@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Shared helpers for frame_resolution scenario tests. Direct DB queries
-// against rimsky_frames, plus invalidate-firing utilities that bypass
-// the controlapi when a test wants to drive many invalidates rapidly.
-//
-// Helpers run through the persistence driver (or the scenario harness's
-// raw-SQL escape hatches) so this file stays out of the pgx-isolation
-// depguard scope.
 package frame_resolution
 
 import (
@@ -32,8 +25,6 @@ type frameRow struct {
 	FrameTimeoutMs      int64
 }
 
-// listFrames returns rimsky_frames rows for the given instance, ordered
-// by queued_at ascending.
 func listFrames(t *testing.T, h *scenario.Harness, instanceID shared.UUID) []frameRow {
 	t.Helper()
 	var out []frameRow
@@ -66,24 +57,6 @@ func countFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.UUI
 	return n
 }
 
-// postInvalidateMessage posts an empty-message wake to the instance to
-// drive a fresh-frame cycle through the real message-delivery /
-// cascade machinery, and returns the message_id assigned by the
-// control-api. Post-spec the runtime synthesizes no envelopes; the
-// empty-message wake trigger is the universal way to wake every
-// structural root via the same path operators use in production.
-//
-// Scope warning: the wake fires EVERY structural root in the template,
-// not a named node. The frame_resolution tests use single-root
-// templates, where "every structural root" is equivalent to "the one
-// node". A multi-root template would see overreach; callers must own
-// that constraint at the call site (no targetNodeID parameter exists
-// for them to pinpoint a single node).
-//
-// Returns the message_id assigned by the control-api (NOT a frame_id
-// — both are `shared.UUID`; readers conflating the two would silently
-// misinterpret downstream lookups). The frame the message opens is
-// found via `listFrames` filtered by `triggering_message_id`.
 // @decision: empty-message-as-root-trigger
 // @story: empty-message-wakes-roots
 func postInvalidateMessage(t *testing.T, h *scenario.Harness, instanceID shared.UUID) shared.UUID {

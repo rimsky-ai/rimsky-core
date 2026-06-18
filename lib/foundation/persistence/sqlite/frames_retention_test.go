@@ -18,12 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// TestPruneTraceForRetention_NoTxPanic asserts the trace retention sweep
-// does not panic with a nil-tx error when invoked the way the scheduler
-// tick invokes it (no surrounding Tables.Transaction). Run against an
-// empty DB — the method must execute its DELETE and return 0, not panic
-// on s.q(nil). The zero cutoff exercises the count-only bound (no time
-// dimension).
 func TestPruneTraceForRetention_NoTxPanic(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

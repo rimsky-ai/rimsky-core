@@ -2,17 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package canonical provides deterministic canonicalization and content
-// hashing for template specs.
-//
-// RFC 8785 JSON Canonicalization Scheme (JCS) is used so that two
-// semantically-identical TemplateSpec values — regardless of map ordering,
-// whitespace, or non-essential string-escape variations — produce
-// byte-identical canonical bytes and, in turn, identical hashes.
-//
 // @blessed-invariant: canonical-hash-identity — the canonical-hash function is the registry's identity
-// function. Any change that alters output bytes for previously-registered
-// specs is a breaking change. The JCS library version is pinned in go.mod.
 package canonical
 
 import (
@@ -26,11 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// CanonicalSpecBytes returns the JCS-canonicalized bytes of a
-// TemplateSpec — the same bytes that feed CanonicalSpecHash. Lifecycle
-// fan-out (controlapi/lifecycle.go) carries these bytes verbatim into
-// OnTemplateRegistered.Spec so subscribers see the exact canonical form
-// rimsky hashed.
 func CanonicalSpecBytes(spec node.TemplateSpec) ([]byte, error) {
 	raw, err := json.Marshal(spec)
 	if err != nil {
@@ -43,9 +28,6 @@ func CanonicalSpecBytes(spec node.TemplateSpec) ([]byte, error) {
 	return canon, nil
 }
 
-// CanonicalSpecHash returns the rimsky-side content hash of a TemplateSpec
-// in the form "sha256-<64-hex>". The spec is JSON-marshalled via
-// encoding/json, JCS-canonicalized, then SHA-256-hashed.
 func CanonicalSpecHash(spec node.TemplateSpec) (string, error) {
 	canon, err := CanonicalSpecBytes(spec)
 	if err != nil {

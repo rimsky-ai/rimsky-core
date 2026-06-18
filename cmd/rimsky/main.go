@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// main.go — rimsky entry point. Dispatches subcommands to handlers
-// in cmd/rimsky/cli/. Hand-rolled subcommand routing on os.Args[1].
 package main
 
 import (
@@ -83,12 +81,6 @@ func main() {
 	}
 }
 
-// dispatchCompose routes `rimsky compose <up|down|plan|status|run>` to
-// the app-layer compose engine. The up/down/plan/status verbs reconcile
-// a rimsky-compose.yml against an already-running rimsky and never
-// start one. The run verb is the embedded one-shot orchestrator: it
-// self-hosts the rimsky runtime stack in-process and drives the
-// manifest to terminal (see @decision: cli-verb).
 func dispatchCompose(args []string) int {
 	return compose.Dispatch(context.Background(), args)
 }

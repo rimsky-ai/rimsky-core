@@ -16,9 +16,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestParseCallbackBody_Success covers the wire shape for the success
-// settling terminal: attributes_delta + change_summary + changed all
-// land on the parsed Outcome.
 func TestParseCallbackBody_Success(t *testing.T) {
 	body := map[string]any{
 		"success": map[string]any{
@@ -51,9 +48,6 @@ func TestParseCallbackBody_Success(t *testing.T) {
 	}
 }
 
-// TestParseCallbackBody_Error covers the error wire shape: error_class
-// is the discriminator the error-policy router keys on, payload carries
-// per-error data.
 func TestParseCallbackBody_Error(t *testing.T) {
 	body := map[string]any{
 		"error": map[string]any{
@@ -85,10 +79,6 @@ func TestParseCallbackBody_Error(t *testing.T) {
 	}
 }
 
-// TestParseCallbackBody_Park covers the park wire shape: reason +
-// reason_note + resume_at + attributes_delta. Per TD-remove-resume-
-// context the body must NOT carry session_token / payload bytes — that
-// state rides attributes_delta now.
 func TestParseCallbackBody_Park(t *testing.T) {
 	resumeAt := time.Date(2026, 6, 17, 15, 30, 0, 0, time.UTC).Format(time.RFC3339)
 	body := map[string]any{
@@ -132,10 +122,6 @@ func TestParseCallbackBody_Park(t *testing.T) {
 	}
 }
 
-// TestParseCallbackBody_ParkUnknownReasonFallsBackToAwaitCallback pins
-// the closed-set safety default: any unknown reason string (typo,
-// missing entry) falls back to PARK_REASON_AWAIT_CALLBACK — the safer
-// default because it does not auto-resume.
 func TestParseCallbackBody_ParkUnknownReasonFallsBackToAwaitCallback(t *testing.T) {
 	body := map[string]any{
 		"park": map[string]any{"reason": "made_up"},
@@ -153,9 +139,6 @@ func TestParseCallbackBody_ParkUnknownReasonFallsBackToAwaitCallback(t *testing.
 	}
 }
 
-// TestParseCallbackBody_RejectsMultipleOutcomes pins that the oneof
-// contract is checked at parse — a body claiming both success AND error
-// is malformed and refused with no outcome.
 func TestParseCallbackBody_RejectsMultipleOutcomes(t *testing.T) {
 	body := map[string]any{
 		"success": map[string]any{},
@@ -166,8 +149,6 @@ func TestParseCallbackBody_RejectsMultipleOutcomes(t *testing.T) {
 	}
 }
 
-// TestParseCallbackBody_RejectsAllThreeOutcomes pins the same multi-
-// outcome rejection for the full three-key case.
 func TestParseCallbackBody_RejectsAllThreeOutcomes(t *testing.T) {
 	body := map[string]any{
 		"success": map[string]any{},
@@ -179,22 +160,15 @@ func TestParseCallbackBody_RejectsAllThreeOutcomes(t *testing.T) {
 	}
 }
 
-// TestParseCallbackBody_RejectsNoOutcome pins that an empty body (or a
-// body carrying only the retired `events` field) is malformed.
 func TestParseCallbackBody_RejectsNoOutcome(t *testing.T) {
 	if _, err := parseCallbackBody(map[string]any{}); err == nil {
 		t.Fatal("expected error for empty body")
 	}
-	// @constraint: legacy `events` field (per TD-collapse-named-event-
-	// to-tags) is gone — a body carrying only events has no outcome.
 	if _, err := parseCallbackBody(map[string]any{"events": []any{}}); err == nil {
 		t.Fatal("expected error for body with no outcome field")
 	}
 }
 
-// TestParseCallbackBody_RejectsLegacyTypeDiscriminator pins that the
-// pre-coherence {type: "complete"|"blocked"|"errored"} shape no longer
-// parses. The migration is one-way per pre-v1 break-freely rules.
 func TestParseCallbackBody_RejectsLegacyTypeDiscriminator(t *testing.T) {
 	body := map[string]any{
 		"type":             "complete",
@@ -205,9 +179,6 @@ func TestParseCallbackBody_RejectsLegacyTypeDiscriminator(t *testing.T) {
 	}
 }
 
-// TestReceiver_RegisterThenHandle covers the happy round-trip: Register
-// claims a channel, the executor's POST drops the outcome on it, the
-// awaiter reads it.
 func TestReceiver_RegisterThenHandle(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -235,10 +206,6 @@ func TestReceiver_RegisterThenHandle(t *testing.T) {
 	}
 }
 
-// TestReceiver_HandleThenRegister covers the inverse race: the
-// callback arrives BEFORE Register. The receiver pre-creates the
-// channel and buffers the outcome; a later Register returns the same
-// buffered channel.
 func TestReceiver_HandleThenRegister(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -264,11 +231,6 @@ func TestReceiver_HandleThenRegister(t *testing.T) {
 	}
 }
 
-// TestReceiver_DuplicateCallback_Discarded pins idempotent delivery:
-// the receiver's channel is buffered to depth 1; a duplicate callback
-// posted after the channel already holds the first outcome is silently
-// discarded. The first-wins discipline matches the persistent-registry
-// contract.
 func TestReceiver_DuplicateCallback_Discarded(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -297,14 +259,9 @@ func TestReceiver_DuplicateCallback_Discarded(t *testing.T) {
 			t.Fatalf("unexpected duplicate delivered: %T", extra.GetOutcome())
 		}
 	case <-time.After(150 * time.Millisecond):
-		// @deliberate: expected silence — no second delivery.
 	}
 }
 
-// TestReceiver_ConcurrentRegisterAndHandle exercises the receiver
-// under concurrent register + post traffic — 32 goroutines half of
-// which register-then-post and half of which post-then-register. Every
-// channel must deliver exactly one outcome.
 func TestReceiver_ConcurrentRegisterAndHandle(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -346,9 +303,6 @@ func TestReceiver_ConcurrentRegisterAndHandle(t *testing.T) {
 	wg.Wait()
 }
 
-// TestReceiver_AdvertiseHostFallback pins that AdvertiseHost="0.0.0.0"
-// is rewritten to BindHost on the URL — exposing the wildcard would
-// give the executor an unroutable callback target.
 func TestReceiver_AdvertiseHostFallback(t *testing.T) {
 	r, err := StartCallbackReceiver(ReceiverOptions{
 		BindHost:      "127.0.0.1",
@@ -363,8 +317,6 @@ func TestReceiver_AdvertiseHostFallback(t *testing.T) {
 	}
 }
 
-// TestReceiver_HandleRejectsMalformedJSON pins the receiver's input
-// guard — a non-JSON body is refused with 400 at the HTTP layer.
 func TestReceiver_HandleRejectsMalformedJSON(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -382,9 +334,6 @@ func TestReceiver_HandleRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
-// TestReceiver_HandleRejectsEmptyOutcome pins that a well-formed JSON
-// body carrying NO outcome key (per AsyncCallbackBody) is refused with
-// 400 — exactly the empty-outcome falsifier the spec names.
 func TestReceiver_HandleRejectsEmptyOutcome(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -403,9 +352,6 @@ func TestReceiver_HandleRejectsEmptyOutcome(t *testing.T) {
 	}
 }
 
-// TestReceiver_HandleRejectsMultiOutcome pins that a wire-level body
-// carrying more than one of success / error / park is refused with 400
-// — the AsyncCallbackBody oneof discipline is enforced at HTTP parse.
 func TestReceiver_HandleRejectsMultiOutcome(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -427,8 +373,6 @@ func TestReceiver_HandleRejectsMultiOutcome(t *testing.T) {
 	}
 }
 
-// TestReceiver_HandleRejectsMissingAckID pins that a POST without an
-// ack id in the path is refused — there is no row to route to.
 func TestReceiver_HandleRejectsMissingAckID(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -447,11 +391,6 @@ func TestReceiver_HandleRejectsMissingAckID(t *testing.T) {
 	}
 }
 
-// TestReceiver_HandleSuccessReturns204 pins that a well-formed POST
-// returns 204 No Content on success (matching the §12.5 convention).
-// The conformance receiver pre-buffers the outcome even when no
-// channel has been Registered yet; that buffered state is the
-// idempotent-replay guarantee per concept:async-callback-persistence.
 func TestReceiver_HandleSuccessReturns204(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -470,8 +409,6 @@ func TestReceiver_HandleSuccessReturns204(t *testing.T) {
 	}
 }
 
-// postCallback marshals body to JSON and POSTs it to the callback
-// receiver, fatal on transport error or non-204.
 func postCallback(t *testing.T, baseURL, ackID string, body map[string]any) {
 	t.Helper()
 	buf, err := json.Marshal(body)

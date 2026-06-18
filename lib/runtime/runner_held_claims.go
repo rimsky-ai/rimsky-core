@@ -2,22 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Held-claim runtime helpers (release path §7.6 / auto-terminal
-// `@blessed-invariant 13`).
-//
-// Post-stage-5 of the run-row lifecycle cutover, `rimsky_claim_holders`
-// rows are keyed by `holder_run_id` (a `rimsky_node_runs.id`):
-//
-//   - The acquirer's own holder row is inserted at acquire time when
-//     the claim is held (deploy-time computation via
-//     `HoldingSubgraphsForTemplate`).
-//   - Co-holders' rows are inserted at the co-holder's own acquire time
-//     (per the `holds:` template directive, runtime entry point in
-//     `runner_acquire_holders.go::insertCoHolderClaimHoldersAtAcquire`).
-//
-// This file owns the per-acquired-claim release-path helpers used by
-// `runner_terminal.go`'s release loop.
-
 package runtime
 
 import (
@@ -30,9 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// isAliasHeld reports whether the alias acquired by acquirerType
-// has IsHeld() == true (subgraph size > 1) in the precomputed
-// holding-subgraph metadata.
 func isAliasHeld(subgraphs []node.HoldingSubgraph, acquirerType, alias string) bool {
 	for _, sg := range subgraphs {
 		if sg.AcquirerType == acquirerType && sg.Alias == alias {
@@ -42,11 +23,6 @@ func isAliasHeld(subgraphs []node.HoldingSubgraph, acquirerType, alias string) b
 	return false
 }
 
-// markClaimHolderForRun flips this run's rimsky_claim_holders row
-// (for the given claim_handle_id) to 'completed' or 'failed' via a single
-// targeted UPDATE keyed on the unique (claim_handle_id, holder_run_id)
-// pair. Used by the terminal release path for both acquirer-of-held and
-// inheritor-of-held branches.
 func markClaimHolderForRun(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	claimHandleID, runID shared.UUID, success bool,
@@ -63,28 +39,6 @@ func markClaimHolderForRun(
 	return nil
 }
 
-// findInheritedAliasesForRun resolves one (acquirerType, alias,
-// claimHandleID) entry per held subgraph this run is a non-acquirer
-// member of. Used by the inheritor branch of the §7.6 release path.
-//
-// Per claim-holders row this run owns (keyed by holder_run_id post-
-// stage-5), the function reads the parent lock-holder row to find the
-// acquirer node, looks up the acquirer's NodeType, and selects the
-// matching (acquirerType, alias) pair from the precomputed
-// holding-subgraph metadata. The acquirer's lock-holder row carries
-// `producer_name`; when an acquirer declares multiple aliases against
-// the same producer_name, we further disambiguate by matching the
-// lock-holder row's `claim_scope_data` against the alias's substituted
-// selector — falling back to the first matching alias if the row has
-// not yet had its store-chosen claim-scope written.
-//
-// This is deterministic on a per-row basis (no cartesian product) and
-// agrees with the acquirer-side computation that drove the original
-// `insertHeldClaimHoldersAtAcquire`.
-//
-// All persistence reads share the caller's tx — option C / no-nil-tx
-// (the release path is inside an open Persist.Transaction; passing
-// nil here would self-deadlock under the SQLite single-conn pool).
 func findInheritedAliasesForRun(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	subgraphs []node.HoldingSubgraph, nodeType string, runID, instanceID shared.UUID,
@@ -124,9 +78,6 @@ func findInheritedAliasesForRun(
 		if err != nil {
 			return nil, fmt.Errorf("findInheritedAliasesForNode: ClaimHandles.Get: %w", err)
 		}
-		// @deliberate: a missing claim handle means a sibling already
-		// auto-terminated the row; the inheritance lookup tolerates
-		// the race rather than treating it as an error.
 		if lh == nil {
 			continue
 		}
@@ -154,15 +105,6 @@ func findInheritedAliasesForRun(
 	return out, nil
 }
 
-// pickAliasForClaimHandle picks the alias for an inherited lock-holder
-// row when the acquirer declares one or more aliases that name this
-// locks. Single-candidate case: return that alias. Multi-candidate
-// case: walk the acquirer's NodeDef and match each alias's substituted
-// selector to the row's `claim_scope_data`; return the first match. Falls
-// back to the first candidate when no selector matches (the row may
-// have been inserted before the store-chosen claim-scope was written).
-//
-// Reuses the caller's tx (option C / no-nil-tx). See findInheritedAliasesForNode.
 func pickAliasForClaimHandle(
 	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
 	acquirerType string, picks []aliasCandidate, lh *persistence.ClaimHandleRow,
@@ -187,10 +129,6 @@ func pickAliasForClaimHandle(
 			if sref.AliasOf() != p.alias {
 				continue
 			}
-			// @deliberate: best-effort selector match — we don't
-			// re-substitute params/deps here; the acquirer already
-			// wrote the substituted selector into claim_scope_data
-			// at acquire time.
 			if matchesClaimScope(lh.ClaimScopeData, sref.Selector) {
 				return p.alias
 			}
@@ -199,16 +137,11 @@ func pickAliasForClaimHandle(
 	return picks[0].alias
 }
 
-// aliasCandidate is the per-acquirer alias-search element used by
-// pickAliasForClaimHandle.
 type aliasCandidate struct {
 	acquirerType string
 	alias        string
 }
 
-// matchesClaimScope reports whether the lock-holder row's claim_scope_data
-// equals the JSON-encoded selector. Conservative: empty claim_scope_data is
-// non-matching; malformed bytes are non-matching.
 func matchesClaimScope(claimScopeData []byte, selector string) bool {
 	if len(claimScopeData) == 0 {
 		return false
@@ -220,15 +153,12 @@ func matchesClaimScope(claimScopeData []byte, selector string) bool {
 	return string(claimScopeData) == string(encoded)
 }
 
-// inheritedAlias bundles the per-aliased-claim metadata an
-// inheritor terminal needs.
 type inheritedAlias struct {
 	AcquirerType  string
 	Alias         string
 	ClaimHandleID shared.UUID
 }
 
-// memberOf reports whether nodeType is in subgraph.Members.
 func memberOf(sg node.HoldingSubgraph, nodeType string) bool {
 	for _, m := range sg.Members {
 		if m == nodeType {

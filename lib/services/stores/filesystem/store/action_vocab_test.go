@@ -16,10 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 )
 
-// TestAction_Pop_FolderStays — pop drains the queue entry but keeps
-// the underlying folder in place. Combined with sync_strategy: on_drain,
-// the next Open after drain returns Unavailable; the folder is NOT
-// re-discovered until the operator triggers a refresh.
 func TestAction_Pop_FolderStays(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -54,8 +50,6 @@ func TestAction_Pop_FolderStays(t *testing.T) {
 	}
 }
 
-// TestAction_PopAndMove_FolderRenamed — pop_and_move drains the queue
-// entry AND renames the folder to the configured target.
 func TestAction_PopAndMove_FolderRenamed(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -90,9 +84,6 @@ func TestAction_PopAndMove_FolderRenamed(t *testing.T) {
 	}
 }
 
-// TestAction_PopAndMove_GiveUpUsesGiveUpTarget — pop_and_move can be
-// configured separately for on_commit and on_give_up. Abandon must use
-// the on_give_up target (here "failed/"), not the on_commit target.
 func TestAction_PopAndMove_GiveUpUsesGiveUpTarget(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -124,8 +115,6 @@ func TestAction_PopAndMove_GiveUpUsesGiveUpTarget(t *testing.T) {
 	}
 }
 
-// TestAction_PopAndDelete_FolderGone — pop_and_delete removes the
-// folder from disk via os.RemoveAll AND drains the queue entry.
 func TestAction_PopAndDelete_FolderGone(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -149,9 +138,6 @@ func TestAction_PopAndDelete_FolderGone(t *testing.T) {
 	}
 }
 
-// TestAction_Recycle_QueueCycles — recycle returns the queue entry
-// to the tail with a fresh mtime, so the same Open→Commit→Open pattern
-// re-picks the same folder eventually (after others rotate through).
 func TestAction_Recycle_QueueCycles(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"

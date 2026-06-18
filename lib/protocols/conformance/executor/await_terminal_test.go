@@ -19,37 +19,30 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// successOutcome builds a unary Outcome carrying a Success terminal.
 func successOutcome(changed bool, summary string) *genv1.Outcome {
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
 		Changed: changed, ChangeSummary: summary,
 	}}}
 }
 
-// awaitAsyncOutcome builds a unary Outcome carrying an AwaitAsyncCallback handoff.
 func awaitAsyncOutcome(ackID string) *genv1.Outcome {
 	return &genv1.Outcome{Outcome: &genv1.Outcome_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
 		AsyncAckId: ackID,
 	}}}
 }
 
-// errorOutcome builds a unary Outcome carrying an Error terminal.
 func errorOutcome(class string) *genv1.Outcome {
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
 		ErrorClass: class,
 	}}}
 }
 
-// parkOutcome builds a unary Outcome carrying a Park terminal.
 func parkOutcome(reason genv1.ParkReason) *genv1.Outcome {
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: &genv1.Park{
 		Reason: reason,
 	}}}
 }
 
-// TestAwaitTerminal_SyncSuccessReturnedDirectly pins that AwaitTerminal
-// is a pass-through for already-settling Outcomes — Success, Error, and
-// Park return verbatim, no callback wait.
 func TestAwaitTerminal_SyncSuccessReturnedDirectly(t *testing.T) {
 	out := successOutcome(true, "applied")
 	got, err := AwaitTerminal(context.Background(), out, Env{})
@@ -68,8 +61,6 @@ func TestAwaitTerminal_SyncSuccessReturnedDirectly(t *testing.T) {
 	}
 }
 
-// TestAwaitTerminal_SyncErrorReturnedDirectly pins that an Error outcome
-// settles synchronously without engaging the callback receiver.
 func TestAwaitTerminal_SyncErrorReturnedDirectly(t *testing.T) {
 	out := errorOutcome("boom")
 	got, err := AwaitTerminal(context.Background(), out, Env{})
@@ -85,8 +76,6 @@ func TestAwaitTerminal_SyncErrorReturnedDirectly(t *testing.T) {
 	}
 }
 
-// TestAwaitTerminal_SyncParkReturnedDirectly pins that a Park outcome
-// settles synchronously without engaging the callback receiver.
 func TestAwaitTerminal_SyncParkReturnedDirectly(t *testing.T) {
 	out := parkOutcome(genv1.ParkReason_PARK_REASON_SNOOZE)
 	got, err := AwaitTerminal(context.Background(), out, Env{})
@@ -102,9 +91,6 @@ func TestAwaitTerminal_SyncParkReturnedDirectly(t *testing.T) {
 	}
 }
 
-// TestAwaitTerminal_AsyncWithoutReceiverReturnedAsIs pins that
-// AwaitAsyncCallback is returned verbatim when env.Callbacks is nil —
-// the caller wants the handoff intent itself, not the eventual verdict.
 func TestAwaitTerminal_AsyncWithoutReceiverReturnedAsIs(t *testing.T) {
 	out := awaitAsyncOutcome("ack-x")
 	got, err := AwaitTerminal(context.Background(), out, Env{Callbacks: nil})
@@ -116,10 +102,6 @@ func TestAwaitTerminal_AsyncWithoutReceiverReturnedAsIs(t *testing.T) {
 	}
 }
 
-// TestAwaitTerminal_AsyncFollowsCallbackToSuccess exercises the full
-// async round-trip: AwaitAsyncCallback registers an ack id, a later
-// HTTP POST to /v1/callback/{ackId} delivers the settling Success, and
-// AwaitTerminal returns it.
 func TestAwaitTerminal_AsyncFollowsCallbackToSuccess(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -171,10 +153,6 @@ func TestAwaitTerminal_AsyncFollowsCallbackToSuccess(t *testing.T) {
 	}
 }
 
-// TestAwaitTerminal_AsyncFollowsCallbackToPark covers the rate-limit
-// case: the executor returns AwaitAsyncCallback, then later POSTs a
-// Park terminal carrying reason + attribute carry-forward, with no
-// session_token on the wire (per TD-remove-resume-context).
 func TestAwaitTerminal_AsyncFollowsCallbackToPark(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -221,16 +199,12 @@ func TestAwaitTerminal_AsyncFollowsCallbackToPark(t *testing.T) {
 	if park.Park.GetReasonNote() != "rate-limited" {
 		t.Errorf("reason_note=%q", park.Park.GetReasonNote())
 	}
-	// @constraint: session state rides attributes_delta now
-	// (per TD-remove-resume-context).
 	delta := park.Park.GetAttributesDelta().AsMap()
 	if delta["session_token"] != "tok-1" {
 		t.Errorf("attributes_delta=%v missing session_token=tok-1", delta)
 	}
 }
 
-// TestAwaitTerminal_AsyncFollowsCallbackToError pins error-routing via
-// the async-callback round trip (the rate-limit case the stub scripts).
 func TestAwaitTerminal_AsyncFollowsCallbackToError(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -273,11 +247,6 @@ func TestAwaitTerminal_AsyncFollowsCallbackToError(t *testing.T) {
 	}
 }
 
-// TestAwaitTerminal_AsyncPreRegisteredCallbackArrivesEarly covers the
-// race window where the executor's callback POST arrives BEFORE
-// AwaitTerminal calls Register — the receiver's handle() pre-creates
-// the channel and buffers the outcome; Register returns the same
-// channel and the outcome delivers immediately.
 func TestAwaitTerminal_AsyncPreRegisteredCallbackArrivesEarly(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -310,9 +279,6 @@ func TestAwaitTerminal_AsyncPreRegisteredCallbackArrivesEarly(t *testing.T) {
 	}
 }
 
-// TestAwaitTerminal_ContextCancelledWhileAwaiting pins that a context
-// deadline elapses cleanly when no callback arrives — the error names
-// the ack id so the operator can correlate the timeout to the dispatch.
 func TestAwaitTerminal_ContextCancelledWhileAwaiting(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -337,9 +303,6 @@ func TestAwaitTerminal_ContextCancelledWhileAwaiting(t *testing.T) {
 	}
 }
 
-// TestAwaitTerminal_AsyncEmptyAckIDIsError pins that an
-// AwaitAsyncCallback with no ack_id is rejected immediately — without
-// an ack id there is no way to route the eventual callback.
 func TestAwaitTerminal_AsyncEmptyAckIDIsError(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -354,9 +317,6 @@ func TestAwaitTerminal_AsyncEmptyAckIDIsError(t *testing.T) {
 	}
 }
 
-// TestAwaitTerminal_NilOutcomeIsError pins that AwaitTerminal rejects
-// a nil Outcome — defensive guard for the supervisor handing the
-// runner a half-built response.
 func TestAwaitTerminal_NilOutcomeIsError(t *testing.T) {
 	_, err := AwaitTerminal(context.Background(), nil, Env{})
 	if err == nil {
@@ -364,10 +324,6 @@ func TestAwaitTerminal_NilOutcomeIsError(t *testing.T) {
 	}
 }
 
-// TestAwaitTerminal_TagsAndAttributesDeltaRoundTrip pins that the
-// uniform settling-terminal shape (tags + attributes_delta per
-// TD-collapse-named-event-to-tags + TD-attributes-delta-on-all-settling-
-// terminals) round-trips verbatim on the sync Success path.
 func TestAwaitTerminal_TagsAndAttributesDeltaRoundTrip(t *testing.T) {
 	delta, _ := structpb.NewStruct(map[string]any{"count": 3, "session_token": "tok-z"})
 	out := &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{

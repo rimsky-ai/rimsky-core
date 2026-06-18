@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Unit coverage for the in-process executor's sync_rpc_deadline path
-// (TD-three-dispatch-deadlines). The deadline is applied by
-// runner_dispatch.go before calling client.Execute; this test pins
-// that an InProcessClient passes the deadlined ctx through to the
-// handler unchanged, so a handler that honors ctx.Err() reflects the
-// deadline as context.DeadlineExceeded.
-
 package executor
 
 import (
@@ -23,9 +16,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// deadlineHonoringHandler blocks until ctx is canceled, then returns
-// ctx.Err(). Models a well-behaved in-process executor that respects
-// the supervisor's sync_rpc_deadline.
 type deadlineHonoringHandler struct{}
 
 func (deadlineHonoringHandler) Execute(ctx context.Context, _ *genv1.ExecuteRequest, _ HandlerContext) (*genv1.Outcome, error) {

@@ -22,11 +22,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// authTestHarness wires a live AuthState over a sqlite store with one
-// seeded `*`-grant key, and a chi router that runs IdentityResolver +
-// gateByAction in front of a probe handler. The probe records the
-// resolved request Mode so the test can assert the `?dry_run=true` flag
-// drives it. Returns the harness pieces and the seeded key plaintext.
 type authTestHarness struct {
 	state     *AuthState
 	tables    persistence.Tables
@@ -55,9 +50,6 @@ func newAuthTestHarness(t *testing.T) authTestHarness {
 		Clock:    clock,
 		Logger:   shared.SilentLogger{},
 	}
-	// @constraint: mint a structurally-valid plaintext: resolveIdentity runs
-	// ValidatePlaintext (prefix + base64url shape) before the hash
-	// lookup, so an arbitrary string would be rejected as invalid_token.
 	plaintext, hash, err := auth.Mint()
 	if err != nil {
 		t.Fatalf("mint: %v", err)
@@ -76,8 +68,6 @@ func newAuthTestHarness(t *testing.T) authTestHarness {
 	return authTestHarness{state: state, tables: d.Tables(), plaintext: plaintext}
 }
 
-// lastAttemptedRow returns the most-recent auth.access_attempted audit
-// row's payload, failing if none is present.
 func lastAttemptedRow(t *testing.T, tables persistence.Tables) map[string]any {
 	t.Helper()
 	var res persistence.EventListResult
@@ -97,12 +87,6 @@ func lastAttemptedRow(t *testing.T, tables persistence.Tables) map[string]any {
 	return res.Events[0].Payload
 }
 
-// TestGate_DryRunFlagSetsModeAndReadExecutes verifies the two halves of
-// the per-request dry-run flag on a READ action:
-//   - `?dry_run=true` resolves ModeFromContext to ModeDryRun inside the
-//     handler (the flag, not a grant entry, is the only source of mode).
-//   - the read genuinely runs, so the audit row records mode=dry_run with
-//     executed=true (a read has no mutation to skip).
 func TestGate_DryRunFlagSetsModeAndReadExecutes(t *testing.T) {
 	h := newAuthTestHarness(t)
 
@@ -113,7 +97,6 @@ func TestGate_DryRunFlagSetsModeAndReadExecutes(t *testing.T) {
 	}
 	r := chi.NewRouter()
 	r.Use(h.state.IdentityResolver())
-	// @constraint: instance:read is a registered read action (IsWrite=false).
 	r.Get("/v1/instances", h.state.gateByAction("instance:read", probe))
 
 	srv := httptest.NewServer(r)
@@ -142,21 +125,9 @@ func TestGate_DryRunFlagSetsModeAndReadExecutes(t *testing.T) {
 	}
 }
 
-// TestGate_StreamingHandlerCanFlush is a regression guard for the GET /mcp
-// 500 "streaming unsupported" bug: gateByAction wraps the ResponseWriter in
-// a *capturingWriter to record the response status for the audit row, but
-// that wrapper must still expose http.Flusher so the downstream SSE stream
-// handler (lib/control/controlapi/mcp.serveStream) can flush events. Before
-// capturingWriter proxied Flush(), the handler's `w.(http.Flusher)`
-// assertion failed under the gate and every GET /mcp returned 500. This
-// drives the real action GET /mcp gates on (mcp:read) through the gate over
-// a live server — the exact path that previously had no coverage.
 func TestGate_StreamingHandlerCanFlush(t *testing.T) {
 	h := newAuthTestHarness(t)
 
-	// @constraint: probe mirrors the MCP SSE stream handler's contract: it requires an
-	// http.Flusher, then writes and flushes one SSE event. Under the gate's
-	// capturingWriter, the assertion must succeed.
 	probe := func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -170,7 +141,6 @@ func TestGate_StreamingHandlerCanFlush(t *testing.T) {
 	}
 	r := chi.NewRouter()
 	r.Use(h.state.IdentityResolver())
-	// @constraint: mcp:read is a registered read action — the umbrella GET /mcp gates on.
 	r.Get("/v1/mcp", h.state.gateByAction("mcp:read", probe))
 
 	srv := httptest.NewServer(r)
@@ -198,14 +168,6 @@ func TestGate_StreamingHandlerCanFlush(t *testing.T) {
 	}
 }
 
-// TestGate_ExecuteBeatsDryRun_MultiEntryGrant verifies the gate's
-// matched-entry resolution is order-independent across two grant entries
-// on the same action with different modes. A key holding both a dry_run
-// entry and an execute entry for `instance:read` must resolve to
-// ModeExecute regardless of the order the entries sit in. Before the
-// fix, the gate broke on the first allowed entry inside CheckGrant, so
-// flipping the entry order silently downgraded a legitimately execute-
-// eligible request to dry_run.
 func TestGate_ExecuteBeatsDryRun_MultiEntryGrant(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -221,7 +183,6 @@ func TestGate_ExecuteBeatsDryRun_MultiEntryGrant(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// @constraint: build a fresh harness per sub-test so audit rows don't bleed.
 			ctx := context.Background()
 			dir := t.TempDir()
 			d, err := persistence.Open(ctx, persistence.Config{
@@ -291,8 +252,6 @@ func TestGate_ExecuteBeatsDryRun_MultiEntryGrant(t *testing.T) {
 	}
 }
 
-// TestGate_DefaultModeIsExecute verifies the absence of the flag resolves
-// to ModeExecute (the default), and a clean read records executed=true.
 func TestGate_DefaultModeIsExecute(t *testing.T) {
 	h := newAuthTestHarness(t)
 

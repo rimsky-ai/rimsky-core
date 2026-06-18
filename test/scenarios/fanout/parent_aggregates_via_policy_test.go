@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N2 scenario — parent_aggregates_via_policy.
-//
-// The fan-out node's `error_policy` block becomes the parent run's
-// snapshot AggregationPolicy. When children terminate the
-// state-propagation engine consults this policy via runtime.Aggregate
-// to decide the parent's outcome. Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Fan-out template DSL "Output aggregation" + the rule table in
-// §State aggregation rules for run-trees.
-//
-// This scenario exercises the pure aggregation rule table against
-// every declared policy kind (`strict`, `threshold`, `best_effort`,
-// `first`) so a fan-out parent's expected terminal state is fully
-// pinned by the aggregation engine.
 package fanout
 
 import (
@@ -49,9 +35,6 @@ func TestParentAggregatesViaPolicy_StrictFailsOnAnyFailure(t *testing.T) {
 
 func TestParentAggregatesViaPolicy_StrictAllSuccessYieldsFreshChanged(t *testing.T) {
 	t.Parallel()
-	// @deliberate: Mixed fresh_changed + fresh_unchanged outcomes; the parent
-	// inherits fresh_changed if any child reported it (cascade-firing
-	// gate).
 	children := []runtime.ChildState{
 		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
 		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
@@ -117,8 +100,6 @@ func TestParentAggregatesViaPolicy_FirstCancelsNonWinners(t *testing.T) {
 	}
 }
 
-// @deliberate: FanOutAggregationPolicy pulls the policy from the template's fan_out
-// block. Validates the runtime helper extracts the right shape.
 func TestFanOutAggregationPolicy_ReadsTemplateBlock(t *testing.T) {
 	t.Parallel()
 	def := &node.TemplateNodeDef{

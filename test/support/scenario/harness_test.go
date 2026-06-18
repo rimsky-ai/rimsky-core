@@ -16,9 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// TestHarnessSmoke verifies the scenario harness stands up every
-// in-process component and a trivial one-node template runs end-to-end
-// against the stub executor.
 func TestHarnessSmoke(t *testing.T) {
 	t.Parallel()
 	h := Start(t, HarnessOpts{})
@@ -40,8 +37,6 @@ func TestHarnessSmoke(t *testing.T) {
 		"node did not reach fresh within 10s")
 }
 
-// TestHarnessClockInjection verifies HarnessOpts.Clock is threaded
-// through.
 func TestHarnessClockInjection(t *testing.T) {
 	t.Parallel()
 	clk := shared.NewControllableClock(time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC))
@@ -55,10 +50,6 @@ func TestHarnessClockInjection(t *testing.T) {
 	require.True(t, clk.Now().After(time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC)))
 }
 
-// TestTemplateSpecToJSONNewGrammar verifies templateSpecToJSON emits the
-// new grammar (`stores`, `locks`, `attributes`, `inherits`) and does
-// NOT emit retired keys (including `claim_resolutions`, dropped by the
-// 2026-04-30 stores cleanup).
 func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	t.Parallel()
 	spec := node.TemplateSpec{
@@ -119,8 +110,6 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	require.Equal(t, "object", schema["type"])
 }
 
-// TestMakeNodeOptions verifies the fluent helpers compose without
-// aliasing slice-typed fields across multiple nodes.
 func TestMakeNodeOptions(t *testing.T) {
 	t.Parallel()
 	base := node.TemplateNodeDef{Type: "worker", Executor: "stub"}

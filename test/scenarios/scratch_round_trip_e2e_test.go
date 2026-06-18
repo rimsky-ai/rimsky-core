@@ -2,32 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// STORY-opaque-executor-scratch proof — verifies the round-trip
-// property of executor-attached opaque scratch bytes across the
-// three prior-dispatch recovery dispositions (stale_recovery,
-// retry_after_error, recalculate).
-//
-// The retry_after_error variant drives the round-trip end to end:
-// the in-process handler writes scratch via the unary Outcome's
-// Success/Error `scratch` field on its first dispatch; the
-// supervisor's error-policy retry chain copies the scratch onto the
-// successor dispatch row; the handler's second invocation captures
-// the incoming `req.scratch` field and the test asserts byte-for-
-// byte equality.
-//
-// The stale_recovery and recalculate variants drive the persistence-
-// layer copy directly via `Queue.EnqueueInTx`-with-prior-dispatch
-// (the same shape the runtime's recovery sites use). This shape is
-// what `concept:opaque-executor-scratch` requires: regardless of
-// which disposition drove the successor enqueue, the persistence
-// layer copies the bytes verbatim onto the new row. Driving an
-// actual second supervisor dispatch through these variants would
-// duplicate the retry_after_error end-to-end pin without adding
-// coverage at the persistence-vs-wire boundary that already holds
-// it. The persistence conformance suite
-// (`code:lib/foundation/persistence/conformance/recovery_aware_dispatch.go`)
-// holds the same property at the persistence layer.
-//
 // @story: opaque-executor-scratch
 // @concept: executor
 package scenarios
@@ -54,10 +28,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// @deliberate: randomScratch returns a scratch envelope: a fixed
-// signature followed by a unique random suffix. Each test variant
-// gets its own bytes so a fixture leak between variants would
-// surface as a content mismatch.
 func randomScratch(t *testing.T, prefix string) []byte {
 	t.Helper()
 	suffix := make([]byte, 16)
@@ -69,10 +39,6 @@ func randomScratch(t *testing.T, prefix string) []byte {
 	return out
 }
 
-// scratchHandler is an inproc handler whose first dispatch writes
-// scratch on the terminal outcome (Error.scratch when failOnFirst,
-// Success.scratch otherwise) and whose subsequent dispatches record
-// the inbound `req.scratch` for assertion.
 type scratchHandler struct {
 	writeBytes  []byte
 	failOnFirst bool
@@ -119,13 +85,6 @@ func (h *scratchHandler) snapshot() []byte {
 	return append([]byte(nil), h.seenOnRetry...)
 }
 
-// TestScratchRoundTripE2E_RetryAfterError drives the
-// retry_after_error path end to end: handler's first dispatch
-// returns Error with scratch attached; supervisor's error-policy
-// retry chain copies the scratch onto the successor row;
-// second invocation captures `req.scratch` and asserts byte-for-
-// byte equality.
-//
 // @concept: error-policy
 func TestScratchRoundTripE2E_RetryAfterError(t *testing.T) {
 	t.Parallel()
@@ -160,8 +119,6 @@ func TestScratchRoundTripE2E_RetryAfterError(t *testing.T) {
 	n := harness.FindNode(iid, "worker")
 	require.NotNil(t, n, "worker node missing")
 
-	// @deliberate: Wait for the retry-success terminal — the second
-	// dispatch transitions the node to fresh.
 	require.True(t,
 		harness.WaitForNodeState(n.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker MUST reach fresh after retry — first dispatch errors with retry policy, second succeeds")
@@ -173,25 +130,6 @@ func TestScratchRoundTripE2E_RetryAfterError(t *testing.T) {
 		scratchBytes, h.snapshot())
 }
 
-// TestScratchRoundTripE2E_StaleRecovery + _Recalculate drive the
-// persistence-layer carry-forward for the other two dispositions.
-// These variants:
-//
-//  1. Run a first dispatch through the in-process handler with
-//     scratch attached to its Success terminal. The supervisor
-//     persists the scratch on that dispatch's row.
-//  2. Identify the now-terminal dispatch row's id.
-//  3. Call `Queue.LoadScratchInTx` + `Queue.EnqueueInTx` directly
-//     with the appropriate disposition, mirroring the runtime's
-//     recovery enqueue sites.
-//  4. Read the new dispatch row's scratch_inline column and assert
-//     verbatim equality with the original bytes.
-//
-// The retry_after_error variant above pins the executor-side
-// `req.scratch` round trip end to end; these two variants pin the
-// persistence-layer copy across the other dispositions, which is
-// the wire-to-row boundary the story acceptance keys on.
-//
 // @concept: opaque-executor-scratch
 
 func TestScratchRoundTripE2E_StaleRecovery(t *testing.T) {
@@ -230,11 +168,6 @@ func runDispositionVariant(t *testing.T, disposition string) {
 		harness.WaitForNodeState(n.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker MUST reach fresh after first dispatch — initial scratch attach failed?")
 
-	// @deliberate: Find the now-terminal dispatch row carrying the
-	// scratch. Use the terminal-phase predicate
-	// (`phase IN ('completed','failed')`) to locate it; the row
-	// survives past active terminal so frame-end + retention + run-
-	// tree aggregation can read its terminal state.
 	var dispatchIDText, frameIDText, runScopeIDText string
 	harness.QueryRowSQL(`
 		SELECT id::text, frame_id::text, run_scope_id::text
@@ -255,15 +188,6 @@ func runDispositionVariant(t *testing.T, disposition string) {
 	frameID := shared.UUID(frameUUID)
 	runScopeID := shared.UUID(runScopeUUIDParsed)
 
-	// @deliberate: Drive the recovery enqueue directly. This mirrors
-	// the runtime's recovery sites:
-	//   stale_recovery → conductor.go's quiet-period sweep would
-	//     eventually mark the row stale; here we drive the same
-	//     EnqueueInTx shape directly to pin the persistence-layer
-	//     copy.
-	//   recalculate → cascade_recalculate.go calls
-	//     LoadScratchInTx + EnqueueInTx with this disposition; same
-	//     shape exercised here.
 	require.NoError(t, harness.Persist.Transaction(harness.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		inline, handle, backend, lerr := harness.Queue.LoadScratchInTx(ctx, tx, priorID)
 		if lerr != nil {
@@ -284,9 +208,6 @@ func runDispositionVariant(t *testing.T, disposition string) {
 		}, tx)
 	}), "recovery EnqueueInTx")
 
-	// @constraint: The successor dispatch row's scratch_inline MUST
-	// equal the prior row's bytes verbatim — the persistence layer
-	// carries them across without inspection (`concept:inertness`).
 	var gotInline []byte
 	harness.QueryRowSQL(`
 		SELECT scratch_inline

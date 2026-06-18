@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// validation.go implements the Validation mix-in service-protocol for
-// verifier-shape-checks. Validate is called by rimsky's control-api at
-// template registration with role="executor"; the verifier inspects
-// the merged effective attribute schema (looking for a `checks`
-// property declared via `default:` or `source:` on the per-node L2
-// schema) plus claim aliases, and surfaces structural problems
-// (missing checks, malformed config, unknown check kinds) as errors /
-// warnings before the template is deployed.
-//
-// Per spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Protocol surfaces / Validation.
-
 package main
 
 import (
@@ -25,24 +13,14 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-shape-checks/checks"
 )
 
-// ValidationServer implements genv1.ValidationServer.
 type ValidationServer struct {
 	genv1.UnimplementedValidationServer
 }
 
-// NewValidationServer constructs the validation handler.
 func NewValidationServer() *ValidationServer { return &ValidationServer{} }
 
-// knownCheckKinds holds the snake_case names of every check the
-// verifier's runtime dispatcher supports, sourced from the checks
-// package's registry so the registration-time `unknown_check_kind`
-// advisory cannot drift from what Run actually dispatches.
 var knownCheckKinds = checks.KnownKinds()
 
-// Validate routes on the role discriminator. Only role="executor" is
-// supported; any other role surfaces an error finding with class
-// `unsupported_role` (caller can downgrade to warning via the
-// validation orchestrator's policy).
 func (v *ValidationServer) Validate(_ context.Context, req *genv1.ValidateRequest) (*genv1.ValidateResponse, error) {
 	if req.GetRole() != "executor" {
 		return &genv1.ValidateResponse{
@@ -68,9 +46,6 @@ func (v *ValidationServer) Validate(_ context.Context, req *genv1.ValidateReques
 	return validateExecutor(exec), nil
 }
 
-// validateExecutor parses the executor context and returns the
-// findings. Exported via a small surface so the in-process self-test
-// can call it directly.
 func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 	errors := make([]*genv1.ValidationFinding, 0)
 	warnings := make([]*genv1.ValidationFinding, 0)
@@ -87,12 +62,6 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 		}
 	}
 
-	// @constraint: registration-time gate accepts `checks` declared as
-	// either a `default:` value or a `source:` binding (both route through
-	// schema.properties.checks); per-element shape validation defers to
-	// dispatch time when `source:` is used. Only when neither is present
-	// (and the property is not `readOnly`) does the gate emit
-	// `missing_checks`.
 	props, _ := attrs["properties"].(map[string]any)
 	checksProp, _ := props["checks"].(map[string]any)
 	_, hasSource := checksProp["source"].(string)
@@ -106,10 +75,6 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 		})
 		return &genv1.ValidateResponse{Valid: false, Errors: errors, Warnings: warnings}
 	}
-	// @deliberate: source-bound `checks` skips per-element validation here;
-	// the upstream-produced array is validated at dispatch time, so
-	// registration-time element checks only run when a static default is
-	// present.
 	if !hasDefault {
 		return &genv1.ValidateResponse{Valid: true, Errors: errors, Warnings: warnings}
 	}

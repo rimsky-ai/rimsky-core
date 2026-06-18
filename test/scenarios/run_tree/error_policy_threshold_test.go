@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N1 scenario — error_policy_threshold.
-//
-// `threshold` aggregation: parent fails when failure count reaches
-// max_failures; otherwise succeeds once all children settle.
 package runtree
 
 import (

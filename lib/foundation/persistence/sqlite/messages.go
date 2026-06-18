@@ -21,8 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// messagesImpl is the SQLite-backed persistence.MessagesTable — the
-// unified message queue per spec §Unified message layer.
 type messagesImpl tablesImpl
 
 var _ persistence.MessagesTable = (*messagesImpl)(nil)
@@ -40,9 +38,6 @@ func (b *messagesImpl) Insert(ctx context.Context, tx persistence.Tx, req persis
 	if req.ReceivedAt.IsZero() {
 		req.ReceivedAt = time.Now().UTC()
 	}
-	// @constraint: received_at goes through formatTime (fixed-width UTC text) — a raw
-	// time.Time bind would store modernc's zone-embedded t.String() form,
-	// which breaks ORDER BY / range comparisons on non-UTC hosts.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertMessageSQL,
 		req.ID.String(), req.InstanceID.String(), req.Type, req.Sender,
 		req.SenderKind, req.Payload, formatTime(req.ReceivedAt))
@@ -66,12 +61,6 @@ func (b *messagesImpl) MarkDelivered(ctx context.Context, tx persistence.Tx, id 
 	return n == 1, nil
 }
 
-// sqliteListPendingMessagesSQL returns the OLDEST pending undelivered
-// message for the instance. LIMIT 1 is load-bearing: the one-message-
-// per-frame property in `code:lib/runtime/message_delivery.go::DeliverPendingMessages`
-// names this SELECT as the structural single-row gate. Removing the
-// LIMIT would let bursty operator traffic materialize N rows per tick
-// just to pick one.
 const sqliteListPendingMessagesSQL = `
 SELECT id, instance_id, type, sender, sender_kind, payload,
        received_at, delivered_at, frame_id, cancelled
@@ -127,9 +116,6 @@ func (b *messagesImpl) Get(ctx context.Context, id shared.UUID) (*persistence.Me
 	return &out[0], nil
 }
 
-// GetInTx mirrors Get but reads through the caller's open tx so
-// inside-transaction callers do not deadlock the SQLite single-conn
-// pool. See persistence.MessagesTable.GetInTx for the rationale.
 func (b *messagesImpl) GetInTx(ctx context.Context, tx persistence.Tx, id shared.UUID) (*persistence.MessageRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx, sqliteGetMessageSQL, id.String())
 	if err != nil {
@@ -202,18 +188,9 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 		var m persistence.MessageRow
 		var idStr, instanceStr string
 		var frameStr sql.NullString
-		// @constraint: Timestamp columns are fixed-width UTC TEXT; scan as strings and
-		// run through parseTime (per queue_park.go::LoadResumeMetadataInTx)
-		// instead of scanning into time.Time / sql.NullTime.
 		var receivedAtStr string
 		var deliveredAtStr sql.NullString
 		var cancelled int
-		// @constraint: payload may be NULL (e.g. an envelope with no body).
-		// The database/sql driver cannot store a NULL driver.Value into a
-		// *json.RawMessage directly, so scan through a nullable []byte and
-		// leave m.Payload nil when the column is NULL. (pgx tolerates NULL
-		// into *json.RawMessage; database/sql does not — this is the SQLite
-		// analogue of the postgres collectMessages nullable-payload handling.)
 		var payload []byte
 		if err := rows.Scan(
 			&idStr, &instanceStr, &m.Type, &m.Sender, &m.SenderKind,

@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N7 scenario — leaf_run_record_creation.
-//
-// At every leaf-run terminal write the supervisor calls
-// runtime.WriteLeafRunLineage in the same transaction as the
-// terminal-state write. The record_kind="leaf_run" row carries the
-// run identity + state + settling_signal_type + per-bytes hashes.
 package lineage
 
 import (
@@ -53,8 +47,6 @@ func TestLeafRunRecordCreation(t *testing.T) {
 	if row.FrameID != frameID {
 		t.Errorf("frame_id mismatch")
 	}
-	// @deliberate: Pin the payload shape: must JSON-decode to a LeafRunRecord with
-	// preserved fields.
 	var decoded runtime.LeafRunRecord
 	if err := json.Unmarshal(row.Record, &decoded); err != nil {
 		t.Fatalf("payload not JSON-decodable: %v", err)

@@ -83,9 +83,6 @@ func TestRunComposePlan_NoDriftExit0(t *testing.T) {
 	}
 }
 
-// TestRunComposePlan_ParamsDriftExit3 covers issue-12: params drift on a
-// non-terminal compose-owned instance has zero plan steps but must still
-// fail CI gating (exit 3, mirroring `terraform plan -detailed-exitcode`).
 func TestRunComposePlan_ParamsDriftExit3(t *testing.T) {
 	_ = setupServer(t)
 	dir := t.TempDir()
@@ -190,19 +187,11 @@ instances:
 	if err := os.WriteFile(mf, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// @constraint: test stdin is a pipe (not a TTY); destructive ops without --yes must exit 2.
 	if got := compose.RunComposeUp(context.Background(), []string{"-f", mf}); got != 2 {
 		t.Errorf("exit %d", got)
 	}
 }
 
-// captureInstanceServer is a minimal httptest.Server that accepts
-// POST /v1/instances and records the decoded request body for the
-// TerminateAfterRun-propagation tests. The harness lets the tests
-// drive ApplyPlan with a hand-crafted Plan (one ActionInstanceCreate
-// step) without going through manifest parsing — the unit under test
-// is the body-shape contract between ApplyPlan and the control-api,
-// nothing more.
 type captureInstanceServer struct {
 	mu       sync.Mutex
 	bodies   []map[string]any
@@ -252,12 +241,6 @@ func (c *captureInstanceServer) lastBody(t *testing.T) map[string]any {
 	return c.bodies[len(c.bodies)-1]
 }
 
-// TestApplyPlan_TerminateAfterRunPropagates is the load-bearing test
-// for @decision: instance-self-termination — the verb's terminal-
-// wait loop sees terminated_at flip only when CreateInstance carries
-// terminate_after_run=true, so ApplyOpts.TerminateAfterRun must
-// reach the wire body. With ApplyOpts{} (default), the field stays
-// false (and `omitempty` keeps it absent from the encoded JSON).
 func TestApplyPlan_TerminateAfterRunPropagates(t *testing.T) {
 	srv := newCaptureInstanceServer(t)
 	c := cli.NewClient(srv.URL())
@@ -294,7 +277,6 @@ func TestApplyPlan_TerminateAfterRunPropagates(t *testing.T) {
 		}
 		body := srv.lastBody(t)
 		if v, present := body["terminate_after_run"]; present {
-			// @constraint: json `omitempty` on a false bool keeps the field absent on the wire, preserving durable-by-default semantics of up/down/plan/status verbs.
 			t.Fatalf("default ApplyOpts must omit terminate_after_run; got %v", v)
 		}
 	})

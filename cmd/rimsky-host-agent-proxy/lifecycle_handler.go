@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// lifecycle_handler.go — the proxy's LifecycleSubscriber consumer role.
-// Two methods do real work: OnInstanceCreated populates the binding
-// cache (service_bindings + owner + params), and OnRunScopeTerminal
-// drives reap (drop the scope's spawns, send Reap frames, await Reaped).
-// The other five methods are no-op LifecycleAck returns — the proxy does
-// not care about template lifecycle.
-//
 // @concept: host-agent-proxy
 
 package main
@@ -21,7 +14,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// lifecycleHandler implements genv1.LifecycleSubscriberServer.
 type lifecycleHandler struct {
 	genv1.UnimplementedLifecycleSubscriberServer
 	state       *proxyState
@@ -32,7 +24,6 @@ func newLifecycleHandler(state *proxyState, cfg Config) *lifecycleHandler {
 	return &lifecycleHandler{state: state, reapTimeout: cfg.ReapTimeout}
 }
 
-// OnInstanceCreated caches the instance's late-bound binding catalog.
 func (h *lifecycleHandler) OnInstanceCreated(_ context.Context, req *genv1.OnInstanceCreatedRequest) (*genv1.LifecycleAck, error) {
 	bindings := parseServiceBindings(req.GetServiceBindings())
 	params := parseParams(req.GetParams())
@@ -44,19 +35,8 @@ func (h *lifecycleHandler) OnInstanceCreated(_ context.Context, req *genv1.OnIns
 	return &genv1.LifecycleAck{}, nil
 }
 
-// reapGraceSeconds is the SIGTERM grace the proxy asks the agent to honor
-// before escalating to SIGKILL on a reaped child.
 const reapGraceSeconds = 30
 
-// OnRunScopeTerminal reaps every spawn keyed to the terminating scope.
-// The proxy keys lazily-spawned children by run_scope_id (its
-// dispatch-observable spawn-isolation scope — see resolveAndSpawn's
-// scopeID), so the reap matches on run_scope_id first and reaps ONLY that
-// run-scope's child: a per-run-scope terminal of a fanned-out instance must
-// not tear down a sibling run-scope's still-serving child. It falls back to
-// instance_id only when run_scope_id is empty — the degenerate / pre-field
-// caller, where the spawn was instance-keyed too, so the reap still matches
-// the main-scope-equals-instance case.
 func (h *lifecycleHandler) OnRunScopeTerminal(_ context.Context, req *genv1.OnRunScopeTerminalRequest) (*genv1.LifecycleAck, error) {
 	scopeID := req.GetRunScopeId()
 	if scopeID == "" {
@@ -69,14 +49,9 @@ func (h *lifecycleHandler) OnRunScopeTerminal(_ context.Context, req *genv1.OnRu
 	return &genv1.LifecycleAck{}, nil
 }
 
-// reap sends a Reap frame to the owning agent and awaits the Reaped ack
-// (bounded by reapTimeout). The spawn snapshot is taken before the row is
-// dropped, so the owning agent is reachable here.
 func (h *lifecycleHandler) reap(sp spawnState) {
 	agent, ok := h.state.lookupAgent(sp.agentAPIKeyID)
 	if !ok {
-		// @constraint: owner disconnected — the agent's reconnect-recovery
-		// SIGKILLs the orphaned child; nothing more to do here.
 		return
 	}
 	ackCh := agent.registerReapPending(sp.spawnID)
@@ -96,28 +71,22 @@ func (h *lifecycleHandler) reap(sp spawnState) {
 	}
 }
 
-// OnTemplateRegistered is a no-op ack.
 func (h *lifecycleHandler) OnTemplateRegistered(_ context.Context, _ *genv1.OnTemplateRegisteredRequest) (*genv1.LifecycleAck, error) {
 	return &genv1.LifecycleAck{}, nil
 }
 
-// OnTemplateDeployed is a no-op ack.
 func (h *lifecycleHandler) OnTemplateDeployed(_ context.Context, _ *genv1.OnTemplateDeployedRequest) (*genv1.LifecycleAck, error) {
 	return &genv1.LifecycleAck{}, nil
 }
 
-// OnTemplateUndeployed is a no-op ack.
 func (h *lifecycleHandler) OnTemplateUndeployed(_ context.Context, _ *genv1.OnTemplateUndeployedRequest) (*genv1.LifecycleAck, error) {
 	return &genv1.LifecycleAck{}, nil
 }
 
-// OnTemplateDeregistered is a no-op ack.
 func (h *lifecycleHandler) OnTemplateDeregistered(_ context.Context, _ *genv1.OnTemplateDeregisteredRequest) (*genv1.LifecycleAck, error) {
 	return &genv1.LifecycleAck{}, nil
 }
 
-// OnInstanceTerminated is a no-op ack (reap is driven by
-// OnRunScopeTerminal, which control-api fires before this event).
 func (h *lifecycleHandler) OnInstanceTerminated(_ context.Context, _ *genv1.OnInstanceTerminatedRequest) (*genv1.LifecycleAck, error) {
 	return &genv1.LifecycleAck{}, nil
 }

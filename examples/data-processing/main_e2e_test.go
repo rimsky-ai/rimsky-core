@@ -2,53 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Cross-stack proof for STORY-data-processing-author: a service author's
-// example DataProcessing mix-in — advertising Capabilities and serving the
-// candidate lifecycle (BeginCandidate / CommitCandidate / AbandonCandidate)
-// plus the version-history surfaces (ListVersions / ListPartitions /
-// GetVersionSchema) — exhibits each protocol surface through the EXACT
-// wire shape rimsky's supervisor uses against a remote DataProcessing peer
-// (lib/runtime/peer.DialDataProcessing + clientiface.DataProcessingClient).
-//
-// The cross-stack BeginCandidate-per-fan-out-partition leg of the spec's
-// Acceptance is covered end-to-end against a real rimsky-all-in-one stack
-// by test/scenarios/leaf_candidate_handle_e2e_test.go: that scenario
-// declares a fan-out node referencing a remote stub store whose
-// DataProcessing surface (test/support/stores/stub/dataprocessing) mints
-// one candidate per BeginCandidate, and asserts each of the three fan-out
-// leaves dispatches with a non-empty per-partition-unique
-// candidate_handle on its StoreHandle. That scenario pins the "rimsky
-// calls BeginCandidate per sub-partition" leg through the assembled
-// product; the test here pins the protocol-surface behavior of the
-// EXAMPLE producer against that same wire shape, completing the four
-// observable legs the spec's Falsifier names:
-//
-//  1. BeginCandidate is called and returns a non-empty candidate_handle
-//     for a fan-out partition (exhibited per-handler-call here; the
-//     cross-stack rimsky-side dispatch is exhibited by
-//     leaf_candidate_handle_e2e_test.go against the stub store fixture
-//     whose DataProcessing surface mirrors this example).
-//  2. CommitCandidate moves the staged candidate into the per-claim
-//     version history with a fresh version_id, surfaces opaque metadata
-//     to the caller, and bumps the example's CommitCount counter — proof
-//     "CommitCandidate is called but the producer's effect is canned"
-//     is FALSE (counter does not grow against a canned handler).
-//  3. AbandonCandidate is NOT skipped on leaf failure: a Begin →
-//     Abandon sequence drives AbandonCount up and clears the staged
-//     entry. The follow-up ListVersions read returns an empty list —
-//     proof an abandoned candidate is NOT silently committed.
-//  4. The version_id CommitCandidate's metadata declares appears in the
-//     subsequent ListVersions response, ListPartitions returns the
-//     partition descriptor the example seeds at commit time, and
-//     GetVersionSchema returns the producer-declared schema bytes —
-//     proof "a declared version doesn't appear in ListVersions" is
-//     FALSE.
-//
-// Test files are exempt from the Apache→AGPL import-direction lint
-// (tools/license-check/imports.go::verifyImports), so this `_test.go`
-// file may import lib/runtime/peer (AGPL) without putting the example's
-// published Apache surface at risk — consumers who `go build` the
-// example never pull in any test dependency.
 package main
 
 import (
@@ -67,46 +20,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// TestE2E_ExampleDataProcessingProtocolSurfaces drives the example
-// producer through the EXACT rimsky-side client surface
-// (lib/runtime/peer.DialDataProcessing — the same constructor
-// lib/runtime/peer/registry dials at startup for any operator-declared
-// claim_producer that advertises the `data_processing` protocol) and
-// asserts each falsifier-named observation lands.
-//
-// The four legs each run against the SAME running in-process server so a
-// failure can be diagnosed against a single endpoint:
-//
-//	─ Capabilities advertises a non-empty set
-//	─ BeginCandidate + CommitCandidate land + the version surfaces in
-//	  ListVersions / ListPartitions / GetVersionSchema
-//	─ BeginCandidate + AbandonCandidate land + the version is NOT in
-//	  ListVersions (the failure path is honored, not silently committed)
-//	─ The cross-stack rimsky-side BeginCandidate per fan-out partition
-//	  is exhibited by test/scenarios/leaf_candidate_handle_e2e_test.go
-//	  against a stub store whose DataProcessing surface mirrors this
-//	  example
-//
-// No rimsky-all-in-one bring-up is needed: the cross-stack dispatch
-// path is already exhibited end-to-end by the leaf-candidate-handle
-// scenario referenced above, so this test pins the protocol-surface
-// behavior of THIS example through the same rimsky-side client (no
-// re-dispatch through testcontainers). Total wall time: <1s.
 func TestE2E_ExampleDataProcessingProtocolSurfaces(t *testing.T) {
 	t.Parallel()
 
-	// @deliberate: bring-up order — start the in-process example
-	// DataProcessing server FIRST so the dial against it succeeds.
-	//   1. In-process example DataProcessing server on a free loopback
-	//      port.
-	//   2. Dial the example through the EXACT rimsky-side client
-	//      constructor. peer.DialDataProcessing is what
-	//      lib/runtime/peer/registry runs at rimsky startup for every
-	//      operator-declared claim_producer that lists "data_processing"
-	//      in its protocols block; the returned client satisfies
-	//      clientiface.DataProcessingClient, the same interface
-	//      lib/runtime/data_processing.go drives against during fan-out
-	//      sub-claim acquisition.
 	dp, endpoint, stop := startExampleDataProcessing(t)
 	defer stop()
 
@@ -118,17 +34,7 @@ func TestE2E_ExampleDataProcessingProtocolSurfaces(t *testing.T) {
 	}
 	defer client.Close()
 
-	// @constraint: compile-time sanity check — the dialed client really
-	// is the interface rimsky's runtime drives against. A future
-	// signature change in clientiface that breaks this assignment
-	// surfaces here at compile time, not as a silent drift between this
-	// example and the rimsky-side wiring.
 	var _ clientiface.DataProcessingClient = client
-
-	// @deliberate: each leg runs as a sub-test against the SAME running
-	// example so the four legs share a single bring-up. The legs are
-	// independent observations against distinct claim handles, so
-	// order does not matter; t.Run keeps the failure isolation per-leg.
 
 	t.Run("Capabilities_advertises_non_empty_set", func(t *testing.T) {
 		exerciseCapabilitiesLeg(t, endpoint)
@@ -143,15 +49,6 @@ func TestE2E_ExampleDataProcessingProtocolSurfaces(t *testing.T) {
 	})
 }
 
-// exerciseCapabilitiesLeg dials the example via a vanilla gRPC client
-// (NOT the rimsky-side wrapper, which doesn't expose Capabilities — the
-// startup discovery cache reads it from the underlying ClaimProducer
-// peer's CapabilitiesResponse.protocols envelope; the example here is
-// the DataProcessing mix-in surface, so we read its Capabilities
-// directly). Asserts the advertised capability set is non-empty, the
-// Falsifier-adjacent observable for "the producer advertises something
-// to gate against": a producer that returns an empty set is silently
-// non-functional.
 func exerciseCapabilitiesLeg(t *testing.T, endpoint string) {
 	t.Helper()
 	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -166,41 +63,12 @@ func exerciseCapabilitiesLeg(t *testing.T, endpoint string) {
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
 	}
-	// @constraint: the example advertises one entry in each of the four
-	// envelope fields. A real producer might be sparser; the load-
-	// bearing observation is "non-empty" — an empty set means the
-	// producer materializes nothing.
 	if len(caps.GetDataShapes()) == 0 && len(caps.GetMaterializations()) == 0 &&
 		len(caps.GetPartitionKinds()) == 0 && len(caps.GetAggregators()) == 0 {
 		t.Fatal("Capabilities advertised an empty capability set — a producer that materializes nothing is silently non-functional")
 	}
 }
 
-// exerciseBeginCommitListLeg drives the rimsky-side fan-out-leaf success
-// path against the example:
-//
-//	BeginCandidate("claim-success", "tenant/a/2026-06", "run-success-1")
-//	  → CommitCandidate(handle) → metadata.version_id is recorded
-//	    → ListVersions("claim-success") includes the version
-//	    → ListPartitions(claim, version) returns the partition descriptor
-//	    → GetVersionSchema(claim, version) returns non-empty bytes
-//
-// Asserts:
-//  1. BeginCandidate returns a non-empty candidate_handle (falsifier:
-//     BeginCandidate never called / canned).
-//  2. CommitCandidate's effect is real: CommitCount grows and the
-//     metadata carries a version_id (falsifier: "CommitCandidate is
-//     called but the producer's effect is canned" fails when the
-//     counter doesn't grow or the metadata is empty).
-//  3. ListVersions returns the version_id CommitCandidate just declared
-//     (falsifier: "a declared version doesn't appear in ListVersions"
-//     fails here).
-//  4. ListPartitions returns the partition descriptor the example
-//     seeds at commit time, keyed by the sub-scope BeginCandidate
-//     received — a canned partition list (one that ignores the
-//     sub-scope) would fail the key check.
-//  5. GetVersionSchema returns non-empty schema bytes — a canned
-//     handler that returns nothing fails the length check.
 func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.DataProcessingClient) {
 	t.Helper()
 	const claimID = "claim-success"
@@ -247,11 +115,6 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 			"the per-version metadata via the parent's writeback; empty metadata would mean " +
 			"the rimsky-side commit lands but the producer's metadata is canned")
 	}
-	// @deliberate: decode the example's metadata blob to extract the
-	// version_id the producer declared. A real consumer (operator,
-	// dashboard) reads this through ListVersions; the example threads
-	// it through metadata too so the proof can correlate the surface-
-	// level read against the commit-time declaration.
 	var meta struct {
 		VersionID string `json:"version_id"`
 		Status    string `json:"status"`
@@ -268,10 +131,6 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 			"time, so an empty value would mean the producer's effect is canned")
 	}
 
-	// @constraint: ListVersions must return the version the commit just
-	// declared — the falsifier "a declared version doesn't appear in
-	// ListVersions" fails when this list is empty or missing the
-	// declared version_id.
 	lvOut, err := client.ListVersions(ctx, clientiface.ListVersionsInput{
 		ProducerName:  "example",
 		ClaimHandleID: claimID,
@@ -285,10 +144,6 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 			meta.VersionID, lvOut.Versions)
 	}
 
-	// @constraint: ListPartitions must return the partition descriptor
-	// the example seeds at commit time, keyed by the sub-scope
-	// BeginCandidate received. A canned partition list that ignores the
-	// sub-scope would fail the key check.
 	lpOut, err := client.ListPartitions(ctx, clientiface.ListPartitionsInput{
 		ProducerName:  "example",
 		ClaimHandleID: claimID,
@@ -308,9 +163,6 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 			lpOut.Partitions, subScope)
 	}
 
-	// @constraint: GetVersionSchema must return non-empty schema bytes
-	// — the example seeds an illustrative JSON Schema at commit; a
-	// canned handler that returns nothing fails the length check.
 	gsOut, err := client.GetVersionSchema(ctx, clientiface.GetVersionSchemaInput{
 		ProducerName:  "example",
 		ClaimHandleID: claimID,
@@ -324,10 +176,6 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 			"— the example seeds a JSON Schema at commit time so an empty response means the " +
 			"producer's effect is canned")
 	}
-	// @constraint: a producer that returns canned non-JSON bytes would
-	// surface here — the example seeds JSON Schema, so the response
-	// must parse as JSON. The check is a weak shape gate, not a JSON-
-	// Schema parse.
 	if !json.Valid(gsOut.Schema) {
 		t.Fatalf("GetVersionSchema returned non-JSON schema bytes %q — the example seeds a JSON "+
 			"Schema at commit, so non-JSON bytes mean the producer is returning a stale or "+
@@ -335,24 +183,6 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 	}
 }
 
-// exerciseBeginAbandonLeg drives the rimsky-side fan-out-leaf failure
-// path against the example:
-//
-//	BeginCandidate("claim-abandon", "tenant/b/2026-06", "run-abandon-1")
-//	  → AbandonCandidate(handle) → AbandonCount grows
-//	    → ListVersions("claim-abandon") is EMPTY (the candidate was
-//	      abandoned, not silently committed)
-//
-// Asserts:
-//  1. BeginCandidate returns a non-empty candidate_handle (same observable as
-//     the commit leg — a canned handler would fail the same check).
-//  2. AbandonCandidate succeeds and bumps AbandonCount — the falsifier
-//     "AbandonCandidate is skipped on leaf failure" fails when the
-//     counter does not grow against a live failure path.
-//  3. ListVersions returns an empty list — an Abandon that silently
-//     promoted the candidate into versions would fail this check.
-//  4. Repeating AbandonCandidate on the same (now-cleared) handle is a
-//     no-op success (idempotency under supervisor retry).
 func exerciseBeginAbandonLeg(t *testing.T, dp *DataProcessing, client *peer.DataProcessingClient) {
 	t.Helper()
 	const claimID = "claim-abandon"
@@ -396,8 +226,6 @@ func exerciseBeginAbandonLeg(t *testing.T, dp *DataProcessing, client *peer.Data
 			beforeCommit, afterCommit)
 	}
 
-	// @constraint: ListVersions for the abandoned claim must be empty;
-	// no version was ever committed against it.
 	lvOut, err := client.ListVersions(ctx, clientiface.ListVersionsInput{
 		ProducerName:  "example",
 		ClaimHandleID: claimID,
@@ -411,12 +239,6 @@ func exerciseBeginAbandonLeg(t *testing.T, dp *DataProcessing, client *peer.Data
 			claimID, lvOut.Versions)
 	}
 
-	// @constraint: repeat Abandon is an idempotent no-op success. The
-	// supervisor may retry a terminal verb on a partial outage, so the
-	// producer MUST tolerate a second Abandon on the same (now-cleared)
-	// handle. AbandonCount does NOT grow because the handle is no
-	// longer staged; this is the documented behavior in
-	// dataprocessing.go's AbandonCandidate comment.
 	if err := client.AbandonCandidate(ctx, clientiface.AbandonCandidateInput{
 		ProducerName:    "example",
 		ClaimHandleID:   claimID,
@@ -427,10 +249,6 @@ func exerciseBeginAbandonLeg(t *testing.T, dp *DataProcessing, client *peer.Data
 	}
 }
 
-// startExampleDataProcessing stands up the example DataProcessing server
-// on a loopback port and returns the producer, the endpoint string, and a
-// teardown closure. The server is brought up before the function returns
-// (poll-dial gate) so callers do not race the listener.
 func startExampleDataProcessing(t *testing.T) (*DataProcessing, string, func()) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -442,12 +260,6 @@ func startExampleDataProcessing(t *testing.T) (*DataProcessing, string, func()) 
 	genv1.RegisterDataProcessingServer(srv, dp)
 	go func() { _ = srv.Serve(lis) }()
 
-	// @deliberate: poll-dial gate — the test's first
-	// peer.DialDataProcessing call returns immediately because
-	// grpc.NewClient is non-blocking, but the first actual RPC would
-	// race the listener if we didn't wait. 100 ms / 100 attempts
-	// mirrors the startExampleProducerInProcess pattern in
-	// the claimproducer example.
 	endpoint := lis.Addr().String()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -464,8 +276,6 @@ func startExampleDataProcessing(t *testing.T) (*DataProcessing, string, func()) 
 	return nil, "", func() {}
 }
 
-// versionListed reports whether `want` appears as the VersionID of any
-// entry in `got`.
 func versionListed(got []clientiface.DataProcessingVersion, want string) bool {
 	for _, v := range got {
 		if v.VersionID == want {
@@ -475,8 +285,6 @@ func versionListed(got []clientiface.DataProcessingVersion, want string) bool {
 	return false
 }
 
-// partitionKeyed reports whether `want` appears as the PartitionKey of any
-// entry in `got`.
 func partitionKeyed(got []clientiface.DataProcessingPartition, want string) bool {
 	for _, p := range got {
 		if p.PartitionKey == want {

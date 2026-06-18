@@ -24,15 +24,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// ListRunningFramesNoPendingNodes state lives on rimsky_node_runs only. The pending-set
-// predicate looks at in-flight run rows whose state is stale/running.
-//
-// unresolved-work: counts parked. A parked node_run holds its frame
-// open — it is suspended work awaiting a wake (deadline-elapsed or
-// external signal), not a terminal. Draining the frame to `completed`
-// while a node sits parked would discard the park's eventual resume, so
-// a parked row (either column, defensively) keeps the frame off the
-// no-pending list until it resolves to a true terminal.
 func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx persistence.Tx) ([]persistence.FramePending, error) {
 	rows, err := s.q(tx).QueryContext(ctx, `
         SELECT f.frame_id, f.instance_id
@@ -74,9 +65,6 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
 	return out, rows.Err()
 }
 
-// HasFailedNode — post-stage-3: state lives on rimsky_node_runs only.
-// Terminal failed rows survive past active terminal (per the stage-1
-// lifecycle flip), so the predicate reads the failure flavor directly.
 func (s *framesImpl) HasFailedNode(ctx context.Context, instanceID, frameID shared.UUID, tx persistence.Tx) (bool, error) {
 	var anyFailed int
 	err := s.q(tx).QueryRowContext(ctx, `
@@ -119,57 +107,20 @@ func (s *framesImpl) MarkRunningFrameTerminal(
 	return n == 1, nil
 }
 
-// PruneTraceForRetention deletes terminal frame ROWS (cascading their
-// node_runs via the rimsky_node_runs.frame_id ON DELETE CASCADE) older
-// than `cutoff` OR beyond the `recentFramesKept` most-recent terminal
-// frames per instance — the lesser-of bound. Mirrors the postgres impl;
-// SQLite's ROW_NUMBER() OVER PARTITION is supported natively from 3.25+
-// (the modernc.org driver tracks the modern SQLite source).
-//
-// This replaces the prior node-run-only prune: we now delete the frame
-// ROW itself and let the cascade remove its runs, so a long-lived
-// durable instance's frame backlog cannot grow without bound. In-flight
-// frames (queued/running, including parked-held) are exempt — only
-// state IN ('completed','failed') rows are candidates, so nothing live
-// is ever reaped.
-//
-// `recentFramesKept <= 0` disables the count bound; a zero `cutoff`
-// disables the time bound. Both disabled → no-op (returns 0). When only
-// one bound is active the predicate degenerates to that bound; when both
-// are active a frame is reaped if EITHER predicate matches (the lesser-of
-// retention — whichever keeps fewer frames).
 func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKept int, cutoff time.Time) (int, error) {
 	countBound := recentFramesKept > 0
 	timeBound := !cutoff.IsZero()
 	if !countBound && !timeBound {
 		return 0, nil
 	}
-	// @constraint: sentinel binds let one SQL serve all three bound
-	// combinations — when a bound is disabled its predicate is made
-	// unsatisfiable (rk > a huge cap never matches; ended_at < zero-time
-	// never matches) so the active bound(s) drive the delete.
 	countCap := recentFramesKept
 	if !countBound {
-		// @constraint: math.MaxInt (not a 1<<62 literal) exceeds any
-		// possible per-instance frame rank yet stays in range of int on
-		// a 32-bit build target, where 1<<62 would overflow and fail to
-		// compile; the rank predicate then never fires when the count
-		// bound is disabled.
 		countCap = math.MaxInt
 	}
 	cutoffArg := formatTime(cutoff)
 	if !timeBound {
-		// @constraint: RFC3339 zero time; ended_at (always > 0001 for
-		// terminal frames) is never < this, so the time predicate never
-		// fires.
 		cutoffArg = formatTime(time.Time{})
 	}
-	// @constraint: standalone retention sweep — no caller-supplied tx.
-	// The single DELETE is atomic on its own, so run it directly against
-	// the db handle (mirroring Lineage.DeleteOlderThan); calling s.q(nil)
-	// here would trip the no-nil-tx contract and panic the scheduler
-	// tick. The frame→node_run ON DELETE CASCADE removes each deleted
-	// frame's runs.
 	res, err := (*tablesImpl)(s).db.ExecContext(ctx, `
         DELETE FROM rimsky_frames
          WHERE frame_id IN (
@@ -196,33 +147,6 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 	return int(n), nil
 }
 
-// MarkInstanceTerminatedIfDone applies the durable-by-default terminal
-// predicate at frame-end. Idempotent set-once.
-//
-// Durable by default: an instance self-terminates ONLY when it was created
-// with terminate_after_run = true. A durable instance (the default, false)
-// is never touched here — it lives until force-terminate. This is the
-// reactive instance model: an instance resolves many frames over its life
-// and nothing terminates it on its own drain.
-//
-// Strict "run at most once more" semantics: the predicate does NOT wait for
-// queued frames to drain. Because the engine calls this only at a real
-// frame-end (transitionFrameEnd, after MarkRunningFrameTerminal), a
-// terminate_after_run instance has by then completed exactly one frame, so
-// termination is correct by construction. That another frame may be queued
-// at that instant is arbitrary; the strict meaning is the useful one (see
-// concept:instance). Termination reads nothing about sensors or
-// publisher-subscriptions — that coupling is deliberately gone.
-//
-// Parked-aware guard: a defensive restatement at the instance level of the
-// frame-end invariant (parity with ListRunningFramesNoPendingNodes). A
-// parked node_run is suspended work awaiting a wake, not a terminal, so it
-// blocks termination — a later wake must never land on a terminated
-// instance. We protect this property even though, at a real frame-end, no
-// parked run can be present (a parked run holds the frame open, so the
-// frame would not have ended): the guard makes termination impossible while
-// any node_run is unresolved (stale, running, or parked) regardless of how
-// this is invoked.
 func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx, `
         UPDATE rimsky_instances
@@ -251,20 +175,6 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
 	return nil
 }
 
-// ListQueuedFramesReadyToStart returns at most one queued frame per
-// instance — the oldest queued — for instances that have no
-// currently-running frame AND are not terminated.
-//
-// Terminated-instance guard: under strict terminal semantics
-// (concept:instance), a terminate_after_run instance can reach terminal at
-// frame-end while a frame it never ran is still `queued` (a message arrived
-// mid-run). That orphaned queued frame must never be promoted — promoting
-// it would run work against a terminated instance. The frame row is cleaned
-// up by the instance's eventual delete (cascade) and by trace retention; it
-// simply never runs. We join rimsky_instances and require terminated_at IS
-// NULL to exclude it.
-//
-// SQLite has no DISTINCT ON; we emulate via row_number() OVER (PARTITION BY).
 func (s *framesImpl) ListQueuedFramesReadyToStart(ctx context.Context, tx persistence.Tx) ([]persistence.FrameQueuedReady, error) {
 	rows, err := s.q(tx).QueryContext(ctx, `
         WITH ranked AS (
@@ -330,10 +240,6 @@ func (s *framesImpl) PromoteQueuedFrameToRunning(ctx context.Context, frameID sh
 	return n == 1, nil
 }
 
-// GetRunningFrameID returns the frame_id of the instance's currently-
-// running frame, or (nil, nil) when none is running. See the postgres
-// mirror for rationale; the ORDER BY started_at DESC LIMIT 1 is the same
-// defensive single-row tiebreak.
 func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (*shared.UUID, error) {
 	var frameIDStr string
 	err := s.q(tx).QueryRowContext(ctx, `
@@ -356,11 +262,6 @@ func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UU
 	return &fid, nil
 }
 
-// MarkSourceNodeStale — post-stage-3 cutover. See postgres mirror for
-// rationale. Binds rimsky_nodes.frame_id then INSERTs a fresh pending
-// stale run row when no in-flight row exists; falls back to the
-// "already in-flight pending stale row for this frame" predicate for
-// under-contention re-entry.
 func (s *framesImpl) MarkSourceNodeStale(
 	ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx persistence.Tx,
 ) (bool, error) {
@@ -371,9 +272,6 @@ func (s *framesImpl) MarkSourceNodeStale(
     `, frameID.String(), nowUTC(), instanceID.String(), nodeID.String()); err != nil {
 		return false, fmt.Errorf("frames.MarkSourceNodeStale: bind frame: %w", err)
 	}
-	// @constraint: populate required_stores from the template node-def
-	// via a JSON lookup; see postgres mirror for rationale.
-	//
 	// @concept: run-scope — under RunScope-first the new row lives in
 	// the instance's main RunScope (the only RunScope a frame source's
 	// run can belong to).
@@ -430,13 +328,6 @@ func (s *framesImpl) MarkSourceNodeStale(
 	return anyMatched != 0, nil
 }
 
-// ListStuckRunningFrames returns running frames past their timeout with
-// no claimed dispatches and at least one stale/running node. SQLite has
-// no `interval` arithmetic — we compute (started_at + timeout) in Go and
-// filter in app code.
-//
-// To avoid pulling every running frame, we filter the SQL by state and
-// existence predicates, then do the time math in Go.
 func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.Tx) ([]persistence.FrameStuck, error) {
 	rows, err := s.q(tx).QueryContext(ctx, `
         SELECT f.frame_id, f.instance_id, f.frame_timeout_ms, f.last_progress_at
@@ -480,12 +371,6 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
 		if err != nil {
 			return nil, err
 		}
-		// @constraint: frame_timeout_ms measures "no progress in window"
-		// rather than frame age — compare against last_progress_at
-		// (refreshed by every node-state transition write) instead of
-		// started_at, so a progressing self-invalidate loop does not
-		// trip the soft warning even if its total runtime exceeds the
-		// timeout.
 		if !lastProgress.Add(time.Duration(frameTimeoutMs) * time.Millisecond).Before(now) {
 			continue
 		}
@@ -537,13 +422,6 @@ func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persisten
 	return out, rows.Err()
 }
 
-// LookupFrameTimeoutMs reads the instance's per-template frame_timeout_ms
-// override (json_extract from the template spec), defaulting to 600000 ms
-// when the template carries no value.
-//
-// Coalesce retires under the message-schema-layer redesign — one message
-// per frame is the only delivery shape — so the producer no longer needs a
-// resolution-mode discriminator alongside the timeout.
 func (s *framesImpl) LookupFrameTimeoutMs(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (int64, error) {
 	var frameTimeoutMs sql.NullInt64
 	err := s.q(tx).QueryRowContext(ctx, `
@@ -565,26 +443,11 @@ func (s *framesImpl) LookupFrameTimeoutMs(ctx context.Context, instanceID shared
 	return timeout, nil
 }
 
-// InsertFrame inserts a queued frame triggered by the given message.
-// The frame→message FK is enforced by the schema (ON DELETE RESTRICT,
-// declared in the 010 migration's rebuilt rimsky_frames), so the message
-// row must already exist in the same tx and cannot be deleted while any
-// frame still points at it.
-//
-// One-message-per-frame: each call mints a fresh frame row; no upsert / no
-// coalesce / no append-to-pending path remains.
 func (s *framesImpl) InsertFrame(
 	ctx context.Context, instanceID, triggeringMessageID shared.UUID, frameTimeoutMs int64, tx persistence.Tx,
 ) (shared.UUID, error) {
 	frameID := uuid.New()
 	now := nowUTC()
-	// @constraint: explicitly write last_progress_at at insert time
-	// using nowUTC() (the fixed-width timeLayoutFixedNanos layout, whose
-	// lexicographic order matches chronological order) so the column is
-	// uniformly nano-precision across all rows. The migration's strftime
-	// DEFAULT only delivers millisecond precision; relying on it for
-	// runtime inserts would leave the column with mixed precision and
-	// break any future SQL-level string comparison against the column.
 	_, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_frames
             (frame_id, instance_id, triggering_message_id, state, queued_at, frame_timeout_ms, last_progress_at)
@@ -597,9 +460,6 @@ func (s *framesImpl) InsertFrame(
 	return frameID, nil
 }
 
-// ListForObservability returns frames matching filter for the
-// observability /v1/observability/frames endpoint. Cursor pagination
-// over (queued_at DESC, frame_id DESC).
 func (s *framesImpl) ListForObservability(ctx context.Context, filter persistence.FrameListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.FrameRow], error) {
 	limit := pag.Limit
 	if limit <= 0 {
@@ -727,12 +587,6 @@ func decodeFrameCursor(s string) (time.Time, shared.UUID, error) {
 	return c.Q, c.F, nil
 }
 
-// RefreshProgress updates rimsky_frames.last_progress_at to now() for
-// the given frame. Called by the node-state-transition write path on
-// every UpdateState that carries the frame's id, so frame_timeout_ms
-// measures no-progress-in-window rather than frame age.
-//
-// See .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §7.
 func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_frames SET last_progress_at = ? WHERE frame_id = ?`,
@@ -744,12 +598,6 @@ func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, t
 	return nil
 }
 
-// CountHeldFrames returns the number of running frames that have at
-// least one parked rimsky_node_runs row attached via frame_id.
-//
-// unresolved-work: counts parked (by definition — this query exists to
-// count frames a parked run is holding open; consistent with
-// ListRunningFramesNoPendingNodes treating parked as unresolved).
 func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (int, error) {
 	var n int
 	err := s.q(tx).QueryRowContext(ctx,
@@ -764,7 +612,6 @@ func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (in
 	return n, nil
 }
 
-// GetForObservability returns one frame by id.
 func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUID, tx persistence.Tx) (*persistence.FrameRow, error) {
 	var (
 		r              persistence.FrameRow
@@ -824,12 +671,6 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 	return &r, nil
 }
 
-// GetForObservabilityWithMessage returns one frame joined with its
-// triggering-message envelope in a single SQL inside the caller's tx.
-// The frame→message FK is RESTRICT, so the envelope is non-null for any
-// live frame; a LEFT JOIN is still used defensively so a (hypothetical)
-// row missing its envelope surfaces as empty-string envelope fields
-// rather than a query error.
 func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID shared.UUID, tx persistence.Tx) (*persistence.FrameRowWithMessage, error) {
 	var (
 		r              persistence.FrameRowWithMessage
@@ -906,9 +747,6 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 	return &r, nil
 }
 
-// ListForObservabilityWithMessage is ListForObservability joined with
-// the triggering-message envelope in one SQL — same pagination shape,
-// same filter binds, single tx, single round-trip per page.
 func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter persistence.FrameListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.FrameRowWithMessage], error) {
 	limit := pag.Limit
 	if limit <= 0 {

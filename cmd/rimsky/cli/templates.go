@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// templates.go — `template register/list/get/deploy/undeploy/rm`.
-//
-// All handlers share the same boilerplate: own a flag set, register
-// CommonFlags, parse args, resolve endpoint, call the typed Client,
-// emit human or JSON output. Exit codes follow spec §5.3:
-// 0 success, 1 runtime/control-api error, 2 usage/local validation.
 package cli
 
 import (
@@ -26,10 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// runWithCommon is a small helper that initializes a flag set, registers
-// the common flags, parses args, resolves the format, and resolves the
-// endpoint. Returns the resolved endpoint and parsed positionals; on
-// error returns a non-zero exit code via *exitCode.
 func runWithCommon(name string, args []string, registerExtra func(fs *flag.FlagSet)) (*flag.FlagSet, *CommonFlags, string, int) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	var common CommonFlags
@@ -54,8 +44,6 @@ func runWithCommon(name string, args []string, registerExtra func(fs *flag.FlagS
 	return fs, &common, endpoint, 0
 }
 
-// reportError prints err and returns 1 unless err is an APIError with a
-// known classification, in which case it formats accordingly.
 func reportError(err error) int {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
@@ -66,21 +54,6 @@ func reportError(err error) int {
 	return 1
 }
 
-// readSpecFile reads <path> as YAML and decodes it into node.TemplateSpec.
-// The control-api accepts JSON-shaped bodies; YAML is the on-disk form.
-// yaml.v3 honors the json: tags' lowercase-snake-case keys via its own
-// yaml: tags (already declared on the spec types).
-//
-// Before typed-spec decode, the YAML tree is walked once and every
-// occurrence of `{source_file: <relative-path>}` is replaced with the
-// referenced file's text content. Resolution is single-pass: inlined
-// content is not re-scanned for further `source_file:` references.
-// Path resolution is relative to the spec file's directory; absolute
-// paths and paths that escape that directory are rejected with
-// exit-code-2 grade errors. Per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// Item 2.
-//
 // @concept: rimsky (CLI-side source_file: resolution)
 func readSpecFile(path string) (node.TemplateSpec, error) {
 	raw, err := os.ReadFile(path)
@@ -107,27 +80,6 @@ func readSpecFile(path string) (node.TemplateSpec, error) {
 	return spec, nil
 }
 
-// resolveSourceFileRefs walks a yaml.Unmarshal-shaped tree (typed as
-// `any`, possibly containing `map[string]any` or `[]any`) and replaces
-// every object of the exact shape `{source_file: "<path>"}` with the
-// referenced file's text content as a plain `string`. Path resolution
-// is relative to baseDir; resolved paths that escape baseDir (via `..`)
-// or that are absolute are rejected. Returns the transformed tree.
-//
-// Single-pass discipline: a file's contents are inlined as plain text
-// and are NOT re-walked for further `source_file:` references; this
-// avoids indirection chains and cycle-detection complexity.
-//
-// The "exact shape" rule: only an object with exactly one entry whose
-// key is `source_file` and whose value is a string qualifies. Objects
-// with additional siblings or non-string `source_file` values are
-// left intact (they may be legitimate attribute fragments — e.g. an
-// attribute `default:` whose value happens to mention `source_file:`
-// inside other keys).
-//
-// Implementation note: yaml.v3 unmarshals YAML mappings into
-// `map[string]any` and sequences into `[]any`, so those are the only
-// container shapes we walk.
 func resolveSourceFileRefs(node any, baseDir string) (any, error) {
 	switch v := node.(type) {
 	case map[string]any:
@@ -162,11 +114,6 @@ func resolveSourceFileRefs(node any, baseDir string) (any, error) {
 	}
 }
 
-// readSourceFile resolves `inputPath` relative to baseDir, rejects
-// absolute paths and paths that escape baseDir, and returns the file's
-// text content as a string. Failures here surface to the CLI as
-// exit-code-2 (usage / local-validation) errors via readSpecFile's
-// wrapper.
 func readSourceFile(inputPath, baseDir string) (string, error) {
 	if inputPath == "" {
 		return "", fmt.Errorf("source_file: path is empty")
@@ -175,8 +122,6 @@ func readSourceFile(inputPath, baseDir string) (string, error) {
 		return "", fmt.Errorf("source_file: %q is absolute; only template-relative paths are allowed", inputPath)
 	}
 	cleaned := filepath.Clean(filepath.Join(baseDir, inputPath))
-	// @deliberate: anchor both sides of filepath.Rel via filepath.Abs so the
-	// containment check is independent of the caller's cwd.
 	absBase, err := filepath.Abs(baseDir)
 	if err != nil {
 		return "", fmt.Errorf("source_file: resolve base dir: %w", err)
@@ -199,19 +144,8 @@ func readSourceFile(inputPath, baseDir string) (string, error) {
 	return string(data), nil
 }
 
-// ReservedTagPrefix is the prefix that compose owns. CLI verbs that
-// accept user-supplied tags reject this prefix to keep manual and
-// compose namespaces disjoint.
 const ReservedTagPrefix = "compose:"
 
-// RunTemplateRegister implements `template register`.
-//
-// G6 adds the `--warnings-as-errors` flag. When set, the CLI forwards
-// `?warnings_as_errors=true` to the control-API; the server rejects
-// the registration if the validation pipeline produced any warnings
-// (in addition to errors). The CLI surfaces the body's
-// `validation_warnings` array on stderr when the rejection is
-// warning-driven so the operator sees what was escalated.
 func RunTemplateRegister(ctx context.Context, args []string) int {
 	var tag, source string
 	var warningsAsErrors bool
@@ -269,13 +203,6 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunTemplateLint implements `template lint`: validate a spec file
-// against the control-api without persisting. Exit codes diverge from
-// the rest of the template verbs by linter convention: 0 = clean, 1 =
-// findings (or a transport/control-api error), 2 = usage/local error.
-// The non-zero-on-findings rule deliberately extends the general
-// "1 = runtime error" convention so the verb composes in CI scripts.
-// Per spec 2026-05-28-quality-of-life-features.
 func RunTemplateLint(ctx context.Context, args []string) int {
 	var warningsAsErrors bool
 	fs, common, endpoint, code := runWithCommon("template lint", args, func(fs *flag.FlagSet) {
@@ -321,7 +248,6 @@ func RunTemplateLint(ctx context.Context, args []string) int {
 	return 1
 }
 
-// RunTemplateList implements `template list`.
 func RunTemplateList(ctx context.Context, args []string) int {
 	var stateFlag, tagPrefix string
 	fs, common, endpoint, code := runWithCommon("template list", args, func(fs *flag.FlagSet) {
@@ -395,7 +321,6 @@ func pagedListTemplates(ctx context.Context, c *Client, q ListTemplatesQuery) ([
 	return all, nil
 }
 
-// RunTemplateGet implements `template get`.
 func RunTemplateGet(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("template get", args, nil)
 	if code != 0 {
@@ -425,7 +350,6 @@ func RunTemplateGet(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunTemplateDeploy implements `template deploy`.
 func RunTemplateDeploy(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("template deploy", args, nil)
 	if code != 0 {
@@ -454,7 +378,6 @@ func RunTemplateDeploy(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunTemplateUndeploy implements `template undeploy`.
 func RunTemplateUndeploy(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("template undeploy", args, nil)
 	if code != 0 {
@@ -483,7 +406,6 @@ func RunTemplateUndeploy(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunTemplateRm implements `template rm`.
 func RunTemplateRm(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("template rm", args, nil)
 	if code != 0 {
@@ -503,7 +425,6 @@ func RunTemplateRm(ctx context.Context, args []string) int {
 	return 0
 }
 
-// JSONString round-trips v through json so tests can compare output.
 func JSONString(v any) string {
 	raw, _ := json.MarshalIndent(v, "", "  ")
 	return string(raw)

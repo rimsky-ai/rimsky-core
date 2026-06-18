@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Omnibus runner — attribute substitution + executor / native
-// dispatch path. Terminal handling lives in runner_terminal.go.
-
 package runtime
 
 import (
@@ -29,20 +26,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// attributeValidationError wraps non-resolution attribute failures
-// raised by resolveAttributes: schema-invalid composition errors,
-// JSON-Schema-validation failures on the dispatch bag, and (post the
-// 2026-05-21 gap-closure cycle) the dispatch-time defense-in-depth
-// validation against the executor's raw expected_attributes_schema.
-//
-// Routed by applyAttributeFailure to the `template_validation_failed`
-// policy chain — distinct from `template_resolution_failed` (strict-
-// directive misses, *attributes.ErrMissingSource) and
-// `executor_schema_unavailable` (executor's schema not visible at
-// dispatch). Per spec
-// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-// §"Error handling".
-//
 // @concept: attribute
 type attributeValidationError struct {
 	Reason string
@@ -58,12 +41,6 @@ func (e *attributeValidationError) Error() string {
 
 func (e *attributeValidationError) Unwrap() error { return e.Cause }
 
-// executorSchemaUnavailableError is the typed marker for the
-// `executor_schema_unavailable` class: the executor's
-// expected_attributes_schema isn't visible at dispatch (handshake not
-// completed, discovery cache empty, or executor advertises no schema).
-// Routed to its own policy chain so operators can override retry-after-
-// handshake-completes behaviour separately from validation failures.
 type executorSchemaUnavailableError struct {
 	Executor string
 }
@@ -75,8 +52,6 @@ func (e *executorSchemaUnavailableError) Error() string {
 	)
 }
 
-// dispatchContext carries the per-dispatch state into the unary
-// Execute RPC call site.
 type dispatchContext struct {
 	Args             RunArgs
 	Acquired         *acquisition
@@ -87,46 +62,19 @@ type dispatchContext struct {
 	RegisterAsync    func(ackID string, actx AsyncContext)
 }
 
-// terminalEvent is the runner-internal classification of an executor's
-// settling outcome — the unary Execute RPC returns one of these per
-// dispatch.
-//
-// Per TD-attributes-delta-on-all-settling-terminals + TD-collapse-
-// named-event-to-tags, every settling kind (Complete/Errored/Park)
-// uniformly carries AttributesDel and Tags. Park no longer carries
-// inline payload bytes or a session token — resume state rides
-// attribute carry-forward (concept:parked-state).
 type terminalEvent struct {
 	Kind          terminalKind
 	Changed       bool
 	ChangeSummary string
-	// AttributesDel is the executor's attribute delta on a settling
-	// terminal (Success / Error / Park). Empty on non-settling kinds.
-	// Persisted alongside the verdict in the same tx by the terminal
-	// handlers.
-	//
 	// @concept: attribute
 	AttributesDel map[string]any
-	// Tags is the set of subscriber-visible discriminators the
-	// executor attached on the settling outcome. Deduplicated +
-	// validated against the emitter's declared_tags before persistence;
-	// undeclared tags collapse into an executor_protocol_violation
-	// Error per the gate-2 runtime check (concept:terminal-tag).
 	Tags       []string
 	ErrorClass string
 	Payload    map[string]any
-	// @constraint: Park fields populated only when Kind == terminalKindPark.
 	ParkReason     genv1.ParkReason
 	ParkReasonNote string
-	// ParkReasonLabel is a freeform optional classification tag opaque
-	// to rimsky (the closed enum no longer requires it).
 	ParkReasonLabel string
-	// @constraint: zero value ParkResumeAt means indefinite park.
 	ParkResumeAt time.Time
-	// Scratch is the executor-attached opaque bytes from a terminal
-	// outcome (Success/Error/Park). Persisted onto the dispatch row by
-	// applyTerminalComplete / applyTerminalError / applyTerminalPark.
-	// Empty when the executor did not attach scratch at terminal.
 	// @concept: executor
 	Scratch []byte
 }
@@ -136,48 +84,24 @@ type terminalKind int
 const (
 	terminalKindNone terminalKind = iota
 	terminalKindComplete
-	// @deliberate: terminalKindErrored covers every error path. Pre-2026-05-12, the
-	// wire protocol split Blocked from Errored; per spec E.2/E.9 they
-	// collapsed into Error{error_class}, and `executor_blocked` is
-	// just one of the error classes the operator's `error_types:`
-	// policy can route on.
 	terminalKindErrored
 	terminalKindAsyncAccepted
 	terminalKindInfra
-	// @constraint: terminalKindPark is the in-runner flavor of the protocol-level
-	// Park event. The supervisor's terminal-handler chain dispatches
-	// to applyTerminalPark for this kind.
 	terminalKindPark
 )
 
-// dispatch routes the candidate to the appropriate execution path.
 func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *RunnerResult, error) {
 	acq := dctx.Acquired
 	args := dctx.Args
 	metrics := metricsOf(args)
 	dispatchStart := args.Clock.Now()
 	defer func() {
-		// @deliberate: record dispatch latency unconditionally — async paths return
-		// before the executor terminal arrives, so this measures the
-		// supervisor-side dispatch envelope rather than full executor
-		// duration. Async terminals are observed separately in the
-		// callback path.
 		metrics.ObserveDispatchLatency(acq.Executor, args.Clock.Now().Sub(dispatchStart).Seconds())
 	}()
 	metrics.IncDispatch(acq.Executor, "started")
 
 	if acq.NodeDef != nil && acq.NodeDef.EmitsMessage != "" {
-		// @deliberate: message-emitter-node dispatch (@concept: message-emitter-node).
-		// The runtime does NOT invoke an executor: the resolved
-		// attribute set IS the message body. Synthesize the same
-		// Success{changed: true} terminal that a real executor's
-		// `Complete{changed: true}` would, so `applyTerminalComplete`
-		// routes through its standard release / attribute-upsert /
-		// state-machine / cascade path AND lands the envelope insert
-		// in the same outer tx (the load-bearing atomicity property —
-		// rollback after body composition rolls the emit back too).
-		// The ChangeSummary names the emitted type so the audit row
-		// surfaces what was emitted.
+		// @concept: message-emitter-node
 		return terminalEvent{
 			Kind:          terminalKindComplete,
 			Changed:       true,
@@ -185,8 +109,6 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		}, nil, nil
 	}
 	if acq.Executor == "" {
-		// @deliberate: native dispatch (claim-only or pure-cascade) synthesizes a
-		// Success{changed: true} so dependents recalc.
 		summary := "pure_cascade"
 		for _, lk := range acq.Locks {
 			if _, ok := lk.Spec.(claimproducer.ClaimSpec); ok {
@@ -197,9 +119,6 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		return terminalEvent{Kind: terminalKindComplete, Changed: true, ChangeSummary: summary}, nil, nil
 	}
 
-	// @deliberate: real per-dispatch instance/run-scope context for late-bind
-	// resolution. A LateBindResolver consults service_bindings on the
-	// instance; a StaticResolver ignores these fields.
 	ep, ok := args.Resolver.Resolve(acq.Executor, executor.DispatchContext{
 		Ctx:        ctx,
 		InstanceID: acq.InstanceID.String(),
@@ -238,15 +157,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "build_request_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
-	// @constraint: stamp the executor name so a host-agent-proxy fronting the
-	// executor protocol can route this Execute by service name. The
-	// unary interceptor reads it off the context; a directly-dialed
-	// hosted executor ignores the header.
 	ctx = peer.WithServiceName(ctx, acq.Executor)
-	// @constraint: TD-three-dispatch-deadlines — bound the unary RPC
-	// with sync_rpc_deadline (per-node, else deployment default 30s).
-	// Zero/negative disables the bound (unbounded RPC). Expiry surfaces
-	// via ctx.Err() and is mapped to executor_sync_timeout below.
 	deadline := resolveSyncRPCDeadline(acq.NodeDef, dctx.Args.SyncRPCDeadlineDefault)
 	if deadline > 0 {
 		var cancel context.CancelFunc
@@ -275,18 +186,6 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		// @concept: signal
 		// @concept: async-callback-persistence
 		// @concept: dispatch-deadlines
-		// @deliberate: persist the ack ID + denormalized per-row dispatch
-		// deadlines onto the dispatch row and emit the canonical
-		// transient/await_async signal in ONE tx so a supervisor crash
-		// between the two cannot leave an audit claiming "await_async
-		// fired" against an empty registry row (handler 404s under that
-		// mismatch). The persistent column is the source-of-truth for
-		// restart-survival; the in-memory cache in registerAsyncIfSet
-		// above is only the hot-path optimization (a miss falls through
-		// to Queue.LookupRunByAsyncAckID at the handler). The denormalized
-		// effective_max_quiet_period / max_runtime values let
-		// code:SweepExecutorDeadlines decide per-row whether to release
-		// without re-walking the template.
 		if dctx.Args.Persist != nil && dctx.Args.Queue != nil {
 			maxQuietSec, maxRuntimeSec := computeEffectiveDeadlineSecs(acq.NodeDef, dctx.Args.MaxQuietPeriodDefault, dctx.Args.MaxRuntimeDefault)
 			awaitSig := signalpkg.Signal{
@@ -320,9 +219,6 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	return terminal, nil, nil
 }
 
-// registerAsyncIfSet hands the per-run AsyncContext to the callback
-// registry so the deferred terminal-handler can reconstruct
-// RunArgs+acquisition.
 func registerAsyncIfSet(dctx dispatchContext, asyncAck string) {
 	if dctx.RegisterAsync == nil {
 		return
@@ -344,15 +240,6 @@ func registerAsyncIfSet(dctx dispatchContext, asyncAck string) {
 	})
 }
 
-// readExecutorOutcome decodes a unary Execute response into a
-// terminalEvent. Runs the tag-validation helper on settling outcomes
-// (Success/Error/Park) before returning — an undeclared tag substitutes
-// an Error{error_class: executor_protocol_violation} so the verdict
-// path persists the protocol violation rather than the executor's
-// requested terminal (concept:terminal-tag gate-2 enforcement).
-//
-// The second return value is the AsyncAckId when the outcome is
-// AwaitAsyncCallback; empty for every settling kind.
 func readExecutorOutcome(
 	ctx context.Context, dctx dispatchContext, outcome *genv1.Outcome,
 ) (terminalEvent, string) {
@@ -417,8 +304,6 @@ func readExecutorOutcome(
 	}
 }
 
-// dedupTagsRT collapses duplicates preserving first-appearance order
-// per concept:terminal-tag set semantics. Returns nil for empty input.
 func dedupTagsRT(in []string) []string {
 	if len(in) == 0 {
 		return nil
@@ -435,18 +320,6 @@ func dedupTagsRT(in []string) []string {
 	return out
 }
 
-// validateTags enforces the concept:terminal-tag gate-2 check: every
-// tag on a settling outcome must appear in the emitting executor's
-// declared_tags observability capability. An undeclared tag substitutes
-// an Error{error_class: executor_protocol_violation} terminal so the
-// verdict path persists the protocol violation rather than the
-// executor's requested settling kind. The synthetic Error carries
-// empty Tags so re-entry through this helper is a no-op.
-//
-// When the runtime cannot reach the discovery cache (no resolver
-// wired) the check soft-passes — the registration-time validator's
-// declared_tags check is the primary gate; this is the runtime
-// defense-in-depth.
 func validateTags(_ context.Context, dctx dispatchContext, t terminalEvent) terminalEvent {
 	if len(t.Tags) == 0 {
 		return t
@@ -483,28 +356,7 @@ func validateTags(_ context.Context, dctx dispatchContext, t terminalEvent) term
 	return t
 }
 
-// resolveAttributes is the runner's pre-dispatch substitution + validation
-// pass. Returns the populated attribute object and the schema (so
-// the terminal handler can re-validate at commit time).
-//
-// Under the 2026-05-21 userdata collapse, the schema returned is the
-// merged effective schema (executor.expected_attributes_schema ∪ L1
-// template defaults ∪ L2 per-node declaration) — the same shape the
-// validator computed at registration. The resolved attribute bag
-// carries source-resolved values, static-default values, and post-
-// merge L3 + L4 instance overrides.
 func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
-	// @constraint: attribute-less / schema-less dispatch still passes through the
-	// before_dispatch breakpoint checkpoint. The breakpoint matcher keys on
-	// node_type / executor / graph / child_key — none of which require a
-	// resolved attribute bag — so a breakpoint installed on a bare node MUST
-	// still fire (and a pause-mode breakpoint MUST still block) here. Running
-	// the checkpoint on these early-return paths (rather than only after a
-	// real attribute resolve) is what makes the before_dispatch breakpoint
-	// universal across node shapes; skipping it for attribute-less nodes was a
-	// silent debugger gap. The empty bag is the correct MergedAttributes for a
-	// node carrying no attributes, and a resume overlay against such a node is
-	// a no-op merge.
 	if acq.NodeDef == nil || acq.NodeDef.Attributes == nil {
 		empty := map[string]any{}
 		bp, err := evaluateBeforeDispatchBreakpoints(ctx, args, acq, "", empty, nil)
@@ -522,22 +374,6 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 		}
 		return bp, nil, nil
 	}
-	// @constraint: reapply the unified-attribute-surface check at dispatch. The
-	// registration-time validator soft-fails the readOnly leg when the
-	// discovery cache hasn't populated the executor's expected schema
-	// yet (e.g. test fixtures with no observability hook wired, or
-	// templates registered before an executor's first handshake). By
-	// dispatch time the executor MUST be reachable and have handshaked,
-	// so a missing schema here is a real problem — fail loud with
-	// `executor_schema_unavailable` rather than silently skipping the
-	// readOnly leg. This is the authoritative gate per spec
-	// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-	// §"Attribute as the unified surface".
-	//
-	// The executor name being non-empty is the precondition for needing
-	// schema visibility — nodes that don't reference an executor (e.g.
-	// pure deterministic templates in tests) don't go through expected-
-	// schema gating.
 	if acq.Executor != "" && !execSchemaVisible {
 		return nil, schema, &executorSchemaUnavailableError{Executor: acq.Executor}
 	}
@@ -553,39 +389,11 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 			Reason: fmt.Sprintf("attributes_schema_invalid: %s: %s", first.Path, first.Msg),
 		}
 	}
-	// @deliberate: resolve the acquisition's RunScope projection ONCE here, above the
-	// substitution-context build, and thread its partition key into both
-	// the resolve context (so `{{child.partition_key}}` binds for fan-out
-	// leaves — E14) and the override-matcher overlay below (its
-	// `child_key:` predicate). A single read avoids a duplicate RunScope
-	// GetByID; the zero/empty partition key for non-fan-out runs is the
-	// correct "no binding" signal — `{{child.partition_key}}` stays
-	// ErrMissingSource off the main RunScope.
 	scope := resolveAcqScope(ctx, args, acq)
 	rctx, err := buildResolveContextForDispatch(ctx, args, acq, scope.PartitionKey)
 	if err != nil {
 		return nil, schema, err
 	}
-	// @constraint: self-state carry-forward — hydrate this dispatch's bag with the
-	// most-recent prior writeback for THIS node in THIS RunScope. Under
-	// the 2026-06-14 carry-forward spec, stateful nodes (loop_counter's
-	// `count`, claude-agent's `session_token`, and any executor that
-	// holds state in its own attributes) need their own prior writeback
-	// visible on the next dispatch. The lookup is keyed on (NodeID,
-	// RunScopeID) — the SQL JOIN filter `r.run_scope_id = $2` is the
-	// load-bearing enforcement of sub-graph sealing: a sub-graph's nodes
-	// live in a different RunScope than the calling graph, so a
-	// sub-graph dispatch's bag starts empty (no walk to the parent
-	// scope; that would break the "fresh context per pass" property the
-	// orchestrator depends on). Fan-out children likewise see no
-	// carry-forward — each sibling lives in its own RunScope.
-	//
-	// Persistence failures here are non-fatal: log + proceed with an
-	// empty bag so a transient DB blip turns the dispatch into a "first-
-	// dispatch in scope" rather than a hard dispatch failure. The
-	// substitution overlay below replaces source-bound values
-	// regardless, so source-driven correctness is unaffected.
-	//
 	// @concept: attribute
 	var carryForward map[string]any
 	if args.Persist != nil {
@@ -622,26 +430,6 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	acq.MergedAttributes = resolved
 	incrementMatchCountersAfterMerge(ctx, args.Persist, args.Logger, acq.InstanceID, matched)
 
-	// @constraint: breakpoint checkpoint before_dispatch runs OUTSIDE any
-	// acquisition / dispatch tx (incrementMatchCountersAfterMerge
-	// committed its own short tx above; the acquisition tx committed
-	// earlier per concept:supervisor invariants). EvaluateBreakpoints
-	// opens its own short txns; pause-mode hits block on waitForResume
-	// which polls on short txns. May return a different `resolved` map
-	// if a one-shot L6 overlay was supplied at resume time — both
-	// subsequent validation passes (dispatch-schema check below + the
-	// executor-raw-schema defense-in-depth) see the overlay-mutated bag,
-	// so an invalid overlay surfaces via the existing
-	// `template_validation_failed` route per concept:error-policy.
-	//
-	// Infrastructure failures (DB blip during ListForInstance / Create /
-	// poll, or context cancellation during the overflow-block / resume-poll
-	// wait; wrapped as *BreakpointInfraError) are Warn-logged and
-	// swallowed here. A debugger-side persistence failure must NOT
-	// route through the attribute-failure policy chain — that would
-	// surface as `template_resolution_failed` to operators, which is
-	// the wrong diagnostic class. The dispatch proceeds with the
-	// pre-breakpoint resolved bag.
 	bpResolved, bpErr := evaluateBeforeDispatchBreakpoints(ctx, args, acq, scope.PartitionKey, resolved, schema)
 	if bpErr != nil {
 		return nil, schema, bpErr
@@ -653,25 +441,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
 		return nil, schema, &attributeValidationError{Reason: "dispatch_bag_invalid", Cause: err}
 	}
-	// @deliberate: defense-in-depth — re-validate the merged bag against the executor's
-	// raw schema. The dispatch-relaxed `dispatchSchema` above tolerates
-	// executor-written `required:` properties (commit gate handles them);
-	// the executor's raw schema does not have that relaxation. This pass
-	// catches L3 / L4 override values that violate the executor's
-	// contract (shape-blind at instance creation per the structural-
-	// inertness rule) and any source-resolved value whose runtime type
-	// doesn't match what the executor declared. Per the 2026-05-21 gap-
-	// closure cycle (spec §"Effective schema computation").
 	if execSchema != nil {
-		// @constraint: the executor's raw schema may carry `required:` entries for
-		// `readOnly: true` properties (executor-written outputs) — those
-		// are populated at commit by write-back, not at dispatch, so
-		// enforcing `required:` for them here would fire false positives.
-		// Per the userdata-collapse spec §"Effective schema computation":
-		// executor-written `required:` is enforced at the commit gate,
-		// not at dispatch. Source-bound and static-default `required:`
-		// entries stay enforced (they should already be in the dispatch
-		// bag).
 		execSchemaForDispatch := relaxRequiredForExecutorWritten(execSchema)
 		if err := attributes.Validate(execSchemaForDispatch, resolved, attributes.PhaseDispatch); err != nil {
 			return nil, schema, &attributeValidationError{
@@ -696,27 +466,6 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	return resolved, schema, nil
 }
 
-// evaluateBeforeDispatchBreakpoints runs the before_dispatch breakpoint
-// checkpoint for one dispatch and returns the (possibly overlay-mutated)
-// merged-attribute bag. It centralizes the EvaluateBreakpoints call + error
-// classification so EVERY resolveAttributes exit path runs the checkpoint —
-// the full-resolve path AND the attribute-less / schema-less early-return
-// paths — rather than only the full-resolve path. A before_dispatch
-// breakpoint must fire (and a pause-mode one must block) regardless of whether
-// the node carries attributes.
-//
-// partitionKey is the acquisition's RunScope partition key (empty for the
-// early-return callers, which resolve no scope); merged is the pre-breakpoint
-// attribute bag (empty for attribute-less nodes); schema is the effective
-// schema threaded onto the hit snapshot (nil for attribute-less nodes).
-//
-// Error contract: infrastructure failures (DB blip, context cancellation
-// during a pause/overflow wait — wrapped as *BreakpointInfraError) are
-// Warn-logged and swallowed; the dispatch proceeds with the pre-breakpoint
-// bag, never surfacing a debugger-side fault through the attribute-failure
-// policy chain. A non-infra error (e.g. an overlay that fails validation) is
-// returned to the caller to route through the existing failure paths.
-//
 // @concept: breakpoint
 func evaluateBeforeDispatchBreakpoints(
 	ctx context.Context,
@@ -752,7 +501,6 @@ func evaluateBeforeDispatchBreakpoints(
 					"phase", infraErr.Phase,
 					"error", bpErr.Error())
 			}
-			// @deliberate: infra failure swallowed — proceed with the pre-breakpoint bag.
 			return merged, nil
 		}
 		return nil, bpErr
@@ -760,25 +508,6 @@ func evaluateBeforeDispatchBreakpoints(
 	return bpResolved, nil
 }
 
-// buildResolveContextForDispatch assembles the substitution context
-// from the candidate's deps, this acquisition's claims (keyed by
-// alias), and instance params (marshalled to RawMessage so the
-// substitution engine can lazy-walk into nested params).
-//
-// The EventLookup callback resolves
-// `nodes.<emitter>.event.<name>.<json_path>` source kinds (plan F4):
-// (a) it maps the emitter node-type to a node-id within the same
-// instance via Nodes().ListByInstance, (b) reads the most recent
-// emission row from rimsky_node_events, (c) materializes the spilled
-// payload via BlobBackend if necessary, (d) returns the bytes for
-// walkPath. Empty bytes / no row → ok=false.
-//
-// partitionKey is the acquisition's RunScope partition key, resolved
-// once by the caller (resolveAttributes) and threaded in to avoid a
-// duplicate RunScope read. It binds `{{child.partition_key}}` for
-// fan-out leaf dispatches (E14); empty string off the main RunScope is
-// the "no binding" signal — `{{child.partition_key}}` then stays
-// ErrMissingSource, which is correct for non-fan-out runs.
 func buildResolveContextForDispatch(
 	ctx context.Context, args RunArgs, acq *acquisition, partitionKey string,
 ) (attributes.ResolveContext, error) {
@@ -815,24 +544,7 @@ func buildResolveContextForDispatch(
 		}
 		paramsRaw = b
 	}
-	// @deliberate: bind the frame's triggering message — payload bytes (the
-	// `{{trigger.message.payload.X}}` arm) AND its type (the new
-	// `{{messages.<type>.<field>}}` arm). One SQL fetch, two
-	// substitution surfaces — they share a single resolver function
-	// (per spec §Load-bearing property "one substitution engine, two
-	// surfaces"). When zero or more than one message lives on the
-	// frame, both arms surface ErrMissingSource via the helper's
-	// empty-string sentinel.
 	triggerPayload, triggerType := lookupTriggerMessageForFrame(ctx, args, acq.FrameID)
-	// @deliberate: arm the `{{messages.<type>.<field>}}` resolver's dynamic floor by
-	// threading the template's declared message-type set. A directive
-	// that names an undeclared type returns ErrMissingSource even when
-	// the frame's actual triggering message type happens to match —
-	// defense-in-depth against runtime-interpolated directives that
-	// bypass the registration-time validator. Loaded via the
-	// per-template cache so the per-dispatch overhead is one map lookup
-	// after first use. Nil on a missing template / unwired persistence;
-	// the resolver treats nil as "no floor" (the documented behaviour).
 	registryTypes := declaredMessageTypesForTemplate(ctx, args, acq.TemplateHash, nil)
 	return attributes.ResolveContext{
 		Deps:                  deps,
@@ -845,21 +557,6 @@ func buildResolveContextForDispatch(
 	}, nil
 }
 
-// lookupTriggerMessageForFrame opens a short read tx and reads the
-// single message delivered into frameID; returns (nil, "") when zero or
-// more than one delivered message exists, when the read fails, or when
-// the messages table is not wired (test contexts may omit it).
-//
-// The dispatch context is built outside the acquisition tx (which has
-// committed by then), so the helper opens its own read tx rather than
-// reusing a caller-supplied one. Reads through
-// Messages().ListDeliveredForFrame so the same implementation services
-// both the fan-out partition_request path and the dispatch-time
-// substitution context.
-//
-// Per @blessed-invariant 21 the payload bytes are inert — forwarded
-// verbatim into the substitution context. The type-path discriminator is
-// identifier-shaped and safe to log; the payload is not.
 func lookupTriggerMessageForFrame(
 	ctx context.Context, args RunArgs, frameID shared.UUID,
 ) (json.RawMessage, string) {
@@ -879,26 +576,6 @@ func lookupTriggerMessageForFrame(
 	return payload, mtype
 }
 
-// computeEffectiveAttributeSchema returns the per-node effective
-// attribute schema at dispatch — the same shape the validator computed
-// at registration:
-//
-//	executor.expected_attributes_schema ∪ L1 template defaults ∪ L2 node schema
-//
-// Returns the effective schema plus the executor's expected schema
-// (parsed) and a visibility flag reporting whether the discovery hook
-// returned schema bytes. The dispatch path uses the visibility flag +
-// parsed executor schema to reapply
-// `node.CheckEffectiveAttributesSchema` against the merged effective
-// schema — closing the gap left by the registration-time validator's
-// soft-fail when the discovery cache isn't populated yet.
-//
-// The recompute happens at dispatch (per spec open-question 1,
-// "recompute rather than persist") so template-registration storage
-// stays unchanged. The merge is pure
-// (graph/node::MergeAttributeDefaults); shape-blind on the L1 + L4
-// value fragments.
-//
 // @concept: attribute
 func computeEffectiveAttributeSchema(args RunArgs, acq *acquisition) (map[string]any, map[string]any, bool) {
 	var nodeSchema map[string]any
@@ -926,11 +603,7 @@ func computeEffectiveAttributeSchema(args RunArgs, acq *acquisition) (map[string
 	return node.MergeAttributeDefaults(execSchema, acq.TemplateAttributeDefaults, nodeSchema), execSchema, execSchemaVisible
 }
 
-// extractReadOnlyPropsLocal mirrors graph/node/template_validator.go::
-// extractReadOnlyProps. Kept private because the runtime only needs the
-// names-of-readOnly-props set when reapplying the unified-attribute-
-// surface check.
-// @source: lib/graph/node/template_validator.go::extractReadOnlyProps
+// @source: lib/graph/node/template_validator.go
 func extractReadOnlyPropsLocal(schema map[string]any) map[string]bool {
 	out := map[string]bool{}
 	if schema == nil {
@@ -952,78 +625,18 @@ func extractReadOnlyPropsLocal(schema map[string]any) map[string]bool {
 	return out
 }
 
-// substituteAttributesSchema walks the effective schema's `properties`
-// map and emits one entry per property:
-//   - source-bound (`source:` directive): resolved against rctx via the
-//     substitution engine. Strict directives (no marker) raise
-//     ErrMissingSource on missing; lenient (`?` marker) and fallback
-//     (`| <literal>`) directives are handled inside the engine and
-//     produce a typed value or null. Source resolution ALWAYS overwrites
-//     any carry-forward value.
-//   - static-default (`default:` value with no source): the default is a
-//     FLOOR under carry-forward — it lands only when the carry-forward
-//     bag has no value for this property. Once a node has produced a
-//     writeback in this RunScope, subsequent dispatches see the
-//     executor's value rather than the static default.
-//   - executor-written (`readOnly: true` in the executor's expected
-//     schema; the effective schema carries the marker through): carried
-//     forward unchanged when the carry-forward bag holds a value
-//     (canonical stateful-property pattern per the 2026-06-14 carry-
-//     forward spec); otherwise absent from the dispatch-time bag,
-//     populated at commit by write-back.
-//
-// `carryForward` is the most-recent prior writeback for (NodeID,
-// RunScopeID) — the hydration starter map per the carry-forward
-// spec. Nil / empty on first dispatch in scope, on sub-graph entries
-// (sub-graphs live in their own RunScope), and on fan-out children
-// (each child lives in its own RunScope). The function never reaches
-// outside the supplied map; cross-RunScope hydration is the caller's
-// boundary to enforce.
-//
-// Per specs:
-//   - .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-//     §"Resolution waterfall"
-//   - .ok-planner/specs/2026-06-14-attribute-carry-forward-and-inproc-utility-executors-design.md
-//     §"Attribute carry-forward"
-//
 // @concept: attribute
 func substituteAttributesSchema(
 	schema map[string]any, rctx attributes.ResolveContext, carryForward map[string]any,
 ) (map[string]any, error) {
 	out := map[string]any{}
 	if schema == nil {
-		// @deliberate: no schema → pure-cascade node with no attributes block. There
-		// is no dispatch attribute bag to build; carry-forward is
-		// always empty here in practice (a node with no executor has no
-		// writeback path) and the per-property loop below has nothing
-		// to iterate.
 		return out, nil
 	}
 	props, _ := schema["properties"].(map[string]any)
 	if props == nil {
-		// @deliberate: schema present but no `properties` block. The validator's
-		// effective-schema construction requires properties whenever
-		// the node has an executor (the executor's expected_attributes_schema
-		// merges in), so this branch is reached only by pure-cascade
-		// nodes whose attributes block declares an object type without
-		// declared fields. Carry-forward is empty in that case for the
-		// same reason as the nil-schema branch.
 		return out, nil
 	}
-	// @constraint: seed the dispatch bag verbatim from carry-forward. The per-
-	// property loop below overlays source-bound resolutions (which
-	// always overwrite carry-forward) and static defaults (which act
-	// as a floor — landing only when carry-forward has no value).
-	// Validation downstream — at the dispatch waterfall (post-
-	// substitution) and at commit (post-writeback) — enforces the
-	// schema's `additionalProperties` stance against the resulting
-	// bag, so a stale or undeclared key cannot reach the executor or
-	// persist under a closed schema. We do not project the seed
-	// through `properties` here: doing so would override an open
-	// schema's stated permissiveness, and would be redundant for a
-	// closed schema (commit-time validation already enforced
-	// `additionalProperties: false` on the prior writeback that
-	// sourced this seed).
 	for k, v := range carryForward {
 		out[k] = v
 	}
@@ -1042,83 +655,27 @@ func substituteAttributesSchema(
 			}
 			val, err := attributes.SubstituteValue(source, rctx)
 			if err != nil {
-				// @constraint: per spec §"Resolution waterfall" step 5, a strict (no
-				// `?` marker) missing directive fails dispatch with
-				// `template_resolution_failed`, regardless of whether
-				// the property is `required`. Lenient (`?`) and
-				// fallback (`| literal`) directives are handled inside
-				// SubstituteValue and never raise ErrMissingSource.
 				return nil, err
 			}
 			if val == nil {
-				// @deliberate: lenient-recovery path — a whole-directive `source:` carrying
-				// the `?` marker over a genuinely-absent source is the ONLY
-				// way SubstituteValue returns (nil, nil) — a strict miss
-				// returns an error above, and a present value is non-nil
-				// (resolved JSON null is itself treated as ErrMissingSource by
-				// the resolver). Landing a raw JSON null in the dispatch bag
-				// would fail the PhaseDispatch type check for a typed property
-				// (e.g. `type: string` rejects null), turning the lenient
-				// recovery the operator asked for back into a hard dispatch
-				// failure. Coerce to the property's type-appropriate empty
-				// value so the executor receives the directive "resolved to
-				// empty" — the documented lenient-marker contract — instead.
 				out[name] = emptyValueForSchemaProperty(prop)
 				continue
 			}
-			// @constraint: source-bound resolution ALWAYS overwrites carry-forward.
-			// Cross-node data flow stays orthogonal to self-state carry-
-			// forward — substitution is the canonical refresh-from-
-			// upstream channel.
 			out[name] = val
 		case hasDefault:
-			// @constraint: static-default property — the default is the FLOOR under
-			// carry-forward per the carry-forward spec. Land the default
-			// only when the carry-forward bag had no value for this
-			// property; otherwise the prior writeback wins (executor-
-			// supplied values must beat static defaults once a node has
-			// produced output in this RunScope). No substitution is
-			// applied to defaults; an operator-supplied `"{{X}}"` is a
-			// literal string here.
 			if _, present := out[name]; !present {
 				out[name] = defaultVal
 			}
 		}
-		// @deliberate: executor-written (readOnly + no source + no default) properties —
-		// when the carry-forward bag carries a value (canonical stateful
-		// pattern: the executor wrote it on a prior dispatch in this scope),
-		// the seeded value survives and feeds the executor on this dispatch.
-		// When the carry-forward bag has no entry, the property stays absent
-		// until the executor's commit write-back populates it. Nothing to do
-		// here in either case.
 	}
 	return out, nil
 }
 
-// emptyValueForSchemaProperty returns the type-appropriate empty value
-// for a JSON-Schema property, used to fill a lenient (`?`-marked)
-// directive whose source was absent at dispatch. The value MUST satisfy
-// the property's declared `type` so the PhaseDispatch validation gate
-// admits it (a raw JSON null would be rejected for any non-null type).
-//
-// The mapping is the JSON zero-value per declared type: string → "",
-// number/integer → 0, boolean → false, array → [], object → {}. A
-// `type` declared as an array (e.g. `["string","null"]`) keys off its
-// first concrete (non-"null") member. When no usable `type` is
-// declared, the empty string is the safe default — it matches the
-// overwhelmingly common string-typed substitution target and the
-// spec's documented "resolved to empty string" lenient contract.
-//
 // @concept: attribute
 func emptyValueForSchemaProperty(prop map[string]any) any {
 	return emptyValueForSchemaType(firstConcreteSchemaType(prop["type"]))
 }
 
-// firstConcreteSchemaType extracts a single concrete JSON-Schema type
-// name from a `type` field that may be a bare string or a string array
-// (the JSON-Schema union form). "null" members are skipped — they carry
-// no shape for an empty value. Returns "" when no concrete type is
-// found.
 func firstConcreteSchemaType(typeField any) string {
 	switch t := typeField.(type) {
 	case string:
@@ -1133,7 +690,6 @@ func firstConcreteSchemaType(typeField any) string {
 	return ""
 }
 
-// emptyValueForSchemaType maps a JSON-Schema type name to its zero value.
 func emptyValueForSchemaType(typeName string) any {
 	switch typeName {
 	case "number", "integer":
@@ -1145,22 +701,10 @@ func emptyValueForSchemaType(typeName string) any {
 	case "object":
 		return map[string]any{}
 	default:
-		// @deliberate: "string" and any unrecognized / absent type fall through to the
-		// empty string — the spec's documented lenient-recovery value and
-		// the dominant substitution-target shape.
 		return ""
 	}
 }
 
-// relaxRequiredToSourceDriven returns a shallow copy of the supplied
-// JSON Schema whose `required` array is filtered to drop only
-// properties that have neither a `source:` directive nor a `default:`
-// value (i.e. executor-written properties). Source-bound and
-// static-default properties stay in `required` — the dispatch bag
-// will already contain a value for them (resolved or static), and the
-// JSON Schema validation step on the dispatch bag should still see
-// them as required. Executor-populated requireds get re-validated at
-// commit (@blessed-invariant 12).
 func relaxRequiredToSourceDriven(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
@@ -1198,27 +742,6 @@ func relaxRequiredToSourceDriven(schema map[string]any) map[string]any {
 	return out
 }
 
-// relaxRequiredForExecutorWritten returns a shallow copy of the
-// supplied JSON Schema whose `required` array drops only the
-// `readOnly: true` properties (executor-written outputs). Source-bound
-// and static-default `required:` entries stay — those properties
-// already exist in the dispatch bag, so requiring them there is
-// correct. Executor-written `required:` entries are enforced at the
-// commit gate when the executor's write-back lands, not at dispatch.
-//
-// Sibling to `relaxRequiredToSourceDriven`: that helper builds the
-// dispatch-relaxed view of the *effective* schema (the executor ∪ L1
-// ∪ L2 composition) for the primary dispatch validation pass; this
-// helper builds the equivalent view of the executor's *raw* schema
-// for the defense-in-depth pass against L3 / L4 overrides. The two
-// relaxations differ in detection criterion: the effective-schema
-// view classifies via `source:` / `default:` (which only the effective
-// schema carries); the raw-executor view classifies via `readOnly:
-// true` (which only the executor schema carries).
-//
-// Per spec
-// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-// §"Effective schema computation".
 func relaxRequiredForExecutorWritten(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
@@ -1268,16 +791,6 @@ func fieldNames(m map[string]any) []string {
 	return out
 }
 
-// loadSubscribedNodeAttributesByID is the per-dispatch subscribed-node
-// attribute map. Runs between the acquisition tx and the dispatch tx,
-// so it opens its own short-lived read tx — every Store method requires
-// an explicit tx (option C / no-nil-tx).
-//
-// Under per-run keying (2026-05-20) this calls BuildAttributeDeps which
-// reads the drained wait-set rows for this receiver in this frame. The
-// builder is the only substitution-context source — no scope-walk, no
-// cross-frame caching.
-//
 //	@concept: node-subscription
 //	@concept: attribute
 func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]json.RawMessage {
@@ -1297,12 +810,6 @@ func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *ac
 	return out
 }
 
-// priorDispositionFromStorageForm maps the lower_snake_case storage
-// form persisted on col:rimsky_node_runs.prior_dispatch_disposition
-// back to the proto PriorDispatchDisposition enum. Unknown values
-// (including empty, which is the wire default) resolve to
-// PRIOR_NONE.
-//
 // @concept: run-scope
 func priorDispositionFromStorageForm(s string) genv1.PriorDispatchDisposition {
 	switch s {
@@ -1316,12 +823,7 @@ func priorDispositionFromStorageForm(s string) genv1.PriorDispatchDisposition {
 	return genv1.PriorDispatchDisposition_PRIOR_NONE
 }
 
-// runScopeIDString renders a RunScope UUID for the wire as its canonical
-// string, EXCEPT the zero value, which renders as the empty string. The
-// host-agent-proxy keys spawns on run_scope_id and falls back to instance
-// id only when it is empty; emitting the zero-UUID string instead would
-// key every non-fanned-out dispatch on one shared sentinel and collapse
-// all instances onto a single late-bound child. @concept: host-agent-proxy
+// @concept: host-agent-proxy
 func runScopeIDString(id shared.UUID) string {
 	if id == (shared.UUID{}) {
 		return ""
@@ -1378,21 +880,9 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		CallbackUrl:      dctx.Args.CallbackURL,
 		CancelToken:      cancelToken,
 		DispatchId:       acq.DispatchID.String(),
-		// @constraint: Scratch is the dispatch row's executor-attached opaque bytes,
-		// materialized from inline or spilled-handle at acquisition time
-		// (see runner_acquire_helpers.go::loadScratchIntoAcquisition).
-		// Empty on a fresh dispatch; carries forward from a prior
-		// dispatch row across stale_recovery / retry_after_error /
-		// recalculate transitions. Inert in rimsky per
-		// @blessed-invariant 21. @concept: executor
+		// @concept: executor
 		Scratch: acq.Scratch,
 	}
-	// @constraint: recovery-aware fields surface the predecessor dispatch identity +
-	// classifier when this run supersedes a prior dispatch
-	// (stale-recovery, retry-after-error, recalculate). Both unset on
-	// initial dispatches. Per spec
-	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-	// §Recovery-aware executor protocol.
 	if acq.PriorDispatchID != nil {
 		pid := acq.PriorDispatchID.String()
 		req.PriorDispatchId = &pid
@@ -1401,28 +891,9 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		disposition := priorDispositionFromStorageForm(acq.PriorDispatchDisposition)
 		req.PriorDispatchDisposition = &disposition
 	}
-	// @deliberate: resume metadata is no longer threaded as a separate
-	// ResumeContext wire field. Per TD-remove-resume-context, resume
-	// state rides attribute carry-forward: the executor wrote
-	// session_token / scratch / any in-flight state to attributes_delta
-	// on the prior settling terminal (Park or Error), the supervisor
-	// persisted that delta onto the node-run row, and the next
-	// dispatch's attribute resolution surfaces it in
-	// req.Attributes. The executor reads incoming attributes to detect
-	// a resume situation (the resume marker is in the attributes the
-	// executor itself authored).
 	return req, nil
 }
 
-// buildStoreHandles converts each ClaimSpec acquisition into a per-
-// store StoreHandle proto entry, then layers any co-held claims
-// (`holds:`) on top under their local alias. The
-// handle's `handle` struct carries the store-supplied address bytes
-// verbatim under the "address" key — opaque to Rimsky per
-// `@blessed-invariant 20`. The leaf executor cannot tell from
-// `ExecuteRequest` whether a given claim was acquired (`claims:`) or
-// co-held (`holds:`) — same wire shape per spec §Claim co-holdership.
-//
 // @concept: claim-co-holdership
 func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) {
 	out := make(map[string]*genv1.StoreHandle, len(acq.Locks)+len(acq.HeldClaims))
@@ -1435,14 +906,6 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 		if err != nil {
 			return nil, err
 		}
-		// @constraint: key by Alias, not ProducerName — two store entries within a node may
-		// share the same producer name but must have distinct aliases (e.g. a
-		// consolidate node holding both `@consolidate-queue` aliased `doc`
-		// and `@guidance-root` aliased `root`, both on the same `content`
-		// producer). Keying by ProducerName would let the second overwrite the
-		// first. Alias is also the lookup key the executor uses for
-		// `cwd_from_store: <alias>` and `claim.<alias>.scope` attribute
-		// substitution, so the wire shape now matches what consumers need.
 		key := spec.Alias
 		if key == "" {
 			key = spec.ProducerName
@@ -1451,8 +914,6 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 	}
 	for alias, claim := range acq.HeldClaims {
 		if _, alreadyPresent := out[alias]; alreadyPresent {
-			// @constraint: `claims:` ALREADY bound this alias for this run; the held
-			// entry is informational only.
 			continue
 		}
 		h, err := makeHeldClaimHandle(alias, claim)
@@ -1464,16 +925,6 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 	return out, nil
 }
 
-// makeHeldClaimHandle builds a `StoreHandle` proto entry for a co-held
-// claim (the upstream's address presented under this run's local alias).
-// Mirrors `makeClaimHandle` for the bytes-shape contract, but draws the
-// address + payload from the upstream `ClaimResult` rather than this
-// run's own `AcquiredLock`. `Intent` is unset (the co-holder does not
-// own an intent against the producer); the executor reads only the
-// `address` field for held claims.
-//
-// @blessed-invariant 20 (wire-encoding site exception): the same JSON
-// round-trip discipline as `makeClaimHandle`.
 func makeHeldClaimHandle(alias string, claim claimproducer.ClaimResult) (*genv1.StoreHandle, error) {
 	out := &genv1.StoreHandle{}
 	fields := map[string]any{"alias": alias}
@@ -1499,42 +950,15 @@ func makeHeldClaimHandle(alias string, claim claimproducer.ClaimResult) (*genv1.
 	return out, nil
 }
 
-// makeClaimHandle builds the per-store proto entry. The handle
-// payload is `{"address": <opaque shape>, "payload": <opaque shape>,
-// "alias": ..., "intent": ...}`; the executor unwraps it per its
-// store knowledge.
-//
-// @blessed-invariant 20 (wire-encoding site exception): this function
-// decodes the store-supplied Address and Payload bytes via
-// json.Unmarshal solely to project them into a `google.protobuf.Struct`
-// for the wire. This is the SOLE sanctioned wire-encoding site outside
-// `graph/attribute/substitution.go::walkPath` (which is the sole
-// sanctioned substitution-leaf extraction site). No transformation,
-// logging, normalization, validation, or pattern-matching happens
-// here — the bytes round-trip through structpb and are reconstituted
-// verbatim on the executor side. If the spec moves the
-// `StoreHandle.handle` field to `bytes`, this function shrinks to a
-// straight byte-copy and the wire-encoding site disappears entirely.
 func makeClaimHandle(lk AcquiredLock, spec claimproducer.ClaimSpec) (*genv1.StoreHandle, error) {
 	out := &genv1.StoreHandle{}
 	if lk.Producer != nil {
-		// @deliberate: the wire StoreHandle.kind field is informational only and
-		// the executor knows its store's kind from the
-		// deployment's operator config. Pass the
-		// operator-chosen store name as the closest analogue; the
-		// v2 Store.Kind() method is gone in v3.
 		out.Kind = lk.Producer.Name()
 	}
 	fields := map[string]any{}
 	if len(lk.ClaimResult.Address) > 0 {
 		var addrAny any
 		if err := json.Unmarshal(lk.ClaimResult.Address, &addrAny); err != nil {
-			// @constraint: producer-supplied bytes did not round-trip as JSON. Per
-			// @blessed-invariant 20 we MUST NOT mangle, log, or
-			// transform the bytes — refuse to dispatch instead so the
-			// failure is visible at the supervisor (rather than letting
-			// a non-UTF-8 byte sequence travel through structpb as a
-			// silently-corrupted Go string field downstream).
 			return nil, fmt.Errorf("makeClaimHandle: claim address bytes are not JSON-decodable (producer invariant); refusing to dispatch: %w", err)
 		}
 		fields["address"] = addrAny
@@ -1553,14 +977,6 @@ func makeClaimHandle(lk AcquiredLock, spec claimproducer.ClaimSpec) (*genv1.Stor
 		return nil, fmt.Errorf("makeClaimHandle: structpb: %w", err)
 	}
 	out.Handle = s
-	// @constraint: E4 — a fan-out leaf's per-partition candidate handle (minted by
-	// `DataProcessing.BeginCandidate`, persisted on the sub-claim row, and
-	// bound onto this lock at leaf acquisition by
-	// `bindLeafCandidateHandles`). Empty for non-fan-out / non-
-	// DataProcessing claims — the wire field stays unset. Per
-	// @blessed-invariant 20 the bytes are inert in rimsky: passed verbatim
-	// from the sub-claim row to the wire so the executor can hand them
-	// straight back to the producer on its writes.
 	out.CandidateHandle = lk.ProducerCandidateHandle
 	return out, nil
 }

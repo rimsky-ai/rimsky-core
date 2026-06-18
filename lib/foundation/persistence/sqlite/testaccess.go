@@ -14,11 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// DBFromDatabase returns the underlying *sql.DB for a sqlite-backed
-// persistence.Database. Used by integration tests to inspect PRAGMA state
-// on the database's actual connection (instead of opening a parallel sql.DB
-// and risking a stale view of session-local PRAGMAs). Panics if d is not
-// a sqlite database. Test-only.
 func DBFromDatabase(d persistence.Database) *sql.DB {
 	sd, ok := d.(*database)
 	if !ok {

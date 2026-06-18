@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// terminal_decision_forensics.go — observability emission for the
-// terminal-decision engine. Companion to `terminal_decision.go`; this
-// file holds the narrow helpers that emit the per-terminal lineage
-// row + the `claim_resolution.*` event after a producer verb fires.
-//
-// Honors `@blessed-invariant 20` (claim content inert) and `@blessed-
-// invariant 21` (messages inert): payloads carry only the claim_scope_data
-// hash + rimsky-side identifiers — never the raw scope / address /
-// candidate-handle / version bytes.
-
 package runtime
 
 import (
@@ -22,8 +12,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// outcomeVerbName maps AggregateOutcome to the producer-verb name for
-// error messages.
 func outcomeVerbName(o AggregateOutcome) string {
 	switch o {
 	case AggregateCommit:
@@ -34,23 +22,6 @@ func outcomeVerbName(o AggregateOutcome) string {
 	return "Unknown"
 }
 
-// emitTerminalForensics emits the per-terminal `claim_terminal` lineage
-// row plus the matching `claim_resolution.*` event after a producer
-// verb fires. Single emit site for every Commit/Abandon path; the
-// lineage projection + the event log stay in sync regardless of which
-// branch (executor terminal, auto-terminal, force-cancel) drove the
-// resolution.
-//
-// Best-effort writes: both helpers tolerate missing dependencies (nil
-// Persist / Clock / Lineage / Events) and log on error rather than
-// failing the surrounding tx. The lineage + event surfaces are
-// observability metadata, not control-plane state.
-//
-// Honors `@blessed-invariant 20` (claim content inert) and `@blessed-
-// invariant 21` (messages inert): payloads carry only the claim_scope_data
-// hash + rimsky-side identifiers (claim_handle_id, run_id, frame_id,
-// producer_name, version_id, outcome, cause). Raw scope / address /
-// candidate-handle / version bytes never appear in the projection.
 func emitTerminalForensics(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	td TerminalDecision, versionID string,
@@ -58,21 +29,11 @@ func emitTerminalForensics(
 	if args.Persist == nil || args.Clock == nil {
 		return
 	}
-	// @deliberate: skip the projection write when the call site lacks
-	// instance / frame metadata. The per-call lineage hint is optional
-	// and some callers (e.g. cycle-4 pre-rename paths) fire without
-	// filling it in; a partial hint cannot anchor a useful row.
 	if (td.LineageHint == ClaimLineageHint{}) {
 		return
 	}
 	outcome := terminalOutcomeKey(td)
 	now := args.Clock.Now()
-	// @deliberate: walk one level of sub-claims only. ListChildClaimHandles
-	// is a single SELECT; pre-v1 we keep it bounded to avoid quadratic
-	// walks on deep trees. Downstream consumers chain ancestor lookups
-	// via `GET /lineage/claims/{id}/ancestors?depth=N`. The OpenLineage
-	// emitter renders this slice as the per-claim sub-claim_handle_ids
-	// facet.
 	var subIDs []string
 	if args.ClaimHandles != nil {
 		children, cerr := args.ClaimHandles.ListChildClaimHandles(ctx, td.ClaimHandleID, tx)
@@ -90,12 +51,6 @@ func emitTerminalForensics(
 	rec := ClaimTerminalRecord{
 		ClaimHandleID: td.ClaimHandleID,
 		RunID:         td.LineageHint.RunID,
-		// @constraint: OpenLineageRunRef seeds the OpenLineage emitter's
-		// `Run.RunID` (subscribers/openlineage/emitter.go::
-		// MakeClaimTerminalEvent). Using the holding-run's RunID keeps
-		// the OL graph aligned with the run that resolved the claim.
-		// NOT a parent-run reference in the run-tree sense — see the
-		// struct comment on ClaimTerminalRecord.
 		OpenLineageRunRef:   td.LineageHint.RunID.String(),
 		NodeID:              td.LineageHint.NodeID,
 		FrameID:             td.LineageHint.FrameID,
@@ -120,10 +75,6 @@ func emitTerminalForensics(
 				"error", err.Error())
 		}
 	}
-	// @deliberate: event payload mirrors the lineage shape but excludes
-	// node_id — the event row already carries it as a column, so
-	// duplicating into the payload wastes bytes. The kind discriminates
-	// commit vs abandon; the cause field carries the abandon-flavor.
 	kind := events.KindClaimResolutionCommit()
 	payload := map[string]any{
 		"claim_handle_id":       td.ClaimHandleID.String(),
@@ -143,10 +94,6 @@ func emitTerminalForensics(
 			cause = TerminalCauseNatural
 		}
 		payload["cause"] = string(cause)
-		// @deliberate: drop empty version_id on Abandon. It is meaningful
-		// on Commit (the producer's emitted version label) but on Abandon
-		// it is rarely populated and never load-bearing; dropping the key
-		// when empty keeps the event payload tight.
 		if rec.VersionID == "" {
 			delete(payload, "version_id")
 		}
@@ -166,10 +113,6 @@ func emitTerminalForensics(
 	}
 }
 
-// terminalOutcomeKey maps the typed (Outcome, Cause) pair to the
-// persistence-layer `outcome` column value. Force-cancelled Abandons
-// promote to `force_cancelled` so analytical queries can isolate the
-// operator-/sibling-driven branch from natural exhaustion.
 func terminalOutcomeKey(td TerminalDecision) string {
 	if td.Outcome == AggregateCommit {
 		return persistence.LineageOutcomeCommitted
@@ -182,10 +125,6 @@ func terminalOutcomeKey(td TerminalDecision) string {
 	}
 }
 
-// preferVersionID picks the verb-returned version (from a successful
-// CommitCandidate) over the hint-supplied one. Falls back to the hint
-// (e.g. a Held-claim row that was already labeled with a prior version)
-// when the verb didn't produce a fresh value.
 func preferVersionID(fromVerb, fromHint string) string {
 	if fromVerb != "" {
 		return fromVerb

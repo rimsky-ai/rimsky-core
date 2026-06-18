@@ -10,15 +10,11 @@ import (
 	"testing"
 )
 
-// TestValidate covers the matcher's grammar enforcement across the
-// validator's responsibilities: closed-key-set, ordinal-rejection,
-// per-key shape requirements, cross-check against reference sets,
-// LegacyFlat policy, and the entryIndex prefix discipline.
 func TestValidate(t *testing.T) {
 	refs := ValidationRefs{
 		NodeTypes:     map[string]struct{}{"area-pass": {}, "deploy": {}},
 		ExecutorNames: map[string]struct{}{"claude-agent": {}, "noop": {}},
-		UsedExecutors: map[string]struct{}{"claude-agent": {}}, // @deliberate: noop is declared but unused, so UsedExecutors must reject it
+		UsedExecutors: map[string]struct{}{"claude-agent": {}},
 		GraphNames:    map[string]struct{}{"main": {}, "ingest": {}},
 	}
 
@@ -114,7 +110,6 @@ func TestValidate(t *testing.T) {
 	t.Run("executor UsedExecutors check skipped when nil (breakpoint mode)", func(t *testing.T) {
 		r := ValidationRefs{
 			ExecutorNames: map[string]struct{}{"claude-agent": {}, "noop": {}},
-			// @deliberate: UsedExecutors left nil to exercise the breakpoint-mode skip path
 		}
 		if err := Validate(Matcher{"executor": "noop"}, r, 0); err != nil {
 			t.Fatalf("when UsedExecutors is nil, declared-but-unused executor should validate; got %v", err)
@@ -195,7 +190,6 @@ func TestValidate(t *testing.T) {
 		if strings.Contains(err.Error(), "[-1]") {
 			t.Fatalf("error message must not contain [-1]; got %v", err)
 		}
-		// @deliberate: guard against a stray [N] prefix leaking when entryIndex<0.
 		if strings.Contains(err.Error(), "matcher[") {
 			t.Fatalf("error message must not contain a 'matcher[' prefix when entryIndex<0; got %v", err)
 		}

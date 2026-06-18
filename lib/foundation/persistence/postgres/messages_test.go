@@ -20,9 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// seedMessageInstanceForNullTest for the postgres mirror — uses the same template
-// → main run scope → instance pattern as seedFrameParkedFixture so the
-// rimsky_messages.instance_id FK is satisfied.
 func seedMessageInstanceForNullTest(t *testing.T, ctx context.Context, d persistence.Database) shared.UUID {
 	t.Helper()
 	store := d.Tables()
@@ -68,9 +65,6 @@ func seedMessageInstanceForNullTest(t *testing.T, ctx context.Context, d persist
 	return instanceID
 }
 
-// TestMessagesScan_NullPayload_Postgres confirms pgx tolerates a NULL
-// payload column through the rimsky_messages → MessageRow scan path.
-// Symmetric to TestMessagesScan_NullPayload in the sqlite test.
 func TestMessagesScan_NullPayload_Postgres(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -87,7 +81,6 @@ func TestMessagesScan_NullPayload_Postgres(t *testing.T) {
 			Type:       "invalidate",
 			Sender:     "operator",
 			SenderKind: "operator",
-			// @deliberate: Payload omitted → nil → NULL on the wire; this test exercises the NULL-payload scan path.
 		})
 	}); err != nil {
 		t.Fatalf("Messages.Insert: %v", err)
@@ -132,13 +125,6 @@ func TestMessagesScan_NullPayload_Postgres(t *testing.T) {
 	}
 }
 
-// TestMessagesList_DeliveredAfterBefore_Postgres pins the persistence
-// predicates for the `delivered_after` / `delivered_before` filters
-// surfaced through GET /v1/instances/{id}/messages. The control-API
-// handler advertises and accepts these filters; this test fails if a
-// future refactor regresses the persistence layer to silently drop
-// them. Symmetric to the sqlite-side coverage so the conformance suite
-// catches cross-backend drift.
 func TestMessagesList_DeliveredAfterBefore_Postgres(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -164,10 +150,6 @@ func TestMessagesList_DeliveredAfterBefore_Postgres(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Messages.Insert[%d]: %v", i, err)
 		}
-		// @deliberate: stamp delivered_at directly — MarkDelivered
-		// requires a real rimsky_frames row, which would mean threading
-		// the FK just for this filter test. The persistence-layer WHERE
-		// clause is the unit under test.
 		pgtest.ExecForTest(ctx, t, d,
 			`UPDATE rimsky_messages SET delivered_at = $1 WHERE id = $2`, tt, ids[i])
 	}
@@ -212,9 +194,6 @@ func TestMessagesList_DeliveredAfterBefore_Postgres(t *testing.T) {
 	}
 }
 
-// TestMessagesScan_NonNullPayload_Postgres is the green-path sanity
-// check: payload bytes round-trip through Insert → scanMessages
-// unchanged on postgres.
 func TestMessagesScan_NonNullPayload_Postgres(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

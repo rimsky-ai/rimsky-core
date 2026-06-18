@@ -17,10 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// ParkActiveInTx transitions a node-run row from phase='active' to
-// phase='parked' under the supplied claimant guard. Persists the
-// park metadata and clears claimed_by so the orphan-claim reaper
-// (`claimed_by IS NOT NULL` predicate) excludes the row.
 func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in persistence.ParkActiveInput) error {
 	if tx == nil {
 		return errors.New("postgres.ParkActiveInTx: tx required")
@@ -55,8 +51,6 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 	return nil
 }
 
-// ListParkedReadyForResume returns up to limit parked rows whose
-// resume_at is non-NULL and has elapsed (resume_at <= cutoff).
 func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Time, limit int) ([]persistence.ParkedRow, error) {
 	if limit <= 0 {
 		limit = 100
@@ -80,9 +74,6 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 	return scanParkedRows(rows)
 }
 
-// ListParkedOverdue returns parked rows whose parked_at +
-// max_park_duration_seconds is older than now AND whose resume_at is
-// either NULL or strictly in the future.
 func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit int) ([]persistence.ParkedRow, error) {
 	if limit <= 0 {
 		limit = 100
@@ -108,8 +99,6 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 	return scanParkedRows(rows)
 }
 
-// ListParkedDiagnostic returns currently-parked rows for the admin
-// diagnostic endpoints.
 func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
 	if tx == nil {
 		return nil, errors.New("postgres.ListParkedDiagnostic: tx required")
@@ -170,8 +159,6 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 	return out, nil
 }
 
-// GetParkedByNode returns the parked row for a node, or (nil, nil) when
-// the node has no parked node-run row.
 func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.pool.QueryRow(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
@@ -193,10 +180,6 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, run
 	return r, nil
 }
 
-// ResumeParkedInTx transitions parked→pending so the next
-// SelectCandidates tick picks it up via the standard atomic acquisition
-// path. The park reason metadata is preserved on the row; resume state
-// rides attribute carry-forward per concept:parked-state.
 func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) (bool, error) {
 	if tx == nil {
 		return false, errors.New("postgres.ResumeParkedInTx: tx required")
@@ -217,8 +200,6 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 	return cmd.RowsAffected() == 1, nil
 }
 
-// RebindRunFrameInTx updates rimsky_node_runs.frame_id for the given
-// dispatch row to `newFrameID`.
 func (q *queueImpl) RebindRunFrameInTx(
 	ctx context.Context, tx persistence.Tx,
 	dispatchID, newFrameID shared.UUID,
@@ -239,7 +220,6 @@ func (q *queueImpl) RebindRunFrameInTx(
 	return nil
 }
 
-// GetRetryNoProgress returns the per-row counter and override.
 func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (int, *int, error) {
 	var (
 		count    int
@@ -264,7 +244,6 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 	return count, nil, nil
 }
 
-// SetRetryNoProgressForNodeInTx writes the carry-forward counter.
 func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error {
 	if tx == nil {
 		return errors.New("postgres.SetRetryNoProgressForNodeInTx: tx required")
@@ -284,7 +263,6 @@ func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persis
 	return nil
 }
 
-// UpdateDispatchTuningInTx writes the per-row dispatch tuning columns.
 func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error {
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
@@ -299,7 +277,6 @@ func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence
 	return nil
 }
 
-// scanParkedRows iterates a Rows cursor.
 func scanParkedRows(rows pgx.Rows) ([]persistence.ParkedRow, error) {
 	var out []persistence.ParkedRow
 	for rows.Next() {
@@ -315,7 +292,6 @@ func scanParkedRows(rows pgx.Rows) ([]persistence.ParkedRow, error) {
 	return out, nil
 }
 
-// scanOneParkedRow scans either a Rows cursor or a QueryRow result.
 func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	var (
 		r          persistence.ParkedRow
@@ -357,7 +333,6 @@ func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	return &r, nil
 }
 
-// LoadScratchInTx returns the persisted scratch triple for a dispatch row.
 func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) ([]byte, string, string, error) {
 	if tx == nil {
 		return nil, "", "", errors.New("postgres.LoadScratchInTx: tx required")
@@ -389,7 +364,6 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, disp
 	return inline, hStr, bStr, nil
 }
 
-// WriteScratchInTx persists scratch onto a dispatch row.
 func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error {
 	if tx == nil {
 		return errors.New("postgres.WriteScratchInTx: tx required")
@@ -414,7 +388,6 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dis
 	return nil
 }
 
-// timeOrNullPark returns the time value or nil for an explicit NULL.
 func timeOrNullPark(t time.Time) any {
 	if t.IsZero() {
 		return nil
@@ -422,8 +395,6 @@ func timeOrNullPark(t time.Time) any {
 	return t
 }
 
-// intPtrOrNullPark returns the int pointer's value or nil for an
-// explicit NULL.
 func intPtrOrNullPark(p *int) any {
 	if p == nil {
 		return nil

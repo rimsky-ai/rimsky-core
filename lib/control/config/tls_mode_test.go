@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Parse-time validation of the per-peer `tls:` key: accepted values are
-// exactly "" (→ off), off, and required, on every peer kind
-// (claim_producers / executors / publishers). Anything else — including
-// the retired "optional" — is a config error naming the entry.
-
 package config
 
 import (
@@ -14,8 +9,6 @@ import (
 	"testing"
 )
 
-// tlsTestYAML renders a rimsky.yml carrying one entry of each peer kind
-// with the given `tls:` line (pass "" to omit the key entirely).
 func tlsTestYAML(tlsLine string) string {
 	indent := ""
 	if tlsLine != "" {
@@ -68,9 +61,6 @@ func TestTLSMode_ValidValues_Pass(t *testing.T) {
 	}
 }
 
-// TestTLSMode_OptionalRejected_NamingEntry verifies the retired
-// "optional" value (and any other junk) rejects at parse with an error
-// naming the entry and the accepted values, per peer kind.
 func TestTLSMode_OptionalRejected_NamingEntry(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -153,10 +143,6 @@ executors:
 	}
 }
 
-// TestTLSMode_HTTPBridgeRequiredNeedsHTTPS verifies the
-// ExecutorsConfig.Validate guard: a `tls: required` HTTP-bridge
-// executor must carry an https:// endpoint — a plaintext URL fails
-// startup validation naming the entry, never accepted-and-ignored.
 func TestTLSMode_HTTPBridgeRequiredNeedsHTTPS(t *testing.T) {
 	reject := ExecutorsConfig{Executors: map[string]ExecutorEntry{
 		"bridge-runner": {Transport: "http", Endpoint: "http://bridge-runner:8080", TLS: "required"},

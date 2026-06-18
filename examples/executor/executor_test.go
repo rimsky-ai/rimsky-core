@@ -17,11 +17,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @deliberate: TestExecuteReturnsSuccessOutcome — default dispatch
-// path (no `mode` attribute) settles as Outcome{Success} with no
-// tags and a non-error change summary. Plus the Capabilities
-// handshake advertises all three load-bearing fields:
-// expected_attributes_schema, declared_tags, declared_error_classes.
 func TestExecuteReturnsSuccessOutcome(t *testing.T) {
 	e := &Executor{}
 	outcome, err := e.Execute(context.Background(), &genv1.ExecuteRequest{})
@@ -51,12 +46,6 @@ func TestExecuteReturnsSuccessOutcome(t *testing.T) {
 	}
 }
 
-// @deliberate: TestExecute_RaiseErrorEmitsDeclaredClass — `mode:
-// raise_error` settles as Outcome{Error} carrying the executor's
-// declared error class. Per @concept:error-policy the wire value of
-// Error.error_class IS the routing key; an operator template's
-// `error_types: { example/forbidden: ... }` chain matches on this
-// exact string.
 func TestExecute_RaiseErrorEmitsDeclaredClass(t *testing.T) {
 	e := &Executor{}
 	req := mustExecuteRequest(t, map[string]any{"mode": "raise_error"})
@@ -74,11 +63,6 @@ func TestExecute_RaiseErrorEmitsDeclaredClass(t *testing.T) {
 	}
 }
 
-// @deliberate: TestExecute_EmitEventEmitsDeclaredTag — `mode:
-// emit_event` settles as Outcome{Success} carrying the declared tag
-// in `Tags`. Per @concept:terminal-tag the tag rides on the
-// settling verdict; downstream subscribers fire via
-// `type: terminal/success when: "<tag>" in payload.tags`.
 func TestExecute_EmitEventEmitsDeclaredTag(t *testing.T) {
 	e := &Executor{}
 	req := mustExecuteRequest(t, map[string]any{"mode": "emit_event"})
@@ -96,16 +80,6 @@ func TestExecute_EmitEventEmitsDeclaredTag(t *testing.T) {
 	}
 }
 
-// @deliberate: TestExecute_AsyncMode_ReturnsAwaitAsyncCallback —
-// `mode: async_callback` with a supplied `async_ack_id` attribute
-// settles the unary RPC as Outcome{AwaitAsyncCallback} carrying that
-// exact ack id. Per @concept:async-callback-persistence the supervisor
-// keys the dispatch row's `col:rimsky_node_runs.async_ack_id` on this
-// value; an incoming callback POST to `/v1/callback/{ack_id}` is
-// correlated by lookup against that column, surviving supervisor
-// restart. The empty-callback-url branch is exercised: with no URL set
-// the executor returns AwaitAsync without dispatching the deferred
-// POST goroutine, so the test asserts on the unary-response shape only.
 func TestExecute_AsyncMode_ReturnsAwaitAsyncCallback(t *testing.T) {
 	e := &Executor{}
 	const wantAck = "ack-async-unit-test-1"
@@ -126,13 +100,6 @@ func TestExecute_AsyncMode_ReturnsAwaitAsyncCallback(t *testing.T) {
 	}
 }
 
-// @deliberate: TestExecute_AsyncMode_MissingAckIDSurfacesError — the
-// empty-ack-id branch of the async-callback path is a template
-// mistake (the executor has no way to manufacture a stable id the
-// supervisor's persistent registry can correlate against). The
-// executor surfaces it as an Error{DeclaredErrorClass} instead of
-// AwaitAsync against an empty ack id, so the failure is visible in
-// the audit log instead of stuck in `running`.
 func TestExecute_AsyncMode_MissingAckIDSurfacesError(t *testing.T) {
 	e := &Executor{}
 	req := mustExecuteRequest(t, map[string]any{"mode": "async_callback"})

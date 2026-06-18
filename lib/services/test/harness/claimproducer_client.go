@@ -17,30 +17,9 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// DialClaimProducer dials a peer claim-producer over gRPC and returns
-// an adapter that satisfies the
-// `pkg:protocols/claimproducer.ClaimProducer` Go interface — the form
-// the protocols conformance runner consumes.
-//
-// The adapter mirrors rimsky-internal `pkg:runtime/peer.Dial` —
-// reaching for that package directly is barred by the
-// `consumption-side-isolation` depguard. The duplicate lives here
-// (rather than in `pkg:protocols`) because the protocols module does
-// not currently publish a gRPC ClaimProducer client; the conformance
-// runner takes the Go interface, leaving callers to adapt their own
-// wire client.
-//
-// `endpoint` may carry an optional "grpc://" prefix (the convention
-// used in rimsky.yml); the prefix is stripped before dial.
-//
-// The caller is responsible for calling Close on the returned adapter
-// to release the gRPC channel.
-//
 // @source: lib/runtime/peer/dial.go::Dial
 // @diverged: true
 // @reason: consumption-side-isolation bars runtime/peer; the
-// lib/services test harness owns its own wire-adapter copy until the
-// protocols module publishes one.
 func DialClaimProducer(ctx context.Context, name, endpoint string) (*ClaimProducerClient, error) {
 	target := strings.TrimPrefix(endpoint, "grpc://")
 	if target == "" {
@@ -79,8 +58,6 @@ func DialClaimProducer(ctx context.Context, name, endpoint string) (*ClaimProduc
 	}, nil
 }
 
-// ClaimProducerClient is a gRPC-backed adapter satisfying the Go
-// `claimproducer.ClaimProducer` interface.
 type ClaimProducerClient struct {
 	name string
 	conn *grpc.ClientConn
@@ -88,18 +65,14 @@ type ClaimProducerClient struct {
 	caps claimproducer.Capabilities
 }
 
-// Close releases the underlying gRPC channel.
 func (c *ClaimProducerClient) Close() error { return c.conn.Close() }
 
-// Name returns the operator-configured producer name.
 func (c *ClaimProducerClient) Name() string { return c.name }
 
-// Capabilities returns the cached startup-handshake capabilities.
 func (c *ClaimProducerClient) Capabilities(_ context.Context) (claimproducer.Capabilities, error) {
 	return c.caps, nil
 }
 
-// Open dispatches to the wire.
 func (c *ClaimProducerClient) Open(ctx context.Context, claimID claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
 	resp, err := c.rpc.Open(ctx, &genv1.OpenRequest{
 		ClaimId:      string(claimID),
@@ -131,8 +104,6 @@ func (c *ClaimProducerClient) Open(ctx context.Context, claimID claimproducer.Cl
 	}, nil
 }
 
-// Commit dispatches to the wire and returns the response body fields
-// (version_id + producer_metadata) per the base-protocol contract.
 func (c *ClaimProducerClient) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte) (claimproducer.CommitResult, error) {
 	resp, err := c.rpc.Commit(ctx, &genv1.CommitRequest{
 		ClaimId:    string(claimID),
@@ -148,7 +119,6 @@ func (c *ClaimProducerClient) Commit(ctx context.Context, claimID claimproducer.
 	}, nil
 }
 
-// Abandon dispatches to the wire.
 func (c *ClaimProducerClient) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte) error {
 	_, err := c.rpc.Abandon(ctx, &genv1.AbandonRequest{
 		ClaimId:    string(claimID),
@@ -158,7 +128,6 @@ func (c *ClaimProducerClient) Abandon(ctx context.Context, claimID claimproducer
 	return err
 }
 
-// Release dispatches to the wire.
 func (c *ClaimProducerClient) Release(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte) error {
 	_, err := c.rpc.Release(ctx, &genv1.ReleaseRequest{
 		ClaimId:    string(claimID),
@@ -168,8 +137,6 @@ func (c *ClaimProducerClient) Release(ctx context.Context, claimID claimproducer
 	return err
 }
 
-// SplitScope dispatches to the wire when the producer advertises
-// supports_split_scope. Otherwise returns ErrSplitScopeUnsupported.
 func (c *ClaimProducerClient) SplitScope(ctx context.Context, req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
 	if !c.caps.SupportsSplitScope {
 		return claimproducer.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
@@ -192,9 +159,6 @@ func (c *ClaimProducerClient) SplitScope(ctx context.Context, req claimproducer.
 	return claimproducer.SplitClaimScopeResponse{SubClaimScopes: subs}, nil
 }
 
-// ScopesConflict dispatches to the wire when the producer advertises
-// supports_scopes_conflict. Otherwise returns
-// ErrScopesConflictUnsupported per the protocol's documented sentinel.
 func (c *ClaimProducerClient) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) {
 	if !c.caps.SupportsScopesConflict {
 		return false, claimproducer.ErrScopesConflictUnsupported
@@ -209,7 +173,6 @@ func (c *ClaimProducerClient) ScopesConflict(ctx context.Context, a, b []byte) (
 	return resp.GetConflicts(), nil
 }
 
-// writeSemanticsFromProto maps the proto enum to the Go enum.
 func writeSemanticsFromProto(ws genv1.WriteSemantics) claimproducer.WriteSemantics {
 	switch ws {
 	case genv1.WriteSemantics_WRITE_SEMANTICS_SYNC:

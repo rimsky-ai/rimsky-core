@@ -38,7 +38,6 @@ func TestSweepRotationGrace(t *testing.T) {
 
 	clock := shared.NewControllableClock(time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC))
 
-	// @deliberate: Insert a key whose revoke_at is already in the past.
 	keyID := uuid.New()
 	hash := sha256.Sum256([]byte("rk_sweep_target"))
 	past := clock.Now().Add(-1 * time.Minute)
@@ -57,7 +56,6 @@ func TestSweepRotationGrace(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	// @deliberate: Sweep — should revoke the row.
 	logger := shared.NewCapturingLogger()
 	n, err := runtime.SweepRotationGrace(ctx, tables, clock, logger)
 	if err != nil {
@@ -67,13 +65,11 @@ func TestSweepRotationGrace(t *testing.T) {
 		t.Fatalf("sweep returned %d; want 1", n)
 	}
 
-	// @deliberate: Row is now revoked.
 	row, ok, err := tables.APIKeys().GetByID(ctx, keyID, nil)
 	if err != nil || !ok || row.RevokedAt == nil {
 		t.Fatalf("post-sweep row: err=%v ok=%v revoked_at=%v", err, ok, row.RevokedAt)
 	}
 
-	// @deliberate: Idempotent re-sweep.
 	n, err = runtime.SweepRotationGrace(ctx, tables, clock, logger)
 	if err != nil {
 		t.Fatalf("re-sweep: %v", err)
@@ -82,7 +78,6 @@ func TestSweepRotationGrace(t *testing.T) {
 		t.Fatalf("re-sweep returned %d; want 0", n)
 	}
 
-	// @deliberate: One auth.key_revoked event emitted.
 	var auditFound int
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		rl, err := tables.Events().List(ctx, persistence.EventListFilter{Kind: auth.EventKeyRevoked}, persistence.ListPagination{}, tx)

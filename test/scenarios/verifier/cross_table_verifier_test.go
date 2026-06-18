@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N10 scenario — cross_table_verifier.
-//
-// A verifier executor can verify across multiple tables; the
-// claim_aliases on the executor context list the per-node aliases
-// the executor receives at dispatch. The scenario pins the
-// claim_aliases pass-through shape from the validation request.
 package verifier
 
 import (

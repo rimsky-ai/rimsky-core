@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// state.go — query the control-api for compose-owned resources.
-//
-// `GET /tags` and `GET /instances` do not support prefix filtering server-
-// side; the CLI lists the full set and filters client-side by the
-// project's `compose:<project>:` prefix.
 package compose
 
 import (
@@ -16,16 +11,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 )
 
-// TagWithTemplate pairs a tag with its currently-bound template hash.
 type TagWithTemplate struct {
 	Tag          string
 	TemplateHash string
 }
 
-// ComposeState is the slice of control-api state visible to compose for
-// a given project: tags whose names begin with `compose:<project>:`,
-// the templates referenced by any such tag, and instances whose
-// instance_key begins with `compose:<project>:`.
 type ComposeState struct {
 	Project      string
 	Tags         []TagWithTemplate
@@ -33,8 +23,6 @@ type ComposeState struct {
 	Instances    []cli.Instance
 }
 
-// QueryState lists the control-api's tags + instances and filters by
-// the project prefix client-side.
 func QueryState(ctx context.Context, c *cli.Client, project string) (*ComposeState, error) {
 	prefix := cli.ReservedTagPrefix + project + ":"
 

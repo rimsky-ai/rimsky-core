@@ -18,11 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// TestFanOutPartitions_ProjectsPartitionKeys — fan-out dispatch unit
-// test: pure helpers only; the integration-tx wiring (DispatchChildren
-// against a real RunTreeTable, the auto-terminal rendezvous with the
-// producer's Commit response) is covered by N2/N10 scenario tests.
-
 func TestFanOutPartitions_ProjectsPartitionKeys(t *testing.T) {
 	subClaims := []SubClaim{
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p1", ClaimScope: json.RawMessage(`{"prefix":"a"}`)},
@@ -54,14 +49,12 @@ func TestFanOutParallelismSemaphore_BoundsConcurrency(t *testing.T) {
 	if sem.InFlight() != 2 {
 		t.Errorf("in-flight: %d (want 2)", sem.InFlight())
 	}
-	// @deliberate: Third Acquire should block; verify via a timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	err := sem.Acquire(ctx)
 	if err == nil {
 		t.Errorf("expected context-deadline error from 3rd acquire on cap=2 semaphore")
 	}
-	// @deliberate: Release one — next acquire passes.
 	sem.Release()
 	if err := sem.Acquire(context.Background()); err != nil {
 		t.Fatal(err)
@@ -73,7 +66,6 @@ func TestFanOutParallelismSemaphore_BoundsConcurrency(t *testing.T) {
 
 func TestFanOutParallelismSemaphore_Unbounded(t *testing.T) {
 	sem := NewFanOutParallelismSemaphore(0)
-	// @deliberate: Unbounded → 1000 acquires complete immediately, no block.
 	for i := 0; i < 1000; i++ {
 		if err := sem.Acquire(context.Background()); err != nil {
 			t.Fatalf("unbounded acquire[%d]: %v", i, err)
@@ -82,7 +74,7 @@ func TestFanOutParallelismSemaphore_Unbounded(t *testing.T) {
 	if sem.InFlight() != 0 {
 		t.Errorf("unbounded in-flight reports: %d (want 0)", sem.InFlight())
 	}
-	sem.Release() // @deliberate: no-op on unbounded; should not panic
+	sem.Release()
 }
 
 func TestFanOutSemaphoreRegistry_GetOrCreateIsIdempotent(t *testing.T) {

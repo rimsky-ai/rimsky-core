@@ -15,21 +15,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// Dial connects to a remote producer-service over gRPC, performs the
-// startup Capabilities() handshake, and returns a Client that satisfies
-// the rimsky-side locks.ClaimProducer interface.
-//
-// Endpoint may carry a "grpc://" prefix (the convention used in
-// rimsky.yml); the prefix is stripped before passing to grpc.NewClient.
-//
-// tlsMode is the peer entry's validated `tls:` mode (TLSModeOff /
-// TLSModeRequired; empty → off). Under required the channel uses
-// verified TLS and RPC failures name the peer and mode.
-//
-// On any failure (unreachable, capability RPC error, timeout), Dial
-// returns the error without leaking a partial Client. Callers should
-// pass a context with a deadline so a non-responsive producer-service
-// cannot block startup forever.
 func Dial(ctx context.Context, name, endpoint, tlsMode string) (*Client, error) {
 	target, err := stripScheme(name, endpoint)
 	if err != nil {
@@ -37,12 +22,6 @@ func Dial(ctx context.Context, name, endpoint, tlsMode string) (*Client, error) 
 	}
 	conn, err := grpc.NewClient(target,
 		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
-		// @constraint: ServiceNameUnaryInterceptor stamps x-rimsky-service-name
-		// from the per-call context so a host-agent-proxy fronting the
-		// claim-producer protocol can route by service name (no-op when the
-		// dispatch site set no name). The TLSMode interceptors annotate RPC
-		// errors with the peer name + mode under tls: required (no-op
-		// otherwise).
 		grpc.WithChainUnaryInterceptor(ServiceNameUnaryInterceptor, TLSModeUnaryInterceptor(name, tlsMode)),
 		grpc.WithChainStreamInterceptor(ServiceNameStreamInterceptor, TLSModeStreamInterceptor(name, tlsMode)),
 	)
@@ -83,12 +62,6 @@ func Dial(ctx context.Context, name, endpoint, tlsMode string) (*Client, error) 
 	}, nil
 }
 
-// DialLifecycle connects to a peer that implements the
-// LifecycleSubscriber service. Unlike Dial, no startup handshake is
-// performed (the LifecycleSubscriber service has no Capabilities verb);
-// the dial succeeds as long as the gRPC channel comes up and the caller
-// is responsible for catching unimplemented errors when the first
-// lifecycle event fires.
 func DialLifecycle(_ context.Context, name, endpoint, tlsMode string) (*LifecycleClient, error) {
 	target, err := stripScheme(name, endpoint)
 	if err != nil {

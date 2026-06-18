@@ -17,9 +17,6 @@ import (
 	pgpersist "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 )
 
-// TestPgLargeObjectBackend covers the round-trip path against a
-// testcontainers Postgres instance: write 1MB, read back, range read,
-// delete, idempotent delete, post-delete read returns ErrBlobNotFound.
 func TestPgLargeObjectBackend(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -31,7 +28,6 @@ func TestPgLargeObjectBackend(t *testing.T) {
 		t.Fatalf("Name: got %q, want pg-largeobject", be.Name())
 	}
 
-	// @deliberate: 1 MiB payload exercises chunked I/O.
 	payload := bytes.Repeat([]byte("0123456789abcdef"), 65536)
 	h, err := be.Write(ctx, persistence.BlobKey{NodeID: "n1", AttributeName: "value"}, payload)
 	if err != nil {
@@ -68,8 +64,6 @@ func TestPgLargeObjectBackend(t *testing.T) {
 	}
 }
 
-// TestPgLargeObjectBackendReadRangeOutOfBounds confirms io.ErrUnexpectedEOF
-// fires when the requested range exceeds blob length.
 func TestPgLargeObjectBackendReadRangeOutOfBounds(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -85,8 +79,6 @@ func TestPgLargeObjectBackendReadRangeOutOfBounds(t *testing.T) {
 	}
 }
 
-// TestPgLargeObjectBackendRejectsBadHandle confirms a non-pglo: handle
-// is rejected without a server round-trip.
 func TestPgLargeObjectBackendRejectsBadHandle(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())

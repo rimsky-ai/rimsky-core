@@ -14,7 +14,6 @@ import (
 	"os"
 )
 
-// RunAuthShow implements `rimsky auth show <name-or-id>`.
 func RunAuthShow(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth show", flag.ContinueOnError)
 	var endpointFlag, keyFlag string

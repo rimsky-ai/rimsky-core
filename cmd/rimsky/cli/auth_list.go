@@ -15,7 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
-// RunAuthList implements `rimsky auth list`.
 func RunAuthList(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth list", flag.ContinueOnError)
 	var (
@@ -87,9 +86,6 @@ func RunAuthList(ctx context.Context, args []string) int {
 	return 0
 }
 
-// matchRole renders a human label for the grant: "role:<name>" when
-// the grant matches a bundled role's expansion exactly; otherwise
-// "custom".
 func matchRole(g auth.Grant) string {
 	for _, name := range bundledRoleNames() {
 		r, err := loadRole(name, "")

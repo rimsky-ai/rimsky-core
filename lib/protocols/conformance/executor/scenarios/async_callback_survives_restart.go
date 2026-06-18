@@ -14,19 +14,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @deliberate: async_callback_survives_restart is the executor-side
-// half of TD-persist-async-callback-registry: the executor accepts
-// the dispatch, replies with AwaitAsyncCallback, and POSTs the
-// settling verdict to the callback URL. The persistent-registry
-// guarantee — that the verdict still lands after a supervisor
-// restart between AwaitAsync and the callback POST — is exercised
-// by `code:test/scenarios/atomic_staging/pg_verifier_conformance_test.go`
-// which drives a real testcontainers supervisor through stop / start
-// between the two events. This conformance scenario pins the
-// executor-side protocol shape: AwaitAsyncCallback carries a
-// non-empty `async_ack_id`, and the executor eventually POSTs an
-// outcome body keyed by that ackID.
-//
 // @concept: async-callback-persistence
 func init() {
 	conformance.Register(conformance.Scenario{

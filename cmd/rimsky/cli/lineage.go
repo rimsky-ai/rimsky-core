@@ -2,11 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// lineage.go — `rimsky lineage prune` (plan G4). Thin wrapper over
-// POST /admin/lineage/prune, which itself delegates to
-// `code:foundation/persistence/lineage.go::LineageTable.DeleteOlderThan`.
-//
-//	@concept: lineage-record
+// @concept: lineage-record
 package cli
 
 import (
@@ -17,7 +13,6 @@ import (
 	"time"
 )
 
-// RunLineagePrune implements `lineage prune --before <RFC3339>`.
 func RunLineagePrune(ctx context.Context, args []string) int {
 	var before string
 	var beforeDur time.Duration

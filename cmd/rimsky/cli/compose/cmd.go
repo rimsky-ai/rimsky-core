@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// cmd.go — sub-dispatcher for `compose <up|down|plan|status|run>`.
 package compose
 
 import (
@@ -11,7 +10,6 @@ import (
 	"os"
 )
 
-// Dispatch routes `compose <verb>` to the appropriate handler.
 func Dispatch(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: rimsky compose <up|down|plan|status|run> ...")

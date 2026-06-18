@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// walker.go — walk the repo tree, classify each source file, and return
-// the set of files the verifier and stamper operate on.
-
 package main
 
 import (
@@ -13,7 +10,6 @@ import (
 	"strings"
 )
 
-// fileEntry is one source file the lint cares about.
 type fileEntry struct {
 	relPath        string
 	absPath        string
@@ -31,17 +27,12 @@ const (
 	kindShell
 )
 
-// skipDirs these directories outright when walking. Only VCS dirs are hardcoded;
-// all other "skip me" directories (bin/, node_modules/, dist/, gen/, etc.)
-// must be listed under `exempt:` in licensing.yml so the boundary map is the
-// single source of truth.
 var skipDirs = map[string]struct{}{
 	".git": {},
 	".svn": {},
 	".hg":  {},
 }
 
-// sourceKindFor extensions we stamp/check.
 func sourceKindFor(name string) (sourceKind, bool) {
 	switch filepath.Ext(name) {
 	case ".go":
@@ -74,8 +65,6 @@ func walkSourceFiles(root string, cfg *licensingConfig) ([]fileEntry, error) {
 			if _, skip := skipDirs[d.Name()]; skip {
 				return fs.SkipDir
 			}
-			// @constraint: honor exempt-prefix that names a directory
-			// (e.g. "bin/", "protocols/proto/v1/gen/").
 			if cfg.classify(rel) == classExempt {
 				return fs.SkipDir
 			}
@@ -85,20 +74,11 @@ func walkSourceFiles(root string, cfg *licensingConfig) ([]fileEntry, error) {
 		if !ok {
 			return nil
 		}
-		// @deliberate: tests under proto/v1/gen/ etc. are excluded by the
-		// dir skip; at this point a stray file matching exempt paths
-		// still gets skipped here.
 		c := cfg.classify(rel)
 		if c == classExempt {
 			return nil
 		}
 		if c == classUnknown {
-			// @deliberate: a source file in an unclassified location is
-			// itself a violation worth surfacing — record as classUnknown
-			// so verify catches it via the import check rather than
-			// silently mis-classifying. In practice licensing.yml covers
-			// every directory the project ships; surfacing unclassified
-			// source files as a hard error forces a config update.
 			out = append(out, fileEntry{
 				relPath:        rel,
 				absPath:        path,
@@ -118,7 +98,6 @@ func walkSourceFiles(root string, cfg *licensingConfig) ([]fileEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	// @constraint: stable order for deterministic output.
 	sortFiles(out)
 	return out, nil
 }

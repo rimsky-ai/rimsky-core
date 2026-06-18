@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// conformance.go — `rimsky conformance <protocol>` subcommands. Each
-// handler is a thin CLI wrapper around the importable runner library at
-// `pkg:protocols/conformance/...`; the library is what external Go
-// authors call directly. The handlers were folded in from the former
-// standalone cmd/rimsky-*-conformance binaries.
 package main
 
 import (
@@ -29,7 +24,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/dataprocessing"
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
-	_ "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor/scenarios" // @constraint: blank import for init() scenario registration
+	_ "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor/scenarios"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/publisher"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/validation"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -69,10 +64,6 @@ func printConformanceUsage(w *os.File) {
 	fmt.Fprintln(w, "usage: rimsky conformance <executor|claim-producer|publisher|validation|data-processing|blob-backend|probe> ...")
 }
 
-// runConformanceExecutor runs the protocol conformance suite against a live
-// node-executor endpoint. Any executor speaking gRPC (canonical) or the
-// HTTP+JSON bridge can be validated. With --check-lifecycle it instead runs
-// the lifecycle protocol six-RPC sanity probe.
 func runConformanceExecutor(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance executor", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "endpoint URL (executor or lifecycle peer)")
@@ -162,18 +153,6 @@ func splitConformanceCSV(s string) []string {
 	return parts
 }
 
-// runConformanceClaimProducer runs the ClaimProducer conformance suite
-// against a remote producer-service endpoint. Checks include the Capabilities
-// handshake, write-semantics envelope conformance, the uniformity invariant
-// (byte-equal Scope ⇒ identical RealizedWriteSemantics), the terminal verbs
-// Commit / Abandon / Release driven against real claims the suite itself
-// Open'd, a TerminalIdempotency probe asserting a retried (re-issued) terminal
-// verb is accepted without error, the optional SplitScope / ScopesConflict
-// probes (gated on the producer's advertised capabilities), and — for
-// producers advertising staged_async — the Serialization9b probe, which fails
-// a producer that internally serializes a reader Open behind an open writer on
-// the byte-equal scope (the reader-lease pattern @blessed-invariant 9b
-// forbids).
 func runConformanceClaimProducer(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance claim-producer", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "claim-producer-service gRPC endpoint (e.g. grpc://localhost:9101)")
@@ -192,9 +171,6 @@ func runConformanceClaimProducer(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	// @deliberate: dial plaintext — the runner exercises the wire
-	// protocol; TLS termination is the deployment's concern when
-	// pointing it at a TLS-fronted peer.
 	client, err := peer.Dial(ctx, "conformance-target", *endpoint, peer.TLSModeOff)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky conformance claim-producer: dial: %v\n", err)
@@ -230,9 +206,6 @@ func runConformanceClaimProducer(args []string) int {
 	return 0
 }
 
-// runConformancePublisher is a black-box conformance suite for the Publisher
-// service-protocol. Custom publisher authors can point this at their service
-// to verify lifecycle + message-push shape.
 func runConformancePublisher(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance publisher", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "publisher gRPC endpoint (e.g. grpc://localhost:9202)")
@@ -292,8 +265,6 @@ func runConformancePublisher(args []string) int {
 	return 0
 }
 
-// runConformanceValidation is a black-box conformance suite for the Validation
-// mix-in service-protocol.
 func runConformanceValidation(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance validation", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "validation-advertising service gRPC endpoint (e.g. grpc://localhost:9095)")
@@ -343,8 +314,6 @@ func runConformanceValidation(args []string) int {
 	return 0
 }
 
-// runConformanceDataProcessing is a black-box conformance suite for the
-// DataProcessing mix-in service-protocol.
 func runConformanceDataProcessing(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance data-processing", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "data-processing-service gRPC endpoint (e.g. grpc://localhost:9101)")
@@ -393,9 +362,6 @@ func runConformanceDataProcessing(args []string) int {
 	return 0
 }
 
-// runConformanceBlobBackend runs the in-process BlobBackend conformance suite
-// against the named backend. Distinct from the wire-protocol runners because
-// the backend surface is in-process Go (`persistence.BlobBackend`).
 func runConformanceBlobBackend(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance blob-backend", flag.ContinueOnError)
 	backend := fs.String("backend", "", "blob backend name: memory | filesystem | pg-largeobject")
@@ -440,10 +406,6 @@ func runConformanceBlobBackend(args []string) int {
 	return 0
 }
 
-// blobBackendAdapter bridges rimsky's persistence.BlobBackend (typed key +
-// opaque Handle) to the conformance library's reduced blobbackend.Backend
-// surface. ErrBlobNotFound is translated so the conformance suite's errors.Is
-// check matches.
 type blobBackendAdapter struct {
 	be persistence.BlobBackend
 }
@@ -476,11 +438,9 @@ func (a *blobBackendAdapter) Delete(ctx context.Context, handle blobbackend.Hand
 	return a.be.Delete(ctx, persistence.Handle(handle))
 }
 
-// openBlobBackend constructs a BlobBackend by name.
 func openBlobBackend(ctx context.Context, name, root, dsn string) (persistence.BlobBackend, func(), error) {
 	switch name {
 	case "memory":
-		// @deliberate: assert unified process role to bypass the unified-only memory-backend gate; conformance is single-process.
 		_ = os.Setenv(persistence.ProcessRoleEnv, "unified")
 		return persistence.NewMemoryBackend(), func() {}, nil
 	case "filesystem":
@@ -508,9 +468,6 @@ func openBlobBackend(ctx context.Context, name, root, dsn string) (persistence.B
 	}
 }
 
-// runConformanceProbe is the protocol-agnostic stub-mode probe. Issues one
-// Execute RPC with attributes {stub_probe: true} and asserts the terminal
-// carries attributes_delta {stub: true}.
 func runConformanceProbe(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance probe", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "executor endpoint URL")
@@ -570,7 +527,6 @@ func runConformanceProbe(args []string) int {
 	}
 	switch oc := settled.GetOutcome().(type) {
 	case *genv1.Outcome_Success:
-		// @constraint: stub mode signals via attributes_delta on Success — probe asserts {stub:true} in the success delta.
 		m := oc.Success.GetAttributesDelta().AsMap()
 		if v, ok := m["stub"].(bool); !ok || !v {
 			fmt.Fprintf(os.Stderr, "conformance: stub-mode probe did not return {stub:true}, got %+v\n", m)

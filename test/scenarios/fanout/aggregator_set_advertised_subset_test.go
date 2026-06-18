@@ -2,21 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N2 scenario — aggregator_set_advertised_subset.
-//
-// The fan-out parent's aggregation policy MUST be one of `strict`,
-// `threshold`, `best_effort`, `first`. The producer's
-// `Capabilities.AggregatorsAdvertised` field is a separate dimension
-// — it advertises which aggregator implementations the producer can
-// commit per-partition outputs through (an out-of-band field; rimsky
 // passes the parent's `data:` block verbatim per @blessed-invariant
-// 20). Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Output aggregation.
-//
-// This scenario confirms the runtime Aggregate function defaults
-// unrecognized kinds to `strict` (safe fallback) and that the kinds
-// enumerated above are accepted.
 package fanout
 
 import (

@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// imports.go — verify the Apache → AGPL import-direction rule.
-//
-// Rule: every Apache-classified Go file's imports of `github.com/rimsky-ai/rimsky-core/...`
-// must resolve to other Apache-classified packages. AGPL packages are
-// unrestricted (they can import either layer freely).
-//
-// Implementation note: the import path
-//   github.com/rimsky-ai/rimsky-core/lib/foundation/locks
-// resolves to a directory in this repo. We map module-paths back to repo
-// paths by stripping the module-path prefix per the go.mod file we sit in.
-
 package main
 
 import (
@@ -21,9 +10,6 @@ import (
 	"strings"
 )
 
-// modulePathPrefixes is the set of module paths defined in this repo that
-// resolve to local directories. Each entry maps a module path to the
-// repo-relative directory that contains its go.mod.
 var modulePathPrefixes = []struct {
 	module string
 	dir    string
@@ -34,9 +20,6 @@ var modulePathPrefixes = []struct {
 }
 
 func init() {
-	// @constraint: ensure longest module-path comes first so the nested
-	// submodules (foundation/, protocols/) win the prefix match in
-	// importToRepoPath below.
 	for i := 0; i < len(modulePathPrefixes); i++ {
 		for j := i + 1; j < len(modulePathPrefixes); j++ {
 			if len(modulePathPrefixes[j].module) > len(modulePathPrefixes[i].module) {
@@ -46,14 +29,6 @@ func init() {
 	}
 }
 
-// verifyImports parses each Apache-classified Go file and checks every
-// rimsky import. AGPL files are not checked (they can import freely).
-//
-// Test files (`*_test.go`) are exempt from the import-direction rule:
-// tests routinely need internal scaffolding (testcontainers fixtures,
-// in-process database harnesses) and don't ship in published binaries
-// or libraries. Apache-licensed test files may therefore import AGPL
-// helpers such as `internal/pgtest/` without the lint complaining.
 func verifyImports(files []fileEntry, cfg *licensingConfig) []violation {
 	var out []violation
 	fset := token.NewFileSet()
@@ -93,8 +68,6 @@ func verifyImports(files []fileEntry, cfg *licensingConfig) []violation {
 	return out
 }
 
-// importToRepoPath maps an import path under github.com/rimsky-ai/rimsky-core/
-// to the repo-relative directory that import resolves to.
 func importToRepoPath(importPath string) (string, bool) {
 	for _, mp := range modulePathPrefixes {
 		if importPath == mp.module {

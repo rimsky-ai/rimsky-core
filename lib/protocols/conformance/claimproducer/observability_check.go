@@ -2,12 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// observability_check.go implements the ClaimProducerObservability
-// probe run by `rimsky conformance claim-producer`. Substantive
-// checks: Capabilities, the per-admin-view GetAdminView round-trips, the
-// missing-claim probes for GetClaim and StreamClaim (when supported),
-// and a structural ListClaims round-trip (when supported).
-
 package claimproducer
 
 import (
@@ -25,20 +19,11 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// ObservabilityCheckOpts configures the observability probe.
 type ObservabilityCheckOpts struct {
-	// Endpoint is the gRPC endpoint string (may carry a grpc:// prefix).
-	Endpoint string
-	// RetentionTestSeconds: when > 0 the probe drives a canned claim
-	// then sleeps this long and verifies GetClaim returns evicted.
+	Endpoint             string
 	RetentionTestSeconds int
 }
 
-// RunObservabilityCheck implements the spec §6 / Task F2 probe. It
-// emits one line of human-readable progress per check via the
-// supplied logf callback; supply fmt.Printf when wired into a CLI
-// binary or a no-op when invoked from a Go test that wants only the
-// error result.
 func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, logf func(format string, args ...any)) error {
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -71,8 +56,6 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 		if err != nil {
 			return fmt.Errorf("GetClaim probe: %w", err)
 		}
-		// @constraint: spec §3.6 — missing claims surface as
-		// ClaimDetail{state=UNKNOWN}.
 		if detail.GetState() != genv1.ClaimState_UNKNOWN {
 			return fmt.Errorf("GetClaim on missing claim returned state=%v, want UNKNOWN (spec §3.6)", detail.GetState())
 		}

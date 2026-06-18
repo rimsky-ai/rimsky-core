@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Auth-smoke: end-to-end exercise of the auth-key lifecycle against
-// the live rimsky/all stack. Verifies bootstrap → mint → rotate →
-// revoke plus the implicit anonymous-mode floor.
 package smoke
 
 import (
@@ -18,8 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// TestAuthSmoke_BootstrapLifecycle drives the documented anonymous →
-// admin → ro → rotate → revoke flow over the live control-api.
 func TestAuthSmoke_BootstrapLifecycle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -79,7 +74,6 @@ func TestAuthSmoke_BootstrapLifecycle(t *testing.T) {
 	}
 }
 
-// authPost POSTs JSON with optional Bearer; fails the test on non-2xx.
 func authPost(t *testing.T, url, key string, body any) map[string]any {
 	t.Helper()
 	bs, _ := json.Marshal(body)
@@ -91,7 +85,6 @@ func authPost(t *testing.T, url, key string, body any) map[string]any {
 	return doAndDecode(t, req)
 }
 
-// authGet GETs with optional Bearer; fails the test on non-2xx.
 func authGet(t *testing.T, url, key string) map[string]any {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(context.Background(), "GET", url, nil)
@@ -101,8 +94,6 @@ func authGet(t *testing.T, url, key string) map[string]any {
 	return doAndDecode(t, req)
 }
 
-// authCode runs the request and returns only the status code; useful
-// for permission-boundary assertions where the body is irrelevant.
 func authCode(t *testing.T, method, url, key string, body any) int {
 	t.Helper()
 	var reader io.Reader

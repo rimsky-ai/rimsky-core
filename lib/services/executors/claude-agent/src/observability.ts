@@ -2,28 +2,6 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// @deliberate: observability.ts — claude-agent's ExecutorObservability surface.
-//
-// Records per-dispatch trace events in a bounded in-memory ledger.
-// Exposes:
-//   - GET /observability/v1/capabilities
-//   - GET /observability/v1/trace/{dispatch_id}
-//   - GET /observability/v1/trace/{dispatch_id}/stream  (SSE)
-//
-// Per spec §2: standard vocabulary + free-form fallback. The agent
-// emits step_started/step_completed/step_failed/step_blocked/
-// step_parked/tool_call/error/log via `recordEvent`; consumers see
-// them via getTrace / streamTrace.
-//
-// Both surfaces ship: the gRPC ExecutorObservability service is wired
-// in `server.ts` alongside the executor service, and the HTTP+JSON
-// equivalent is mounted on the Fastify app for the dashboard's Hono
-// proxy and the conformance probe in `cmd/rimsky-conformance/`.
-//
-// Bounded retention: per dispatch, all events are retained until
-// retention_after_terminal_seconds elapses past terminal; then evicted
-// (the trace returns evicted: true, complete: true, events: []).
-
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { expectedAttributesSchemaBytes, resolveDeclaredTags, declaredErrorClasses } from "./expected-attributes-schema.js";
@@ -52,26 +30,12 @@ interface TraceRecord {
   events: TraceEvent[];
   complete: boolean;
   terminalAt?: number;
-  // @deliberate: listeners for live SSE streams
   listeners: Set<(ev: TraceEvent) => void>;
 }
 
 const RETENTION_AFTER_TERMINAL_SECONDS = 3600;
 const MAX_TRACES = 1024;
 
-/**
- * @agent-contract
- * what: Per-dispatch in-memory trace ledger backing the executor
- *   observability protocol (HTTP+JSON bridge mounted by `mountObservability`).
- * how: `recordEvent(dispatchId, ev)` appends one event; `markComplete(dispatchId)`
- *   stamps the terminal time; `getTrace(dispatchId)` returns a snapshot.
- *   Tests construct a fresh `Observability` per case; the production singleton
- *   is created by `main.ts` and shared with `agent-run.ts` via a callback.
- * handles: bounded retention (eviction at retention + idle check), free-form
- *   categories, SSE listener fan-out.
- * does-not-handle: persistence (process-local only); cross-process replication;
- *   gRPC service hosting (HTTP+JSON only in v1).
- */
 export class Observability {
   private records = new Map<string, TraceRecord>();
   private order: string[] = [];
@@ -92,7 +56,6 @@ export class Observability {
       try {
         cb(event);
       } catch {
-        // @deliberate: listener failures are not the producer's problem
       }
     }
     this.evictIfNeeded();
@@ -114,7 +77,6 @@ export class Observability {
       try {
         cb(tail);
       } catch {
-        // @deliberate: ignore
       }
     }
   }
@@ -122,10 +84,6 @@ export class Observability {
   getTrace(dispatchId: string): Trace {
     const rec = this.records.get(dispatchId);
     if (!rec || this.isEvicted(rec)) {
-      // @deliberate: per spec §2.6: missing dispatches must surface as the same
-      // evicted-shape envelope. evicted:true makes "we don't have
-      // it" a single observable signal, regardless of whether the
-      // dispatch never existed or has been evicted by retention.
       return { dispatch_id: dispatchId, evicted: true, complete: true, events: [] };
     }
     return {
@@ -136,18 +94,6 @@ export class Observability {
     };
   }
 
-  /**
-   * Subscribe to live events for a dispatch. Returns an unsubscribe
-   * function. Replay is the caller's concern (the HTTP handler emits
-   * the snapshot first, then attaches the listener).
-   *
-   * Note: prefer `subscribeWithSnapshot` for SSE handlers — it
-   * atomically returns the current snapshot + attaches the listener
-   * under one async tick, eliminating the gap window where new events
-   * could land between snapshot capture and listener registration
-   * (issue 11). Plain `subscribe` is kept for tests and for callers
-   * that don't need the snapshot.
-   */
   subscribe(dispatchId: string, cb: (ev: TraceEvent) => void): () => void {
     const rec = this.getOrCreate(dispatchId);
     rec.listeners.add(cb);
@@ -156,13 +102,6 @@ export class Observability {
     };
   }
 
-  /**
-   * Atomic snapshot+subscribe. Returns the current event slice plus
-   * a teardown handle for the live listener. Because both reads/writes
-   * happen synchronously in JS's single-threaded event loop, no event
-   * appended elsewhere can land between the snapshot and the listener
-   * attach — this is the analog of the Go-side fix in issue 11.
-   */
   subscribeWithSnapshot(
     dispatchId: string,
     cb: (ev: TraceEvent) => void,
@@ -205,10 +144,6 @@ export class Observability {
   }
 
   private evictIfNeeded() {
-    // @deliberate: hard cap on map size: when the bound is exceeded, drop the
-    // oldest record regardless of state. Without this, a long run of
-    // never-terminal dispatches would grow the ledger unbounded
-    // (parallels the same fix on the Go ledgers).
     while (this.records.size > MAX_TRACES) {
       const oldestId = this.order.shift();
       if (!oldestId) break;
@@ -224,25 +159,12 @@ export function capabilitiesPayload(httpBridgeUrl = "") {
     retention_after_terminal_seconds: RETENTION_AFTER_TERMINAL_SECONDS,
     custom_ui: null,
     http_bridge_url: httpBridgeUrl,
-    // @deliberate: plan A1 — expected attribute schema bytes (base64 for JSON wire) and declared tags.
     expected_attributes_schema: Buffer.from(expectedAttributesSchemaBytes()).toString("base64"),
     declared_tags: resolveDeclaredTags(),
-    // @deliberate: 2026-05-23 signal-taxonomy Pass 6: hierarchical error vocabulary.
     declared_error_classes: declaredErrorClasses,
   };
 }
 
-/**
- * Mounts the observability HTTP routes onto an existing Fastify
- * instance. The same routes are added by `startObservabilityServer`
- * when the executor boots its observability surface as a standalone
- * server; alternatively a parent listener (e.g. the http-bridge) can
- * mount them under itself.
- *
- * httpBridgeUrl, when non-empty, is included in the capabilities
- * response so dashboards can discover the externally-reachable URL
- * for browser-friendly fetch/SSE.
- */
 export function mountObservability(
   app: FastifyInstance,
   obs: Observability,
@@ -268,8 +190,6 @@ export function mountObservability(
       const send = (ev: TraceEvent) => {
         reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`);
       };
-      // @deliberate: atomic snapshot+subscribe so events appended between the two
-      // can't escape the stream (issue 11).
       const result = obs.subscribeWithSnapshot(dispatchId, (ev) => {
         send(ev);
         if (ev.category === "trace_complete") {
@@ -283,16 +203,12 @@ export function mountObservability(
         reply.raw.end();
         return;
       }
-      // @deliberate: spec §2.5: idle-close after RIMSKY_OBS_IDLE_TIMEOUT_MS (default
-      // 5 minutes). The listener resets the timer on every event;
-      // disconnect cancels both timer and subscription.
       const idleMs = Number(process.env.RIMSKY_OBS_IDLE_TIMEOUT_MS ?? 5 * 60 * 1000);
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       const armIdle = () => {
         if (idleMs <= 0) return;
         if (idleTimer !== null) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
-          // @deliberate: final keepalive comment + close (not an error).
           reply.raw.write(`: idle_timeout\n\n`);
           result.unsubscribe();
           reply.raw.end();

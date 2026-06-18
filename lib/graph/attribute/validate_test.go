@@ -75,7 +75,6 @@ func TestValidate_MissingRequired(t *testing.T) {
 	}
 	data := map[string]any{
 		"area": "northwest",
-		// @deliberate: subtopic omitted to exercise the required-missing case.
 	}
 	err := Validate(schema, data, PhaseDispatch)
 	if err == nil {
@@ -92,8 +91,6 @@ func TestValidate_MissingRequired(t *testing.T) {
 func TestValidate_BadSchema(t *testing.T) {
 	t.Parallel()
 
-	// @deliberate: JSON Schema declares `required` must be an array of
-	// strings; passing a string instead is a schema-compile error.
 	schema := map[string]any{
 		"type":     "object",
 		"required": "not-an-array",
@@ -108,10 +105,6 @@ func TestValidate_BadSchema(t *testing.T) {
 	}
 }
 
-// TestValidate_WholeDirectiveLift covers the receiver-side schema
-// validation for the whole-directive value lift added by spec
-// data slot, the Validate pass runs the JSON Schema over the typed
-// value (no string coercion).
 func TestValidate_WholeDirectiveLift(t *testing.T) {
 	t.Parallel()
 
@@ -159,10 +152,6 @@ func TestValidate_WholeDirectiveLift(t *testing.T) {
 				"count": map[string]any{"type": "integer"},
 			},
 		}
-		// @deliberate: {{params.count}} against count=42 lifts as
-		// float64(42). jsonschema/v5 accepts float64(42) for type:integer
-		// when it's a whole number (per JSON Schema's number-vs-integer
-		// rules).
 		data := map[string]any{"count": float64(42)}
 		if err := Validate(schema, data, PhaseDispatch); err != nil {
 			t.Fatalf("expected validation to pass for integer lift, got %v", err)
@@ -170,8 +159,6 @@ func TestValidate_WholeDirectiveLift(t *testing.T) {
 	})
 }
 
-// errAs is a tiny helper to keep the test imports lean — we already pull in
-// the standard errors package transitively via the package under test.
 func errAs(err error, target **ErrSchemaValidation) bool {
 	for cur := err; cur != nil; {
 		if v, ok := cur.(*ErrSchemaValidation); ok {

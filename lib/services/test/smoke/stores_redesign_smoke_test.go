@@ -2,29 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// stores_redesign_smoke_test.go — public-API acceptance smoke for the
-// stores redesign. The pre-2026-05-24 in-process version drove 100
-// sequential invalidations of the §11.5 four-node template through
-// `BringUpStack` and asserted on rimsky-internal tables. The rewrite
-// preserves the load-bearing semantic — "a template carrying real
-// store + executor wiring drives a cascade through to terminal" —
-// by:
-//
-//   - Bringing up rimsky/all with a real fs-store + real executor-stub
-//     as peer containers.
-//   - Deploying a minimal 2-node template (claim-acquirer → executor-
-//     target) that exercises the same store-acquire / executor-dispatch
-//     chain the §11.5 four-node template hit at scale.
-//   - Driving N=5 sequential invalidations (compressed from the
-//     original 100; the goal here is wire-shape coverage, not stress).
-//   - Asserting via the public observability API that the executor
-//     node reaches a terminal state after each invalidate.
-//
-// The white-box DB-query diagnostics in the original 780-line test
-// (rimsky_events / rimsky_node_runs / rimsky_claim_holders inspection)
-// are dropped — that surface is unreachable from lib/services under
-// the consumption-side-isolation depguard, and the public observability
-// API now covers the same questions where needed.
 package smoke
 
 import (
@@ -38,9 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// TestStoresRedesignSmoke drives N sequential invalidations of a
-// store-claim → executor template through the live stack and asserts
-// the executor node reaches terminal after each invalidate.
 func TestStoresRedesignSmoke(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -87,17 +61,9 @@ func TestStoresRedesignSmoke(t *testing.T) {
 
 	instanceID := smokeCreateInstance(t, ep, templateID, "stores-redesign-1")
 
-	// @deliberate: compressed from the original 100 — wire-shape coverage,
-	// not stress; 5 cycles exercise the claim-recycle / dispatch /
-	// cascade-drain loop enough to catch regressions.
 	const cycles = 5
 	const perCycle = 30 * time.Second
 
-	// @deliberate: the retired admin invalidate route is replaced by a
-	// pause → debug-override (action=invalidate_node) → resume sequence:
-	// debug-override only fires inside a paused/breakpoint gate, so
-	// each cycle pauses the instance, drives the stale-mark, and
-	// resumes so the next dispatch can claim the queued frame.
 	for n := 1; n <= cycles; n++ {
 		smokeWaitForTerminal(t, ep, instanceID, "claim-acquirer", 30*time.Second)
 		status, raw := ep.PostJSON(t,
@@ -122,13 +88,9 @@ func TestStoresRedesignSmoke(t *testing.T) {
 		_ = perCycle
 	}
 
-	// @constraint: post-final-invalidate the node must drain back to
-	// terminal — this is the load-bearing wire-shape assertion the
-	// pre-2026-05-24 white-box test covered via DB inspection.
 	smokeWaitForTerminal(t, ep, instanceID, "claim-acquirer", perCycle)
 }
 
-// smokeDeployTemplate POSTs body to /templates then deploys.
 func smokeDeployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/templates", body)
@@ -149,10 +111,6 @@ func smokeDeployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[strin
 	return resp.TemplateID
 }
 
-// smokeCreateInstance POSTs a new instance and returns instance_id.
-// Instance creation is idle post-spec; the helper follows up with an empty
-// message so the structural roots wake.
-//
 // @decision: test-harness-create-instance-wakes-roots-after-create
 func smokeCreateInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
@@ -177,8 +135,6 @@ func smokeCreateInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, in
 	return resp.InstanceID
 }
 
-// smokeWaitForTerminal polls the node state until it reaches a
-// terminal value.
 func smokeWaitForTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)

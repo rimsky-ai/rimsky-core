@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// harness_test.go — in-process test scaffolding for the proxy. Stands up
-// the full proxy gRPC server (HostAgent + Executor + ClaimProducer +
-// Lifecycle) on a bufconn, plus a fakeAgent that speaks the agent side of
-// the HostAgent.Connect protocol: it answers Spawn with a scripted
-// SpawnAck, relays DispatchFrames to a scripted in-process handler, and
-// answers Reap with Reaped. This stubs the dev-machine agent and the
-// spawned child so the supervisor-facing handlers can be unit-tested in
-// isolation (full end-to-end wiring is Pass 10's scenario tests).
-
 package main
 
 import (
@@ -28,17 +19,12 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// proxyTestServer bundles the proxy's shared state and in-process clients.
 type proxyTestServer struct {
 	state    *proxyState
 	hostConn *grpc.ClientConn
 	supConn  *grpc.ClientConn
 }
 
-// newProxyTestServer registers all supervisor-facing handlers + the
-// HostAgent server on one bufconn gRPC server and returns clients for
-// both surfaces. fetch is the instance fetcher both handlers use (nil →
-// a fetcher that always misses).
 func newProxyTestServer(t *testing.T, fetch instanceFetcher) *proxyTestServer {
 	t.Helper()
 	state := newProxyState()
@@ -72,29 +58,21 @@ func newProxyTestServer(t *testing.T, fetch instanceFetcher) *proxyTestServer {
 	return &proxyTestServer{state: state, hostConn: dial(), supConn: dial()}
 }
 
-// dispatchHandler scripts how the fakeAgent's spawned child responds to a
-// relayed request payload. Returns one or more serialized response
-// payloads, each sent back as its own DispatchFrame on the same stream-id
-// (executor streams multiple events; claim-producer is unary, one frame).
 type dispatchHandler func(protocol string, payload []byte) [][]byte
 
-// fakeAgent drives the agent side of HostAgent.Connect in-process. The
-// boolean script flags steer how the agent responds to relayed frames.
 type fakeAgent struct {
 	stream genv1.HostAgent_ConnectClient
 
 	mu          sync.Mutex
-	spawnFail   bool          // @constraint: when true, answer Spawn with FAILED
-	spawnDelay  time.Duration // @constraint: delay before answering Spawn (for timeout tests)
-	dropOnFirst bool          // @constraint: when true, close the stream on the first DispatchFrame (mid-dispatch disconnect)
-	stallData   bool          // @constraint: when true, never answer DATA frames so a CANCEL can race in
+	spawnFail   bool
+	spawnDelay  time.Duration
+	dropOnFirst bool
+	stallData   bool
 	handler     dispatchHandler
-	reaped      chan string // @constraint: spawn-ids reaped, surfaced to assertions
-	canceled    chan string // @constraint: stream-ids canceled, surfaced to assertions
+	reaped      chan string
+	canceled    chan string
 }
 
-// connectFakeAgent registers a fakeAgent for apiKey and starts its
-// background loop. localBase is reported in Register for callback rewrite.
 func connectFakeAgent(t *testing.T, ts *proxyTestServer, apiKey, localBase string, handler dispatchHandler) *fakeAgent {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -118,7 +96,6 @@ func connectFakeAgent(t *testing.T, ts *proxyTestServer, apiKey, localBase strin
 	fa := &fakeAgent{stream: stream, handler: handler, reaped: make(chan string, 8), canceled: make(chan string, 8)}
 	go fa.loop(t)
 
-	// @deliberate: Wait until the proxy has the agent registered.
 	waitFor(t, func() bool { _, ok := ts.state.lookupAgent(apiKey); return ok })
 	return fa
 }
@@ -128,7 +105,6 @@ func (fa *fakeAgent) setSpawnDelay(d time.Duration) { fa.mu.Lock(); fa.spawnDela
 func (fa *fakeAgent) setDropOnFirst(v bool)         { fa.mu.Lock(); fa.dropOnFirst = v; fa.mu.Unlock() }
 func (fa *fakeAgent) setStallData(v bool)           { fa.mu.Lock(); fa.stallData = v; fa.mu.Unlock() }
 
-// loop reads ServerFrames and answers per the script.
 func (fa *fakeAgent) loop(t *testing.T) {
 	for {
 		frame, err := fa.stream.Recv()
@@ -173,12 +149,7 @@ func (fa *fakeAgent) handleSpawn(sp *genv1.Spawn) {
 	_ = fa.stream.Send(&genv1.ClientFrame{Body: &genv1.ClientFrame_SpawnAck{SpawnAck: ack}})
 }
 
-// handleDispatch relays the request to the scripted handler and sends the
-// response back on the same stream-id. Returns true if it dropped the
-// stream (mid-dispatch disconnect script).
 func (fa *fakeAgent) handleDispatch(df *genv1.DispatchFrame) bool {
-	// @constraint: an inbound CANCEL frame is the proxy relaying a
-	// supervisor-side cancellation; capture it for assertions and do not reply.
 	if df.GetKind() == genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL {
 		select {
 		case fa.canceled <- df.GetStreamId():
@@ -196,9 +167,6 @@ func (fa *fakeAgent) handleDispatch(df *genv1.DispatchFrame) bool {
 		return true
 	}
 	if stall {
-		// @deliberate: never answer the DATA frame; the dispatch hangs
-		// so the supervisor can cancel it and we can observe the
-		// resulting CANCEL frame.
 		return false
 	}
 	if handler == nil {
@@ -216,12 +184,10 @@ func (fa *fakeAgent) handleDispatch(df *genv1.DispatchFrame) bool {
 	return false
 }
 
-// callCtx returns a context with the x-rimsky-service-name header set.
 func callCtx(name string) context.Context {
 	return metadata.AppendToOutgoingContext(context.Background(), serviceNameHeader, name)
 }
 
-// staticFetcher returns an instanceFetcher serving one fixed entry.
 func staticFetcher(instanceID string, entry *instanceCacheEntry) instanceFetcher {
 	return func(_ context.Context, id string) (*instanceCacheEntry, bool, error) {
 		if id == instanceID {

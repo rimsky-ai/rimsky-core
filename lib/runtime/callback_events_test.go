@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// In-package coverage of parseAsyncCallback: the async-callback body
-// parser the supervisor's /v1/callback/{ack} route feeds. Per
-// TD-collapse-named-event-to-tags the `events[]` array on
-// AsyncCallbackBody has retired; tags ride on each settling outcome
-// variant. These tests pin the new shape.
-
 package runtime
 
 import (
@@ -45,7 +39,6 @@ func TestParseAsyncCallback_Park_AttributesDeltaAndTags(t *testing.T) {
 }
 
 func TestParseAsyncCallback_RejectsLegacyTypeDiscriminator(t *testing.T) {
-	// @deliberate: The legacy `{type: ...}` shape sets no outcome-oneof variant.
 	raw := []byte(`{"type":"complete","attributes_delta":{"k":"v"},"changed":true}`)
 	_, err := parseAsyncCallback(raw)
 	require.Error(t, err)

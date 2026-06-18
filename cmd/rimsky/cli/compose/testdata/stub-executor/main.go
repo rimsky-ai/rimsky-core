@@ -2,29 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// stub-executor is a minimal late-bound gRPC executor used by the
-// acceptance proofs for the `rimsky compose run` verb. It reads
-// RIMSKY_AGENT_PORT (the env var the verb's hostagent.SpawnService
-// helper sets when it spawns a `--service` binary), binds a gRPC
-// server on 127.0.0.1:<port>, and answers the unary Executor.Execute
-// RPC with one of three behaviors driven by dispatch-time attributes:
-//
-//   - default                       — return Outcome{Success}.
-//   - attributes.outcome="fail"     — return Outcome{Error} with
-//     error_class=stub/failed.
-//   - attributes.delay_ms=<int>     — time.Sleep for the configured
-//     duration before returning the
-//     settling Outcome (lets
-//     STORY-live-progress interleave a
-//     fast and slow instance to prove
-//     progress lines are emitted live,
-//     not batched).
-//
-// Per TD-execute-rpc-unary the RPC is unary; the stub returns the
-// settling Outcome directly. This binary is intentionally lighter
-// than examples/executor — no schema beyond the permissive open
-// shape — so a copy of it in a scenario test compiles fast and
-// contributes minimal surface area to debug.
 package main
 
 import (
@@ -43,29 +20,15 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// stubErrorClass is the wire error_class the stub emits when the
-// dispatch's `outcome` attribute is "fail". Hierarchical
-// `<executor>/<leaf>` per concept:signal. Tests that drive an
-// expected-failure node assert on this exact string.
 const stubErrorClass = "stub/failed"
 
-// executor implements genv1.ExecutorServer for the stub. Per-dispatch
-// behavior is read from the request's attributes — there is no
-// per-instance configuration.
 type executor struct {
 	genv1.UnimplementedExecutorServer
 }
 
-// Execute branches on the `outcome` and `delay_ms` attributes of the
-// dispatch. delay_ms (if positive) gates the terminal emission so a
-// slow-node scenario can prove that progress lines appear during the
-// sleep rather than only after the dispatch returns. outcome="fail"
-// flips the terminal from Success to Error.
 func (e executor) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	delay := intAttr(req, "delay_ms")
 	if delay > 0 {
-		// @constraint: bound the sleep at 60s so a malformed attribute cannot wedge
-		// the stub forever — the test that overshoots can still drain.
 		if delay > 60_000 {
 			delay = 60_000
 		}
@@ -86,24 +49,10 @@ func (e executor) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv
 	}}}, nil
 }
 
-// observability implements genv1.ExecutorObservabilityServer. The stub
-// retains no traces but MUST answer Capabilities with a non-nil
-// expected-attributes schema so the dispatch-time attribute-surface
-// gate (lib/runtime.resolveAttributes) does not reject attribute-bearing
-// nodes with executor_schema_unavailable. The permissive open shape
-// `{"type":"object"}` admits any attribute the templates supply.
-//
-// DeclaredErrorClasses advertises stubErrorClass so a template node
-// using `error_types: { stub/failed: { policy: [give_up] } }` passes
-// the registration validator's range-check against the executor's
-// advertised vocabulary.
 type observability struct {
 	genv1.UnimplementedExecutorObservabilityServer
 }
 
-// Capabilities reports the no-observability shape with the permissive
-// expected-attributes schema and the single declared error class the
-// stub may surface.
 func (observability) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
 	return &genv1.ObservabilityCapabilities{
 		ExpectedAttributesSchema: []byte(`{"type":"object"}`),
@@ -111,8 +60,6 @@ func (observability) Capabilities(_ context.Context, _ *genv1.ExecutorCapabiliti
 	}, nil
 }
 
-// stringAttr reads a string attribute by name from the dispatch
-// request. Returns "" when the attribute is absent or not a string.
 func stringAttr(req *genv1.ExecuteRequest, name string) string {
 	attrs := req.GetAttributes()
 	if attrs == nil {
@@ -125,11 +72,6 @@ func stringAttr(req *genv1.ExecuteRequest, name string) string {
 	return v.GetStringValue()
 }
 
-// intAttr reads an integer attribute by name from the dispatch request,
-// admitting either a NumberValue (the canonical proto wire shape for
-// JSON numbers) or a StringValue parseable as an int (a defensive
-// fallback for templates that serialize numbers as strings). Returns 0
-// when the attribute is absent or unparseable.
 func intAttr(req *genv1.ExecuteRequest, name string) int {
 	attrs := req.GetAttributes()
 	if attrs == nil {
@@ -173,9 +115,6 @@ func main() {
 	genv1.RegisterExecutorObservabilityServer(srv, observability{})
 	slog.Info("stub-executor listening", "port", port)
 
-	// @constraint: shut down on SIGTERM/SIGINT so the verb's drain coordinator can
-	// reap the child cleanly (GracefulStop drains in-flight RPCs first;
-	// Stop is the fallback if the in-flight set takes too long).
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	go func() {

@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// server_test.go — verifier-shape-checks executor coverage under the
-// unary RPC shape (TD-execute-rpc-unary). Each test calls Execute(req)
-// directly and asserts on the settling Outcome: Success when all
-// blocking checks pass, Error{verifier/check_failed/<kind>} when at
-// least one error-severity check fails, Error{verifier/attribute_invalid}
-// for malformed input.
-
 package main
 
 import (
@@ -93,7 +86,6 @@ func TestExecute_InvalidAttributes_MissingChecks(t *testing.T) {
 	srv := NewServer(false)
 	req := buildReq(t, map[string]any{
 		"rows": []any{map[string]any{"id": "x"}},
-		// @deliberate: `checks` omitted to exercise attribute-validation rejection.
 	})
 	outcome, err := srv.Execute(context.Background(), req)
 	if err != nil {
@@ -112,7 +104,7 @@ func TestExecute_InvalidAttributes_BadCheckKind(t *testing.T) {
 	srv := NewServer(false)
 	req := buildReq(t, map[string]any{
 		"checks": []any{
-			map[string]any{"config": map[string]any{"field": "id"}}, // @deliberate: missing kind
+			map[string]any{"config": map[string]any{"field": "id"}},
 		},
 		"rows": []any{map[string]any{"id": "x"}},
 	})
@@ -132,7 +124,7 @@ func TestExecute_InvalidAttributes_BadSeverity(t *testing.T) {
 		"checks": []any{
 			map[string]any{
 				"kind":     "pk_unique",
-				"severity": "warn", // @deliberate: not in the closed set {error, warning}
+				"severity": "warn",
 				"config":   map[string]any{"field": "id"},
 			},
 		},
@@ -148,8 +140,6 @@ func TestExecute_InvalidAttributes_BadSeverity(t *testing.T) {
 	}
 }
 
-// TestCapabilities_AdvertisesHierarchicalErrorClasses confirms the
-// observability surface advertises the canonical verifier/* leaves.
 func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
 	obs := NewObservabilityServer()
 	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
@@ -171,9 +161,6 @@ func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
 	}
 }
 
-// TestCapabilities_AdvertisesValidationSupportedRoles confirms the
-// observability handshake advertises the Validation mix-in's supported
-// roles.
 func TestCapabilities_AdvertisesValidationSupportedRoles(t *testing.T) {
 	obs := NewObservabilityServer()
 	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
@@ -186,10 +173,6 @@ func TestCapabilities_AdvertisesValidationSupportedRoles(t *testing.T) {
 	}
 }
 
-// TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks
-// drives the real dispatch and asserts the severity partition: a failed
-// `severity:warning` check is non-blocking, while a failed
-// `severity:error` check drives the `verifier/check_failed/<kind>` Error.
 func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *testing.T) {
 	srv := NewServer(false)
 
@@ -209,7 +192,7 @@ func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *te
 			},
 			"rows": []any{
 				map[string]any{"id": "a"},
-				map[string]any{"id": "a"}, // @deliberate: duplicate id forces pk_unique (warning) to FAIL.
+				map[string]any{"id": "a"},
 			},
 		})
 		outcome, err := srv.Execute(context.Background(), req)
@@ -257,14 +240,10 @@ func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *te
 	})
 }
 
-// deltaSurfacesWarning reports whether the Success attributes_delta
-// carries a non-blocking-warning finding referencing the named check
-// kind.
 func deltaSurfacesWarning(delta *structpb.Struct, kind string) bool {
 	return structValueMentions(structpb.NewStructValue(delta), "warning", kind)
 }
 
-// structValueMentions walks a structpb.Value tree.
 func structValueMentions(v *structpb.Value, needleKey, kind string) bool {
 	switch kv := v.GetKind().(type) {
 	case *structpb.Value_StructValue:
@@ -286,8 +265,6 @@ func structValueMentions(v *structpb.Value, needleKey, kind string) bool {
 	return false
 }
 
-// valueMentions reports whether v (a leaf string, or a struct/list
-// containing one) mentions kind.
 func valueMentions(v *structpb.Value, kind string) bool {
 	switch kv := v.GetKind().(type) {
 	case *structpb.Value_StringValue:

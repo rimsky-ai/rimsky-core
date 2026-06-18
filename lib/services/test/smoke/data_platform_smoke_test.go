@@ -2,32 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// O1 — Data platform extensions smoke fixture extension.
-//
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Smoke test extension extends the original §10 smoke with three
-// wire-shape exercises:
-//
-//   - Stub-store DataProcessing extension — boots the rimsky-side
-//     stub-store with the DataProcessing extension wired in and drives
-//     the seven RPCs over gRPC. POST-2026-05-24 the stub-store source
-//     lives in rimsky-internal (test-infrastructure carve-out per the
-//     repo-reorganization spec) and the `consumption-side-isolation`
-//     depguard bars lib/services from importing it; that subtest
-//     stays in rimsky at
-//     `pkg:stores/stub/dataprocessing/data_processing_test.go`.
-//   - SensorHTTP — exercises the sensor-http poll → match → push wire
-//     path against a fake upstream + fake rimsky receiver. Pure
-//     `net/http/httptest` shape exerciser; preserved here verbatim.
-//   - OpenLineageEmission — exercises the openlineage subscriber's
-//     wire contract against a fake Marquez receiver. Pure
-//     `net/http/httptest` shape; preserved here verbatim.
-//
-// The two preserved subtests pin the wire contracts the lib/services
-// sensors and subscribers are obliged to honour; the full end-to-end
-// drive of openlineage against a live rimsky stack lives in
-// `pkg:subscribers/openlineage/subscriber_test.go` post-rewrite.
-
 package smoke
 
 import (
@@ -43,17 +17,6 @@ import (
 	"time"
 )
 
-// TestDataPlatformSmoke_SensorHTTP exercises the sensor-http poll →
-// match → push wire path. The sensor binary itself is
-// `pkg:sensors/sensor-http/main.go`; the in-process surface is
-// `package main` so this test mirrors the wire contract:
-//
-//  1. Boot a fake upstream `httptest.NewServer` that returns a known
-//     body whose content-hash triggers an observation.
-//  2. Boot a fake rimsky receiver recording `POST /instances/{id}/messages`
-//     arrivals with `sender_kind: "publisher"`.
-//  3. Drive the poll → push contract via a generic HTTP client.
-//
 // Inert payload per `@blessed-invariant: message-inertness — messages are inert in rimsky`.
 func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 	t.Parallel()
@@ -175,11 +138,6 @@ func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 	}
 }
 
-// TestDataPlatformSmoke_OpenLineageEmission exercises the openlineage
-// subscriber's wire contract against a fake Marquez receiver: POST
-// OpenLineage 1.x JSON envelopes to `{backend}/api/v1/lineage`.
-// Inert payload per `@blessed-invariant 21`; the smoke pins the
-// wire shape only.
 func TestDataPlatformSmoke_OpenLineageEmission(t *testing.T) {
 	t.Parallel()
 	var (
@@ -247,6 +205,4 @@ func TestDataPlatformSmoke_OpenLineageEmission(t *testing.T) {
 	}
 }
 
-// _ ensures context.Background and other imports survive a future
-// refactor without compiler whine.
 var _ = context.Background

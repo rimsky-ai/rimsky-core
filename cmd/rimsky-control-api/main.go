@@ -2,26 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// rimsky-control-api is the env-var-driven entry point for the control
-// API HTTP server. Builds the role's logger from env, then delegates
-// the full wiring (rimsky.yml from RIMSKY_CONFIG, persistence open,
-// config.StartControlAPI, background loops) to launch.RunControlAPI and
-// waits for a termination signal.
-//
-// Environment variables:
-//
-//	RIMSKY_CONFIG            optional; path to rimsky.yml.
-//	                         default /etc/rimsky/rimsky.yml.
-//	RIMSKY_CONTROL_API_HOST  optional; default 127.0.0.1.
-//	RIMSKY_CONTROL_API_PORT  optional; default 8080. An explicit "0" also
-//	                         selects the default; a non-numeric value
-//	                         fails startup.
-//	RIMSKY_METRICS_PORT      optional; default 0 = disabled. When >0
-//	                         exposes /metrics on this port (Prometheus
-//	                         text format) on the same host as the
-//	                         control API.
-//	RIMSKY_LOG_LEVEL         optional; debug|info|warn|error (default info).
-//	RIMSKY_LOG_BINARY        optional; structured slog field for unified-image.
 package main
 
 import (
@@ -45,31 +25,18 @@ func main() {
 	slog.SetDefault(logger)
 	log := shared.NewSlogLogger(logger)
 
-	// @constraint: register the signal handler BEFORE the role starts —
-	// startup can be slow (DB dials, handshakes), and as a container PID-1
-	// an unregistered SIGTERM during that window would be silently dropped
-	// (default disposition is ignored for PID-1), hanging the container
-	// until SIGKILL. The buffered channel queues a signal received
-	// mid-start.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	ctx := context.Background()
 	driver, cfg, err := launch.OpenDriverFromEnv(ctx, logger)
 	if err != nil {
-		// @constraint: OpenDriverFromEnv already logged the failure with
-		// full context — exit silently rather than double-log.
 		os.Exit(1)
 	}
 	defer func() { _ = driver.Close() }()
 
 	stop, failCh, err := launch.RunControlAPI(ctx, logger, driver, cfg)
 	if err != nil {
-		// @constraint: RunControlAPI already logged the failure; os.Exit
-		// does not run deferred functions, so the `defer driver.Close()`
-		// above would leak the driver — its sqlite WAL would not
-		// checkpoint and the file lock would survive until kernel reap.
-		// Close inline before exit.
 		_ = driver.Close()
 		os.Exit(1)
 	}
@@ -79,8 +46,6 @@ func main() {
 	defer cancel()
 	_ = stop(shutdownCtx)
 	if roleErr != nil {
-		// @constraint: a dead role must restart the container, not linger
-		// degraded; as above, os.Exit skips defers — close inline.
 		_ = driver.Close()
 		os.Exit(1)
 	}
@@ -99,11 +64,6 @@ func parseLogLevel(s string) slog.Level {
 	}
 }
 
-// waitForSignalOrFailure blocks until a termination signal arrives
-// (returns nil) or the role reports a fatal post-start failure on
-// failCh (returns the error). sigCh must already be registered with
-// signal.Notify — main registers it before launch.RunControlAPI so a
-// SIGTERM during slow startup is queued instead of dropped.
 func waitForSignalOrFailure(log shared.Logger, sigCh <-chan os.Signal, failCh <-chan error) error {
 	select {
 	case s := <-sigCh:

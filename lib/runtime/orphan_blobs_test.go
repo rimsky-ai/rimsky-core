@@ -15,9 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// fakeBlobOrphanTable is a tiny in-memory BlobOrphanTable used by the
-// sweep test. It tracks rows and deletes; backend interaction goes
-// through fakeBlobBackend.
 type fakeBlobOrphanTable struct {
 	mu   sync.Mutex
 	rows []persistence.BlobOrphanRow
@@ -58,21 +55,17 @@ func (f *fakeBlobOrphanTable) Delete(_ context.Context, handle string) error {
 	return nil
 }
 
-// TestSweepOrphanedBlobs covers the happy path: rows with reap_after
-// in the past are deleted from the backend and the tracker.
 func TestSweepOrphanedBlobs(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
 	be := persistence.NewMemoryBackend()
-	// @deliberate: Pre-write three blobs.
 	h1, _ := be.Write(ctx, persistence.BlobKey{}, []byte("one"))
 	h2, _ := be.Write(ctx, persistence.BlobKey{}, []byte("two"))
 	h3, _ := be.Write(ctx, persistence.BlobKey{}, []byte("three"))
 
 	store := &fakeBlobOrphanTable{}
 	now := time.Now()
-	// @deliberate: h1 due, h2 due, h3 not yet due.
 	if err := store.Insert(ctx, persistence.BlobOrphanRow{
 		Handle: string(h1), Backend: "memory",
 		OrphanedAt: now.Add(-time.Hour), ReapAfter: now.Add(-time.Minute),
@@ -99,14 +92,12 @@ func TestSweepOrphanedBlobs(t *testing.T) {
 		t.Fatalf("SweepOrphanedBlobs: %v", err)
 	}
 
-	// @deliberate: h1 + h2 should be gone from both the backend and the store.
 	if _, err := be.Read(ctx, h1); !errors.Is(err, persistence.ErrBlobNotFound) {
 		t.Fatalf("h1 should be deleted; got %v", err)
 	}
 	if _, err := be.Read(ctx, h2); !errors.Is(err, persistence.ErrBlobNotFound) {
 		t.Fatalf("h2 should be deleted; got %v", err)
 	}
-	// @deliberate: h3 still present.
 	if _, err := be.Read(ctx, h3); err != nil {
 		t.Fatalf("h3 should still exist; got %v", err)
 	}
@@ -115,9 +106,6 @@ func TestSweepOrphanedBlobs(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedBlobsCrossBackendIgnored confirms an orphan row whose
-// backend doesn't match the active backend is left alone (forward-compat
-// for future mixed-backend deployments).
 func TestSweepOrphanedBlobsCrossBackendIgnored(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -142,14 +130,11 @@ func TestSweepOrphanedBlobsCrossBackendIgnored(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedBlobsHandlesNotFound confirms an already-deleted blob
-// is treated as success — the tracker row is removed.
 func TestSweepOrphanedBlobsHandlesNotFound(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	be := persistence.NewMemoryBackend()
 	store := &fakeBlobOrphanTable{}
-	// @deliberate: Ghost handle: never written to the backend, but tracked.
 	if err := store.Insert(ctx, persistence.BlobOrphanRow{
 		Handle:     "mem:9999",
 		Backend:    "memory",

@@ -82,10 +82,6 @@ func TestSQLiteEvents_TypedKindRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSQLiteEvents_AppendRefusesZeroKind pins the write-side defense:
-// the persistence driver refuses an empty / zero Kind value at the
-// boundary rather than persisting a row that observability
-// consumers can't filter on.
 func TestSQLiteEvents_AppendRefusesZeroKind(t *testing.T) {
 	d := openSQLiteForEvents(t)
 	ctx := context.Background()
@@ -98,10 +94,6 @@ func TestSQLiteEvents_AppendRefusesZeroKind(t *testing.T) {
 	}
 }
 
-// TestSQLiteEvents_UnmarshalRejectsCorruptKind exercises the
-// defensive-read posture against a deliberately-corrupted kind
-// inserted via raw SQL. The read path surfaces an ErrUnknownKind
-// rather than coercing the row to a synthetic Kind.
 func TestSQLiteEvents_UnmarshalRejectsCorruptKind(t *testing.T) {
 	d := openSQLiteForEvents(t)
 	ctx := context.Background()

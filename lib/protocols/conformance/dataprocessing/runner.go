@@ -2,16 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Package dataprocessing is the importable form of the DataProcessing
-// mix-in conformance suite. The `rimsky conformance data-processing`
-// subcommand is a thin wrapper that dials the endpoint and invokes Run;
-// tests can invoke Run directly against an in-process or testcontainers-
-// hosted producer to assert the standard suite passes against the
-// target.
-//
-// Reaches the wire through the generated stubs at
-// `pkg:protocols/proto/v1/gen`. No rimsky-internal client wrapper.
-
 package dataprocessing
 
 import (
@@ -26,15 +16,11 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// CheckResult is one row of conformance output. Err nil on pass.
 type CheckResult struct {
 	Name string
 	Err  error
 }
 
-// Run drives the DataProcessing conformance checks against the supplied
-// client. Each check is independent; a failure does not short-circuit
-// so the operator sees the full surface.
 func Run(ctx context.Context, c genv1.DataProcessingClient) []CheckResult {
 	results := make([]CheckResult, 0, 10)
 
@@ -68,8 +54,6 @@ func Run(ctx context.Context, c genv1.DataProcessingClient) []CheckResult {
 	return results
 }
 
-// runBeginCommitPerMaterialization drives one Begin → Commit round-
-// trip per advertised materialization.
 func runBeginCommitPerMaterialization(ctx context.Context, c genv1.DataProcessingClient, caps *genv1.DataProcessingCapabilities) []CheckResult {
 	out := make([]CheckResult, 0, len(caps.GetMaterializations()))
 	for _, mat := range caps.GetMaterializations() {
@@ -99,15 +83,12 @@ func runBeginCommitPerMaterialization(ctx context.Context, c genv1.DataProcessin
 			out = append(out, CheckResult{Name: name, Err: fmt.Errorf("CommitCandidate: %w", err)})
 			continue
 		}
-		_ = commit // @constraint: candidate_metadata is opaque to rimsky; presence not asserted.
+		_ = commit
 		out = append(out, CheckResult{Name: name})
 	}
 	return out
 }
 
-// checkBeginCandidateIdempotent re-issues BeginCandidate with the
-// same idempotency_key and asserts the same candidate_handle is
-// returned. Per proto:data_processing.proto::BeginCandidateRequest.idempotency_key.
 func checkBeginCandidateIdempotent(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
 	req := &genv1.BeginCandidateRequest{
 		ClaimHandleId:  "rimsky/conformance/dataproc/idempotency",
@@ -128,14 +109,10 @@ func checkBeginCandidateIdempotent(ctx context.Context, c genv1.DataProcessingCl
 				string(first.GetCandidateHandle()), string(second.GetCandidateHandle())),
 		}
 	}
-	// @constraint: abandon so the candidate doesn't strand state.
 	_, _ = c.AbandonCandidate(ctx, &genv1.AbandonCandidateRequest{CandidateHandle: first.GetCandidateHandle()})
 	return CheckResult{Name: "BeginCandidateIdempotent"}
 }
 
-// checkListVersionsSmoke commits one candidate then probes ListVersions
-// for the claim_handle. Asserts at least one version is returned and the
-// version_id is non-empty.
 func checkListVersionsSmoke(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
 	claimHandleID := "rimsky/conformance/dataproc/list-versions"
 	begin, err := c.BeginCandidate(ctx, &genv1.BeginCandidateRequest{
@@ -165,9 +142,6 @@ func checkListVersionsSmoke(ctx context.Context, c genv1.DataProcessingClient) C
 	return CheckResult{Name: "ListVersionsSmoke"}
 }
 
-// checkListPartitionsSmoke pins the contract: after a successful
-// commit, ListPartitions for the claim_handle (no version filter)
-// returns at least one PartitionDescriptor.
 func checkListPartitionsSmoke(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
 	claimHandleID := "rimsky/conformance/dataproc/list-partitions"
 	subScope, _ := json.Marshal(map[string]string{"partition_key": "conformance-p1"})
@@ -194,8 +168,6 @@ func checkListPartitionsSmoke(ctx context.Context, c genv1.DataProcessingClient)
 	return CheckResult{Name: "ListPartitionsSmoke"}
 }
 
-// checkGetVersionSchemaSmoke commits one candidate and pins that
-// GetVersionSchema returns a non-empty schema for the version_id.
 func checkGetVersionSchemaSmoke(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
 	claimHandleID := "rimsky/conformance/dataproc/get-schema"
 	begin, err := c.BeginCandidate(ctx, &genv1.BeginCandidateRequest{
@@ -231,9 +203,6 @@ func checkGetVersionSchemaSmoke(ctx context.Context, c genv1.DataProcessingClien
 	return CheckResult{Name: "GetVersionSchemaSmoke"}
 }
 
-// checkConcurrentWrites pushes N candidates against the same
-// claim_handle concurrently and asserts they all commit and turn
-// into distinct versions.
 func checkConcurrentWrites(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
 	const n = 8
 	claimHandleID := "rimsky/conformance/dataproc/concurrent"
@@ -275,7 +244,6 @@ func checkConcurrentWrites(ctx context.Context, c genv1.DataProcessingClient) Ch
 			Err:  fmt.Errorf("expected %d versions after concurrent commits, got %d", n, len(resp.GetVersions())),
 		}
 	}
-	// @constraint: concurrent commits MUST yield distinct version_ids.
 	seen := make(map[string]bool, n)
 	for _, v := range resp.GetVersions() {
 		if seen[v.GetVersionId()] {

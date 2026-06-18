@@ -2,29 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// sensor-object-store — bundled object-store sensor reference
-// implementation. Polls an object-store bucket+prefix on a fixed
-// interval, emitting one observation per new object.
-//
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Sensors as a service kind.
-//
 //	@concept: sensor
-//
-// The default bundled image always registers the in-memory backend
-// ("memory") and conditionally registers the filesystem backend
-// ("filesystem", when env RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT is set).
-// Those are the SDK-free backends shipped here: the sensor advertises
-// (Capabilities) and accepts (Subscribe) exactly the registered set,
-// so a subscription naming s3/gcs/azure is rejected at Subscribe
-// rather than silently no-op'ing at poll time. S3 / GCS / Azure are
-// deliberately NOT implemented in this binary — keeping the cloud
-// SDKs out of the default build keeps the `go.mod` budget tight and
-// avoids LocalStack-only dev dependencies. A deployment that needs a
-// cloud backend builds its own binary that constructs the desired
-// ObjectLister, registers it via svc.SetBackend("s3", …) before
-// svc.Run, and the sensor then advertises and accepts that backend
-// automatically.
 package main
 
 import (
@@ -60,10 +38,6 @@ func main() {
 
 	svc := NewSensorService(rimskyEndpoint, slogAdapter{l: slog.Default()})
 
-	// @deliberate: in-memory backend is the always-registered default so
-	// Capabilities advertises and Subscribe accepts "memory" at minimum;
-	// s3/gcs/azure stay rejected unless a production build wires them via
-	// SetBackend before svc.Run.
 	svc.SetBackend("memory", NewMemoryLister())
 
 	// @story: sensor-object-store — env RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT,
@@ -84,8 +58,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// @deliberate: state-DB persistence is optional — empty env leaves the
-	// sensor in in-memory mode rather than failing startup.
 	state, err := openStateDB(ctx)
 	if err != nil {
 		slog.Error("open state db", "error", err.Error())

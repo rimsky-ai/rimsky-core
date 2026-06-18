@@ -17,23 +17,16 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/clientiface"
 )
 
-// PublisherClient is a remote-gRPC implementation of the rimsky-side
-// clientiface.PublisherClient interface. One client per publisher
-// service that advertises the `publisher` protocol in rimsky.yml.
 type PublisherClient struct {
 	name string
 	conn *grpc.ClientConn
 	rpc  genv1.PublisherClient
 }
 
-// @deliberate: compile-time interface check — fails compilation when
-// *PublisherClient no longer satisfies clientiface.PublisherClient.
 var _ clientiface.PublisherClient = (*PublisherClient)(nil)
 
-// Name returns the operator-configured publisher service name.
 func (c *PublisherClient) Name() string { return c.name }
 
-// Subscribe RPCs to the remote publisher.
 func (c *PublisherClient) Subscribe(ctx context.Context, req clientiface.SubscribeRequest) error {
 	_, err := c.rpc.Subscribe(ctx, &genv1.SubscribeRequest{
 		PublisherSubscriptionId: req.PublisherSubscriptionID.String(),
@@ -49,7 +42,6 @@ func (c *PublisherClient) Subscribe(ctx context.Context, req clientiface.Subscri
 	return nil
 }
 
-// Unsubscribe RPCs to the remote publisher.
 func (c *PublisherClient) Unsubscribe(ctx context.Context, subscriptionID shared.UUID) error {
 	_, err := c.rpc.Unsubscribe(ctx, &genv1.UnsubscribeRequest{
 		PublisherSubscriptionId: subscriptionID.String(),
@@ -60,7 +52,6 @@ func (c *PublisherClient) Unsubscribe(ctx context.Context, subscriptionID shared
 	return nil
 }
 
-// ListSubscriptions RPCs to the remote publisher.
 func (c *PublisherClient) ListSubscriptions(ctx context.Context) ([]clientiface.ListedPublisherSubscription, error) {
 	resp, err := c.rpc.ListSubscriptions(ctx, &emptypb.Empty{})
 	if err != nil {
@@ -87,16 +78,12 @@ func (c *PublisherClient) ListSubscriptions(ctx context.Context) ([]clientiface.
 	return out, nil
 }
 
-// Close releases the gRPC connection.
 func (c *PublisherClient) Close() {
 	if c.conn != nil {
 		_ = c.conn.Close()
 	}
 }
 
-// DialPublisher connects to a peer that implements the Publisher
-// service. tlsMode is the peer entry's validated `tls:` mode
-// (TLSModeOff / TLSModeRequired; empty → off).
 func DialPublisher(_ context.Context, name, endpoint, tlsMode string) (*PublisherClient, error) {
 	target, err := stripScheme(name, endpoint)
 	if err != nil {

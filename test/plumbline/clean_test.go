@@ -13,9 +13,6 @@ import (
 	"testing"
 )
 
-// TestPlumblineClean runs Plumbline's lint binary against the rimsky tree
-// and asserts that all three checks are active in the project's
-// .plumbline.json and that the lint reports clean.
 func TestPlumblineClean(t *testing.T) {
 	binPath := resolveBinPath(t)
 	if binPath == "" {
@@ -41,9 +38,6 @@ func TestPlumblineClean(t *testing.T) {
 	}
 }
 
-// resolveBinPath returns the filesystem path to the Plumbline lint script.
-// Prefers PLUMBLINE_BIN; falls back to $CLAUDE_PLUGIN_ROOT/bin/plumbline.
-// Returns "" when neither path exists on disk.
 func resolveBinPath(t *testing.T) string {
 	t.Helper()
 	if p := os.Getenv("PLUMBLINE_BIN"); p != "" {
@@ -60,8 +54,6 @@ func resolveBinPath(t *testing.T) string {
 	return ""
 }
 
-// findRepoRoot walks up from this test file's location until it finds a
-// directory containing .plumbline.json, and returns that directory.
 func findRepoRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -81,9 +73,6 @@ func findRepoRoot(t *testing.T) string {
 	}
 }
 
-// assertAllChecksActive parses .plumbline.json at repoRoot and fails the
-// test if any of source_validity, blessed_invariant_test_coverage, or
-// comment_hygiene is missing or set to false.
 func assertAllChecksActive(t *testing.T, repoRoot string) {
 	t.Helper()
 	cfgPath := filepath.Join(repoRoot, ".plumbline.json")

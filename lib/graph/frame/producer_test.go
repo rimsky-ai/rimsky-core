@@ -19,10 +19,6 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// seedTemplateInstanceAndMessage inserts a minimal rimsky_templates row
-// (state='deployed'), a rimsky_instances row with its main run-scope, and
-// a synthetic rimsky_messages row whose id can be threaded as the frame's
-// triggering message. Returns (instanceID, triggeringMessageID).
 func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persistence.Database) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	suffix := uuid.NewString()
@@ -37,9 +33,6 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 	instanceID := uuid.New()
 	mainScopeID := uuid.New()
 	messageID := uuid.New()
-	// @deliberate: rimsky_instances.main_run_scope_id ↔
-	// rimsky_run_scopes.instance_id are mutually FK'd DEFERRABLE
-	// INITIALLY DEFERRED; both inserts must land in one tx.
 	tables := d.Tables()
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -72,10 +65,6 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 	return instanceID, messageID
 }
 
-// TestEnqueueFrame exercises the single-path producer: each call inserts a
-// distinct queued frame row carrying the supplied triggering_message_id.
-// There is no upsert, no coalesce, no append-to-pending semantic — pure
-// INSERT. The frame→message FK is honored.
 func TestEnqueueFrame(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -84,8 +73,6 @@ func TestEnqueueFrame(t *testing.T) {
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 
-	// @deliberate: Three calls produce three distinct frames carrying the
-	// same triggering_message_id; each stays in 'queued' state.
 	var got []uuid.UUID
 	for i := 0; i < 3; i++ {
 		err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -122,8 +109,6 @@ func TestEnqueueFrame(t *testing.T) {
 	require.Equal(t, 3, matchTrigger)
 }
 
-// TestEnqueueFrame_InstanceNotFound surfaces the missing-instance error
-// from the template lookup.
 func TestEnqueueFrame_InstanceNotFound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

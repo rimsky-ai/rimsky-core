@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package testfixture stands up an in-process loopback claim-producer
-// store-service for tests that want to drive the postgres-store
-// surface over the wire.
-//
-// The production postgres-store implementation is not part of this
-// repo. To preserve the in-rimsky test-fixture surface without dragging
-// in production code, this testfixture wraps `pkg:stores/stub`
-// (deterministic in-memory) while exposing the same `Start` signature
-// callers had against the postgres-backed fixture. Postgres-specific
-// behaviour (atomic-staging schema swap, fused verifier-role Execute,
-// items-table pick semantics) is out of scope for this fixture.
 package testfixture
 
 import (
@@ -27,14 +16,6 @@ import (
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
 )
 
-// PickPolicy mirrors the configuration shape that the production
-// postgres-store's PickPolicy used to expose, so call-site test code
-// can construct fixture configs without importing the production-
-// side store package. Only `OnCommit` and `OnGiveUp` are honoured by
-// the stub-backed translation; `ItemsTable` and `VisibilityTimeout`
-// are accepted for source compatibility and ignored. Postgres-
-// specific tests that rely on the items-table semantics or
-// visibility-timeout dynamics are out of scope for this fixture.
 type PickPolicy struct {
 	ItemsTable        string
 	OnCommit          action.Action
@@ -42,13 +23,6 @@ type PickPolicy struct {
 	VisibilityTimeout time.Duration
 }
 
-// Config is the per-test store config. `Connection`,
-// `WriteSemantics`, `SweepInterval`, `WithAdmin`, and
-// `EnableExecutor` are accepted for source compatibility with the
-// pre-reorg postgres-backed fixture and ignored by the stub-backed
-// translation — the stub-store substrate has no executor role and
-// no admin surface. Tests that need those behaviours are out of scope
-// for this fixture.
 type Config struct {
 	Connection     string
 	WriteSemantics claimproducer.WriteSemantics
@@ -58,12 +32,6 @@ type Config struct {
 	EnableExecutor bool
 }
 
-// Start spawns the loopback store-service on ephemeral listeners.
-// Returns (grpcEndpoint, adminEndpoint, teardown). adminEndpoint is
-// always empty — the stub-backed fixture exposes no admin surface;
-// tests that need admin seeding use the stub's `*stubstore.Store`
-// handle directly (see `pkg:stores/stub/testfixture` for that
-// surface).
 func Start(t *testing.T, cfg Config) (grpcEndpoint, adminEndpoint string, teardown func()) {
 	t.Helper()
 	grpcLis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -92,11 +60,6 @@ func Start(t *testing.T, cfg Config) (grpcEndpoint, adminEndpoint string, teardo
 	}
 }
 
-// translateConfig converts the postgres-shape Config into a
-// stub-store config. Pick policies preserve OnCommit / OnGiveUp
-// kinds; queues start empty (tests that need items seeded use
-// `stubstore.Store.SeedPickPolicyItem` via the stub-store
-// testfixture's *Store handle).
 func translateConfig(cfg Config) stubstore.Config {
 	out := stubstore.Config{
 		Capabilities: claimproducer.Capabilities{

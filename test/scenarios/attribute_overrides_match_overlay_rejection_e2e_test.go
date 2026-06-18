@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — by_match grammar violations are rejected at instance
-// creation with HTTP 400 and a vocabulary-naming error message.
-//
-// The ordinal-shaped matcher keys (dispatch_index, partition_index,
-// nth_child, seq) MUST be rejected with a redirect message naming
-// `child_key` or `attrs.<path>` as the supported anchor. Unknown
-// matcher keys (e.g. node_name) and non-primitive `attrs.<path>`
-// values are also rejected.
 package scenarios
 
 import (

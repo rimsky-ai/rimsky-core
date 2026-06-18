@@ -19,9 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// publisherSubscriptionsImpl is the SQLite-backed
-// persistence.PublisherSubscriptionsTable — publisher-subscription
-// lifecycle state per spec §Publisher protocol unification.
 type publisherSubscriptionsImpl tablesImpl
 
 var _ persistence.PublisherSubscriptionsTable = (*publisherSubscriptionsImpl)(nil)
@@ -44,9 +41,6 @@ func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.
 	if row.State == "" {
 		row.State = persistence.PublisherSubscriptionStateMounting
 	}
-	// @constraint: started_at goes through formatTime (fixed-width UTC text) — a raw
-	// time.Time bind would store modernc's zone-embedded t.String() form,
-	// which breaks text comparisons on non-UTC hosts.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertPublisherSubscriptionSQL,
 		row.ID.String(), row.InstanceID.String(), row.PublisherName, row.Kind,
 		row.ResolvedConfig, row.TargetNode, row.MessageType,
@@ -122,9 +116,6 @@ func (b *publisherSubscriptionsImpl) Get(ctx context.Context, tx persistence.Tx,
 	return &out[0], nil
 }
 
-// sqliteCASPublisherSubscriptionStateSQL flips state from→to only when the row is still in
-// `from` (guarded single-statement UPDATE; see the interface contract in
-// persistence.PublisherSubscriptionsTable for the race it defends).
 const sqliteCASPublisherSubscriptionStateSQL = `
 UPDATE rimsky_publisher_subscriptions
    SET state = ?, failure_reason = NULLIF(?, '')
@@ -148,9 +139,6 @@ func scanPublisherSubscriptions(rows *sql.Rows) ([]persistence.PublisherSubscrip
 	for rows.Next() {
 		var w persistence.PublisherSubscriptionRow
 		var idStr, instanceStr string
-		// @constraint: started_at is fixed-width UTC TEXT; scan as a string and run
-		// through parseTime (per queue_park.go::LoadResumeMetadataInTx)
-		// instead of scanning into sql.NullTime.
 		var startedAtStr sql.NullString
 		if err := rows.Scan(
 			&idStr, &instanceStr, &w.PublisherName, &w.Kind,

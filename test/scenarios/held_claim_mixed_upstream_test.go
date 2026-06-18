@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Task 30 — held_claim_mixed_upstream.
-//
-// A three-node template: A acquires a held claim from a stub queue
-// (passes via error_types: { "acquire/unavailable": [pass] }); C is
-// an independent upstream of B that commits Changed=true; B inherits
-// the held claim from A AND depends on C.
-//
-// Expected behavior:
-//   - C cascades to B; B dispatches.
-//   - B's substitution into {{claim.held.address}} fails because A
-//     never acquired the claim.
-//   - template_resolution_failed routes through B's error_types policy
-//     (give_up); B lands in failed.
 package scenarios
 
 import (
@@ -43,7 +30,6 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// @deliberate: Empty queue — A's Open returns Unavailable.
 			},
 		},
 	})
@@ -99,9 +85,6 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// @constraint: Source-driven attribute that requires A to have
-						// acquired the held claim. When A passes, this
-						// substitution fails → template_resolution_failed.
 						"held_addr": map[string]any{
 							"type":   "string",
 							"source": "{{claim.held.address}}",
@@ -121,8 +104,6 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 	require.NotNil(t, bNode)
 	require.NotNil(t, c)
 
-	// @deliberate: A passes (settling_signal_type=terminal/error/<class>); C commits
-	// (settling_signal_type=terminal/success).
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, a.ID, "terminal/error/", 30*time.Second),
 		"a should record settling_signal_type=terminal/error/<class>")
 	require.True(t, waitForSettlingSignalType(t, h, c.ID, "terminal/success", 30*time.Second),

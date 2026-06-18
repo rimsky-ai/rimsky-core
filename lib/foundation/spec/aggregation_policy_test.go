@@ -10,13 +10,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestAggregationPolicyYAMLBinds guards the CLI template path: a template
-// author writes the documented snake_case keys (cancel_siblings,
-// max_failures) and the CLI's gopkg.in/yaml.v3 Unmarshal
-// (cmd/rimsky/cli/templates.go::readSpecFile) must bind them onto the
-// struct fields. Without explicit yaml: tags, yaml.v3 falls back to the
-// lowercased field names (cancelsiblings/maxfailures), silently dropping
-// the documented keys and leaving both fields at their zero value.
 func TestAggregationPolicyYAMLBinds(t *testing.T) {
 	const fragment = "kind: strict\ncancel_siblings: true\nmax_failures: 3\n"
 	var p AggregationPolicy

@@ -2,29 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// End-to-end driver for STORY-cross-frame-coupling's demo half.
-//
-// The story's proof is "all-of-the-above" — executable proofs under
-// test/scenarios/ AND a demo walking through the scenario succeeding.
-// This file drives the shipped demo (examples/cross-frame-coupling-demo.sh)
-// against a live rimsky stack wired to the bundled verifier-shape-checks
-// executor and asserts:
-//
-//   - the script exits 0,
-//   - the cascade exhibits both the wake frame (operator-posted) and the
-//     iterate frame (cascade-emitted),
-//   - the receiver node R (subscribed to the typed-message loop/iterate)
-//     reaches terminal/success — pinning the spec's "receiver reads the
-//     sender's data through {{messages.<type>.<field>}}" property end-
-//     to-end.
-//
-// The bring-up mirrors onboarding_demo_e2e_test.go: network first, then
-// the verifier-shape-checks bundled image as a network peer, then
-// rimsky-all-in-one with the executor declared via WithExecutor. The
-// services-scenario harness owns the testcontainers lifecycle; the demo
-// script is run as a subprocess with RIMSKY_ENDPOINT pointing at the
-// mapped port.
-//
 // @story: cross-frame-coupling
 
 package scenarios
@@ -43,20 +20,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// TestCrossFrameCouplingDemo_RunExitsZero drives the shipped demo as a
-// subprocess against a live all-in-one stack wired to the
-// verifier-shape-checks executor and asserts the script exits zero — the
-// demo's self-check covers structural correctness (both frames present,
-// every frame carries triggering_message_id), so a non-zero exit
-// surfaces both infra and spec violations.
 func TestCrossFrameCouplingDemo_RunExitsZero(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// @constraint: the verifier-shape-checks executor must be reachable
-	// on the shared network before rimsky/all starts — the control-api
-	// fires a Capabilities handshake against declared executors at
-	// startup.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartVerifierShapeChecksOnNetwork(ctx, t, netName, "verifier-shape-checks")
 
@@ -74,31 +41,14 @@ func TestCrossFrameCouplingDemo_RunExitsZero(t *testing.T) {
 		t.Fatalf("cross-frame-coupling-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
 	}
 
-	// @deliberate: confirm the template path the script points at exists
-	// on disk. A missing template would have already failed the script
-	// run; this is belt-and-suspenders for the Falsifier ("shipped
-	// example isn't a real runnable templatespec").
 	if _, err := os.Stat(templatePath); err != nil {
 		t.Fatalf("shipped template %s missing on disk: %v — the cross-frame-coupling demo's template is broken", templatePath, err)
 	}
 
-	// @deliberate: reach into the instance via the API to verify the
-	// back-edge actually fired. The script's self-check already asserts
-	// the frames pattern; this is the persistence-layer witness that
-	// the loop/iterate envelope landed AND its sender_kind is instance
-	// (the cascade-emit origin).
 	requireCrossFrameInstanceEmittedIterate(t, ep, 60*time.Second)
 }
 
-// runCrossFrameDemoScript invokes the demo shell script as a subprocess
-// with the live stack's endpoint plumbed via env, and returns its
-// combined stdout/stderr plus the subprocess exit code. Any non-exit
-// error (e.g. failure to fork) fatals the test.
-//
 // @source: lib/services/test/scenarios/onboarding_demo_e2e_test.go::runDemoScript
-// Duplicated rather than shared: the onboarding helper plumbs RIMSKY_BIN
-// (the CLI binary path) which this demo doesn't use — the curl-only
-// script needs only RIMSKY_ENDPOINT.
 func runCrossFrameDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string, timeout time.Duration) (string, int) {
 	t.Helper()
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -126,20 +76,11 @@ func runCrossFrameDemoScript(t *testing.T, ctx context.Context, scriptPath, base
 	return combined, exitErr.ExitCode()
 }
 
-// requireCrossFrameInstanceEmittedIterate scans the most recent instances
-// for one with a loop/iterate frame, exhibiting the cascade-emit origin.
-// The script already asserts this at the frame-list level; this is the
-// belt-and-suspenders persistence-layer witness that the emit-node
-// actually wrote an envelope (the back-edge dispatched real work, not a
-// no-op).
 func requireCrossFrameInstanceEmittedIterate(t *testing.T, ep harness.RimskyEndpoint, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var lastBody string
 	for time.Now().Before(end) {
-		// @deliberate: the control-API exposes per-instance message
-		// reads but not a global filter; iterate by polling each
-		// instance's frames for a type=loop/iterate row.
 		status, raw := ep.GetJSON(t, "/v1/instances?limit=20", "")
 		if status != http.StatusOK {
 			time.Sleep(250 * time.Millisecond)
@@ -147,10 +88,6 @@ func requireCrossFrameInstanceEmittedIterate(t *testing.T, ep harness.RimskyEndp
 		}
 		var resp struct {
 			Instances []struct {
-				// @deliberate: the instances-list endpoint returns the
-				// instance UUID under `id` (not `instance_id`). The other
-				// CRUD endpoints use `instance_id`; this is a known
-				// shape divergence in the list response.
 				ID string `json:"id"`
 			} `json:"instances"`
 		}

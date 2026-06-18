@@ -17,14 +17,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// runScopesImpl is the Postgres-backed persistence.RunScopeTable — CRUD
-// + tree-walks on rimsky_run_scopes, the first-class execution-context
-// table backing concept:run-scope.
 type runScopesImpl tablesImpl
 
 var _ persistence.RunScopeTable = (*runScopesImpl)(nil)
 
-// RunScopes exposes the rimsky_run_scopes accessor.
 func (s *tablesImpl) RunScopes() persistence.RunScopeTable { return (*runScopesImpl)(s) }
 
 func (b *runScopesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
@@ -32,7 +28,6 @@ func (b *runScopesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q
 const runScopeCols = `id, parent_run_scope_id, parent_run_id, graph_name, partition_key, instance_id, created_at, closed_at`
 
 func (b *runScopesImpl) Create(ctx context.Context, tx persistence.Tx, row persistence.RunScopeRow) error {
-	// @deliberate: zero CreatedAt → pass nil so COALESCE falls through to DB default NOW().
 	var createdAt any
 	if !row.CreatedAt.IsZero() {
 		createdAt = row.CreatedAt

@@ -11,82 +11,25 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Database is the umbrella over the rimsky persistence layer. One Database
-// is constructed per process via Open(); the three runtime processes hold
-// it for their lifetime and Close() it on shutdown. Analogous to Go
-// stdlib sql.DB — the runtime object, not the adapter.
-//
-// Implementations live under postgres/ and sqlite/. No code outside this
-// package tree may depend on driver-specific libraries (pgx, modernc).
-// The adapter selector string (Config.Driver = "postgres"/"sqlite") is
-// distinct from this interface name.
-//
 // @concept: persistence-database
 type Database interface {
 	Queue() Queue
 	Tables() Tables
 	AdvisoryLocker() AdvisoryLocker
-	// @agent-contract Migrate: runs all embedded SQL migrations under the
-	// coordinator's migration lock. log receives one Info per applied
-	// migration plus a final summary. Pass shared.SilentLogger{} to suppress.
 	Migrate(ctx context.Context, log shared.Logger) error
-	// @agent-contract Ping: issues a trivial round-trip to the underlying
-	// database to surface connectivity problems. Returns nil when the
-	// database can successfully execute a query. Used by the observability
-	// /v1/observability/system/health endpoint.
 	Ping(ctx context.Context) error
 
-	// @agent-contract SetBlobBackend: installs the active BlobBackend +
-	// spill threshold + orphan-retention window on the underlying Tables.
-	// The attribute write/read paths consult this configuration to decide
-	// whether to spill bytes to the configured BlobBackend (vs. inline
-	// storage). Set with bb=nil and threshold=0 to disable spill. See plan
-	// §D0/D6/D7.
 	SetBlobBackend(bb BlobBackend, threshold int, retention time.Duration)
 
 	Close() error
 }
 
-// AdvisoryLocker carries the cross-process synchronization primitives the
-// scheduler, migration runner, and supervisor's acquisition tx depend on.
-//
-// Postgres impl: pg_(try_)advisory_lock and pg_advisory_xact_lock.
-// SQLite impl: flock(2)-based file locks (lock files derived from the
-// database path) for the cross-process methods — exclusion holds across
-// OS processes sharing the database file on one host — and no-ops for the
-// xact-lock methods (the surrounding BEGIN IMMEDIATE writer hold subsumes
-// them — strictly stronger than per-name advisory locking).
-//
-// Per spec §4 and §3.10. Load-bearing for blessed invariants 3, 4b, 7, 8, 10.
 type AdvisoryLocker interface {
-	// @agent-contract TrySchedulerTick: returns held=true plus a release fn
-	// if the scheduler-tick exclusion was acquired; held=false and a nil
-	// release fn if another replica already holds it. The scheduler skips
-	// the tick when held=false. Inv 7.
 	TrySchedulerTick(ctx context.Context) (held bool, release func(), err error)
 
-	// @agent-contract AcquireMigrationLock: blocks until the migration
-	// exclusion is held. The release fn must be safe to call even after
-	// the parent ctx is cancelled (Postgres impl uses context.Background()
-	// internally for the unlock; SQLite impl is a plain flock-unlock +
-	// close). Inv 8.
 	AcquireMigrationLock(ctx context.Context) (release func() error, err error)
 
-	// @agent-contract TakeNamedLockInTx: acquires the per-named-lock
-	// advisory exclusion inside the supplied tx. Released automatically
-	// at tx end. Callers MUST take locks in the deterministic sort order
-	// from v3 spec §4.10 invariant 3 (named-lock names sorted lexically
-	// before scope locks sorted by store-name then by scope-data bytes).
-	// Inv 3, 10.
-	//
-	// @constraint: Postgres uses pg_advisory_xact_lock(hashtext('rimsky_lock:'+name));
-	// SQLite is a no-op because the writer slot is already held.
 	TakeNamedLockInTx(ctx context.Context, tx Tx, name string) error
 
-	// @agent-contract TakeClaimScopeLockInTx: same pattern as
-	// TakeNamedLockInTx, scoped to (storeName, claimScopeData). Inv 3, 4b, 10.
-	//
-	// @constraint: Postgres uses pg_advisory_xact_lock(hashtext('rimsky_scope:'+store+':'+hex(claim_scope)));
-	// SQLite is a no-op.
 	TakeClaimScopeLockInTx(ctx context.Context, tx Tx, storeName string, claimScopeData []byte) error
 }

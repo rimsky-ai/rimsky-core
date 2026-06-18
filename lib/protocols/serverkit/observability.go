@@ -2,17 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// observability.go mounts the per-store HTTP+JSON observability bridge
-// onto an http.ServeMux. Routes (per spec §3.1):
-//
-//	GET /observability/v1/capabilities
-//	GET /observability/v1/claims/{claim_id}
-//	GET /observability/v1/claims/{claim_id}/stream  (SSE)
-//	GET /observability/v1/claims                    (ListClaims)
-//	GET /observability/v1/admin/{view_name}         (GetAdminView)
-//
-// All errors surface as HTTP 500 (mirrors the dispatch bridge's
-// per-package convention; see bridge.go).
 package serverkit
 
 import (
@@ -30,8 +19,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// MountObservability registers the observability HTTP routes on mux,
-// dispatching through the supplied genv1.ClaimProducerObservabilityServer.
 func MountObservability(mux *http.ServeMux, srv genv1.ClaimProducerObservabilityServer) {
 	mux.HandleFunc("/observability/v1/capabilities", obsCapabilitiesHandler(srv))
 	mux.HandleFunc("/observability/v1/claims", obsListClaimsHandler(srv))
@@ -60,7 +47,6 @@ func obsListClaimsHandler(srv genv1.ClaimProducerObservabilityServer) http.Handl
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// @constraint: serve /observability/v1/claims with no trailing slash.
 		if r.URL.Path != "/observability/v1/claims" {
 			http.NotFound(w, r)
 			return
@@ -92,8 +78,6 @@ func obsClaimsHandler(srv genv1.ClaimProducerObservabilityServer) http.HandlerFu
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// @constraint: serve /observability/v1/claims/{claim_id} or
-		// /.../{claim_id}/stream.
 		path := strings.TrimPrefix(r.URL.Path, "/observability/v1/claims/")
 		isStream := strings.HasSuffix(path, "/stream")
 		claimID := strings.TrimSuffix(path, "/stream")
@@ -146,10 +130,6 @@ func obsAdminHandler(srv genv1.ClaimProducerObservabilityServer) http.HandlerFun
 	}
 }
 
-// handleClaimStreamHTTP serves the SSE form of StreamClaim. The bridge
-// calls the gRPC server's StreamClaim with a synthetic stream that
-// writes events out as `data:` SSE frames. Per spec §3.5 the bridge
-// honors the underlying server's idle close behavior.
 func handleClaimStreamHTTP(w http.ResponseWriter, r *http.Request, srv genv1.ClaimProducerObservabilityServer, claimID string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -157,8 +137,6 @@ func handleClaimStreamHTTP(w http.ResponseWriter, r *http.Request, srv genv1.Cla
 	flusher, _ := w.(http.Flusher)
 	stream := &sseClaimStream{w: w, ctx: r.Context(), flusher: flusher}
 	if err := srv.StreamClaim(&genv1.StreamClaimRequest{ClaimId: claimID}, stream); err != nil {
-		// @constraint: best-effort final error frame — ignore the write
-		// error since the client is already gone if Send failed.
 		if _, werr := fmt.Fprintf(w, "data: {\"error\":%q}\n\n", err.Error()); werr == nil {
 			if flusher != nil {
 				flusher.Flush()
@@ -167,11 +145,6 @@ func handleClaimStreamHTTP(w http.ResponseWriter, r *http.Request, srv genv1.Cla
 	}
 }
 
-// sseClaimStream adapts an http.ResponseWriter to the
-// ClaimProducerObservability_StreamClaimServer interface so we can call the
-// gRPC server in-process. Send returns the wrapped fmt.Fprintf error
-// so disconnected clients propagate the error up to the SSE handler
-// loop and exit cleanly.
 type sseClaimStream struct {
 	w       http.ResponseWriter
 	ctx     context.Context

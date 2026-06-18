@@ -28,9 +28,6 @@ func TestTick_PreservesAliveAndOldLeakedReaped(t *testing.T) {
 		t.Fatalf("store.New: %v", err)
 	}
 
-	// @deliberate: three claims by category — alive (in live set),
-	// young-leak (not in live set but < TTL old), old-leak (not in live
-	// set and > TTL old) — exercise the keep / preserve / reap branches.
 	if _, err := st.Open("alive-1", "scope-a"); err != nil {
 		t.Fatalf("Open alive-1: %v", err)
 	}
@@ -41,10 +38,6 @@ func TestTick_PreservesAliveAndOldLeakedReaped(t *testing.T) {
 		t.Fatalf("Open old-leak: %v", err)
 	}
 
-	// @deliberate: simulate time-travel by back-dating the side-table's
-	// old-leak entry rather than sleeping — TTL is 24h, so old-leak's
-	// CreatedAt is rewritten to 25h-ago to trigger reaping while
-	// young-leak stays within TTL.
 	backdateOldLeak(t, tmp)
 
 	sw := &Sweeper{
@@ -100,9 +93,6 @@ func TestTick_PreservesAliveAndOldLeakedReaped(t *testing.T) {
 	}
 }
 
-// backdateOldLeak rewrites the side-table to give the `old-leak` entry
-// a 25h-old CreatedAt. The file format is JSON-per-line; reading and
-// rewriting in-place is the simplest approach for the test.
 func backdateOldLeak(t *testing.T, tmp string) {
 	t.Helper()
 	statePath := filepath.Join(tmp, "producer_state.jsonl")
@@ -110,9 +100,6 @@ func backdateOldLeak(t *testing.T, tmp string) {
 	if err != nil {
 		t.Fatalf("read state: %v", err)
 	}
-	// @deliberate: substring rewrite over going through store.Entries —
-	// the test owns the JSONL file shape and a string replace keeps the
-	// scaffolding minimal.
 	old := time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339Nano)
 	out := []byte(replaceAfterClaim(string(data), "old-leak", old))
 	if err := os.WriteFile(statePath, out, 0o644); err != nil {
@@ -120,15 +107,10 @@ func backdateOldLeak(t *testing.T, tmp string) {
 	}
 }
 
-// replaceAfterClaim rewrites the JSONL line whose `claim_id` field
-// matches claimID, swapping its `created_at` value for newCreatedAt.
 func replaceAfterClaim(s, claimID, newCreatedAt string) string {
 	return naiveReplaceCreatedAt(s, claimID, newCreatedAt)
 }
 
-// naiveReplaceCreatedAt finds the JSONL line containing `claim_id`
-// equal to id and rewrites the `created_at` value to v. Whitespace-
-// sensitive; the side-table writer emits without indentation.
 func naiveReplaceCreatedAt(blob, id, v string) string {
 	out := ""
 	for _, line := range splitLines(blob) {

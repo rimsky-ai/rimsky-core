@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Auth middleware: the outer IdentityResolver resolves Bearer → identity
-// (or anonymous-mode synthetic) and gates pre-action denials; the
-// per-handler gateByAction does action-scoped permission checks, sets
-// the per-request Mode (execute vs dry_run), and emits audit events.
-//
-// Why split. Chi's `RouteContext().RoutePattern()` is empty at outer-
-// middleware time, so an outer middleware cannot know the action.
-// Wrapping each handler at registration time with `gateByAction("<action>",
-// handler)` puts the action lookup at a point where it is statically
-// known. Defense-in-depth: MCP's in-process Catalog.Invoke re-enters
-// the chi router, so the same gate runs again for MCP-originated calls.
-//
 // @concept: api-key
 // @concept: permission
 // @concept: anonymous-mode
@@ -36,50 +24,23 @@ import (
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// AuthState is the per-process auth-middleware state. Built once at
-// startup; the outer middleware and gateByAction close over it.
 type AuthState struct {
-	// Tables is the persistence.Tables handle. Used to open
-	// transactions for audit appends and to access APIKeys/Events.
-	// Required.
 	Tables persistence.Tables
 
-	// Registry is the canonical action registry. Required.
 	Registry *ActionRegistry
 
-	// Clock is the time source used for active-status predicate
-	// evaluation and audit duration measurements. Required.
 	Clock foundationshared.Clock
 
-	// Logger is for structured warnings (anonymous-mode banner, audit-
-	// insert failures, last_used_at update failures). Required.
 	Logger foundationshared.Logger
 
-	// anonCache holds the result of the last anonymous-mode predicate
-	// evaluation. TTL bounded at anonCacheTTL.
 	anonCache atomic.Pointer[anonCacheEntry]
 
-	// mcpRouterRef is the lazy-bound router pointer the MCP catalog
-	// dispatches in-process tool calls through. Populated by
-	// registerMCPRoute; NewApp's tail assigns the built router into it.
 	mcpRouterRef *routerRef
 
-	// @constraint: lastUsedUpdates bounds the in-flight UpdateLastUsed goroutine
-	// count so a burst of authenticated requests against a slow
-	// Postgres can't accumulate thousands of pgx-bound goroutines.
-	// Buffered semaphore: gateByAction does a non-blocking acquire;
-	// on a full sem the update is skipped with a debug log rather
-	// than spawning more goroutines. Initialized lazily under
-	// lastUsedOnce so the AuthState zero value remains usable in
-	// tests.
 	lastUsedOnce    sync.Once
 	lastUsedUpdates chan struct{}
 }
 
-// lastUsedConcurrencyCap is the maximum in-flight UpdateLastUsed
-// goroutines. Sized so steady-state turnover stays within ~one per
-// active key; bursts beyond this drop the update with a logged debug
-// rather than spawning more goroutines.
 const lastUsedConcurrencyCap = 64
 
 type anonCacheEntry struct {
@@ -87,17 +48,8 @@ type anonCacheEntry struct {
 	until  time.Time
 }
 
-// anonCacheTTL is the staleness bound on the anonymous-mode
-// predicate cache. Each control-api replica refreshes independently
-// on its own clock; under TTL, post-mint requests may briefly see
-// the older state. The handleCreateKey / handleRevokeKey paths call
-// InvalidateAnonCache so the same replica's next request sees the
-// fresh value immediately.
 const anonCacheTTL = 1 * time.Second
 
-// IsAnonymousMode returns whether the deployment currently has zero
-// active keys. Uses a short TTL cache to avoid per-request DB hits
-// in the unauthenticated fallback path.
 func (s *AuthState) IsAnonymousMode(ctx context.Context) (bool, error) {
 	now := s.Clock.Now()
 	if e := s.anonCache.Load(); e != nil && now.Before(e.until) {
@@ -112,26 +64,14 @@ func (s *AuthState) IsAnonymousMode(ctx context.Context) (bool, error) {
 	return e.isAnon, nil
 }
 
-// InvalidateAnonCache drops the cached predicate. Called by auth
-// endpoint handlers after a mutation that could cross the zero
-// boundary (create / revoke / rotate / sweep).
 func (s *AuthState) InvalidateAnonCache() {
 	s.anonCache.Store(nil)
 }
 
-// OnAuthMutation drops the cached predicate AND any other per-replica
-// soft state that a key-table mutation invalidates. Today this is
-// equivalent to InvalidateAnonCache; the named hook is the seam
-// SweepRotationGrace calls from in-process tests so the local cache
-// reflects the post-sweep state immediately (in production the sweep
-// runs in the scheduler process and per-replica caches refresh via
-// the anonCacheTTL bound, as the spec accepts).
 func (s *AuthState) OnAuthMutation() {
 	s.InvalidateAnonCache()
 }
 
-// lastUsedSem returns the per-process semaphore for in-flight
-// UpdateLastUsed goroutines, lazily initialized on first use.
 func (s *AuthState) lastUsedSem() chan struct{} {
 	s.lastUsedOnce.Do(func() {
 		s.lastUsedUpdates = make(chan struct{}, lastUsedConcurrencyCap)
@@ -139,16 +79,6 @@ func (s *AuthState) lastUsedSem() chan struct{} {
 	return s.lastUsedUpdates
 }
 
-// IdentityResolver is the outer chi middleware. It:
-//   - extracts Authorization: Bearer <plaintext>
-//   - looks up the key by SHA-256(plaintext)
-//   - applies the active-status predicate
-//   - on success, sets ctxKeyIdentity and falls through
-//   - on failure with no anonymous fallback, returns 401 with the
-//     appropriate denial_reason and emits auth.access_denied
-//
-// Does NOT resolve action or check permission — that is gateByAction
-// (per-handler), once chi has matched the route.
 func (s *AuthState) IdentityResolver() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -173,18 +103,9 @@ func (s *AuthState) IdentityResolver() func(http.Handler) http.Handler {
 	}
 }
 
-// resolveIdentity returns (identity, "", nil) on success, including
-// the anonymous-mode synthetic identity. Returns
-// (zero-or-row-identity, denialReason, nil) on auth failure. Errors
-// are reserved for unexpected DB failures.
 func (s *AuthState) resolveIdentity(ctx context.Context, r *http.Request) (auth.Identity, auth.DenialReason, error) {
 	h := r.Header.Get("Authorization")
 	if h == "" {
-		// @constraint: no Authorization header at all → anonymous-mode probe.
-		// Distinct from a header with a non-Bearer scheme, which is
-		// an explicit (but malformed) credential and must surface
-		// as invalid_token so operators can tell the cases apart in
-		// the audit log.
 		anon, err := s.IsAnonymousMode(ctx)
 		if err != nil {
 			return auth.Identity{}, "", err
@@ -195,12 +116,6 @@ func (s *AuthState) resolveIdentity(ctx context.Context, r *http.Request) (auth.
 		return auth.Identity{}, auth.DenialNoToken, nil
 	}
 	if !strings.HasPrefix(h, "Bearer ") {
-		// @constraint: header present with a scheme rimsky doesn't speak
-		// (`Basic`, `Digest`, custom). The client DID send a
-		// credential — classify as invalid_token rather than
-		// no_token, regardless of anonymous mode (an anonymous
-		// deployment that accepts a malformed credential as
-		// anonymous would silently mask client bugs).
 		return auth.Identity{}, auth.DenialInvalidToken, nil
 	}
 	plaintext := strings.TrimPrefix(h, "Bearer ")
@@ -228,7 +143,6 @@ func (s *AuthState) resolveIdentity(ctx context.Context, r *http.Request) (auth.
 	return rowIdentity(row), "", nil
 }
 
-// rowIdentity builds an Identity from a persistence.APIKey row.
 func rowIdentity(row persistence.APIKey) auth.Identity {
 	var perms auth.Grant
 	if len(row.Permissions) > 0 {
@@ -243,63 +157,22 @@ func rowIdentity(row persistence.APIKey) auth.Identity {
 	}
 }
 
-// gateByAction returns a handler that:
-//   - reads the identity placed on ctx by IdentityResolver
-//   - checks the identity's grant against the named action
-//   - on deny, returns 403 with auth.access_denied audit
-//   - on allow, sets ctxKeyMode from the `?dry_run=true` request flag,
-//     runs the inner handler, then emits auth.access_attempted with the
-//     captured status code
-//   - best-effort updates last_used_at on the key
-//
-// gateByAction is called at route-registration time with the action
-// known statically.
 func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := s.Clock.Now()
 		ident, ok := IdentityFromContextOK(r.Context())
 		if !ok {
-			// @constraint: IdentityResolver should have populated this. Surface as 500 — a wiring bug.
 			s.Logger.Error("auth.gate.no_identity", "action", action)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "no identity"})
 			return
 		}
 		skin := protocolSkinFromContext(r.Context())
-		// @constraint: capture the body before the permission check: scope evaluation
-		// needs the request's scopeable dimension (e.g. the template tag),
-		// which requestTargets reads out of the captured JSON body and
-		// the URL path. captureBody re-attaches the bytes to r.Body, so
-		// the handler still reads the same body the client sent. It also
-		// hands back two views — the FULL body for target resolution
-		// (must not be the truncated marker, otherwise a >4 MB JSON
-		// request with a scoped grant 403s when the marker hides the
-		// real `template_tag`) and a possibly-truncated audit copy.
 		handlerBody, auditBody, rejected := captureBody(r, w, s.Logger)
 		if rejected {
-			// @constraint: 413 already written; do not dispatch the handler.
 			return
 		}
-		// @constraint: targets is the request's resource-selector candidate list for
-		// scope evaluation. requestTargets extracts the per-action
-		// scopeable dimension from the URL path / captured JSON body
-		// (the full handlerBody, never the audit-truncated marker) and
-		// returns one candidate per concretely-named tag — covering the
-		// full template lifecycle, not just register. The gate is
-		// satisfied if ANY candidate satisfies the matched entry's Scope;
-		// an empty candidate (lone `{}`) matches only unscoped grant
-		// entries (preserving today's behavior for actions without a
-		// scopeable dimension). CheckGrant rejects an out-of-scope write
-		// with 403 + auth.access_denied below.
 		// @concept: permission
 		targets := requestTargets(r.Context(), s.Tables, action, handlerBody, r)
-		// @deliberate: resolve the matched entry deterministically across ALL
-		// candidate targets — execute beats dry_run regardless of
-		// iteration order. A grant with one scoped execute entry and a
-		// separate dry_run entry on the same action must always resolve
-		// to execute, no matter which target the gate checks first.
-		// `auth.CheckGrant` itself is now order-independent within a
-		// single target (see CheckGrant doc); this loop extends that
-		// rule across the per-target candidate set.
 		// @concept: permission
 		// @concept: dry-run
 		var res auth.CheckResult
@@ -316,17 +189,6 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 				res = cand
 			}
 		}
-		// @constraint: validate that the captured body is JSON before wrapping it
-		// as `request_params`. The audit-row insert path Unmarshals the
-		// typed payload back into map[string]any (see audit.go::
-		// insertEvent), which fails on malformed JSON and would drop
-		// the row. Per spec section "Audit and dry-run", every
-		// authenticated request must produce an audit row regardless
-		// of body shape — so when the body is non-empty but not JSON
-		// (e.g. multipart upload, malformed payload) we land the row
-		// with `request_params_invalid: true` and a nil params field.
-		// The audit copy may be a synthetic truncation marker (well-
-		// formed JSON) when the body exceeds auditBodyCapBytes.
 		var (
 			params        json.RawMessage
 			paramsInvalid bool
@@ -343,8 +205,6 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "permission denied"})
 			return
 		}
-		// @constraint: effective mode is the FLOOR of two sources: the matched grant
-		// entry's identity-bound write floor (res.Mode, restored as a
 		// first-class @concept: permission `mode` field — defaulted to
 		// ModeExecute when the entry pins no mode) and the per-request
 		// `?dry_run=true` flag. Dry-run is sticky downward: once either
@@ -361,12 +221,6 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 		}
 		ctx := context.WithValue(r.Context(), ctxKeyMode{}, mode)
 
-		// @constraint: IsWrite discriminates `executed` semantics in the audit row: a
-		// read genuinely runs even under dry_run (no mutation to skip),
-		// so it records executed:true; a write under dry_run records
-		// executed:false. Unknown actions (shouldn't happen — the route
-		// is gated, so the action is registered) default to write-shaped
-		// to stay on the conservative side.
 		entry, known := s.Registry.Entry(action)
 		isWrite := !known || entry.IsWrite
 
@@ -378,11 +232,6 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 		if ident.KeyID != nil {
 			id := *ident.KeyID
 			now := start
-			// @constraint: bounded concurrency: a non-blocking acquire on the
-			// semaphore; on a full sem we skip the update with a
-			// debug log rather than spawning more goroutines. The
-			// last_used_at column is best-effort metadata, not a
-			// permission gate, so a missed update is acceptable.
 			sem := s.lastUsedSem()
 			select {
 			case sem <- struct{}{}:
@@ -401,56 +250,20 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 	}
 }
 
-// auditBodyCapBytes caps the request body size that the audit
-// pipeline records verbatim. JSON bodies above this still flow
-// through to the handler unchanged; the audit row records only the
-// prefix + a synthetic JSON marker noting the truncation.
-// Sized for a few MB — operator-facing JSON requests are well below
-// this; the cap exists to prevent a hostile client from buffering
-// an arbitrary payload into the audit row.
 const auditBodyCapBytes = 4 * 1024 * 1024
 
-// auditBodyHandlerMaxBytes is the absolute ceiling on request-body
-// bytes the handler may see. Above this the request is rejected with
-// 413 rather than silently truncated. Sized one decimal order above
-// the audit cap so legitimate large JSON payloads still flow through
-// while a hostile chunked stream can't drive the process out of
-// memory.
 const auditBodyHandlerMaxBytes = 64 * 1024 * 1024
 
-// captureBody reads the request body up to the handler ceiling and
-// re-attaches the FULL captured bytes via NopCloser so the handler can
-// re-read them. It returns TWO views of those bytes — the full body for
-// permission-target resolution (which must read the un-truncated JSON,
-// e.g. `template_tag` on a >4 MB POST /instances) and a possibly-
-// truncated audit copy that the audit row records verbatim. Bodies
-// above auditBodyHandlerMaxBytes trigger a 413 (writing to w directly);
-// callers MUST check the returned handlerRejected flag and stop
-// dispatch.
-//
-// Returns:
-//   - handlerBody: the FULL captured request body. Passed to
-//     requestTargets so scope evaluation reads the same bytes the
-//     handler will see. Empty on an empty/missing body.
-//   - auditBytes: the bytes to record in the audit row. Identical to
-//     handlerBody when ≤ auditBodyCapBytes; a synthetic JSON marker when
-//     the body exceeds the cap (the handler's view is never corrupted).
-//   - handlerRejected: true iff the function wrote a 413 response.
-//     Callers MUST stop dispatch when true.
 func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared.Logger) (handlerBody, auditBytes []byte, handlerRejected bool) {
 	if r.Body == nil || r.ContentLength == 0 {
 		return nil, nil, false
 	}
-	// @constraint: limit to handlerCap+1 so we can detect "too large" without
-	// buffering an arbitrary client-controlled payload.
 	limited := io.LimitReader(r.Body, auditBodyHandlerMaxBytes+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, nil, false
 	}
 	if len(body) > auditBodyHandlerMaxBytes {
-		// @constraint: Drain the rest so the underlying connection can be reused,
-		// then reject with 413. The handler is never invoked.
 		_, _ = io.Copy(io.Discard, r.Body)
 		if logger != nil {
 			logger.Warn("auth.audit_body_too_large",
@@ -463,9 +276,6 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 		})
 		return nil, nil, true
 	}
-	// @constraint: always re-attach the full body so the handler reads the same
-	// bytes the client sent. Audit truncation is a record-side concern
-	// and must not corrupt the handler's view.
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	if len(body) > auditBodyCapBytes {
 		if logger != nil {
@@ -473,12 +283,6 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 				"cap_bytes", auditBodyCapBytes,
 				"observed_bytes", len(body))
 		}
-		// @constraint: build a synthetic JSON marker so the audit row records the
-		// truncation explicitly. Callers consume `requestParams` as
-		// json.RawMessage; the marker is well-formed JSON. The handler
-		// body still carries the full bytes so scope evaluation reads
-		// the real `template_tag` / `template` / etc., not a synthetic
-		// marker that would falsely deny a legitimately-scoped grant.
 		marker := []byte(`{"_audit_truncated":true,"_audit_observed_bytes":` +
 			intToString(len(body)) + `}`)
 		return body, marker, false
@@ -486,7 +290,6 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 	return body, body, false
 }
 
-// intToString avoids strconv import bloat in this file; small helper.
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
@@ -509,8 +312,6 @@ func intToString(n int) string {
 	return string(buf[i:])
 }
 
-// capturingWriter wraps http.ResponseWriter so the audit emitter can
-// read the response status code after the handler returns.
 type capturingWriter struct {
 	http.ResponseWriter
 	statusCode  int
@@ -531,22 +332,12 @@ func (c *capturingWriter) WriteHeader(code int) {
 }
 
 func (c *capturingWriter) Write(b []byte) (int, error) {
-	// @constraint: Http.ResponseWriter writes an implicit 200 if WriteHeader
-	// hasn't been called; mirror that for the status capture.
 	if !c.wroteHeader {
 		c.wroteHeader = true
 	}
 	return c.ResponseWriter.Write(b)
 }
 
-// Flush proxies through to the wrapped ResponseWriter so streaming
-// handlers (the GET /mcp SSE stream) can flush events to the client.
-// Without this passthrough capturingWriter masks the underlying
-// http.Flusher, and the stream handler's `w.(http.Flusher)` assertion
-// fails — every GET /mcp then 500s with "streaming unsupported". In
-// production the inner writer is chi's Flusher-capable WrapResponseWriter
-// (installed by accessLog), which reaches the real net/http connection;
-// the guard tolerates an inner writer that doesn't support flushing.
 func (c *capturingWriter) Flush() {
 	if f, ok := c.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
@@ -555,14 +346,6 @@ func (c *capturingWriter) Flush() {
 
 func (c *capturingWriter) status() int { return c.statusCode }
 
-// gate returns an http.HandlerFunc that gates the inner handler on
-// the given action when an AuthState is wired. When deps.AuthState
-// is nil (tests that pass an `AppDeps{}` literal), the inner handler
-// runs unchanged.
-//
-// Production wiring always installs an AuthState; tests that exercise
-// route logic without the auth layer pass a nil AuthState and skip
-// the gate.
 func gate(deps AppDeps, action string, inner http.HandlerFunc) http.HandlerFunc {
 	if deps.AuthState == nil {
 		return inner

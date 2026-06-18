@@ -17,9 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
-// main stands up the DataProcessing service as a gRPC server. The supervisor
-// dials this address at fan-out leaf dispatch time (configured operator-side;
-// the service does not self-register) to drive the candidate lifecycle.
 func main() {
 	lis, err := serverkit.Listen("0.0.0.0", 9500)
 	if err != nil {
@@ -29,8 +26,6 @@ func main() {
 	srv := grpc.NewServer()
 	genv1.RegisterDataProcessingServer(srv, newDataProcessing())
 
-	// @deliberate: serve until SIGINT/SIGTERM, then drain in-flight RPCs
-	// gracefully — abrupt shutdown would tear down RPCs mid-flight.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	serverkit.RunGRPC(ctx, srv, lis, "example-data-processing")

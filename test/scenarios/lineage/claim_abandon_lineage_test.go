@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Forensics scenario — claim_abandon_lineage.
-//
-// Pin: a claim that resolves naturally as Abandon emits a
-// `rimsky_lineage` row with record_kind = "claim_terminal" and
-// outcome = "abandoned" (no Cause field). Distinct from a Commit
-// resolution (which carries outcome = "committed") and distinct from a
-// force-cancelled Abandon (which carries outcome = "force_cancelled"
-// + a Cause discriminator).
-//
-// Spec: 2026-05-16 dispatch attached to plans/2026-05-15-data-platform-
-// extensions-plan (lineage + events forensics extensions).
-//
 // @concept: claim-tree
 // @concept: lineage
 
@@ -82,12 +70,10 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 		})
 	}))
 
-	// @constraint: Producer-side: one Abandon, no Commit.
 	require.Equal(t, 1, countCallsOnID(store.Calls(), claimHandleID.String(), "abandon"),
 		"natural Abandon must hit Producer.Abandon once")
 	require.Equal(t, 0, countCallsOnID(store.Calls(), claimHandleID.String(), "commit"))
 
-	// @constraint: Lineage row: kind=claim_terminal, outcome=abandoned, no cause.
 	rows, err := backend.Lineage().GetByClaimHandleID(ctx, claimHandleID)
 	require.NoError(t, err)
 	require.Len(t, rows, 1, "claim_terminal row must be present after Abandon")
@@ -100,7 +86,6 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 	require.Equal(t, persistence.LineageOutcomeAbandoned, rec.Outcome)
 	require.Empty(t, rec.Cause, "natural Abandon must not carry a Cause field")
 
-	// @deliberate: Events: one claim_resolution.abandon, cause=natural.
 	var page persistence.EventListResult
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		p, err := backend.Events().List(ctx, persistence.EventListFilter{
@@ -116,11 +101,6 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 		"natural Abandon event must carry cause=natural")
 }
 
-// seedAbandonScenario inserts an instance + node + frame + node-run +
-// claim-handle row and returns the identifiers needed to drive
-// `ResolveClaimHandleTerminal`. The claim is NON-held (no
-// rimsky_claim_holders rows) so the terminal engine routes through
-// the direct Abandon path rather than via auto-terminal.
 func seedAbandonScenario(
 	ctx context.Context, t *testing.T, backend persistence.Tables, instanceKey string,
 ) (shared.UUID, shared.UUID, shared.UUID, shared.UUID) {

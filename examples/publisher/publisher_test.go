@@ -17,9 +17,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestSubscribeListUnsubscribe asserts the subscription lifecycle round-trips
-// over gRPC: Capabilities advertises a kind, Subscribe records a subscription,
-// ListSubscriptions returns it, and Unsubscribe removes it.
 func TestSubscribeListUnsubscribe(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

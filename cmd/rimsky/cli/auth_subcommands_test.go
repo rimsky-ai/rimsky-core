@@ -2,21 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Httptest-driven unit tests for the `rimsky auth` subcommands.
-//
-// Per plan J3-J9 each subcommand wants at least one test asserting
-// exit code, request shape, and (where applicable) error-path
-// behavior. The tests here pair a stub httptest.Server with the
-// real subcommand entry points (RunAuthCreateKey / RunAuthList /
-// RunAuthShow / RunAuthRevoke / RunAuthRotate / RunAuthStatus).
-//
-// Exit-code expectations follow the (subcommand → exit) table in the
-// spec section "CLI subcommands":
-//
-//   - flag parse error → 2
-//   - non-2xx from server → 1
-//   - 2xx → 0
-
 package cli_test
 
 import (
@@ -30,8 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 )
 
-// stubServer wraps httptest.NewServer with a routes map so each test
-// can declare per-(method, path) responses.
 type stubServer struct {
 	srv     *httptest.Server
 	last    *http.Request
@@ -43,8 +26,6 @@ func newStubServer(t *testing.T, handler http.HandlerFunc) *stubServer {
 	s := &stubServer{}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.last = r
-		// @deliberate: snapshot the body before the handler writes the response so
-		// later assertions can inspect it without re-reading a consumed reader.
 		if r.Body != nil {
 			buf := make([]byte, r.ContentLength)
 			if r.ContentLength > 0 {

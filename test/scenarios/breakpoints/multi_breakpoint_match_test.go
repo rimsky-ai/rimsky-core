@@ -2,23 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — pins spec §10.2 "Multi-breakpoint match":
-//
-//   1. Install two pause-mode breakpoints with overlapping matchers
-//      (both match the same node_type).
-//   2. The supervisor reaches the before_dispatch checkpoint and the
-//      evaluator iterates both breakpoints in order, writing a hit row
-//      per match.
-//   3. The dispatch blocks at the first breakpoint until resumed; once
-//      resumed, the evaluator moves to the second breakpoint, writes
-//      its hit row, blocks again until resumed.
-//   4. Two resume calls are required; only after the second does the
-//      dispatch proceed to the executor.
-//
-// This pins the per-iteration block + ordered evaluation contract of
-// EvaluateBreakpoints. (`ListForInstance` orders by created_at ASC, so
-// the first-installed breakpoint fires first.)
-//
 // @concept: breakpoint
 
 package breakpoints
@@ -56,9 +39,6 @@ func TestMultiBreakpointMatch(t *testing.T) {
 	})
 
 	iid := createInstanceWithPause(t, h, tid, "ck-multi-match", map[string]any{})
-	// @deliberate: Two breakpoints with overlapping matchers — both fire on the same
-	// dispatch. Created sequentially so the ListForInstance ordering is
-	// deterministic.
 	bp1 := breakpointCreate(t, h, iid, map[string]any{
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": "worker"},
@@ -69,7 +49,6 @@ func TestMultiBreakpointMatch(t *testing.T) {
 	})
 	_, _ = instanceResume(t, h, iid)
 
-	// @constraint: The first hit lands. The evaluator is blocked there.
 	hit1 := waitForHitOnBreakpoint(t, h, bp1, 10*time.Second)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not be called while paused at the first breakpoint")
@@ -78,7 +57,6 @@ func TestMultiBreakpointMatch(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 
 	hit2 := waitForHitOnBreakpoint(t, h, bp2, 10*time.Second)
-	// @constraint: Still no executor — bp2 is now holding the dispatch.
 	time.Sleep(200 * time.Millisecond)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must remain uncalled while paused at the second breakpoint")

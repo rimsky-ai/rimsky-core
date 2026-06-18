@@ -18,11 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// noopStore is a minimal persistence.Tables impl used by admin-diagnostics
-// tests that exercise only the route layer (no real DB read). Every
-// per-feature accessor returns nil; only Transaction is exercised, and
-// it just runs fn with a sentinel Tx. Nodes() returns a stub NodeTable
-// that always reports the requested node as existing in state='stale'.
 type noopStore struct{}
 
 type noopTx struct{ persistence.TxMarker }
@@ -56,8 +51,6 @@ func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, t
 	return fn(ctx, &noopTx{})
 }
 
-// noopNodes stubs persistence.NodeTable. Reports every requested node
-// as existing in state='stale' — sufficient for the routing tests.
 type noopNodes struct{}
 
 func (noopNodes) Create(context.Context, persistence.NodeCreateInput, persistence.Tx) (persistence.NodeRow, error) {
@@ -128,9 +121,6 @@ func (noopNodes) GetRunByDispatchIDForUpdate(context.Context, shared.UUID, persi
 	return nil, nil
 }
 
-// fakeDiagnosticQueue implements persistence.Queue but only services
-// ListParkedDiagnostic. Every other method is a no-op (the
-// admin-diagnostics route handlers never call them).
 type fakeDiagnosticQueue struct {
 	rows []persistence.ParkedDiagnosticRow
 }
@@ -148,9 +138,6 @@ func (f *fakeDiagnosticQueue) ListParkedDiagnostic(_ context.Context, _ persiste
 	return out, nil
 }
 
-// Enqueue the rest of persistence.Queue so the type satisfies the
-// interface. None of these are exercised by the admin-diagnostics
-// route handlers.
 func (f *fakeDiagnosticQueue) Enqueue(context.Context, persistence.DispatchRequest) error {
 	return nil
 }
@@ -295,8 +282,6 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 		t.Fatalf("want 2 parked rows, got %d", len(got.ParkedNodes))
 	}
 
-	// @constraint: with reason filter (post-2026-05-22 ParkReason 7→2 collapse, the
-	// enum projection validates: await_callback | snooze).
 	resp2, err := http.Get(srv.URL + "/v1/admin/diagnostics/parked-nodes?reason=snooze")
 	if err != nil {
 		t.Fatalf("GET parked-nodes filtered: %v", err)

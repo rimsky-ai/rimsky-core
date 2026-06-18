@@ -2,37 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// TestAtomicStaging_SchemaSwap proves the postgres store is a real
-// atomic-staging substrate for a staged-write scope-bytes claim, per
-// concept:atomic-staging ("Postgres schema swap: atomic via
-// transaction") and spec story S-pgstore-atomic-staging-substrate:
-//
-//   - Open reserves a per-claim STAGING schema (distinct from the
-//     canonical schema named by the selector) — queryable via
-//     information_schema.schemata.
-//   - The executor writes rows INTO the staging schema (here, a direct
-//     INSERT through the pool, as a real executor would over the data
-//     path).
-//   - Commit performs an ATOMIC swap: the canonical schema reflects the
-//     staged rows AND the staging schema is gone afterward.
-//   - Abandon discards the staging schema and leaves the canonical
-//     schema unchanged.
-//   - A swap collision surfaces a `pg/swap_failed`-classed error at the
-//     store boundary (the class declared in the executor's
-//     declaredErrorClasses but, today, never emitted).
-//
-// This is a PROOF-FIRST RED test (plan pass AUTHSTORES-15). It MUST
-// FAIL against the current code: Store.Open echoes the selector
-// verbatim as Address/ClaimScope and reserves no schema; Commit/Abandon
-// are no-ops for scope-bytes claims; pg/swap_failed has zero emit
-// sites. AUTHSTORES-16 implements the staging lifecycle that turns this
-// green.
-//
-// Rigor note: the swap is asserted to be a REAL schema rename/replace
-// (staging gone + canonical present after Commit), not a content copy
-// that leaves staging behind — atomicity and no-orphaned-staging are
-// the load-bearing properties the substrate must protect.
-
 package store
 
 import (
@@ -51,10 +20,6 @@ import (
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-// bootStagingStore stands up a fresh Postgres + a staged_async Store and
-// returns the pool (for direct staging-schema seeding) and the store.
-// Mirrors server/executor_test.go::bootExecutor; lives here so the
-// store-package test can drive Open/Commit/Abandon directly.
 func bootStagingStore(t *testing.T) (*pgxpool.Pool, *Store) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -98,9 +63,6 @@ func bootStagingStore(t *testing.T) (*pgxpool.Pool, *Store) {
 	return pool, st
 }
 
-// schemaExists reports whether the named schema is present in
-// information_schema.schemata — the observable surface the spec names
-// for "a staging schema is created/reserved (queryable)".
 func schemaExists(t *testing.T, pool *pgxpool.Pool, schema string) bool {
 	t.Helper()
 	var exists bool
@@ -114,10 +76,6 @@ func schemaExists(t *testing.T, pool *pgxpool.Pool, schema string) bool {
 	return exists
 }
 
-// addressSchema decodes the Open result's Address (a JSON string) into
-// the schema identity the executor is told to write into. In the staged
-// substrate this is the per-claim staging schema; the test asserts that
-// schema actually exists and is distinct from the canonical target.
 func addressSchema(t *testing.T, addr json.RawMessage) string {
 	t.Helper()
 	var s string
@@ -134,9 +92,6 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 	pool, st := bootStagingStore(t)
 	ctx := context.Background()
 
-	// @constraint: canonical schema must exist before Commit so the swap
-	// has a target to replace and so the test can prove "canonical
-	// reflects staged rows after Commit".
 	const canonical = "analytics_production"
 	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+canonical); err != nil {
 		t.Fatalf("create canonical schema: %v", err)
@@ -156,9 +111,6 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 		}
 		staging := addressSchema(t, out.Result.Address)
 
-		// @constraint: staging schema MUST be a real reserved schema
-		// distinct from canonical — an in-place write would defeat the
-		// stage-then-swap atomicity the substrate promises.
 		if staging == canonical {
 			t.Fatalf("Open returned the canonical schema %q as the write target; "+
 				"expected a distinct staging schema (no schema reservation occurred)", canonical)
@@ -167,8 +119,6 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 			t.Fatalf("Open did not reserve staging schema %q (absent from information_schema.schemata)", staging)
 		}
 
-		// @deliberate: Abandon here releases the reserved staging schema so
-		// it does not leak into the later sub-tests that share this store.
 		if err := st.Abandon(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
 			t.Fatalf("Abandon (cleanup): %v", err)
 		}
@@ -189,9 +139,6 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 		}
 		staging := addressSchema(t, out.Result.Address)
 
-		// @deliberate: stand in for the real executor's data-path write by
-		// INSERTing directly through the pool against the staging address
-		// Open handed out — same target, same semantics.
 		if _, err := pool.Exec(ctx, "CREATE TABLE "+staging+".items (id TEXT, payload TEXT)"); err != nil {
 			t.Fatalf("create staged table: %v", err)
 		}
@@ -220,8 +167,6 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 	})
 
 	t.Run("Abandon discards staging and leaves canonical unchanged", func(t *testing.T) {
-		// @deliberate: seed canonical with a known marker row so the
-		// post-Abandon assertion can prove Abandon left it untouched.
 		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+canonical+" CASCADE"); err != nil {
 			t.Fatalf("reset canonical schema: %v", err)
 		}
@@ -277,10 +222,6 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 	})
 
 	t.Run("swap collision surfaces pg/swap_failed at the store boundary", func(t *testing.T) {
-		// @deliberate: induce a swap collision by placing a conflicting
-		// object in the canonical target so the rename/replace cannot
-		// complete; the store MUST then surface pg/swap_failed and leave
-		// staging intact (canonical uncorrupted).
 		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+canonical+" CASCADE"); err != nil {
 			t.Fatalf("reset canonical schema: %v", err)
 		}
@@ -302,16 +243,10 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 			t.Fatalf("seed staged rows: %v", err)
 		}
 
-		// @deliberate: pre-create a schema at the name the atomic swap
-		// renames staging INTO so the rename step has nowhere to land —
-		// the simplest substrate-level collision the swap cannot resolve.
 		collidingName := staging + "_swap_target_collision"
 		if _, err := pool.Exec(ctx, "CREATE SCHEMA "+collidingName); err != nil {
 			t.Fatalf("create colliding schema: %v", err)
 		}
-		// @deliberate: pin canonical with a cross-schema view dependency
-		// so the swap's DROP (without CASCADE) cannot succeed — the
-		// atomic swap path relies on that drop landing.
 		if _, err := pool.Exec(ctx, "CREATE TABLE "+canonical+".pinned (n INT)"); err != nil {
 			t.Fatalf("create canonical pinned table: %v", err)
 		}

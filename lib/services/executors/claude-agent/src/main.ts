@@ -3,7 +3,6 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// @deliberate: pino ships CJS; reach the callable through the interop namespace.
 import * as pinoNs from "pino";
 type PinoFn = (opts?: object) => import("pino").Logger;
 const pino: PinoFn = (((pinoNs as unknown) as { default?: PinoFn }).default ??
@@ -18,19 +17,8 @@ import { registerCrashHandlers } from "./crash-handlers.js";
 import { loadCatalogFromEnv, parsePolicy } from "./mcp-catalog.js";
 import { createClaudeCliRunner } from "./cli-runner.js";
 
-/**
- * Executable entry point for the claude-agent executor.
- *
- * Configuration via env vars (see README). Binds:
- *   - internal MCP callback on 127.0.0.1:<random-port> (advertised to subprocess)
- *   - gRPC Executor on RIMSKY_EXECUTOR_HOST:RIMSKY_EXECUTOR_PORT_GRPC
- *   - HTTP+JSON bridge on RIMSKY_EXECUTOR_HOST:RIMSKY_EXECUTOR_PORT_HTTP
- */
 async function main(): Promise<void> {
   const logger = pino({ name: "claude-agent-executor" });
-  // @deliberate: registered before any server starts so a crash during startup (or
-  // during a server's lifetime) is logged and surfaced as a non-zero
-  // exit instead of a silent vanish.
   registerCrashHandlers(logger);
   const host = process.env.RIMSKY_EXECUTOR_HOST ?? "0.0.0.0";
   const grpcPort = parseInt(
@@ -47,11 +35,6 @@ async function main(): Promise<void> {
     process.env.RIMSKY_EXECUTOR_SILENCE_MS ?? "120000",
     10,
   );
-  // @deliberate: read RIMSKY_EXECUTOR_CLAUDE_BINARY once at startup and thread
-  // through to both transports so a deployment can override the bare `claude`
-  // PATH lookup — required for cross-stack tests that bind a stub CLI replacing
-  // the third-party binary while keeping the rest of the dispatch path real.
-  // Empty leaves the default ("claude" from PATH).
   const cliBinaryPath = process.env.RIMSKY_EXECUTOR_CLAUDE_BINARY ?? "";
 
   const cliAuth: CliAuthConfig = {
@@ -80,11 +63,6 @@ async function main(): Promise<void> {
     "cli auth resolved",
   );
 
-  // @deliberate: startup MCP-server catalog + allow_inline policy
-  // (S-executors-mcp-catalog-transports). Parsed ONCE here and threaded into
-  // both transports so every dispatch's `cli.mcp_servers` `{ ref: }` resolves
-  // against the same catalog. A malformed catalog throws and fails startup
-  // loudly (a dropped catalog server is a silently-unwired reference).
   const mcpCatalog = loadCatalogFromEnv(
     process.env.RIMSKY_EXECUTOR_MCP_CATALOG,
   );
@@ -106,20 +84,10 @@ async function main(): Promise<void> {
   });
   logger.info({ callback_url: callback.url }, "internal MCP listening");
 
-  // @deliberate: single ledger shared between gRPC + HTTP transports so dashboards
-  // can fetch traces by supervisor's dispatch_id regardless of which
-  // path delivered the dispatch.
   const observability = new Observability();
   const observabilityHttpBridgeUrl =
     process.env.RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL ?? "";
 
-  // @deliberate: in stub mode `runAgent` short-circuits before spawning the CLI, so the
-  // runner is never reached and we leave both transports to lazily build
-  // their default. In real mode, when `RIMSKY_EXECUTOR_CLAUDE_BINARY` is
-  // set, build the runner here once and inject the same instance into both
-  // transports so the override applies uniformly across the gRPC and HTTP
-  // paths (a stub-CLI binding skewed across transports would defeat the
-  // override and leave a real-CLI dispatch latent on one path).
   const sharedCliRunner =
     !stubModeEnabled() && cliBinaryPath !== ""
       ? createClaudeCliRunner({ auth: cliAuth, binaryPath: cliBinaryPath })

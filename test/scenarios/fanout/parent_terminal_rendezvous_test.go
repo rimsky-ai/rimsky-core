@@ -2,24 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N2 scenario — parent_terminal_rendezvous.
-//
-// When all sub-claim handles of a fan-out parent have terminated, the
-// parent's resolution fires. Aggregate outcome propagates:
-//   - all sub-claims committed → parent Commits.
-//   - any sub-claim aborted    → parent Aborts.
-//
-// Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Recursive claim-tree resolution + §Fan-out template DSL step 7.
-//
-// The parent-terminal rendezvous logic lives in
-// runtime/child_execution.go::SettleChildren. The persistence-
-// touching paths are covered by the auto-terminal aggregate-outcome
-// integration tests at test/scenarios/claim_stores/. This scenario
-// exercises the parallelism-semaphore that bounds in-flight leaves
-// during the wave — the operator-facing contract of `parallelism: N`
-// on a fan-out node.
 package fanout
 
 import (
@@ -38,9 +20,8 @@ func TestParentTerminalRendezvous_SemaphoreBoundsInFlightLeaves(t *testing.T) {
 	t.Parallel()
 	registry := runtime.NewFanOutSemaphoreRegistry()
 	parent := shared.UUID(uuid.New())
-	sem := registry.GetOrCreate(parent, 3) // @constraint: cap=3 in-flight leaves
+	sem := registry.GetOrCreate(parent, 3)
 
-	// @constraint: Hold 3 slots; the next Acquire must block.
 	for i := 0; i < 3; i++ {
 		if err := sem.Acquire(context.Background()); err != nil {
 			t.Fatalf("acquire %d: %v", i, err)
@@ -62,8 +43,6 @@ func TestParentTerminalRendezvous_SemaphoreBoundsInFlightLeaves(t *testing.T) {
 	registry.Drop(parent)
 }
 
-// @deliberate: The semaphore registry is per-parent-run. Two different parents'
-// semaphores are independent — saturating one must not block the other.
 func TestParentTerminalRendezvous_PerParentIsolation(t *testing.T) {
 	t.Parallel()
 	registry := runtime.NewFanOutSemaphoreRegistry()
@@ -75,14 +54,11 @@ func TestParentTerminalRendezvous_PerParentIsolation(t *testing.T) {
 	if err := s1.Acquire(context.Background()); err != nil {
 		t.Fatalf("s1.Acquire: %v", err)
 	}
-	// @constraint: s2 is independent — must succeed even though s1 is saturated.
 	if err := s2.Acquire(context.Background()); err != nil {
 		t.Fatalf("s2.Acquire (independent parent): %v", err)
 	}
 }
 
-// @deliberate: Concurrent Acquires honor the cap exactly — bounded by a counter
-// confirms the channel-backed semaphore is correct under contention.
 func TestParentTerminalRendezvous_ConcurrentAcquireRespectsCap(t *testing.T) {
 	t.Parallel()
 	const cap = 4

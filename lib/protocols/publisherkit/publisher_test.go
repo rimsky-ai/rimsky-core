@@ -24,8 +24,6 @@ func (c *captureLog) Warn(msg string, args ...any) {
 	c.msgs = append(c.msgs, msg)
 }
 
-// TestSend_Success_NoRetry confirms a 2xx returns immediately with a
-// single attempt.
 func TestSend_Success_NoRetry(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -50,7 +48,6 @@ func TestSend_Success_NoRetry(t *testing.T) {
 	}
 }
 
-// TestSend_5xx_RetriesUpToMax confirms 5xx triggers retries.
 func TestSend_5xx_RetriesUpToMax(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -78,9 +75,6 @@ func TestSend_5xx_RetriesUpToMax(t *testing.T) {
 	}
 }
 
-// TestSend_4xx_NoRetry_LogsRejected confirms 4xx is terminal AND logs
-// the `publisher.message.rejected` key so operators see capability
-// revocations distinctly.
 func TestSend_4xx_NoRetry_LogsRejected(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -110,8 +104,6 @@ func TestSend_4xx_NoRetry_LogsRejected(t *testing.T) {
 	}
 }
 
-// TestSend_5xxThenSuccess confirms the loop succeeds when a later
-// attempt returns 2xx.
 func TestSend_5xxThenSuccess(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

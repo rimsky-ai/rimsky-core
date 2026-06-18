@@ -17,11 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite/migrations"
 )
 
-// newMigrator returns the persistence.Migrator wired with SQLite
-// callbacks. The lock is acquired by Migrator.Run via the advisory
-// locker (an exclusive flock on a lock file beside the database file
-// under SQLite — exclusion holds across processes sharing the file, so
-// concurrent migrate runs serialize instead of racing).
 func newMigrator(db *sql.DB) persistence.Migrator {
 	return persistence.Migrator{
 		FS: migrations.FS,

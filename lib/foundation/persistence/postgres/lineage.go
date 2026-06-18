@@ -15,13 +15,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// lineageImpl is the Postgres-backed persistence.LineageTable — the
-// content lineage projection per spec §Content lineage.
 type lineageImpl tablesImpl
 
 var _ persistence.LineageTable = (*lineageImpl)(nil)
 
-// Lineage returns the postgres LineageTable impl.
 func (s *tablesImpl) Lineage() persistence.LineageTable { return (*lineageImpl)(s) }
 
 func (b *lineageImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
@@ -35,13 +32,6 @@ func (b *lineageImpl) Insert(ctx context.Context, tx persistence.Tx, row persist
 	if row.ObservedAt.IsZero() {
 		row.ObservedAt = time.Now().UTC()
 	}
-	// @deliberate: leaf_run rows carry outcome="" by design (no per-terminal
-	// disposition). The post-2026-05-17 claim_terminal writers
-	// (runtime.WriteClaimTerminalLineage) reject empty outcome at the call
-	// site, so any row reaching this Insert is either a leaf_run (empty
-	// outcome OK) or a claim_terminal with an explicit value. row.Outcome
-	// passes through verbatim — the column tolerates the empty string for
-	// leaf_run rows.
 	_, err := b.q(tx).Exec(ctx, insertLineageSQL,
 		row.ID, row.RecordKind, row.InstanceID, row.FrameID,
 		row.ObservedAt, row.Record, row.Outcome)
@@ -140,12 +130,6 @@ func (b *lineageImpl) QueryByParentRunID(ctx context.Context, parentRunID shared
 	return collectLineage(rows)
 }
 
-// lineagePruneWhereSQL is the shared predicate for both DeleteOlderThan
-// (the live prune) and CountOlderThan (the dry-run preview): rows older
-// than the cutoff whose corresponding run AND claim_handle are no longer
-// present. Defined once so the dry-run count is a true preview of the
-// live delete — keeping the WHERE clause byte-identical across the two
-// statements is the load-bearing invariant (see CountOlderThan doc).
 const lineagePruneWhereSQL = `
  WHERE observed_at < $1
    AND NOT EXISTS (

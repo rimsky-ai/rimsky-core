@@ -2,23 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// assets_test.go — F5 characterization tests for the asset handlers
-// against the real chi router + real Postgres (the app_test.go::newHarness
-// pattern, extended with a DataProcessing-advertising store + a stub
-// DataProcessing registry). The asset surface works today; these tests
-// pin the observable response bodies/status so a future regression in the
-// alias resolution, the ListByInstanceAndState(committed, durable) row
-// discovery, the ListVersions proxy, the lineage join, or the delete
-// 409-if-in-flight gate surfaces as a red test rather than a silent
-// behavior change.
-//
-// Why a bespoke harness (assetHarness) rather than newHarness: the asset
-// endpoints filter to producers that advertise `data_processing` and the
-// versions endpoint dials a DataProcessing client. newHarness wires
-// neither, so an asset row would be silently dropped by
-// buildDataProcessingPredicate. assetHarness registers a content store
-// that advertises data_processing and a stub DataProcessors registry.
-
 package controlapi
 
 import (
@@ -41,9 +24,6 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// stubDataProcessor is a minimal runtime.DataProcessingClient that records
-// the ListVersions call and returns a canned version list. Only ListVersions
-// is exercised by the asset surface; the other verbs return empty.
 type stubDataProcessor struct {
 	name         string
 	versions     []runtime.DataProcessingVersion
@@ -71,7 +51,6 @@ func (s *stubDataProcessor) GetVersionSchema(context.Context, runtime.GetVersion
 	return runtime.GetVersionSchemaOutput{}, nil
 }
 
-// stubDataProcessorRegistry is a single-entry DataProcessingRegistry.
 type stubDataProcessorRegistry struct {
 	clients map[string]runtime.DataProcessingClient
 }
@@ -81,14 +60,9 @@ func (r *stubDataProcessorRegistry) Get(name string) (runtime.DataProcessingClie
 	return c, ok
 }
 
-// assetHarness is newHarness plus a data_processing-advertising "content"
-// store and a stub DataProcessors registry, so the asset endpoints surface
-// rows and the versions proxy resolves.
 type assetHarness struct {
 	*harness
 	dp *stubDataProcessor
-	// @constraint: release captures whether ClaimProducer.Release fired (asserted by the
-	// delete test). The content fake records all calls.
 	content *storetest.Fake
 }
 
@@ -98,9 +72,6 @@ func newAssetHarness(t *testing.T, versions []runtime.DataProcessingVersion) (*a
 	d := pgtest.OpenDriver(ctx, t)
 
 	reg := locks.NewRegistry()
-	// @constraint: `content` advertises data_processing so handleListAssets's predicate
-	// includes the seeded durable claim and handleDeleteAsset can resolve a
-	// producer to Release.
 	contentFake := storetest.NewFake("content", claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		Protocols:             []string{claimproducer.ProtocolDataProcessing},
@@ -136,12 +107,6 @@ func newAssetHarness(t *testing.T, versions []runtime.DataProcessingVersion) (*a
 	return ah, func() { srv.Close() }
 }
 
-// assetTemplateBody builds a template whose `producer` node declares a
-// `content` store aliased `dataset`. The alias resolution
-// (lookupClaimAliasForProducer / lookupProducerForAlias) walks this
-// template to map node_type↔producer↔alias; the durable claim handle is
-// seeded directly in the DB (the asset row state lives there, not on the
-// template store entry).
 func assetTemplateBody(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
@@ -161,13 +126,6 @@ func assetTemplateBody(name string) map[string]any {
 	}
 }
 
-// seedAsset deploys assetTemplateBody, creates an instance, and inserts a
-// committed/durable claim handle row owned by the `producer` node + a
-// node-run that owns it (so the in-flight gate has a run to look at). The
-// claim handle is seeded via raw SQL because the Insert path always lands
-// state='active'; assets are state='committed' rows by construction
-// (post-Promote), so a direct insert is the faithful seed. Returns the
-// instance id and the seeded claim handle id.
 func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.UUID, claimID uuid.UUID, producerNodeID uuid.UUID, frameID uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
@@ -202,9 +160,6 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 			}
 		}
 		producerNodeID = uuid.UUID(prodNodeUUID)
-		// @constraint: seed a synthetic typed-message envelope to satisfy the
-		// rimsky_frames.triggering_message_id FK; the asset surface does not
-		// dispatch the message, it just needs a frame row with a satisfiable FK.
 		msgID := shared.UUID(uuid.New())
 		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
@@ -215,7 +170,6 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 		}); err != nil {
 			return err
 		}
-		// @constraint: re-use a seeded frame so the node-run + lineage FKs are satisfiable.
 		_ = prodNodeUUID
 		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instID), msgID, 600000, tx)
 		if err != nil {
@@ -230,7 +184,6 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
 		[]any{instID}, &mainScopeID)
 
-	// @constraint: A node-run for the producer node so a claim_holder can FK against it.
 	nodeRunID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_node_runs
@@ -238,9 +191,6 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'completed', 'fresh', $3, $4)
 	`, nodeRunID, producerNodeID, frameID, mainScopeID)
 
-	// @constraint: the durable, committed asset row. holder_supervisor_id is NULL per the
-	// inactive-has-no-holder CHECK; lock_kind='claim_scope' with producer +
-	// scope + intent set per the claim_handle_kind_fields CHECK.
 	claimID = uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_claim_handles
@@ -271,9 +221,7 @@ func TestAssetEndpoints_ListSurfacesDurableCommittedRows(t *testing.T) {
 	require.Equal(t, "committed", item["state"])
 	require.Equal(t, "durable", item["lifetime"])
 	require.Equal(t, "v-001", item["version_id"])
-	// @constraint: alias resolves through the template: {node_type}.{claim_alias}.
 	require.Equal(t, "producer.dataset", item["alias"])
-	// @constraint: scope is surfaced; address is never leaked (blessed-invariant 20).
 	scope, _ := item["scope"].(map[string]any)
 	require.Equal(t, "north", scope["area"])
 	require.NotContains(t, item, "address")
@@ -291,11 +239,9 @@ func TestAssetEndpoints_GetSingleAsset(t *testing.T) {
 	require.Equal(t, claimID.String(), out["claim_id"])
 	require.Equal(t, "producer.dataset", out["alias"])
 
-	// @constraint: A well-formed but unknown alias resolves to no row → 404.
 	status, _ = ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/producer.ghost", nil)
 	require.Equal(t, http.StatusNotFound, status)
 
-	// @constraint: A malformed alias (no dot) → 400.
 	status, _ = ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/nodot", nil)
 	require.Equal(t, http.StatusBadRequest, status)
 }
@@ -321,7 +267,6 @@ func TestAssetEndpoints_VersionsProxiesDataProcessor(t *testing.T) {
 	v1 := got[1].(map[string]any)
 	require.Equal(t, "v-002", v1["version_id"])
 
-	// @constraint: the proxy dialed the stub with the resolved claim handle id.
 	require.Len(t, ah.dp.listVersions, 1)
 	require.Equal(t, "content", ah.dp.listVersions[0].ProducerName)
 	require.Equal(t, claimID.String(), ah.dp.listVersions[0].ClaimHandleID)
@@ -335,7 +280,6 @@ func TestAssetEndpoints_MaterializationHistoryJoinsLineage(t *testing.T) {
 
 	instID, claimID, _, frameID := ah.seedAsset(t, "asset-hist")
 
-	// @constraint: two claim_terminal lineage rows keyed to the seeded claim handle.
 	insertClaimTerminal := func(versionID string, observedAt time.Time) {
 		rec, err := json.Marshal(map[string]any{
 			"claim_handle_id": claimID.String(),
@@ -363,13 +307,10 @@ func TestAssetEndpoints_MaterializationHistoryJoinsLineage(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	hist, _ := out["materialization_history"].([]any)
 	require.Len(t, hist, 2, "both claim_terminal rows for this claim handle must join in")
-	// @constraint: GetByClaimHandleID is observed_at ASC.
 	first := hist[0].(map[string]any)
 	require.Equal(t, "claim_terminal", first["record_kind"])
 }
 
-// TestAssetEndpoints_DeleteReleasesAndDeletes drives the happy-path delete:
-// no in-flight holder → ClaimProducer.Release fires, the row is deleted.
 func TestAssetEndpoints_DeleteReleasesAndDeletes(t *testing.T) {
 	t.Parallel()
 	ah, teardown := newAssetHarness(t, nil)
@@ -397,9 +338,6 @@ func TestAssetEndpoints_DeleteReleasesAndDeletes(t *testing.T) {
 	require.True(t, releaseFired, "Release must fire on the producer before row delete")
 }
 
-// TestAssetEndpoints_DeleteRefusesInFlightHolder pins the
-// 409-if-in-flight gate: an active claim_holder row makes DELETE
-// return 409 (and Release does not fire).
 func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 	t.Parallel()
 	ah, teardown := newAssetHarness(t, nil)
@@ -408,8 +346,6 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 
 	instID, claimID, producerNodeID, frameID := ah.seedAsset(t, "asset-del-busy")
 
-	// @constraint: an active node-run + an active claim_holder row → the delete gate
-	// must refuse (409) and NOT call Release or delete the row.
 	holderRunID := uuid.New()
 	var mainScopeID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
@@ -435,7 +371,6 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 		[]any{claimID}, &remaining)
 	require.Equal(t, 1, remaining, "asset row must survive a refused delete")
 
-	// @constraint: release must NOT have fired.
 	for _, c := range ah.content.Calls() {
 		require.NotEqual(t, "release", c.Verb, "Release must not fire when delete is refused")
 	}

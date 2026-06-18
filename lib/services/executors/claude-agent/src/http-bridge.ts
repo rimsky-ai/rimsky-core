@@ -19,57 +19,19 @@ import { mountObservability } from "./observability.js";
 import { CliConfigError, isCliConfigError } from "./cli-config-error.js";
 import type { McpCatalog } from "./mcp-catalog.js";
 
-/**
- * HTTP+JSON bridge. Callers that can't speak gRPC POST to `/execute` with an
- * ExecuteRequest-shaped body; the bridge returns `{ async_ack_id }`
- * immediately and posts the outcome to `callback_url` when the agent finishes.
- *
- * Spec: docs/specs/2026-04-27-stores-redesign-v2-design.md §12.3 — the bridge
- * mirrors the gRPC shape, with bodies keyed by `type`.
- *
- * This is primarily a debug / integration surface — rimsky supervisors
- * normally use the gRPC transport.
- */
 export interface HttpBridgeConfig {
   host: string;
   port: number;
   callback: CallbackServerHandle;
   cliRunner?: CliRunner;
-  /**
-   * Auth config used when constructing the default CLI runner. Required
-   * unless `cliRunner` is supplied (tests inject a fake runner).
-   */
   cliAuth?: CliAuthConfig;
   silenceTimeoutMs: number;
   logger: Logger;
   postCallback?: PostCallbackFn;
   postAttributes?: PostAttributesFn;
-  /**
-   * Startup MCP-server catalog (S-executors-mcp-catalog-transports). Parsed
-   * once at process startup from `RIMSKY_EXECUTOR_MCP_CATALOG`; threaded into
-   * every dispatch's `runAgent` so a `cli.mcp_servers` `{ ref: }` resolves.
-   */
   mcpCatalog?: McpCatalog;
-  /**
-   * Inline-server policy (`allow_inline`, default false) from
-   * `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE`. Gates whether inline
-   * `cli.mcp_servers` entries are permitted at dispatch.
-   */
   mcpAllowInline?: boolean;
-  /**
-   * Optional observability ledger. When provided, the HTTP bridge:
-   *   - mounts /observability/v1/* routes from observability.ts
-   *   - emits step_started/step_completed/error events around each
-   *     /execute call so dashboards can fetch the trace via
-   *     GET /observability/v1/trace/{ack_id}.
-   */
   observability?: Observability;
-  /**
-   * Externally-reachable HTTP base URL for the dashboard. Surfaced in
-   * the observability capabilities response so dashboards can dial
-   * the bridge directly. When empty, the dashboard falls back to its
-   * gRPC dispatch endpoint and HTTP-only routes will not work.
-   */
   observabilityHttpBridgeUrl?: string;
 }
 
@@ -82,36 +44,17 @@ interface ExecuteBody {
   node_id?: string;
   instance_id?: string;
   node_type?: string;
-  // @deliberate: supervisor-supplied dispatch identifier. When present, the bridge
-  // keys the trace ledger by this value so dashboards can fetch the
-  // trace via GET /observability/v1/trace/{dispatch_id}. Falls back to
-  // the freshly-minted ackId for non-rimsky callers.
   dispatch_id?: string;
   attributes?: unknown;
   attributes_schema?: unknown;
   stores?: Record<string, unknown>;
   callback_url?: string;
   cancel_token?: string;
-  // @deliberate: field number 10 (`resumed`) is reserved on the wire under
-  // stores-redesign-v2. Resume is universal — substrate-detected.
-  // Field number 11 (`run_attempt`) is reserved on the wire under
-  // the 2026-05-20 per-run attribute keying spec — each dispatch has
-  // a fresh dispatch_id; consumers keying on attempts use dispatch_id.
-  // J10 plan: when this is a resume after the `Park` terminal, the
-  // supervisor populates resume_context with the original
-  // session_token + payload
-  // and a resume_reason ("deadline_elapsed" | "external_invalidate").
-  // The bridge extracts session_token and passes it to the CLI's
-  // `--resume <id>` arg; payload + reason are exposed to the prompt
-  // template as `{{rimsky.resume_payload}}` / `{{rimsky.resume_reason}}`.
   resume_context?: {
-    payload?: string; // @deliberate: base64 of bytes; optional, may be empty
+    payload?: string;
     session_token?: string;
     resume_reason?: string;
   };
-  // @deliberate: recovery-aware fields (per spec
-  // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-  // §Recovery-aware executor protocol).
   prior_dispatch_id?: string;
   prior_dispatch_disposition?: string;
 }
@@ -140,18 +83,9 @@ export async function startHttpBridge(
   app.post("/execute", async (req, reply) => {
     const body = (req.body ?? {}) as ExecuteBody;
     const ackId = randomUUID();
-    // @deliberate: per the 2026-05-20 per-run keying refactor, the writeback URL's run_id
-    // segment must equal the supervisor's dispatch_id so attributesAuth can
-    // verify the cancel_token. The node_id is a poor proxy because it is
-    // stable across runs of the same node. Fall back to a fresh UUID only
-    // when no dispatch_id was supplied (debug / integration callers).
     const runId = body.dispatch_id && body.dispatch_id.length > 0
       ? body.dispatch_id
       : randomUUID();
-    // @deliberate: the trace ledger is keyed by supervisor's dispatch_id when one
-    // arrives in the body (production path); otherwise by the locally
-    // minted ackId (debug / integration callers). This is what makes
-    // dashboard `getTrace(dispatch_id)` resolve.
     const traceId = body.dispatch_id && body.dispatch_id.length > 0
       ? body.dispatch_id
       : ackId;
@@ -208,13 +142,8 @@ async function runAndCallback(
       cwdFromStore: stringOrUndefined(attributes.cwd_from_store),
       cwdOverride: stringOrUndefined(attributes.cwd),
       cliConfig: parseCliConfig(attributes.cli),
-      // @deliberate: startup MCP catalog + allow_inline policy thread through so a node's
-      // `cli.mcp_servers` `{ ref: }` resolves against the catalog at dispatch.
       mcpCatalog: config.mcpCatalog,
       mcpAllowInline: config.mcpAllowInline,
-      // @deliberate: raw dispatch_id (not runId): the sign-off gate binds to and
-      // enforces non-emptiness on this, distinct from the UUID-fallback
-      // runId above.
       dispatchId: body.dispatch_id ?? "",
       callbackUrl: body.callback_url ?? "",
       cancelToken: body.cancel_token ?? "",
@@ -223,10 +152,6 @@ async function runAndCallback(
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
       postAttributes: config.postAttributes,
-      // @constraint: TD-claude-agent-session-attribute-only — the session
-      // token rides attributes only. The retired resume_context body
-      // channel does not exist; attributes.session_token IS the resume
-      // signal.
       sessionToken: stringOr(attributes.session_token, ""),
     });
     const cb = outcomeToCallbackBody(outcome, ackId);
@@ -249,12 +174,6 @@ async function runAndCallback(
       logger.warn({ outcome: outcome.kind }, "no callback_url; outcome dropped");
     }
   } catch (e) {
-    // @deliberate: A CliConfigError means a present-but-malformed cli.* config (e.g. a
-    // required_signoffs entry missing public_key) — a host configuration
-    // error, not an executor fault. Surface it as the declared
-    // `agent/attribute_invalid` class so a misconfigured sign-off gate
-    // fails LOUDLY (same fail-loud mode as the empty-dispatch_id path in
-    // agent-run.ts) instead of silently degrading to an ungated run.
     const errorClass = isCliConfigError(e)
       ? e.errorClass
       : "agent/internal_error";
@@ -268,9 +187,6 @@ async function runAndCallback(
       config.observability.markComplete(traceId);
     }
     if (body.callback_url) {
-      // @deliberate: same AsyncCallbackBody oneof shape the supervisor's
-      // parseAsyncCallback requires (success | error | park); the legacy
-      // `{type: ...}` discriminator is rejected with HTTP 400.
       await post(
         body.callback_url,
         {
@@ -286,28 +202,10 @@ async function runAndCallback(
   }
 }
 
-/**
- * Exported for unit tests; not part of the agent-contract surface.
- */
 export function outcomeToCallbackBody(
   outcome: AgentOutcome,
   ackId: string,
 ): Record<string, unknown> {
-  // @constraint: AsyncCallbackBody carries exactly one outcome variant
-  // (success | error | park), identical in shape to the gRPC variant in
-  // server.ts. Per TD-collapse-named-event-to-tags the `events[]` slot
-  // retires; tags ride on the settling verdict (Success/Error/Park
-  // `tags` field). Per TD-claude-agent-session-attribute-only the
-  // session token rides `attributes_delta` on Park; the proto
-  // Park.payload and Park.session_token fields are reserved.
-  //
-  // `async_ack_id` is carried in the body for the HTTP bridge (the
-  // gRPC variant omits it — it rides the route param); the supervisor
-  // reads the ack from the route and ignores the body field, so it is
-  // harmless.
-  //
-  // @source server.ts::outcomeToCallbackBody (the gRPC sibling; same
-  // oneof body, minus async_ack_id).
   if (outcome.kind === "complete") {
     return {
       async_ack_id: ackId,
@@ -319,9 +217,6 @@ export function outcomeToCallbackBody(
     };
   }
   if (outcome.kind === "blocked") {
-    // @deliberate: post-E.2 collapse: `Blocked` maps to
-    // `Error{error_class: "agent/blocked"}` (renamed 2026-05-23 per
-    // signal-taxonomy spec, hierarchical-class convention).
     return {
       async_ack_id: ackId,
       error: {
@@ -369,11 +264,6 @@ function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
 }
 
 // @source: lib/services/executors/claude-agent/src/server.ts (unwrapStruct + unwrapStructValue + toRecord)
-// Mirror of the gRPC server's attributes unwrap. The HTTP bridge usually
-// receives plain JSON (no Struct envelope) but accepts the proto-Struct
-// shape too so behavior stays consistent across transports. Both snake_case
-// and camelCase Value-kind discriminators are accepted — matches the
-// production gRPC path that uses keepCase: true.
 function unwrapStructValue(v: unknown): unknown {
   if (v === null || v === undefined) return null;
   if (typeof v !== "object") return v;
@@ -422,7 +312,6 @@ function toRecord(v: unknown): Record<string, unknown> {
 }
 
 // @source: lib/services/executors/claude-agent/src/server.ts (unwrapStores)
-// Mirror of the gRPC server's store-handle unwrap.
 function unwrapStores(stores: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(stores)) {
@@ -448,7 +337,6 @@ function stringOrUndefined(v: unknown): string | undefined {
 }
 
 // @source: lib/services/executors/claude-agent/src/server.ts (parseCliConfig + helpers)
-// Mirror of the gRPC path's attributes.cli reader.
 function boolOrUndefined(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
 }
@@ -494,9 +382,6 @@ export function parseCliConfig(v: unknown): {
   if (hr !== undefined) out!.handleRateLimits = hr;
   const msc = numberOrUndefined(cli.max_schema_corrections);
   if (msc !== undefined) out!.maxSchemaCorrections = msc;
-  // @deliberate: sign-off gate: host-wired validator MCP servers and the required
-  // (public_key, path) signature pairs. Type-shape-only validation,
-  // like every other field here — rimsky never inspects the values.
   const ms = parseMcpServers(cli.mcp_servers);
   if (ms !== undefined) out!.mcpServers = ms;
   const rs = parseRequiredSignoffs(cli.required_signoffs);
@@ -507,13 +392,6 @@ export function parseCliConfig(v: unknown): {
 }
 
 // @source: lib/services/executors/claude-agent/src/server.ts (parseMcpServers)
-// Two entry shapes (S-executors-mcp-catalog-transports): a catalog reference
-// `{ ref: <name> }` (resolved in agent-run.ts against the startup catalog) or
-// an inline `{ name, url, headers, allowed_tools }` server (permitted only
-// under the `allow_inline` policy, also enforced in agent-run.ts). A
-// present-but-malformed entry throws CliConfigError rather than being
-// silently dropped (mcp_servers wires the validator servers the sign-off
-// gate depends on). Field-absent (`v` not an array) ⇒ undefined.
 function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
   if (v === undefined || v === null) return undefined;
   if (!Array.isArray(v)) {
@@ -562,10 +440,6 @@ function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
 }
 
 // @source: lib/services/executors/claude-agent/src/server.ts (parseRequiredSignoffs)
-// A present-but-malformed entry (missing / non-string / empty public_key)
-// throws CliConfigError rather than being silently dropped: required_signoffs
-// is a security gate, and a dropped entry would silently weaken (or disable)
-// enforcement. Field-absent (`v` not an array) ⇒ undefined (no gate).
 function parseRequiredSignoffs(
   v: unknown,
 ): { publicKey: string; path?: string }[] | undefined {

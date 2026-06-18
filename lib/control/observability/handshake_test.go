@@ -18,9 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub/stubtest"
 )
 
-// fakeProber is a Prober stub for testing the handshake without dialing
-// real peers. Errors are guarded by sync.Mutex (atomic.Value chokes on
-// typed-nil swaps).
 type fakeProber struct {
 	mu            sync.Mutex
 	executorErr   error
@@ -30,10 +27,6 @@ type fakeProber struct {
 	storeClasses  []string
 	storeClassErr error
 	probeAttempts atomic.Int64
-	// @constraint: received tlsMode arguments, per probe verb. The handshake must
-	// thread each PeerSpec's TLS mode into every dial — dropping it at
-	// any of the three probe call sites would silently downgrade a
-	// required-TLS peer to plaintext.
 	executorTLSModes   []string
 	storeTLSModes      []string
 	storeClassTLSModes []string
@@ -104,10 +97,6 @@ func TestRunHandshake_ReachableExecutor(t *testing.T) {
 	}
 }
 
-// TestRunHandshake_StoreDeclaredErrorClasses pins the producer half of
-// TD-producer-declared-classes-capability: the ClaimProducer
-// Capabilities handshake's declared_error_classes land in the
-// discovery cache alongside the observability capabilities.
 func TestRunHandshake_StoreDeclaredErrorClasses(t *testing.T) {
 	prober := newFakeProber()
 	prober.storeClasses = []string{"pg/claim_unavailable", "pg/swap_failed"}
@@ -131,10 +120,6 @@ func TestRunHandshake_StoreDeclaredErrorClasses(t *testing.T) {
 	}
 }
 
-// TestRunHandshake_StoreDeclaredErrorClasses_ObsUnreachable pins that
-// the producer vocabulary survives a missing observability surface:
-// the validator must see the same vocabulary the runtime routes by
-// even when the store exposes no observability endpoint.
 func TestRunHandshake_StoreDeclaredErrorClasses_ObsUnreachable(t *testing.T) {
 	prober := newFakeProber()
 	prober.storeErr = errors.New("obs endpoint unreachable")
@@ -200,13 +185,6 @@ func TestRefreshLoop_HealsUnreachable(t *testing.T) {
 	t.Fatalf("RefreshLoop did not heal; final reachability = %s", got.Reachability)
 }
 
-// TestHandshake_RealProberCachesAndHeals drives the real NewGRPCProber
-// against a real loopback peer (no fakeProber), proving the production
-// probe→cache path actually dials, reads the peer's advertised
-// observability capabilities over the wire, and caches them — and that
-// RefreshLoop flips the entry to unreachable once the peer dies. This is
-// the coupling the gate closes: every other handshake test injects a
-// fakeProber, so without this one nothing exercises gRPCProber end to end.
 func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 	srv, addr := stubtest.Listen(t, stub.New())
 
@@ -226,11 +204,6 @@ func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 	if entry.Capabilities == nil {
 		t.Fatalf("capabilities nil — nothing was probed over the wire")
 	}
-	// @constraint: assert on the wire-advertised caps the real stub serves
-	// (observability.go Capabilities), NOT SupportsTraceGet — the stub
-	// advertises that false; only the fakeProber set it true. Matching
-	// DeclaredTags/ExpectedAttributesSchema proves the real caps round-
-	// tripped the gRPC boundary into the cache.
 	wantTags := []string{"ready", "signal", "checkpoint", "progress", "completed"}
 	if !reflect.DeepEqual(entry.Capabilities.DeclaredTags, wantTags) {
 		t.Fatalf("DeclaredTags = %v, want %v", entry.Capabilities.DeclaredTags, wantTags)
@@ -239,9 +212,6 @@ func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 		t.Fatalf("ExpectedAttributesSchema empty — caps not probed over the wire")
 	}
 
-	// @constraint: heal/flip: kill the peer, run one RefreshLoop interval against the
-	// real prober, and assert the entry flips to unreachable. Mirrors
-	// TestRefreshLoop_HealsUnreachable but exercises the real dial path.
 	srv.Stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -258,11 +228,6 @@ func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 	t.Fatalf("RefreshLoop did not flip to unreachable; final reachability = %s", entry.Reachability)
 }
 
-// TestRunHandshake_ThreadsTLSMode pins the TLS-mode threading: every
-// probe call site (executor probe, store observability probe, store
-// declared-error-classes probe) must receive the PeerSpec's TLS mode.
-// Dropping the mode at any site would pass this suite before this test
-// existed — the fake recorded nothing.
 func TestRunHandshake_ThreadsTLSMode(t *testing.T) {
 	prober := newFakeProber()
 	_ = RunHandshake(context.Background(), prober,

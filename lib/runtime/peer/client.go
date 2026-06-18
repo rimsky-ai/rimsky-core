@@ -15,9 +15,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// Client is a remote-gRPC implementation of the rimsky-side
-// ClaimProducer interface. One Client per registered producer
-// (operator-chosen name in rimsky.yml). Per spec §2.
 type Client struct {
 	name string
 	conn *grpc.ClientConn
@@ -25,25 +22,14 @@ type Client struct {
 	caps claimproducer.Capabilities
 }
 
-// @deliberate: compile-time interface check — fails compilation when
-// *Client no longer satisfies locks.ClaimProducer.
 var _ locks.ClaimProducer = (*Client)(nil)
 
-// Name returns the operator-configured producer name supplied at Dial.
 func (c *Client) Name() string { return c.name }
 
-// Capabilities returns the cached capability struct populated by Dial's
-// startup handshake. Returns the cached value without making another
-// RPC; rimsky calls Capabilities exactly once per producer-service per
-// process at startup.
 func (c *Client) Capabilities(_ context.Context) (claimproducer.Capabilities, error) {
 	return c.caps, nil
 }
 
-// Open RPCs to the remote producer. Maps the OpenResponse oneof to
-// OpenOutcome: Acquired → {Available: true, Result: ...};
-// Unavailable → {Available: false}. Producer-side faults flow as
-// gRPC errors and are surfaced to the caller.
 func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
 	resp, err := c.rpc.Open(ctx, &genv1.OpenRequest{
 		ClaimId:      string(claimID),
@@ -59,10 +45,6 @@ func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec c
 		return claimproducer.OpenOutcome{}, NewProducerCallError(c.name, "Open", err)
 	}
 	if u := resp.GetUnavailable(); u != nil {
-		// @constraint: carry the producer-declared acquisition-failure class
-		// (empty when the producer named none) so rimsky-side routing keys the
-		// operator's `error_types:` chain on it rather than only the synthetic
-		// "acquire/unavailable".
 		return claimproducer.OpenOutcome{Available: false, UnavailableClass: u.GetErrorClass()}, nil
 	}
 	acq := resp.GetAcquired()
@@ -87,11 +69,6 @@ func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec c
 	}, nil
 }
 
-// Commit RPCs to the remote producer and returns the response body.
-// The base-protocol CommitResponse fields are honored, not discarded:
-// version_id flows to the claim-handle row and producer_metadata to
-// the fan-out parent's writeback (both wired by the unified resolution
-// engine in runtime). Inert in rimsky per @blessed-invariant 20.
 func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) (claimproducer.CommitResult, error) {
 	resp, err := c.rpc.Commit(ctx, &genv1.CommitRequest{
 		ClaimId:    string(claimID),
@@ -107,8 +84,6 @@ func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scop
 	}, nil
 }
 
-// Abandon RPCs to the remote producer. address may be nil when Open's
-// response was lost — the producer identifies state by claim_id.
 func (c *Client) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
 	_, err := c.rpc.Abandon(ctx, &genv1.AbandonRequest{
 		ClaimId:    string(claimID),
@@ -121,7 +96,6 @@ func (c *Client) Abandon(ctx context.Context, claimID claimproducer.ClaimID, sco
 	return nil
 }
 
-// Release RPCs to the remote producer.
 func (c *Client) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
 	_, err := c.rpc.Release(ctx, &genv1.ReleaseRequest{
 		ClaimId:    string(claimID),
@@ -134,11 +108,6 @@ func (c *Client) Release(ctx context.Context, claimID claimproducer.ClaimID, sco
 	return nil
 }
 
-// SplitScope RPCs to the remote producer. Per spec §Fan-out template
-// DSL — used inside the rimsky-side acquisition tx for fan-out nodes.
-// Producers that do not advertise SupportsSplitScope return
-// ErrSplitScopeUnsupported; rimsky validates at registration so this
-// path is normally unreachable.
 func (c *Client) SplitScope(ctx context.Context, req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
 	if !c.caps.SupportsSplitScope {
 		return claimproducer.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
@@ -161,10 +130,6 @@ func (c *Client) SplitScope(ctx context.Context, req claimproducer.SplitClaimSco
 	return out, nil
 }
 
-// ScopesConflict RPCs to the remote producer. Per @blessed-invariant
-// 4b: when SupportsScopesConflict is false rimsky uses byte-equal as
-// the trivial default; callers should consult the cached Capabilities
-// rather than relying on this method's fallback.
 func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) {
 	if !c.caps.SupportsScopesConflict {
 		return claimproducer.ErrScopesConflictUnsupportedFallback(a, b), nil
@@ -179,17 +144,12 @@ func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) 
 	return resp.GetConflicts(), nil
 }
 
-// Close releases the gRPC connection. Called by Registry.Close on
-// shutdown.
 func (c *Client) Close() {
 	if c.conn != nil {
 		_ = c.conn.Close()
 	}
 }
 
-// ValidateCapabilities compares the cached capability struct against
-// the operator-declared envelope. The operator-declared envelope MUST
-// be a non-empty subset of the producer-advertised envelope.
 func (c *Client) ValidateCapabilities(declared claimproducer.Capabilities) error {
 	if len(declared.WriteSemanticsAllowed) == 0 {
 		return fmt.Errorf("remote producer %q: operator-declared write_semantics_allowed is empty", c.name)
@@ -203,8 +163,6 @@ func (c *Client) ValidateCapabilities(declared claimproducer.Capabilities) error
 	return nil
 }
 
-// writeSemanticsFromProto maps the proto enum to the Go-side string
-// constant. Returns WriteSemanticsUnknown for the proto zero value.
 func writeSemanticsFromProto(ws genv1.WriteSemantics) claimproducer.WriteSemantics {
 	switch ws {
 	case genv1.WriteSemantics_WRITE_SEMANTICS_SYNC:

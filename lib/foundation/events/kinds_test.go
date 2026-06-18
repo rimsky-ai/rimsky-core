@@ -12,19 +12,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestOperationalKindRoundTrip exercises the typed → wire → typed
-// round-trip for every operational kind in the catalog. The
-// load-bearing property: a wire form built by Kind.String() parses
-// back to a Kind that compares equal (same family + same enum value)
-// to the original. Catching a regression here means an emit-site
-// kind would land in the column under one spelling and read back as
-// a different operational name (or fall to ErrUnknownKind).
 func TestOperationalKindRoundTrip(t *testing.T) {
-	// @deliberate: every operational kind currently emitted is held
-	// literal here (not pulled from AllOperationalKinds) so a
-	// regression that drops an entry from the canonical map shows up
-	// as a missing case in this list, not a silently-empty round-trip
-	// pass.
 	cases := []struct {
 		name string
 		op   genv1.OperationalKind
@@ -99,10 +87,6 @@ func TestOperationalKindRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSignalKindRoundTrip exercises the signal-class round-trip:
-// type-path → wire string → SignalKind, recovered SignalPath equal
-// to the input. ParseKindString uses the "/" character to
-// disambiguate signal from operational.
 func TestSignalKindRoundTrip(t *testing.T) {
 	cases := []string{
 		"terminal/success",
@@ -141,10 +125,6 @@ func TestSignalKindRoundTrip(t *testing.T) {
 	}
 }
 
-// TestParseKindStringErrors covers the rejection paths: empty input,
-// a malformed operational-style string that doesn't match the
-// canonical catalog AND has no slash (so it doesn't pretend to be a
-// signal type-path either).
 func TestParseKindStringErrors(t *testing.T) {
 	cases := []struct {
 		name string
@@ -170,10 +150,6 @@ func TestParseKindStringErrors(t *testing.T) {
 	}
 }
 
-// TestSignalKindPanicsOnEmpty exercises the construction-side guard:
-// an empty signal type-path is a caller bug (an empty wire string
-// indistinguishable from "no kind"), so SignalKind panics rather
-// than persist a zero-equivalent value.
 func TestSignalKindPanicsOnEmpty(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
@@ -183,7 +159,6 @@ func TestSignalKindPanicsOnEmpty(t *testing.T) {
 	_ = events.SignalKind("")
 }
 
-// TestZeroKindIsZero confirms the zero-value detection helper.
 func TestZeroKindIsZero(t *testing.T) {
 	var k events.Kind
 	if !k.IsZero() {
@@ -202,12 +177,6 @@ func TestZeroKindIsZero(t *testing.T) {
 	}
 }
 
-// TestAllOperationalKindsMatchesCatalog asserts the AllOperationalKinds
-// helper returns exactly the set of canonical operational wire forms
-// that ParseKindString recognizes. If an entry drops out of the
-// canonical map (e.g. a refactor accident), it disappears from the
-// audit-read allowlist this helper backs, and operators lose audit
-// visibility on that kind. This test catches that regression.
 func TestAllOperationalKindsMatchesCatalog(t *testing.T) {
 	all := events.AllOperationalKinds()
 	for _, name := range all {

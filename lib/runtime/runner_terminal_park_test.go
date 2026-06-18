@@ -46,7 +46,6 @@ func TestParkTerminalSignal_AwaitCallback(t *testing.T) {
 	if got.Type != signalpkg.TypePath("terminal/park/await_callback") {
 		t.Fatalf("await_callback type: got %q", got.Type)
 	}
-	// @deliberate: Zero ParkResumeAt → key omitted from payload; lookup returns nil.
 	if got.Payload["resume_at"] != nil {
 		t.Fatalf("resume_at should be nil when zero: got %v", got.Payload["resume_at"])
 	}

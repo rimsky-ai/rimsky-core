@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// templates.go — POST /templates, GET /templates, GET /templates/:id,
-// DELETE /templates/:id.
-//
-// The deploy handler decodes JSON request bodies straight into
-// node.TemplateSpec (the in-memory representation, json-tagged) and
-// runs node.ValidateTemplate against the per-process store registry
-// (AppDeps.Stores). Concurrency-tag / owns-resources / reads-resources
-// fields were retired in the stores redesign (spec §11.3); the JSON
-// shape mirrors the current template shape: stores, locks, attributes,
-// quality_rules. Per the 2026-04-30 stores cleanup, claim_resolutions
-// is gone — store disposition is governed by per-store config, not by
-// the template.
 package controlapi
 
 import (
@@ -38,19 +26,13 @@ import (
 	loop_counter "github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin/loop_counter"
 )
 
-// readAllBody reads the request body in full.
 func readAllBody(req *http.Request) ([]byte, error) {
 	defer req.Body.Close()
 	return io.ReadAll(req.Body)
 }
 
-// bytesReader wraps body bytes in a *bytes.Reader for json.NewDecoder.
 func bytesReader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
 
-// templateRegisterRequest is the per-spec §1.5 register-template body.
-// The wrapped shape `{spec: {...}, tag, source}` is the only accepted
-// form; the legacy bare-spec body was retired alongside the control-
-// plane v1 cutover.
 type templateRegisterRequest struct {
 	Spec   *node.TemplateSpec `json:"spec,omitempty"`
 	Tag    string             `json:"tag,omitempty"`
@@ -58,18 +40,12 @@ type templateRegisterRequest struct {
 }
 
 type templateRegisterResponse struct {
-	// @constraint: TemplateID is the content hash.
 	TemplateID string   `json:"template_id"`
 	Tags       []string `json:"tags,omitempty"`
-	// ValidationWarnings carries the merged advisory set (static
-	// validator + Validation-mix-in pipeline) so warnings the system
-	// computed reach the registrant even when registration succeeds
-	// (TD-merge-validator-warnings).
 	ValidationWarnings []runtime.ValidationFinding `json:"validation_warnings,omitempty"`
 }
 
 type templateListItem struct {
-	// @constraint: ID is the content hash.
 	ID           string   `json:"id"`
 	State        string   `json:"state"`
 	RegisteredAt string   `json:"registered_at"`
@@ -86,11 +62,8 @@ type templateGetResponse struct {
 	Spec         node.TemplateSpec `json:"spec"`
 }
 
-// registerTemplatesRoutes wires the /templates group.
 func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/templates", gate(deps, "template:register", handleDeployTemplate(deps)))
-	// @constraint: static segment registered alongside the others; chi resolves the
-	// static `/templates/validate` ahead of the `/templates/{id}` wildcard.
 	r.Post("/templates/validate", gate(deps, "template:validate", handleValidateTemplate(deps)))
 	r.Get("/templates", gate(deps, "template:read", handleListTemplates(deps)))
 	r.Get("/templates/{id}", gate(deps, "template:read", handleGetTemplate(deps)))
@@ -99,26 +72,6 @@ func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/templates/{id}/undeploy", gate(deps, "template:undeploy", handleUndeployTemplateState(deps)))
 }
 
-// validatorHooksFor builds the registry-dependent lookups consumed by
-// node.ValidateTemplate. Nil-safe on deps.Stores.
-//
-// The pick-policy hook from v2 is gone (per the v3 inertness cleanup):
-// rimsky no longer recognises pick-policy selectors. Substrate is the
-// only entity with that knowledge.
-//
-// NamedLockDeclared is wired unconditionally so missing names always
-// fail validation — an empty `named_locks:` block is still a valid
-// (empty) declaration, and templates referencing any name when none
-// are declared must be rejected.
-//
-// Names in spec.LateBindServices bypass the registration-time existence
-// and expected_attributes_schema cross-checks: a late-bound service is
-// not declared in rimsky.yml and has no discovery-cache entry yet, so
-// the StoreDeclared / ExecutorDeclared / ExecutorExpectedAttributesSchema
-// hooks short-circuit to "declared, no schema cross-check" for those
-// names. The spawned binary's Capabilities supplies the real schema at
-// dispatch; the proxy enforces it there. Per spec
-// 2026-05-24-host-agent-and-proxy-design.md.
 func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks {
 	isLateBind := func(name string) bool {
 		for _, ls := range spec.LateBindServices {
@@ -129,16 +82,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		return false
 	}
 	hooks := node.RegistryHooks{
-		// @constraint: stamp the operator-set registration-time reference-validation
-		// mode onto the hooks so the registration path AND the
-		// POST /templates/validate path (both route through
-		// validatorHooksFor) share one operator-chosen strictness. The
-		// zero value is node.RefValidateAll — strict by default.
 		RefValidationMode: deps.RefValidationMode,
-		// @constraint: plumb the static `kind:` → executor-alias map so the per-node
-		// `kind:` validator can range-check the optional kind field.
-		// Same map drives the canonicalizer's substitution after
-		// validation succeeds.
 		KindAliases: deps.KindAliases,
 	}
 	if deps.Stores != nil {
@@ -153,10 +97,6 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 	if deps.StoreDeclaredErrorClasses != nil {
 		hooks.StoreDeclaredErrorClasses = func(name string) ([]string, bool) {
 			if isLateBind(name) {
-				// @constraint: late-bound producer: no discovery-cache entry yet; it
-				// contributes no vocabulary at registration. Keys only it
-				// could attribute surface as advisory warnings, never
-				// rejections.
 				return nil, false
 			}
 			return deps.StoreDeclaredErrorClasses(name)
@@ -166,13 +106,6 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		_, ok := deps.NamedLocks.Get(name)
 		return ok
 	}
-	// @constraint: inprocAlias reports whether `name` matches a rimsky-bundled inproc
-	// executor identity. The inproc executor is always "declared" (it
-	// ships with the binary) and exposes its capabilities via the
-	// builtin handler package so the validator's executor-declared /
-	// declared-events / expected-attributes-schema legs treat it exactly
-	// like an out-of-process executor whose observability handshake
-	// succeeded.
 	inprocAlias := func(name string) bool {
 		return name == loop_counter.ExecutorAlias
 	}
@@ -189,18 +122,11 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			return ok
 		}
 	} else if deps.KindAliases != nil {
-		// @constraint: inproc-only deployment (no operator-declared external
-		// executors): the loop_counter alias must still validate as
-		// declared. Without this clause an inproc-only operator would
-		// fail validation under the strict reference-validation mode.
 		hooks.ExecutorDeclared = func(name string) bool {
 			return inprocAlias(name)
 		}
 	}
 	if deps.ExecutorCapabilities != nil {
-		// @constraint: wrap the operator-supplied observability hook so the inproc
-		// executor's baked-in capabilities shadow it for the inproc
-		// alias only; every other name still routes through the cache.
 		hooks.ExecutorDeclaredTags = func(name string) ([]string, bool) {
 			if name == loop_counter.ExecutorAlias {
 				return loop_counter.DeclaredTags(), true
@@ -210,10 +136,6 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		}
 		hooks.ExecutorDeclaredErrorClasses = func(name string) ([]string, bool) {
 			if inprocAlias(name) {
-				// @constraint: inproc executors declare no error-class vocabulary;
-				// returning (nil, true) is the "visible, empty"
-				// sentinel — the runtime-synthesized error classes
-				// plus the producer side of the union still apply.
 				return nil, true
 			}
 			_, classes, _, ok := deps.ExecutorCapabilities(name)
@@ -221,8 +143,6 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		}
 		hooks.ExecutorExpectedAttributesSchema = func(name string) ([]byte, bool) {
 			if isLateBind(name) {
-				// @constraint: declared, no schema cross-check — the spawned binary's
-				// Capabilities supplies the schema at dispatch.
 				return nil, true
 			}
 			if name == loop_counter.ExecutorAlias {
@@ -232,12 +152,6 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			return schema, ok
 		}
 	} else if deps.KindAliases != nil {
-		// @constraint: no observability cache wired (e.g. inproc-only deployment or
-		// a test harness that didn't run the handshake), but kind sugar
-		// is in use: install minimal hooks that surface the inproc
-		// executor's baked-in capabilities and stay nil-shaped for
-		// every other name so the validator's silent-skip path keeps
-		// its current behavior for non-inproc executors.
 		hooks.ExecutorDeclaredTags = func(name string) ([]string, bool) {
 			if name == loop_counter.ExecutorAlias {
 				return loop_counter.DeclaredTags(), true
@@ -260,11 +174,6 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 	return hooks
 }
 
-// handleDeployTemplate is POST /templates: register a template (insert
-// a new content-addressed row, optionally attach a tag, fire the
-// OnTemplateRegistered fan-out). The handler accepts the wrapped body
-// shape (`{spec: {...}, tag, source}`) only; legacy bare-spec bodies
-// are rejected by decodeRegisterRequest.
 func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		t0 := time.Now()
@@ -289,25 +198,11 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		res := node.ValidateTemplate(&spec, validatorHooksFor(deps, spec))
 		log.Debug("register.validate.done", "elapsed_ms", time.Since(tValidate).Milliseconds())
 		if !res.Ok() {
-			// @deliberate: build the validation_errors array as a flat slice carrying
-			// two entry shapes:
-			//   - legacy {path, msg} entries from res.Errors (first).
-			//   - structured entries from res.StructuredErrors (second);
-			//     each carries a `kind` discriminator field — currently
-			//     `substitution_ref_uncovered` from the coverage check.
-			// Append order is deterministic (slice iteration), so
-			// downstream assertions on position remain stable. Per
-			// decision:validation-errors-additive-not-uniform and
-			// decision:uncovered-substitution-error-shape.
 			entries := make([]map[string]any, 0, len(res.Errors)+len(res.StructuredErrors))
 			for _, e := range res.Errors {
 				entries = append(entries, map[string]any{"path": e.Path, "msg": e.Msg})
 			}
 			entries = append(entries, res.StructuredErrors...)
-			// @constraint: parity with the pipeline rejection below: the warnings
-			// the validator computed alongside the errors ride the
-			// rejection body too, so an operator fixing the errors sees
-			// the advisories in the same pass.
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error":               shared.ErrTemplateValidation.Error(),
 				"validation_errors":   entries,
@@ -315,52 +210,8 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// @constraint: static-validator advisories merge into the same
-		// validation_warnings stream as the pipeline findings below
-		// (TD-merge-validator-warnings): a warning the validator
-		// computed must reach the response, and warnings_as_errors
-		// must trip on it exactly like a pipeline warning.
 		staticWarnings := staticWarningsToFindings(res.Warnings)
-		// @constraint: default-fill frame-resolution fields (FrameTimeoutMs == 0 →
-		// FrameTimeoutDefaultMs). Validator is pure; the boundary handler
-		// applies defaults after validation passes so the persisted spec
-		// carries the resolved value.
 		node.ApplyFrameResolutionDefaults(&spec)
-		// @constraint: rewrite any `kind: <name>` sugar to its canonical
-		// `executor: <alias>` form before hashing, so the persisted
-		// spec is in normal form and downstream registration code does
-		// not need to know about kind sugar. Validation has already
-		// confirmed every `kind:` resolves and no node mixes kind +
-		// executor (validateKindDeclaration), so this is a pure
-		// rewrite — nothing to reject.
-		//
-		// @deliberate: alias-stability assumption (`kind:` → `executor:` map):
-		// canonicalize-then-hash silently couples the persisted hash to
-		// the alias map state at registration time. Two consequences:
-		//
-		//   1. Re-registering the SAME template body with the long
-		//      form (`executor: <alias>`) instead of the sugar form
-		//      (`kind: <alias-key>`) produces the SAME content hash and
-		//      dedups via the idempotent re-register path — by design,
-		//      since the spec's "kind is sugar for executor" claim
-		//      requires the two forms to be observationally equivalent.
-		//   2. Renaming a built-in alias (e.g. retiring
-		//      `rimsky.loop_counter` for a different executor identity)
-		//      would orphan every existing kind-sugar registration: the
-		//      persisted `Executor` would no longer match the new alias,
-		//      and validation would reject the persisted spec at deploy.
-		//      Pre-v1 this is acceptable (no backwards-compat guarantees
-		//      on the wire / YAML / persistence shape per
-		//      `.claude/rules/rules.md`), but a v1+ alias rename will
-		//      need a migration story — either persist the original
-		//      `Kind` alongside the resolved `Executor` as an inert
-		//      annotation and re-canonicalize on deploy, or run a
-		//      one-shot rewrite of every persisted template's
-		//      `Executor` field as part of the alias rename PR.
-		//
-		// The hash is recomputed below from the canonicalized spec; a
-		// future change to that ordering must consider the
-		// alias-stability properties above.
 		node.CanonicalizeKindSugar(&spec, deps.KindAliases)
 
 		tHash := time.Now()
@@ -371,11 +222,6 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// @constraint: F9: Validation pipeline. After canonicalization + static-
-		// check pass, fire `Validate` RPCs to advertising services.
-		// Errors at this step reject the registration; warnings fail
-		// only when `?warnings_as_errors=true` is set on the request.
-		// Spec §Protocol surfaces / Validation / Pipeline integration.
 		warningsAsErrors := req.URL.Query().Get("warnings_as_errors") == "true"
 		tValidatePipeline := time.Now()
 		var execSchemaLookup runtime.ExpectedAttributesSchemaLookup
@@ -400,9 +246,6 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			writeError(w, vErr)
 			return
 		}
-		// @constraint: merged advisory set: static-validator warnings first, then
-		// the pipeline's. Both feed the warnings_as_errors rejection
-		// gate and every response that carries validation_warnings.
 		mergedWarnings := append(staticWarnings, outcome.Warnings...)
 		if len(outcome.Errors) > 0 || (warningsAsErrors && len(mergedWarnings) > 0) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -414,10 +257,6 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// @constraint: dry-run: validation (static + Validation mix-in pipeline)
-		// has run faithfully against the registry; skip only the DB
-		// inserts. Per spec section "Synthetic response shape /
-		// template:register".
 		if WriteDryRunResponse(w, req, "would_have_registered", map[string]any{
 			"template_hash":       hash,
 			"tag":                 tag,
@@ -427,9 +266,6 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// @constraint: idempotent re-register: if a row with this hash already exists,
-		// short-circuit per spec §1.5 step 1. If a tag was supplied, upsert
-		// it pointing at the existing row.
 		tGetByHash := time.Now()
 		var existing *persistence.TemplateRow
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -460,11 +296,6 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// @constraint: fire OnTemplateRegistered to every store referenced by the spec.
-		// Per spec §5.4 the fan-out runs synchronously before the row is
-		// inserted; on partial failure we surface a 5xx and leave the
-		// caller to retry. Carry the JCS-canonical spec bytes so
-		// subscribers see exactly what rimsky hashed.
 		canonBytes, err := canonical.CanonicalSpecBytes(spec)
 		if err != nil {
 			writeError(w, err)
@@ -510,14 +341,6 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleValidateTemplate is POST /templates/validate: run the full
-// registration validation pipeline (static `node.ValidateTemplate` +
-// the Validation-protocol mix-in pipeline) against the live registry,
-// but stop before canonicalization-for-persistence and any DB insert.
-// It always returns HTTP 200 when validation ran; the `ok` flag and the
-// findings carry the verdict. Non-2xx is reserved for request-level
-// failures (a malformed body → 400). Per spec
-// 2026-05-28-quality-of-life-features.
 func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		raw, err := readAllBody(req)
@@ -525,8 +348,6 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "read body: "+err.Error())
 			return
 		}
-		// @constraint: tag and source are accepted-but-ignored on the lint path: they
-		// only affect persistence, which validate-only never reaches.
 		specBody, _, _, err := decodeRegisterRequest(raw)
 		if err != nil {
 			badRequest(w, err.Error())
@@ -536,35 +357,15 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 		spec := *specBody
 		res := node.ValidateTemplate(&spec, validatorHooksFor(deps, spec))
 
-		// @deliberate: project static findings into the unified `validation_errors`
-		// array. Carry two entry shapes side by side:
-		//   - legacy {path, msg} entries from res.Errors (first).
-		//   - structured entries from res.StructuredErrors (second);
-		//     each carries a `kind` discriminator — currently
-		//     `substitution_ref_uncovered` from the coverage check.
-		// Per decision:validation-errors-additive-not-uniform.
 		validationErrors := make([]map[string]any, 0, len(res.Errors)+len(res.StructuredErrors))
 		for _, e := range res.Errors {
 			validationErrors = append(validationErrors, map[string]any{"path": e.Path, "msg": e.Msg})
 		}
 		validationErrors = append(validationErrors, res.StructuredErrors...)
 
-		// @constraint: default-fill frame-resolution fields before the pipeline, exactly
-		// as register does, so the spec the validators see matches what
-		// would be persisted.
 		node.ApplyFrameResolutionDefaults(&spec)
-		// @constraint: rewrite any `kind: <name>` sugar to its canonical
-		// `executor: <alias>` form before hashing, so the persisted
-		// spec is in normal form and downstream registration code does
-		// not need to know about kind sugar. Validation has already
-		// confirmed every `kind:` resolves and no node mixes kind +
-		// executor (validateKindDeclaration), so this is a pure
-		// rewrite — nothing to reject.
 		node.CanonicalizeKindSugar(&spec, deps.KindAliases)
 
-		// @constraint: CanonicalSpecHash is computed purely to feed the validation
-		// pipeline (validation input, not persistence). A hash error is a
-		// request-level failure.
 		hash, err := canonical.CanonicalSpecHash(spec)
 		if err != nil {
 			writeError(w, err)
@@ -589,11 +390,6 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// @constraint: merge the pipeline findings (ValidationFinding) into the unified
-		// {path, msg} projection. Static-validator advisories lead the
-		// warnings array (TD-merge-validator-warnings): a warning the
-		// static validator computed must reach the response and count
-		// toward the warnings_as_errors verdict below.
 		for _, e := range outcome.Errors {
 			validationErrors = append(validationErrors, findingToProjectionAny(e))
 		}
@@ -616,12 +412,6 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// staticWarningsToFindings projects the static validator's advisory
-// warnings (node.ValidationWarning, {Path, Msg}) into the pipeline's
-// ValidationFinding shape so both warning kinds travel through one
-// validation_warnings array on the register surface. ServiceName/Role
-// name the in-process static validator as the origin — static warnings
-// always carry a Path, so findingToProjection never falls back to them.
 func staticWarningsToFindings(warnings []node.ValidationWarning) []runtime.ValidationFinding {
 	out := make([]runtime.ValidationFinding, 0, len(warnings))
 	for _, w := range warnings {
@@ -635,10 +425,6 @@ func staticWarningsToFindings(warnings []node.ValidationWarning) []runtime.Valid
 	return out
 }
 
-// findingToProjection flattens a pipeline ValidationFinding into the
-// unified {path, msg} shape the lint response and CLI consume. When the
-// finding carries no path, fall back to the originating service/role so
-// the operator still sees where it came from.
 func findingToProjection(f runtime.ValidationFinding) map[string]string {
 	path := f.Path
 	if path == "" {
@@ -650,16 +436,11 @@ func findingToProjection(f runtime.ValidationFinding) map[string]string {
 	return map[string]string{"path": path, "msg": f.Message}
 }
 
-// findingToProjectionAny is findingToProjection retyped as
-// map[string]any so the merged validation_errors array can carry both
-// legacy {path, msg} string entries and the static validator's
-// structured `substitution_ref_uncovered` entries side by side.
 func findingToProjectionAny(f runtime.ValidationFinding) map[string]any {
 	p := findingToProjection(f)
 	return map[string]any{"path": p["path"], "msg": p["msg"]}
 }
 
-// handleListTemplates is GET /templates: paginated list of registry rows.
 func handleListTemplates(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		state := req.URL.Query().Get("state")
@@ -695,7 +476,6 @@ func handleListTemplates(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleGetTemplate is GET /templates/{tag_or_hash}.
 func handleGetTemplate(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		hash, err := resolveTagOrHash(req.Context(), deps, chi.URLParam(req, "id"))
@@ -731,15 +511,9 @@ func handleGetTemplate(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleDeleteTemplate is DELETE /templates/{tag_or_hash}: see spec §1.5.
-// Tag-form: deletes the tag. If other tags still point at this template,
-// the template is preserved. Last-tag (or direct-hash) form: refuse if
-// state is deployed or instances are active; fire deregister fan-out;
-// delete row.
 func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		idOrTag := chi.URLParam(req, "id")
-		// @constraint: resolve to (hash, isTagForm).
 		isTag := !looksLikeHash(idOrTag)
 		hash, err := resolveTagOrHash(req.Context(), deps, idOrTag)
 		if err != nil {
@@ -762,8 +536,6 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 				return
 			}
 			if n > 1 {
-				// @constraint: tag-only deletion validation has passed. Honor
-				// dry-run by skipping the DELETE.
 				if WriteDryRunResponse(w, req, "would_have_deregistered", map[string]any{
 					"template_hash": hash,
 					"is_tag_form":   true,
@@ -781,7 +553,6 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 				writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "tag_only": true})
 				return
 			}
-			// @constraint: last tag → fall through to template deregister.
 		}
 
 		var row *persistence.TemplateRow
@@ -819,9 +590,6 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// @constraint: all validation has passed (template found, state not
-		// 'deployed', no active instances). Dry-run skips fan-out +
-		// delete; the synthetic envelope is now an honest precursor.
 		if WriteDryRunResponse(w, req, "would_have_deregistered", map[string]any{
 			"template_hash": hash,
 			"is_tag_form":   isTag,
@@ -841,7 +609,6 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 					return err
 				}
 			} else {
-				// @constraint: direct-hash form: drop all tags pointing at this row.
 				tags, err := deps.Persist.TemplateTags().ListByTemplate(ctx, hash, tx)
 				if err != nil {
 					return err
@@ -862,17 +629,6 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleDeployTemplateState is POST /templates/{tag_or_hash}/deploy.
-//
-// The transaction stays open across the fan-out: we hold the
-// FOR UPDATE row lock from LockForUpdate through the per-store
-// OnTemplateDeployed dispatches and the final UpdateState. Two
-// concurrent deploys serialize on the row lock; the second one
-// observes state='deployed' on entry and short-circuits as a no-op.
-// Pre-v1 acceptable cost: fan-out is in-process gRPC and bounded by
-// the spec's per-store call budget; the alternative (CAS-style
-// UpdateState with a re-checked prior state) would still need a row
-// lock to avoid lost-update on the lifecycle bookkeeping rows.
 func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		t0 := time.Now()
@@ -917,10 +673,6 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 					"template not deployable from state "+string(row.State),
 					map[string]any{"template_hash": hash, "state": string(row.State)})
 			}
-			// @constraint: dry-run: every state validation has passed (template
-			// found, state in {registered, undeployed}). Skip fan-out
-			// and the UPDATE; the synthetic envelope below is now an
-			// honest precursor to a real deploy.
 			if isDryRun {
 				return errDryRunOK
 			}
@@ -985,11 +737,6 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleUndeployTemplateState is POST /templates/{tag_or_hash}/undeploy.
-//
-// Same transactional structure as handleDeployTemplateState — the row
-// lock is held across the fan-out so two concurrent undeploys serialize
-// and the lifecycle rows are written exactly once.
 func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		hash, err := resolveTagOrHash(req.Context(), deps, chi.URLParam(req, "id"))
@@ -1038,9 +785,6 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 					"template has active instances",
 					map[string]any{"template_hash": hash, "active_count": active})
 			}
-			// @constraint: dry-run: every validation has passed. Skip fan-out and
-			// the UPDATE; the synthetic envelope is now an honest
-			// precursor.
 			if isDryRun {
 				return errDryRunOK
 			}
@@ -1092,10 +836,6 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// decodeRegisterRequest decodes the wrapped POST /templates body shape
-// `{spec: {...}, tag, source}`. The legacy bare-spec shape was removed
-// alongside the control-plane v1 cutover; bodies missing the "spec" key
-// are rejected.
 func decodeRegisterRequest(body []byte) (specOut *node.TemplateSpec, tag, source string, err error) {
 	var wrap templateRegisterRequest
 	dec := json.NewDecoder(bytesReader(body))
@@ -1109,8 +849,6 @@ func decodeRegisterRequest(body []byte) (specOut *node.TemplateSpec, tag, source
 	return wrap.Spec, wrap.Tag, wrap.Source, nil
 }
 
-// resolveTagOrHash maps a tag or content hash to a hash. Returns the
-// empty string when the input is unrecognized or absent.
 func resolveTagOrHash(ctx context.Context, deps AppDeps, value string) (string, error) {
 	if looksLikeHash(value) {
 		return value, nil
@@ -1129,9 +867,6 @@ func resolveTagOrHash(ctx context.Context, deps AppDeps, value string) (string, 
 	return row.TemplateID, nil
 }
 
-// looksLikeHash reports whether s is the canonical "sha256-<64-hex>"
-// shape. Cheap-string check; the canonical-hash function is the actual
-// source of truth (`canonical.CanonicalSpecHash`).
 func looksLikeHash(s string) bool {
 	if !strings.HasPrefix(s, "sha256-") {
 		return false
@@ -1149,8 +884,6 @@ func looksLikeHash(s string) bool {
 	return true
 }
 
-// tagsForTemplate returns the sorted list of tag strings that point at
-// templateHash. Best-effort: a query failure produces a nil slice.
 func tagsForTemplate(ctx context.Context, deps AppDeps, templateHash string) []string {
 	var rows []persistence.TemplateTagRow
 	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

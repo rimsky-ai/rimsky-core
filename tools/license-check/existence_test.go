@@ -39,9 +39,6 @@ exempt:
 			t.Errorf("expected a violation naming %q; got %q", want, joined)
 		}
 	}
-	// @deliberate: present classification entries and absent exempt
-	// entries (bin/) must NOT be flagged — exempt is skip-rules, not
-	// classification.
 	for _, unwanted := range []string{"protocols", "runtime", "bin"} {
 		if strings.Contains(joined, `"`+unwanted) {
 			t.Errorf("did not expect a violation naming %q; got %q", unwanted, joined)

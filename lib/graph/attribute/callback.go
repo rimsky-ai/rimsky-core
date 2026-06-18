@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Incremental attributes writeback callback handler — spec §12.5.
-//
-// Wire shape (post 2026-05-20 per-run keying):
-//
-//	POST {callback_url}/v1/runs/{run_id}/attributes
-//	Authorization: <cancel_token>          (matches §12.4 async-callback auth)
-//	Body: {"delta": { "<field>": <value>, ... }}
-//	→ 204 No Content
-//
-// The handler resolves the supervisor-issued cancel_token to a run_id
-// via the AuthLookup callback, then merges the delta into
-// rimsky_node_attributes.data keyed on the run row and returns 204.
-
 package attributes
 
 import (
@@ -31,9 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Row mirrors a row of `rimsky_node_attributes`. Under per-run keying
-// (2026-05-20) the row is keyed by RunID; NodeID is denormalized for
-// forensic queries.
 type Row struct {
 	RunID     shared.UUID
 	NodeID    shared.UUID
@@ -41,44 +25,22 @@ type Row struct {
 	UpdatedAt time.Time
 }
 
-// NodeAttributeTable is the narrow interface the HTTP handler depends
-// on. The supervisor adapts the canonical
-// `persistence.NodeAttributeTable` to this shape (the persistence
-// methods take an additional `tx persistence.Tx`; the callback handler
-// always runs outside any caller-owned tx).
 type NodeAttributeTable interface {
 	GetByRun(ctx context.Context, runID shared.UUID) (*Row, error)
 	Upsert(ctx context.Context, runID, nodeID shared.UUID, data map[string]any) error
 	MergeDelta(ctx context.Context, runID shared.UUID, delta map[string]any) error
 }
 
-// AuthLookup resolves a supervisor-issued cancel_token to the run_id it
-// authorises. Returns ErrUnauthorizedCallback when the token is unknown
-// or doesn't match the URL-supplied run_id. The supervisor wires this
-// callback to its in-memory dispatch registry; tests pass a closure.
 type AuthLookup func(token string, runID shared.UUID) error
 
-// ErrUnauthorizedCallback is the sentinel an AuthLookup returns when the
-// cancel_token is missing, unknown, or scoped to a different run. The
-// handler maps it to HTTP 401.
 var ErrUnauthorizedCallback = errors.New("attributes: unauthorized callback")
 
-// HandlerDeps bundles the callback handler's dependencies. The
-// supervisor constructs one of these and registers Handler under
-// `/v1/runs/{run_id}/attributes` on its callback router.
 type HandlerDeps struct {
 	Store  NodeAttributeTable
 	Auth   AuthLookup
 	Logger shared.Logger
 }
 
-// Handler returns the chi-compatible http.Handler for §12.5. It is
-// intended to be mounted at `POST /v1/runs/{run_id}/attributes` so chi
-// can supply the URL parameter via chi.URLParam.
-//
-// Auth is required at construction. Passing a HandlerDeps with a nil
-// Auth panics: a nil-skip would silently disable callback auth and is
-// trivially exploitable. Tests must supply a stub closure.
 func Handler(deps HandlerDeps) http.Handler {
 	if deps.Auth == nil {
 		panic("attributes.Handler: deps.Auth is required (nil would silently disable callback auth)")
@@ -98,9 +60,6 @@ func Handler(deps HandlerDeps) http.Handler {
 			return
 		}
 		token := strings.TrimSpace(r.Header.Get("Authorization"))
-		// @deliberate: spec §12.5 calls for the bare token in `Authorization`;
-		// stripping an optional `Bearer ` prefix is intentional tolerance for
-		// executor convenience.
 		token = strings.TrimPrefix(token, "Bearer ")
 		token = strings.TrimSpace(token)
 		if token == "" {
@@ -121,9 +80,6 @@ func Handler(deps HandlerDeps) http.Handler {
 			return
 		}
 		if body.Delta == nil {
-			// @deliberate: spec §12.5 permits empty or missing delta — it bumps
-			// updated_at so the callback's heartbeat-of-progress side-effect
-			// still fires.
 			body.Delta = map[string]any{}
 		}
 		if err := deps.Store.MergeDelta(r.Context(), runID, body.Delta); err != nil {

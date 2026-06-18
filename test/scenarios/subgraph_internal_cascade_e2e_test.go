@@ -2,24 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// S1 must-pass scenario — subgraph_internal_cascade_e2e.
-//
-// End-to-end coverage of sub-graph internal cascade firing under the
-// RunScope-first reshape per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-// §"Test coverage matrix / S1":
-//
-//   - A calling node delegates to a sub-graph.
-//   - At calling-node Success terminal, the supervisor creates a
-//     sub-graph RunScope (per
-//     code:runtime/subgraph_dispatch.go::applyTerminalCompleteSubgraphCaller).
-//   - The internal cascade propagates state to the sub-graph's internal
-//     nodes (non-entry).
-//   - Internal nodes dispatch in the sub-graph RunScope, NOT in the
-//     instance's main RunScope.
-//
-// Pins the sub-graph RunScope creation + internal-dispatch routing
-// load-bearing property of the reshape.
 package scenarios
 
 import (
@@ -38,8 +20,6 @@ func TestSubgraphInternalCascadeE2E(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// @deliberate: Stub scripts: caller (absorbing inner-entry) succeeds, then
-	// inner-mid and inner-exit each fire via internal cascade.
 	h.Stub.WhenType("caller").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("inner-mid").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("inner-exit").Success(map[string]any{"ok": true}, true, "ok")
@@ -92,9 +72,6 @@ func TestSubgraphInternalCascadeE2E(t *testing.T) {
 	innerExitNode := h.FindNode(iid, "inner-exit")
 	require.NotNil(t, innerExitNode, "inner-exit node missing")
 
-	// @deliberate: Wait for inner-mid + inner-exit to reach fresh — these only
-	// dispatch after the caller's Success terminal fires the internal
-	// cascade per applyTerminalCompleteSubgraphCaller.
 	require.True(t,
 		h.WaitForNodeState(innerMidNode.ID, cascade.NodeStateFresh, 30*time.Second),
 		"inner-mid must reach fresh via internal cascade")
@@ -102,8 +79,6 @@ func TestSubgraphInternalCascadeE2E(t *testing.T) {
 		h.WaitForNodeState(innerExitNode.ID, cascade.NodeStateFresh, 30*time.Second),
 		"inner-exit must reach fresh via internal cascade")
 
-	// @deliberate: Sub-graph RunScope created with graph_name = "worker". The
-	// internal dispatches live in this RunScope (NOT in the main scope).
 	mainScopeID := h.GetMainRunScopeID(iid)
 	var subgraphScopes int
 	h.QueryRowSQL(`

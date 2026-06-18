@@ -18,15 +18,6 @@ import (
 	pgsqlite "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
-// TestSQLiteForeignKeysEnabled confirms the FK-enforcement PRAGMA is
-// active on driver-issued connections. Without it, the rimsky_claim_handles
-// → rimsky_claim_holders ON DELETE CASCADE wouldn't fire, which would
-// silently break auto-terminal cleanup.
-//
-// Queried against the *driver's* underlying sql.DB (via DBFromDatabase) so
-// the test can't pass against a parallel handle whose PRAGMA state happens
-// to be set independently — the contract under test is that the driver's
-// own connections boot with FKs on.
 func TestSQLiteForeignKeysEnabled(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "fk.db")
@@ -49,9 +40,6 @@ func TestSQLiteForeignKeysEnabled(t *testing.T) {
 	}
 }
 
-// TestSQLiteWALMode confirms _journal_mode=WAL takes effect on driver
-// connections. Queried against the *driver's* underlying sql.DB (via
-// DBFromDatabase) so the test can't pass against a parallel handle.
 func TestSQLiteWALMode(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "wal.db")
@@ -74,8 +62,6 @@ func TestSQLiteWALMode(t *testing.T) {
 	}
 }
 
-// TestSQLiteStartupBanner verifies the dev-only-driver warning is logged
-// at Open time. Operators must see this loudly per spec §1.
 func TestSQLiteStartupBanner(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()

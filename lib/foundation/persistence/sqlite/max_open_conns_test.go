@@ -15,7 +15,6 @@ import (
 	pgsqlite "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
-// TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader covers
 // @decision: persistence-driver: a transaction holding its
 // connection MUST NOT block a parallel read on a different connection
 // from making progress. The previous MaxOpenConns=1 setting caused the
@@ -38,9 +37,6 @@ func TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader(t *testing.T) {
 
 	db := pgsqlite.DBFromDatabase(d)
 
-	// @deliberate: probe table gives the writer something concrete to hold; under
-	// WAL + busy_timeout the writer slot is held at the file level, so the conn
-	// it sits on is what the pool-slot sizing is measured against.
 	if _, err := db.Exec(`CREATE TABLE poolprobe (id INTEGER PRIMARY KEY, payload TEXT)`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
@@ -74,9 +70,6 @@ func TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader(t *testing.T) {
 		t.Fatalf("writer tx setup: %v", writerErr)
 	}
 
-	// @constraint: with MaxOpenConns=1 this QueryRowContext would block on
-	// conn-pool acquisition until the writer commits and the 1s context would
-	// fire first; the wider pool lets the read get its own conn and complete.
 	readCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	var one int

@@ -4,10 +4,6 @@
 
 package spec
 
-// Severity classifies the consequence of a failure: an "error" failure
-// blocks the commit, a "warning" failure is logged but allows the run
-// to succeed. Used by policy-action declarations and by service-side
-// observability events.
 type Severity string
 
 const (
@@ -15,8 +11,6 @@ const (
 	SeverityWarning Severity = "warning"
 )
 
-// BackoffKind names the curve used by ComputeDelay when scheduling a
-// retry. Linear grows base*N; exponential grows base*2^(N-1).
 type BackoffKind string
 
 const (
@@ -24,8 +18,6 @@ const (
 	BackoffExponential BackoffKind = "exponential"
 )
 
-// JitterKind names how computed retry delays are jittered.
-// PlusMinus multiplies the base delay by a uniform random in [0.5, 1.5).
 type JitterKind string
 
 const (

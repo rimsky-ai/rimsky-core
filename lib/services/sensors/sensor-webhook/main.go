@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// sensor-webhook — bundled webhook sensor reference implementation.
-// Runs an HTTP server on the configured port; each publisher-
-// subscription registers a route under its `path_prefix`. Inbound
-// POSTs push message envelopes to rimsky's generic
-// `POST /v1/instances/{instance_id}/messages` endpoint with
-// `sender_kind: "publisher"`.
-//
-// Spec .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-// §Publisher protocol unification.
-//
 //	@concept: sensor
 package main
 
@@ -58,7 +48,6 @@ func main() {
 	})
 	svc := NewSensorService(rimskyEndpoint, router, slogAdapter{l: slog.Default()})
 
-	// @deliberate: state-DB persistence is optional; empty env → in-memory mode.
 	ctxState, cancelState := context.WithCancel(context.Background())
 	defer cancelState()
 	state, err := openStateDB(ctxState)
@@ -72,8 +61,6 @@ func main() {
 		slog.Info("sensor-webhook state db attached")
 	}
 
-	// @deliberate: webhook HTTP listens on a distinct port from gRPC so operator
-	// routing can expose the webhook surface publicly while keeping gRPC private.
 	webhookSrv := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", host, webhookPort),
 		Handler:           router,

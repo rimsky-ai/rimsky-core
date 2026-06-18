@@ -1,9 +1,12 @@
 {
-  "tags_extend": ["@concept:", "@story:", "@decision:"],
-  "ignore": ["lib/protocols/proto/v1/gen/", ".ok-planner/"],
+  "citations": [
+    { "tag": "@concept:",  "file_template": ".ok-planner/design/concepts/{slug}.md" },
+    { "tag": "@story:",    "file_template": ".ok-planner/design/stories/{slug}.md" },
+    { "tag": "@decision:", "file_template": ".ok-planner/design/decisions/{slug}.md" }
+  ],
+  "ignore": ["lib/protocols/proto/v1/gen/"],
   "checks": {
     "comment_hygiene": true,
-    "source_validity": true,
-    "blessed_invariant_test_coverage": true
+    "citation_resolution": true
   }
 }

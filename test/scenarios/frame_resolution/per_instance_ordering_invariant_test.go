@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies blessed invariant 16 (spec §18): "Per-instance ordering — at
-// most one running frame per instance. Enforced by uq_rimsky_frames_running."
-//
-// Two checks:
-//  1. Direct SQL: insert two running rows for the same instance; second insert
-//     must fail with a unique-violation.
-//  2. Concurrent fires through frame.EnqueueFrame + RunTick advancement
-//     do not produce more than one running frame at a time over the test's
-//     observation window.
 package frame_resolution
 
 import (
@@ -44,8 +35,6 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// @deliberate: CreateInstance auto-enqueues a frame for the root. Clear it so the
-	// test's own inserts have full control.
 	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	require.NoError(t, err)
 	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
@@ -53,9 +42,6 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 	require.NoError(t, err)
 
-	// @constraint: rimsky_frames.triggering_message_id is NOT NULL FK after migration 010/011;
-	// seed two typed envelopes (one per attempted frame insert) so the FK resolves on the row
-	// that succeeds and on the row that races the unique-index violation.
 	messageIDFirst := uuid.New()
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
@@ -69,14 +55,12 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 	`, messageIDSecond, uuid.UUID(iid))
 	require.NoError(t, err)
 
-	// @constraint: First running insert: should succeed.
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms)
 		VALUES ($1, $2, 'running', now(), now(), 600000)
 	`, uuid.UUID(iid), messageIDFirst)
 	require.NoError(t, err, "first running insert should succeed")
 
-	// @constraint: Second running insert: must fail (uq_rimsky_frames_running).
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms)
 		VALUES ($1, $2, 'running', now(), now(), 600000)
@@ -101,7 +85,6 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// @deliberate: Fire 10 invalidates concurrently.
 	const N = 10
 	var wg sync.WaitGroup
 	wg.Add(N)
@@ -113,8 +96,6 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 	}
 	wg.Wait()
 
-	// @deliberate: Poll the rimsky_frames table over a 5-second window asserting at most one
-	// row in 'running' at any time.
 	var maxRunning atomic.Int32
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

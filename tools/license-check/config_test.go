@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// writeLicensingYAML writes a licensing.yml fixture into dir and returns its
-// loaded config. Test helper.
 func writeLicensingYAML(t *testing.T, dir, contents string) *licensingConfig {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "licensing.yml"), []byte(contents), 0o644); err != nil {
@@ -50,7 +48,6 @@ exempt:
 }
 
 func TestClassifyAGPLOverrideUnderApacheParent(t *testing.T) {
-	// @deliberate: synthetic paths exercise the more-specific-AGPL-overrides-Apache-parent shape; concrete graph/qualityrule example retired upstream.
 	cfg := writeLicensingYAML(t, t.TempDir(), `apache:
   - graph/example/
 agpl:

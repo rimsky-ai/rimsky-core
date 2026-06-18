@@ -2,17 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies the stores redesign ClaimHolderInsertInput shape round-
-// trips through the storage interface and the (claim_handle_id,
-// holder_run_id) uniqueness constraint holds.
-//
-// The pre-redesign test in this position exercised ClaimID/ProducerName/
-// OnCommit/OnGiveUp/FrameID columns on rimsky_claim_holders — all
-// removed by the redesign. Per-row resolution actions now live in
-// template metadata; rows simply record subgraph membership and
 // per-member terminal state (auto-terminal: `@blessed-invariant 13`).
-// Post-stage-5 of the run-row lifecycle cutover, the row keys on
-// `holder_run_id` (a `rimsky_node_runs.id`).
 package frame_resolution
 
 import (
@@ -43,13 +33,6 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// @deliberate: Seed a frame + run row so the FK on rimsky_claim_holders.holder_run_id
-	// resolves. Post-stage-5 the holder ledger keys on run id. The
-	// instance's initial frame + source-node run row are enqueued by
-	// the harness's CreateInstance path; reuse them rather than seeding
-	// fresh rows (the partial UNIQUE index `uq_rimsky_frames_running`
-	// and the in-flight-run-per-node unique index would both reject a
-	// second insert).
 	var frameID shared.UUID
 	h.QueryRowSQL(`
 		SELECT frame_id FROM rimsky_frames WHERE instance_id = $1
@@ -103,8 +86,6 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	require.Equal(t, runID, row.HolderRunID)
 	require.Equal(t, persistence.ClaimHolderStateActive, row.State)
 
-	// @constraint: Second insert on same (claim_handle_id, holder_run_id) must fail
-	// per the unique index.
 	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:            shared.UUID(uuid.New()),

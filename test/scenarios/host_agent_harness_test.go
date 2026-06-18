@@ -2,21 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// host_agent_harness_test.go — shared end-to-end scaffolding for the
-// host-agent + host-agent-proxy scenario tests. Stands up the real wiring:
-//   - the rimsky-host-agent-proxy binary (built once, exec'd as a real gRPC
-//     server on a free port, pointed at the harness control-api for the
-//     GET /instances binding-cache fallback);
-//   - the host-agent daemon in-process via hostagent.Run, dialing the proxy
-//     and registering under the owner api-key id;
-//   - the stubchild test binary (Executor + ClaimProducer over
-//     RIMSKY_AGENT_PORT) as the late-bound service binary the agent exec()s.
-//
-// The supervisor resolves the late-bound `codegen` executor name through the
-// proxy (registered as the `codegen-proxy` executor + lifecycle peer); the
-// proxy fetches the instance's service_bindings + owner via control-api,
-// finds the connected agent, spawns the stub, and tunnels Execute through to
-// it. This is the real dispatch path, not a fake.
 package scenarios
 
 import (
@@ -39,39 +24,22 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// proxyExecutorName is the static executor name the proxy is registered
-// under; late_bind_service_proxies maps the executor protocol to it.
 const proxyExecutorName = "codegen-proxy"
 
-// lateBindServiceName is the late-bound service the codegen node references
-// and the key in the instance's service_bindings catalog.
 const lateBindServiceName = "codegen"
 
-// anonRoutingIdentity is the well-known routing key an agent registers under
-// when the deployment runs in anonymous mode (no api-key owner). Anonymous
-// instances persist with an empty created_by_api_key_id, so the proxy cannot
-// match them to an owner-keyed agent; the anonymous routing identity is the
-// agreed fallback the agent and proxy share so an anonymous-mode instance can
-// still resolve to a connected agent. The GREEN pass that closes
-// S-hostagent-anonymous-mode-latebind teaches the proxy to fall back to this
-// identity when the instance owner is empty; the RED test registers the agent
-// under it.
 const anonRoutingIdentity = "anonymous"
 
-// hostAgentFixture bundles the running proxy + agent + stub binary path for
-// one scenario.
 type hostAgentFixture struct {
 	h           *scenario.Harness
-	proxyAddr   string // @deliberate: host:port the supervisor dials as the executor endpoint
+	proxyAddr   string
 	stubBinary  string
-	adminKey    string // @deliberate: plaintext bearer for authenticated control-api calls
-	ownerKeyID  string // @deliberate: the created_by_api_key_id the agent registers under
+	adminKey    string
+	ownerKeyID  string
 	cancelAgent context.CancelFunc
 	agentDone   chan struct{}
 }
 
-// repoRoot finds the module root (the directory containing go.work) by
-// walking up from the test's working directory.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -88,7 +56,6 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// buildBinary go-builds pkgPath into a temp file and returns its path.
 func buildBinary(t *testing.T, pkgPath string) string {
 	t.Helper()
 	root := repoRoot(t)
@@ -102,8 +69,6 @@ func buildBinary(t *testing.T, pkgPath string) string {
 	return out
 }
 
-// freePort grabs an OS-assigned TCP port and returns it. The brief
-// close-then-reuse race is acceptable for an in-process test fixture.
 func freePort(t *testing.T) int {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -113,7 +78,6 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-// waitDialable poll-dials addr until a TCP connection succeeds or timeout.
 func waitDialable(addr string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -127,9 +91,6 @@ func waitDialable(addr string, timeout time.Duration) bool {
 	return false
 }
 
-// startAgent runs hostagent.Run in a background goroutine, dialing the proxy
-// and registering under ownerKeyID. Returns a cancel func + done channel so
-// the caller can drop the agent mid-test (disconnect scenarios).
 func startAgent(t *testing.T, proxyAddr, ownerKeyID string) (context.CancelFunc, chan struct{}) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -145,50 +106,21 @@ func startAgent(t *testing.T, proxyAddr, ownerKeyID string) (context.CancelFunc,
 	return cancel, done
 }
 
-// fixtureOpts tweaks the host-agent fixture wiring.
 type fixtureOpts struct {
-	// withAgent connects a host-agent under the owner key.
 	withAgent bool
-	// blindProxy starts the proxy with NO control-api fallback URL and does
-	// NOT wire it as a lifecycle peer, so its binding cache stays empty even
-	// though the resolver (reading the instance row directly) still routes to
-	// it. Used to exercise the proxy's binding_not_found guard: the resolver
-	// routes the dispatch, but the proxy can't find the binding in its empty
-	// cache.
 	blindProxy bool
-	// stores threads an operator-facing remote-stores config into the
-	// harness. The per-run-scope isolation scenario needs a real claim
-	// producer that advertises supports_split_scope so a fan-out node can
-	// split into multiple concurrent run-scopes; the zero value leaves the
-	// store catalog empty (today's behavior for the other host-agent
-	// scenarios, which late-bind only an executor).
 	stores config.RemoteStoresConfig
-	// anonymous runs the fixture in anonymous mode: it skips minting an owner
-	// api-key (MintAdminKey flips the deployment OUT of anonymous mode, so an
-	// anonymous fixture must never call it), leaving the control-api in its
-	// zero-key bootstrap state where every request is admitted as the synthetic
-	// admin identity. Templates and instances are created via the anonymous
-	// path (no bearer), so the instance row's created_by_api_key_id is empty;
-	// the connected agent registers under anonRoutingIdentity instead of an
-	// owner key id. Drives S-hostagent-anonymous-mode-latebind.
 	anonymous bool
 }
 
-// newHostAgentFixture wires the host-agent stack: an authenticated
-// control-api with the proxy as a late-bind executor (and, unless blind, a
-// lifecycle peer + GET fallback), a minted owner key, the running proxy, the
-// stub binary, and (when withAgent) a connected host-agent.
 func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 	t.Helper()
 
-	// @deliberate: proxyAddr is allocated up-front so the static resolver can point at it
-	// before the proxy process is actually listening (gRPC dials lazily).
 	proxyPort := freePort(t)
 	proxyAddr := fmt.Sprintf("127.0.0.1:%d", proxyPort)
 
 	execProtocols := []string{"executor", "lifecycle_subscriber"}
 	if opts.blindProxy {
-		// @constraint: No lifecycle subscription → the proxy never sees OnInstanceCreated.
 		execProtocols = []string{"executor"}
 	}
 	h := scenario.Start(t, scenario.HarnessOpts{
@@ -200,12 +132,6 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		Stores:                 opts.stores,
 	})
 
-	// @deliberate: Mint the owner key (also flips the deployment to authenticated mode).
-	// In anonymous mode we must NOT mint — MintAdminKey creates the first
-	// active key and flips the deployment out of anonymous mode, defeating the
-	// scenario. The admin/owner key stay empty: templates + instances are then
-	// created via the anonymous (no-bearer) path, and the agent registers under
-	// the anonymous routing identity rather than an owner key id.
 	var adminKey, ownerKeyID, agentRoutingKey string
 	if opts.anonymous {
 		agentRoutingKey = anonRoutingIdentity
@@ -214,11 +140,6 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		agentRoutingKey = ownerKeyID
 	}
 
-	// @deliberate: Start the proxy. A blind proxy gets no control-api URL so its
-	// GET-fallback can't populate the cache either. In anonymous mode the
-	// control-api needs no bearer (synthetic admin identity), so the token is
-	// empty but the URL is still wired so the GET-fallback can read the
-	// anonymous instance's bindings.
 	controlURL, controlToken := h.ControlBase, adminKey
 	if opts.blindProxy {
 		controlURL, controlToken = "", ""
@@ -241,9 +162,6 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 	return fx
 }
 
-// startProxyOnPort execs the proxy on a caller-allocated port (so the
-// resolver endpoint is known before the process binds). An empty controlBase
-// leaves the proxy without a GET-fallback (blind cache).
 func startProxyOnPort(t *testing.T, port int, controlBase, adminKey string) {
 	t.Helper()
 	bin := buildBinary(t, "cmd/rimsky-host-agent-proxy")
@@ -271,12 +189,6 @@ func startProxyOnPort(t *testing.T, port int, controlBase, adminKey string) {
 	require.True(t, waitDialable(addr, 10*time.Second), "proxy did not come up on %s", addr)
 }
 
-// lateBindTemplateSpec builds the raw spec map for a single-node template
-// whose node references the late-bound executor and declares
-// late_bind_services so registration bypasses the existence/schema checks.
-// The node deliberately carries no attributes block so dispatch skips the
-// executor_schema_unavailable gate (the spawned binary's Capabilities are
-// the authority for late-bound nodes).
 func lateBindTemplateSpec(name string) map[string]any {
 	return map[string]any{
 		"name":               name,
@@ -288,15 +200,11 @@ func lateBindTemplateSpec(name string) map[string]any {
 	}
 }
 
-// deployLateBindTemplate registers + deploys the late-bind template under
-// the admin key and returns its hash.
 func (fx *hostAgentFixture) deployLateBindTemplate(t *testing.T, name string) string {
 	t.Helper()
 	return fx.h.DeployTemplateSpecMap(lateBindTemplateSpec(name), fx.adminKey)
 }
 
-// createLateBindInstance creates an instance binding the late-bound service
-// to the stub binary, under the owner key.
 func (fx *hostAgentFixture) createLateBindInstance(t *testing.T, templateHash, instanceKey, binaryPath string) shared.UUID {
 	t.Helper()
 	bindings := map[string]any{
@@ -305,9 +213,6 @@ func (fx *hostAgentFixture) createLateBindInstance(t *testing.T, templateHash, i
 	return fx.h.CreateInstanceWithServiceBindings(templateHash, instanceKey, fx.adminKey, map[string]any{}, bindings)
 }
 
-// waitForNodeEventKind polls rimsky_events for an event of the given kind on
-// the instance's node. Returns true if seen before timeout. Used to assert
-// terminal/error/<class> (failure modes) and terminal/success (happy path).
 func (fx *hostAgentFixture) waitForNodeEventKind(t *testing.T, instanceID shared.UUID, kind string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

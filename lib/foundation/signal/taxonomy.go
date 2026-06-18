@@ -9,21 +9,6 @@ import (
 	"strings"
 )
 
-// canonicalEmitPatterns enumerates every valid emit-shape TypePath in
-// the canonical taxonomy. Patterns ending in "*" are prefix patterns
-// (the "*" matches one or more slash-delimited segments). The middle
-// position of attribute/<key>/changed is intentionally a single
-// segment captured by attributeMidSuffix below.
-//
-// Adding a new pattern here must travel alongside a new payload
-// schema in payloads.go and an update to concepts/signal.md.
-//
-// `message/*` is intentionally NOT in this taxonomy. Message arrival is
-// a virtual-node settle: the message's type-path names a virtual node
-// that emits `terminal/success` on delivery, and receivers subscribe to
-// that virtual node via the standard `node: <message-type>, type:
-// terminal/success` shape. A subscription whose `type:` starts with
-// `message/` is rejected here by the unknown-type-path validator.
 var canonicalEmitPatterns = []string{
 	"terminal/success",
 	"terminal/error/*",
@@ -35,14 +20,6 @@ var canonicalEmitPatterns = []string{
 	"attribute/*/changed",
 }
 
-// ValidateTypePath returns nil if t is a legal emit-shape path under
-// the canonical taxonomy. Exact patterns (no trailing "*") must match
-// verbatim; prefix patterns (trailing "*") accept one-or-more
-// slash-delimited tail segments. The special attribute/<key>/changed
-// shape is matched by checking the "/changed" suffix with a
-// non-empty middle key segment.
-//
-// Returns a descriptive error naming the offending path on rejection.
 func ValidateTypePath(t TypePath) error {
 	s := string(t)
 	if s == "" {
@@ -54,25 +31,6 @@ func ValidateTypePath(t TypePath) error {
 	return fmt.Errorf("invalid signal type-path: %q (not in canonical taxonomy)", s)
 }
 
-// ValidateSubscriptionType returns nil if t is a legal subscription
-// pattern. Subscription patterns may be exact emit-shape paths OR a
-// trailing-"*" prefix that itself matches some prefix of the
-// canonical taxonomy (e.g., "terminal/error/*", "terminal/*").
-// Positional wildcards (e.g., "terminal/*/foo", "*/error/*") are
-// explicitly rejected at the operator-template surface with a
-// precise error message — operators must express such patterns via
-// CEL when:.
-//
-// @deliberate: the historic `event/*` subscription form retired
-// alongside `event/<name>` (TD-collapse-named-event-to-tags); a
-// template using it now fails registration with the "not in
-// canonical taxonomy" error from this validator.
-//
-// Asymmetry note: the cascade matcher tolerates positional `*` at
-// runtime as a defensive convenience, but operator-declared
-// subscriptions are constrained to trailing-only `*` here. Today's
-// only producer of operator-facing subscription types is the
-// `subscribes:` block in the template DSL.
 func ValidateSubscriptionType(t TypePath) error {
 	s := string(t)
 	if s == "" {
@@ -88,8 +46,6 @@ func ValidateSubscriptionType(t TypePath) error {
 	return fmt.Errorf("invalid subscription type: %q (not in canonical taxonomy)", s)
 }
 
-// positionalWildcard reports whether a "*" appears anywhere other
-// than the last character of the string.
 func positionalWildcard(s string) bool {
 	idx := strings.IndexByte(s, '*')
 	if idx < 0 {
@@ -98,12 +54,6 @@ func positionalWildcard(s string) bool {
 	return idx != len(s)-1
 }
 
-// matchesCanonical reports whether s matches any pattern in
-// canonicalEmitPatterns. When allowTrailingWildcard is true, s itself
-// may end in "*"; in that case the match succeeds if the prefix
-// preceding the "*" is a prefix of any canonical pattern (e.g.,
-// "terminal/*" matches because canonicalEmitPatterns has paths
-// starting with "terminal/"; "event/*" matches verbatim).
 func matchesCanonical(s string, allowTrailingWildcard bool) bool {
 	if allowTrailingWildcard && strings.HasSuffix(s, "*") {
 		prefix := strings.TrimSuffix(s, "*")
@@ -112,11 +62,6 @@ func matchesCanonical(s string, allowTrailingWildcard bool) bool {
 		}
 		for _, p := range canonicalEmitPatterns {
 			canon := strings.TrimSuffix(p, "*")
-			// @deliberate: match when either the subscription prefix is
-			// a prefix of the canonical exact path (e.g. "terminal/"
-			// prefixes "terminal/success") or the canonical prefix is a
-			// prefix of the subscription prefix (e.g. "terminal/error/"
-			// is a prefix of "terminal/error/http/").
 			if strings.HasPrefix(canon, prefix) || strings.HasPrefix(prefix, canon) {
 				return true
 			}

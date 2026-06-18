@@ -23,14 +23,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// runScopesImpl is the SQLite-backed persistence.RunScopeTable — CRUD +
-// tree-walks on rimsky_run_scopes, the first-class execution-context
-// table backing concept:run-scope.
 type runScopesImpl tablesImpl
 
 var _ persistence.RunScopeTable = (*runScopesImpl)(nil)
 
-// RunScopes exposes the rimsky_run_scopes accessor.
 func (s *tablesImpl) RunScopes() persistence.RunScopeTable { return (*runScopesImpl)(s) }
 
 func (b *runScopesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }

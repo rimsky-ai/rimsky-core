@@ -21,9 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// fakeScratchWriter is a tiny in-memory ScratchWriter used by the
-// callback handler test. It records each Write call so the test can
-// assert the run_id ↔ bytes mapping.
 type fakeScratchWriter struct {
 	mu      sync.Mutex
 	writes  map[shared.UUID][]byte
@@ -52,9 +49,6 @@ func (f *fakeScratchWriter) get(runID shared.UUID) []byte {
 	return f.writes[runID]
 }
 
-// mountHandler constructs a chi router with the scratch route and
-// returns a configured test server. The router is needed because
-// Handler relies on chi.URLParam.
 func mountHandler(t *testing.T, deps HandlerDeps) *httptest.Server {
 	t.Helper()
 	r := chi.NewRouter()
@@ -178,8 +172,6 @@ func TestHandler_BodyTooLarge(t *testing.T) {
 	writer := newFakeScratchWriter()
 	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: func(string, shared.UUID) error { return nil }})
 
-	// @deliberate: one byte over the 64 MiB cap. Use a streaming reader
-	// so we don't allocate the full buffer in test memory.
 	const maxBody = 64 * 1024 * 1024
 	body := io.MultiReader(
 		io.LimitReader(zeroReader{}, maxBody),
@@ -201,8 +193,6 @@ func TestHandler_BodyTooLarge(t *testing.T) {
 	}
 }
 
-// zeroReader emits an unbounded stream of zero bytes. Used to test the
-// body-too-large branch without allocating the full buffer.
 type zeroReader struct{}
 
 func (zeroReader) Read(p []byte) (int, error) {
@@ -226,15 +216,6 @@ func TestHandler_WriteFailureReturns500(t *testing.T) {
 	}
 }
 
-// TestHandler_RunRowMissingReturns410 pins the missing-row mapping: a
-// ScratchWriter that surfaces ErrRunRowMissing translates to HTTP 410
-// Gone. STORY-opaque-executor-scratch makes this case load-bearing —
-// the executor's mid-dispatch checkpoint was NOT persisted, and 410
-// is the signal that lets the executor distinguish "row retired" from
-// the silent 204 the missing-row case used to return. Without this
-// regression pin a refactor could silently downgrade to 500 (generic
-// write failure) or 204 (success), both of which the executor would
-// mis-handle.
 func TestHandler_RunRowMissingReturns410(t *testing.T) {
 	t.Parallel()
 

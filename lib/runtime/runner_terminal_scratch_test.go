@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Unit tests for applyTerminalScratchInTx. The empty-terminal-scratch
-// contract is documented in
-// `.ok-planner/design/decisions/scratch-protocol.md` — an empty
-// terminal-attach is a no-op against the dispatch row's persisted
-// scratch (preserves prior mid-dispatch / recovery-copied state); the
-// executor's "clear" lane is the mid-dispatch scratch HTTP callback
-// route with an empty body, not the terminal outcome's scratch field.
-
 package runtime
 
 import (
@@ -21,9 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// scratchRecorder is a minimal Queue stub that records WriteScratchInTx
-// invocations. Every other Queue method is a no-op / zero-value return
-// — only the scratch surface is exercised here.
 type scratchRecorder struct {
 	persistence.Queue
 	writes int
@@ -53,9 +42,6 @@ func TestApplyTerminalScratchInTx_EmptyScratchIsNoOp(t *testing.T) {
 		NodeID:     shared.UUID{2},
 	}
 
-	// @constraint: empty scratch — WriteScratchInTx MUST NOT be issued.
-	// Any prior row state (mid-dispatch callback write, recovery-copied
-	// bytes) survives.
 	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, nil); err != nil {
 		t.Fatalf("applyTerminalScratchInTx nil scratch: %v", err)
 	}
@@ -71,13 +57,6 @@ func TestApplyTerminalScratchInTx_EmptyScratchIsNoOp(t *testing.T) {
 	}
 }
 
-// TestApplyTerminalScratchInTx_SubgraphExitIsNoOp pins the carve-out:
-// every terminal site (Success, Error/retry-after-error, infra-reenqueue)
-// must agree that a sub-graph exit's dispatch row stays empty. The
-// gate lives inside applyTerminalScratchInTx (rather than at each
-// call site) so the three sites cannot silently drift on this rule —
-// if any future site reuses the helper it inherits the carve-out
-// automatically.
 func TestApplyTerminalScratchInTx_SubgraphExitIsNoOp(t *testing.T) {
 	t.Parallel()
 	rec := &scratchRecorder{}
@@ -98,9 +77,6 @@ func TestApplyTerminalScratchInTx_SubgraphExitIsNoOp(t *testing.T) {
 func TestApplyTerminalScratchInTx_NonEmptyWritesInline(t *testing.T) {
 	t.Parallel()
 	rec := &scratchRecorder{}
-	// @deliberate: zero BlobSpillThreshold + nil Blob means
-	// shouldSpillBlob returns false, so this lands inline regardless
-	// of size.
 	args := RunArgs{Queue: rec}
 	acq := &acquisition{
 		DispatchID: shared.UUID{1},

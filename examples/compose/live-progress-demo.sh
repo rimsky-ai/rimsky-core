@@ -64,24 +64,6 @@ cd "$WORK" || die "cd $WORK"
 TRANSCRIPT="$WORK/run.transcript"
 step "run rimsky compose run; pipe stderr through a per-line timestamper"
 
-# @deliberate: the per-line timestamper reads stderr from the verb and
-# prefixes each line with a wall-clock epoch (seconds.nanoseconds). The
-# verb's stderr is line-buffered through its slog handler (the default
-# printer flushes after every line; see progress.go); the timestamper
-# tags each line as it arrives, so the resulting transcript pins the
-# arrival time of every observable lifecycle event.
-#
-# We deliberately do NOT use `awk '{print strftime(...)...}'` here:
-# strftime's resolution is per-second and the slow vs fast separation
-# is in the seconds-range; date with %s.%N gives nanosecond resolution
-# so the ordering assertion is unambiguous.
-#
-# `script -q /dev/null` (macOS/FreeBSD) or `stdbuf -oL -eL` (Linux)
-# would each put a pty / line-buffering wrapper on the verb's stderr
-# so its line-buffered writes do not get block-buffered when piped
-# through another process. We prefer plain `bash` composition by
-# routing through a `while read` loop, which forces per-line emission
-# without requiring either.
 set +e
 "$RIMSKY_BIN" compose run \
   --service "stub=$STUB_BIN" \
@@ -99,9 +81,6 @@ echo "----- transcript (per-instance summary lines only) -----"
 grep -E "instance live-pipeline/(fast|slow): success" "$TRANSCRIPT" || true
 echo "--------------------------------------------------------"
 
-# @constraint: falsifier #1 — both `fast: success` and `slow: success`
-# lines must be present in the transcript, proving the verb ran the
-# wait loop through to both instances' terminals.
 fast_line=$(grep -E "instance live-pipeline/fast: success" "$TRANSCRIPT" | head -n 1 || true)
 slow_line=$(grep -E "instance live-pipeline/slow: success" "$TRANSCRIPT" | head -n 1 || true)
 [[ -n "$fast_line" ]] || die "FAIL: 'live-pipeline/fast: success' missing from transcript"
@@ -111,26 +90,13 @@ fast_ts=$(printf '%s' "$fast_line" | awk '{print $1}')
 slow_ts=$(printf '%s' "$slow_line" | awk '{print $1}')
 [[ -n "$fast_ts" && -n "$slow_ts" ]] || die "FAIL: transcript lines missing timestamp prefix"
 
-# @constraint: falsifier #2 — the fast instance's terminal line must
-# arrive at least 1 second BEFORE the slow instance's terminal line. If
-# both appeared at roughly the same wall-clock time, the verb buffered
-# all lifecycle events to the end of the run, exactly the failure mode
-# the story rules out.
 delta=$(awk -v a="$slow_ts" -v b="$fast_ts" 'BEGIN { printf "%.3f", a - b }')
 step "fast terminal at $fast_ts; slow terminal at $slow_ts; delta=${delta}s"
 
-# @deliberate: bash's [[ ... -gt ... ]] is integer-only; compare via
-# awk to admit a fractional threshold.
 ok=$(awk -v d="$delta" 'BEGIN { print (d >= 1.0) ? "yes" : "no" }')
 [[ "$ok" == "yes" ]] \
   || die "FAIL: fast terminal arrived within ${delta}s of slow terminal (expected ≥1.0s gap) — verb appears to be buffering progress lines"
 
-# @constraint: falsifier #3 (sanity) — the delta should also be
-# bounded above; anything beyond 6s suggests the slow path took much
-# longer than its delay_ms attribute (3s + 2s slop + 1s wait-poll
-# margin). A blown-up delta would mean the slow path didn't actually
-# start until after the fast one finished — a serialized execution
-# shape we want to rule out.
 sane=$(awk -v d="$delta" 'BEGIN { print (d <= 6.0) ? "yes" : "no" }')
 [[ "$sane" == "yes" ]] \
   || die "FAIL: delta=${delta}s is greater than the expected 6s upper bound; instances may be serializing rather than running concurrently"

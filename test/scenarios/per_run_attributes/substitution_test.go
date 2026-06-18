@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario test for the per-run substitution-context builder. Verifies
-// that under per-run attribute keying (2026-05-20), a receiver dispatches
-// reading the upstream sender's THIS-FRAME attributes — not a stale
-// cross-frame value.
-//
-// Per spec
-// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
-// §"Substitution context builder".
 package per_run_attributes
 
 import (
@@ -26,10 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// TestPerRunAttributes_DownstreamReadsThisFrame verifies that a
-// downstream receiver dispatches with the THIS-FRAME upstream value
-// — across two invalidations, the receiver's data carries the
-// second-fire upstream value, not the first-fire's.
 func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -78,11 +66,6 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 	downN := h.FindNode(iid, "downstream")
 	require.NotNil(t, upN)
 	require.NotNil(t, downN)
-	// @constraint: upstream was previously a structural root; the
-	// subscribes: entry added for the typed-message wake demoted it
-	// from root, so the harness's empty-wake doesn't fire it. Emit
-	// the typed message here to drive the initial cascade the test
-	// assertions expect.
 	h.PostInstanceMessage(iid, "test/wake/upstream", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	require.True(t, h.WaitForNodeState(upN.ID, cascade.NodeStateFresh, 15*time.Second))
@@ -101,8 +84,6 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 	h.Stub.WhenType("upstream").Success(map[string]any{"value": "fire-2"}, true, "ok")
 	h.Stub.WhenType("downstream").Success(map[string]any{}, true, "ok")
 
-	// @deliberate: Invalidate upstream so cascade refires downstream via
-	// a per-target typed-message wake — the universal post-spec trigger.
 	h.PostInstanceMessage(iid, "test/wake/upstream", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	deadline := time.Now().Add(15 * time.Second)

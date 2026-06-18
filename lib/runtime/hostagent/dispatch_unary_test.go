@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// dispatch_unary_test.go — host-agent-side unit coverage for
-// `dispatchUnaryByMethod` and the three per-protocol forwarders
-// (`forwardPublisherUnary`, `forwardValidationUnary`,
-// `forwardDataProcessingUnary`). Each sub-test exec()s the
-// testdata/stubchild, dispatches a real gRPC call into the spawned
-// child via the agent's handleDispatchFrame → dispatchUnaryByMethod
-// path, and asserts both the response shape AND a side-effect
-// recorded by the stub (a log line / sentinel-driven return value)
-// — so a routing slip cannot pass with a plausibly-shaped but
-// wrong-RPC response.
-
 package hostagent
 
 import (
@@ -27,8 +16,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// dispatchUnaryVia pushes a unary-protocol DispatchFrame and returns the
-// agent's response DATA frame.
 func dispatchUnaryVia(t *testing.T, fp *fakeProxy, spawnID, protocol, rpcMethod string, payload []byte) *genv1.DispatchFrame {
 	t.Helper()
 	streamID := uuid.NewString()
@@ -43,8 +30,6 @@ func dispatchUnaryVia(t *testing.T, fp *fakeProxy, spawnID, protocol, rpcMethod 
 	return nextDispatch(t, fp, streamID)
 }
 
-// spawnStubForUnaryProtocols spawns the stubchild advertising the three
-// unary protocols and returns the spawn-id.
 func spawnStubForUnaryProtocols(t *testing.T, fp *fakeProxy) string {
 	t.Helper()
 	bin := buildStubChild(t)
@@ -65,10 +50,6 @@ func spawnStubForUnaryProtocols(t *testing.T, fp *fakeProxy) string {
 	return spawnID
 }
 
-// TestDispatchUnary_Publisher_SubscribeReachesSpawnedChild routes a real
-// Publisher.Subscribe through dispatchUnaryByMethod into a live spawned
-// stub binary, asserting BOTH a clean response AND the stub's
-// publish-log records the dispatch.
 func TestDispatchUnary_Publisher_SubscribeReachesSpawnedChild(t *testing.T) {
 	publishLog := t.TempDir() + "/publish.log"
 	t.Setenv("STUBCHILD_PUBLISH_LOG", publishLog)
@@ -114,12 +95,6 @@ func TestDispatchUnary_Publisher_SubscribeReachesSpawnedChild(t *testing.T) {
 	}
 }
 
-// TestDispatchUnary_Publisher_UnsubscribeUsesDistinctRPC pins the
-// rpc_method authoritativeness: SubscribeRequest and UnsubscribeRequest
-// are distinct types, so a routing slip that swallowed rpc_method and
-// fell through to e.g. Subscribe would either fail to decode the
-// payload or silently fire a Subscribe with an empty body. The stub
-// records each Subscribe; an Unsubscribe leaves no publish-log line.
 func TestDispatchUnary_Publisher_UnsubscribeUsesDistinctRPC(t *testing.T) {
 	publishLog := t.TempDir() + "/publish.log"
 	t.Setenv("STUBCHILD_PUBLISH_LOG", publishLog)
@@ -153,10 +128,6 @@ func TestDispatchUnary_Publisher_UnsubscribeUsesDistinctRPC(t *testing.T) {
 	}
 }
 
-// TestDispatchUnary_Validation_RejectsSentinelRole drives a real
-// Validation.Validate dispatch through dispatchUnaryByMethod into the
-// spawned stub. The sentinel role makes the stub REJECT (valid=false
-// with a sentinel-class ValidationFinding).
 func TestDispatchUnary_Validation_RejectsSentinelRole(t *testing.T) {
 	fp := startFakeProxy(t)
 	connectAgentToFakeProxy(t, fp, Config{})
@@ -189,10 +160,6 @@ func TestDispatchUnary_Validation_RejectsSentinelRole(t *testing.T) {
 	}
 }
 
-// TestDispatchUnary_DataProcessing_BeginCommitFidelity routes two
-// distinct DataProcessing RPCs (BeginCandidate then CommitCandidate)
-// through dispatchUnaryByMethod and asserts the response of the second
-// is deterministically derived from the response of the first.
 func TestDispatchUnary_DataProcessing_BeginCommitFidelity(t *testing.T) {
 	fp := startFakeProxy(t)
 	connectAgentToFakeProxy(t, fp, Config{})
@@ -246,8 +213,6 @@ func TestDispatchUnary_DataProcessing_BeginCommitFidelity(t *testing.T) {
 	}
 }
 
-// TestDispatchUnary_UnknownRpcMethodCancels asserts the agent surfaces
-// an unknown rpc_method on a known unary protocol as a CANCEL frame.
 func TestDispatchUnary_UnknownRpcMethodCancels(t *testing.T) {
 	fp := startFakeProxy(t)
 	connectAgentToFakeProxy(t, fp, Config{})

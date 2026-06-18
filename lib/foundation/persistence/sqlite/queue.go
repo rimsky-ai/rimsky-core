@@ -6,11 +6,6 @@
 // @diverged: true
 // @reason: parallel driver — SQLite dialect (positional ? params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
 
-// queue.go is the SQLite implementation of persistence.Queue. Mirrors
-// foundation/persistence/postgres/queue.go method-for-method with SQLite
-// dialect translations per spec §6.3.
-//
-// @blessed-invariant 2: dispatch claim brackets the running window.
 package sqlite
 
 import (
@@ -30,8 +25,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// defaultCandidateLimit caps the candidate batch returned by
-// SelectCandidates when the caller passes Limit==0.
 const defaultCandidateLimit = 100
 
 type queueImpl struct {
@@ -42,7 +35,6 @@ func newQueue(db *sql.DB) *queueImpl { return &queueImpl{db: db} }
 
 var _ persistence.Queue = (*queueImpl)(nil)
 
-// q returns the right querier for tx. Same convention as tablesImpl.q.
 func (q *queueImpl) q(tx persistence.Tx) querier {
 	if tx == nil {
 		return q.db
@@ -55,24 +47,11 @@ func (q *queueImpl) q(tx persistence.Tx) querier {
 }
 
 func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest) error {
-	// @constraint: EnqueueInTx is a guarded INSERT followed by a zero-rows
-	// re-resolution SELECT. Without a transaction another process sharing
-	// the database file could close the run scope between the two
-	// statements and the re-resolution would misclassify "row already
-	// in-flight" as ErrRunScopeClosed. The internal immediate-mode
-	// transaction (the DSN's _txlock=immediate makes BEGIN hold the writer
-	// slot) keeps the pair atomic across processes.
 	return q.inTx(ctx, func(tx persistence.Tx) error {
 		return q.EnqueueInTx(ctx, req, tx)
 	})
 }
 
-// inTx runs fn inside an immediate-mode transaction opened on the queue's
-// own handle (the DSN's _txlock=immediate makes BEGIN take the writer
-// slot up front). Used by Queue methods that perform multi-statement
-// read-then-write sequences when the caller did not supply a tx, so
-// their atomicity holds across OS processes sharing the database file —
-// connection-level serialization only ever covered one process.
 func (q *queueImpl) inTx(ctx context.Context, fn func(tx persistence.Tx) error) error {
 	sTx, err := q.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -91,27 +70,6 @@ func (q *queueImpl) inTx(ctx context.Context, fn func(tx persistence.Tx) error) 
 	return sTx.Commit()
 }
 
-// EnqueueInTx inserts a fresh dispatch row when no in-flight row exists
-// for the node, otherwise no-ops. Mirrors the postgres impl post-
-// stage-1 lifecycle flip: terminal rows (phase IN ('completed','failed'))
-// are retained on the table so frame-end / retention / run-tree
-// aggregation can read their terminal state. The uq_node_runs_in_flight
-// partial unique index enforces the runtime "at most one in-flight row
-// per node" invariant; the WHERE NOT EXISTS gate turns the constraint
-// into a friendly no-op for the pure-cascade-sweep / retry-after-retry
-// paths that may try to enqueue a row that already exists in 'pending'.
-//
-// Closed-scope enforcement: the INSERT's source row SELECTs from
-// rimsky_run_scopes filtered by closed_at IS NULL so a new in-flight
-// row cannot land in a closed RunScope. Mirrors postgres EnqueueInTx
-// and AffirmNodeRunRow. On zero rows affected we re-resolve to
-// distinguish "row already in-flight" (silent success), "scope closed"
-// (ErrRunScopeClosed), or "scope absent" (error). SQLite's BEGIN
-// IMMEDIATE write-serialisation makes the original SELECT-then-INSERT
-// shape safe in practice, but folding the check into the INSERT keeps
-// cross-backend symmetry and prevents future refactors from missing
-// the invariant.
-//
 // @concept: run-scope
 func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
 	stores := req.RequiredStores
@@ -124,31 +82,16 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if req.RunScopeID == (shared.UUID{}) {
 		return fmt.Errorf("sqlite.Enqueue: run_scope_id required for node %s", req.NodeID)
 	}
-	// @constraint: prior_dispatch_id / prior_dispatch_disposition carry
-	// the predecessor dispatch identity for retries / stale-recovery /
-	// recalculates. Both NULL for initial dispatches. Per spec
-	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-	// §Recovery-aware executor protocol.
 	var priorDispatchID any
 	if req.PriorDispatchID != nil {
 		priorDispatchID = req.PriorDispatchID.String()
 	}
 	priorDisposition := nullableString(req.PriorDispatchDisposition)
-	// @constraint: scratch carry-forward — when this enqueue follows a
-	// prior dispatch (stale-recovery, retry-after-error, recalculate),
-	// the caller has already loaded the prior row's scratch triple and
-	// put it on req.InitialScratch* so the new dispatch row carries the
-	// executor's in-flight state across the recovery. Inert in rimsky
-	// per concept:inertness / @blessed-invariant 21.
-	//
 	// @concept: executor
 	var scratchInlineArg any
 	if len(req.InitialScratchInline) > 0 {
 		scratchInlineArg = req.InitialScratchInline
 	}
-	// @constraint: single-branch guard keyed on (node_id, run_scope_id)
-	// is unambiguous per uq_node_runs_in_flight_per_run_scope. The
-	// rimsky_run_scopes SELECT enforces closed_at IS NULL at INSERT time.
 	res, err := q.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
 		 SELECT ?, ?, ?, ?, ?, 'pending', ?, rs.id, ?, ?, ?, ?, ?
@@ -179,9 +122,6 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if affected > 0 {
 		return nil
 	}
-	// @constraint: zero rows means (a) in-flight row already exists
-	// (silent success), (b) scope closed (return ErrRunScopeClosed),
-	// or (c) scope absent (error). Re-resolve via a separate SELECT.
 	var closedAt sql.NullString
 	err = q.q(tx).QueryRowContext(ctx,
 		`SELECT closed_at FROM rimsky_run_scopes WHERE id = ?`,
@@ -196,14 +136,9 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if closedAt.Valid {
 		return persistence.ErrRunScopeClosed
 	}
-	// @constraint: scope open + zero rows means an in-flight row already
-	// exists; silent success per the existing no-op contract.
 	return nil
 }
 
-// SelectCandidates returns up to req.Limit dispatch rows. SQLite has no
-// FOR UPDATE SKIP LOCKED; the surrounding BEGIN IMMEDIATE writer-slot
-// hold serialises any concurrent runner so there's no contention to skip.
 func (q *queueImpl) SelectCandidates(
 	ctx context.Context, tx persistence.Tx, req persistence.SelectCandidatesRequest,
 ) ([]persistence.Candidate, error) {
@@ -226,18 +161,6 @@ func (q *queueImpl) SelectCandidates(
 		acceptedExecutors = []string{}
 	}
 
-	// @constraint: filter required_stores ⊆ acceptedStores in app code
-	// by scanning then post-filtering. The executor and now filters are
-	// pushed into SQL where straightforward, but executor IN(...) and
-	// required_stores subset are easier in Go.
-	// @constraint: SELECT predicates — claimed_by IS NULL is the legacy
-	// unclaimed-row gate; phase='pending' filters out parked rows (which
-	// also have claimed_by=NULL but must transition through
-	// wakeParkedNode rather than being directly claimed). Per the
-	// 2026-05-08 platform-extensions plan E2/E3.
-	// @constraint: join rimsky_instances via rimsky_nodes
-	// (rimsky_node_runs has no instance_id of its own) and filter out
-	// paused instances. Per concept:breakpoint §5.2 soft-pause semantics.
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
 		        d.prior_dispatch_id, d.prior_dispatch_disposition
@@ -261,10 +184,6 @@ func (q *queueImpl) SelectCandidates(
 	}
 	defer rows.Close()
 
-	// @constraint: post-stage-3 cutover — native-only rows
-	// (executor == "") need a non-empty required_stores to be
-	// dispatch-eligible; pure-cascade rows (no executor, no stores) are
-	// state-only and excluded.
 	executorAccepted := func(executor string, required []string) bool {
 		if executor == "" {
 			return len(required) > 0
@@ -345,12 +264,6 @@ func (q *queueImpl) SelectCandidates(
 		if c.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
 			return nil, err
 		}
-		// @constraint: keyset cursor mirrors the postgres driver's $6/$7
-		// predicate, applied in Go here because enqueued_at round-trips
-		// through a string column. Only rows strictly after the
-		// (enqueued_at, id) cursor pair survive, so the runner can page
-		// past a head-of-line batch whose candidates were all skipped
-		// (e.g. the upstream in-flight gate). Zero cursor = no filter.
 		if !req.CursorEnqueuedAfter.IsZero() {
 			if c.EnqueuedAt.Before(req.CursorEnqueuedAfter) {
 				continue
@@ -371,10 +284,6 @@ func (q *queueImpl) SelectCandidates(
 	return out, nil
 }
 
-// ClaimDispatchRow — @blessed-invariant 2.
-//
-// The phase='pending' guard prevents accidental claims of parked rows;
-// see the matching postgres impl for rationale.
 func (q *queueImpl) ClaimDispatchRow(
 	ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, supervisorID string,
 ) (bool, error) {
@@ -398,11 +307,6 @@ func (q *queueImpl) ClaimDispatchRow(
 	return n == 1, nil
 }
 
-// Complete retires the in-flight run row identified by dispatchID. Post-
-// stage-1 lifecycle flip: flips phase to a terminal value rather than
-// deleting the row so frame-end / retention / run-tree aggregation can
-// read the terminal `state` / `settling_signal_type` after the active
-// phase closes. See the postgres impl for the full rationale.
 func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	now := nowUTC()
 	if expectedClaimedBy != "" {
@@ -434,10 +338,6 @@ func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, runSc
 	return q.RemoveForNodeInTx(ctx, nodeID, runScopeID, expectedClaimedBy, nil)
 }
 
-// RemoveForNodeInTx retires the in-flight run row for a (node, run scope)
-// by flipping phase to a terminal value.
-//
-// @blessed-invariant 4: claimant-guarded release.
 // @concept: run-scope
 func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
 	now := nowUTC()
@@ -468,12 +368,6 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 	return err
 }
 
-// ListOrphanedClaims returns claimed async-mode dispatch rows. The
-// returned set is exhaustive (every in-flight async claim with non-NULL
-// async_ack_id); SweepExecutorDeadlines per-row applies the effective
-// max_quiet_period and max_runtime decision using the denormalized
-// effective_max_quiet_period_seconds / effective_max_runtime_seconds
-// columns set at RegisterAsyncAck time.
 func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.DispatchRow, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
@@ -500,9 +394,6 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 	return out, rows.Err()
 }
 
-// ReleaseClaim — @blessed-invariant 4. Reverts phase to 'pending'
-// alongside nulling the claim fields so the orphan reaper's repointed
-// row becomes claim-eligible again on the next scheduler tick.
 func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.db.ExecContext(ctx,
@@ -547,7 +438,6 @@ func (q *queueImpl) GetDispatchNode(ctx context.Context, dispatchID shared.UUID)
 	return nodeID, persistence.ClaimOwnership{Kind: "claimed_by", SupervisorID: claimedBy.String}, nil
 }
 
-// GetClaimedBy — @blessed-invariant 5: verify-before-run.
 func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (persistence.ClaimOwnership, error) {
 	var claimedBy sql.NullString
 	err := q.db.QueryRowContext(ctx,
@@ -566,11 +456,6 @@ func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (p
 	return persistence.ClaimOwnership{Kind: "claimed_by", SupervisorID: claimedBy.String}, nil
 }
 
-// LookupRunByAsyncAckID returns the dispatch row previously registered
-// against ackID via RegisterAsyncAck, or (nil, nil) when no row matches.
-//
-// @constraint: the unique partial index rimsky_node_runs_async_ack_id_idx
-// (sqlite migration 013) guarantees at most one row per ackID.
 func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx, ackID string) (*persistence.DispatchRow, error) {
 	if tx == nil {
 		return nil, errors.New("sqlite.LookupRunByAsyncAckID: tx required")
@@ -594,12 +479,6 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 	return &r, nil
 }
 
-// RegisterAsyncAck persists ackID and per-row dispatch deadlines onto
-// the dispatch row.
-//
-// @constraint: caller-supplied tx is load-bearing — the registration
-// must commit atomically with the dispatch state mutation that
-// triggered the AwaitAsync handoff.
 func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int) error {
 	if tx == nil {
 		return errors.New("sqlite.RegisterAsyncAck: tx required")
@@ -637,10 +516,6 @@ func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, run
 	return nil
 }
 
-// BumpLastProgressAt advances col:rimsky_node_runs.last_progress_at.
-//
-// @constraint: the bump MUST run in the caller's tx when one exists so
-// it commits atomically with the writeback that triggered it.
 func (q *queueImpl) BumpLastProgressAt(ctx context.Context, tx persistence.Tx, runID shared.UUID, now time.Time) (bool, error) {
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs SET last_progress_at = ? WHERE id = ?`,
@@ -656,8 +531,6 @@ func (q *queueImpl) BumpLastProgressAt(ctx context.Context, tx persistence.Tx, r
 	return n > 0, nil
 }
 
-// ListLive returns currently-live dispatch rows for the observability
-// browse endpoint. Cursor pagination over (enqueued_at DESC, id DESC).
 func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.DispatchRow], error) {
 	limit := pag.Limit
 	if limit <= 0 {
@@ -677,9 +550,6 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		args = append(args, formatTime(oc), id.String())
 	}
 	args = append(args, limit)
-	// @constraint: post-stage-1 lifecycle flip — terminal rows survive
-	// past active terminal; the "live" observability surface filters to
-	// in-flight phases so the listing keeps its prior shape.
 	q1 := `SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 	        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 	        d.async_ack_registered_at, d.last_progress_at, d.tags,
@@ -717,7 +587,6 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	return persistence.PaginatedListResult[persistence.DispatchRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
-// CountLive counts currently-live dispatch rows matching filter.
 func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchListFilter) (int, error) {
 	stateClause, executor, instanceID := buildLiveDispatchFilters(filter)
 	q1 := `SELECT COUNT(*)
@@ -735,9 +604,6 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 	return n, nil
 }
 
-// CountParkedByReason mirrors the postgres impl: groups currently-parked
-// node-run rows by parked_reason for the metrics gauge. Empty /
-// NULL reason buckets under "".
 func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT COALESCE(parked_reason, ''), COUNT(*)
@@ -760,9 +626,6 @@ func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, er
 	return out, rows.Err()
 }
 
-// GetByID returns the live dispatch row for id, or (nil, nil) when no
-// such row exists (or the row has reached terminal phase). Mirrors the
-// postgres impl for the observability dispatch-detail handler.
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
@@ -783,9 +646,6 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 	return &r, nil
 }
 
-// GetInFlightRunForNode resolves the in-flight rimsky_node_runs.id for
-// the (node, run scope) pair. Unambiguous per uq_node_runs_in_flight_per_run_scope.
-//
 // @concept: run-scope
 func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
 	row := q.q(tx).QueryRowContext(ctx,
@@ -808,12 +668,6 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 	return id, true, nil
 }
 
-// GetMostRecentRunForNodeInScope returns the id of the most-recent
-// rimsky_node_runs row for (node, run scope) regardless of phase —
-// mirrors the postgres impl. Used by the cascade-recalculate path so
-// scratch carry-forward survives the recalculate disposition when the
-// prior dispatch already retired (phase='completed').
-//
 // @concept: run-scope
 func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
 	row := q.q(tx).QueryRowContext(ctx,
@@ -836,11 +690,6 @@ func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persi
 	return id, true, nil
 }
 
-// ListInFlightRunPhases returns the distinct in-flight phases per node
-// in (frameID, runScopeID). Mirror of the postgres impl — the
-// persistence half of the supervisor's upstream-gating eligibility
-// condition and its pending-cycle tie-breaker.
-//
 // @concept: wait-set
 // @concept: cascade
 func (q *queueImpl) ListInFlightRunPhases(
@@ -904,22 +753,10 @@ func buildLiveDispatchFilters(filter persistence.DispatchListFilter) (stateClaus
 	return stateClause, executor, instanceID
 }
 
-// scanner is implemented by both *sql.Row and *sql.Rows so a single
-// row-shape decoder serves both QueryRow and Query iteration sites.
 type scanner interface {
 	Scan(dest ...any) error
 }
 
-// scanDispatchRow decodes a row from the canonical dispatch SELECT shape
-// used by ListLive / GetByID / ListOrphanedClaims /
-// LookupRunByAsyncAckID — fourteen columns: id, node_id, executor_name,
-// required_stores, enqueued_at, claimed_by, claimed_at, frame_id,
-// async_ack_id, async_ack_registered_at, last_progress_at, tags,
-// effective_max_quiet_period_seconds, effective_max_runtime_seconds.
-//
-// Tags are persisted as a JSON string array per the SQLite schema; the
-// decoder deduplicates preserving first-appearance order so callers
-// observe set semantics (concept:terminal-tag).
 func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
 	var (
 		idStr                string
@@ -1016,10 +853,6 @@ func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
 	return r, nil
 }
 
-// dedupTags collapses duplicates while preserving first-appearance
-// order, per concept:terminal-tag set semantics. Returns nil for empty
-// input so the JSON-omitempty tag on DispatchRow.Tags drops the column
-// from observability serialization when no tags are set.
 func dedupTags(in []string) []string {
 	if len(in) == 0 {
 		return nil

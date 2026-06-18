@@ -12,7 +12,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// CascadeNode is one node in the cascade-graph response. Per spec §1.4.
 type CascadeNode struct {
 	NodeType          string             `json:"node_type"`
 	NodeID            shared.UUID        `json:"node_id"`
@@ -30,13 +29,7 @@ type terminalEventView struct {
 	OccurredAt string `json:"occurred_at"`
 }
 
-// computeCascadeGraph builds the per-instance cascade graph by joining
-// the template spec's node declarations with the live rimsky_nodes
-// rows for the instance. last_terminal_event is sourced from
-// rimsky_events filtered by node_id and kind in the dispatch-terminal
-// set, fetched in a single batch lookup to avoid the per-node N+1.
 func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceRow, nodes []persistence.NodeRow, template *persistence.TemplateRow) []CascadeNode {
-	// @constraint: index live nodes by node_type for O(1) projection.
 	byType := make(map[string]persistence.NodeRow, len(nodes))
 	nodeIDs := make([]shared.UUID, 0, len(nodes))
 	for _, n := range nodes {
@@ -59,12 +52,6 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 			OccurredAt: ev.OccurredAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
 	}
-	// @constraint: build edges_out per type from the template's subscription graph.
-	// Post-2026-05-14, the dependency edges are derived from the
-	// per-node Subscribes block: each entry naming a sender contributes
-	// edges_in[receiver] += sender and edges_out[sender] += receiver.
-	// Cross-cutting (instance:true) subscriptions are skipped (no
-	// concrete sender).
 	edgesIn := map[string][]string{}
 	edgesOut := map[string][]string{}
 	if template != nil {
@@ -80,8 +67,6 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 	}
 	out := make([]CascadeNode, 0, len(nodes))
 	if template == nil {
-		// @constraint: no template available; project the live rows verbatim with
-		// empty edge lists.
 		for _, n := range nodes {
 			cn := CascadeNode{
 				NodeType:          n.NodeType,

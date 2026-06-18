@@ -14,16 +14,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @deliberate: tags_round_trip asserts that the executor accepts an
-// incoming dispatch and produces a settling Outcome whose `tags`
-// field deserializes as a list-of-strings. Per
-// TD-collapse-named-event-to-tags subscribers fire on
-// `terminal/success when: "<tag>" in payload.tags`; this scenario
-// pins the wire shape so a conformance run demonstrates the executor
-// produces a usable tag list (deduplicated at decode per Success.tags
-// set semantics). The actual cascade match (CEL filter against
-// payload.tags) is exercised by `code:test/scenarios/cascade_signal_blind_test.go`.
-//
 // @concept: terminal-tag
 func init() {
 	conformance.Register(conformance.Scenario{

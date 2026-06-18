@@ -18,7 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
-// fakeCatalog implements mcp.ToolCatalog for the smoke test.
 type fakeCatalog struct {
 	tools  []mcp.Tool
 	calls  map[string]any
@@ -87,28 +86,15 @@ func TestMCPToolsCall(t *testing.T) {
 	}
 }
 
-// TestMCPStreamableHTTPHandshake drives the full connect-and-control
-// sequence the default Claude Code `type: http` MCP client performs over
-// the MCP Streamable HTTP transport: initialize (a session id must be
-// issued) → notifications/initialized (a notification — must get a 202 /
-// empty body and NEVER a JSON-RPC error reply) → tools/list → tools/call
-// (both succeed) → GET /mcp (must open a valid text/event-stream, 200,
-// not 405). Live push/subscriptions stay out of scope (V2); the GET
-// stream may be idle. See
-// .ok-planner/plans/2026-06-02-rimsky-core-remediation-notes.md.
 func TestMCPStreamableHTTPHandshake(t *testing.T) {
 	catalog := &fakeCatalog{tools: []mcp.Tool{
 		{Name: "x", Description: "x desc", InputSchema: json.RawMessage(`{"type":"object"}`)},
 	}}
 	server := &mcp.Server{Tools: catalog}
 
-	// @constraint: real HTTP server so the GET SSE stream exercises the actual
-	// flush/keep-alive path and request-context cancellation, not just a
-	// recorder.
 	hs := httptest.NewServer(http.HandlerFunc(server.ServeHTTP))
 	defer hs.Close()
 
-	// @constraint: initialize must return a session id header.
 	status, hdr, _ := postRPC(t, hs.URL, "", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
 	if status != http.StatusOK {
 		t.Fatalf("initialize status: got %d want 200", status)
@@ -118,9 +104,6 @@ func TestMCPStreamableHTTPHandshake(t *testing.T) {
 		t.Fatalf("initialize did not issue an Mcp-Session-Id header; headers=%v", hdr)
 	}
 
-	// @constraint: notifications/initialized is a JSON-RPC notification (no
-	// id). It MUST be consumed with a 202/empty body and NEVER a JSON-RPC
-	// error reply (a notification gets no response).
 	nStatus, _, nBody := postRPC(t, hs.URL, sessionID,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	if nStatus != http.StatusAccepted {
@@ -129,7 +112,6 @@ func TestMCPStreamableHTTPHandshake(t *testing.T) {
 	if strings.TrimSpace(nBody) != "" {
 		t.Fatalf("notifications/initialized must return an empty body; got %q", nBody)
 	}
-	// @constraint: guard explicitly against the JSON-RPC violation: no error envelope.
 	if strings.Contains(nBody, "method not found") || strings.Contains(nBody, `"error"`) {
 		t.Fatalf("notifications/initialized returned a JSON-RPC error reply (violation): %q", nBody)
 	}
@@ -163,16 +145,9 @@ func TestMCPStreamableHTTPHandshake(t *testing.T) {
 		t.Fatalf("tools/call did not invoke tool x; got %q", catalog.called)
 	}
 
-	// @constraint: GET /mcp is the client's server-to-client stream probe.
-	// Must open a valid text/event-stream (200), not 405. The stream may
-	// stay idle; we read only the response headers, then cancel.
 	getMCPStream(t, hs.URL, sessionID)
 }
 
-// postRPC POSTs a JSON-RPC body to the MCP endpoint and returns the
-// status, response headers, and body string. When sessionID is non-empty
-// it is sent as the Mcp-Session-Id request header (echoing the
-// Streamable-HTTP client contract).
 func postRPC(t *testing.T, baseURL, sessionID, body string) (int, http.Header, string) {
 	t.Helper()
 	req, err := http.NewRequest("POST", baseURL+"/mcp", strings.NewReader(body))
@@ -196,9 +171,6 @@ func postRPC(t *testing.T, baseURL, sessionID, body string) (int, http.Header, s
 	return resp.StatusCode, resp.Header, string(raw)
 }
 
-// getMCPStream opens GET /mcp, asserts a valid 200 text/event-stream is
-// returned (not 405), then cancels the request so the idle keep-alive
-// stream is torn down. It reads only the response headers.
 func getMCPStream(t *testing.T, baseURL, sessionID string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -225,7 +197,6 @@ func getMCPStream(t *testing.T, baseURL, sessionID string) {
 		}
 		defer resp.Body.Close()
 		done <- result{status: resp.StatusCode, ctype: resp.Header.Get("Content-Type")}
-		// @constraint: cancel so the idle stream unblocks the server-side handler.
 		cancel()
 	}()
 	select {
@@ -249,8 +220,6 @@ func getMCPStream(t *testing.T, baseURL, sessionID string) {
 
 func TestMCPUnsupportedMethod(t *testing.T) {
 	server := &mcp.Server{Tools: &fakeCatalog{}}
-	// @constraint: `prompts/list` is not implemented in v1; both tools/* and
-	// resources/* are.
 	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":4,"method":"prompts/list"}`)
 	if resp.Error == nil || resp.Error.Code != mcp.CodeMethodNotFound {
 		t.Fatalf("expected method-not-found; got %+v", resp.Error)
@@ -284,11 +253,6 @@ func serveRPC(t *testing.T, s *mcp.Server, body string) mcp.Response {
 	return resp
 }
 
-// TestCatalogFiltered exercises catalog.Filtered against a fake
-// registry. Verifies the wildcard-based filter.
-//
-// Injects the identity resolver as a Catalog field (no package-global
-// hook), so the filter runs in isolation with no shared state to race.
 func TestCatalogFiltered(t *testing.T) {
 	t.Parallel()
 	reg := &fakeRegistry{

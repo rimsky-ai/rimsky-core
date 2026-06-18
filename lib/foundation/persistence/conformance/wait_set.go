@@ -60,7 +60,6 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		// @constraint: duplicate Insert is idempotent — same (frame, receiver, sender, topic) key collapses.
 		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
 			SenderRunID: senderARunID,
@@ -108,9 +107,6 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		t.Fatalf("ListForFrame: got %d rows want 2", len(byFrame))
 	}
 
-	// @constraint: MarkDrainedBySender(senderA) MUST mark the
-	// state-direct row drained but RETAIN it — the row's DrainedAt
-	// becomes non-nil; the row itself stays in the table.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderARunID, tx)
 	}); err != nil {
@@ -149,7 +145,6 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		t.Fatalf("senderB row: DrainedAt non-nil before drain")
 	}
 
-	// @constraint: re-calling MarkDrainedBySender for an already-drained sender MUST NOT advance drained_at.
 	priorDrainedAt := *senderADrained.DrainedAt
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderARunID, tx)
@@ -173,9 +168,6 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// @constraint: MarkDrainedBySender(senderB) drains the remainder
-	// of the wait-set; combined with the senderA drain above the
-	// frame becomes fully drained.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderBRunID, tx)
 	}); err != nil {
@@ -198,7 +190,6 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// @constraint: ListDrainedAttributeRowsForReceiver MUST filter to topic_kind=attribute, excluding state-kind rows.
 	var drainedAttrs []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		rows, err := store.WaitSet().ListDrainedAttributeRowsForReceiver(ctx, fix.FrameID, receiverRunID, tx)

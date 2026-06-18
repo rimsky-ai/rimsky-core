@@ -13,10 +13,6 @@ import (
 	"testing"
 )
 
-// TestInlineBackend confirms the documented degenerate behavior:
-// Write returns an error (caller should never reach it under correct
-// spill-check usage); Read/ReadRange return ErrBlobNotFound; Delete is
-// a no-op.
 func TestInlineBackend(t *testing.T) {
 	t.Parallel()
 	be := InlineBackend{}
@@ -37,9 +33,6 @@ func TestInlineBackend(t *testing.T) {
 	}
 }
 
-// TestMemoryBackend covers the round-trip path: write returns a unique
-// handle, read returns the bytes, range read returns the slice, delete
-// is idempotent, and post-delete reads return ErrBlobNotFound.
 func TestMemoryBackend(t *testing.T) {
 	t.Parallel()
 	be := NewMemoryBackend()
@@ -72,7 +65,6 @@ func TestMemoryBackend(t *testing.T) {
 		t.Fatalf("ReadRange: got %q, want %q", string(gotRange), "blob")
 	}
 
-	// @deliberate: mutate the caller's slice to prove the backend stored its own copy; a shared-slice bug would surface as got2[0] == 0xff below.
 	payload[0] = 0xff
 	got2, _ := be.Read(ctx, h)
 	if got2[0] != 'h' {
@@ -90,8 +82,6 @@ func TestMemoryBackend(t *testing.T) {
 	}
 }
 
-// TestMemoryBackendReadRangeOutOfBounds confirms io.ErrUnexpectedEOF is
-// returned when the requested range exceeds the stored size.
 func TestMemoryBackendReadRangeOutOfBounds(t *testing.T) {
 	t.Parallel()
 	be := NewMemoryBackend()
@@ -102,7 +92,6 @@ func TestMemoryBackendReadRangeOutOfBounds(t *testing.T) {
 	}
 }
 
-// TestFilesystemBackend covers the round-trip path against a t.TempDir.
 func TestFilesystemBackend(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -150,8 +139,6 @@ func TestFilesystemBackend(t *testing.T) {
 	}
 }
 
-// TestFilesystemBackendRejectsPathEscape confirms a hand-crafted handle
-// with directory escape sequences is rejected.
 func TestFilesystemBackendRejectsPathEscape(t *testing.T) {
 	t.Parallel()
 	be, err := NewFilesystemBackend(t.TempDir())
@@ -159,13 +146,10 @@ func TestFilesystemBackendRejectsPathEscape(t *testing.T) {
 		t.Fatalf("NewFilesystemBackend: %v", err)
 	}
 	if _, err := be.Read(context.Background(), Handle("fs:../../../etc/passwd")); err == nil {
-		// @constraint: backend MUST refuse path-escape handles; either ErrBlobNotFound (after filepath.Clean("/"+rel) lands inside <root>) or an explicit "escapes root" error is acceptable, but a successful read of the host's /etc/passwd is not.
 		t.Fatalf("expected error, got success on path-escape handle")
 	}
 }
 
-// TestFilesystemBackendRejectsNonFsHandle confirms a Read on a non-fs:
-// prefixed handle is rejected, not silently treated as a relative path.
 func TestFilesystemBackendRejectsNonFsHandle(t *testing.T) {
 	t.Parallel()
 	be, err := NewFilesystemBackend(t.TempDir())
@@ -177,8 +161,6 @@ func TestFilesystemBackendRejectsNonFsHandle(t *testing.T) {
 	}
 }
 
-// TestValidateBlobConfig covers the four backend names + the multi-process
-// rejection on memory backend.
 func TestValidateBlobConfig(t *testing.T) {
 	cases := []struct {
 		name     string

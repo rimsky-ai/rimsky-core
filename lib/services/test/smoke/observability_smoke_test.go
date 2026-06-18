@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// observability_smoke_test.go — minimal smoke: bring up rimsky/all and
-// assert each top-level observability endpoint returns 200 with the
-// documented JSON envelope (issue 29).
 package smoke
 
 import (
@@ -16,12 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// TestObservabilitySmoke probes each top-level observability endpoint
-// for a 200 response. Where the response key carries `omitempty` (the
-// stores / executors topology lists), the test wires a stub peer into
-// the rimsky config so the key is present; without that wiring the
-// API returns `{}` and the test would assert on an empty-body shape
-// — meaningless coverage.
 func TestObservabilitySmoke(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -19,30 +19,19 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// breakpointHitsImpl is the Postgres-backed persistence.BreakpointHitTable
-// — append-only ledger of breakpoint matches per concept:breakpoint.
-// Aspect-type pattern: per-row-type slice of *tablesImpl exposing the
-// BreakpointHitTable method set, same shape as breakpointsImpl above.
 type breakpointHitsImpl tablesImpl
 
 var _ persistence.BreakpointHitTable = (*breakpointHitsImpl)(nil)
 
-// BreakpointHits returns the postgres BreakpointHitTable impl.
 func (s *tablesImpl) BreakpointHits() persistence.BreakpointHitTable {
 	return (*breakpointHitsImpl)(s)
 }
 
 func (b *breakpointHitsImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
-// breakpointHitCols is the canonical column list. seq is first because
-// SELECT/RETURNING consumers always need both seq and id together
-// (the spec-defined cursor + stable resume identity).
 const breakpointHitCols = `seq, id, breakpoint_id, instance_id, node_run_id, frame_id,
 	checkpoint, mode, snapshot, hit_at, resumed_at, resumed_by_key, resume_overlay`
 
-// Create inserts a new rimsky_breakpoint_hits row. Returns both the
-// UUID (stable identity for resume) and the int64 seq (monotonic cursor
-// for resources/read pagination). Marshals snapshot map → JSONB.
 func (b *breakpointHitsImpl) Create(ctx context.Context, hit persistence.BreakpointHitRow, tx persistence.Tx) (shared.UUID, int64, error) {
 	ex := b.q(tx)
 	snapshot := hit.Snapshot
@@ -88,8 +77,6 @@ func (b *breakpointHitsImpl) Create(ctx context.Context, hit persistence.Breakpo
 	return id, seq, nil
 }
 
-// Get returns the hit by id (the UUID column, not seq). Returns
-// (nil, nil) on not-found.
 func (b *breakpointHitsImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.BreakpointHitRow, error) {
 	ex := b.q(tx)
 	row := ex.QueryRow(ctx,
@@ -106,9 +93,6 @@ func (b *breakpointHitsImpl) Get(ctx context.Context, id shared.UUID, tx persist
 	return &out, nil
 }
 
-// ListSinceForInstance pages forward through rimsky_breakpoint_hits by
-// seq. INCLUDES resumed rows — the cursor pages through every hit; the
-// agent inspects `resumed_at` per row to know its state.
 func (b *breakpointHitsImpl) ListSinceForInstance(ctx context.Context, instanceID shared.UUID, sinceSeq int64, limit int, tx persistence.Tx) ([]persistence.BreakpointHitRow, error) {
 	ex := b.q(tx)
 	if limit <= 0 {
@@ -127,8 +111,6 @@ func (b *breakpointHitsImpl) ListSinceForInstance(ctx context.Context, instanceI
 	return scanBreakpointHits(rows)
 }
 
-// ListSinceForBreakpoint mirrors ListSinceForInstance but filtered by
-// breakpoint_id.
 func (b *breakpointHitsImpl) ListSinceForBreakpoint(ctx context.Context, bpID shared.UUID, sinceSeq int64, limit int, tx persistence.Tx) ([]persistence.BreakpointHitRow, error) {
 	ex := b.q(tx)
 	if limit <= 0 {
@@ -147,9 +129,6 @@ func (b *breakpointHitsImpl) ListSinceForBreakpoint(ctx context.Context, bpID sh
 	return scanBreakpointHits(rows)
 }
 
-// ListUnresumedForBreakpoint returns hits with resumed_at IS NULL,
-// oldest first. Drives the drop_oldest and block_dispatch overflow
-// policies.
 func (b *breakpointHitsImpl) ListUnresumedForBreakpoint(ctx context.Context, bpID shared.UUID, tx persistence.Tx) ([]persistence.BreakpointHitRow, error) {
 	ex := b.q(tx)
 	rows, err := ex.Query(ctx,
@@ -164,10 +143,6 @@ func (b *breakpointHitsImpl) ListUnresumedForBreakpoint(ctx context.Context, bpI
 	return scanBreakpointHits(rows)
 }
 
-// Resume sets resumed_at = NOW() (idempotently — replay returns nil).
-// On 0 rows affected, probes the row: if it exists with resumed_at
-// already set → idempotent replay → nil; if it doesn't exist →
-// shared.ErrBreakpointHitNotFound.
 func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey string, overlay map[string]any, tx persistence.Tx) error {
 	ex := b.q(tx)
 	var overlayBytes []byte
@@ -193,8 +168,6 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 	if tag.RowsAffected() == 1 {
 		return nil
 	}
-	// @deliberate: zero rows means either the row is already resumed (replay → nil)
-	// or it doesn't exist (→ ErrBreakpointHitNotFound); probe to distinguish.
 	var resumedAt *time.Time
 	err = ex.QueryRow(ctx,
 		`SELECT resumed_at FROM rimsky_breakpoint_hits WHERE id = $1`, id).Scan(&resumedAt)
@@ -204,16 +177,10 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 		}
 		return fmt.Errorf("breakpointHits.resume.probe: %w", err)
 	}
-	// @deliberate: row exists and resumed_at IS NOT NULL implies replay; a NULL
-	// resumed_at here would have been caught by the UPDATE above, so surface as
-	// an idempotent no-op rather than an error.
 	_ = resumedAt
 	return nil
 }
 
-// AutoResumeStale resumes every unresumed hit whose breakpoint's
-// overflow_policy = 'auto_resume_after_ttl' and whose hit_at + hit_ttl
-// has passed. Returns the rowcount.
 func (b *breakpointHitsImpl) AutoResumeStale(ctx context.Context, now time.Time, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	tag, err := ex.Exec(ctx,
@@ -230,8 +197,6 @@ func (b *breakpointHitsImpl) AutoResumeStale(ctx context.Context, now time.Time,
 	return int(tag.RowsAffected()), nil
 }
 
-// DropOldest deletes the oldest unresumed hits beyond keepCount for
-// the breakpoint. Returns the number of rows actually deleted.
 func (b *breakpointHitsImpl) DropOldest(ctx context.Context, bpID shared.UUID, keepCount int, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	if keepCount < 0 {
@@ -255,15 +220,6 @@ func (b *breakpointHitsImpl) DropOldest(ctx context.Context, bpID shared.UUID, k
 	return int(tag.RowsAffected()), nil
 }
 
-// SweepOrphanedUnresumed deletes unresumed hits older than `cutoff`
-// whose parent breakpoint's overflow_policy is NOT
-// `auto_resume_after_ttl` (the AutoResumeStale path owns that case
-// because the per-breakpoint hit_ttl drives it). Returns the rowcount.
-//
-// Purpose: reap rows abandoned mid-block when the supervisor crashes
-// or context-cancels in `runtime.handleOverflow` / `waitForResume` —
-// the persisted hit row stays unresumed but no waiter ever returns,
-// so it would accumulate across restarts under load.
 func (b *breakpointHitsImpl) SweepOrphanedUnresumed(ctx context.Context, cutoff time.Time, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	tag, err := ex.Exec(ctx,
@@ -279,7 +235,6 @@ func (b *breakpointHitsImpl) SweepOrphanedUnresumed(ctx context.Context, cutoff 
 	return int(tag.RowsAffected()), nil
 }
 
-// UnresumedCount returns the number of unresumed hits for the breakpoint.
 func (b *breakpointHitsImpl) UnresumedCount(ctx context.Context, bpID shared.UUID, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	var n int
@@ -291,25 +246,6 @@ func (b *breakpointHitsImpl) UnresumedCount(ctx context.Context, bpID shared.UUI
 	return n, nil
 }
 
-// HasUnresumedPauseHitForInstance reports whether the instance has at
-// least one pause-mode breakpoint hit that is currently BLOCKING a
-// runner — i.e. an unresumed hit whose `node_run_id` points at a
-// node-run row still in a non-terminal phase
-// (pending/active/held/parked). Drives the debug-channel gate; runs
-// inside the request tx so the gate-check and the override mutation
-// share one snapshot.
-//
-// The phase-non-terminal join is what makes the predicate match the
-// `concept:breakpoint` and STORY-debug-channel language ("blocking a
-// runner"). A stale hit row whose runner died and whose node-run
-// transitioned to phase=completed or phase=failed before heartbeat
-// reclamation cleaned the hit up is NOT a blocker — admitting it
-// would let the override fire while there is no actual debugger
-// session to overlay onto. A hit with node_run_id IS NULL (defensive;
-// the supervisor populates it when the hit fires) is similarly
-// excluded — without a target node-run we cannot establish that a
-// runner is parked.
-//
 // @concept: breakpoint
 func (b *breakpointHitsImpl) HasUnresumedPauseHitForInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (bool, error) {
 	ex := b.q(tx)

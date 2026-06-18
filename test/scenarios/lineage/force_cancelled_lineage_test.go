@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Forensics scenario — force_cancelled_lineage.
-//
-// Pin: under `strict.cancel_siblings: true`, the parent's cancel walker
-// in `runtime/terminal_decision.go::cancelInFlightSiblings` fires
-// force-Abandon on each remaining in-flight sibling. Those force-Abandon
-// resolutions emit `rimsky_lineage` rows with
-// `outcome: force_cancelled` and `Cause: sibling_cancel`, distinguishing
-// them from the triggering child's natural Abandon (`outcome: abandoned`).
-//
-// Spec: 2026-05-16 dispatch attached to plans/2026-05-15-data-platform-
-// extensions-plan (lineage + events forensics extensions).
-//
 // @concept: claim-tree
 // @concept: cancel-siblings
 // @concept: lineage
@@ -64,9 +52,6 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 		"sup-FC", "cancel-store", 3,
 		spec.AggregationPolicy{Kind: spec.AggregationKindStrict, CancelSiblings: true})
 
-	// @deliberate: Drive sub[0] to a natural Abandon. The strict.cancel_siblings walker
-	// force-Abandons sub[1] and sub[2] inside the same tx, and the parent
-	// aggregator finalizes the parent's own Abandon.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
 			ClaimHandleID:       subIDs[0],
@@ -89,8 +74,6 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 		})
 	}))
 
-	// @constraint: Producer-side: all three sub-claims received Abandon (1 natural,
-	// 2 force-cancelled), plus the parent.
 	for i, sid := range subIDs {
 		require.Equal(t, 1, countCallsOnID(store.Calls(), sid.String(), "abandon"),
 			"sub-claim %d must receive exactly one Abandon", i)
@@ -98,15 +81,11 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
 		"parent claim must receive its own Abandon (aggregator decision)")
 
-	// @deliberate: Lineage rows: triggering sub[0] is "abandoned"; sub[1]/sub[2] are
-	// "force_cancelled" with Cause="sibling_cancel"; parent is "abandoned".
 	verifyLineageOutcome(ctx, t, backend, subIDs[0], persistence.LineageOutcomeAbandoned, "")
 	verifyLineageOutcome(ctx, t, backend, subIDs[1], persistence.LineageOutcomeForceCancelled, string(runtime.TerminalCauseSiblingCancel))
 	verifyLineageOutcome(ctx, t, backend, subIDs[2], persistence.LineageOutcomeForceCancelled, string(runtime.TerminalCauseSiblingCancel))
 	verifyLineageOutcome(ctx, t, backend, parentID, persistence.LineageOutcomeAbandoned, "")
 
-	// @deliberate: Events: claim_resolution.abandon events for every cancelled sibling
-	// carry cause=sibling_cancel.
 	var page persistence.EventListResult
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		p, err := backend.Events().List(ctx, persistence.EventListFilter{
@@ -130,9 +109,6 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 	require.GreaterOrEqual(t, naturalCount, 1, "the triggering child + parent emit cause=natural events")
 }
 
-// verifyLineageOutcome asserts that the lineage row for claimID carries
-// the expected outcome + cause discriminator. The cause check is
-// skipped when the expected value is empty (Commit / natural Abandon).
 func verifyLineageOutcome(
 	ctx context.Context, t *testing.T, backend persistence.Tables,
 	claimID shared.UUID, expectedOutcome, expectedCause string,
@@ -193,10 +169,6 @@ func seedForceCancelScenario(
 	return inst.ID, frameID, runID, nodeRow.ID
 }
 
-// seedFanOutTree inserts a parent claim_handle row + n sub-claim rows
-// under it, with the supplied aggregation policy snapshotted on the
-// parent. Returns the parent id + sub-claim ids in insertion order.
-//
 // @source: lib/runtime/auto_terminal_test.go::seedFanOutParentAndSubclaims
 func seedFanOutTree(
 	ctx context.Context, t *testing.T, backend persistence.Tables,

@@ -5,18 +5,6 @@
 // @concept: wait-set
 // @concept: cascade
 
-// @constraint: ListInFlightRunPhases conformance area.
-// Covers Queue.ListInFlightRunPhases, the persistence half of the
-// supervisor's upstream-gating eligibility condition: a stale receiver
-// is not dispatch-eligible while any subscribed upstream has an
-// in-flight run in the same (frame, run scope), and the gate's
-// pending-cycle tie-breaker distinguishes a merely-pending upstream
-// from a progressing one. Both drivers must agree on: keying (node set
-// + frame + scope), counting only in-flight phases (pending / active /
-// held / parked) — settled rows, whether deleted or transitioned to a
-// settled phase, no longer gate — per-node phase reporting, and the
-// empty-set fast path.
-//
 // @concept: wait-set
 // @concept: cascade
 package conformance
@@ -31,13 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// testListInFlightRunPhases_PerNodePhases: parity area for
-// Queue.ListInFlightRunPhases (the per-node phase breakdown the
-// upstream gate and its pending-cycle tie-breaker consume). Both
-// drivers must agree on: keying (node set + frame + scope), the
-// in-flight phase filter, per-node phase reporting, the empty-set
-// fast path, absence for nodes with no in-flight rows, and the
-// settlement release (a settled row stops reporting immediately).
 func testListInFlightRunPhases_PerNodePhases(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -65,7 +46,6 @@ func testListInFlightRunPhases_PerNodePhases(t *testing.T, d persistence.Databas
 		t.Errorf("match: phases for node = %v (present=%v), want [pending]", phases, ok)
 	}
 
-	// @deliberate: perturb each key dimension (frame / scope / node) in isolation; each must yield an empty map, proving the lookup keys on the full tuple.
 	otherNode := shared.UUID(uuid.New())
 	otherFrame := shared.UUID(uuid.New())
 	otherScope := shared.UUID(uuid.New())
@@ -83,7 +63,6 @@ func testListInFlightRunPhases_PerNodePhases(t *testing.T, d persistence.Databas
 		t.Errorf("empty-set: got %v, want empty", m)
 	}
 
-	// @constraint: a settled row (terminal phase deletes the dispatch row) must drop out of the in-flight report immediately so the upstream gate releases.
 	if err := q.Complete(ctx, runID, ""); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}

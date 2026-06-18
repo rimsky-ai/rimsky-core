@@ -12,9 +12,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// schemaWithChecks builds an attributes_schema JSON-Schema fragment
-// declaring a `checks` property with the supplied default value. Helper
-// used by the validator tests.
 func schemaWithChecks(checks any) []byte {
 	out, _ := json.Marshal(map[string]any{
 		"type": "object",
@@ -28,9 +25,6 @@ func schemaWithChecks(checks any) []byte {
 	return out
 }
 
-// TestValidate_ExecutorHappy covers the happy path: a valid executor
-// context with a well-shaped attribute schema declaring a `checks`
-// default array of known check kinds.
 func TestValidate_ExecutorHappy(t *testing.T) {
 	v := NewValidationServer()
 	schema := schemaWithChecks([]map[string]any{
@@ -54,8 +48,6 @@ func TestValidate_ExecutorHappy(t *testing.T) {
 	}
 }
 
-// TestValidate_ExecutorUnknownKind surfaces a warning (not error)
-// for an unrecognized check kind.
 func TestValidate_ExecutorUnknownKind(t *testing.T) {
 	v := NewValidationServer()
 	schema := schemaWithChecks([]map[string]any{
@@ -79,8 +71,6 @@ func TestValidate_ExecutorUnknownKind(t *testing.T) {
 	}
 }
 
-// TestValidate_ExecutorMalformedJSON surfaces an invalid_attribute
-// error and short-circuits before walking checks.
 func TestValidate_ExecutorMalformedJSON(t *testing.T) {
 	v := NewValidationServer()
 	resp, err := v.Validate(context.Background(), &genv1.ValidateRequest{
@@ -101,8 +91,6 @@ func TestValidate_ExecutorMalformedJSON(t *testing.T) {
 	}
 }
 
-// TestValidate_UnsupportedRole rejects a non-executor role with an
-// unsupported_role error finding.
 func TestValidate_UnsupportedRole(t *testing.T) {
 	v := NewValidationServer()
 	resp, err := v.Validate(context.Background(), &genv1.ValidateRequest{Role: "claim_producer"})
@@ -117,7 +105,6 @@ func TestValidate_UnsupportedRole(t *testing.T) {
 	}
 }
 
-// TestValidate_MissingExecutorContext surfaces missing_context.
 func TestValidate_MissingExecutorContext(t *testing.T) {
 	v := NewValidationServer()
 	resp, err := v.Validate(context.Background(), &genv1.ValidateRequest{Role: "executor"})
@@ -129,7 +116,6 @@ func TestValidate_MissingExecutorContext(t *testing.T) {
 	}
 }
 
-// TestValidate_EmptyChecks rejects an empty checks list.
 func TestValidate_EmptyChecks(t *testing.T) {
 	v := NewValidationServer()
 	schema := schemaWithChecks([]any{})
@@ -148,10 +134,6 @@ func TestValidate_EmptyChecks(t *testing.T) {
 	}
 }
 
-// TestValidate_SourceBoundChecks accepts a `checks` property declared
-// via `source:` instead of `default:`. Per-element shape validation
-// defers to dispatch time; the registration-time gate just verifies
-// the property is satisfied (default: or source: present).
 func TestValidate_SourceBoundChecks(t *testing.T) {
 	v := NewValidationServer()
 	schemaBytes, _ := json.Marshal(map[string]any{

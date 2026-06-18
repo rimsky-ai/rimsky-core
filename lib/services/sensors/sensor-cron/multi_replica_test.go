@@ -2,21 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// multi_replica_test.go pins single-replica behavior. Per
-// `concept:replica`, sensor-cron's v1 contract is single-replica only:
-// operators run one pod per binary and accept restart-on-fail
-// recovery. Multi-replica HA is the publisher implementation's concern,
-// not rimsky's. A sensor-cron binary deployed as multiple replicas
-// behind a single rimsky endpoint will double-fire every tick — this
-// is honest behavior, not a bug to coordinate around.
-//
-// The tests below pin both shapes:
-//
-//  1. Single replica fires once per window.
-//  2. Two independently-running in-process replicas (each with its own
-//     SensorService instance) fire INDEPENDENTLY — no cross-replica
-//     serialization exists by design.
-//
 // @concept: sensor
 // @concept: replica
 
@@ -36,10 +21,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestSingleReplica_FiresOnceWhenSubscriptionTickFires pins the
-// standard single-replica behavior. A publisher-subscription with a
-// cron expression that's already due fires exactly once on the first
-// Tick call.
 func TestSingleReplica_FiresOnceWhenSubscriptionTickFires(t *testing.T) {
 	var fireCount int64
 	var bodies []map[string]any
@@ -85,13 +66,6 @@ func TestSingleReplica_FiresOnceWhenSubscriptionTickFires(t *testing.T) {
 	}
 }
 
-// TestMultiReplica_TwoInProcessInstancesEachFireIndependently pins the
-// v1 contract: two replicas of sensor-cron pointed at the same rimsky
-// endpoint each fire independently. Per `concept:replica`, rimsky
-// does not model replica coordination — operators run a single replica
-// per publisher binary. This test documents the honest behavior so
-// operators reading the test suite see exactly what happens at
-// replicas > 1.
 func TestMultiReplica_TwoInProcessInstancesEachFireIndependently(t *testing.T) {
 	var fireCount int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -100,10 +74,6 @@ func TestMultiReplica_TwoInProcessInstancesEachFireIndependently(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// @deliberate: two independent SensorService instances share a
-	// publisher_subscription_id. Each replica is shape-isolated with no
-	// shared state — this is the v1 single-replica contract surface
-	// under test.
 	replicaA := NewSensorService(srv.URL, noopLogger{})
 	replicaB := NewSensorService(srv.URL, noopLogger{})
 

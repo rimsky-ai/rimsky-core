@@ -15,7 +15,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// Result is the outcome of running a single Scenario.
 type Result struct {
 	Scenario string
 	Passed   bool
@@ -24,7 +23,6 @@ type Result struct {
 	Duration time.Duration
 }
 
-// RunnerOpts configures a single conformance run.
 type RunnerOpts struct {
 	Endpoint        Endpoint
 	RequireStubMode bool
@@ -35,13 +33,6 @@ type RunnerOpts struct {
 	CallbackHost    string
 }
 
-// Run dials the endpoint, starts a CallbackReceiver, probes
-// capabilities (stub mode and async-callback support), and executes
-// every scenario registered via All() — subject to the Only/Skip
-// filters and the per-scenario RequiresStub / RequiresAsync gates.
-// Returns one Result per scenario carrying pass / fail / skipped
-// state plus the failure error string when failed.
-//
 // @concept: conformance
 func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	if opts.Timeout == 0 {
@@ -101,8 +92,6 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	return results, nil
 }
 
-// probeStubMode sends a stub-probe Execute and returns true iff the
-// resulting Success outcome carries `attributes_delta = {stub: true}`.
 func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, error) {
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -129,8 +118,6 @@ func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, e
 	return false, nil
 }
 
-// probeAsyncSupport sends an Execute with attributes.probe_async=true
-// and returns true iff the executor responds with AwaitAsyncCallback.
 func probeAsyncSupport(ctx context.Context, env Env, timeout time.Duration) bool {
 	pctx, cancel := context.WithTimeout(ctx, timeout/3)
 	defer cancel()
@@ -165,7 +152,6 @@ func skipMatch(name string, only, skip []string) bool {
 	return true
 }
 
-// Summary is a pretty-printing helper used by the CLI.
 func Summary(results []Result, w *os.File) {
 	passed, failed, skipped := 0, 0, 0
 	for _, r := range results {

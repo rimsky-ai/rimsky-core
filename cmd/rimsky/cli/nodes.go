@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// nodes.go — `node get`.
 package cli
 
 import (
@@ -11,7 +10,6 @@ import (
 	"os"
 )
 
-// RunNodeGet implements `node get`.
 func RunNodeGet(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("node get", args, nil)
 	if code != 0 {

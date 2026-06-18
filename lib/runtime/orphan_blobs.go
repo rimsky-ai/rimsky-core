@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// orphan_blobs.go runs the SweepOrphanedBlobs sweep — D8 of the
-// 2026-05-08 platform-extensions plan. Walks rimsky_blob_orphans for
-// rows whose reap_after has passed; for each, calls
-// BlobBackend.Delete(handle) and removes the row on success.
-//
-// Errors other than ErrBlobNotFound are logged and the row is left in
-// place for retry next tick. ErrBlobNotFound (handle already gone) is
-// treated as success — the orphan tracker entry is removed because the
-// underlying bytes are no longer present anywhere.
-//
-// Wired into the conductor tick at a separate cadence
-// (BlobConfig.Retention.OrphanSweepInterval, default 1h).
-
 package runtime
 
 import (
@@ -27,24 +14,15 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// OrphanBlobsArgs bundles the dependencies for SweepOrphanedBlobs.
-//
-// Backend is the active BlobBackend; only handles whose recorded backend
-// matches Backend.Name() are reaped (cross-backend handles in a mixed
-// deployment are left for that backend's own sweep — v1 only supports a
-// single backend, so this is forward-compatible defense).
 type OrphanBlobsArgs struct {
 	Persist     persistence.Tables
 	BlobOrphans persistence.BlobOrphanTable
 	Backend     persistence.BlobBackend
 	Clock       shared.Clock
 	Logger      shared.Logger
-	// Limit caps the per-tick reap budget. 0 → 100.
 	Limit int
 }
 
-// SweepOrphanedBlobs reaps every blob orphan whose reap_after <= now()
-// and whose recorded backend matches the active backend.
 func SweepOrphanedBlobs(ctx context.Context, args OrphanBlobsArgs) error {
 	log := args.Logger
 	if log == nil {
@@ -70,7 +48,6 @@ func SweepOrphanedBlobs(ctx context.Context, args OrphanBlobsArgs) error {
 	}
 	for _, r := range rows {
 		if r.Backend != args.Backend.Name() {
-			// @constraint: cross-backend orphan rows belong to the backend that wrote them; this sweep only reaps rows whose recorded backend matches the active Backend.Name().
 			continue
 		}
 		if err := reapOneBlobOrphan(ctx, args, r, log); err != nil {
@@ -83,9 +60,6 @@ func SweepOrphanedBlobs(ctx context.Context, args OrphanBlobsArgs) error {
 	return nil
 }
 
-// reapOneBlobOrphan deletes the bytes from the backend and removes the
-// tracker row. ErrBlobNotFound from Delete is treated as success — bytes
-// are gone, tracker should follow.
 func reapOneBlobOrphan(ctx context.Context, args OrphanBlobsArgs, row persistence.BlobOrphanRow, log shared.Logger) error {
 	if err := args.Backend.Delete(ctx, persistence.Handle(row.Handle)); err != nil {
 		if !errors.Is(err, persistence.ErrBlobNotFound) {

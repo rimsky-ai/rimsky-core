@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// executor_test.go — pg-store verifier-role executor coverage under
-// the unary RPC shape (TD-execute-rpc-unary). Boots a real Postgres
-// via testcontainers and drives Execute(req) directly so the
-// assertions can pin the settling Outcome and the SQL-side semantics.
-
 package server
 
 import (
@@ -25,8 +20,6 @@ import (
 	pgsstore "github.com/rimsky-ai/rimsky-core/lib/services/stores/postgres/store"
 )
 
-// bootExecutor stands up a fresh Postgres + pgsstore.Store + ExecutorServer
-// and returns the pool so the test can seed staging data.
 func bootExecutor(t *testing.T) (*pgxpool.Pool, *ExecutorServer) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -70,7 +63,6 @@ func bootExecutor(t *testing.T) (*pgxpool.Pool, *ExecutorServer) {
 	return pool, NewExecutorServer(st)
 }
 
-// seedStagingTable creates a staging schema + items table and inserts rows.
 func seedStagingTable(t *testing.T, pool *pgxpool.Pool, schema, table string, rows []map[string]any) {
 	t.Helper()
 	ctx := context.Background()
@@ -123,7 +115,6 @@ func TestExecutor_AllChecksPass(t *testing.T) {
 
 func TestExecutor_RowCountFails(t *testing.T) {
 	pool, ex := bootExecutor(t)
-	// @deliberate: seed 2 rows against min=100 so row_count_absolute must fail.
 	seedStagingTable(t, pool, "staging_low", "items", []map[string]any{
 		{"id": "a", "payload": "x"},
 		{"id": "b", "payload": "y"},
@@ -197,13 +188,9 @@ func TestExecutor_NoNullsFails(t *testing.T) {
 	}
 }
 
-// TestExecutor_RowCountRatio drives the SQL-store verifier with a
-// row_count_ratio check, asserting both in-bounds Success and
-// out-of-bounds Error with the computed ratio in the failure payload.
 func TestExecutor_RowCountRatio(t *testing.T) {
 	pool, ex := bootExecutor(t)
 
-	// @deliberate: 4 rows against baseline 4 yields ratio 1.0, inside [0.5, 2.0].
 	t.Run("in_bounds_success", func(t *testing.T) {
 		seedStagingTable(t, pool, "staging_ratio_ok", "items", []map[string]any{
 			{"id": "a", "payload": "x"},
@@ -229,7 +216,6 @@ func TestExecutor_RowCountRatio(t *testing.T) {
 		}
 	})
 
-	// @deliberate: 4 rows against baseline 1 yields ratio 4.0, above high=2.0.
 	t.Run("out_of_bounds_error", func(t *testing.T) {
 		seedStagingTable(t, pool, "staging_ratio_high", "items", []map[string]any{
 			{"id": "a", "payload": "x"},
@@ -267,8 +253,6 @@ func TestExecutor_RowCountRatio(t *testing.T) {
 	})
 }
 
-// ratioFromFailurePayload digs the computed `ratio` out of the verifier
-// failure payload's `failures[].counts.ratio` shape.
 func ratioFromFailurePayload(payload *structpb.Struct) (float64, bool) {
 	if payload == nil {
 		return 0, false
@@ -321,8 +305,6 @@ func TestExecutor_InvalidAttributes(t *testing.T) {
 	}
 }
 
-// TestExecutor_Capabilities pins the observability handshake's
-// declared error vocabulary.
 func TestExecutor_Capabilities(t *testing.T) {
 	obs := NewExecutorObservabilityServer()
 	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})

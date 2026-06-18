@@ -20,10 +20,6 @@ import (
 	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
-// traceFixture carries the row ids the retention sweep keys on:
-// `nOld` terminal frames + their runs (reaped), one recent terminal
-// frame + run (survives), one in-flight held frame + parked run
-// (never reaped), and old + recent audit-event ids.
 type traceFixture struct {
 	instanceID  string
 	scopeID     string
@@ -130,9 +126,6 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 	}
 	recentFrame, recentRun := seedTerminalFrame(recentTime)
 
-	// @constraint: in-flight running frame held open by a parked
-	// node_run — retention must never reap a non-terminal frame
-	// regardless of age.
 	heldFrame := uuid.New().String()
 	heldNode := uuid.New().String()
 	heldRun := uuid.New().String()
@@ -193,13 +186,6 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 	}
 }
 
-// TestSQLite_FrameRetention_PrunesOldTerminalFramesAndCascadesNodeRuns
-// pins the post-coherence frame retention path: terminal frames older
-// than the cutoff (and not in the most-recent kept window) are reaped
-// alongside their node_runs via the rimsky_node_runs.frame_id ON
-// DELETE CASCADE. The held in-flight running frame and its parked
-// node_run survive regardless of age (the reaper keys on phase).
-//
 // @concept: frame
 func TestSQLite_FrameRetention_PrunesOldTerminalFramesAndCascadesNodeRuns(t *testing.T) {
 	ctx := context.Background()
@@ -255,11 +241,6 @@ func TestSQLite_FrameRetention_PrunesOldTerminalFramesAndCascadesNodeRuns(t *tes
 	}
 }
 
-// TestSQLite_EventRetention_DeleteOlderThan pins the audit-event
-// retention path: rows older than the cutoff are reaped, recent rows
-// inside the trailing window survive. The audit ledger is time-keyed
-// (no frame FK), so the trailing window alone bounds it.
-//
 // @concept: event-log
 func TestSQLite_EventRetention_DeleteOlderThan(t *testing.T) {
 	ctx := context.Background()
@@ -293,14 +274,6 @@ func TestSQLite_EventRetention_DeleteOlderThan(t *testing.T) {
 	}
 }
 
-// TestSQLite_EventTimeRoundTripThroughProductionPaths pins the unified
-// RFC3339Nano emitted_at convention end-to-end through the production
-// accessors: Insert via the Events table stamps occurred_at, and
-// DeleteOlderThan compares it against a formatTime cutoff. If the
-// Insert write format ever drifts from the reaper's compare format,
-// the lexicographic `occurred_at < cutoff` comparison breaks and the
-// reap boundary flips.
-//
 // @concept: event-log
 func TestSQLite_EventTimeRoundTripThroughProductionPaths(t *testing.T) {
 	ctx := context.Background()
@@ -325,8 +298,6 @@ func TestSQLite_EventTimeRoundTripThroughProductionPaths(t *testing.T) {
 		t.Fatalf("seedTraceFixture must seed at least 2 events; got %d", before)
 	}
 
-	// @constraint: a past cutoff (well before old event's occurred_at)
-	// must not reap rows — both events were seeded after this point.
 	n, err := store.Events().DeleteOlderThan(ctx, f.oldTime.Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("DeleteOlderThan(past): %v", err)
@@ -338,9 +309,6 @@ func TestSQLite_EventTimeRoundTripThroughProductionPaths(t *testing.T) {
 		t.Fatalf("rows reaped by a too-early cutoff")
 	}
 
-	// @constraint: a future cutoff reaps everything — the lexicographic
-	// comparison succeeds only when both Insert and reaper write
-	// RFC3339Nano.
 	n, err = store.Events().DeleteOlderThan(ctx, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("DeleteOlderThan(future): %v", err)
@@ -353,12 +321,6 @@ func TestSQLite_EventTimeRoundTripThroughProductionPaths(t *testing.T) {
 	}
 }
 
-// TestSQLite_RetentionSweepRespectsWriterSerializationUnderContention
-// pins that the retention sweep does not deadlock when run alongside
-// other writer-slot traffic (the executor's keepalive bumps). Both
-// paths hit the BEGIN IMMEDIATE writer slot at the FILE level
-// (busy_timeout=5000ms); the sweep must yield cleanly without livelock.
-//
 // @concept: frame
 // @concept: orphan-reaper
 func TestSQLite_RetentionSweepRespectsWriterSerializationUnderContention(t *testing.T) {
@@ -372,10 +334,6 @@ func TestSQLite_RetentionSweepRespectsWriterSerializationUnderContention(t *test
 	bumperReady := make(chan struct{})
 	var wg sync.WaitGroup
 	var bumpsCompleted atomic.Int64
-	// @deliberate: keepalive-like background writer producing constant
-	// BEGIN IMMEDIATE traffic against the file. Signals bumperReady
-	// after the first successful bump so the sweep does not race the
-	// goroutine startup.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -403,8 +361,6 @@ func TestSQLite_RetentionSweepRespectsWriterSerializationUnderContention(t *test
 	}()
 	<-bumperReady
 
-	// @constraint: run the sweeps multiple times while the writer is
-	// busy — under wide-pool every iteration must complete.
 	sweepDeadline := time.Now().Add(30 * time.Second)
 	iters := 0
 	for time.Now().Before(sweepDeadline) && iters < 10 {

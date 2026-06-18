@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// runner_acquire_restamp_test.go — pins the leaf-acquisition sub-claim
-// holder restamp (`restampLinkedSubClaimHolders`): a sub-claim row
-// linked to the leaf run and still stamped with the PARENT acquirer's
-// supervisor moves onto the acquiring supervisor; rows that are not
-// sub-claims (no parent_claim_handle_id) or already held by the
-// acquirer are untouched. Lives in `package runtime` for the
-// unexported helper; the full cross-supervisor settlement chain is
-// pinned in runner_subclaim_test.go.
-
 package runtime
 
 import (
@@ -106,9 +97,6 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		// @constraint: the parent (fan-out root) claim MUST NOT be
-		// linked to the leaf run — the restamp path must treat the
-		// fan-out root's claim as scope-level, not run-level.
 		if err := tables.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: parentClaimID, LockKind: persistence.LockKindScope,
 			ProducerName: &producer, ClaimScopeData: json.RawMessage(`{"p":"root"}`),
@@ -117,8 +105,6 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		// @deliberate: The linked sub-claim: node_run_id = leaf run (the
-		// DispatchChildren repoint), holder still the parent acquirer.
 		leafRunIDCopy := leafRunID
 		parentClaimIDCopy := parentClaimID
 		if err := tables.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
@@ -131,8 +117,6 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		// @deliberate: The leaf's own freshly-Open'd claim: linked to the run but no
-		// parent, already held by the leaf's supervisor.
 		return tables.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: ownClaimID, LockKind: persistence.LockKindScope,
 			NodeRunID:    &leafRunIDCopy,

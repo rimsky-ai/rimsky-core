@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// TestFailureReporter_Report asserts the basic contract: a reported
-// error is delivered on the fail channel.
 func TestFailureReporter_Report(t *testing.T) {
 	r := newFailureReporter(1)
 	want := errors.New("serve loop died")
@@ -27,9 +25,6 @@ func TestFailureReporter_Report(t *testing.T) {
 	}
 }
 
-// TestFailureReporter_Close asserts Close closes the channel so monitor
-// goroutines reading it observe the close and exit, and that Close is
-// idempotent (StopFuncs may run more than once across embedded cycles).
 func TestFailureReporter_Close(t *testing.T) {
 	r := newFailureReporter(1)
 	r.Close()
@@ -38,19 +33,13 @@ func TestFailureReporter_Close(t *testing.T) {
 		t.Fatal("channel should be closed after Close")
 	}
 
-	// @constraint: idempotent — a second Close must not panic (close of
-	// closed channel).
 	r.Close()
 }
 
-// TestFailureReporter_ReportAfterClose asserts the race-free contract:
-// a Report racing (or following) Close is a silent no-op — the role is
-// already stopping — rather than a send on a closed channel (panic).
 func TestFailureReporter_ReportAfterClose(t *testing.T) {
 	r := newFailureReporter(1)
 	r.Close()
 
-	// @constraint: must not panic, must not deliver anything.
 	r.Report(errors.New("late failure"))
 
 	if _, ok := <-r.ch; ok {
@@ -58,16 +47,10 @@ func TestFailureReporter_ReportAfterClose(t *testing.T) {
 	}
 }
 
-// TestFailureReporter_OverCapacity asserts Report is non-blocking when
-// the buffer is full: the extra error is dropped — one failure is enough
-// to restart the role. A blocking Report here would wedge a serve-loop
-// goroutine forever.
 func TestFailureReporter_OverCapacity(t *testing.T) {
 	r := newFailureReporter(1)
 	first := errors.New("first failure")
 	r.Report(first)
-	// @constraint: over-capacity Report must return without blocking;
-	// the failure-reporter's buffer (capacity 1) is full here.
 	r.Report(errors.New("second failure"))
 
 	if got := <-r.ch; got != first {
@@ -80,10 +63,6 @@ func TestFailureReporter_OverCapacity(t *testing.T) {
 	}
 }
 
-// TestMetricsPortFor covers the resolution contract: per-role override
-// wins, base port applies as-is per-process, unified mode offsets the
-// shared base per role, empty/zero disables, and a non-numeric value in
-// either variable is a startup-fatal error.
 func TestMetricsPortFor(t *testing.T) {
 	clearEnv := func(t *testing.T) {
 		t.Setenv("RIMSKY_METRICS_PORT", "")
@@ -146,7 +125,6 @@ func TestMetricsPortFor(t *testing.T) {
 		if port != 9200 {
 			t.Errorf("metricsPortFor(control-api) = %d, want per-role override 9200", port)
 		}
-		// @constraint: other roles still resolve from the base.
 		port, err = metricsPortFor("scheduler")
 		if err != nil {
 			t.Fatalf("metricsPortFor(scheduler): %v", err)

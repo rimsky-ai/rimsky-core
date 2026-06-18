@@ -2,48 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package scheduler main loop.
-//
-// This is the graph-layer scheduler — it composes the foundation
-// integration sweeps (advisory-lock tick gate, executor-deadline
-// sweep, lock-holder orphan reap, ready sweep) with the graph-layer
-// sweeps (pure-cascade transitions, frame-engine tick). The cron-fire
-// sweep retired with the 2026-05-15 plan B10 / D7 / E16; cron firing
-// is owned by the bundled `sensors/sensor-cron/` service via the
-// Publisher protocol — Subscribe / Unsubscribe / ListSubscriptions
-// plus message envelopes POSTed to the generic POST
-// /instances/{instance_id}/messages endpoint with
-// sender_kind="publisher".
-//
-// Per tick:
-//  1. AdvisoryLocker-guarded TrySchedulerTick skips ticks when another
-//     replica holds the lock. A lock-acquisition error is treated as
-//     lock-held — the pass is skipped, never run unlocked (the sweeps
-//     are periodic recovery; a one-interval delay is benign, while an
-//     unlocked run permits concurrent multi-replica sweeping).
-//  2. ProcessPureCascade — transition pure-cascade nodes (no executor) to
-//     fresh inline and emit recalculate to dependents.
-//  3. runtime.SweepExecutorDeadlines — async-mode dispatch rows whose
-//     per-row effective max_quiet_period (last_progress_at) or
-//     effective max_runtime (claimed_at) have elapsed are released
-//     claimant-guarded with error_class executor_quiet or
-//     max_runtime_exceeded so a fresh supervisor can pick them up.
-//     Per TD-three-dispatch-deadlines.
-//  4. runtime.SweepOrphanedClaimHandles — `rimsky_claim_handles` rows whose
-//     `expires_at < now()` are deleted claimant-guarded. Per v3 spec
-//     §7.5, ClaimProducer.Abandon is NOT called — the store's own TTL/sweep
-//     handles its internal state. Cascade FK on
-//     `rimsky_claim_holders.claim_handle_id` cleans up held-claim rows.
-//  5. runtime.SweepReady — executor-backed stale nodes whose deps
-//     are all fresh get enqueued for the next claim cycle.
-//  6. frame.RunTick — frame-end detection, queue advancement,
-//     stuck-frame warning (advisory only), orphan-frame-dispatch reap.
-//  7. Breakpoint sweeps — delete TTL-expired
-//     `rimsky_instance_breakpoints` rows, auto-resume stale
-//     `rimsky_breakpoint_hits` rows on `auto_resume_after_ttl`
-//     breakpoints, and reap orphaned-unresumed hit rows abandoned
-//     mid-block (block_dispatch / unknown-policy waits whose
-//     supervisor crashed or context-canceled before resume). Per
 package scheduler
 
 import (
@@ -57,108 +15,39 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// Config bundles everything the scheduler loop needs.
-//
-// ClaimHandles is required for the orphan-reap sweep. When nil the
-// corresponding sweep is skipped — this keeps tests that exercise only
-// the dispatch-claim / executor-deadline / ready sweeps from being
-// forced into store wiring.
-//
-// In v3 the scheduler does not consult any store-side state — the v2
-// visibility-timeout sweep is gone, and the orphan reaper no longer
-// fires ClaimProducer.Abandon per spec §7.5. There is no StoreRegistry on
-// this Config.
 type Config struct {
-	// Persist is the unified persistence.Tables handle (rimsky_* tables).
-	// Required.
 	Persist persistence.Tables
-	// Queue is the dispatch-queue accessor. Required.
 	Queue persistence.Queue
-	// AdvisoryLocker carries the cross-process synchronization primitives
-	// (scheduler-tick exclusion, etc.). Required for the per-tick guard.
 	AdvisoryLocker persistence.AdvisoryLocker
 	Clock          shared.Clock
 	Logger         shared.Logger
 	TickInterval   time.Duration
-	// @constraint: MaxQuietPeriodDefault and MaxRuntimeDefault are the
-	// deployment-level fallback values for the two operator-opt-in
-	// dispatch deadlines. They participate in the resolution chain
-	// (per-node template value folded over deployment default folded
-	// over built-in 0=disabled) which runs at AwaitAsyncCallback-
-	// registration time; the resolved per-row values land on
-	// col:rimsky_node_runs.effective_max_quiet_period_seconds and
-	// col:rimsky_node_runs.effective_max_runtime_seconds. Zero on
-	// either field means "no deployment-default cap; per-node value
-	// only". Per TD-three-dispatch-deadlines.
-	//
 	// @concept: dispatch-deadlines
 	MaxQuietPeriodDefault time.Duration
 	MaxRuntimeDefault     time.Duration
 	ClaimHandles          persistence.ClaimHandleTable
-	// SupervisorID is the scheduler's own supervisor id. Used by the
-	// parked-nodes sweep (E3) to claim wakes against — every wake
-	// transitions phase parked → pending so any executor-running
-	// supervisor can pick the row up; the scheduler itself doesn't need
-	// to be one.
 	SupervisorID string
-	// ParkedSweepInterval governs how often the parked-nodes sweep
-	// runs. Zero falls back to TickInterval (every tick).
 	ParkedSweepInterval time.Duration
-	// StoreRegistry is the per-process producer registry. Required for
-	// the park_timeout watchdog to fire Abandon on held claims (blessed
-	// invariant 13). When nil the watchdog still removes node-run
-	// rows but cannot abandon held claims — used in unit tests.
 	StoreRegistry *locks.Registry
-	// BlobBackend is the active backend for the orphan-blob sweep
-	// (D8 / SweepOrphanedBlobs). When nil the sweep is skipped.
 	BlobBackend persistence.BlobBackend
-	// BlobOrphans is the rimsky_blob_orphans accessor for the orphan-
-	// blob sweep. When nil the sweep is skipped.
 	BlobOrphans persistence.BlobOrphanTable
-	// OrphanBlobSweepInterval governs how often SweepOrphanedBlobs runs.
-	// Zero falls back to 1 hour (per BlobConfig.Retention default).
 	OrphanBlobSweepInterval time.Duration
-	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
-	// hook. Threaded into per-tick invalidate emits (schedule fire,
-	// parked-resume sweep) so `rimsky_invalidates_total` reflects the
-	// scheduler's contribution. Nil → no-op.
 	Metrics runtime.MetricsHook
-	// MaxParkDuration is the deployment-level per-reason
-	// max_park_duration cap map (spec §Parked-state taxonomy /
-	// Per-reason `max_park_duration` config). Threaded into
-	// SweepParkedNodes so the per-reason cap can fire when the per-row
-	// col:rimsky_node_runs.max_park_duration_seconds is NULL. Empty /
-	// nil → only per-row caps fire.
 	MaxParkDuration map[string]time.Duration
-	// Retention carries the trailing-window retention parameters. The
-	// claim-handle retention sweep (`runtime.SweepClaimHandleRetention`)
-	// runs at every tick when `Retention.ClaimHandlesTrailing > 0`,
-	// reaping terminal `rimsky_claim_handles` rows past the cutoff
-	// (excluding committed-durable rows — the asset surface). Zero /
-	// unset trailing → sweep disabled.
-	//
 	// @concept: claim-lifetime
 	// @concept: claim-handle
 	Retention runtime.RetentionConfig
 }
 
-// Handle is returned from Start. Shutdown signals the loop to exit after the
-// current tick completes.
 type Handle struct {
 	stop chan struct{}
 	done chan struct{}
-	// lastOrphanBlobSweep tracks when the orphan-blob sweep last ran so
-	// we can throttle it to OrphanBlobSweepInterval (typically 1h)
-	// rather than running every tick.
 	lastOrphanBlobSweep time.Time
 }
 
-// Shutdown signals the loop to stop. Returns when the loop has exited, or
-// when ctx is canceled.
 func (h *Handle) Shutdown(ctx context.Context) error {
 	select {
 	case <-h.stop:
-		// @deliberate: already closed; still wait for done.
 	default:
 		close(h.stop)
 	}
@@ -170,14 +59,6 @@ func (h *Handle) Shutdown(ctx context.Context) error {
 	}
 }
 
-// Start launches the scheduler tick loop. Errors inside a tick are logged;
-// the loop never returns on its own unless Handle.Shutdown is invoked.
-//
-// Panics if cfg.Persist is nil — every code path that creates a frame
-// (instance-factory, message-emit, operator invalidate) calls
-// frame.EnqueueFrame on cfg.Persist, so a nil here is a wiring bug that
-// surfaces as an unhelpful NPE deep in the tick loop. Fail loudly at
-// Start() instead.
 func Start(cfg Config) *Handle {
 	if cfg.Persist == nil {
 		panic("scheduler.Start: Config.Persist is required (frame engine and invalidate path dereference it)")
@@ -185,10 +66,6 @@ func Start(cfg Config) *Handle {
 	if cfg.TickInterval == 0 {
 		cfg.TickInterval = 1500 * time.Millisecond
 	}
-	// @deliberate: MaxQuietPeriodDefault and MaxRuntimeDefault stay 0 by
-	// default per TD-three-dispatch-deadlines ("default 0 = disabled").
-	// Operators opt in via rimsky.yml; per-node template values override
-	// the deployment default.
 	if cfg.Logger == nil {
 		cfg.Logger = shared.SilentLogger{}
 	}
@@ -217,7 +94,6 @@ func runLoop(cfg Config, h *Handle) {
 		if err := tick(context.Background(), cfg, h); err != nil {
 			cfg.Logger.Error("scheduler tick failed", "error", err.Error())
 		}
-		// @deliberate: Sleep with early-wake on stop.
 		timer := time.NewTimer(cfg.TickInterval)
 		select {
 		case <-h.stop:
@@ -229,35 +105,19 @@ func runLoop(cfg Config, h *Handle) {
 	}
 }
 
-// Tick runs a single sweep under the scheduler-tick exclusion.
-// Exported so tests can invoke it synchronously against a real
-// Postgres-backed driver. Pass nil for h when running outside the
-// runLoop (the Handle is used only to track orphan-blob sweep cadence).
 func Tick(ctx context.Context, cfg Config) error {
 	return tick(ctx, cfg, nil)
 }
 
-// tick runs a single sweep under the scheduler-tick exclusion. The
-// Handle pointer is used to track per-sweep cadence state (e.g. the
-// orphan-blob sweep's last-run timestamp); pass nil for synchronous
-// test invocations.
 func tick(ctx context.Context, cfg Config, h *Handle) error {
 	log := cfg.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
 
-	// @deliberate: scheduler-tick exclusion (skipped when no advisory
-	// locker wired).
 	if cfg.AdvisoryLocker != nil {
 		held, release, err := cfg.AdvisoryLocker.TrySchedulerTick(ctx)
 		if err != nil {
-			// @deliberate: lock-attempt error is treated as lock-held —
-			// the sweeps are periodic recovery, so skipping one interval
-			// is benign, while running unlocked under DB flakiness
-			// permits exactly the concurrent multi-replica sweeping the
-			// lock exists to prevent (@blessed-invariant 7 — mutual
-			// exclusion over availability of a single pass).
 			log.Warn("tick: TrySchedulerTick failed; skipping sweep pass",
 				"error", err.Error())
 			return nil
@@ -269,9 +129,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		defer release()
 	}
 
-	// @deliberate: pure-cascade sweep — the cron-fire sweep retired
-	// with cron firing now owned by the bundled `sensors/sensor-cron/`
-	// service.
 	if _, err := ProcessPureCascade(ctx, PureCascadeArgs{
 		Persist: cfg.Persist, Queue: cfg.Queue,
 		Clock: cfg.Clock, Logger: log,
@@ -288,12 +145,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		MaxRuntimeDefault:     cfg.MaxRuntimeDefault,
 	}
 
-	// @deliberate: SweepExecutorDeadlines enforces the per-row
-	// effective_max_quiet_period_seconds and effective_max_runtime_seconds
-	// (denormalized at AwaitAsyncCallback-registration time) by releasing
-	// claims with the matching error_class. Sync-mode dispatches surface
-	// failure via the supervisor's gRPC connection state and never reach
-	// this sweep.
 	if err := runtime.SweepExecutorDeadlines(ctx, conductorArgs); err != nil {
 		return err
 	}
@@ -308,12 +159,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// @deliberate: claim-handle retention sweep reaps terminal
-	// claim_handle rows past the configured trailing window (default
-	// disabled — `Retention.ClaimHandlesTrailing == 0` skips the
-	// sweep). Wired only when ClaimHandles is present; the sweep is
-	// idempotent across invocations and runs under the scheduler-tick
-	// advisory lock for cross-replica serialization.
 	if cfg.ClaimHandles != nil && cfg.Retention.ClaimHandlesTrailing > 0 {
 		now := time.Now()
 		if cfg.Clock != nil {
@@ -324,11 +169,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// @deliberate: rimsky_message_idempotencies retention sweep reaps
-	// dedup rows past the configured trailing window (default 24h).
-	// Dedup tokens are short-lived by design — operators with longer
-	// retry windows can raise the cap. Runs under the scheduler-tick
-	// advisory lock for cross-replica serialization.
 	if cfg.Persist != nil && cfg.Retention.MessageIdempotenciesTrailing > 0 {
 		now := time.Now()
 		if cfg.Clock != nil {
@@ -339,14 +179,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// @deliberate: lineage retention sweep reaps rimsky_lineage rows
-	// past the configured trailing window whose corresponding run /
-	// claim_handle is gone. Default disabled —
-	// `Retention.LineageTrailing == 0` skips the sweep. Runs under the
-	// scheduler-tick advisory lock for cross-replica serialization;
-	// errors are logged at Warn and swallowed (matching the
-	// SweepClaimHandleRetention / SweepMessageIdempotencies
-	// discipline).
 	if cfg.Persist != nil && cfg.Retention.LineageTrailing > 0 {
 		now := time.Now()
 		if cfg.Clock != nil {
@@ -357,16 +189,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// @deliberate: trace retention sweep reaps the whole per-instance
-	// execution trace under one policy — terminal frame rows
-	// (cascading their node_runs) by the lesser of
-	// `Retention.RecentFramesKept` (the count cap) and
-	// `Retention.TraceTrailing` (the trailing time window), plus the
-	// time-keyed event logs by that same window. Fires when EITHER
-	// dimension is enabled — a config with only trace_trailing set (no
-	// count cap) must still reap, so the gate cannot be on
-	// RecentFramesKept alone. `now` feeds the trailing-window cutoff
-	// inside the sweep.
 	if cfg.Persist != nil && (cfg.Retention.RecentFramesKept > 0 || cfg.Retention.TraceTrailing > 0) {
 		now := time.Now()
 		if cfg.Clock != nil {
@@ -381,9 +203,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		return err
 	}
 
-	// @deliberate: parked-nodes sweep wakes parked rows whose
-	// resume_at has elapsed and forces park_timeout failure on rows
-	// that overran max_park_duration_seconds.
 	if cfg.SupervisorID != "" {
 		if err := runtime.SweepParkedNodes(ctx, runtime.ParkedSweepArgs{
 			Persist:          cfg.Persist,
@@ -401,12 +220,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// @deliberate: orphan-blob sweep drains rimsky_blob_orphans
-	// entries whose reap_after has elapsed — calls
-	// BlobBackend.Delete for each and removes the tracker row.
-	// Throttled to OrphanBlobSweepInterval (default 1h) so it doesn't
-	// run every 1.5s tick. Wired only when both BlobBackend and
-	// BlobOrphans are present.
 	if cfg.BlobBackend != nil && cfg.BlobOrphans != nil {
 		now := cfg.Clock.Now()
 		if h == nil || h.lastOrphanBlobSweep.IsZero() || now.Sub(h.lastOrphanBlobSweep) >= cfg.OrphanBlobSweepInterval {
@@ -431,29 +244,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// @deliberate: message-delivery sweep — for each running frame,
-	// deliver one pending message (one-message-per-frame, per
-	// concept:message). Fired after frame.RunTick so newly-promoted
-	// running frames pick up their messages on the same tick.
-	// Idempotent re-fire is safe: a row that's already delivered_at +
-	// frame_id is filtered out by `ListPendingForInstance`. Per spec
-	// §Unified message layer.
-	//
-	// Ordering is load-bearing — this sweep stamps delivered_at +
-	// frame_id on the running frame's triggering envelope BEFORE the
-	// subsequent runner-tick walks the runner-side cascade. The
-	// message-virtual-node settle
-	// (runtime.cascadeMessageVirtualNode SettleInTx) relies on this
-	// ordering to skip wait-set insertion: a receiver subscribed to both
-	// a message-virtual-node and a real upstream node has only the
-	// regular upstream's wait-set row gating it, so substitution against
-	// rimsky_frames.triggering_message_id must resolve deterministically
-	// by the time the receiver dispatches. The tick sequence — frame-end
-	// detect → advance queued → message-delivery sweep (here) → runner
-	// tick — must be preserved; reordering requires restoring wait-set
-	// symmetry in the message-virtual-node settle path. The blessed
-	// invariant lives at @blessed-invariant: SweepDeliverMessagesFor
-	// RunningFrames in code:lib/runtime/message_delivery.go.
 	if cfg.Persist != nil && cfg.Clock != nil {
 		if err := runtime.SweepDeliverMessagesForRunningFrames(ctx, cfg.Persist, cfg.Queue, log, cfg.Clock.Now()); err != nil {
 			log.Warn("tick: SweepDeliverMessagesForRunningFrames failed", "error", err.Error())
@@ -465,12 +255,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		if cfg.Clock != nil {
 			bpNow = cfg.Clock.Now()
 		}
-		// @deliberate: Orphaned-unresumed cutoff: how stale an unresumed hit must
-		// unresumed hit must get before the reaper deletes it. 5
-		// minutes is generous enough that legitimately-paused
-		// dispatches under operator inspection don't get yanked out
-		// from under their waiters, while still bounding the table
-		// size after supervisor restarts under steady load.
 		orphanedHitCutoff := bpNow.Add(-5 * time.Minute)
 		if err := cfg.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			deleted, err := cfg.Persist.Breakpoints().SweepExpired(ctx, bpNow, tx)
@@ -503,9 +287,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	return nil
 }
 
-// frameMetricsAdapter narrows the runtime.MetricsHook to frame's
-// minimum surface. Returns nil when no hook is configured so RunTick
-// skips the observation.
 func frameMetricsAdapter(m runtime.MetricsHook) frame.MetricsHook {
 	if m == nil {
 		return nil

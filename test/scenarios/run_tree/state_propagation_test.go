@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N1 scenario — state_propagation.
-//
-// Exercises `runtime.Aggregate` over the run-tree's per-child
-// summaries. The state-propagation engine walks the run-tree upward
-// at every child terminal and recomputes the parent's state per its
-// snapshot policy. Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §State aggregation rules for run-trees.
 package runtree
 
 import (
@@ -21,9 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// TestStatePropagation_NonTerminalChildHoldsParent pins that a
-// parent stays non-terminal while at least one child is still
-// running / stale, regardless of any settled children's verdicts.
 func TestStatePropagation_NonTerminalChildHoldsParent(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
@@ -37,8 +26,6 @@ func TestStatePropagation_NonTerminalChildHoldsParent(t *testing.T) {
 	}
 }
 
-// TestStatePropagation_AllStaleStillNonTerminal asserts the engine
-// distinguishes stale (non-terminal) from fresh/failed (terminal).
 func TestStatePropagation_AllStaleStillNonTerminal(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
@@ -51,17 +38,6 @@ func TestStatePropagation_AllStaleStillNonTerminal(t *testing.T) {
 	}
 }
 
-// @deliberate: TestStatePropagation_ParkedDoesNotPropagate pins the
-// parked-cascade behavior: a parked child is non-terminal from the
-// aggregation engine's perspective (cascade does not propagate from
-// parked, but the run-tree aggregation engine specifically TREATS
-// parked as a terminal state — distinct concerns).
-//
-// Per the runtime helper: `ChildState.IsSettled()` returns true on
-// parked. The aggregation engine therefore settles the parent when
-// all children are parked + fresh. The N1 contract is that the
-// state-propagation engine doesn't crash or stall on parked
-// children.
 func TestStatePropagation_ParkedChildAggregatesAsTerminal(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
@@ -74,9 +50,6 @@ func TestStatePropagation_ParkedChildAggregatesAsTerminal(t *testing.T) {
 	}
 }
 
-// TestStatePropagation_FreshUnchangedAggregatesToParent pins the
-// pure-cascade outcome when every child reports fresh_unchanged: the
-// parent's outcome is also unchanged.
 func TestStatePropagation_FreshUnchangedAggregatesToParent(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
@@ -92,9 +65,6 @@ func TestStatePropagation_FreshUnchangedAggregatesToParent(t *testing.T) {
 	}
 }
 
-// TestStatePropagation_FreshChangedDominatesUnchanged pins the rule:
-// when any child is fresh_changed, the parent's aggregated outcome
-// is fresh_changed (so cascade fires from the parent).
 func TestStatePropagation_FreshChangedDominatesUnchanged(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{

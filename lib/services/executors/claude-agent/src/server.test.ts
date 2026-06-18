@@ -29,16 +29,10 @@ import { Observability } from "./observability.js";
 
 const logger = pino({ level: "silent" });
 
-// @constraint: TD-execute-rpc-unary — the Execute RPC is unary; the
-// response is a single Outcome carrying AwaitAsyncCallback. The final
-// settling terminal rides the HTTP callback POST, not the gRPC reply.
 interface UnaryOutcome {
   await_async?: { async_ack_id: string; expected_completion_ms: number };
 }
 
-// @deliberate: helper — call the unary Execute RPC and resolve with
-// the AwaitAsyncCallback outcome. Tests then wait for the callback POST
-// to capture the settling terminal.
 function executeUnary(
   client: grpc.Client,
   req: Record<string, unknown>,
@@ -61,7 +55,6 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
     },
   };
 
-  // @deliberate: capture calls made via the supervisor callback URL (mocked).
   const callbackPosts: Array<{ url: string; body: unknown }> = [];
   const fakeCallbackUrl = "http://supervisor.invalid/rimsky/callback";
 
@@ -112,27 +105,18 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
       cancel_token: "cancel-tok-1",
     });
 
-    // @constraint: TD-execute-rpc-unary — the unary reply IS the
-    // AwaitAsyncCallback outcome carrying the async_ack_id.
     expect(outcome.await_async).toBeDefined();
     const ackId = outcome.await_async!.async_ack_id;
     expect(ackId).toBeTruthy();
 
-    // @deliberate: wait for the background agent run + callback POST. Stub is ~50ms.
     await waitFor(() => callbackPosts.length > 0, 2000);
     expect(callbackPosts).toHaveLength(1);
-    // @deliberate: executor appends /v1/callback/{ackID} to the supervisor-provided base.
     expect(callbackPosts[0]!.url).toBe(
       `${fakeCallbackUrl}/v1/callback/${encodeURIComponent(ackId)}`,
     );
     const body = callbackPosts[0]!.body as Record<string, unknown>;
-    // @deliberate: post-2026-05-12 (spec E.2/E.6): the callback body uses the
-    // AsyncCallbackBody outcome-oneof shape — `success: { ... }` —
-    // rather than the legacy `{type: "complete", ...}` discriminator.
     expect(body.success).toBeDefined();
     const success = body.success as Record<string, unknown>;
-    // @deliberate: stub mode stamps `session_token: runId` on every terminal Success
-    // (mirroring runAgentReal). Check the marker plus the session_token shape.
     const delta1 = success.attributes_delta as Record<string, unknown>;
     expect(delta1.stub).toBe(true);
     expect(typeof delta1.session_token).toBe("string");
@@ -155,10 +139,6 @@ async function waitFor(
   }
 }
 
-// @deliberate: gRPC Execute observability: dashboard fetches the trace via
-// dispatch_id, so the ledger must record step_started on receipt and
-// step_completed on outcome, then markComplete so the SSE/snapshot
-// surfaces close.
 describe("gRPC Execute observability ledger", () => {
   let cb: CallbackServerHandle;
   let srv: RunningServer;
@@ -224,8 +204,6 @@ describe("gRPC Execute observability ledger", () => {
 
     const trace = obs.getTrace(dispatchId);
     expect(trace.dispatch_id).toBe(dispatchId);
-    // @deliberate: successful stub run records step_started + step_completed plus
-    // the synthetic trace_complete marker added by markComplete.
     const cats = trace.events.map((e) => e.category);
     expect(cats).toContain("step_started");
     expect(cats).toContain("step_completed");
@@ -236,12 +214,6 @@ describe("gRPC Execute observability ledger", () => {
   });
 });
 
-// @deliberate: end-to-end coverage of the TS executor -> Go supervisor callback protocol.
-// Rather than spin up a full Go supervisor here (out of scope for TS tests),
-// we stand up a plain HTTP server that mimics the supervisor's chi routing:
-//   POST /v1/callback/{ackID}  -> captures ackID from path + body
-// This guarantees the executor's URL shape and body format line up with the
-// supervisor's handler in core/supervisor/callback.go.
 describe("gRPC executor -> supervisor callback (protocol shape)", () => {
   let cb: CallbackServerHandle;
   let srv: RunningServer;
@@ -263,8 +235,6 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
     process.env.RIMSKY_EXECUTOR_STUB_MODE = "1";
     received.length = 0;
 
-    // @deliberate: minimal supervisor-like HTTP server that matches the Go chi route
-    // `POST /v1/callback/{ackID}`. This is the end-to-end assertion.
     supervisorLike = http.createServer((req, res) => {
       const match = /^\/v1\/callback\/([^/]+)$/.exec(req.url ?? "");
       if (!match || req.method !== "POST") {
@@ -308,8 +278,6 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
       cliRunner: fakeCli,
       silenceTimeoutMs: 5000,
       logger,
-      // @deliberate: use the real defaultPostCallback (no postCallback override) so we
-      // actually exercise the network round-trip.
     });
   });
 
@@ -354,16 +322,9 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
       `/v1/callback/${encodeURIComponent(ackId)}`,
     );
     expect(received[0]!.ackId).toBe(ackId);
-    // @deliberate: post-2026-05-12 (spec E.2/E.6): AsyncCallbackBody outcome-oneof
-    // shape — `success: { ... }` — rather than the legacy
-    // `{type: "complete", ...}` discriminator.
     expect(received[0]!.body.success).toBeDefined();
-    // @deliberate: ensure we did NOT use the legacy `kind` or `type` keys.
     expect(received[0]!.body.kind).toBeUndefined();
     expect(received[0]!.body.type).toBeUndefined();
-    // @deliberate: spec §12.2: stub round-trips its synthetic delta. Stub mode
-    // stamps `session_token: runId` on every terminal Success (mirroring
-    // runAgentReal); the session_token field rides along on the delta.
     const success = received[0]!.body.success as Record<string, unknown>;
     const delta2 = success.attributes_delta as Record<string, unknown>;
     expect(delta2.stub).toBe(true);
@@ -375,17 +336,6 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
   });
 });
 
-// @deliberate: the malformed-gate-config fail-loud guarantee, proven on the gRPC transport
-// (the HTTP bridge proves the same in http-bridge.test.ts). A present-but-
-// malformed cli.required_signoffs (host omitted public_key) must terminal-
-// ERROR with agent/attribute_invalid, never silently degrade to an ungated
-// run. parseCliConfig throws a CliConfigError in the background runAndCallback
-// (server.ts ~415, BEFORE runAgent), so the stream still closes with the normal
-// async handoff and the verdict rides the callback. The nested cli Struct is
-// built with protobuf.js's canonical camelCase Value wrappers (structValue/
-// listValue/stringValue): @grpc/proto-loader serializes Value via those names
-// regardless of keepCase (which governs only decode), and the snake_case form
-// jsToProtoStruct emits silently drops a nested Struct on the client side.
 describe("gRPC server Execute rejects a malformed sign-off gate config (no silent ungating)", () => {
   let cb: CallbackServerHandle;
   let srv: RunningServer;
@@ -427,9 +377,6 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       creds: grpc.ChannelCredentials,
     ) => grpc.Client;
     const client = new Client(srv.address, grpc.credentials.createInsecure());
-    // @deliberate: build the attributes Struct with protobuf.js's canonical camelCase Value
-    // wrappers (structValue/listValue/stringValue) — the form @grpc/proto-loader
-    // actually serializes nested Structs from on the client (see describe note).
     const toValue = (v: unknown): unknown => {
       if (v === null || v === undefined) return { nullValue: "NULL_VALUE" };
       if (typeof v === "string") return { stringValue: v };
@@ -451,8 +398,6 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       node_id: "n-gate",
       node_type: "stub-agent",
       dispatch_id: "d-grpc-gate",
-      // @deliberate: public_key omitted — only `path` present. The parser must reject this
-      // present-but-malformed gate rather than drop it to an ungated run.
       attributes: toStruct({
         model: "sonnet",
         user_prompt: "go",
@@ -462,7 +407,6 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       callback_url: fakeCallbackUrl,
     });
 
-    // @deliberate: the unary reply completes the async handoff; the verdict rides the callback.
     expect(outcome.await_async).toBeDefined();
     const ackId = outcome.await_async!.async_ack_id;
 
@@ -472,7 +416,6 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       `${fakeCallbackUrl}/v1/callback/${encodeURIComponent(ackId)}`,
     );
     const body = callbackPosts[0]!.body as Record<string, unknown>;
-    // @deliberate: must NOT have reached terminal success.
     expect(body.success).toBeUndefined();
     expect(body.error).toBeDefined();
     const error = body.error as { error_class: string };
@@ -483,12 +426,6 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
   });
 });
 
-// @deliberate: round-trip the production gRPC wire shape through unwrapStruct.
-// proto-loader runs with `keepCase: true` + `oneofs: true` (see
-// proto-loader.ts) which produces `{kind: "string_value", string_value: "x"}`
-// per Value. The dispatch path reads `attributes.model` from this shape;
-// the fix in unwrapStructValue accepts both the kind-set production form
-// and the kind-omitted older fixture form. Both must be covered.
 describe("unwrapStruct production wire shape (kind-set discriminator)", () => {
   it("unwraps a kind-set string_value", () => {
     const wire = {
@@ -556,9 +493,6 @@ describe("unwrapStruct production wire shape (kind-set discriminator)", () => {
   });
 });
 
-// @deliberate: jsToProtoValue / jsToProtoStruct / isoToProtoTimestamp / traceEventToProto
-// are reached on every GetTrace + StreamTrace reply. Bugs in these silently
-// corrupt traces with no visible RPC error.
 describe("proto-conversion helpers", () => {
   it("jsToProtoValue: scalars + null", () => {
     expect(jsToProtoValue("x")).toEqual({ string_value: "x" });
@@ -604,9 +538,6 @@ describe("proto-conversion helpers", () => {
     expect(Number(ts.seconds)).toBe(Math.floor(Date.UTC(2026, 4, 9, 12, 0, 0, 250) / 1000));
   });
   it("isoToProtoTimestamp: pre-epoch sub-second uses floor (no negative nanos)", () => {
-    // @deliberate: 1969-12-31T23:59:59.500Z = -500ms wall time. Math.trunc would
-    // produce nanos=-500_000_000 which violates the proto contract;
-    // Math.floor produces seconds=-1, nanos=500_000_000.
     const ts = isoToProtoTimestamp("1969-12-31T23:59:59.500Z");
     expect(ts.nanos).toBe(500_000_000);
     expect(ts.nanos).toBeGreaterThanOrEqual(0);
@@ -654,9 +585,6 @@ describe("proto-conversion helpers", () => {
   });
 });
 
-// @deliberate: unwrapStructValue scalar fallback shapes (kind absent, value field absent
-// → returns sensible default). Pins the kind-omitted-fixture branch separate
-// from the production-wire tests above.
 describe("unwrapStructValue defensive defaults", () => {
   it("returns null for null/undefined", () => {
     expect(unwrapStructValue(null)).toBeNull();
@@ -669,11 +597,6 @@ describe("unwrapStructValue defensive defaults", () => {
   });
 });
 
-// @constraint: TD-collapse-named-event-to-tags + observability-rename —
-// the gRPC ExecutorObservability.Capabilities surface carries the
-// RIMSKY_EXECUTOR_DECLARED_TAGS-resolved list in declared_tags (the
-// renamed observability field). Pairs with capabilitiesPayload coverage
-// in observability.test.ts to cover both capability surfaces.
 describe("ExecutorObservability.Capabilities declared_tags (gRPC surface)", () => {
   let cb: CallbackServerHandle;
   let srv: RunningServer;
@@ -722,10 +645,6 @@ describe("ExecutorObservability.Capabilities declared_tags (gRPC surface)", () =
   });
 });
 
-// @constraint: TD-claude-agent-session-attribute-only +
-// uniform-attributes-delta — Park-outcome serialization carries
-// session_token via attributes_delta (not a top-level field). Park.payload
-// is gone with the proto reservation.
 describe("outcomeToCallbackBody park outcome shape", () => {
   it("merges sessionToken into attributes_delta on Park (no top-level session_token)", () => {
     const outcome: AgentOutcome = {

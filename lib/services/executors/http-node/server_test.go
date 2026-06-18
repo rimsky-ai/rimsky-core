@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// server_test.go — http-node executor coverage under the unary RPC
-// shape (TD-execute-rpc-unary). Each test calls Execute(req) directly
-// against an httptest.NewServer upstream and asserts on the settling
-// Outcome — Success/Error/Park — including attributes_delta, tags,
-// and error_class propagation. The HTTP bridge tests round-trip
-// through the protojson bridge mounted by mountBridge().
-
 package main
 
 import (
@@ -29,16 +22,11 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// newRequest builds an ExecuteRequest with the http-node config attributes.
 func newRequest(t *testing.T, ud map[string]any) *genv1.ExecuteRequest {
 	t.Helper()
 	return newRequestWithAttrs(t, ud, nil)
 }
 
-// newRequestWithAttrs builds an ExecuteRequest with the merged attribute
-// bag. Under the userdata collapse, callers pass config (url, method,
-// body, ...) as `ud` and resolved per-run inputs as `attrs`; the helper
-// merges with `attrs` overriding `ud` on collisions.
 func newRequestWithAttrs(t *testing.T, ud, attrs map[string]any) *genv1.ExecuteRequest {
 	t.Helper()
 	merged := map[string]any{}
@@ -133,7 +121,6 @@ func TestExecute_5xx_ReturnsServerError(t *testing.T) {
 
 func TestExecute_NetworkError_ReturnsTransportErr(t *testing.T) {
 	s := testServer(t, false)
-	// @deliberate: port 1 is reserved and unbound, so the dial fails synchronously.
 	req := newRequest(t, map[string]any{"url": "http://127.0.0.1:1/does-not-exist"})
 	outcome, _ := s.Execute(context.Background(), req)
 	errd := outcome.GetError()
@@ -146,7 +133,6 @@ func TestExecute_NetworkError_ReturnsTransportErr(t *testing.T) {
 }
 
 func TestExecute_Timeout_ReturnsTimeout(t *testing.T) {
-	// @deliberate: upstream sleeps past the executor TimeoutMs so the client times out.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -182,7 +168,6 @@ func TestExecute_MalformedAttributes_MissingURL(t *testing.T) {
 
 func TestStubMode_ReturnsCannedResponse(t *testing.T) {
 	s := testServer(t, true)
-	// @constraint: stub mode must not dial — an unreachable URL still resolves to Success.
 	req := newRequest(t, map[string]any{"url": "http://unreachable.invalid/"})
 	outcome, err := s.Execute(context.Background(), req)
 	if err != nil {
@@ -260,9 +245,6 @@ func TestExecute_WithCustomExpectStatus(t *testing.T) {
 	}
 }
 
-// TestExecute_HTTPBridge_PostExecuteRoundTrip verifies the protojson
-// bridge accepts an ExecuteRequest body and returns a single Outcome
-// (TD-execute-rpc-unary; no streaming).
 func TestExecute_HTTPBridge_PostExecuteRoundTrip(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -312,8 +294,6 @@ func TestExecute_HTTPBridge_PostExecuteRoundTrip(t *testing.T) {
 	}
 }
 
-// TestExecute_NonJSONResponse_Base64 verifies the fallback path where the
-// upstream returns a non-JSON Content-Type.
 func TestExecute_NonJSONResponse_Base64(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -336,8 +316,6 @@ func TestExecute_NonJSONResponse_Base64(t *testing.T) {
 	}
 }
 
-// TestExecute_JSONContentType_InvalidBody_ReturnsParseFailed covers the
-// http/response_unparseable error class.
 func TestExecute_JSONContentType_InvalidBody_ReturnsParseFailed(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -357,8 +335,6 @@ func TestExecute_JSONContentType_InvalidBody_ReturnsParseFailed(t *testing.T) {
 	}
 }
 
-// TestExecute_PostWithStructBody verifies that attributes.body wins over
-// the implicit-attributes body and is sent verbatim to the upstream.
 func TestExecute_PostWithStructBody(t *testing.T) {
 	var got map[string]any
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -375,7 +351,6 @@ func TestExecute_PostWithStructBody(t *testing.T) {
 			"method": "POST",
 			"body":   map[string]any{"name": "bob"},
 		},
-		// @constraint: per-run attributes carry sentinel values the upstream must NOT see.
 		map[string]any{"name": "ignored", "extra": "ignored"},
 	)
 	if _, err := s.Execute(context.Background(), req); err != nil {
@@ -389,8 +364,6 @@ func TestExecute_PostWithStructBody(t *testing.T) {
 	}
 }
 
-// TestExecute_AttributesAsRequestBody verifies http-node POSTs the per-run
-// `attributes` map as the JSON request body when no body override is set.
 func TestExecute_AttributesAsRequestBody(t *testing.T) {
 	var got map[string]any
 	var gotCT string
@@ -423,8 +396,6 @@ func TestExecute_AttributesAsRequestBody(t *testing.T) {
 	}
 }
 
-// TestExecute_NoAttributesNoBody verifies that with neither body nor
-// attributes set, the upstream receives an empty body.
 func TestExecute_NoAttributesNoBody(t *testing.T) {
 	var bodyLen int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -445,8 +416,6 @@ func TestExecute_NoAttributesNoBody(t *testing.T) {
 	}
 }
 
-// TestExecute_NonObjectJSONResponse_ReturnsParseFailed verifies that JSON
-// arrays / scalars from the upstream cannot become attributes_delta.
 func TestExecute_NonObjectJSONResponse_ReturnsParseFailed(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -466,10 +435,6 @@ func TestExecute_NonObjectJSONResponse_ReturnsParseFailed(t *testing.T) {
 	}
 }
 
-// TestHttpNode_429ParksWithResumeAtAndAutoWakes asserts that an upstream
-// 429 with Retry-After resolves to Park{SNOOZE, resume_at}, not Error.
-// A subsequent re-dispatch against an upstream that now returns 200
-// reaches Success.
 func TestHttpNode_429ParksWithResumeAtAndAutoWakes(t *testing.T) {
 	const retryAfterSeconds = 7
 
@@ -536,9 +501,6 @@ func TestHttpNode_429ParksWithResumeAtAndAutoWakes(t *testing.T) {
 	}
 }
 
-// TestHttpNode_ConfigurableErrorClassFieldAndUnspecifiedFallback covers
-// the configurable upstream error-class field and the /_unspecified
-// fallback for absent fields.
 func TestHttpNode_ConfigurableErrorClassFieldAndUnspecifiedFallback(t *testing.T) {
 	t.Run("ConfiguredFieldRead", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -589,9 +551,6 @@ func TestHttpNode_ConfigurableErrorClassFieldAndUnspecifiedFallback(t *testing.T
 	})
 }
 
-// TestStubMode_RejectsNonObjectStubResponse covers the spec constraint
-// that attributes_delta is a JSON object — non-object stub_response
-// values must be rejected as http/attribute_invalid.
 func TestStubMode_RejectsNonObjectStubResponse(t *testing.T) {
 	s := testServer(t, true)
 	req := newRequest(t, map[string]any{
@@ -608,11 +567,6 @@ func TestStubMode_RejectsNonObjectStubResponse(t *testing.T) {
 	}
 }
 
-// TestExecute_ProbeParkAwaitCallback covers the Park-outcome shape probe
-// surfaced by the stub-mode `probe_park` escape hatch (the closed
-// two-value ParkReason set). The await_callback variant flows to
-// Park{AWAIT_CALLBACK} so the conformance harness's park-reason
-// scenarios are unit-tested here too.
 func TestExecute_ProbeParkAwaitCallback(t *testing.T) {
 	s := testServer(t, true)
 	req := newRequest(t, map[string]any{

@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// E10 — retention sweeps wired into the scheduler tick.
-//
-// SweepLineageRetention / SweepRunTreeRetention were dead code: the tick
-// wired every other sweep but not these two, and scheduler.Config.Retention
-// was never populated. This e2e drives the real tick against a real
-// Postgres-backed driver, seeds stale rimsky_lineage rows and a backlog of
-// terminal frames, and asserts the tick reaps them per a
-// Retention{LineageTrailing, RecentFramesKept} config — the proof that the
-// sweeps are now reachable.
 package scenarios
 
 import (
@@ -28,18 +19,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// TestRetentionSweepsReapOnTick pins E10: one scheduler.Tick with a
-// Retention config set must (a) delete stale rimsky_lineage rows past the
-// LineageTrailing cutoff whose run/claim_handle is gone, and (b) prune
-// rimsky_node_runs rows belonging to all but the RecentFramesKept
-// most-recent terminal frames per instance. Both gate on
-// scheduler.Config.Retention, which the production wiring now populates.
 func TestRetentionSweepsReapOnTick(t *testing.T) {
 	t.Parallel()
-	// @constraint: NoScheduler so the harness's own tick loop doesn't race our seeded
-	// rows; NoSupervisor so the created instance never spawns real frames /
-	// run rows that would pollute the retention assertions. We drive
-	// scheduler.Tick synchronously below.
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true, NoSupervisor: true})
 
 	tplHash := h.DeployTemplate(node.TemplateSpec{
@@ -53,29 +34,12 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	instanceID := h.CreateInstance(tplHash, "", map[string]any{})
 	scopeID := h.GetMainRunScopeID(instanceID)
 
-	// @deliberate: Clear the instance-factory's auto-created root frames so the test
-	// sees only the rows it seeds. Under the typed-message schema layer
-	// every root node gets a seeded synthetic message + frame at
-	// instance-create; those auto frames count toward
-	// PruneTraceForRetention's per-instance ranking and would skew the
-	// expected survivor set. node_runs CASCADE via the frame FK.
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(instanceID))
 
-	// @constraint: A node to hang the seeded run rows off (node.frame_id stays NULL;
-	// the run rows carry frame_id directly).
 	nodeID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_nodes (id, instance_id, node_type, executor)
 	           VALUES ($1, $2, 'retention-node', 'worker')`, nodeID, instanceID)
 
-	// @deliberate: Seed terminal frames + run rows
-	//
-	// Five completed frames per instance with distinct ended_at. With
-	// RecentFramesKept=2 (no TraceTrailing here), PruneTraceForRetention
-	// keeps the 2 most-recent terminal frame rows and deletes the other 3;
-	// the deleted frames' run rows go via the frame→node_run ON DELETE
-	// CASCADE, so the surviving frames' runs survive and the pruned
-	// frames' runs are removed — the assertions below ride on the run
-	// rows, which hold under the frame-row-deleting reaper.
 	const totalFrames = 5
 	const keepFrames = 2
 	survivingRunIDs := make(map[string]bool)
@@ -83,10 +47,6 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	base := time.Now().Add(-24 * time.Hour)
 	for i := 0; i < totalFrames; i++ {
 		frameID := uuid.New()
-		// @deliberate: ended_at increases with i so the highest-i frames are the most
-		// recent terminal frames (the survivors). The typed-message schema
-		// layer added the rimsky_frames.triggering_message_id NOT NULL FK;
-		// seed a typed envelope first so the frame's FK resolves.
 		endedAt := base.Add(time.Duration(i) * time.Hour)
 		messageID := uuid.New()
 		h.ExecSQL(`INSERT INTO rimsky_messages
@@ -115,12 +75,6 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	require.Len(t, survivingRunIDs, keepFrames)
 	require.Len(t, prunedRunIDs, totalFrames-keepFrames)
 
-	// @deliberate: Seed lineage rows
-	//
-	// Stale rows: observed_at well past the 1h LineageTrailing cutoff, with
-	// record run_id/claim_handle_id pointing at rows that don't exist, so
-	// the prune predicate (observed_at < cutoff AND run gone AND
-	// claim_handle gone) matches them.
 	staleFrameID := uuid.New()
 	staleMessageID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_messages
@@ -143,8 +97,6 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 			lid, instanceID, staleFrameID, base, uuid.NewString(), uuid.NewString())
 	}
 
-	// @constraint: Fresh lineage row: observed_at is now, so it's inside the trailing
-	// window and must survive.
 	freshLineageID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_lineage
 	    (id, record_kind, instance_id, frame_id, observed_at, record, outcome)
@@ -152,7 +104,6 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	            jsonb_build_object('run_id', $4::text, 'claim_handle_id', $5::text), '')`,
 		freshLineageID, instanceID, staleFrameID, uuid.NewString(), uuid.NewString())
 
-	// @deliberate: Drive one tick with retention configured
 	cfg := scheduler.Config{
 		Persist:        h.Persist,
 		Queue:          h.Queue,

@@ -10,12 +10,6 @@ import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 )
 
-// TestErrorPolicySignal_RetryShape covers the per-action emission
-// rules in errorPolicySignal. The end-to-end emit (the full
-// applyErrorPolicy → EmitSignal write into rimsky_events) is
-// covered in test/scenarios/signal_emission_test.go; this unit-test
-// pins the type-path construction so the retire-Pass-5 work and
-// future Pass-3 refactors don't silently change the wire shape.
 func TestErrorPolicySignal_RetryShape(t *testing.T) {
 	got := errorPolicySignal("foo", map[string]any{"k": "v"}, nil, "retry", 1, 500)
 	if got.Type != signalpkg.TypePath("transient/retry/1/foo") {

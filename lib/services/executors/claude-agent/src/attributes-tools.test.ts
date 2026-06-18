@@ -34,8 +34,6 @@ describe("buildAttributesWritebackUrl", () => {
 });
 
 describe("defaultPostAttributes", () => {
-  // @deliberate: spec §12.5: POSTs `{delta}` with the cancel token as bearer auth, body
-  // shaped exactly `{delta: {...}}`. End-to-end against a fake supervisor.
   let server: http.Server;
   let received: {
     path: string;

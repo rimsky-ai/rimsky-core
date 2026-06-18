@@ -2,20 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// on_error_tx_atomicity_test.go pins
-// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
-// tx-atomic. Specifically, OnError's retry path must perform the
-// (state-write + remove-from-queue + enqueue-new-dispatch) sequence
-// inside a single transaction. Per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
-//
-// A pre-fix regression where the retry path opened a fresh
-// `sb.Transaction` for each of `UpdateState` and the
-// `RemoveForNodeInTx + EnqueueInTx` pair would leave the row stranded
-// if the second commit failed (state advanced but no replacement
-// enqueued). The fix collapsed those into one tx; this test counts
-// each `Tx` pointer threaded through the queue mutators on the retry
-// path and asserts the trio share one tx.
+// @blessed-invariant: state-machine-writes-single-tx
 
 package runtime
 
@@ -34,13 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// txTrackingQueue wraps a persistence.Queue and records the Tx pointer
-// passed to each retry-path mutator. The test inspects the trail after
-// OnError returns to verify the trio (UpdateState, RemoveForNodeInTx,
-// EnqueueInTx) share a single Tx.
-//
-// We only need to instrument RemoveForNodeInTx and EnqueueInTx here;
-// UpdateState is captured via txTrackingNodes below.
 type txTrackingQueue struct {
 	persistence.Queue
 	mu             sync.Mutex
@@ -62,8 +42,6 @@ func (q *txTrackingQueue) EnqueueInTx(ctx context.Context, req persistence.Dispa
 	return q.Queue.EnqueueInTx(ctx, req, tx)
 }
 
-// txTrackingNodes wraps a persistence.NodeTable and records the Tx
-// pointer passed to UpdateState (the retry path's state write).
 type txTrackingNodes struct {
 	persistence.NodeTable
 	mu              sync.Mutex
@@ -79,8 +57,6 @@ func (n *txTrackingNodes) UpdateState(ctx context.Context, id shared.UUID, runSc
 	return n.NodeTable.UpdateState(ctx, id, runScopeID, state, reason, settlingSignalType, tx)
 }
 
-// nodeTrackingTables wraps persistence.Tables to route Nodes() through
-// txTrackingNodes. Other accessors delegate to inner.
 type nodeTrackingTables struct {
 	inner persistence.Tables
 	nodes *txTrackingNodes
@@ -131,17 +107,6 @@ func (w *nodeTrackingTables) Transaction(ctx context.Context, fn func(ctx contex
 	return w.inner.Transaction(ctx, fn)
 }
 
-// TestOnErrorTxAtomicity verifies the retry path performs (state-write
-// + remove-from-queue + enqueue-new-dispatch) inside a single tx.
-//
-// The test instruments NodeTable.UpdateState, Queue.RemoveForNodeInTx,
-// and Queue.EnqueueInTx; each records the tx pointer it was invoked
-// with. After OnError returns, the test asserts the three retry-path
-// writes share exactly one tx pointer (the same Tx value).
-//
-// Regression coverage: if the retry path's state write or the
-// remove+enqueue gets split into a separate `sb.Transaction(...)`
-// block, the tx pointers will differ and the assertion trips.
 func TestOnErrorTxAtomicity(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -268,8 +233,6 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	// @deliberate: Wrap nodes + queue for tx tracking. The wrapped Tables is what
-	// OnError sees.
 	trackedNodes := &txTrackingNodes{NodeTable: store.Nodes()}
 	trackedQueue := &txTrackingQueue{Queue: q}
 	tracked := &nodeTrackingTables{inner: store, nodes: trackedNodes}
@@ -289,9 +252,6 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 		t.Fatalf("OnError: %v", err)
 	}
 
-	// @deliberate: Find the retry path's UpdateState — the call writing
-	// NodeStateStale (the only `policy_retry` state write). The seed
-	// step earlier issued an UpdateState(NodeStateRunning); skip those.
 	var retryStateTx persistence.Tx
 	found := false
 	for i, st := range trackedNodes.updateStateArgs {
@@ -308,7 +268,6 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 	if len(trackedQueue.removeForNodes) == 0 {
 		t.Fatalf("retry path did not call Queue.RemoveForNodeInTx")
 	}
-	// @deliberate: The first RemoveForNodeInTx after seed must share the retry state tx.
 	if trackedQueue.removeForNodes[0] != retryStateTx {
 		t.Fatalf("retry path opened a new tx between UpdateState and RemoveForNodeInTx: "+
 			"state tx=%p, remove tx=%p — must be the same tx",

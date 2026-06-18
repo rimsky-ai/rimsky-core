@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: ForeignKeyCascade conformance area.
-// Inv 13 (auto-terminal cleanup); also exercises _foreign_keys=ON under
-// SQLite (without it the cascade silently fails).
 package conformance
 
 import (
@@ -21,8 +18,6 @@ import (
 func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	// @constraint: claim-holders rows key on holder_run_id post-stage-5;
-	// seed an in-flight run row for the fixture node so the FK target exists.
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	store := d.Tables()
 
@@ -31,13 +26,8 @@ func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 	supID := "fk-supervisor"
 	expires := time.Now().Add(1 * time.Hour)
 	lockName := "fk-test-lock"
-	// @constraint: address is opaque bytes returned by ClaimProducer.Open; a
-	// real json.RawMessage keeps the column type honest while leaving
-	// scope_data NULL, which the named-vs-scope check constraint requires
-	// on a named-kind row.
 	address := json.RawMessage(`{"k":"fk-conformance"}`)
 
-	// @constraint: Insert requires an open tx; wrap both inserts together.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,

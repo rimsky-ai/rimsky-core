@@ -24,23 +24,15 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// Server implements genv1.ExecutorServer for the http-node bundled
-// executor. It owns the http.Client used for upstream requests, the
-// stub-mode flag, and the optional observability ledger.
-//
 // @concept: executor
 type Server struct {
 	genv1.UnimplementedExecutorServer
 	cfg      Config
 	client   *http.Client
 	stubMode bool
-	// obs, when non-nil, receives per-dispatch trace events. Set by
-	// main.go after the gRPC server is constructed (the observability
-	// surface is registered on the same listener).
 	obs *ObservabilityServer
 }
 
-// NewServer builds a Server with a timeout-configured http.Client.
 func NewServer(cfg Config) *Server {
 	return &Server{
 		cfg:      cfg,
@@ -49,38 +41,12 @@ func NewServer(cfg Config) *Server {
 	}
 }
 
-// SetObservability attaches an ObservabilityServer so Execute can emit
-// per-dispatch trace events. Optional: when nil, dispatch runs without
-// trace emission.
 func (s *Server) SetObservability(obs *ObservabilityServer) { s.obs = obs }
 
-// Execute is the gRPC unary entrypoint. Per TD-execute-rpc-unary the
-// RPC returns exactly one settling Outcome — no stream, no per-event
-// chunking. The HTTP+JSON bridge at code:bridge.go forwards a single
-// request to this same method.
-//
-// @agent-contract Execute: runs the http-node cell's network request
-// and returns one settling Outcome — Success, Error, or Park. Handles
-// stub_mode (short-circuits before network), JSON and non-JSON
-// responses, custom expect_status lists, and user-supplied headers.
-// Post-userdata-collapse the executor reads its full input from the
-// unified `attributes` bag. A fixed set of attribute keys (`url`,
-// `method`, `headers`, `body`, `expect_status`, `stub_probe`,
-// `stub_response`, `error_class_field` — see configAttributeKeys)
-// drives the transport; every other attribute key is serialised as
-// the implicit JSON request body via buildRequestBody's
-// configAttributeKeys subtraction. Does NOT paginate, stream response
-// bodies, or honor redirects beyond Go stdlib defaults. Does NOT
-// itself retry; instead an unexpected 429 resolves to a Park
-// (PARK_REASON_SNOOZE) with a resume_at computed from Retry-After.
-// Reentrant; the http.Client is safe for concurrent use.
 func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	dispatchID := req.GetDispatchId()
 	stepID := "http-node:" + req.GetNodeType()
 	if s.obs != nil && dispatchID != "" {
-		// @constraint: register the dispatch with the in-memory ledger so
-		// subsequent AppendEvent / MarkTerminal calls succeed; forged
-		// dispatch IDs cannot create ledger records this way.
 		s.obs.RegisterDispatch(dispatchID)
 		s.obs.AppendEvent(dispatchID, MakeEvent(
 			"step-"+stepID, "", "step_started",
@@ -95,9 +61,6 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	return outcome, err
 }
 
-// recordTerminal mirrors the streaming wrapper's per-outcome trace
-// emission onto the unary path. A nil ledger or empty dispatch id
-// skips emission.
 func (s *Server) recordTerminal(dispatchID, stepID string, outcome *genv1.Outcome) {
 	if s.obs == nil || dispatchID == "" || outcome == nil {
 		return
@@ -138,32 +101,16 @@ func (s *Server) recordTerminal(dispatchID, stepID string, outcome *genv1.Outcom
 	}
 }
 
-// executeCore runs the dispatch and returns the settling Outcome. The
-// caller (Execute above, or future per-transport adapters) is
-// responsible for any per-dispatch trace-ledger bookkeeping.
 func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	ud := req.GetAttributes().AsMap()
 
-	// @constraint: conformance-probe escape hatch — the conformance
-	// harness uses executor-agnostic attributes flagged `stub_probe:
-	// true`. When stub mode is on, short-circuit before per-executor
-	// shape validation so the suite's basic-happy-path scenarios work
-	// regardless of which executor is under test.
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
 		return s.executeStub(req), nil
 	}
-	// @constraint: conformance-probe escape hatch for the Park-outcome
-	// shape — when the suite flags attributes with `probe_park: true`,
-	// return a Park terminal carrying the named `park_reason` in the
-	// closed two-value set (await_callback | snooze) per the
-	// ParkReason collapse.
 	if probePark, _ := ud["probe_park"].(bool); probePark && s.stubMode {
 		return s.executeParkProbe(ud), nil
 	}
 
-	// @constraint: validate attribute shape even in stub mode — the
-	// protocol contract requires executors to reject malformed input
-	// consistently, not only in live mode.
 	urlStr, _ := ud["url"].(string)
 	if urlStr == "" {
 		return erroredOutcome("http/attribute_invalid", "attributes.url required"), nil
@@ -188,10 +135,6 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 		}
 	}
 
-	// @constraint: body composition — http-node puts the per-run
-	// `attributes` in the request body. `attributes.body` (if present)
-	// is an explicit override; otherwise the JSON-serialised
-	// `attributes` map (minus configAttributeKeys) becomes the body.
 	reqBody, ctype, err := buildRequestBody(ud, req.GetAttributes().AsMap())
 	if err != nil {
 		return erroredOutcome("http/attribute_invalid", err.Error()), nil
@@ -230,10 +173,6 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 		return erroredOutcome(classifyTransportErr(err), "read body: "+err.Error()), nil
 	}
 
-	// @constraint: 429 Too Many Requests is a transient rate-limit
-	// signal, not a hard terminal — park (SNOOZE) with a resume_at
-	// computed from Retry-After so the supervisor's existing
-	// SweepParkedNodes wakes the node and re-dispatches.
 	if resp.StatusCode == http.StatusTooManyRequests && !statusOK(resp.StatusCode, expectStatus) {
 		resumeAt := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now)
 		return parkedOutcome(resumeAt,
@@ -241,9 +180,6 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 	}
 
 	if !statusOK(resp.StatusCode, expectStatus) {
-		// @constraint: resolve the upstream error-class field name in
-		// priority order — per-node attributes wins, else executor's
-		// configured default.
 		errorClassField := s.cfg.ErrorClassField
 		if ecf, ok := ud["error_class_field"].(string); ok && ecf != "" {
 			errorClassField = ecf
@@ -256,10 +192,6 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 			fmt.Sprintf("status=%d, body=%s", resp.StatusCode, truncate(string(body), 512))), nil
 	}
 
-	// @constraint: response → attributes_delta — the target's response
-	// body must be a JSON object so it maps directly to
-	// Success.attributes_delta. Non-object JSON is rejected; non-JSON
-	// content types are wrapped in a base64 envelope.
 	delta, err := buildAttributesDelta(body, resp.Header.Get("Content-Type"))
 	if err != nil {
 		return erroredOutcome("http/response_unparseable", err.Error()), nil
@@ -272,11 +204,6 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 	}}}, nil
 }
 
-// configAttributeKeys is the set of attribute keys the http-node
-// executor treats as transport configuration (URL, method, headers,
-// body override, etc.). When building the implicit request body from
-// the attribute bag, these keys are subtracted so transport config
-// never leaks into the upstream payload.
 var configAttributeKeys = map[string]struct{}{
 	"url":               {},
 	"method":            {},
@@ -288,10 +215,6 @@ var configAttributeKeys = map[string]struct{}{
 	"error_class_field": {},
 }
 
-// buildRequestBody picks the upstream request body. `attributes.body`
-// is an explicit override; absent, the per-run input attributes
-// (minus known config keys) are JSON-marshalled. When the resulting
-// input bag is empty, no body is sent.
 func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
 	if b, ok := ud["body"]; ok && b != nil {
 		switch bb := b.(type) {
@@ -322,10 +245,6 @@ func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
 	return bytes.NewReader(jb), "application/json", nil
 }
 
-// buildAttributesDelta turns the upstream response into a Struct
-// suitable for Success.attributes_delta. JSON object responses pass
-// through as-is. Non-JSON responses are wrapped as
-// `{body_base64, content_type}`. JSON arrays / scalars are an error.
 func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, error) {
 	if !strings.Contains(contentType, "json") {
 		return structpb.NewStruct(map[string]any{
@@ -347,9 +266,6 @@ func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, er
 	return structpb.NewStruct(m)
 }
 
-// executeStub short-circuits the network path; used when
-// RIMSKY_EXECUTOR_STUB_MODE=1. Returns attributes.stub_response if
-// provided, else {stub: true}.
 func (s *Server) executeStub(req *genv1.ExecuteRequest) *genv1.Outcome {
 	ud := req.GetAttributes().AsMap()
 	delta := map[string]any{"stub": true}
@@ -371,11 +287,6 @@ func (s *Server) executeStub(req *genv1.ExecuteRequest) *genv1.Outcome {
 	}}}
 }
 
-// executeParkProbe handles the conformance park_reason_emission
-// scenario in stub mode. Reads attributes.park_reason (defaulting to
-// `await_callback`), validates it against the closed two-value
-// ParkReason set, and returns a Park terminal carrying the typed
-// reason.
 func (s *Server) executeParkProbe(ud map[string]any) *genv1.Outcome {
 	reasonStr, _ := ud["park_reason"].(string)
 	if reasonStr == "" {
@@ -402,9 +313,6 @@ func (s *Server) executeParkProbe(ud map[string]any) *genv1.Outcome {
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}
 }
 
-// classifyTransportErr maps a transport-layer error to a hierarchical
-// error class per concept:signal. Distinguishes deadline-exceeded /
-// network-timeout errors from generic network errors.
 func classifyTransportErr(err error) string {
 	if err == nil {
 		return "http/network_error"
@@ -419,14 +327,6 @@ func classifyTransportErr(err error) string {
 	return "http/network_error"
 }
 
-// classifyUnexpectedStatus maps an unexpected HTTP status to a
-// hierarchical error class per concept:signal:
-//   - 5xx → http/server_error/<status>
-//   - 4xx with parseable JSON object + non-empty errorClassField →
-//     http/request_invalid/<body_class>
-//   - 4xx with parseable JSON object but missing field →
-//     http/request_invalid/_unspecified
-//   - otherwise → http/expectation_mismatch
 func classifyUnexpectedStatus(status int, body []byte, errorClassField string) string {
 	if status >= 500 && status <= 599 {
 		return fmt.Sprintf("http/server_error/%d", status)
@@ -440,25 +340,14 @@ func classifyUnexpectedStatus(status int, body []byte, errorClassField string) s
 			if cls, ok := decoded[errorClassField].(string); ok && cls != "" {
 				return "http/request_invalid/" + cls
 			}
-			// @constraint: 4xx body parsed as a JSON object but the
-			// configured error-class field is absent/empty — emit the
-			// stable `_unspecified` leaf so the request-invalid subtree
-			// stays subscribable.
 			return "http/request_invalid/_unspecified"
 		}
 	}
 	return "http/expectation_mismatch"
 }
 
-// defaultRetryAfter is the snooze window used when a 429 carries no
-// Retry-After header (or an unparseable one). RFC 9110 makes
-// Retry-After optional on 429.
 const defaultRetryAfter = 30 * time.Second
 
-// parseRetryAfter computes the wall-clock resume time from a
-// Retry-After header value per RFC 9110 §10.2.3 (delta-seconds OR
-// HTTP-date). `now` is injected so the delta-seconds branch is
-// deterministically testable.
 func parseRetryAfter(header string, now func() time.Time) time.Time {
 	header = strings.TrimSpace(header)
 	base := now()
@@ -476,16 +365,12 @@ func parseRetryAfter(header string, now func() time.Time) time.Time {
 			if t.After(base) {
 				return t
 			}
-			// @deliberate: a non-future date is treated as "retry now".
 			return base
 		}
 	}
 	return base.Add(defaultRetryAfter)
 }
 
-// parkedOutcome builds a Park{SNOOZE} Outcome with the computed
-// resume_at, reusing rimsky's existing parked-node auto-wake
-// mechanism.
 func parkedOutcome(resumeAt time.Time, note string) *genv1.Outcome {
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: &genv1.Park{
 		Reason:     genv1.ParkReason_PARK_REASON_SNOOZE,
@@ -502,7 +387,6 @@ func erroredOutcome(class, msg string) *genv1.Outcome {
 	}}}
 }
 
-// defaultExpectStatus returns the default accepted status list (2xx).
 func defaultExpectStatus() []int {
 	return []int{200, 201, 202, 203, 204, 205, 206, 207, 208, 226}
 }

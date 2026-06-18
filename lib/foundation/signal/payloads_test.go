@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-// TestPayloads_RoundTrip exercises json.Marshal + json.Unmarshal on
-// every payload struct, confirming fields survive the round-trip.
 func TestPayloads_RoundTrip(t *testing.T) {
 	t.Run("TerminalSuccessPayload", func(t *testing.T) {
 		in := TerminalSuccessPayload{
@@ -164,18 +162,8 @@ func TestPayloadSchemaForType(t *testing.T) {
 		{"transient/retry/3/agent/rate_limited", reflect.TypeOf(TransientRetryPayload{}), true},
 		{"transient/await_async", reflect.TypeOf(TransientAwaitAsyncPayload{}), true},
 		{"attribute/budget_cents/changed", reflect.TypeOf(AttributeChangedPayload{}), true},
-		// @deliberate: event/<name> retired under TD-collapse-named-event-
-		// to-tags; PayloadSchemaForType must reject the path.
 		{"event/discovered", nil, false},
-		// @deliberate: message/* is a retired top-level taxonomy kind —
-		// the operator-invalidate retirement removed MessagePayload, so
-		// PayloadSchemaForType must return (nil, false) for any
-		// message/* path. Kept here as a regression guard against the
-		// kind sneaking back in.
 		{"message/invalidate/operator/self", nil, false},
-		// @deliberate: prefix paths (terminal/*, attribute/*, etc.)
-		// return (nil, false) — the resolver matches concrete leaves
-		// only, never glob-style prefixes.
 		{"terminal/*", nil, false},
 		{"terminal/error/*", nil, false},
 		{"attribute/*", nil, false},

@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies the post-spec node-reset / retry workflow. Per the
-// empty-message-wake-trigger spec:
-//   - POST /nodes/{id}/reset is a pure retry-budget-clear verb. It
-//     clears the error budget, resets the settling-signal-type, and
-//     nulls the frame_id pointer. It does NOT enqueue a frame.
-//   - The operator's workflow for retrying an errored node is two
-//     explicit steps: reset (clears the retry budget) then a message
-//     emit (empty for whole-instance, typed for partial) that
-//     invalidates the node so a fresh dispatch is attempted.
-//
 // @story: node-admin
 // @decision: node-reset-as-pure-retry-budget-clear
 package frame_resolution
@@ -52,14 +42,12 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	require.True(t, waitForFramesByState(t, h, iid, "failed", 1, 5*time.Second),
 		"first frame should end failed")
 
-	// @deliberate: Capture the prior frame_id; reset should not leave it pointing here.
 	var priorFrameID *uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&priorFrameID))
 	require.NotNil(t, priorFrameID,
 		"failed node should preserve frame_id from the failed frame")
 
-	// @deliberate: Re-script the stub to succeed before resetting.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok")
 
 	resp, err := http.Post(
@@ -69,10 +57,6 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// @constraint: post-spec the reset endpoint is a pure
-	// retry-budget-clear verb. It does NOT enqueue a frame. The
-	// operator drives the retry by posting an empty-message wake to
-	// invalidate the node.
 	// @story: node-admin
 	// @decision: node-reset-as-pure-retry-budget-clear
 	h.PostInstanceMessage(iid, "", nil, "reset-followup-wake-"+iid.String())
@@ -83,23 +67,12 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 5*time.Second),
 		"second frame should end completed")
 
-	// @deliberate: Final frame_id on the now-fresh node should be cleared (per the
-	// enforceAndUpdate fresh-state guard; spec §4.4).
 	var finalFrameID *uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&finalFrameID))
 	require.Nil(t, finalFrameID,
 		"fresh node must carry no frame_id after work_completed")
 
-	// @deliberate: Pin Issue 5 fix: the failed-terminal row's `settling_signal_type`
-	// must have been reset by ResetFailedTerminalSettlingSignalType
-	// (called from handleResetNode) so the dashboard's nodeSelect
-	// projection no longer surfaces the stale failed signal type-path.
-	// Before the fix, the prior ClearSettlingSignalType(runID=nil) was
-	// a no-op because its `phase IN ('pending','active','held','parked')`
-	// predicate excludes `phase='failed'`. Post-Pass-5 the reset clears
-	// the column to NULL (the prior column-default-based reset retired
-	// alongside `last_outcome`).
 	var failedRowSettlingSig *string
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT settling_signal_type FROM rimsky_node_runs

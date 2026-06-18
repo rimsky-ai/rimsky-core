@@ -62,7 +62,7 @@ func TestAdminBumpToHead_404FolderMissing(t *testing.T) {
 func TestAdminBumpToHead_409InProgress(t *testing.T) {
 	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
-	_, _ = st.Open(context.Background(), "c", "@r") // @constraint: claims alpha so the subsequent bump-to-head must see 409 in-progress
+	_, _ = st.Open(context.Background(), "c", "@r")
 	handler := st.AdminHandler()
 	req := httptest.NewRequest(http.MethodPost, "/admin/bump-to-head/%40r",
 		strings.NewReader(`{"folder":"alpha"}`))
@@ -85,11 +85,6 @@ func TestAdminBumpToHead_400UnknownSelector(t *testing.T) {
 	}
 }
 
-// TestAdminBumpToHead_400InvalidFolder pins the rejection of folder
-// values that would either escape the policy root or otherwise resolve
-// to something other than a single path component. Covers leading-dot,
-// embedded separators, and ".." / "." literals; the cases caught by
-// each guard in admin.go are noted alongside.
 func TestAdminBumpToHead_400InvalidFolder(t *testing.T) {
 	st, _, _ := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	handler := st.AdminHandler()
@@ -97,11 +92,11 @@ func TestAdminBumpToHead_400InvalidFolder(t *testing.T) {
 		name   string
 		folder string
 	}{
-		{"forward_slash", "foo/bar"},                 // @constraint: separator guard
-		{"forward_slash_traversal", "foo/../../etc"}, // @constraint: separator guard (would otherwise traverse)
-		{"backslash", `foo\bar`},                     // @constraint: separator guard
-		{"dot_dot", ".."},                            // @constraint: leading-dot guard
-		{"single_dot", "."},                          // @constraint: leading-dot guard
+		{"forward_slash", "foo/bar"},
+		{"forward_slash_traversal", "foo/../../etc"},
+		{"backslash", `foo\bar`},
+		{"dot_dot", ".."},
+		{"single_dot", "."},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -118,8 +113,6 @@ func TestAdminBumpToHead_400InvalidFolder(t *testing.T) {
 	}
 }
 
-// jsonString returns a JSON-encoded string literal (handles backslashes
-// without forcing the test bodies through fmt.Sprintf).
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)

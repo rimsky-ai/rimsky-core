@@ -2,15 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// bridge_test.go covers the HTTP+JSON bridge response encoding.
-//
-// The OpenResponse proto uses a `oneof result` carrying either an
-// `Acquired` or `Unavailable` arm. proto3-JSON encodes that as a
-// discriminator key (`{"acquired": {...}}` / `{"unavailable": {}}`),
-// which `encoding/json` does NOT produce when marshalling the same Go
-// struct directly. The bridge therefore uses `protojson.Marshal` to
-// serialize responses; these tests guard against a regression that
-// swaps it back to `encoding/json`.
 
 package serverkit
 
@@ -28,9 +19,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// fakeServer is a minimal genv1.ClaimProducerServer the bridge can
-// dispatch to. Each verb returns a canned response or an error from the
-// corresponding `*Func` field, defaulting to an empty proto when unset.
 type fakeServer struct {
 	genv1.UnimplementedClaimProducerServer
 
@@ -44,8 +32,6 @@ func (f *fakeServer) Open(_ context.Context, req *genv1.OpenRequest) (*genv1.Ope
 	return &genv1.OpenResponse{}, nil
 }
 
-// mountFake wires the bridge against fakeServer and returns an
-// httptest.Server the test can POST to.
 func mountFake(t *testing.T, srv *fakeServer) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -81,10 +67,6 @@ func postOpen(t *testing.T, ts *httptest.Server) []byte {
 	return raw
 }
 
-// TestOpenBridge_AcquiredOneof asserts the bridge returns the
-// `acquired` arm of the OpenResponse oneof in the proto3-JSON
-// discriminator shape and that protojson can decode it back into the
-// same shape.
 func TestOpenBridge_AcquiredOneof(t *testing.T) {
 	addr := []byte(`{"path":"/items/x"}`)
 	payload := []byte(`{"data":"hello"}`)
@@ -122,8 +104,6 @@ func TestOpenBridge_AcquiredOneof(t *testing.T) {
 	}
 }
 
-// TestOpenBridge_UnavailableOneof asserts the Unavailable arm encodes
-// as a recognisable discriminator key that protojson can decode.
 func TestOpenBridge_UnavailableOneof(t *testing.T) {
 	srv := &fakeServer{
 		OpenFunc: func(_ *genv1.OpenRequest) (*genv1.OpenResponse, error) {
@@ -147,12 +127,6 @@ func TestOpenBridge_UnavailableOneof(t *testing.T) {
 	}
 }
 
-// TestOpenBridge_StdJSONCannotRecoverOneof guards against a regression
-// that swaps `protojson.Marshal` back to `encoding/json.Marshal`.
-// `encoding/json` produces the Go-struct shape (`{"Result": {...}}`)
-// rather than the proto3-JSON discriminator shape, which protojson
-// cannot decode. If this test starts failing on the protojson decode,
-// the bridge has regressed.
 func TestOpenBridge_StdJSONCannotRecoverOneof(t *testing.T) {
 	addr := []byte(`{"path":"/items/x"}`)
 	srv := &fakeServer{
@@ -165,7 +139,6 @@ func TestOpenBridge_StdJSONCannotRecoverOneof(t *testing.T) {
 	ts := mountFake(t, srv)
 	raw := postOpen(t, ts)
 
-	// @constraint: protojson must recover the oneof — discriminator shape requires proto3-JSON decoding.
 	var viaProto genv1.OpenResponse
 	if err := protojson.Unmarshal(raw, &viaProto); err != nil {
 		t.Fatalf("protojson.Unmarshal: %v\nbody: %s", err, raw)
@@ -174,7 +147,6 @@ func TestOpenBridge_StdJSONCannotRecoverOneof(t *testing.T) {
 		t.Fatalf("protojson did not recover Acquired arm: %s", raw)
 	}
 
-	// @constraint: stdlib encoding/json cannot recover the oneof discriminator — Go's json reflection cannot map proto3-JSON onto the generated Result interface, so this assertion guards that the bridge is using protojson for marshal; a swap back to encoding/json would change the on-the-wire shape and fail the protojson decode above.
 	var viaStd genv1.OpenResponse
 	if err := json.Unmarshal(raw, &viaStd); err == nil {
 		if viaStd.GetAcquired() != nil {
@@ -183,9 +155,6 @@ func TestOpenBridge_StdJSONCannotRecoverOneof(t *testing.T) {
 	}
 }
 
-// TestLifecycleBridge_TemplateScopeRoundTrip verifies that a POST to
-// /v1/on_template_deployed decodes the JSON body into the
-// corresponding proto request and forwards to the server.
 func TestLifecycleBridge_TemplateScopeRoundTrip(t *testing.T) {
 	var seen string
 	srv := &lifecycleFakeServer{
@@ -214,8 +183,6 @@ func TestLifecycleBridge_TemplateScopeRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLifecycleBridge_InstanceScopeRoundTrip verifies that a POST to
-// /v1/on_instance_terminated decodes both template_hash and instance_id.
 func TestLifecycleBridge_InstanceScopeRoundTrip(t *testing.T) {
 	var gotTemplate, gotInstance string
 	srv := &lifecycleFakeServer{
@@ -248,8 +215,6 @@ func TestLifecycleBridge_InstanceScopeRoundTrip(t *testing.T) {
 	}
 }
 
-// lifecycleFakeServer is a minimal LifecycleSubscriberServer the bridge
-// can dispatch to.
 type lifecycleFakeServer struct {
 	genv1.UnimplementedLifecycleSubscriberServer
 

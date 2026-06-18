@@ -14,16 +14,6 @@ import (
 	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
-// TestQueuedFrameNotPromotedForTerminatedInstance pins the orphaned-queued-
-// frame guard under strict terminal semantics. With durable-by-default,
-// a terminate_after_run instance can terminate at frame-end while a frame
-// it never ran is still `queued` (a message arrived mid-run). That queued
-// frame must NEVER be promoted against a terminated instance — promoting it
-// would run work on an instance that has already reached terminal.
-//
-// We seed a terminated instance (terminated_at non-NULL) with one `queued`
-// frame and no running frame, then call ListQueuedFramesReadyToStart. The
-// frame must not be returned.
 func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()
@@ -62,12 +52,6 @@ func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// @deliberate: seed one queued frame and no running frame so the row is
-	// eligible-to-start in every dimension except the terminated-instance
-	// guard under test; otherwise a guard regression could hide behind a
-	// different eligibility miss. The triggering message is seeded first to
-	// satisfy the rimsky_frames.triggering_message_id NOT NULL FK introduced
-	// by the typed-message schema layer.
 	msgID := uuid.New().String()
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)

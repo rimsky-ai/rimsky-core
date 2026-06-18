@@ -2,34 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package events owns the typed-Kind discriminator API for the
-// rimsky_events log. The persistence column shape stays TEXT, but
-// rimsky's app logic (scheduler, supervisor, breakpoint evaluator,
-// audit handler, read-API kind filters) consumes Kind values
-// exclusively — raw strings cross only the persistence marshal/
-// unmarshal boundary.
-//
-// Two kind families share one Kind value:
-//
-//   - Operational kinds (auth.*, state_transition, lock_acquired,
-//     work_started, attributes_substituted, breakpoint.hit, etc.) —
-//     declared as the OperationalKind enum in proto/v1/events.proto.
-//     The proto enum IS the catalog; adding a new operational kind
-//     means adding an enum value and regenerating Go bindings, no
-//     schema migration required.
-//
-//   - Signal-class kinds (terminal/..., transient/..., attribute/...)
-//     — carry the parsed signal type-path under the canonical taxonomy.
-//     The signal package owns type-path validation; this package treats
-//     the path as opaque and exposes it through SignalPath() / String().
-//
-// At the persistence boundary, Kind.String() produces the canonical
-// wire form (the snake_case operational name OR the slash-delimited
-// signal type-path) for the TEXT column. ParseKindString consumes
-// the column value on read; an unknown string is a defensive error
-// (per decision:event-log-kind-enum), never silently coerced to a
-// synthetic "unknown" kind.
-//
 //	@concept: event-log
 //	@decision: event-log-kind-enum
 package events
@@ -42,53 +14,24 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// Family discriminates between operational and signal-class kinds.
 type Family int
 
 const (
-	// FamilyUnknown is the zero value. A zero Kind is invalid for use
-	// in a persistence write — constructors below produce non-zero
-	// values; ParseKindString rejects empty input rather than emit a
-	// zero Kind.
 	FamilyUnknown Family = iota
-	// @constraint: FamilyOperational designates an OperationalKind-backed kind.
 	FamilyOperational
-	// @constraint: FamilySignal designates a signal-type-path-backed kind.
 	FamilySignal
 )
 
-// Kind is the typed discriminator carried by rimsky's app logic. It
-// wraps either an OperationalKind enum value (operational family) or
-// a canonical signal type-path string (signal family).
-//
-// Zero value is invalid — callers obtain Kind values through the
-// constructors below or ParseKindString.
 type Kind struct {
 	family Family
 	op     genv1.OperationalKind
-	// signalPath is the slash-delimited canonical type-path for
-	// signal-class kinds (e.g. "terminal/success",
-	// "attribute/budget_cents/changed"). Empty for operational
-	// kinds. Treated as opaque here — taxonomy validation is the
-	// signal package's responsibility.
 	signalPath string
 }
 
-// OperationalKindFromProto wraps an OperationalKind enum value as a
-// typed Kind. The OPERATIONAL_KIND_UNSPECIFIED zero value is rejected
-// at the persistence boundary by String() (returns empty) and is
-// never produced by an honest emit site — callers pass a real enum
-// value.
 func OperationalKindFromProto(op genv1.OperationalKind) Kind {
 	return Kind{family: FamilyOperational, op: op}
 }
 
-// SignalKind wraps a parsed signal type-path as a typed Kind. The
-// path is taken verbatim — taxonomy validation has happened at the
-// signal emit site (via signal.ValidateTypePath). Empty paths panic;
-// an empty signal-class kind would round-trip through an empty wire
-// string indistinguishable from "no kind", which the spec's typed
-// boundary exists to prevent.
 func SignalKind(path string) Kind {
 	if path == "" {
 		panic("events.SignalKind: empty signal type-path")
@@ -96,25 +39,12 @@ func SignalKind(path string) Kind {
 	return Kind{family: FamilySignal, signalPath: path}
 }
 
-// Family returns the kind's family discriminator. FamilyUnknown means
-// the value is the zero Kind and must not be persisted.
 func (k Kind) Family() Family { return k.family }
 
-// OperationalKind returns the wrapped proto enum value when the kind
-// is operational; for signal-class kinds it returns
-// OPERATIONAL_KIND_UNSPECIFIED.
 func (k Kind) OperationalKind() genv1.OperationalKind { return k.op }
 
-// SignalPath returns the wrapped signal type-path when the kind is
-// signal-class; for operational kinds it returns the empty string.
 func (k Kind) SignalPath() string { return k.signalPath }
 
-// String produces the canonical wire form rimsky persists in
-// rimsky_events.kind: snake_case operational name (e.g.
-// "state_transition", "auth.access_attempted") for operational
-// kinds; verbatim slash-delimited type-path for signal-class kinds;
-// empty string for the zero Kind (a caller-side bug — Append paths
-// log the empty value).
 func (k Kind) String() string {
 	switch k.family {
 	case FamilyOperational:
@@ -130,38 +60,10 @@ func (k Kind) String() string {
 	}
 }
 
-// IsZero reports whether k is the unset zero value.
 func (k Kind) IsZero() bool { return k.family == FamilyUnknown }
 
-// ErrUnknownKind is returned by ParseKindString when the string does
-// not match a canonical operational name and is not shaped like a
-// signal type-path. Persistence read paths surface this error rather
-// than silently coerce to a synthetic "unknown" kind (per
-// decision:event-log-kind-enum: defensive error at the unmarshal
-// boundary).
 var ErrUnknownKind = errors.New("events.ParseKindString: unknown kind")
 
-// ParseKindString parses the canonical wire form back to a typed
-// Kind. The rules:
-//
-//  1. Empty input is an error (a zero-Kind value is not a valid
-//     parse — callers gate empties separately if they want a no-op).
-//  2. If s matches a known operational name (snake_case from the
-//     proto enum), return that operational Kind.
-//  3. Otherwise, if s carries a slash (canonical signal type-paths
-//     are slash-delimited), treat it as a signal-class kind. The
-//     persistence-layer caller is encouraged to validate against the
-//     signal taxonomy if it has the signal package in its dependency
-//     budget; here we accept any non-empty slash-bearing string as
-//     opaque.
-//  4. Otherwise, return ErrUnknownKind wrapped with the offending
-//     value.
-//
-// Note: the audit log historically uses dot-prefixed operational
-// names ("auth.access_attempted", "breakpoint.hit"); those land in
-// the operational name table above and parse as operational. So a
-// slash in the string is the only honest disambiguator from
-// operational vs. signal at parse time.
 func ParseKindString(s string) (Kind, error) {
 	if s == "" {
 		return Kind{}, fmt.Errorf("%w: empty string", ErrUnknownKind)
@@ -175,15 +77,6 @@ func ParseKindString(s string) (Kind, error) {
 	return Kind{}, fmt.Errorf("%w: %q", ErrUnknownKind, s)
 }
 
-// operationalKindWireForm maps the proto enum value to the canonical
-// wire string rimsky persists. The strings here ARE the durable
-// catalog: emit sites used to construct these as literals; now they
-// thread through the typed Kind, with the literal mapping
-// centralized so a single grep over this file enumerates every
-// canonical operational kind.
-//
-// Keys must stay in sync with the OperationalKind enum in
-// proto/v1/events.proto. New entries land in BOTH places.
 var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED:           "auth.access_attempted",
 	genv1.OperationalKind_OPERATIONAL_KIND_AUTH_ACCESS_DENIED:              "auth.access_denied",
@@ -232,9 +125,6 @@ var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED:          "debug.override.applied",
 }
 
-// operationalKindFromWire is the reverse index of
-// operationalKindWireForm. Built once at package init from the
-// canonical map above so the two stay in sync by construction.
 var operationalKindFromWire = func() map[string]genv1.OperationalKind {
 	m := make(map[string]genv1.OperationalKind, len(operationalKindWireForm))
 	for op, s := range operationalKindWireForm {
@@ -243,10 +133,6 @@ var operationalKindFromWire = func() map[string]genv1.OperationalKind {
 	return m
 }()
 
-// AllOperationalKinds returns the canonical wire-form names of every
-// operational kind. Used by the audit-read handler to declare its
-// allowed set and by tests / read-API diagnostics that want to
-// enumerate the catalog. Order is unspecified.
 func AllOperationalKinds() []string {
 	out := make([]string, 0, len(operationalKindWireForm))
 	for _, s := range operationalKindWireForm {
@@ -255,14 +141,6 @@ func AllOperationalKinds() []string {
 	return out
 }
 
-// KindAuthAccessAttempted constructors for the operational kinds most often
-// emitted from runtime/control. These let call sites avoid the
-// verbose genv1 spelling without re-introducing string literals.
-// Add more as emit sites grow.
-//
-// Each constructor's body is the typed equivalent of one of the
-// pre-Pass-2 literal kind strings; collectively they enumerate the
-// operational catalog above.
 func KindAuthAccessAttempted() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED)
 }

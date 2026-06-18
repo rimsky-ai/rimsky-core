@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Tests for materialization-time tag substitution on the instance-
-// factory path. Per spec
-
 package controlapi
 
 import (

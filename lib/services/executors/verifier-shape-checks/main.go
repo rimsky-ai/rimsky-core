@@ -19,11 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 )
 
-// main verifier executor — protocol-shape reference impl. Env vars
-// follow the bundled-executor pattern (`RIMSKY_EXECUTOR_<NAME>_*`).
-//
-// @deliberate: implements the verifier-executor pattern
-// (documentation-only, no successor concept).
 func main() {
 	host := envOr("RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_HOST", "0.0.0.0")
 	port := atoiOr("RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_PORT", 9095)
@@ -40,9 +35,6 @@ func main() {
 	srv := grpc.NewServer()
 	genv1.RegisterExecutorServer(srv, NewServer(stubMode))
 	RegisterObservability(srv)
-	// @constraint: verifier-shape-checks advertises role="executor" validation
-	// alongside its executor role so rimsky's control-api can cross-check the
-	// resolved attribute schema at template registration.
 	genv1.RegisterValidationServer(srv, NewValidationServer())
 
 	ctx, cancel := context.WithCancel(context.Background())

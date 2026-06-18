@@ -2,41 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// End-to-end proof that the platform refuses any message-emit that omits the
-// mandatory `Idempotency-Key` header, against the REAL assembled product.
-//
-// S-control-api-mcp-idempotency-key-required: as a publisher, when I emit a
-// message via `POST /instances/{id}/messages`, the platform refuses any
-// request that omits the `Idempotency-Key` header, so replay-dedup is
-// mandatory and a missing key can never silently bypass it.
-//
-// Unlike a handler-altitude unit test, this drives the REAL control-api
-// handler inside the running rimsky-all-in-one image over real HTTP (not an
-// httptest recorder, not an in-process call). The value path is the live
-// `handleCreateMessage` reached through the chi router, the auth middleware
-// chain, and the real persistence layer (`rimsky_message_idempotencies` +
-// the message envelope insert) on the baked SQLite backend. The control-api,
-// scheduler, and supervisor are the real value-delivering components; the
-// in-tree stub executor stands in for "whatever executor your deployment
-// provides" so the template's worker node can be claimed/dispatched, but the
-// thing under test — the idempotency-key guard and the dedup INSERT — is the
-// real, shipped control-api code path.
-//
-// The three observable outcomes the story names are each asserted at the wire:
-//
-//	(1) A POST carrying a valid invalidate body but NO Idempotency-Key returns
-//	    400 with a header-required diagnostic, AND leaves no trace: a
-//	    subsequent GET /instances/{id}/messages shows zero messages (no
-//	    envelope, and — since the dedup INSERT is gated on the same tx as the
-//	    envelope insert — no idempotency row either).
-//	(2) A POST that DOES carry the header returns 201 Created with a message_id.
-//	(3) A third POST replaying that same header returns 200 OK with the
-//	    IDENTICAL message_id and inserts no second envelope (GET still shows
-//	    exactly one message).
-//
-// If the guard ever regresses (an empty/absent key silently accepted, or the
-// replay producing a fresh envelope), this test fails on the observable HTTP
-// status / message-count, not a Docker error.
 package scenarios
 
 import (
@@ -51,18 +16,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// TestControlAPIIdempotencyRequired_E2E proves the mandatory-Idempotency-Key
-// contract end to end against the live control-api: a keyless emit is rejected
-// 400 and leaves no message, a keyed emit is accepted 201, and a replay of the
-// same key is deduped 200 to the original message_id with no second envelope.
 func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// @constraint: the stub executor must be reachable on the shared network
-	// before rimsky starts — the control-api fires a Capabilities handshake
-	// against declared executors at startup, so the order is network first,
-	// then the executor peer, then rimsky on the baked SQLite default.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
 
@@ -72,11 +29,6 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// @constraint: a single worker node gives the message-emit path a real
-	// node to source a delivery frame on (resolveMessageFrameSource needs at
-	// least one node); the declared `messages:` block lets the test POST a
-	// well-formed envelope of a recognized type — the post-message-schema-layer
-	// control-api rejects undeclared types at the route.
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":    "idempotency-required-e2e",
@@ -101,20 +53,9 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 
 	messagesPath := "/v1/instances/" + instanceID + "/messages"
 
-	// @constraint: post-spec instance creation is idle — the ledger is
-	// structurally empty before the test's emits, since
-	// createScenarioInstance POSTs to /v1/instances directly and never
-	// emits a wake (the compose driver's empty-message wake does not
-	// run on this test path). We baseline what is present rather than
-	// asserting absolute zero so a future seed step added at this call
-	// site does not silently invalidate the count math.
 	// @story: instance-create-is-idle
 	baseline := countInstanceMessages(t, ep, messagesPath)
 
-	// @deliberate: the body is held constant across all three POSTs below so
-	// the ONLY variable under test is the presence/absence of the
-	// Idempotency-Key header — any other delta would muddy what the wire
-	// response is asserting about.
 	invalidateBody := map[string]any{
 		"type": "idem/probe",
 		"payload": map[string]any{
@@ -122,10 +63,6 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 		},
 	}
 
-	// @constraint: control-api MCP requires Idempotency-Key on emit — a
-	// keyless emit with an otherwise valid body must be refused 400 with a
-	// header-required diagnostic, so a missing key can never silently bypass
-	// dedup.
 	status, raw, _ := postMessage(t, ep, messagesPath, invalidateBody, "")
 	if status != http.StatusBadRequest {
 		t.Fatalf("keyless POST %s returned %d, want 400 — a missing Idempotency-Key must be refused, not silently accepted\nbody: %s",
@@ -135,19 +72,11 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 		t.Fatalf("keyless POST 400 body did not name the required Idempotency-Key header; got: %s", string(raw))
 	}
 
-	// @constraint: the rejected keyless emit must leave NO trace — the dedup
-	// INSERT and the envelope insert share one tx and both run only AFTER the
-	// key guard, so a rejected keyless POST inserts neither (no envelope ⇒ no
-	// idempotency row, since the row is written in the same tx as the envelope
-	// it points at) and the count stays at baseline.
 	if n := countInstanceMessages(t, ep, messagesPath); n != baseline {
 		t.Fatalf("after a rejected keyless POST, GET %s shows %d messages, want baseline %d — the rejected emit must leave no envelope (and thus no idempotency row)",
 			messagesPath, n, baseline)
 	}
 
-	// @constraint: a keyed emit must return 201 Created with a message_id.
-	// The status-code distinction (201 first insert vs 200 replay) is
-	// operator-visible, so it is asserted exactly.
 	const idemKey = "idem-key-e2e-0001"
 	status, raw, firstMsgID := postMessage(t, ep, messagesPath, invalidateBody, idemKey)
 	if status != http.StatusCreated {
@@ -157,15 +86,10 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 		t.Fatalf("first keyed POST returned no message_id; body: %s", string(raw))
 	}
 
-	// @constraint: exactly one new envelope must exist now (baseline + 1) —
-	// the accepted keyed emit inserts a single envelope, no more.
 	if n := countInstanceMessages(t, ep, messagesPath); n != baseline+1 {
 		t.Fatalf("after the first keyed POST, GET %s shows %d messages, want exactly baseline+1=%d", messagesPath, n, baseline+1)
 	}
 
-	// @constraint: a replay POST carrying the SAME key must return 200 OK
-	// with the IDENTICAL message_id and insert no second envelope. This is
-	// the dedup guarantee the mandatory key exists to deliver.
 	status, raw, replayMsgID := postMessage(t, ep, messagesPath, invalidateBody, idemKey)
 	if status != http.StatusOK {
 		t.Fatalf("replay keyed POST %s returned %d, want 200 OK (idempotent dedup)\nbody: %s", messagesPath, status, string(raw))
@@ -179,17 +103,6 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 	}
 }
 
-// postMessage POSTs body as JSON to ep.BaseURL+path, optionally setting the
-// Idempotency-Key header (empty key ⇒ header omitted entirely, which is the
-// precise condition the guard must reject). Returns the HTTP status, the raw
-// response body, and the decoded message_id (empty when the body has none).
-//
-// The harness PostJSON helper sets no custom headers, so this scenario uses a
-// local raw-HTTP poster: the header's presence/absence is the variable under
-// test and must be controllable per request. Content-Type application/json is
-// always set because the control-api write surface gates on it
-// (AllowContentType middleware) — a missing Content-Type would be rejected
-// before the handler runs, masking the idempotency-key behavior under test.
 func postMessage(t *testing.T, ep harness.RimskyEndpoint, path string, body map[string]any, idempotencyKey string) (int, []byte, string) {
 	t.Helper()
 	raw, err := json.Marshal(body)
@@ -217,16 +130,8 @@ func postMessage(t *testing.T, ep harness.RimskyEndpoint, path string, body map[
 	return resp.StatusCode, out, decoded.MessageID
 }
 
-// countInstanceMessages reads GET /instances/{id}/messages and returns the
-// number of envelopes recorded for the instance. Pages are not walked because
-// the test inserts at most one message; a non-empty next_cursor under that
-// invariant would itself be a defect, so a single page is the right read.
 func countInstanceMessages(t *testing.T, ep harness.RimskyEndpoint, path string) int {
 	t.Helper()
-	// @deliberate: a short retry settle window guards against any
-	// read-after-write projection lag on SQLite rather than racing on the
-	// first GET. The envelope is durably committed before the POST returns,
-	// so the loop usually completes on the first iteration.
 	deadline := time.Now().Add(5 * time.Second)
 	var last int
 	for {

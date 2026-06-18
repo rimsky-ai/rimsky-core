@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Tests for the `source_file:` resolution pass in readSpecFile /
-// resolveSourceFileRefs. Per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// Item 2.
-
 package cli
 
 import (
@@ -186,7 +181,6 @@ func TestResolveSourceFileRefs_WithSiblings_NotRecognized(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	m := got.(map[string]any)["x"].(map[string]any)
-	// @constraint: source_file + sibling keys is not a ref — object passes through unchanged.
 	if m["source_file"] != "a.md" || m["foo"] != "bar" {
 		t.Fatalf("object with siblings should be left intact: %v", m)
 	}
@@ -207,11 +201,6 @@ func TestResolveSourceFileRefs_NonStringValue_NotRecognized(t *testing.T) {
 	}
 }
 
-// TestReadSpecFile_HashStability_IdenticalContent confirms that two
-// templates with different `source_file:` paths whose targets carry
-// identical content resolve to specs that hash identically.
-// (The hash is computed over the resolved bytes per spec §Item 2 "Hash
-// semantics".)
 func TestReadSpecFile_HashStability_IdenticalContent(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
@@ -271,10 +260,6 @@ nodes:
 	}
 }
 
-// TestReadSpecFile_HashStability_DifferentContent_ChangesHash confirms
-// that re-registering after editing a referenced file produces a
-// distinguishable spec (which the canonical-hash predicate will hash
-// differently).
 func TestReadSpecFile_HashStability_DifferentContent_ChangesHash(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, "system.md")
@@ -316,10 +301,6 @@ nodes:
 	}
 }
 
-// TestReadSpecFile_SourceFileResolved exercises sibling-file resolution
-// via readSpecFile: write a small template YAML that references a
-// sibling prompt file; confirm the decoded TemplateSpec carries the
-// resolved content (not the reference).
 func TestReadSpecFile_SourceFileResolved(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, "system.md")
@@ -359,9 +340,6 @@ nodes:
 	}
 }
 
-// propDefault is a test helper: returns the `default:` value for the
-// named property on a NodeAttributesDef. Returns (nil, false) on any
-// missing intermediate.
 func propDefault(def *node.NodeAttributesDef, name string) (any, bool) {
 	if def == nil || def.Schema == nil {
 		return nil, false

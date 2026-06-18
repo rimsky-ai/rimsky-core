@@ -91,11 +91,6 @@ func TestScopeByteEqualForSamePath(t *testing.T) {
 	}
 }
 
-// TestScopeCanonicalizationCollapsesEquivalentForms verifies that
-// selectors that resolve to the same on-disk path produce byte-equal
-// scope bytes. Without canonicalization "foo" and "./foo" would
-// produce byte-different regions and the rimsky-side scope-conflict
-// check would fail to detect the collision.
 func TestScopeCanonicalizationCollapsesEquivalentForms(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	equivalents := []string{"foo", "./foo", "foo/.", "./foo/.", "foo/"}
@@ -115,10 +110,6 @@ func TestScopeCanonicalizationCollapsesEquivalentForms(t *testing.T) {
 	}
 }
 
-// TestOpenRejectsPathTraversal verifies that selectors trying to
-// escape the configured root via ".." are rejected before any path
-// resolution happens. Without this guard a selector like
-// "../../etc/passwd" would resolve to a path outside s.root.
 func TestOpenRejectsPathTraversal(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	cases := []string{
@@ -137,9 +128,6 @@ func TestOpenRejectsPathTraversal(t *testing.T) {
 	}
 }
 
-// TestOpenRejectsAbsolutePath verifies that selectors that are
-// absolute paths are rejected — selectors must be relative paths
-// under the configured root.
 func TestOpenRejectsAbsolutePath(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	if _, err := st.Open(context.Background(), "c1", "/etc/passwd"); err == nil {

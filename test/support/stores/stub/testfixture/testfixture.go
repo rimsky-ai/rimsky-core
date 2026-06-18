@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package testfixture starts the stub store-service on ephemeral
-// listeners for in-process loopback tests.
 package testfixture
 
 import (
@@ -15,9 +13,6 @@ import (
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
 )
 
-// Start spawns server.RunWithStore on a goroutine bound to ephemeral
-// ports. Returns the gRPC endpoint, the in-memory *Store (for test
-// assertions), and a teardown closure.
 func Start(t *testing.T, cfg stubstore.Config) (endpoint string, store *stubstore.Store, teardown func()) {
 	t.Helper()
 	grpcLis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -33,8 +28,6 @@ func Start(t *testing.T, cfg stubstore.Config) (endpoint string, store *stubstor
 	st := stubstore.New(cfg)
 	done := make(chan struct{})
 	go func() {
-		// @deliberate: t.Logf is unsafe to call after the test has returned; teardown
-		// blocks on `done` so we just discard the return value here.
 		_ = server.RunWithStore(ctx, server.Config{
 			Substrate:            cfg,
 			EnableLifecycle:      true,

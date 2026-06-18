@@ -6,11 +6,6 @@
 // @diverged: true
 // @reason: parallel driver — SQLite connection pool (modernc.org/sqlite single-writer with widened pool for in-process unified stack) vs Postgres (pgx connection pool, no writer-serialization constraint)
 
-// Package sqlite is the SQLite-backed persistence.Database.
-//
-// SQLite is the dev-only driver per spec §1 and §6. Multi-host /
-// multi-replica deployments require Postgres. The startup banner says
-// so loudly on every process that opens it.
 package sqlite
 
 import (
@@ -31,9 +26,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// sqliteMaxOpenConns is the connection-pool size for the SQLite driver.
-// See the comment in open() for the load-bearing details.
-//
 // @decision: persistence-driver — the in-process unified stack
 // (compose-run verb) and the supervisor's settle tx + control-api's
 // request handlers all open their own Begin against the same driver.
@@ -53,11 +45,6 @@ func init() {
 	persistence.RegisterSQLite(open)
 }
 
-// database is the persistence.Database impl wrapping a *sql.DB plus the
-// per-feature aspect impls. Fully wired: AdvisoryLocker(), Tables(), and
-// Queue() all return non-nil concrete impls. SQLite is the dev-only
-// driver per spec §6 — for production / multi-replica deploys, use
-// the postgres driver.
 type database struct {
 	db *sql.DB
 	c  *advisoryLockerImpl
@@ -86,9 +73,6 @@ func (d *database) AdvisoryLocker() persistence.AdvisoryLocker {
 	return d.c
 }
 
-// SetBlobBackend installs the active BlobBackend + spill threshold +
-// orphan-retention window on the database's Tables. See the postgres impl
-// for the contract; same semantics apply to SQLite.
 func (d *database) SetBlobBackend(bb persistence.BlobBackend, threshold int, retention time.Duration) {
 	if d.s != nil {
 		d.s.SetBlobBackend(bb, threshold, retention)
@@ -97,11 +81,8 @@ func (d *database) SetBlobBackend(bb persistence.BlobBackend, threshold int, ret
 
 func (d *database) Close() error { return d.db.Close() }
 
-// Ping issues a trivial round-trip to surface connectivity problems.
 func (d *database) Ping(ctx context.Context) error { return d.db.PingContext(ctx) }
 
-// Migrate runs all embedded SQL migrations under the advisory-locker's
-// migration lock.
 func (d *database) Migrate(ctx context.Context, log shared.Logger) error {
 	if d.c == nil {
 		return errors.New("sqlite driver: advisory locker not initialized")
@@ -113,11 +94,6 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Databa
 	if !filepath.IsAbs(cfg.Path) {
 		return nil, fmt.Errorf("sqlite: path %q must be absolute", cfg.Path)
 	}
-	// @constraint: path is spliced into a `file:` URI below, where `?` begins the
-	// query string — a `?` in the path would make the database file the driver
-	// opens diverge from the path the advisory locker derives its lock-file names
-	// from (two processes could lock different files). Reject outright rather
-	// than risking a split-brain.
 	if strings.Contains(cfg.Path, "?") {
 		return nil, fmt.Errorf("sqlite: path %q must not contain '?' (reserved by the file: URI query string)", cfg.Path)
 	}
@@ -126,11 +102,6 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Databa
 		return nil, fmt.Errorf("sqlite: parent dir %q: %w", parent, err)
 	}
 
-	// @deliberate: modernc.org/sqlite supports PRAGMA via _pragma=name=value
-	// query params. Repeat the param for each PRAGMA. _txlock=immediate runs
-	// each tx as BEGIN IMMEDIATE so the writer slot is held for the whole tx
-	// (the SQLite analogue of a shared exclusive lock — used by the
-	// coordinator's no-op named/scope locks).
 	q := url.Values{}
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "synchronous(NORMAL)")
@@ -143,26 +114,6 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Databa
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open: %w", err)
 	}
-	// @deliberate: sqliteMaxOpenConns is NOT load-bearing for correctness.
-	// Conn-level serialization only ever covered one process, and no
-	// read-then-write impl relies on it anymore: the Tables layer requires an
-	// explicit caller-supplied tx (tablesImpl.q panics on nil — the BEGIN
-	// IMMEDIATE writer-slot hold covers e.g. node_attributes.MergeDelta), and
-	// the Queue / APIKey surfaces that accept tx == nil open an internal
-	// immediate-mode transaction around their multi-statement sequences
-	// (queueImpl.Enqueue, apiKeysImpl.MarkRevoked). Atomicity therefore holds
-	// across OS processes sharing the database file, not just across
-	// goroutines. The value is 8 — wider than 1 so concurrent goroutines that
-	// each open their own Persist.Transaction (the supervisor's dispatch tx +
-	// the control-api's read paths + the scheduler's tick polls) don't
-	// serialize at the connection pool. SQLite admits one writer per file at
-	// a time and writes contend at that file-level slot via
-	// busy_timeout=5000ms, but read-only paths run lock-free under WAL and
-	// benefit from the wider pool. At 1 conn, a single long-running tx blocks
-	// every other Begin in the process — under the unified in-process stack
-	// this manifests as the supervisor's settle tx starving control-api
-	// request handlers and the wait-loop polls they back, producing
-	// context-deadline-exceeded errors on every goroutine after ~30s.
 	db.SetMaxOpenConns(sqliteMaxOpenConns)
 	if got := db.Stats().MaxOpenConnections; got != sqliteMaxOpenConns {
 		_ = db.Close()

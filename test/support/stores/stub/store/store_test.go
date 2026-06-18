@@ -105,9 +105,6 @@ func TestApplyPickActionReleaseToBack(t *testing.T) {
 	}
 }
 
-// TestApplyPickActionRecycleAbandonReturnsItemToTail — Abandon with
-// recycle puts the item back at the queue tail; the next Open picks
-// the OTHER item (b) first, then the recycled one.
 func TestApplyPickActionRecycleAbandonReturnsItemToTail(t *testing.T) {
 	items := []json.RawMessage{
 		json.RawMessage(`{"v":"a"}`),

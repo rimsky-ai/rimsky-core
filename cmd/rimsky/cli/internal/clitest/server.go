@@ -2,23 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package clitest provides an httptest-backed fake control-api for
-// CLI tests. It lives under internal/ because it imports rimsky's
-// canonical-hash and template-spec packages to mirror the production
-// hashing predicate exactly — that coupling is sanctioned because
-// clitest exists to validate the CLI against rimsky internals, not as
-// a public test fixture. Only packages under control/cli/ may import it.
-//
-// Usage:
-//
-//	srv := clitest.NewServer(t)
-//	defer srv.Close()
-//	srv.State.RegisterTemplate(spec, "tag", "")
-//	client := cli.NewClient(srv.URL)
-//
-// FailNext lets a test inject failures keyed by "METHOD path" — when
-// matched, the handler returns the configured status+body before
-// touching state. Times decrements on each match; 0 means once.
 package clitest
 
 import (
@@ -37,7 +20,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Server wraps an httptest.Server with state and failure injection.
 type Server struct {
 	*httptest.Server
 	State *InMemoryState
@@ -46,15 +28,12 @@ type Server struct {
 	failNext map[string]*FailureSpec
 }
 
-// FailureSpec configures a one-shot failure injection.
 type FailureSpec struct {
 	Status int
 	Body   any
-	// Times: how many subsequent calls fail; 0 means once.
-	Times int
+	Times  int
 }
 
-// NewServer constructs a Server bound to a fresh in-memory state.
 func NewServer(t testing.TB) *Server {
 	t.Helper()
 	srv := &Server{
@@ -67,8 +46,6 @@ func NewServer(t testing.TB) *Server {
 	return srv
 }
 
-// SetFailure configures a failure for the next call to "METHOD path"
-// (path may be a chi-style template). Times <= 0 means once.
 func (s *Server) SetFailure(method, path string, spec FailureSpec) {
 	s.failMu.Lock()
 	defer s.failMu.Unlock()
@@ -184,14 +161,6 @@ func (s *Server) handleRegisterTemplate(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// handleValidateTemplate mirrors POST /templates/validate: always HTTP
-// 200 with {ok, validation_errors, validation_warnings}, and persists
-// nothing (it never touches s.State). This fake does not run the real
-// validation pipeline; the verdict is derived deterministically from
-// the spec so tests can drive the not-ok path — any node referencing the
-// sentinel executor "drift-executor" yields an error, and any node
-// referencing "warn-executor" yields a warning. `?warnings_as_errors=true`
-// folds warnings into the ok verdict, mirroring the live handler.
 func (s *Server) handleValidateTemplate(w http.ResponseWriter, r *http.Request) {
 	if s.maybeFail(w, r, "/v1/templates/validate") {
 		return
@@ -364,7 +333,6 @@ func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isTagForm {
-		// @deliberate: tag-form delete removes only the tag while other tags still point at the hash; the underlying template is removed only when this was the last tag.
 		if n := s.State.CountTagsForHash(hash); n > 1 {
 			s.State.DeleteTag(ref)
 			writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "tag_only": true})
@@ -522,14 +490,6 @@ func nodeCountForSpec(spec map[string]any) int {
 	return 0
 }
 
-// handleCreateInstanceMessage stubs POST /v1/instances/{idOrKey}/messages.
-// The real control-api dedups on the Idempotency-Key header and returns the
-// original message_id with 200 OK on replay; for the cli stub we synthesize
-// a deterministic message_id from the idempotency key (when present) so a
-// re-issued request returns the same id, and we fall back to a monotonic
-// counter when the header is missing. The body shape mirrors the real
-// surface enough for the CLI client to round-trip successfully.
-//
 // @decision: compose-driver-emits-empty-message-after-create
 func (s *Server) handleCreateInstanceMessage(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
@@ -549,15 +509,6 @@ func (s *Server) handleCreateInstanceMessage(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad body"})
 		return
 	}
-	// @constraint: Idempotency-Key is MANDATORY on every emit per the
-	// live control-api semantics (`code:lib/control/controlapi/messages.go::handleCreateMessage`
-	// at the pre-tx 400-on-missing-header gate). The stub mirrors that
-	// gate so a CLI test that omits the header against the stub fails
-	// the same way it would against the real server, rather than
-	// passing here and breaking in production. The CLI side helper
-	// (`code:cmd/rimsky/cli/client.go::CreateInstanceMessage`) always
-	// supplies the header; this guard catches a hand-rolled request
-	// that bypasses the helper.
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Idempotency-Key header is required"})
@@ -576,7 +527,6 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hash := r.URL.Query().Get("template_hash")
-	// @constraint: the real control-api's /instances endpoint filters only on template_hash and active, so this fake must also ignore instance_key — otherwise tests pass here while breaking against the real server.
 	out := []map[string]any{}
 	for _, inst := range s.State.ListInstances(hash, "") {
 		out = append(out, instanceToWire(inst))
@@ -620,14 +570,6 @@ func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
-// handleTerminateInstance mirrors POST /instances/{idOrKey}/terminate: it
-// marks the instance terminal (sets terminated_at) and returns the updated
-// instance projection with 200. Idempotent — an already-terminal instance
-// returns its current projection unchanged. The optional `{reason}` body is
-// accepted and ignored (the real handler records it as an audit event;
-// the fake holds no event log for terminate). This mirrors the live
-// control-api force-terminate surface so CLI tests don't pass against the
-// fake while breaking against the real server.
 func (s *Server) handleTerminateInstance(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
 	if s.maybeFail(w, r, "/v1/instances/"+idOrKey+"/terminate") {
@@ -659,14 +601,6 @@ func (s *Server) handleListInstanceNodes(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": out, "next_cursor": ""})
 }
 
-// handleListBreakpointHits mirrors GET /instances/{idOrKey}/breakpoint-hits:
-// the read-only twin of the MCP `rimsky://instances/{id}/breakpoint-hits`
-// resource. Returns the live route's {hits, next_since, truncated} shape,
-// fetching limit+1 rows so `truncated` reflects a row beyond the requested
-// page. since defaults to 0; limit defaults to 100 and is capped at 500,
-// matching resourceReadDefaultLimit / resourceReadMaxLimit on the real
-// route so CLI tests don't pass against the fake while breaking against
-// the real server.
 func (s *Server) handleListBreakpointHits(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
 	if s.maybeFail(w, r, "/v1/instances/"+idOrKey+"/breakpoint-hits") {
@@ -749,7 +683,6 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// @constraint: cursor decode must match foundation/persistence/{sqlite,postgres}/events.go::decodeEventCursor (base64 JSON {"o":<occurred>,"i":<id>}); a non-base64 cursor (e.g. the CLI's old numeric fmt.Sprintf("%d", lastSeenID) token) must be rejected with `events.list: bad cursor` so a CLI test can't silently pass against a token the live server would 500 on.
 	cursor := q.Get("cursor")
 	var (
 		cursorOccurred time.Time
@@ -769,7 +702,6 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 
 	events := s.State.EventsPage(instanceID, cursorOccurred, cursorID, hasCursor, limit)
 
-	// @constraint: next_cursor must mirror foundation/persistence/{sqlite,postgres}/events.go — opaque keyset of the last (oldest) row on the page, set only when the page is full (len == limit); a partial page returns "" so clients wait rather than page on past the tail.
 	nextCursor := ""
 	if len(events) == limit && len(events) > 0 {
 		last := events[len(events)-1]
@@ -781,11 +713,6 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// eventCursorFake mirrors the live persistence layer's cursor struct
-// (foundation/persistence/{sqlite,postgres}/events.go) byte-for-byte: the
-// keyset position is base64(JSON {"o":<occurred>,"i":<id>}). The fake
-// re-implements it (rather than importing the unexported persistence type)
-// so the CLI is driven against the real wire shape.
 type eventCursorFake struct {
 	O time.Time `json:"o"`
 	I int64     `json:"i"`
@@ -824,7 +751,6 @@ func instanceToWire(inst *storedInstance) map[string]any {
 	return m
 }
 
-// @constraint: tagFakeRe / hashFakeRe / hashFakeStr must mirror the real control-api's tag-vs-hash regexes (lib/control/api template handlers); any drift here lets CLI tests accept refs the live server would reject (or vice versa).
 var (
 	tagFakeRe   = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._:@/-]{0,254}$`)
 	hashFakeRe  = regexp.MustCompile(`^sha256-[0-9a-f]{64}$`)

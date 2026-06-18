@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// apply.go — execute a Plan serially against the control-api.
-//
-// Compose-up entry point: parse manifest, query state, compute plan,
-// run destructive-op pre-check, apply. Compose-plan: same flow up to
-// emit. Compose-status: read-only annotation.
 package compose
 
 import (
@@ -24,53 +19,18 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 )
 
-// ApplyOpts controls how ApplyPlan runs. Confirmation is gated upstream
-// in runComposeUpWithManifest / runComposeDownWithManifest via
-// confirmDestructive — ApplyPlan does not consult any --yes flag, so
-// this struct carries only the writer for step-by-step progress logs
-// and the per-verb behavior toggles ApplyPlan needs to thread into
-// CreateInstance.
 type ApplyOpts struct {
 	Logger io.Writer
-	// TerminateAfterRun, when true, sets terminate_after_run=true on
-	// every CreateInstance the engine issues. Used by `compose run` so
-	// manifest-declared instances self-terminate after their first run
-	// reaches terminal — the same `--no-keep` knob the existing
-	// `rimsky run` verb sets. The other compose verbs (up/down/plan/
-	// status) leave this false so durable-by-default instances remain
-	// the deployment shape.
-	//
 	// @decision: instance-self-termination
 	TerminateAfterRun bool
 }
 
-// CreatedInstance records one instance the apply created so the
-// caller — most importantly the `compose run` verb's terminal-wait
-// loop — can resolve the server-assigned instance UUID without
-// re-listing. Key is the manifest-prefixed instance key
-// (compose:<project>:<name>); ID is the control-api-returned UUID;
-// TemplateHash is the content-hash of the template the instance was
-// created against (the compose-run wake step needs this to decide
-// whether the template has a structural root worth waking).
 type CreatedInstance struct {
 	Key          string
 	ID           string
 	TemplateHash string
 }
 
-// ApplyPlan executes plan.Steps serially against c. Returns
-// immediately on the first step error, wrapping the failed step. The
-// returned created slice records every InstanceCreate step the apply
-// successfully landed; the existing up/down callers ignore it, the
-// compose-run verb consumes it to drive its terminal-wait loop.
-//
-// Pre-2026-05-02 the CLI computed plan-time hashes against the typed
-// TemplateSpec while the control-api stored hashes computed against the
-// shadow-tree-decoded view; those two could diverge when capital-N
-// capital keys leaked into one side's JSON marshal but not the other.
-// The 2026-05-02 json-tags cleanup unified them — both sides now hash
-// the same lowercase-snake-case bytes — so ApplyPlan no longer needs
-// the hash-rewrite defense it carried during the rimsky rollout.
 func ApplyPlan(ctx context.Context, c *cli.Client, plan *Plan, opts ApplyOpts) ([]CreatedInstance, error) {
 	w := opts.Logger
 	if w == nil {
@@ -100,13 +60,6 @@ func stepTarget(s Step) string {
 	}
 }
 
-// applyStep executes one plan step against the control-api and logs
-// the outcome. Returns (created, err): a non-nil created handle on a
-// successful ActionInstanceCreate so ApplyPlan can build its
-// CreatedInstance roster; nil on every other step. opts carries the
-// caller's per-verb behavior toggles (currently TerminateAfterRun);
-// the parameter is by-value because Step iterators inside ApplyPlan
-// share one opts and applyStep never mutates it.
 func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts ApplyOpts) (*CreatedInstance, error) {
 	logf := func(verb, target, status string) {
 		fmt.Fprintf(w, "  %s %s %s\n", verb, target, status)
@@ -125,7 +78,6 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 		return nil, nil
 	case ActionTagCreate:
 		if _, err := c.CreateTag(ctx, cli.CreateTagRequest{Tag: step.Tag, Template: step.TemplateHash}); err != nil {
-			// @deliberate: tag already exists pointing at the same hash → idempotent skip rather than error.
 			if cli.IsConflict(err) {
 				logf("tag", step.Tag, "skipped (already exists)")
 				return nil, nil
@@ -210,7 +162,6 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 	return nil, nil
 }
 
-// EmitPlan prints plan in human or JSON form per spec §3.2.
 func EmitPlan(w io.Writer, plan *Plan, format cli.Format) {
 	if format == cli.FormatJSON {
 		_ = cli.EmitJSON(w, plan)
@@ -296,17 +247,6 @@ func formatStep(s Step) string {
 	}
 }
 
-// destructive returns true if step needs --yes (or interactive
-// confirmation) per spec §3.6.
-//
-// Most destructiveness is recorded at plan time on Step.Destructive
-// (the bool is the authoritative signal — see plan.go where it's set).
-// Undeploy steps are an exception: their destructiveness depends on
-// whether non-compose instances are bound to the template, and that's
-// computed against live state at apply time so a manifest change
-// between plan and apply still bails. The undeploy-active-bindings
-// table is computed once per apply (precomputeUndeployBindings) and
-// passed in here, so destructive() is a pure check.
 func destructive(step Step, undeployHasNonComposeBindings map[string]bool) bool {
 	if step.Destructive {
 		return true
@@ -317,10 +257,6 @@ func destructive(step Step, undeployHasNonComposeBindings map[string]bool) bool 
 	return false
 }
 
-// precomputeUndeployBindings issues one ListInstances per unique
-// undeploy hash and reports whether each has any non-compose-owned
-// active binding. Unknown / fetch-error → marked destructive
-// pessimistically (so the operator is forced to confirm).
 func precomputeUndeployBindings(ctx context.Context, c *cli.Client, project string, plan *Plan) map[string]bool {
 	out := map[string]bool{}
 	prefix := cli.ReservedTagPrefix + project + ":"
@@ -351,8 +287,6 @@ func precomputeUndeployBindings(ctx context.Context, c *cli.Client, project stri
 	return out
 }
 
-// confirmDestructive prompts on a TTY or requires --yes. Returns true
-// when the operator approved.
 func confirmDestructive(yes bool, in io.Reader, out io.Writer, destructiveSteps []Step) bool {
 	if len(destructiveSteps) == 0 {
 		return true
@@ -390,7 +324,6 @@ func isTerminal(r io.Reader) bool {
 	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
-// composeUpFlags collects the parsed flags for `compose up`.
 type composeUpFlags struct {
 	manifestPath string
 	common       cli.CommonFlags
@@ -412,7 +345,6 @@ func parseComposeFlags(name string, args []string) (*composeUpFlags, []string, i
 	return out, fs.Args(), 0
 }
 
-// loadManifestAndClient is the shared prelude for compose verbs.
 func loadManifestAndClient(flags *composeUpFlags) (*Manifest, *cli.Client, string, int) {
 	m, err := LoadManifest(flags.manifestPath)
 	if err != nil {
@@ -427,9 +359,6 @@ func loadManifestAndClient(flags *composeUpFlags) (*Manifest, *cli.Client, strin
 	return m, c, endpoint, 0
 }
 
-// resolveTemplatePaths rewrites each template's Path to be absolute
-// relative to the manifest's directory. Idempotent — already-absolute
-// paths are left alone.
 func resolveTemplatePaths(m *Manifest, manifestPath string) {
 	mdir := filepath.Dir(manifestPath)
 	for i := range m.Templates {
@@ -439,8 +368,6 @@ func resolveTemplatePaths(m *Manifest, manifestPath string) {
 	}
 }
 
-// clientForManifest resolves the endpoint (manifest-pin precedence) and
-// constructs the cli.Client. Returns (client, endpoint, exitCode).
 func clientForManifest(flags *composeUpFlags, m *Manifest) (*cli.Client, string, int) {
 	cfgPath, _ := cli.DefaultConfigPath()
 	endpoint, err := cli.ResolveEndpointForCompose(flags.common.Endpoint, os.Getenv("RIMSKY_CONTROL_API"), cfgPath, m.Context)
@@ -449,13 +376,10 @@ func clientForManifest(flags *composeUpFlags, m *Manifest) (*cli.Client, string,
 		return nil, "", 2
 	}
 	c := cli.NewClient(endpoint)
-	// @constraint: CLICTRL-4 — compose owns the reserved `compose:` prefix; stamp the trusted compose-origin marker so the control-api server-side guard admits compose-originated tag/instance writes.
 	c.SetComposeOrigin(true)
 	return c, endpoint, 0
 }
 
-// RunComposeUp implements `compose up`. Loads the manifest, resolves
-// the client, and delegates to runComposeUpWithManifest.
 func RunComposeUp(ctx context.Context, args []string) int {
 	flags, _, code := parseComposeFlags("compose up", args)
 	if code != 0 {
@@ -468,8 +392,6 @@ func RunComposeUp(ctx context.Context, args []string) int {
 	return runComposeUpWithManifest(ctx, m, c, flags)
 }
 
-// runComposeUpWithManifest is the shared body of `compose up`.
-// RunComposeUp loads the manifest once and threads it through.
 func runComposeUpWithManifest(ctx context.Context, m *Manifest, c *cli.Client, flags *composeUpFlags) int {
 	state, err := QueryState(ctx, c, m.Project)
 	if err != nil {
@@ -479,7 +401,6 @@ func runComposeUpWithManifest(ctx context.Context, m *Manifest, c *cli.Client, f
 	if err != nil {
 		return reportPlanError(err)
 	}
-	// @deliberate: precompute the active-binding table for undeploys once so we issue at most one ListInstances per unique hash — not one per undeploy step (which previously drove N+1 calls on a plan with multiple undeploys).
 	undeployBindings := precomputeUndeployBindings(ctx, c, m.Project, plan)
 	destructiveSteps := []Step{}
 	for _, step := range plan.Steps {
@@ -501,7 +422,6 @@ func runComposeUpWithManifest(ctx context.Context, m *Manifest, c *cli.Client, f
 	return 0
 }
 
-// RunComposePlan implements `compose plan`.
 func RunComposePlan(ctx context.Context, args []string) int {
 	flags, _, code := parseComposeFlags("compose plan", args)
 	if code != 0 {
@@ -520,14 +440,12 @@ func RunComposePlan(ctx context.Context, args []string) int {
 		return reportPlanError(err)
 	}
 	EmitPlan(os.Stdout, plan, flags.common.Format)
-	// @deliberate: exit 3 mirrors `terraform plan -detailed-exitcode` — any pending change OR any drift warning (params drift on a non-terminal compose-owned instance, where there is no step to schedule but the operator still needs to know) must fail CI gating.
 	if plan.Summary.Changes == 0 && !plan.HasDriftWarnings {
 		return 0
 	}
 	return 3
 }
 
-// RunComposeStatus implements `compose status`.
 func RunComposeStatus(ctx context.Context, args []string) int {
 	flags, _, code := parseComposeFlags("compose status", args)
 	if code != 0 {

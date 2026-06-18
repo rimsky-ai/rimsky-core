@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — by_match declaration order is load-bearing.
-//
-// Two entries match the same dispatch; their overlays touch
-// overlapping attribute paths. Per concept:attribute's L5
-// "later wins on conflict" rule, the later entry's value wins on
-// overlapping keys, and non-conflicting paths from both apply.
 package scenarios
 
 import (
@@ -95,7 +89,6 @@ func TestAttributeOverridesMatchOverlayOrder_LaterWins(t *testing.T) {
 	require.Equal(t, "yes", cli["first-only"], "non-conflicting path from first entry must apply")
 	require.Equal(t, "yes", cli["second-only"], "non-conflicting path from second entry must apply")
 
-	// @deliberate: Both entries fired.
 	var inst *persistence.InstanceRow
 	require.Eventually(t, func() bool {
 		err := h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {

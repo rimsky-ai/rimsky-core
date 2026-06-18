@@ -2,27 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Deterministic injection test for the held-claim aggregate
-// check-and-fire (`auto_terminal.go::CheckAndFireResolution`,
 // @blessed-invariant 13: at holding-subgraph completion exactly one
-// producer verb fires).
-//
-// Two co-holding node-runs (acquirer + `holds:` inheritor) have both
-// reached terminal — the racy shape is two supervisor goroutines
-// observing the completed subgraph nearly simultaneously and each
-// running the check-and-fire. The defense is the SELECT … FOR UPDATE
-// on the rimsky_claim_handles row plus the state='active' guard: the
-// second contender blocks on the row lock until the first commits,
-// then observes state='committed' and no-ops.
-//
-// Forcing the interleaving deterministically requires an injection
-// point between the first contender's check (subgraph complete, fire
-// decided) and its fire (producer verb + Promote) —
-// `RunArgs.CheckAndFireHook`, a nil-default test-only seam. The hook
-// launches the second contender and waits until it is observably
-// blocked on the row lock (pg_stat_activity), so the second check
-// provably runs after the first check but before the first fire. The
-// defense itself (real Postgres row lock + state guard) is NOT stubbed.
 package scenarios
 
 import (
@@ -53,15 +33,9 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	syncCaps := claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	}
-	// @deliberate: Scoped-direct stub store (no pick policies): Open echoes the
-	// selector; Commit/Abandon record into the Calls ledger the test
-	// counts.
 	endpoint, store, teardown := stubfixture.Start(t, stubstore.Config{Capabilities: syncCaps})
 	t.Cleanup(teardown)
 
-	// @constraint: No scheduler / no supervisor: the test drives the check-and-fire
-	// directly so it can thread the injection hook; background sweeps
-	// must not touch the seeded rows.
 	h := scenario.Start(t, scenario.HarnessOpts{
 		NoScheduler:  true,
 		NoSupervisor: true,
@@ -100,11 +74,6 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	mainScopeID := h.GetMainRunScopeID(iid)
 	const supervisorID = "race-supervisor"
 
-	// @deliberate: Seed the post-terminal shape directly: both members' run rows are
-	// already terminal, both claim-holders rows are 'completed', the
-	// claim-handle row is still active and owned. This is exactly the
-	// state the LAST terminating member's release tx observes when it
-	// invokes CheckAndFireResolution.
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE node_id IN ($1, $2)`, acq.ID, inh.ID)
 	acqRunID := uuid.New()
 	inhRunID := uuid.New()
@@ -146,8 +115,6 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 		SupervisorID:  supervisorID,
 	}
 
-	// @deliberate: Contender B: same check-and-fire, no hook. Launched from inside
-	// contender A's check→fire window.
 	var (
 		bErr      error
 		bDone     = make(chan struct{})
@@ -161,11 +128,6 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 		})
 	}
 
-	// @deliberate: waitForBlockedContender polls pg_stat_activity until a backend in
-	// this database is lock-waiting on the claim-handle FOR UPDATE read.
-	// That observation is what makes the interleaving deterministic: B's
-	// check has STARTED (it reached LockForUpdate) while A holds the row
-	// lock between its check and its fire.
 	waitForBlockedContender := func(ctx context.Context) bool {
 		deadline := time.Now().Add(15 * time.Second)
 		for time.Now().Before(deadline) {
@@ -188,21 +150,12 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 		hookFired = true
 		startB.Do(func() {
 			go runB()
-			// @deliberate: Join B's goroutine even when an assertion below FailNows
-			// before the inline <-bDone select — otherwise B outlives the
-			// test body and races teardown. The hook runs on the test
-			// goroutine (A's Transaction executes it synchronously), so
-			// t.Cleanup is legal here. bDone is CLOSED (not a one-shot
-			// send), so the Cleanup receive and the inline receive both
-			// complete.
 			t.Cleanup(func() { <-bDone })
 		})
 		require.True(t, waitForBlockedContender(ctx),
 			"contender B must be observably blocked on the claim-handle row lock inside A's check→fire window")
 	}
 
-	// @deliberate: Contender A: the first check-and-fire, paused between check and
-	// fire by the hook.
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.CheckAndFireResolution(ctx, argsA, tx, chID)
 	}))
@@ -227,9 +180,6 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	require.Equal(t, 1, commits,
 		"the aggregate check-and-fire must fire the producer verb exactly once under racing finals")
 
-	// @deliberate: The claim-handle row resolved exactly once: promoted to
-	// 'committed' (the Promote nulls the holder per the CHECK pair), not
-	// deleted, not double-transitioned.
 	var rowCount int
 	var state string
 	var holder *string
@@ -240,8 +190,6 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	require.Equal(t, "committed", state, "the row must be promoted to committed exactly once")
 	require.Nil(t, holder, "Promote must null the holder (absence guard for later sweeps)")
 
-	// @deliberate: Exactly one claim_resolution.commit forensics event — a second
-	// fire would have emitted a duplicate.
 	var resolutionEvents int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_events WHERE kind = 'claim_resolution.commit' AND payload->>'claim_handle_id' = $1`,

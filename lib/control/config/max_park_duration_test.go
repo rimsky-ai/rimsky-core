@@ -12,15 +12,6 @@ import (
 	"time"
 )
 
-// TestMaxParkDurationAcceptsRealReasons proves the per-reason
-// max_park_duration cap is keyed by the actual stored ParkReason values
-// (`await_callback` / `snooze`), not the obsolete wider vocabulary
-// (`time_wait` / `callback_wait` / `retry_backoff` / `other`). The
-// runtime sweep does exact-equality on the stored reason, so a cap keyed
-// by a vocabulary the runner never stores can never trip a parked row.
-// E11: the config validator must accept exactly the two stored reasons
-// and reject everything else, so a documented operator config actually
-// loads and the cap actually fires.
 func TestMaxParkDurationAcceptsRealReasons(t *testing.T) {
 	cfg := mustLoadCfg(t, `
 persistence:
@@ -38,11 +29,6 @@ max_park_duration:
 		t.Fatalf("MaxParkDuration[snooze] = %s, want 1h", got)
 	}
 
-	// @deliberate: `callback_wait` is from the retired vocabulary — a
-	// stored-reason value the runner never persists, so a cap keyed by
-	// it could never match a parked row. The validator must surface
-	// that as a startup error rather than silently accepting dead
-	// config; this branch asserts the rejection.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rimsky.yml")
 	body := `
@@ -63,8 +49,6 @@ max_park_duration:
 	if !strings.Contains(err.Error(), "callback_wait") {
 		t.Fatalf("error %q should name the rejected key callback_wait", err.Error())
 	}
-	// @constraint: the error must name the valid set so the operator
-	// can self-correct.
 	if !strings.Contains(err.Error(), "await_callback") || !strings.Contains(err.Error(), "snooze") {
 		t.Fatalf("error %q should list the valid reason keys await_callback, snooze", err.Error())
 	}

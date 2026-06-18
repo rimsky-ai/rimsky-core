@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N7 scenario — openlineage_emission.
-//
-// The openlineage subscriber emits OpenLineage-shaped events to a
-// configured Marquez-compatible backend. The subscriber binary
-// itself is a `package main` (cannot be imported from a test
-// package), so this scenario mocks the emitter shape inline and
-// pins the wire contract: POST JSON body to
-// "${backend}/api/v1/lineage". The subscriber's own unit tests
-// live alongside the binary at
-// subscribers/openlineage/emitter_test.go.
 package lineage
 
 import (
@@ -25,8 +15,6 @@ import (
 	"testing"
 )
 
-// fakeEmitter is a minimal OpenLineage emitter mirroring the
-// subscriber's wire contract: POST JSON to {backend}/api/v1/lineage.
 type fakeEmitter struct {
 	backend string
 	client  *http.Client

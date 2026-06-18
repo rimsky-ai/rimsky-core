@@ -14,13 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 )
 
-// TestExecute_TagsAndDeltaAcrossBoundary drives the handler over the
-// count<max → tag "loop" and count==max → tag "done" boundary, plus
-// checks the attributes_delta carry-forward shape on each.
-//
-// Per decision:loop-counter-shape the handler returns a unary Outcome
-// with Success.Tags carrying exactly one tag per dispatch (loop or
-// done) and Success.AttributesDelta carrying { count: new_count }.
 func TestExecute_TagsAndDeltaAcrossBoundary(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -66,12 +59,6 @@ func TestExecute_TagsAndDeltaAcrossBoundary(t *testing.T) {
 	}
 }
 
-// TestExecute_SchemaViolationsReturnError exercises every input shape
-// the handler must reject as an attributes_schema_invalid Error
-// outcome. A nil-return-with-error would route through the executor
-// client as an Error too, but the handler chooses to surface the
-// schema-shaped failures as in-band Error outcomes so the supervisor's
-// error-policy router handles them like any other executor error.
 func TestExecute_SchemaViolationsReturnError(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -100,9 +87,6 @@ func TestExecute_SchemaViolationsReturnError(t *testing.T) {
 	}
 }
 
-// TestExecute_NilAttributes confirms a request with no Attributes set
-// at all is treated as the same missing-max case and surfaces an
-// Error outcome — not a nil-pointer panic.
 func TestExecute_NilAttributes(t *testing.T) {
 	t.Parallel()
 	h := New()
@@ -119,10 +103,6 @@ func TestExecute_NilAttributes(t *testing.T) {
 	}
 }
 
-// TestDeclaredTags pins the public tag vocabulary the handler is
-// allowed to emit on the settling Success outcome. The same vocabulary
-// is what the operator-side template's CEL `when:` filters key off,
-// per concept:terminal-tag.
 func TestDeclaredTags(t *testing.T) {
 	got := DeclaredTags()
 	want := []string{"loop", "done"}

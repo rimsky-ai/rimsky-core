@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package matcher implements the closed five-key dispatch-identity
-// predicate shared by concept:attribute (the by_match overlay) and
-// concept:breakpoint (the runtime pause-point matcher).
-//
-// Grammar: equality-only across a fixed key set
-// {node_type, executor, graph, child_key, attrs}; AND across present
-// keys; missing keys are wildcards; empty matcher fires for every
-// dispatch.
-//
-// The attrs.<path> branch is the inertness-sanctioned attribute-value
-// read site (preserved from runtime/attribute_overrides.go's prior
-// home); see concept:inertness.
-//
 // @concept: inertness (sanctioned attribute-value read site lives in Evaluate's attrs branch)
 package matcher
 
@@ -26,18 +13,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// ErrInvalid is the package-local sentinel returned by Validate for any
-// grammar or cross-check failure. Callers use errors.Is(err, matcher.ErrInvalid)
-// to convert to HTTP 400 / MCP InvalidParams at their boundary. Pattern
-// mirrors the existing control/controlapi/attribute_overrides.go::errAttributeOverridesInvalid.
 var ErrInvalid = errors.New("matcher invalid")
 
-// Matcher is the closed-key-set predicate. The wire form is JSON;
-// the Go form is a generic map (the runtime never inspects shape
-// beyond the keys this package owns).
 type Matcher map[string]any
 
-// Context is the dispatch context the matcher evaluates against.
 type Context struct {
 	Executor     string
 	NodeType     string
@@ -46,10 +25,6 @@ type Context struct {
 	AttributeBag map[string]any // @concept: attribute — post-L5 merged attribute bag
 }
 
-// allowedKeys is the closed set of recognised matcher keys.
-// The Validate function rejects unknown keys at registration; Evaluate
-// defensively skips entries with unknown keys (matching the existing
-// runtime discipline against out-of-band persistence corruption).
 var allowedKeys = map[string]struct{}{
 	"node_type": {},
 	"executor":  {},
@@ -58,17 +33,7 @@ var allowedKeys = map[string]struct{}{
 	"attrs":     {},
 }
 
-// Evaluate returns true if matcher fires on ctx. AND-joined across
-// present keys; missing keys are wildcards; empty matcher matches
-// every dispatch. If the matcher carries any key outside the closed
-// allowed set, returns false and emits a Warn (out-of-band persistence
-// corruption — the validator rejects this at registration).
-//
-// The attrs.<path> branch is the concept:inertness sanctioned
-// attribute-value read site.
 func Evaluate(m Matcher, ctx Context, logger shared.Logger, entryIndex int) bool {
-	// @deliberate: defensive guard against unknown keys (out-of-band
-	// persistence corruption — validator already rejects at registration).
 	for k := range m {
 		if _, ok := allowedKeys[k]; !ok {
 			if logger != nil {
@@ -122,9 +87,6 @@ func Evaluate(m Matcher, ctx Context, logger shared.Logger, entryIndex int) bool
 	return true
 }
 
-// walkAttrPath walks a dotted path through bag and returns the leaf
-// value plus whether the path resolved. Returns (nil, false) for any
-// non-map intermediate.
 func walkAttrPath(bag map[string]any, path string) (any, bool) {
 	cur := any(bag)
 	parts := strings.Split(path, ".")
@@ -142,13 +104,7 @@ func walkAttrPath(bag map[string]any, path string) (any, bool) {
 	return cur, true
 }
 
-// primitiveEqual compares two values for equality. Type-coerces
-// numeric values across float64 / int / int64 / json.Number per the
-// existing by_match validator + runtime convention. Returns false
-// when either side is non-primitive.
 func primitiveEqual(a, b any) bool {
-	// @deliberate: Reduce json.Number on either side to float64 so the numeric
-	// branches below have a single shape to compare against.
 	if n, ok := a.(json.Number); ok {
 		if f, err := n.Float64(); err == nil {
 			a = f

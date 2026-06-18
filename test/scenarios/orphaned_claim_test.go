@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario 13 — orphaned claim: a `rimsky_claim_handles` row outlives its
-// supervisor's heartbeat. The scheduler's §7.5 step-2 lock-holder sweep
-// reaps the expired row, deletes it claimant-guarded on
-// `holder_supervisor_id`, and emits a `lock_orphan_reaped` event.
-//
-// Migrated to the stores-redesign template grammar (spec §11). The legacy
-// dispatch-row claim-orphan path (`rimsky_node_runs.claimed_by` >
-// 5 × heartbeat_timeout) is still wired in `graph/scheduler/scheduler.go` and
-// emits `orphaned_claim_released`, but the redesign relocates the
-// supervisor-side orphan signal onto `rimsky_claim_handles` (§9.9.2 +
-// §7.5). This scenario exercises the lock-holder path; `verify_before_run_
-// race_test.go` covers the dispatch-row complement.
 package scenarios
 
 import (
@@ -31,8 +19,6 @@ import (
 
 func TestOrphanedClaim(t *testing.T) {
 	t.Parallel()
-	// @deliberate: NoSupervisor so the harness's running supervisor doesn't claim the
-	// node we're about to attach a manufactured lock-holder row to.
 	h := scenario.Start(t, scenario.HarnessOpts{NoSupervisor: true})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -45,11 +31,6 @@ func TestOrphanedClaim(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	// @deliberate: Seed an expired `rimsky_claim_handles` row tied to a dead supervisor.
-	// We pick `kind='named'` so the per-row reap path runs without needing a
-	// real claim_store factory in the harness — the §7.5 step-2 reap is
-	// identical for all three kinds modulo the store-side ReleaseLock call
-	// (claim-only). Same pattern as `heartbeat_loss_reenqueue_test.go`.
 	lockHolderID := uuid.New()
 	lockName := "orphan-zombie-lock"
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -63,9 +44,6 @@ func TestOrphanedClaim(t *testing.T) {
 		}, tx)
 	}))
 
-	// @deliberate: Wait for the §7.5 step-2 sweep to reap the row. Scheduler tick
-	// interval in the harness is 250ms; orphan-reap cutoff is purely
-	// `expires_at < now()` for the lock-holder path.
 	deadline := time.Now().Add(20 * time.Second)
 	var reaped bool
 	for time.Now().Before(deadline) {
@@ -94,8 +72,6 @@ func TestOrphanedClaim(t *testing.T) {
 	}))
 	require.NotEmpty(t, evs.Events, "expected lock_orphan_reaped event")
 
-	// @deliberate: Spot-check the payload carries the kind + supervisor for operator
-	// triage (sweep_locks.go:lockReapPayload populates these unconditionally).
 	payload := evs.Events[0].Payload
 	require.Equal(t, "named", payload["lock_kind"])
 	require.Equal(t, "dead-supervisor", payload["supervisor_id"])

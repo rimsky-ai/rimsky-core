@@ -2,15 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// util.go — small shared helpers reused across verb implementations
-// and (via export) the compose package.
 package cli
 
-// TruncHash trims a long content-hash (or any opaque string) to a
-// human-friendly prefix capped at 19 visible characters plus an ellipsis.
-// Strings already at or below the cap are returned unchanged. Used by
-// every CLI table that prints sha256-… hashes and by compose plan
-// output to keep step lines from wrapping.
 func TruncHash(s string) string {
 	if len(s) <= 19 {
 		return s

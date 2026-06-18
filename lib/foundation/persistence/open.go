@@ -11,10 +11,6 @@ import (
 	"path/filepath"
 )
 
-// Open constructs a Database for the given config. Validates mutual
-// exclusion of postgres / sqlite sub-blocks (spec §8.2) and dispatches to
-// the per-driver constructor. Constructors live in postgres/ and sqlite/
-// and are wired in via package init().
 func Open(ctx context.Context, cfg Config) (Database, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("persistence: invalid config: %w", err)
@@ -29,11 +25,6 @@ func Open(ctx context.Context, cfg Config) (Database, error) {
 	}
 }
 
-// Validate checks the config shape per spec §8.2: driver in
-// {postgres,sqlite}, exactly one of Postgres/SQLite is non-nil, and the
-// per-driver required fields are populated. The SQLite path must be
-// absolute (relative paths are rejected at the loader and re-checked
-// here). Exported so config loaders can validate before calling Open.
 func (c Config) Validate() error {
 	switch c.Driver {
 	case "postgres":
@@ -67,15 +58,8 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// openPostgres is a package-private var so the postgres/ subpackage can
-// install the real driver via init(). This avoids open.go importing
-// the postgres/ subpackage (which imports persistence/) and creating
-// an import cycle.
 var openPostgres = stubOpenPostgres
 
-// openSQLite is a package-private var so the sqlite/ subpackage can
-// install the real driver via init(); same cycle-break as
-// openPostgres.
 var openSQLite = stubOpenSQLite
 
 func stubOpenPostgres(context.Context, PostgresConfig) (Database, error) {
@@ -85,8 +69,6 @@ func stubOpenSQLite(context.Context, SQLiteConfig) (Database, error) {
 	return nil, errors.New("sqlite driver not yet wired")
 }
 
-// RegisterPostgres / RegisterSQLite are called from each driver's init()
-// to install the constructor. Tests may also call these to install fakes.
 func RegisterPostgres(fn func(context.Context, PostgresConfig) (Database, error)) {
 	openPostgres = fn
 }

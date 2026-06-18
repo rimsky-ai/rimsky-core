@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// instance_terminator_test.go — coverage for the control-api
-// background worker that fires OnInstanceTerminated against the stores
-// recorded in rimsky_lifecycle_idempotencies. Drives a real testcontainer-
-// backed Postgres + storetest.Fake stores.
 package controlapi
 
 import (
@@ -57,17 +53,10 @@ func newTerminatorFixture(t *testing.T) *terminatorFixture {
 	}
 }
 
-// seedTerminatedInstance inserts a rimsky_templates row in 'deployed'
-// state, an rimsky_instances row whose terminated_at is non-NULL, and
-// a rimsky_lifecycle_idempotencies row at scope='instance' so the terminator
-// has work to do. When withTemplate is false the template row is
-// removed after the instance is created so the lookup misses.
 func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string, withTemplate bool) (templateHash string, instanceID uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 
-	// @constraint: use a unique hash per call so parallel tests don't collide on the
-	// rimsky_templates PK.
 	templateHash = "sha256-" + repeatHex("a", 32) + uuid.NewString()[:32]
 	spec := node.TemplateSpec{
 		Name: "term-test", Version: "v1",
@@ -111,9 +100,6 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 	}))
 
 	if !withTemplate {
-		// @constraint: drop the FK constraint so we can null/replace the binding,
-		// then delete the template row to simulate a force-deleted
-		// template.
 		pgtest.ExecForTest(ctx, t, f.driver,
 			`ALTER TABLE rimsky_instances DROP CONSTRAINT IF EXISTS rimsky_instances_template_hash_fkey`)
 		pgtest.ExecForTest(ctx, t, f.driver,
@@ -122,21 +108,15 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 	return templateHash, instanceID
 }
 
-// TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted: happy path —
-// terminated instance with a template + a lifecycle row → tick fires
-// OnInstanceTerminated, store records the call, lifecycle row is gone.
 func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
 	hash, inst := seedTerminatedInstance(t, f, "alpha", true)
 
-	term := NewInstanceTerminator(f.deps, time.Hour) // @deliberate: poll long — we drive tick directly.
+	term := NewInstanceTerminator(f.deps, time.Hour)
 	term.tick(context.Background())
 
-	// @constraint: the terminator closes the main run-scope and fires
-	// OnRunScopeTerminal before OnInstanceTerminated, so the happy path
-	// records both lifecycle calls against the store.
 	calls := f.alpha.Calls()
 	require.Len(t, calls, 2)
 	var runScopeCall, terminatedCall *storetest.FakeCall
@@ -166,8 +146,6 @@ func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 	require.Nil(t, row, "lifecycle row must be deleted on success")
 }
 
-// TestInstanceTerminator_RowFoundRPCFailsRowPreserved: RPC failure
-// must leave the lifecycle row in place so the next tick retries.
 func TestInstanceTerminator_RowFoundRPCFailsRowPreserved(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
@@ -193,10 +171,6 @@ func TestInstanceTerminator_RowFoundRPCFailsRowPreserved(t *testing.T) {
 	require.NotNil(t, row, "lifecycle row must survive a per-store failure")
 }
 
-// TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows:
-// when the template row is gone the terminator falls back to firing
-// OnInstanceTerminated against every store named in the lifecycle
-// rows, then deletes those rows directly. Issue 7's fix.
 func TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
@@ -219,8 +193,6 @@ func TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows(t *testing.T
 	require.Nil(t, row, "fallback path must delete the lifecycle row on success")
 }
 
-// TestInstanceTerminator_RunExitsOnContextCancel verifies the loop
-// exits promptly when its context is cancelled.
 func TestInstanceTerminator_RunExitsOnContextCancel(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
@@ -234,7 +206,6 @@ func TestInstanceTerminator_RunExitsOnContextCancel(t *testing.T) {
 		defer wg.Done()
 		term.Run(ctx)
 	}()
-	// @constraint: give the goroutine a chance to enter its loop, then cancel.
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 
@@ -250,20 +221,15 @@ func TestInstanceTerminator_RunExitsOnContextCancel(t *testing.T) {
 	}
 }
 
-// TestInstanceTerminator_StopBoundedByBudget — Stop must return
-// promptly when the goroutine drains cleanly. The stopBudget cap
-// prevents wedged-RPC scenarios from blocking shutdown indefinitely.
 func TestInstanceTerminator_StopBoundedByBudget(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
-	// @constraint: started=false → Stop is a no-op fast path.
 	term := NewInstanceTerminator(f.deps, time.Hour)
 	start := time.Now()
 	term.Stop()
 	require.Less(t, time.Since(start), 100*time.Millisecond)
 
-	// @constraint: started=true, goroutine drains cleanly via context-cancel.
 	term2 := NewInstanceTerminator(f.deps, 10*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	go term2.Run(ctx)

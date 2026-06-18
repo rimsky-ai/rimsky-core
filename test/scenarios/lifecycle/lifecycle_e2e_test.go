@@ -2,25 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// lifecycle_e2e_test.go — end-to-end coverage of the six store-lifecycle
-// events from spec §4.1, driven through the scenario harness against a
-// loopback stub store-service.
-//
-// Sequence: register → deploy → instantiate → drive instance to terminal
-// → undeploy → deregister. After each control-api transition we assert
-// the rimsky_lifecycle_idempotencies row counts match the spec's expected
-// invariants:
-//
-//   - registered:     one (template-scope) row at state='registered'.
-//   - deployed:       same one row, state advanced to 'deployed'.
-//   - instantiated:   above + one (instance-scope) row at state='created'.
-//   - terminated:     instance-scope row deleted (lifecycle terminate flow).
-//   - undeployed:     template-scope row at state='undeployed'.
-//   - deregistered:   template-scope row gone.
-//
-// Drives terminal-state detection by writing terminated_at directly via
-// SQL — the harness's runtime path isn't exercised here; this test
-// targets lifecycle event sequencing, not frame engine behavior.
 package lifecycle
 
 import (
@@ -40,9 +21,6 @@ import (
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
-// TestLifecycleE2E_FullSequence walks the full template/instance
-// lifecycle and asserts rimsky_lifecycle_idempotencies row deltas at every
-// transition.
 func TestLifecycleE2E_FullSequence(t *testing.T) {
 	t.Parallel()
 
@@ -52,8 +30,6 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		// @deliberate: Skip the supervisor and scheduler; we don't need them for
-		// lifecycle event coverage and dropping them speeds the test up.
 		NoSupervisor: true,
 		NoScheduler:  true,
 		Stores: config.RemoteStoresConfig{
@@ -81,27 +57,19 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 	}
 	templateHash := h.DeployTemplate(spec)
 
-	// @constraint: Post-DeployTemplate: register + deploy fired, so the
-	// template-scope lifecycle row should be at state='deployed'.
 	tplRow := getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeTemplate, templateHash)
 	require.NotNil(t, tplRow, "template-scope lifecycle row must exist after deploy")
 	require.Equal(t, persistence.LifecycleIdempotencyStateDeployed, tplRow.State)
 
-	// @constraint: Instantiate: triggers OnInstanceCreated.
 	instanceID := h.CreateInstance(templateHash, "ck-1", nil)
 	instRow := getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeInstance, instanceID.String())
 	require.NotNil(t, instRow, "instance-scope lifecycle row must exist after create")
 	require.Equal(t, persistence.LifecycleIdempotencyStateCreated, instRow.State)
 
-	// @deliberate: Drive instance terminal — manual SQL bypass; lifecycle test
-	// doesn't depend on the frame engine.
 	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.Instances().MarkTerminated(ctx, instanceID, tx)
 	}))
 
-	// @deliberate: DELETE /instances triggers OnInstanceTerminated fan-out, which
-	// deletes the per-store lifecycle row before dropping the
-	// instance row. We verify both outcomes below.
 	deleteAndExpect(t, h, "/v1/instances/"+instanceID.String(), http.StatusOK)
 	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeInstance, instanceID.String()),
 		"instance-scope lifecycle row must be deleted by terminate fan-out")
@@ -111,7 +79,6 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 	require.NotNil(t, tplRow)
 	require.Equal(t, persistence.LifecycleIdempotencyStateUndeployed, tplRow.State)
 
-	// @constraint: Deregister: DELETE /templates/{hash}; lifecycle row must be gone.
 	deleteAndExpect(t, h, "/v1/templates/"+templateHash, http.StatusOK)
 	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeTemplate, templateHash),
 		"template-scope lifecycle row must be deleted by deregister fan-out")

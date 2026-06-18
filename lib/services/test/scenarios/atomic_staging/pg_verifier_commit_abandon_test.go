@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// pg_verifier commit/abandon scenario — rewritten in Pass 2 task 26
-// alongside the unary RPC migration. Sibling tests in this package
-// still reference startPgStore, so the helper survives here as a
-// thin wrapper until the rewrite lands.
-
 package atomicstaging
 
 import (
@@ -19,8 +14,6 @@ import (
 	pgstoreserver "github.com/rimsky-ai/rimsky-core/lib/services/stores/postgres/server"
 )
 
-// startPgStore boots `stores/postgres/server.Run` in-process bound to
-// loopback. Returns the gRPC dial address and a teardown.
 func startPgStore(t *testing.T, dsn string, enableExecutor bool) (grpcAddr string, teardown func()) {
 	t.Helper()
 	grpcLis, err := net.Listen("tcp", "127.0.0.1:0")

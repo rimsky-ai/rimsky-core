@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N10 scenario — mixed_outcomes.
-//
-// A verifier-pattern subgraph may have multiple verifier co-holders;
-// the supervisor's aggregation engine resolves the parent's
-// terminal per the snapshot policy. Mixed outcomes (some pass, some
-// fail) interact with the parent's error_policy: strict fails,
-// best_effort succeeds, threshold checks the count.
 package verifier
 
 import (
@@ -23,8 +16,8 @@ import (
 func TestMixedOutcomes_StrictAnyFailFails(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true}, // @deliberate: verifier #1 passed
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},    // @deliberate: verifier #2 failed
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
 	if !res.IsSettled || res.ParentState != cascade.NodeStateFailed {

@@ -2,28 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// claim_handles.go is the postgres accessor for `rimsky_claim_handles`
-// (v3 spec §12). Lifts the SQL from foundation/persistence/postgres/claim_handles.go (which
-// the persistence refactor folds away — the lock-holder mechanism lives
-// here now).
-//
-// @blessed-invariant 9a: lock state lives only in the persistence layer.
-//
-//	No store implementation persists lock state. The question
-//	"is anyone holding lock X" is answered exclusively by the rows
-//	managed in this file.
-//
-// @blessed-invariant 4: claimant-guarded release. Every DELETE / UPDATE
-// against rimsky_claim_handles carries the claimant guard
-// (`holder_supervisor_id = <supervisor>`), rendered exclusively by the
-// claimantGuard helper in this file — the predicate is written exactly
-// once per driver, so no mutation site can drift to an unguarded form.
-// Stale orphan sweeps cannot null or delete live ownership.
-//
-// FrameID handling: ClaimHandleInsertInput carries an optional FrameID
-// that is plumbed through into the postgres row. Per v3 spec §12, frame_id
-// on rimsky_claim_handles is observability-only — no algorithm consults
-// it; population is the supervisor's contract.
 
 package postgres
 
@@ -55,20 +33,6 @@ const lockHolderCols = `
   state, resolved_at
 `
 
-// claimantGuard renders the @blessed-invariant 4 ownership predicate —
-// `holder_supervisor_id = $n` — as a SQL fragment. This is the single
-// written site of the guard for the postgres driver: every claimant-
-// guarded UPDATE / DELETE in this file and in claim_holders.go
-// (FailAllActiveByClaimHandle's EXISTS sub-query) splices this fragment
-// into its WHERE clause, so a wrong-supervisor mutation can never match
-// a row. alias qualifies the column for statements that alias the table
-// ("" for unqualified); n is the 1-based placeholder ordinal the caller
-// binds the supervisor id at.
-//
-// Load-bearing property protected: no mutation statement may lose its
-// guard — call sites must splice this fragment rather than hand-writing
-// (or omitting) the predicate, even where a caller seems to guarantee
-// ownership.
 func claimantGuard(alias string, n int) string {
 	col := "holder_supervisor_id"
 	if alias != "" {
@@ -77,10 +41,6 @@ func claimantGuard(alias string, n int) string {
 	return fmt.Sprintf("%s = $%d", col, n)
 }
 
-// Insert writes a new lock-holder row inside the caller-provided
-// transaction. The dispatch-acquisition transaction (§7.3) holds the tx;
-// every per-spec lock-holder row is inserted via this method so the row
-// commits atomically with the dispatch claim.
 func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandleInsertInput, tx persistence.Tx) error {
 	now := time.Now().UTC()
 	var rws *string
@@ -123,8 +83,6 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 	return nil
 }
 
-// UpdateAddress sets the address column on an existing scope-kind row.
-// Claimant-guarded on supervisorID; mismatches are a no-op (returns nil).
 func (s *claimHandlesImpl) UpdateAddress(
 	ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx persistence.Tx,
 ) error {
@@ -140,8 +98,6 @@ func (s *claimHandlesImpl) UpdateAddress(
 	return nil
 }
 
-// UpdatePayload sets the payload column on an existing scope-kind row.
-// Claimant-guarded on supervisorID; mismatches are a no-op (returns nil).
 func (s *claimHandlesImpl) UpdatePayload(
 	ctx context.Context, id shared.UUID, supervisorID string, payload json.RawMessage, tx persistence.Tx,
 ) error {
@@ -157,10 +113,6 @@ func (s *claimHandlesImpl) UpdatePayload(
 	return nil
 }
 
-// UpdateRealizedWriteSemantics sets the realized_write_semantics column
-// on an existing scope-kind row. Claimant-guarded on supervisorID;
-// mismatches are a no-op (returns nil). Called by the supervisor's
-// acquireClaim path after Open returns its per-claim verdict.
 func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 	ctx context.Context, id shared.UUID, supervisorID string, ws string, tx persistence.Tx,
 ) error {
@@ -181,9 +133,6 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 	return nil
 }
 
-// UpdateClaimScope sets the claim_scope_data column on an existing
-// claim-scope-kind row. Claimant-guarded on supervisorID; mismatches
-// are a no-op (returns nil).
 func (s *claimHandlesImpl) UpdateClaimScope(
 	ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx persistence.Tx,
 ) error {
@@ -199,12 +148,6 @@ func (s *claimHandlesImpl) UpdateClaimScope(
 	return nil
 }
 
-// UpdateNodeRunID repoints the node_run_id FK on an existing claim_handle
-// row. NOT claimant-guarded: the fan-out dispatch path calls it inside the
-// same tx as the child-run INSERT (before any other supervisor can observe
-// the sub-claim), retargeting the sub-claim from the parent fan-out run to
-// its own child leaf run so the leaf can resolve its candidate handle by
-// `node_run_id = its own dispatch id` (E4).
 func (s *claimHandlesImpl) UpdateNodeRunID(
 	ctx context.Context, id shared.UUID, nodeRunID shared.UUID, tx persistence.Tx,
 ) error {
@@ -220,19 +163,10 @@ func (s *claimHandlesImpl) UpdateNodeRunID(
 	return nil
 }
 
-// ReassignHolderSupervisor CAS-moves an ACTIVE row's
-// holder_supervisor_id from fromSupervisorID to toSupervisorID. The
-// cross-supervisor claim-handoff primitive (leaf-acquisition restamp +
-// settlement takeover); see the interface doc on
-// persistence.ClaimHandleTable for the call sites and the guard
-// rationale. Affected-rows = 0 (state not active, or the observed
-// holder lost a race) returns spec.ErrIllegalClaimHandleTransition.
 func (s *claimHandlesImpl) ReassignHolderSupervisor(
 	ctx context.Context, id shared.UUID, fromSupervisorID, toSupervisorID string, tx persistence.Tx,
 ) error {
 	if toSupervisorID == "" {
-		// @constraint: active rows must carry a holder (migration-009 CHECK pair); an
-		// empty target would be a disguised release.
 		return fmt.Errorf("lockholders.ReassignHolderSupervisor: empty toSupervisorID")
 	}
 	cmd, err := s.q(tx).Exec(ctx,
@@ -252,7 +186,6 @@ func (s *claimHandlesImpl) ReassignHolderSupervisor(
 	return nil
 }
 
-// Get returns the row identified by id, or (nil, nil) when no row exists.
 func (s *claimHandlesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRow(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles WHERE id = $1`, id,
@@ -267,9 +200,6 @@ func (s *claimHandlesImpl) Get(ctx context.Context, id shared.UUID, tx persisten
 	return &out, nil
 }
 
-// LockForUpdate runs SELECT ... FOR UPDATE on the lock-holder row. Used
-// by runtime/auto_terminal.go to serialize auto-terminal
-// resolution per @blessed-invariant 13.
 func (s *claimHandlesImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRow(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles WHERE id = $1 FOR UPDATE`, id,
@@ -284,7 +214,6 @@ func (s *claimHandlesImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx
 	return &out, nil
 }
 
-// ListByHolderNode returns every row anchored to holderNodeID.
 func (s *claimHandlesImpl) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
@@ -311,9 +240,6 @@ func (s *claimHandlesImpl) ListByNodeRun(ctx context.Context, nodeRunID shared.U
 	return collectClaimHandles(rows)
 }
 
-// GetByFrameAndNode returns the lock-holder row for (nodeID, frameID),
-// or (nil, nil) when no matching row exists. Used by the observability
-// dispatch-detail endpoint to follow dispatch → claim_id directly.
 func (s *claimHandlesImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRow(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
@@ -331,9 +257,6 @@ func (s *claimHandlesImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.
 	return &out, nil
 }
 
-// ListChildClaimHandles returns every claim handle whose
-// parent_claim_handle_id equals parentID. Used by the recursive
-// claim-tree resolution path (spec §Recursive claim-tree resolution).
 func (s *claimHandlesImpl) ListChildClaimHandles(ctx context.Context, parentID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
@@ -346,13 +269,6 @@ func (s *claimHandlesImpl) ListChildClaimHandles(ctx context.Context, parentID s
 	return collectClaimHandles(rows)
 }
 
-// DeleteResolvedOlderThan deletes terminal claim_handle rows past the
-// retention cutoff, excluding committed-durable rows (asset surface).
-// Absence-guarded; serialized across replicas via the scheduler-tick
-// advisory lock at the caller site.
-//
-// @blessed-invariant 4 (post-refactor): non-active-row deletions are
-// guarded by absence + the row-discovery query filter.
 // @concept: claim-handle
 // @concept: claim-lifetime
 func (s *claimHandlesImpl) DeleteResolvedOlderThan(
@@ -371,15 +287,6 @@ func (s *claimHandlesImpl) DeleteResolvedOlderThan(
 	return int(tag.RowsAffected()), nil
 }
 
-// DeleteResolved deletes a non-active claim_handle row. Absence-
-// guarded — the post-Stage-4 CHECK constraint nulls
-// `holder_supervisor_id` whenever `state` exits `'active'`, so the
-// IS-NULL clause is structurally satisfied for every non-active row.
-// Returns spec.ErrIllegalClaimHandleTransition on affected-rows = 0
-// (the row was still active, the predicate didn't match).
-//
-// @blessed-invariant 4 (post-refactor): non-active-row deletions are
-// guarded by absence + the row-discovery query filter.
 // @concept: claim-handle
 func (s *claimHandlesImpl) DeleteResolved(
 	ctx context.Context, id shared.UUID, tx persistence.Tx,
@@ -398,15 +305,6 @@ func (s *claimHandlesImpl) DeleteResolved(
 	return nil
 }
 
-// Promote transitions a claim handle from active to committed or
-// abandoned. Claimant-guarded against the supervisor that holds the
-// row. Sets state, nulls holder_supervisor_id, and sets resolved_at in
-// a single statement. Returns spec.ErrIllegalClaimHandleTransition on
-// affected-rows = 0 (the row was not active or the supervisor
-// mismatched).
-//
-// @blessed-invariant 4 (post-refactor): active-row mutations are
-// claimant-guarded.
 // @concept: claim-handle
 func (s *claimHandlesImpl) Promote(
 	ctx context.Context, id shared.UUID, supervisorID string,
@@ -430,9 +328,6 @@ func (s *claimHandlesImpl) Promote(
 	return nil
 }
 
-// ListByState returns claim-handle rows currently in the given state.
-// Used by the retention sweep (state ∈ {committed, abandoned}) and by
-// readers that need state-filtered listings.
 func (s *claimHandlesImpl) ListByState(
 	ctx context.Context, state spec.ClaimHandleState, tx persistence.Tx,
 ) ([]persistence.ClaimHandleRow, error) {
@@ -447,14 +342,6 @@ func (s *claimHandlesImpl) ListByState(
 	return collectClaimHandles(rows)
 }
 
-// ListByInstanceAndState returns claim-handle rows joined through
-// holder_node_id → rimsky_nodes filtered by instance + state +
-// lifetime. The asset query calls
-// `ListByInstanceAndState(instance, committed, durable)`.
-//
-// Column qualification: every column selected MUST be prefixed `ch.`
-// because the JOIN against `rimsky_nodes n` introduces the `id` column
-// from both tables.
 func (s *claimHandlesImpl) ListByInstanceAndState(
 	ctx context.Context, instanceID shared.UUID,
 	state spec.ClaimHandleState, lifetime spec.ClaimLifetime, tx persistence.Tx,
@@ -474,8 +361,6 @@ func (s *claimHandlesImpl) ListByInstanceAndState(
 	return collectClaimHandles(rows)
 }
 
-// SetVersionID persists the producer-returned canonical version_id
-// claimant-guarded. Inert in rimsky (@blessed-invariant 20-class).
 func (s *claimHandlesImpl) SetVersionID(
 	ctx context.Context, id shared.UUID, supervisorID string, versionID string, tx persistence.Tx,
 ) error {
@@ -493,10 +378,6 @@ func (s *claimHandlesImpl) SetVersionID(
 	return nil
 }
 
-// qualifiedLockHolderCols returns the lock-holder column list prefixed
-// with the given alias. Used by JOIN queries (e.g.,
-// `ListByInstanceAndState`) where unqualified column names would be
-// ambiguous against the joined table's columns.
 func qualifiedLockHolderCols(alias string) string {
 	return alias + `.id, ` + alias + `.lock_kind, ` + alias + `.lock_name, ` +
 		alias + `.producer_name, ` + alias + `.claim_scope_data, ` + alias + `.address, ` +
@@ -513,15 +394,6 @@ func qualifiedLockHolderCols(alias string) string {
 		alias + `.state, ` + alias + `.resolved_at`
 }
 
-// ListExpired returns active rows whose `expires_at < now()`. The
-// scheduler's orphan-reap sweep iterates these.
-//
-// Predicate: `state = 'active' AND expires_at < now()`. Committed /
-// abandoned rows are owned by the retention sweep, not the orphan
-// reaper. See @blessed-invariant 22 (held-durable persistence) for
-// the higher-level discipline; the column-level predicate just enforces
-// it.
-//
 // @concept: orphan-reaper
 func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
@@ -536,8 +408,6 @@ func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) (
 	return collectClaimHandles(rows)
 }
 
-// Delete removes the row keyed by id. Claimant-guarded on
-// expectedSupervisorID; mismatch is a no-op (returns nil).
 func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
 	_, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handles
@@ -550,16 +420,6 @@ func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedS
 	return nil
 }
 
-// CountByNamedLock returns the number of currently-held named-lock
-// rows. Used inside the supervisor's acquisition tx after taking
-// pg_advisory_xact_lock(hashtext('rimsky_lock:'||lockName)) to enforce
-// the named-lock counting-mode limit.
-//
-// Post-Stage-2 of the claim-handle state-column refactor: counts
-// state='active' rows only. Committed / abandoned named-lock rows are
-// no longer held; the retention sweep reaps them in due course but
-// they MUST NOT count against the named-lock limit (the lock was
-// released at terminal).
 func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string, tx persistence.Tx) (int, error) {
 	var n int
 	err := s.q(tx).QueryRow(ctx,
@@ -574,20 +434,6 @@ func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string
 	return n, nil
 }
 
-// ListByProducerClaimScope returns every claim-scope-kind row for producerName
-// that is currently in conflict-detection scope: active OR
-// committed-durable (the asset surface; the durable holder still
-// occupies the claim-scope until producer Release). Used by the
-// supervisor's claim-scope-conflict re-check (§7.3 step 4a/4b).
-//
-// Predicate: `state = 'active' OR (state = 'committed' AND lifetime =
-// 'durable')`. Subgraph rows transition to state='committed' at
-// terminal but no longer occupy the claim-scope (the producer released its
-// hold on Commit; only the rimsky-side ledger row lingers for forensics
-// until the retention sweep reaps it). Abandoned rows are not in the
-// conflict set either — the producer Abandon released the claim-scope.
-//
-// @blessed-invariant 4b (single-writer-per-claim-scope)
 // @concept: claim-handle
 // @concept: asset
 func (s *claimHandlesImpl) ListByProducerClaimScope(ctx context.Context, producerName string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
@@ -605,23 +451,6 @@ func (s *claimHandlesImpl) ListByProducerClaimScope(ctx context.Context, produce
 	return collectClaimHandles(rows)
 }
 
-// DeleteIfExpired removes the row keyed by id, claimant-guarded on
-// supervisor_id AND only when expires_at is still in the past AND only
-// when state = 'active'. Used by the orphan reaper. Returns
-// deleted=true on success; false on no-op (claimant mismatch, fresh
-// heartbeat extended the row, or the row promoted to a terminal state
-// between ListExpired and this DELETE — racing with `Promote` fired
-// by the auto-terminal Commit/Abandon path).
-//
-// The `state = 'active'` clause is defense in depth: `Promote` nulls
-// `holder_supervisor_id` atomically with the state transition (the
-// post-Stage-4 CHECK constraint enforces this), so the claimant-guard
-// alone would reject the DELETE on a freshly-promoted row; the
-// explicit state gate closes the ListExpired → race → DELETE window
-// regardless.
-//
-// @blessed-invariant 4 (post-refactor): active-row mutations are
-// claimant-guarded.
 // @concept: orphan-reaper
 func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx persistence.Tx) (bool, error) {
 	tag, err := s.q(tx).Exec(ctx,
@@ -638,12 +467,6 @@ func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, 
 	return tag.RowsAffected() > 0, nil
 }
 
-// ListForObservability returns lock-holder rows matching filter,
-// cursor-paginated by claimed_at DESC. Used by the observability
-// /v1/observability/lock-holders endpoint (spec §1.2.4). The filter
-// supports the spec's documented surface plus the previously
-// per-method options (holder_node, holder_supervisor) so a single
-// generic browse endpoint can replace the prior per-anchor methods.
 func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter persistence.LockHolderListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.ClaimHandleRow], error) {
 	limit := pag.Limit
 	if limit <= 0 {
@@ -744,9 +567,6 @@ func decodeLockHolderCursor(s string) (time.Time, shared.UUID, error) {
 	return c.C, c.I, nil
 }
 
-// SetAggregationPolicy writes the parent-claim aggregation policy
-// snapshot on a claim_handle row. Claimant-guarded on supervisorID;
-// mismatches no-op.
 func (s *claimHandlesImpl) SetAggregationPolicy(
 	ctx context.Context, id shared.UUID, supervisorID string, policy json.RawMessage, tx persistence.Tx,
 ) error {
@@ -762,9 +582,6 @@ func (s *claimHandlesImpl) SetAggregationPolicy(
 	return nil
 }
 
-// BumpExpectedChildrenCount adds delta to the parent's
-// `expected_children_count`. Used by `runtime/runner_subclaim.go` per
-// sub-claim INSERT. Claimant-guarded on supervisorID; mismatches no-op.
 func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 	ctx context.Context, id shared.UUID, supervisorID string, delta int, tx persistence.Tx,
 ) error {
@@ -780,11 +597,6 @@ func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 	return nil
 }
 
-// BumpChildOutcomeCount adds delta to either
-// `committed_children_count` (outcome="commit") or
-// `abandoned_children_count` (outcome="abandon"). Used by the recursive
-// walker (`runtime/child_execution.go::SettleChildren`) before
-// firing the parent's terminal verb. Claimant-guarded on supervisorID.
 func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	ctx context.Context, id shared.UUID, supervisorID string, outcome string, delta int, tx persistence.Tx,
 ) error {
@@ -860,12 +672,6 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	if rws != nil {
 		r.RealizedWriteSemantics = *rws
 	}
-	// @constraint: HolderSupervisorID is nullable: non-active rows always carry NULL
-	// per the `rimsky_claim_handles_inactive_has_no_holder` CHECK. The
-	// `*string` mirrors the column nullability so callers cannot
-	// inadvertently compare against the zero value (empty string) and
-	// match a NULL row that should never participate in the
-	// claimant-guarded delete (`@blessed-invariant 4`).
 	r.HolderSupervisorID = holderSupervisorID
 	r.FrameID = frameID
 	r.NodeRunID = workerRequestID
@@ -902,8 +708,6 @@ func collectClaimHandles(rows pgx.Rows) ([]persistence.ClaimHandleRow, error) {
 	return out, nil
 }
 
-// nullableJSONB returns nil for an empty/nil RawMessage so the JSONB
-// column gets a SQL NULL rather than the literal string "null".
 func nullableJSONB(b json.RawMessage) any {
 	if len(b) == 0 {
 		return nil
@@ -911,9 +715,6 @@ func nullableJSONB(b json.RawMessage) any {
 	return []byte(b)
 }
 
-// nullableBytes is the []byte twin of nullableJSONB — callers that
-// already hold a []byte slice (e.g. json.Marshal output) avoid an
-// extra conversion to RawMessage.
 func nullableBytes(b []byte) any {
 	if len(b) == 0 {
 		return nil

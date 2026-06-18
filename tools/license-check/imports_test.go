@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// makeImportsTestConfig builds a small licensingConfig with a foundation
-// (AGPL) and protocols (Apache) split, used by the import-direction tests.
 func makeImportsTestConfig() *licensingConfig {
 	return &licensingConfig{
 		apachePrefixes: normalizePrefixes([]string{"protocols/", "foundation/locks/"}),

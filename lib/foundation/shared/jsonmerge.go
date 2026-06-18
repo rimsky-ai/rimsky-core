@@ -6,25 +6,6 @@
 
 package shared
 
-// DeepMergeJSON merges `over` into a copy of `base` and returns the
-// result. Behavior:
-//
-//   - Both args must be JSON-shaped values (the result of json.Unmarshal
-//     into `any`): map[string]any, []any, scalars, nil.
-//   - When both layers carry an object at the same key, recurse.
-//   - When the layers disagree on shape (e.g. base has an object, over
-//     has a string), `over` replaces `base` wholesale — last-writer-wins
-//     within a layer pair.
-//   - Arrays REPLACE, never concatenate. Concatenation would be too cute
-//     and ambiguous (do duplicates dedupe? does ordering carry?). If a
-//     caller wants concatenation they can express it explicitly in their
-//     domain.
-//   - Scalars (strings, numbers, bools, nil) replace.
-//   - The function never mutates either argument — `base` is cloned as
-//     the merge proceeds. Safe to pass references read from persistence.
-//   - nil inputs are normalised: a nil `base` is treated as an empty
-//     object when `over` is an object; a nil `over` returns a clone of
-//     `base`.
 func DeepMergeJSON(base, over any) any {
 	if over == nil {
 		return cloneJSON(base)
@@ -48,10 +29,6 @@ func DeepMergeJSON(base, over any) any {
 	return out
 }
 
-// cloneJSON deep-copies a JSON-shaped value so callers can freely
-// mutate the result of DeepMergeJSON without affecting the inputs.
-// Maps and slices are recursively cloned; scalars (strings, numbers,
-// bools, nil) are returned as-is (Go semantics make scalar copies free).
 func cloneJSON(v any) any {
 	switch t := v.(type) {
 	case map[string]any:

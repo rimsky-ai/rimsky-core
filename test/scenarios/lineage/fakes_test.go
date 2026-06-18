@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Shared fakes for the N7 lineage scenarios. Mirrors
-// runtime/lineage_writer_test.go::fakeLineageTable; duplicated per
-// cold-read rule "tracked duplication over hidden coupling".
-//
 // @source: lib/runtime/lineage_writer_test.go::fakeLineageTable
 // @diverged: false
 package lineage

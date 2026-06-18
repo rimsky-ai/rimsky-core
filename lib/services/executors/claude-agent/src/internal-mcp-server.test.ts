@@ -15,12 +15,6 @@ import {
 } from "./internal-mcp-server.js";
 import { TokenRegistry } from "./token-registry.js";
 
-/**
- * Tests exercise the rimsky-callback tool surface via an InMemoryTransport
- * pair (mirrors brain's `mcp-topic-server_test.ts`). The HTTP transport is
- * itself an SDK concern; tests focus on tool behavior, not transport wiring.
- */
-
 const logger = pino({ level: "silent" });
 
 function makeRegistryEntry(overrides: {
@@ -267,37 +261,18 @@ describe("rimsky-callback MCP tools", () => {
 
   it("report_park surfaces a structured response when the run did not register onPark", async () => {
     const registry = new TokenRegistry();
-    registry.register("tok-no-park", makeRegistryEntry({})); // @deliberate: no onPark
+    registry.register("tok-no-park", makeRegistryEntry({}));
     const client = await buildClient(registry);
 
     const res = await client.callTool({
       name: "report_park",
       arguments: { token: "tok-no-park", reason: "snooze" },
     });
-    // @deliberate: the handler returns a structured "park_not_supported" payload
-    // (not isError) so the agent can surface a meaningful message to
-    // the user; the per-run registration is expected to wire onPark
-    // in production. Either shape is acceptable; we just want to
-    // assert the path doesn't crash.
     expect(typeof res.content).toBe("object");
   });
 
 });
 
-/**
- * Bug 1 regression coverage: prior versions of `startInternalMcpServer`
- * lazily created a single `StreamableHTTPServerTransport` and held it
- * for the executor's process lifetime. The SDK transport is one-session
- * per instance in stateful mode (see SDK source
- * `node_modules/@modelcontextprotocol/sdk/dist/esm/server/webStandardStreamableHttp.js:422-428`),
- * so the second dispatch's CLI got HTTP 400 `Invalid Request: Server
- * already initialized` on its initialize handshake — surfacing in the
- * CLI as "MCP server not connected." This is the multi-tenant executor
- * bug that wedged the 22-hour docs-pipeline smoke run.
- *
- * These tests spin up the real HTTP server and open two concurrent MCP
- * clients against it. Each must succeed independently.
- */
 describe("startInternalMcpServer — multi-session HTTP routing", () => {
   let handle: CallbackServerHandle;
 
@@ -317,7 +292,6 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
   }
 
   it("supports two concurrent sessions in one server process (bug 1 regression)", async () => {
-    // @deliberate: register two distinct dispatches.
     const completedA: { changed: boolean; summary: string | null }[] = [];
     const completedB: { changed: boolean; summary: string | null }[] = [];
     handle.registry.register(
@@ -341,9 +315,6 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
 
     const [clientA, clientB] = await Promise.all([openClient(), openClient()]);
 
-    // @deliberate: each client makes a tool call keyed to its own token. Per-session
-    // routing is the contract under test: both should land on the
-    // correct registry entry.
     const [resA, resB] = await Promise.all([
       clientA.callTool({
         name: "report_complete",
@@ -364,23 +335,6 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
   });
 
   it("survives long SSE stream (no per-request timeout RST — #11)", async () => {
-    // @deliberate: #11 regression: a per-socket inactivity timeout destroys the
-    // long-lived standalone MCP SSE GET stream that the SDK client opens
-    // after `initialize`. The destroyed socket surfaces on the client as
-    // an ECONNRESET `onerror`, and the dispatch terminal-errors
-    // `agent/subprocess_exit/before_complete` even though the agent did
-    // its work. The fix pins every per-connection/per-request timeout to 0
-    // so the stream is indefinitely long-lived.
-    //
-    // This test drives the REAL server-side fault on a fast clock: we
-    // start a dedicated server with a tight per-socket inactivity window
-    // (`socketTimeoutMs` — the knob that actually RSTs an idle SSE
-    // response), open a real `StreamableHTTPClientTransport` (whose
-    // connect handshake opens the standalone GET SSE stream), then hold it
-    // open well past that window and assert NO error fires on the
-    // transport — i.e. the SSE stream stayed alive. The assertion is the
-    // observable outcome (stream survives), not the value of any timeout
-    // field.
     const socketTimeoutMs = 250;
     const sseHandle = await startInternalMcpServer({
       logger,
@@ -396,18 +350,8 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
       version: "1.0.0",
     });
     try {
-      // @deliberate: connect() runs initialize +
-      // notifications/initialized, which makes the SDK client open
-      // the standalone GET SSE stream we want to keep alive across
-      // the per-request window.
       await client.connect(transport);
-      // @deliberate: hold the stream open well past the inactivity window. Under the
-      // unfixed server, the idle GET SSE socket is destroyed at
-      // `socketTimeoutMs` and the client surfaces an ECONNRESET-class
-      // error here.
       await new Promise((resolve) => setTimeout(resolve, socketTimeoutMs * 5));
-      // @deliberate: the stream must still be alive: a tool call over the same session
-      // round-trips, and no error has fired.
       sseHandle.registry.register("tok-sse", makeRegistryEntry({}));
       const res = await client.callTool({
         name: "report_complete",
@@ -422,10 +366,6 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
   });
 
   it("supports a fresh session after a prior one closes (sequential dispatch shape)", async () => {
-    // @deliberate: this is the shape that wedged the 22-hour run: dispatch A finishes,
-    // its CLI exits, then dispatch B starts later in the same executor
-    // process and tries to initialize. A singleton transport would
-    // reject B's initialize with HTTP 400 `Server already initialized`.
     handle.registry.register("tok-A", makeRegistryEntry({}));
     handle.registry.register("tok-B", makeRegistryEntry({}));
 
@@ -437,7 +377,6 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
     expect(parseToolText(resA.content)).toEqual({ status: "accepted" });
     await clientA.close();
 
-    // @deliberate: dispatch B follows in the same server.
     const clientB = await openClient();
     const resB = await clientB.callTool({
       name: "report_complete",

@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package pgmigrate provides the rimsky-internal Postgres test harness:
-// a testcontainers-backed Postgres container with rimsky migrations
-// applied, plus pgx-backed escape hatches (ExecForTest / QueryRowForTest
-// / etc.) for tests that need to seed or assert against tables the
-// persistence interface does not surface.
-//
-// Stays rimsky-internal because it imports foundation/persistence to
-// apply migrations. Service authors building publishers / executors /
-// store-services use pkg:testpg instead, which spins up a vanilla
-// Postgres without rimsky's schema.
 package pgmigrate
 
 import (
@@ -26,14 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/testpg"
 )
 
-// StartPostgres spins up a throwaway Postgres 14 container, applies all
-// rimsky migrations, and returns a connection pool. Caller MUST invoke the
-// returned teardown func (typically via t.Cleanup). Multi-test parallel-
-// safe: testcontainers assigns unique container names.
-//
-// Wraps OpenDriver and returns the underlying pool via the test-only
-// PoolFromDatabaseForTest helper. Prefer OpenDriver for new code.
-//
 // @source: lib/foundation/internal/pgtest/pgtest.go::StartPostgres
 // @diverged: false
 // @reason: depguard visibility — pkg:internal/pgmigrate is reachable from
@@ -50,22 +32,9 @@ func StartPostgres(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
 	if !ok {
 		t.Fatalf("pgmigrate: PoolFromDatabaseForTest returned !ok")
 	}
-	// @deliberate: Cleanup is registered inside OpenDriver; return a no-op teardown
-	// so existing call sites remain backward-compatible.
 	return pool, func() {}
 }
 
-// ExecForTest runs a raw SQL command against the underlying Postgres
-// pool of a persistence.Database. Test-only escape hatch for tests that
-// need to seed or mutate state through SQL paths the persistence
-// interface does not surface (e.g. directly inserting into
-// rimsky_node_runs.last_heartbeat_at). Fatals on driver-mismatch or
-// SQL error.
-//
-// Lives here (not in a per-test package) so callers can stay outside
-// the pgx-isolation depguard rule by importing pgmigrate instead of pgx
-// directly.
-//
 // @source: lib/foundation/internal/pgtest/pgtest.go::ExecForTest
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above.
@@ -80,11 +49,6 @@ func ExecForTest(ctx context.Context, t *testing.T, d persistence.Database, sql 
 	}
 }
 
-// QueryRowForTest runs a raw SQL SELECT against the underlying Postgres
-// pool of a persistence.Database and scans into dest. Test-only escape
-// hatch in the same vein as ExecForTest. Fatals on driver-mismatch or
-// SQL error.
-//
 // @source: lib/foundation/internal/pgtest/pgtest.go::QueryRowForTest
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above.
@@ -99,13 +63,6 @@ func QueryRowForTest(ctx context.Context, t *testing.T, d persistence.Database, 
 	}
 }
 
-// QueryForTest runs a raw SQL SELECT against the underlying Postgres
-// pool and invokes scan on each row. Test-only escape hatch for the
-// scenario tests that need to walk multiple rows (e.g. listing
-// rimsky_frames rows by instance_id) without importing pgx. Fatals on
-// driver-mismatch or SQL error; the scan callback returns its own
-// error which is reported via t.Fatalf.
-//
 // @source: lib/foundation/internal/pgtest/pgtest.go::QueryForTest
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above.
@@ -131,12 +88,6 @@ func QueryForTest(ctx context.Context, t *testing.T, d persistence.Database,
 	}
 }
 
-// HoldAdvisoryLock acquires a single Postgres advisory lock on a fresh
-// connection from the driver's pool and returns a release fn. Test-only
-// helper for the scheduler advisory-lock test (which needs to simulate a
-// peer replica holding the per-tick lock). Fatals on driver-mismatch or
-// SQL error.
-//
 // @source: lib/foundation/internal/pgtest/pgtest.go::HoldAdvisoryLock
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above.
@@ -165,20 +116,11 @@ func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Database,
 			return
 		}
 		released = true
-		// @deliberate: context.Background to avoid stranding the lock if the test ctx
-		// is already cancelled.
 		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", key)
 		conn.Release()
 	}
 }
 
-// OpenDriver spins up a fresh Postgres container, opens a
-// persistence.Database against it, applies migrations, and returns the
-// driver. Cleanup (Close + Terminate) is registered via t.Cleanup.
-//
-// Used by tests that target the persistence.Database surface directly
-// (conformance suite, scenario harness, post-Task-22 cmd binaries).
-//
 // @source: lib/foundation/internal/pgtest/pgtest.go::OpenDriver
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above. Note that
@@ -189,10 +131,6 @@ func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Database,
 func OpenDriver(ctx context.Context, t *testing.T) persistence.Database {
 	t.Helper()
 	dsn, terminate := testpg.StartFreshPostgresDSN(ctx, t)
-	// @deliberate: Register the container teardown immediately so a panic in
-	// persistence.Open does not leak the container. Cleanups run in LIFO
-	// order: the driver Close() registered below runs before this
-	// terminate.
 	t.Cleanup(terminate)
 
 	d, err := persistence.Open(ctx, persistence.Config{

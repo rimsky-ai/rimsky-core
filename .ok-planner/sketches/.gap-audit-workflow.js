@@ -8,12 +8,6 @@ export const meta = {
   ],
 }
 
-// ---- ground truth -------------------------------------------------------
-// Code is the only source of truth. Every doc below is a CLAIM of intent.
-// A gap = something a doc says Rimsky does (or should do), that the code
-// does NOT actually do, does only partially, does with a bug, or that was
-// explicitly deferred and never returned to.
-
 const DIV = '.ok-planner/history/plans/'
 const divergences = [
   '2026-05-15-control-plane-mcp-and-auth-plan-divergences.md',
@@ -167,7 +161,6 @@ const VERDICT_SCHEMA = {
   },
 }
 
-// ---- Phase 1: harvest ---------------------------------------------------
 phase('Harvest')
 
 const harvestJobs = []
@@ -292,7 +285,6 @@ const harvested = await parallel(
 const allFindings = harvested.filter(Boolean).flatMap(r => r.findings || [])
 log(`Harvested ${allFindings.length} raw findings from ${harvestJobs.length} sources`)
 
-// dedup by normalized capability; keep the highest-severity / most-confident copy
 function sevRank(s) { return { blocker: 3, high: 2, medium: 1, low: 0 }[s] ?? 0 }
 const byKey = new Map()
 for (const f of allFindings) {
@@ -306,12 +298,10 @@ for (const f of allFindings) {
   }
 }
 const deduped = [...byKey.values()]
-// only verify things claimed to be gaps; implemented-confirmed items pass through untouched
 const gaps = deduped.filter(f => f.status !== 'implemented')
 const passthroughImplemented = deduped.filter(f => f.status === 'implemented')
 log(`${deduped.length} deduped; ${gaps.length} claimed gaps to adversarially verify`)
 
-// ---- Phase 2: adversarial verify ---------------------------------------
 phase('Verify')
 
 const verdicts = await parallel(gaps.map(f => () =>
@@ -348,7 +338,6 @@ const confirmedGaps = verified.filter(x => x.verdict.stillAGap)
 const refuted = verified.filter(x => !x.verdict.stillAGap)
 log(`Verified ${verified.length}: ${confirmedGaps.length} confirmed gaps, ${refuted.length} refuted (actually implemented)`)
 
-// ---- Phase 3: synthesize + write report --------------------------------
 phase('Synthesize')
 
 const SYNTH_SCHEMA = {

@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// TestParseInterspersed covers the flag/positional permutation directly:
-// flags after positionals, the `=` form, boolean flags, the `--`
-// terminator, and parity with flags-first ordering.
 func TestParseInterspersed(t *testing.T) {
 	newFS := func() (*flag.FlagSet, *string, *bool) {
 		fs := flag.NewFlagSet("t", flag.ContinueOnError)

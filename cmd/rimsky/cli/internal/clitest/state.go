@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// state.go — in-memory state for the fake control-api.
-//
-// Mirrors the contracts that the live control-api enforces:
-//   - Tag delete on a hash with no other tags allows template delete.
-//   - Template delete refused when state is `deployed`.
-//   - Template delete refused when any non-terminal instance binds.
-//   - Instance delete refused when terminated_at IS NULL.
-//   - Instance create with same instance_key against same template_hash
-//     collides on the unique key (returns existing row).
-//   - Tag create with hash-shape input is rejected.
 package clitest
 
 import (
@@ -28,9 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/template/canonical"
 )
 
-// InMemoryState backs the fake control-api. Methods are concurrency-safe.
-// templates is keyed by hash; tags is keyed tag → hash; instances is
-// keyed by id; nodes is keyed instance_id → node_id → node.
 type InMemoryState struct {
 	mu        sync.Mutex
 	templates map[string]*storedTemplate
@@ -40,24 +27,9 @@ type InMemoryState struct {
 	nodes     map[string]map[string]*cli.Node
 	nextEvent int64
 
-	// breakpointHits holds pending breakpoint-hit rows keyed by instance
-	// ID. Each hit is the flat wire shape the live route returns (seq,
-	// hit_id, …, plus snapshot keys). nextHitSeq assigns seq monotonically
-	// across all instances, mirroring the live ledger's per-instance seq
-	// being a strictly increasing cursor.
 	breakpointHits map[string][]map[string]any
 	nextHitSeq     int64
 
-	// messageIdem holds (instanceID, idempotencyKey) -> message_id so a
-	// replay returns the original id (200 OK), matching the live
-	// control-api's Idempotency-Key dedup semantics on
-	// POST /v1/instances/{id}/messages. The server rejects keyless
-	// requests at the HTTP boundary with 400
-	// (`code:cmd/rimsky/cli/internal/clitest/server.go` —
-	// handleCreateInstanceMessage), mirroring the live surface, so this
-	// map's keys are always non-empty. `RecordInstanceMessage` panics
-	// on an empty key to make any internal mis-call that bypasses the
-	// boundary gate loud rather than silently skipping dedup.
 	messageIdem map[string]string
 	nextMessage int64
 }
@@ -79,7 +51,6 @@ type storedInstance struct {
 	TerminatedAt *time.Time
 }
 
-// NewInMemoryState constructs an empty state.
 func NewInMemoryState() *InMemoryState {
 	return &InMemoryState{
 		templates:      map[string]*storedTemplate{},
@@ -91,18 +62,6 @@ func NewInMemoryState() *InMemoryState {
 	}
 }
 
-// RecordInstanceMessage records a POST /v1/instances/{id}/messages call and
-// returns the message_id assigned to it. When a prior call recorded one for
-// (instanceID, idempotencyKey), the original message_id is returned with
-// fresh=false — matching the live control-api's dedup behavior. fresh=true
-// means a new id was minted.
-//
-// @constraint: idempotencyKey must be non-empty. The HTTP boundary
-// (`code:cmd/rimsky/cli/internal/clitest/server.go` —
-// handleCreateInstanceMessage) rejects keyless requests with 400 before
-// reaching this method; any caller that lands here with an empty key has
-// bypassed the gate, which is a programmer error. Panic so the mis-call
-// is loud rather than silently skipping dedup.
 // @decision: compose-driver-emits-empty-message-after-create
 func (s *InMemoryState) RecordInstanceMessage(instanceID, idempotencyKey string) (messageID string, fresh bool) {
 	if idempotencyKey == "" {
@@ -120,17 +79,6 @@ func (s *InMemoryState) RecordInstanceMessage(instanceID, idempotencyKey string)
 	return id, true
 }
 
-// hashSpec produces the canonical content hash for a spec map, matching
-// the live control-api's CanonicalSpecHash. Falls back to a SHA-256 of
-// the raw JSON if the spec cannot be coerced into TemplateSpec — that
-// fallback is only used by tests that pass partial / illustrative
-// specs and don't care about bit-for-bit hash equality.
-//
-// json.Marshal on a map[string]any only fails when the map contains a
-// non-marshallable value (channels, funcs, complex). Tests pass plain
-// JSON-shaped data; if that invariant ever breaks, panic loudly rather
-// than silently emitting a malformed sha256-… token that the
-// manifest-validation regex (^sha256-[0-9a-f]{64}$) would later reject.
 func hashSpec(spec map[string]any) string {
 	raw, err := json.Marshal(spec)
 	if err != nil {
@@ -147,8 +95,6 @@ func hashSpec(spec map[string]any) string {
 	return "sha256-" + hex.EncodeToString(sum[:])
 }
 
-// RegisterTemplate inserts (or no-ops on existing hash) a template and
-// optionally upserts a tag pointing at it.
 func (s *InMemoryState) RegisterTemplate(spec map[string]any, tag, source string) (hash string, isNew bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -169,8 +115,6 @@ func (s *InMemoryState) RegisterTemplate(spec map[string]any, tag, source string
 	return hash, isNew
 }
 
-// LookupRef resolves a tag-or-hash to a stored hash, returning empty
-// string when unknown.
 func (s *InMemoryState) LookupRef(ref string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -187,9 +131,6 @@ func (s *InMemoryState) lookupRefLocked(ref string) string {
 	return ""
 }
 
-// GetTemplate returns the stored template by hash. Returns a value copy
-// (and ok=false when not found) so callers can read fields without
-// holding the state mutex.
 func (s *InMemoryState) GetTemplate(hash string) (storedTemplate, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -200,8 +141,6 @@ func (s *InMemoryState) GetTemplate(hash string) (storedTemplate, bool) {
 	return *t, true
 }
 
-// ListTemplates returns templates sorted by hash. Returns value copies
-// so callers can read fields without holding the state mutex.
 func (s *InMemoryState) ListTemplates() []storedTemplate {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -213,7 +152,6 @@ func (s *InMemoryState) ListTemplates() []storedTemplate {
 	return out
 }
 
-// ListTags returns tags sorted by name.
 func (s *InMemoryState) ListTags() []cli.Tag {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -225,14 +163,12 @@ func (s *InMemoryState) ListTags() []cli.Tag {
 	return out
 }
 
-// SetTagHash directly upserts a tag. Used by tests setting up state.
 func (s *InMemoryState) SetTagHash(tag, hash string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tags[tag] = hash
 }
 
-// CountTagsForHash returns the number of tags pointing at hash.
 func (s *InMemoryState) CountTagsForHash(hash string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -245,7 +181,6 @@ func (s *InMemoryState) CountTagsForHash(hash string) int {
 	return n
 }
 
-// DeleteTag removes a tag. Returns true if it existed.
 func (s *InMemoryState) DeleteTag(tag string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -256,7 +191,6 @@ func (s *InMemoryState) DeleteTag(tag string) bool {
 	return true
 }
 
-// SetTemplateState updates a template's state ("registered","deployed","undeployed").
 func (s *InMemoryState) SetTemplateState(hash, state string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -268,7 +202,6 @@ func (s *InMemoryState) SetTemplateState(hash, state string) bool {
 	return true
 }
 
-// CountActiveInstances returns the number of non-terminal instances bound to hash.
 func (s *InMemoryState) CountActiveInstances(hash string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -281,7 +214,6 @@ func (s *InMemoryState) CountActiveInstances(hash string) int {
 	return n
 }
 
-// DeleteTemplate removes a template + its tags. No-op if missing.
 func (s *InMemoryState) DeleteTemplate(hash string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -293,15 +225,6 @@ func (s *InMemoryState) DeleteTemplate(hash string) {
 	}
 }
 
-// CreateInstance inserts a new instance. Returns the existing row if a
-// matching (hash, key) already exists.
-//
-// Caller (the HTTP handler) is responsible for the "template must be in
-// deployed state" precondition: it issues a 409 before reaching this
-// method (see server.go::handleCreateInstance). We re-check
-// "template-exists" here because the server resolved the ref to a
-// hash earlier and a template-deletion race would invalidate that
-// hash by the time this method runs.
 func (s *InMemoryState) CreateInstance(hash string, key *string, params map[string]any) (inst *storedInstance, existed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -330,8 +253,6 @@ func (s *InMemoryState) CreateInstance(hash string, key *string, params map[stri
 	return &cp, false, nil
 }
 
-// SetInstanceTerminated marks an instance terminal at the given time.
-// If t is nil, sets to now. Used by tests.
 func (s *InMemoryState) SetInstanceTerminated(id string, t *time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -346,9 +267,6 @@ func (s *InMemoryState) SetInstanceTerminated(id string, t *time.Time) {
 	inst.TerminatedAt = t
 }
 
-// IsTerminated reports whether the instance's terminated_at is set.
-// Returns false when the instance is unknown. Used by tests asserting
-// terminal state without reaching into the unexported storedInstance.
 func (s *InMemoryState) IsTerminated(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -359,7 +277,6 @@ func (s *InMemoryState) IsTerminated(id string) bool {
 	return inst.TerminatedAt != nil
 }
 
-// AddNode injects a node row for the given instance.
 func (s *InMemoryState) AddNode(instanceID string, node cli.Node) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -370,7 +287,6 @@ func (s *InMemoryState) AddNode(instanceID string, node cli.Node) {
 	s.nodes[instanceID][node.ID] = &cp
 }
 
-// AddEvent appends an event to the log; assigns ID monotonically.
 func (s *InMemoryState) AddEvent(e cli.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -382,8 +298,6 @@ func (s *InMemoryState) AddEvent(e cli.Event) {
 	s.events = append(s.events, e)
 }
 
-// FindInstance resolves id-or-key to a stored instance. Returns a value
-// copy so callers can read fields without holding the state mutex.
 func (s *InMemoryState) FindInstance(idOrKey string) *storedInstance {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -400,7 +314,6 @@ func (s *InMemoryState) FindInstance(idOrKey string) *storedInstance {
 	return nil
 }
 
-// DeleteInstance removes an instance. No-op if missing.
 func (s *InMemoryState) DeleteInstance(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -408,9 +321,6 @@ func (s *InMemoryState) DeleteInstance(id string) {
 	delete(s.nodes, id)
 }
 
-// ListInstances returns instances filtered by hash and key, sorted by ID.
-// Returns value copies so callers can read fields without holding the
-// state mutex.
 func (s *InMemoryState) ListInstances(hash, key string) []*storedInstance {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -431,10 +341,6 @@ func (s *InMemoryState) ListInstances(hash, key string) []*storedInstance {
 	return out
 }
 
-// MarkFirstActiveTerminated sets terminated_at on the first non-terminal
-// instance encountered (deterministic order by ID). Returns the id, or
-// empty when no active instance exists. Used by tests that drive
-// `--no-keep` style flows without external concurrency.
 func (s *InMemoryState) MarkFirstActiveTerminated() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -454,9 +360,6 @@ func (s *InMemoryState) MarkFirstActiveTerminated() string {
 	return ""
 }
 
-// ListNodes returns the nodes for an instance, sorted by ID. Returns
-// value copies so callers can read fields without holding the state
-// mutex.
 func (s *InMemoryState) ListNodes(instanceID string) []cli.Node {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -469,9 +372,6 @@ func (s *InMemoryState) ListNodes(instanceID string) []cli.Node {
 	return out
 }
 
-// GetNode returns a node by ID across all instances. Returns a value
-// copy (and ok=false when not found) so callers can read fields
-// without holding the state mutex.
 func (s *InMemoryState) GetNode(id string) (cli.Node, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -483,7 +383,6 @@ func (s *InMemoryState) GetNode(id string) (cli.Node, bool) {
 	return cli.Node{}, false
 }
 
-// SetNodeState updates a node's state.
 func (s *InMemoryState) SetNodeState(id, state string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -495,10 +394,6 @@ func (s *InMemoryState) SetNodeState(id, state string) {
 	}
 }
 
-// AddBreakpointHit appends a pending breakpoint hit for an instance,
-// assigning seq monotonically. The supplied fields are merged into the
-// flat wire envelope the live route returns; identity fields (seq,
-// instance_id) are filled in here. Used by tests seeding hits.
 func (s *InMemoryState) AddBreakpointHit(instanceID string, fields map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -516,9 +411,6 @@ func (s *InMemoryState) AddBreakpointHit(instanceID string, fields map[string]an
 	s.breakpointHits[instanceID] = append(s.breakpointHits[instanceID], hit)
 }
 
-// BreakpointHitsFor returns the pending hits for an instance with seq >
-// since, capped at limit+1 rows so the caller can compute `truncated`
-// (mirrors the live route's fetch-+1 discipline). Returns value copies.
 func (s *InMemoryState) BreakpointHitsFor(instanceID string, since int64, limit int) []map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -540,19 +432,6 @@ func (s *InMemoryState) BreakpointHitsFor(instanceID string, since int64, limit 
 	return out
 }
 
-// EventsPage mirrors the live control-api's keyset-paginated read of the
-// event log: results are ordered newest-first ((occurred_at, id) DESC) and
-// `cursor` is an opaque keyset position — the page returned is strictly
-// OLDER than the cursor ((occurred_at, id) < (cursor.occurred, cursor.id)).
-// This is byte-for-byte the contract the real persistence layer enforces
-// (foundation/persistence/{sqlite,postgres}/events.go); the fake mirrors it
-// so CLI tests can't pass against a numeric-cursor shortcut the live server
-// rejects.
-//
-// cursorOccurred/cursorID are the decoded keyset; pass the zero time and
-// 0 for the first (uncursored) page. limit bounds the page; the caller
-// (the HTTP handler) is responsible for emitting next_cursor only when the
-// page is full, matching the live server.
 func (s *InMemoryState) EventsPage(instanceID string, cursorOccurred time.Time, cursorID int64, hasCursor bool, limit int) []cli.Event {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -563,7 +442,6 @@ func (s *InMemoryState) EventsPage(instanceID string, cursorOccurred time.Time, 
 		}
 		filtered = append(filtered, e)
 	}
-	// @constraint: newest-first (occurred_at, id) DESC matches the live ORDER BY.
 	sort.Slice(filtered, func(i, j int) bool {
 		oi := eventOccurredAt(filtered[i])
 		oj := eventOccurredAt(filtered[j])
@@ -575,7 +453,6 @@ func (s *InMemoryState) EventsPage(instanceID string, cursorOccurred time.Time, 
 	out := []cli.Event{}
 	for _, e := range filtered {
 		if hasCursor {
-			// @constraint: keyset predicate — strictly older than the cursor position.
 			oe := eventOccurredAt(e)
 			if !(oe.Before(cursorOccurred) || (oe.Equal(cursorOccurred) && e.ID < cursorID)) {
 				continue
@@ -589,10 +466,6 @@ func (s *InMemoryState) EventsPage(instanceID string, cursorOccurred time.Time, 
 	return out
 }
 
-// eventOccurredAt parses an event's RFC3339 occurred_at string back to a
-// time for keyset comparison. A row whose timestamp fails to parse sorts as
-// the zero time (it never wins an ordering comparison) — the seeding helpers
-// always emit RFC3339, so this is defensive, not a live path.
 func eventOccurredAt(e cli.Event) time.Time {
 	t, err := time.Parse(time.RFC3339, e.OccurredAt)
 	if err != nil {

@@ -2,25 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario 14 — verify-before-run race (blessed invariant 5): a dispatch
-// row already claimed by another supervisor must NOT be executed by ours.
-// In the redesigned omnibus runner this manifests as the §7.3 step 1
-// candidate SELECT skipping the row (claimed_by IS NULL filter) AND, on
-// the rare path where another supervisor steals the row between commit
-// and the verify-before-run separate-read guard, the runner emits
-// `orphaned_claim_lost_race` and bails without running.
-//
-// This scenario exercises the candidate-selection guard: with a row
-// pre-claimed by a different supervisor, RunNode finds no eligible
-// candidates and returns Ran=false; the node remains stale. The
-// verify-before-run separate-read complement is unit-tested in
-// `runtime` (verifyBeforeRun is unexported); preserving that
-// invariant here as a higher-level integration check that ownership
-// gates execution end to end.
-//
-// Migrated to the stores-redesign template grammar (spec §11): no
-// resource wiring; the runner is driven through `foundation/runtime.RunNode`
-// directly with a stub-store registry from the harness.
 package scenarios
 
 import (
@@ -55,10 +36,6 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	// @deliberate: Replace the auto-enqueued dispatch row with one already claimed by
-	// a different integration. ClaimDispatchRow is claimant-guarded and
-	// SelectCandidates filters claimed_by IS NULL — neither path will
-	// admit our runner.
 	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
 	require.NoError(t, err)
 	require.NotNil(t, n.FrameID, "expected node to carry a frame_id from the initial frame advance")
@@ -74,9 +51,6 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	// @deliberate: RunNode with our SupervisorID should find no eligible candidate
-	// (the row's claimed_by is set), return Ran=false, and leave the
-	// node unchanged.
 	args := runtime.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
@@ -98,7 +72,6 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	require.False(t, out.Ran,
 		"runner should not execute when another supervisor holds the claim")
 
-	// @deliberate: Node remains in stale; the dispatch row is still owned by fake-other.
 	var got *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().Get(h.Ctx, n.ID, tx)

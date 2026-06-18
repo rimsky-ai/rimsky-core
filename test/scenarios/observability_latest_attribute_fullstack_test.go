@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Full-stack scenario for S-observability-forensic-last-attribute: a
-// node's most-recent resolved attribute bag (its forensic last-attribute
-// snapshot) must surface on BOTH node-read surfaces — the control-api
-// `GET /nodes/{id}` detail and the observability
-// `GET /v1/observability/nodes/{instance_id}/{node_type}` read — served
-// by the real `NodeAttributes().GetLatestByNode` primitive end to end.
-//
-// RED phase (Pass SENSLIFEOBS-9): neither surface emits the bag today, so
-// this test FAILS — the `latest_attributes` key is absent. Pass
-// SENSLIFEOBS-10 adds it to both surfaces and flips this green. The test
-// is deliberately coupled to the missing behavior: every assertion reads
-// the value the live `GetLatestByNode(nodeID, MainRunScopeID)` primitive
-// returns, never a hardcoded literal, so it can only pass once the real
-// primitive is wired through both handlers.
 package scenarios
 
 import (
@@ -38,12 +24,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// TestNodeLatestAttributeBagFullStack drives a single-worker node across
-// two runs with DIFFERENT attribute deltas, then asserts both node-read
-// surfaces carry the SECOND (most-recent) run's resolved bag, equal to
-// what `NodeAttributes().GetLatestByNode` returns. A separate paused
-// instance proves a never-executed node yields an absent/empty
-// `latest_attributes` (no panic on the nil row).
 func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -76,11 +56,6 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-latest-attr", map[string]any{})
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w)
-	// @constraint: worker was previously a structural root; the
-	// subscribes: entry added for the typed-message wake demoted it
-	// from root, so the harness's empty-wake doesn't fire it. Emit
-	// the typed message here to drive the initial dispatch the test
-	// assertions expect.
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second),
@@ -90,14 +65,9 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	firstRunID := firstRow.NodeRunID
 	require.Equal(t, "first", firstRow.Data["value"])
 
-	// @constraint: Re-prime the stub and invalidate so the node re-runs with a
-	// DIFFERENT delta value — satisfies the "most-recent of two runs"
-	// clause: the latest bag must differ from the first.
 	h.Stub.WhenType("worker").Success(map[string]any{"value": "second"}, true, "rerun")
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	// @deliberate: Wait until the live primitive reports the SECOND run's bag (new run
-	// id + new value). This is the canonical value both surfaces must echo.
 	var second *persistence.NodeAttributesRow
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
@@ -113,8 +83,6 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 		"GetLatestByNode must return the most-recent run's bag")
 	wantBag := second.Data
 
-	// @constraint: (3) control-api GET /nodes/{id} must carry latest_attributes equal to
-	// the SECOND run's resolved bag (the GetLatestByNode value).
 	caBody := getJSONMap(t, h.ControlBase+"/v1/nodes/"+w.ID.String())
 	caLatest, ok := caBody["latest_attributes"]
 	require.True(t, ok,
@@ -122,9 +90,6 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	require.Equal(t, wantBag, normalizeBag(t, caLatest),
 		"GET /nodes/{id} latest_attributes must equal the second run's GetLatestByNode bag")
 
-	// @constraint: (4) observability GET /v1/observability/nodes/{instance_id}/{node_type}
-	// must carry the same most-recent bag (today it returns only
-	// {node,events,holdings}).
 	obsBody := getJSONMap(t, h.ControlBase+"/v1/observability/nodes/"+iid.String()+"/worker")
 	obsLatest := extractObsLatest(t, obsBody)
 	require.NotNil(t, obsLatest,
@@ -132,10 +97,6 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	require.Equal(t, wantBag, normalizeBag(t, obsLatest),
 		"observability latest_attributes must equal the second run's GetLatestByNode bag")
 
-	// @constraint: (5) A node that has NEVER executed must yield an absent/empty
-	// latest_attributes — no panic on the nil GetLatestByNode row. A paused
-	// instance never dispatches its worker until resumed, so its node row
-	// has no persisted attribute bag.
 	pausedIID := createPausedInstanceLatestAttr(t, h, tid, "ck-latest-attr-paused")
 	pausedW := waitForNodeRow(t, h, pausedIID, "worker", 10*time.Second)
 	require.Nil(t, latestAttrRow(h, pausedW.ID, h.GetMainRunScopeID(pausedIID)),
@@ -150,8 +111,6 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 		"observability read for a never-executed node must omit/empty latest_attributes")
 }
 
-// latestAttrRow reads the live GetLatestByNode primitive — the canonical
-// value the surfaces must echo.
 func latestAttrRow(h *scenario.Harness, nodeID, runScopeID shared.UUID) *persistence.NodeAttributesRow {
 	var row *persistence.NodeAttributesRow
 	require.NoError(h.T, h.InTx(func(tx persistence.Tx) error {
@@ -162,8 +121,6 @@ func latestAttrRow(h *scenario.Harness, nodeID, runScopeID shared.UUID) *persist
 	return row
 }
 
-// createPausedInstanceLatestAttr POSTs /instances with paused:true so the
-// node never dispatches — a never-executed node for the nil-row assertion.
 func createPausedInstanceLatestAttr(t *testing.T, h *scenario.Harness, templateHash, consumerKey string) shared.UUID {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
@@ -185,7 +142,6 @@ func createPausedInstanceLatestAttr(t *testing.T, h *scenario.Harness, templateH
 	return shared.UUID(id)
 }
 
-// waitForNodeRow polls until the named node row exists for the instance.
 func waitForNodeRow(t *testing.T, h *scenario.Harness, instanceID shared.UUID, nodeType string, timeout time.Duration) *persistence.NodeRow {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -199,7 +155,6 @@ func waitForNodeRow(t *testing.T, h *scenario.Harness, instanceID shared.UUID, n
 	return nil
 }
 
-// getJSONMap GETs a URL and decodes the 200 body into a generic map.
 func getJSONMap(t *testing.T, url string) map[string]any {
 	t.Helper()
 	resp, err := http.Get(url)
@@ -212,9 +167,6 @@ func getJSONMap(t *testing.T, url string) map[string]any {
 	return out
 }
 
-// extractObsLatest reads the latest-attribute bag from the observability
-// node read, accepting either a top-level `latest_attributes` sibling key
-// (the plan's preferred shape) or one nested under the `node` object.
 func extractObsLatest(t *testing.T, body map[string]any) any {
 	t.Helper()
 	if v, ok := body["latest_attributes"]; ok && !isEmptyBag(v) {
@@ -228,8 +180,6 @@ func extractObsLatest(t *testing.T, body map[string]any) any {
 	return nil
 }
 
-// normalizeBag coerces a decoded JSON value into a map[string]any for
-// equality against the persisted Data map.
 func normalizeBag(t *testing.T, v any) map[string]any {
 	t.Helper()
 	m, ok := v.(map[string]any)
@@ -237,8 +187,6 @@ func normalizeBag(t *testing.T, v any) map[string]any {
 	return m
 }
 
-// requireAbsentOrEmptyBag asserts a never-executed node's latest_attributes
-// is absent (nil) or an empty object — never populated.
 func requireAbsentOrEmptyBag(t *testing.T, v any, msg string) {
 	t.Helper()
 	require.Truef(t, isEmptyBag(v), "%s: got %#v", msg, v)

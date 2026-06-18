@@ -20,14 +20,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// WaitSet returns the sqlite WaitSetTable impl.
 func (s *tablesImpl) WaitSet() persistence.WaitSetTable {
 	return (*waitSetImpl)(s)
 }
 
-// waitSetImpl is the SQLite-backed persistence.WaitSetTable — the
-// per-frame ledger that records which observations a wait-set is
-// blocked on.
 type waitSetImpl tablesImpl
 
 func (b *waitSetImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
@@ -53,9 +49,6 @@ func (b *waitSetImpl) Insert(ctx context.Context, row persistence.WaitSetRow, tx
 	return nil
 }
 
-// MarkDrainedBySender marks rows drained rather than deleting them.
-// Idempotent: the `AND drained_at IS NULL` guard means re-invoking
-// against an already-drained set is a no-op.
 func (b *waitSetImpl) MarkDrainedBySender(ctx context.Context, frameID, senderRunID shared.UUID, tx persistence.Tx) error {
 	_, err := b.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_wait_set
@@ -94,8 +87,6 @@ func (b *waitSetImpl) ListForFrame(ctx context.Context, frameID shared.UUID, tx 
 	return collectWaitSetRows(rows)
 }
 
-// ListDrainedAttributeRowsForReceiver returns drained attribute-topic
-// rows for the receiver.
 func (b *waitSetImpl) ListDrainedAttributeRowsForReceiver(
 	ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx,
 ) ([]persistence.WaitSetRow, error) {

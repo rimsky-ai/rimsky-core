@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N3 scenario — nested_subgraph.
-//
-// A sub-graph internal node MAY delegate to a further sub-graph (it
-// becomes the calling node for an inner invocation). The canonicalizer
-// must accept such templates as long as there is no `delegate:` cycle
-// across graphs; cycles are rejected with
-// `subgraph_recursion_unsupported` per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Sub-graphs / Edge-case rejections at registration.
-//
-// This scenario validates both branches: a clean nested-but-acyclic
-// template canonicalizes, and a self-referencing graph is rejected.
 package subgraph
 
 import (
@@ -63,7 +51,6 @@ func TestNestedSubgraph_AcyclicAccepted(t *testing.T) {
 	if len(res.Errors) != 0 {
 		t.Fatalf("acyclic nested template should validate clean, got errors: %v", res.Errors)
 	}
-	// @constraint: Both calling nodes must carry the absorption marker.
 	byType := make(map[string]*node.TemplateNodeDef, len(tmpl.Nodes))
 	for i := range tmpl.Nodes {
 		byType[tmpl.Nodes[i].Type] = &tmpl.Nodes[i]
@@ -103,7 +90,7 @@ func TestNestedSubgraph_CycleRejected(t *testing.T) {
 				Entry: "g2n",
 				Exit:  "g2x",
 				Nodes: []node.TemplateNodeDef{
-					{Type: "g2n", Delegate: "g1"}, // @deliberate: cycle: g1 → g2 → g1
+					{Type: "g2n", Delegate: "g1"},
 					{Type: "g2x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "g2n", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 				},
 			},

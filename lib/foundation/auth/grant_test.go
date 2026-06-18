@@ -36,10 +36,6 @@ func TestGrantRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGrantModeFirstClass: `mode` is now a recognized first-class field
-// (lifted out of Extras). A valid mode decodes onto GrantEntry.Mode and
-// does NOT survive in Extras; an invalid mode is rejected as
-// ErrInvalidGrant.
 func TestGrantModeFirstClass(t *testing.T) {
 	var e GrantEntry
 	if err := json.Unmarshal([]byte(`{"action":"instance:create","mode":"dry_run"}`), &e); err != nil {
@@ -61,9 +57,6 @@ func TestGrantModeFirstClass(t *testing.T) {
 	}
 }
 
-// TestGrantScopeFirstClass: `scope` is now a recognized first-class
-// field (lifted out of Extras) decoding onto GrantEntry.Scope; genuinely
-// unknown keys (e.g. `rate_limit`) still land in Extras and round-trip.
 func TestGrantScopeFirstClass(t *testing.T) {
 	src := `{"action":"x","scope":{"template_tag":"y"},"rate_limit":"1/s"}`
 	var e GrantEntry
@@ -95,10 +88,6 @@ func TestGrantScopeFirstClass(t *testing.T) {
 	}
 }
 
-// TestGrantModeScopeByteStableRoundTrip: a fully-specified entry
-// marshals to a byte-stable canonical form (deterministic key order:
-// action, mode, scope sorted, extras sorted) and round-trips unchanged,
-// so the audit hash-key over the persisted grant is stable.
 func TestGrantModeScopeByteStableRoundTrip(t *testing.T) {
 	e := GrantEntry{
 		Action: "template:register",

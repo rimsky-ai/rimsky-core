@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// lifecycle_test.go — coverage for the FanOutTemplateEvent /
-// FanOutInstanceEvent helpers. Uses storetest.Fake stores as targets
-// and a real testcontainer-backed Postgres for the rimsky_lifecycle_idempotencies
-// bookkeeping table so the SQL behaviour is exercised end-to-end.
 package controlapi
 
 import (
@@ -25,9 +21,6 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// fanOutFixture wires a real persistence.Database-backed Postgres, two
-// storetest.Fake stores ("alpha", "beta") accessible via the registry,
-// and the AppDeps the helpers consume.
 type fanOutFixture struct {
 	deps      AppDeps
 	alpha     *storetest.Fake
@@ -46,8 +39,6 @@ func newFanOutFixture(t *testing.T) *fanOutFixture {
 	reg.Add("alpha", alpha)
 	reg.Add("beta", beta)
 
-	// @constraint: fake satisfies both ClaimProducer and LifecycleSubscriber; register
-	// both alpha and beta as lifecycle subscribers.
 	lcReg := locks.NewLifecycleRegistry()
 	lcReg.Add("alpha", alpha)
 	lcReg.Add("beta", beta)
@@ -64,9 +55,6 @@ func newFanOutFixture(t *testing.T) *fanOutFixture {
 	}
 }
 
-// twoStoreSpec returns a TemplateSpec whose nodes reference store "alpha"
-// twice (one node per ref) and "beta" once. The dedupe-and-sort path
-// must yield ["alpha", "beta"] regardless of the input order.
 func twoStoreSpec() node.TemplateSpec {
 	return node.TemplateSpec{
 		Name: "fan-out-test", Version: "v1",
@@ -78,9 +66,6 @@ func twoStoreSpec() node.TemplateSpec {
 	}
 }
 
-// TestFanOutTemplateEvent_DedupAndSortedOrder confirms (a) duplicate
-// store names collapse to a single per-store call and (b) the surviving
-// per-store iteration runs in lexicographic order.
 func TestFanOutTemplateEvent_DedupAndSortedOrder(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
@@ -91,16 +76,12 @@ func TestFanOutTemplateEvent_DedupAndSortedOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"alpha", "beta"}, storeNames, "must dedupe + sort")
 
-	// @constraint: each store saw exactly one OnTemplateRegistered call.
 	require.Len(t, f.alpha.Calls(), 1)
 	require.Len(t, f.beta.Calls(), 1)
 	require.Equal(t, "on_template_registered", f.alpha.Calls()[0].Verb)
 	require.Equal(t, hash, f.alpha.Calls()[0].TemplateID)
 }
 
-// TestFanOutTemplateEvent_SkipsAlreadyTargetState confirms idempotency:
-// re-firing OnTemplateRegistered on a row already at state='registered'
-// is a no-op (no second store call, no row churn).
 func TestFanOutTemplateEvent_SkipsAlreadyTargetState(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
@@ -111,27 +92,18 @@ func TestFanOutTemplateEvent_SkipsAlreadyTargetState(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, f.alpha.Calls(), 1)
 
-	// @constraint: second fire — both rows are already at target state.
 	_, _, err = FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{}, nil)
 	require.NoError(t, err)
 	require.Len(t, f.alpha.Calls(), 1, "second fire must skip when already at target")
 	require.Len(t, f.beta.Calls(), 1)
 }
 
-// TestFanOutTemplateEvent_PartialFailurePreservesProgress: when the
-// second store fails, the first store's bookkeeping row remains
-// upserted (so a retry re-fires only the failing store). The error
-// must be surfaced and per-store-error map populated. Also asserts
-// the deterministic-sort semantics under fan-out: alpha's call must
-// be recorded before beta's regardless of input order, verified via
-// the FakeCall.Sequence counter.
 func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
 
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("c", 64)
-	// @constraint: "beta" sorts after "alpha" → first call goes to alpha, second to beta.
 	f.beta.ErrorFunc = func(verb string, _ claimproducer.ClaimID) error {
 		if verb == "on_template_registered" {
 			return errors.New("simulated beta failure")
@@ -162,10 +134,6 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 	}))
 	require.Nil(t, betaRow)
 
-	// @constraint: deterministic-sort assertion: alpha's recorded call must precede
-	// beta's, regardless of the spec's input ordering. The
-	// twoStoreSpec function deliberately lists beta first to make this
-	// test meaningful; the fan-out helper sorts before iterating.
 	alphaCalls := f.alpha.Calls()
 	betaCalls := f.beta.Calls()
 	require.Len(t, alphaCalls, 1, "alpha should have been called once before beta failed")
@@ -174,10 +142,6 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 		"alpha must be dispatched before beta under deterministic sort order")
 }
 
-// TestFanOutTemplateEvent_DeregisterDeletesRow exercises the
-// deletes-row branch: OnTemplateDeregistered fires on a previously-
-// upserted row, the store records the call, the lifecycle row is
-// gone afterward.
 func TestFanOutTemplateEvent_DeregisterDeletesRow(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
@@ -202,8 +166,6 @@ func TestFanOutTemplateEvent_DeregisterDeletesRow(t *testing.T) {
 	}
 }
 
-// TestFanOutInstanceEvent_TerminatedDeletesRow mirrors the template-
-// scope deregister test for the instance-scope termination event.
 func TestFanOutInstanceEvent_TerminatedDeletesRow(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
@@ -237,7 +199,6 @@ func TestFanOutInstanceEvent_TerminatedDeletesRow(t *testing.T) {
 	}
 }
 
-// repeatHex is a tiny helper for synthesising fake content hashes in tests.
 func repeatHex(c string, n int) string {
 	return strings.Repeat(c, n)
 }

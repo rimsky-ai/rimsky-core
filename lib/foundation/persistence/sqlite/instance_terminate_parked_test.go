@@ -15,21 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// TestMarkInstanceTerminatedIfDoneHoldsForParkedRun pins the instance-
-// terminated predicate to the same unresolved-work definition as
-// ListRunningFramesNoPendingNodes (the two predicates are documented as
-// agreeing, and run in the same tx in frame/engine.go::transitionFrameEnd).
-// A parked node_run is unresolved work — the instance must NOT be marked
-// terminated while a node sits parked, or the next deadline-elapsed wake
-// would resume work against a terminated instance.
-//
-// The instance is created with terminate_after_run = true so the
-// durable-by-default gate is satisfied and the predicate hinges solely on
-// the parked-run guard — a durable instance (the default) would never
-// terminate here regardless, which would not exercise the parked clause.
-// Termination reads nothing about publisher-subscriptions (that coupling
-// is gone), so none is seeded. Before the parked-counting fix, the instance
-// was wrongly terminated.
 func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()
@@ -70,10 +55,6 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// @constraint: frame seeded terminal (completed) so the frames-in-flight
-	// guard does NOT block termination — only the node-run predicate can.
-	// @constraint: triggering message seeded so the
-	// rimsky_frames.triggering_message_id NOT NULL FK is satisfied.
 	msgID := uuid.New().String()
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
@@ -97,9 +78,6 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	// @constraint: exactly one parked node_run (phase='parked',
-	// state='parked') seeded; no stale/running runs, so the predicate hinges
-	// solely on the parked clause.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
@@ -133,11 +111,6 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	}
 }
 
-// seedResolvedFrameInstance creates a terminate_after_run-flagged instance
-// (controlled by terminateAfterRun) with one terminal (completed) frame and
-// a single fresh node — i.e. all work resolved, no in-flight or parked run.
-// This is the exact shape transitionFrameEnd sees at a real frame-end.
-// Returns the instance id.
 func seedResolvedFrameInstance(t *testing.T, ctx context.Context, d persistence.Database, terminateAfterRun bool) uuid.UUID {
 	t.Helper()
 	rawDB := sqlitedrv.DBFromDatabase(d)
@@ -178,11 +151,6 @@ func seedResolvedFrameInstance(t *testing.T, ctx context.Context, d persistence.
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// @constraint: frame seeded terminal so the (former) frames-in-flight
-	// clause is irrelevant; the node is fresh (no in-flight run row), so
-	// the only thing deciding the predicate is the terminate_after_run gate.
-	// @constraint: triggering message seeded so the
-	// rimsky_frames.triggering_message_id NOT NULL FK is satisfied.
 	msgID := uuid.New().String()
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
@@ -231,11 +199,6 @@ func markTerminatedAndGet(t *testing.T, ctx context.Context, d persistence.Datab
 	return row
 }
 
-// TestMarkInstanceTerminatedIfDoneFiresForTerminateAfterRun is the positive
-// companion to the parked-hold test: a terminate_after_run instance whose
-// frame has fully resolved (no parked/in-flight run) IS marked terminated.
-// This proves the parked-hold test is meaningful — the only thing holding
-// termination back there is the parked guard, not the flag gate.
 func TestMarkInstanceTerminatedIfDoneFiresForTerminateAfterRun(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()
@@ -247,10 +210,6 @@ func TestMarkInstanceTerminatedIfDoneFiresForTerminateAfterRun(t *testing.T) {
 	}
 }
 
-// TestMarkInstanceTerminatedIfDoneSkipsDurableDefault pins durable-by-default
-// at the predicate level: an instance created without the flag (the default)
-// is never self-terminated even when all its work has resolved. It lives
-// until force-terminate.
 func TestMarkInstanceTerminatedIfDoneSkipsDurableDefault(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()

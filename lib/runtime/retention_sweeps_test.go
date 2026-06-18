@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// retention_sweeps_test.go — focused gate for SweepRunTreeRetention's
-// trace_trailing-only path: a retention config with ONLY the trailing
-// time window set (no count cap) must still reap. This is the
-// "either retention dimension alone reaps" property — the internal
-// early-return guard must not require RecentFramesKept, and the sweep
-// must drive all three deletes (frames+cascade, audit events, named
-// events) off the computed cutoff.
-//
-// The sqlite driver is imported in this _test.go only; no import cycle —
-// the sqlite driver does not import lib/runtime.
-
 package runtime_test
 
 import (
@@ -29,14 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// TestSweepRunTreeRetention_TraceTrailingOnly seeds old + recent terminal
-// frames (each with a node_run) and old + recent audit/named event rows,
-// then calls SweepRunTreeRetention with ONLY TraceTrailing set (no count
-// cap). It asserts the old frames/node_runs/events are reaped and the
-// recent ones survive. Against the un-fixed guard (which returned early
-// unless RecentFramesKept > 0) the sweep reaps nothing and the "old gone"
-// assertions fail; with the guard fixed (either dimension reaps) and the
-// cutoff plumbed through, it passes.
 func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -54,7 +35,6 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	tables := d.Tables()
 	rawDB := sqlitedrv.DBFromDatabase(d)
 
-	// @deliberate: Seed template → instance → run_scope
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New().String()
 	scopeID := uuid.New().String()
@@ -93,8 +73,6 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 		frameID := uuid.New().String()
 		nodeID := uuid.New().String()
 		runID := uuid.New().String()
-		// @constraint: seed a synthetic typed-message envelope so the
-		// frame's triggering_message_id FK is satisfied.
 		msgID := uuid.New().String()
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_messages
@@ -132,7 +110,6 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	oldFrame, oldRun := seedTerminalFrame(oldTime)
 	recentFrame, recentRun := seedTerminalFrame(now.Add(-time.Minute))
 
-	// @deliberate: Audit + named events, old and recent.
 	insertEvent := func(when time.Time) int64 {
 		res, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_events (instance_id, kind, payload, occurred_at) VALUES (?, 'work_started', '{}', ?)`,
@@ -147,16 +124,8 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	oldEventID := insertEvent(oldTime)
 	recentEventID := insertEvent(now.Add(-time.Minute))
 
-	// @deliberate: Per TD-collapse-named-event-to-tags the
-	// rimsky_node_events ledger has retired; the retention sweep no
-	// longer needs a node-event seed, and there is no spilled-payload
-	// surface to test.
 	_ = uuid.New
 
-	// @deliberate: Sweep with ONLY TraceTrailing set (RecentFramesKept unset)
-	// A 1h window puts the cutoff between the old rows (-24h) and the
-	// recent rows (-1m). With RecentFramesKept defaulting to 0, only the
-	// time dimension drives the reap.
 	if _, err := runtime.SweepRunTreeRetention(
 		ctx, runtime.RetentionConfig{TraceTrailing: time.Hour},
 		tables, now, shared.SilentLogger{},

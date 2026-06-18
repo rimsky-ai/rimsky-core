@@ -9,10 +9,6 @@ import (
 	"time"
 )
 
-// SupervisorRow mirrors a row of rimsky_supervisors. Supervisor-level
-// heartbeat tracking is gone — orphan detection keys on per-dispatch
-// last_progress_at + RPC connection state, not a heartbeat column on
-// this table.
 type SupervisorRow struct {
 	ID                string    `json:"id"`
 	AcceptedExecutors []string  `json:"accepted_executors"`
@@ -24,7 +20,6 @@ type SupervisorRow struct {
 	RegisteredAt      time.Time `json:"registered_at"`
 }
 
-// SupervisorRegisterInput is the per-row input for Register.
 type SupervisorRegisterInput struct {
 	ID                string
 	AcceptedExecutors []string
@@ -34,7 +29,6 @@ type SupervisorRegisterInput struct {
 	CallbackPort      int
 }
 
-// SupervisorTable is the rimsky_supervisors accessor.
 type SupervisorTable interface {
 	Register(ctx context.Context, in SupervisorRegisterInput, tx Tx) error
 	UpdateActiveNodeCount(ctx context.Context, id string, activeNodeCount int, tx Tx) error

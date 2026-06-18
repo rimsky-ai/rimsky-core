@@ -14,13 +14,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @deliberate: malformed_attributes asserts the executor rejects a
-// dispatch carrying a reserved malformed-shape marker by settling
-// with Outcome{Error}; the error_class string is the executor's own
-// (e.g. agent/attribute_invalid for claude-agent). Per
-// TD-execute-rpc-unary the rejection rides the unary outcome — the
-// stream-close discriminator is gone.
-//
 // @concept: executor
 func init() {
 	conformance.Register(conformance.Scenario{

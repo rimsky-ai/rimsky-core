@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// helpers_test.go — shared HTTP+persistence shims for the breakpoint
-// end-to-end scenarios per spec §10.2. Each scenario file installs
-// breakpoints via the live control-api routes and inspects the
-// supervisor's evaluator side-effects (hit rows, dispatch progression)
-// through the harness's persistence handle and the stub executor's
-// Observed log. All helpers fatal on transport errors so individual
-// scenarios stay focused on the breakpoint-shape they're pinning.
-//
 // @concept: breakpoint
 
 package breakpoints
@@ -31,8 +23,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// breakpointCreate POSTs a create-breakpoint body and returns the new
-// breakpoint id. Fatals on any non-201 status.
 func breakpointCreate(t *testing.T, h *scenario.Harness, instanceID shared.UUID, body map[string]any) shared.UUID {
 	t.Helper()
 	status, out := postJSON(t, h.ControlBase+fmt.Sprintf("/v1/instances/%s/breakpoints", instanceID.String()), body)
@@ -50,9 +40,6 @@ func breakpointCreate(t *testing.T, h *scenario.Harness, instanceID shared.UUID,
 	return id
 }
 
-// breakpointResume POSTs a resume body and returns the decoded response.
-// Fatals when the HTTP layer hiccups; non-200 statuses are returned as
-// (status, body) so callers can pin 400s.
 func breakpointResume(t *testing.T, h *scenario.Harness, instanceID, breakpointID shared.UUID, body map[string]any) (int, map[string]any) {
 	t.Helper()
 	url := h.ControlBase + fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume",
@@ -60,7 +47,6 @@ func breakpointResume(t *testing.T, h *scenario.Harness, instanceID, breakpointI
 	return postJSON(t, url, body)
 }
 
-// breakpointDelete DELETEs the breakpoint row; fatals on non-204.
 func breakpointDelete(t *testing.T, h *scenario.Harness, instanceID, breakpointID shared.UUID) {
 	t.Helper()
 	url := h.ControlBase + fmt.Sprintf("/v1/instances/%s/breakpoints/%s",
@@ -80,9 +66,6 @@ func breakpointDelete(t *testing.T, h *scenario.Harness, instanceID, breakpointI
 	}
 }
 
-// instancePause / instanceResume drive the soft-pause endpoints from
-// spec §5.1. Both return (status, body) so the rare 409 paths
-// (`already paused` / `not paused`) can be asserted explicitly.
 func instancePause(t *testing.T, h *scenario.Harness, instanceID shared.UUID) (int, map[string]any) {
 	t.Helper()
 	return postJSON(t, h.ControlBase+fmt.Sprintf("/v1/instances/%s/pause", instanceID.String()), map[string]any{})
@@ -93,9 +76,6 @@ func instanceResume(t *testing.T, h *scenario.Harness, instanceID shared.UUID) (
 	return postJSON(t, h.ControlBase+fmt.Sprintf("/v1/instances/%s/resume", instanceID.String()), map[string]any{})
 }
 
-// postJSON marshals body, POSTs to url, decodes response JSON. Returns
-// (status, decoded body). When the body fails to decode it returns
-// (status, nil). Fatals on transport-level errors.
 func postJSON(t *testing.T, url string, body any) (int, map[string]any) {
 	t.Helper()
 	buf, err := json.Marshal(body)
@@ -114,18 +94,12 @@ func postJSON(t *testing.T, url string, body any) (int, map[string]any) {
 	var out map[string]any
 	if len(raw) > 0 && raw[0] == '{' {
 		if err := json.Unmarshal(raw, &out); err != nil {
-			// @deliberate: Decode failure on a JSON body is unusual — surface for
-			// diagnosis. Don't fatal: the caller may be pinning a
-			// non-JSON 4xx path.
 			t.Logf("postJSON: decode warn (status %d body=%s): %v", resp.StatusCode, string(raw), err)
 		}
 	}
 	return resp.StatusCode, out
 }
 
-// waitForHitOnBreakpoint polls until a breakpoint has a hit, returning
-// the first hit row. Fatals on timeout. Used by pause-mode scenarios to
-// confirm the supervisor reached the checkpoint before issuing a resume.
 func waitForHitOnBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID, timeout time.Duration) persistence.BreakpointHitRow {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -147,9 +121,6 @@ func waitForHitOnBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID,
 	return persistence.BreakpointHitRow{}
 }
 
-// waitForHitCount polls until len(hits) >= want, returning the slice.
-// Used by multi-hit scenarios (multi-breakpoint match, hit-queue
-// overflow). Fatals on timeout.
 func waitForHitCount(t *testing.T, h *scenario.Harness, bpID shared.UUID, want int, timeout time.Duration) []persistence.BreakpointHitRow {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -171,8 +142,6 @@ func waitForHitCount(t *testing.T, h *scenario.Harness, bpID shared.UUID, want i
 	return hits
 }
 
-// getBreakpointRow fetches the breakpoint row directly for tests that
-// inspect dropped_count / expires_at side-effects.
 func getBreakpointRow(t *testing.T, h *scenario.Harness, bpID shared.UUID) *persistence.BreakpointRow {
 	t.Helper()
 	var out *persistence.BreakpointRow
@@ -186,7 +155,6 @@ func getBreakpointRow(t *testing.T, h *scenario.Harness, bpID shared.UUID) *pers
 	return out
 }
 
-// getHitRow fetches a single hit row by id; nil-safe.
 func getHitRow(t *testing.T, h *scenario.Harness, hitID shared.UUID) *persistence.BreakpointHitRow {
 	t.Helper()
 	var out *persistence.BreakpointHitRow
@@ -200,9 +168,6 @@ func getHitRow(t *testing.T, h *scenario.Harness, hitID shared.UUID) *persistenc
 	return out
 }
 
-// stubObservedCount returns the count of Observed dispatches matching
-// the given node_type. Used to assert "no executor call before resume"
-// and "exactly one executor call after resume".
 func stubObservedCount(h *scenario.Harness, nodeType string) int {
 	n := 0
 	for _, o := range h.Stub.Observed() {
@@ -213,8 +178,6 @@ func stubObservedCount(h *scenario.Harness, nodeType string) int {
 	return n
 }
 
-// waitForStubObservedCount blocks until stubObservedCount(nodeType) >= want.
-// Returns true on convergence, false on timeout.
 func waitForStubObservedCount(h *scenario.Harness, nodeType string, want int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -226,23 +189,6 @@ func waitForStubObservedCount(h *scenario.Harness, nodeType string, want int, ti
 	return false
 }
 
-// createInstanceWithPause POSTs to /instances with `paused: true` and
-// returns the new instance id. Mirrors scenario.Harness.CreateInstance
-// but does NOT call waitForRootDispatch (no dispatch should happen until
-// resume).
-//
-// Post-spec instance creation is idle, so this helper additionally posts
-// an empty-message wake right after create. The wake POST enqueues BOTH
-// the wake envelope AND its delivering frame in the same tx via the
-// universal `POST /instances/{id}/messages` route (see
-// `handleCreateMessage`'s `EnqueueMessage` + `EnqueueFrame` calls). The
-// envelope persists in the message ledger and the frame persists in
-// `rimsky_frames` with `state=queued`; the frame stays queued (no
-// promotion) while the instance is paused. When the test resumes the
-// instance, the frame engine's queued-frame sweep promotes the frame to
-// running, the message delivers, and the cascade walker fires the
-// structural roots — preserving the helper's pre-spec contract that a
-// subsequent `instanceResume` triggers root dispatch.
 // @decision: empty-message-as-root-trigger
 // @decision: test-harness-create-instance-wakes-roots-after-create
 func createInstanceWithPause(t *testing.T, h *scenario.Harness, templateHash, consumerKey string, params map[string]any) shared.UUID {

@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Cascade fallthrough: per-node detection of `pure_cascade` (the
-// no-dispatch fresh-roll). When all dependents are fresh and a node
-// has no executor, the scheduler's pure-cascade sweep rolls fresh
-// state forward without running the node.
-//
 // @concept: cascade
 package runtime
 
@@ -21,7 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// RecalculateArgs is the payload for RecalculateNode.
 type RecalculateArgs struct {
 	Persist      persistence.Tables
 	Queue        persistence.Queue
@@ -31,16 +25,6 @@ type RecalculateArgs struct {
 	TargetNodeID shared.UUID
 }
 
-// RecalculateNode routes a recalculate message to TargetNodeID. Flow:
-//  1. Append message_received.
-//  2. Load target.
-//  3. If fresh: no-op.
-//  4. If running or failed: no-op.
-//  5. If stale: check all dependencies. If any dep != fresh, no-op (we'll
-//     be nudged again when that dep completes). If all fresh AND target
-//     has an executor, enqueue dispatch row. If all fresh AND no executor,
-//     the scheduler's pure-cascade sweep handles it — no dispatch needed;
-//     no-op here.
 func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	sb, log := args.Persist, args.Logger
 	if log == nil {
@@ -53,15 +37,6 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		sourceStr = args.SourceNodeID.String()
 	}
 
-	// @deliberate: Load target BEFORE emitting the audit event so the
-	// message_received row carries the owning InstanceID. story:event-log-read
-	// has an operator filter /v1/events by instance_id and expect every event
-	// of the instance; a row without InstanceID is dropped by that filter and
-	// silently absent from the unified feed. The prior emit-then-load ordering
-	// dropped the InstanceID column on every message_received row — fixing at
-	// the read-surface boundary rather than threading instance_id resolution
-	// through the payload map keeps storage shape consistent with every other
-	// instance-scoped emit site.
 	var target *persistence.NodeRow
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		t, err := sb.Nodes().Get(ctx, args.TargetNodeID, tx)
@@ -90,24 +65,11 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		return nil
 	}
 
-	// @constraint: gating predicate is "wait-set empty in this frame."
-	// cascade-from-commit inserts wait-set rows; settled-state drain
-	// removes them. If any remain, code:lib/graph/scheduler::ListReadyForDispatch
-	// picks the row up on a later tick once the drain completes. The
-	// wait-set keys on receiver_run_id; resolve the target's in-flight run
-	// for the frame via the queue. Absent run means we cannot gate-check
-	// here — bail to the next scheduler tick which seeds the run row via
-	// the source.
 	if target.FrameID == nil {
 		return nil
 	}
 	var pending int
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// @deliberate: Under RunScope-first the in-flight resolver keys on
-		// (node_id, run_scope_id). Receivers with no in-flight run have
-		// nothing for the wait-set walk to gate on; treat that as "no
-		// pending blockers" — the next scheduler tick re-runs the gate
-		// after the cascade walker affirms a row.
 		if target.RunScopeID == nil {
 			pending = 0
 			return nil
@@ -136,58 +98,15 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	if target.Executor == "" {
 		return nil
 	}
-	// @constraint: FrameID is sourced from the target node row — a stale
-	// node always belongs to the in-flight frame (invariant:19). A nil
-	// frame_id here means the frame engine hasn't yet advanced the
-	// source-node's queued frame; defer to the next scheduler tick.
 	if target.FrameID == nil {
 		log.Debug("RecalculateNode: skip enqueue: target frame_id is nil",
 			"node_id", target.ID.String())
 		return nil
 	}
-	// @deliberate: RequiredStores empty. Per spec §6.2 an empty slice
-	// trivially satisfies the supervisor-pool predicate
-	// (RequiredStores ⊆ AcceptedStores).
 	var runScopeID shared.UUID
 	if target.RunScopeID != nil {
 		runScopeID = *target.RunScopeID
 	}
-	// @constraint: the in-flight run row on the target (if any) is the
-	// predecessor whose output is now stale; surface its id on
-	// proto:executor.proto::ExecuteRequest.prior_dispatch_id so executors
-	// maintaining per-dispatch session state can recover or hand off the
-	// recalculate. When the prior dispatch already retired (phase=
-	// 'completed' / 'failed') so InFlightRunID is nil, fall back to the
-	// most-recent row for (node, scope) — including terminal rows — so
-	// scratch carries forward across the recalculate disposition;
-	// STORY-opaque-executor-scratch's load-bearing property is round-trip
-	// integrity across every prior-dispatch-disposition, and recalculate
-	// over a retired prior is by far the most common shape.
-	//
-	// @constraint: MUST use EnqueueInTx (not the auto-commit Enqueue
-	// wrapper): the auto-commit wrapper has a documented zero-rows
-	// fallback race where a concurrent RunScopes().Close() commit between
-	// the INSERT and the fallback SELECT can over-report
-	// ErrRunScopeClosed (see queue.go EnqueueInTx comment lines 84-98).
-	// The recovery scratch load + enqueue MUST share a snapshot via a
-	// single tx, both to avoid that race and so the prior row's scratch
-	// can't be mutated between the load and the INSERT.
-	//
-	// @deliberate: when `priorDispatchID` resolves to an in-flight row
-	// (an in-flight row already exists for `(node_id, run_scope_id)`),
-	// EnqueueInTx's NOT EXISTS guard silently no-ops, so no new dispatch
-	// row is created. The scratch already lives on the existing
-	// in-flight row (the executor's own prior writes survive on its own
-	// dispatch row); the recalculate hint is a no-op rather than an
-	// error because the cascade walker's settle-side seed will fire at
-	// the in-flight row's terminal. The LoadScratchInTx call below is
-	// short-circuited in that case: the EnqueueInTx no-op would discard
-	// whatever LoadScratchInTx returned, and the wasted SELECT sits
-	// inside the recalculate tx that serializes with the
-	// actively-dispatching tx on a row currently being processed — the
-	// recalculate-against-in-flight shape is the documented common case,
-	// so the probe is worth its one branch.
-	//
 	// @concept: executor
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		priorDispatchID := target.InFlightRunID
@@ -225,12 +144,6 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			InitialScratchHandleBackend: scratchBackend,
 		}, tx)
 	}); err != nil {
-		// @constraint: a closed RunScope means the target's scope has
-		// terminated (parent rendezvous has fired). Walker discipline per
-		// concept:run-scope: do not enqueue into a closed scope; drop the
-		// recalculate silently. Without this skip, a benign race between
-		// the source's commit cascade and the target's scope closure
-		// would surface as a recalculate error.
 		if errors.Is(err, persistence.ErrRunScopeClosed) {
 			log.Debug("RecalculateNode: skip enqueue: run scope closed",
 				"node_id", target.ID.String(),

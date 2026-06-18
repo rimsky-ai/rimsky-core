@@ -3,23 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Gate 3 — the post-commit limb of @blessed-invariant 5 (verify-before-run).
-//
-// The sibling scenario `TestVerifyBeforeRunRace` exercises the candidate-
-// SELECT guard: a row pre-claimed by another supervisor is never admitted
-// as a candidate, so the runner returns Ran=false without ever committing.
-// That covers the common case but NOT the rare cross-transaction handoff
-// the invariant actually exists to catch: a row that IS unclaimed at
-// candidate-SELECT time (so our runner wins the acquisition tx and commits
-// ownership to itself) but is then stolen by another supervisor in the
-// narrow window between the acquisition commit and the verify-before-run
-// separate-read. The verify-read must catch that flip, emit
-// `orphaned_claim_lost_race`, and bail WITHOUT dispatching to the executor.
-//
-// Forcing that window deterministically requires an injection point between
-// the commit and the verify-read — `RunArgs.PostCommitHook`, a nil-default
-// test-only seam. The hook flips `claimed_by` to a thief supervisor, exactly
-// as a racing supervisor's claim would, so the verify-read observes foreign
-// ownership and the bail path fires.
 package scenarios
 
 import (
@@ -55,11 +38,6 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	// @constraint: Seed a single UNCLAIMED dispatch row (claimed_by left NULL, phase
-	// defaults to 'pending'). Unlike the candidate-guard sibling test we do
-	// NOT pre-seed an owner: this row must be admitted by the candidate
-	// SELECT so our runner wins the acquisition tx and commits ownership to
-	// itself — only then is the post-commit steal window reachable.
 	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
 	require.NoError(t, err)
 	require.NotNil(t, n.FrameID, "expected node to carry a frame_id from the initial frame advance")
@@ -75,9 +53,6 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	// stolen records whether the post-commit hook actually fired and flipped
-	// ownership — guards against a silent regression where the seam stops
-	// being invoked (which would make the test pass for the wrong reason).
 	var stolen bool
 	args := runtime.RunArgs{
 		Persist:           h.Persist,
@@ -94,8 +69,6 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),
 		LivenessInterval: 100 * time.Millisecond,
-		// @deliberate: Force the cross-transaction ownership flip in the window between
-		// the acquisition commit and the verify-before-run separate-read.
 		PostCommitHook: func(ctx context.Context) {
 			tag, uerr := h.Pool.Exec(ctx,
 				`UPDATE rimsky_node_runs SET claimed_by = 'thief-supervisor', claimed_at = NOW() WHERE id = $1`,
@@ -115,9 +88,6 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	require.False(t, out.Ran,
 		"verify-before-run must bail (Ran=false) when the claim was stolen between commit and the verify-read")
 
-	// @deliberate: The executor must NOT have been invoked: the node stays stale (the
-	// runner never transitioned it to running) and no terminal event was
-	// emitted for it.
 	var got *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, gerr := h.Persist.Nodes().Get(h.Ctx, n.ID, tx)
@@ -135,8 +105,6 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	require.Zero(t, terminalCount,
 		"no terminal/* event must be emitted — the stolen dispatch was never executed")
 
-	// @deliberate: The bail path must emit orphaned_claim_lost_race for the stolen
-	// dispatch, carrying the dispatch_id in its payload.
 	var orphanCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_events

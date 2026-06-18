@@ -2,10 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// asset.go — `rimsky asset {list,show,versions,delete,lineage}`
-// (plan G1). Thin wrapper over F5 + F6 control-api routes.
-//
-//	@concept: asset
+// @concept: asset
 package cli
 
 import (
@@ -18,7 +15,6 @@ import (
 	"time"
 )
 
-// RunAssetList implements `asset list --instance <id>`.
 func RunAssetList(ctx context.Context, args []string) int {
 	var instance string
 	fs, common, endpoint, code := runWithCommon("asset list", args, func(fs *flag.FlagSet) {
@@ -57,8 +53,6 @@ func RunAssetList(ctx context.Context, args []string) int {
 	return 0
 }
 
-// resolveInstanceUUID accepts either a UUID or an instance_key. When
-// the input is not the UUID shape we GET /instances/{key} to resolve.
 func resolveInstanceUUID(ctx context.Context, c *Client, ref string) (string, error) {
 	if LooksLikeUUID(ref) {
 		return ref, nil
@@ -70,7 +64,6 @@ func resolveInstanceUUID(ctx context.Context, c *Client, ref string) (string, er
 	return inst.UUID(), nil
 }
 
-// RunAssetShow implements `asset show --instance <id> <alias>`.
 func RunAssetShow(ctx context.Context, args []string) int {
 	var instance string
 	fs, common, endpoint, code := runWithCommon("asset show", args, func(fs *flag.FlagSet) {
@@ -110,10 +103,6 @@ func RunAssetShow(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunAssetVersions implements `asset versions --instance <id> <alias>`.
-// Wraps GET /instances/{id}/assets/{alias}/versions. V1 server returns
-// 501; the CLI surfaces the precise body error so operators know the
-// follow-up status.
 func RunAssetVersions(ctx context.Context, args []string) int {
 	var instance string
 	fs, common, endpoint, code := runWithCommon("asset versions", args, func(fs *flag.FlagSet) {
@@ -155,7 +144,6 @@ func RunAssetVersions(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunAssetDelete implements `asset delete --instance <id> <alias>`.
 func RunAssetDelete(ctx context.Context, args []string) int {
 	var instance string
 	fs, common, endpoint, code := runWithCommon("asset delete", args, func(fs *flag.FlagSet) {
@@ -182,10 +170,6 @@ func RunAssetDelete(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunAssetLineage implements
-// `asset lineage --instance <id> <alias> [--version v] [--depth N]`.
-// Resolves the alias to a claim_handle_id via GET /assets/{alias}
-// then walks GET /lineage/claims/{claim_handle_id}/ancestors.
 func RunAssetLineage(ctx context.Context, args []string) int {
 	var instance, version string
 	var depth int
@@ -242,9 +226,6 @@ func RunAssetLineage(ctx context.Context, args []string) int {
 	return 0
 }
 
-// recordCarriesVersion reports whether the JSON record's `version_id`
-// field equals `want`. Used to client-side-filter ancestors by version
-// without pushing predicates into the URL.
 func recordCarriesVersion(record json.RawMessage, want string) bool {
 	if len(record) == 0 || want == "" {
 		return false
@@ -258,8 +239,6 @@ func recordCarriesVersion(record json.RawMessage, want string) bool {
 	return probe.VersionID == want
 }
 
-// truncateSnippet is a small printable abbreviator for raw-JSON record
-// previews in the table format.
 func truncateSnippet(s string, max int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	if len(s) <= max {

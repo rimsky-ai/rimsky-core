@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// runner_acquire_named_locks.go — named-lock acquisition path. Split
-// out of `runner_acquire.go` per the 2026-05-17 cold-read paydown
-// (Item 4 / Tier 1) so each concern lives in a < 500-line file.
-
 package runtime
 
 import (
@@ -22,8 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-// takeNamedAdvisoryLocks walks the sorted spec slice and takes one
-// advisory lock per NamedLockSpec.
 func takeNamedAdvisoryLocks(ctx context.Context, args RunArgs, tx persistence.Tx, specs []any) error {
 	for _, sp := range specs {
 		named, ok := sp.(locks.NamedLockSpec)
@@ -37,11 +31,6 @@ func takeNamedAdvisoryLocks(ctx context.Context, args RunArgs, tx persistence.Tx
 	return nil
 }
 
-// acquireOneLock dispatches one spec to the right acquisition path and
-// returns one of the three openResult flavors. NamedLockSpec acquisitions
-// never report Unavailable (acquired or bail only). ClaimSpec
-// acquisitions may report Unavailable when the producer's Open returns
-// Available=false.
 func acquireOneLock(
 	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
 	sp any, cand persistence.Candidate, livenessInterval time.Duration,
@@ -63,15 +52,6 @@ func acquireOneLock(
 	return AcquiredLock{}, openResultBail, fmt.Errorf("acquireOneLock: unknown spec kind %T", sp)
 }
 
-// acquireNamedLock enforces the counter-semaphore limit then inserts
-// the named lock-holder row. The per-name advisory lock has been
-// taken upstream (takeNamedAdvisoryLocks); under that lock the
-// CountByNamedLock + Insert pair is atomic against the limit.
-//
-// When the operator's NamedLocks config has no entry for this name,
-// no limit is enforced (limit defaults to ∞). Templates referencing
-// undeclared names should have failed validation at deploy time
-// (control-api wires NamedLockDeclared unconditionally).
 func acquireNamedLock(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	spec locks.NamedLockSpec, cand persistence.Candidate, livenessInterval time.Duration,
@@ -82,16 +62,6 @@ func acquireNamedLock(
 			return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: CountByNamedLock(%q): %w", spec.Name, err)
 		}
 		if count >= cfg.Limit {
-			// @deliberate: saturation bail counts as "unavailable" (mirroring
-			// producer-claim intent vocabulary) even though the per-candidate
-			// tx rolls back — the metric is a monotonic counter of attempts,
-			// not persisted state, so the rollback does not (and must not)
-			// un-count it. The "acquired" outcome, by contrast, increments
-			// post-commit (see the audit step in acquireCandidate) so a later
-			// spec failing the same tx never leaves a phantom acquisition.
-			// @constraint: label with the bounded pre-substitution template
-			// name (namedLockMetricLabel) — the concrete per-entity name
-			// would mint one Prometheus series per runtime value.
 			metricsOf(args).IncNamedLockAcquisition(namedLockMetricLabel(spec), "unavailable")
 			return AcquiredLock{}, false, nil
 		}
@@ -109,8 +79,6 @@ func acquireNamedLock(
 		HolderNodeID:       cand.NodeID,
 		ExpiresAt:          args.Clock.Now().Add(5 * livenessInterval),
 		FrameID:            &frameID,
-		// @constraint: named locks are never held past active terminal; they
-		// release at the node-run's active-phase terminal.
 		IsHeld: false,
 	}
 	if err := args.ClaimHandles.Insert(ctx, in, tx); err != nil {
@@ -129,15 +97,6 @@ func acquireNamedLock(
 	}, true, nil
 }
 
-// namedLockMetricLabel picks the Prometheus label for a named-lock
-// acquisition: the pre-substitution template name (bounded — one value
-// per template declaration) rather than the concrete post-substitution
-// name, whose per-entity values (the documented
-// `{{nodes.X.attribute.Y}}` pattern) would mint unbounded series. The
-// concrete name remains observable in the events ledger
-// (lock_acquired payloads). Falls back to the concrete name for specs
-// constructed without a template name (no substitution directives —
-// the two are then identical).
 func namedLockMetricLabel(spec locks.NamedLockSpec) string {
 	if spec.TemplateName != "" {
 		return spec.TemplateName

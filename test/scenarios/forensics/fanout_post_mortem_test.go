@@ -2,26 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Forensics scenario — fanout_post_mortem.
-//
-// Pin: a fan-out parent with mixed-outcome children (some Commit, some
-// natural Abandon) emits a complete forensics trail across both
-// `rimsky_lineage` and `rimsky_events`:
-//
-//   - One `claim_terminal` lineage row per child (committed/abandoned)
-//     plus one for the parent.
-//   - One `claim_resolution.commit` event per committed child, one
-//     `claim_resolution.abandon` per abandoned child, one for the parent.
-//   - Note: `fanout.children_created` is fired by the dispatch path
-//     (`runtime/fanout_dispatch.go::dispatchFanOutChildren`); this
-//     scenario exercises the resolution path directly (skipping
-//     dispatch) so the event is not expected here. The dispatch-side
-//     event surface is exercised by the fan-out scenarios in
-//     `test/scenarios/fanout/`.
-//
-// Spec: 2026-05-16 dispatch attached to plans/2026-05-15-data-platform-
-// extensions-plan (lineage + events forensics extensions).
-//
 // @concept: fan-out
 // @concept: claim-tree
 // @concept: lineage
@@ -67,16 +47,10 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 		Clock:         shared.SystemClock{},
 	}
 
-	// @constraint: Threshold(max_failures=1): tolerates one Abandon, requires the rest
-	// to Commit. We exercise 4 children: 3 Commit + 1 Abandon → parent
-	// Commits per threshold rule.
 	parentID, subIDs := seedFanOutTree(ctx, t, backend, parentRunID, parentNodeID, frameID,
 		"sup-PM", "postmortem-store", 4,
 		spec.AggregationPolicy{Kind: spec.AggregationKindThreshold, MaxFailures: 1})
 
-	// @deliberate: Drive sub[0..2] as Commit, sub[3] as Abandon. All resolutions
-	// recurse upward via ParentClaimHandleID so the parent's aggregation
-	// + counter bumps fire.
 	commitOutcomes := []runtime.AggregateOutcome{
 		runtime.AggregateCommit, runtime.AggregateCommit, runtime.AggregateCommit, runtime.AggregateAbandon,
 	}
@@ -121,12 +95,9 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, parentRows, 1,
 		"parent must emit exactly one claim_terminal row after all children resolve")
-	// @constraint: Threshold(max_failures=1) with 3 commit + 1 abandon → Commit.
 	require.Equal(t, persistence.LineageOutcomeCommitted, parentRows[0].Outcome,
 		"threshold(max_failures=1) tolerates one abandon → parent Commits")
 
-	// @deliberate: Events coverage: 3 commit + 1 abandon per child + 1 commit for the
-	// parent.
 	var commitPage persistence.EventListResult
 	var abandonPage persistence.EventListResult
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -194,9 +165,6 @@ func seedForensicsScenario(
 	return inst.ID, frameID, runID, nodeRow.ID
 }
 
-// seedFanOutTree inserts a parent + n sub-claim rows with the
-// supplied aggregation policy snapshotted on the parent.
-//
 // @source: test/scenarios/lineage/force_cancelled_lineage_test.go::seedFanOutTree
 func seedFanOutTree(
 	ctx context.Context, t *testing.T, backend persistence.Tables,

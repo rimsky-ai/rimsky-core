@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — per-instance attribute_overrides drives end-to-end:
-//   - POST /instances accepts attribute_overrides
-//   - persistence round-trips it on rimsky_instances.attribute_overrides
-//   - acquisition reads it onto acquisition.InstanceAttributeOverrides
-//   - applyAttributeOverrides deep-merges L1 template defaults (folded
-//     into the effective schema's `default:` values at registration) +
-//     L3 by_executor + L4 by_node fragments on top of resolved sources
-//   - the merged map reaches the executor on ExecuteRequest.attributes
-//
-// This test guards against regressions of the "load-bearing seam" between
-// the persisted column and the dispatch path. Before the 2026-05-21
-// userdata-collapse rewrite, this scenario asserted on the userdata
-// field; post-collapse it asserts on attributes.
 package scenarios
 
 import (
@@ -56,10 +43,6 @@ func TestAttributeOverridesEndToEndDispatch(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// @deliberate: `cli` carries no L2 declaration so L1's
-						// template-default ({silence_timeout_ms, trace_to})
-						// folds into the effective schema as the
-						// `default:` for the property at registration.
 						"cli": map[string]any{
 							"type": "object",
 						},
@@ -95,11 +78,6 @@ func TestAttributeOverridesEndToEndDispatch(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
-	// @deliberate: Find the stub's record of the worker dispatch and assert the
-	// attribute bag reaching the executor was the merged map: by_node
-	// wins the trace_to key (most specific), by_executor contributes
-	// synthetic_scenario, the template L1 default's silence_timeout_ms
-	// is preserved.
 	var got map[string]any
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -123,7 +101,6 @@ func TestAttributeOverridesEndToEndDispatch(t *testing.T) {
 		"by_node should win the trace_to key (most specific layer)")
 	require.Equal(t, "exit-clean-no-callback", cli["synthetic_scenario"],
 		"by_executor should contribute synthetic_scenario")
-	// @deliberate: L1 template default's silence_timeout_ms key not touched by either override.
 	require.Equal(t, float64(60000), cli["silence_timeout_ms"],
 		"template L1 default's silence_timeout_ms should be preserved")
 }

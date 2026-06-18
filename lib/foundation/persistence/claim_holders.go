@@ -11,7 +11,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// ClaimHolderState enumerates the per-claim-holder lifecycle states.
 type ClaimHolderState string
 
 const (
@@ -20,12 +19,6 @@ const (
 	ClaimHolderStateFailed    ClaimHolderState = "failed"
 )
 
-// ClaimHolderRow mirrors a row of rimsky_claim_holders.
-//
-// Post-stage-5 of the run-row lifecycle cutover the holder is keyed by
-// HolderRunID (a `rimsky_node_runs.id`), not by node id — co-holdership
-// (`holds:` template directive) and inheritor membership both bind to a
-// specific run, so per-run identity is what auto-terminal walks.
 type ClaimHolderRow struct {
 	ID            shared.UUID      `json:"id"`
 	ClaimHandleID shared.UUID      `json:"claim_handle_id"`
@@ -34,7 +27,6 @@ type ClaimHolderRow struct {
 	CompletedAt   *time.Time       `json:"completed_at,omitempty"`
 }
 
-// ClaimHolderInsertInput is the per-row input for Insert.
 type ClaimHolderInsertInput struct {
 	ID            shared.UUID
 	ClaimHandleID shared.UUID
@@ -42,7 +34,6 @@ type ClaimHolderInsertInput struct {
 	FrameID       *shared.UUID
 }
 
-// ClaimHolderTable is the rimsky_claim_holders accessor.
 type ClaimHolderTable interface {
 	Insert(ctx context.Context, in ClaimHolderInsertInput, tx Tx) error
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHolderRow, error)
@@ -51,18 +42,5 @@ type ClaimHolderTable interface {
 	ListActiveByClaimHandleID(ctx context.Context, claimHandleID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
 	Complete(ctx context.Context, id shared.UUID, state ClaimHolderState, tx Tx) error
 	CompleteByClaimHandleAndRun(ctx context.Context, claimHandleID, holderRunID shared.UUID, state ClaimHolderState, tx Tx) error
-	// @agent-contract FailAllActiveByClaimHandle marks every still-'active'
-	// row for the given claim_handle as 'failed'. Used by the held-claim
-	// acquirer-failure path (operator-declared `error_types:` chain
-	// resolving give_up for an executor Error or for synthetic
-	// `acquire/unavailable`) so auto-terminal can fire immediately rather
-	// than waiting for inheritors that will never reach a terminal — the
-	// acquirer's failure means the held subgraph aborts.
-	// @constraint: claimant-guarded per blessed-invariant 4 — the UPDATE
-	// applies only when rimsky_claim_handles.holder_supervisor_id matches
-	// supervisorID. Defense-in-depth: today's call site is the legitimate
-	// owner by construction (it just acquired the handle), but the guard
-	// prevents a future refactor from acting on rows whose ownership has
-	// moved.
 	FailAllActiveByClaimHandle(ctx context.Context, claimHandleID shared.UUID, supervisorID string, tx Tx) error
 }

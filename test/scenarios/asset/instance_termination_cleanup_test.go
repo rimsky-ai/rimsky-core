@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N6 scenario — instance_termination_cleanup.
-//
-// At instance termination, runtime.ReleaseHeldDurableClaims walks the
-// instance's committed-durable rows (state = 'committed' AND lifetime =
-// 'durable') and calls ClaimProducer.Release on each; the per-claim
-// report carries success / failure counts.
-//
-// This scenario pins the report shape contract; the full
-// persistence wiring lives behind the postgres harness.
 package asset
 
 import (

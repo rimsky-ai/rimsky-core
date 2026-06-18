@@ -2,34 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Executable proof for STORY-cascade-signal-blind.
-//
-// Drives the real assembled stack (control-api + scheduler +
-// supervisor + stub-executor + Postgres via testcontainers) through
-// every cascade-firing signal type in the post-collapse taxonomy —
-// `terminal/success`, `terminal/error/<class>` (give_up and pass
-// flavors), `attribute/<key>/changed` — plus the new
-// `terminal/success` + `when: "<tag>" in payload.tags` CEL row that
-// replaces the retired `event/<name>` signal under
-// TD-collapse-named-event-to-tags.
-//
-// For each row asserts (a) a subscriber dispatches in response to
-// the signal, AND (b) the audit row lands in `rimsky_events`. The
-// per-sender (`{ node: X, type: ... }`) and cross-cutting (`instance:
-// true`) subscription shapes are exercised for the terminal/success
-// + terminal/error rows; per-sender alone for attribute/<key>/changed
-// and the tag CEL row. Trailing-`*` prefix shapes (`terminal/error/*`)
-// are exercised on the error rows. The `transient/retry/<n>/<class>`
-// signal is exercised by the retry-after-error scratch round-trip in
-// `code:test/scenarios/scratch_round_trip_e2e_test.go::TestScratchRoundTripE2E_RetryAfterError`,
-// which drives a real retry chain end to end; we don't duplicate
-// here.
-//
-// Load-bearing property: cascade signal-blindness — drive REAL
-// settlements through the runtime; no hand-injected signals. Per
-// TD-collapse-named-event-to-tags the `event/<name>` row is dropped
-// entirely and replaced by the `terminal/success + tags` CEL row.
-//
 // @story: cascade-signal-blind
 // @concept: cascade
 // @concept: terminal-tag
@@ -50,13 +22,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// @deliberate: waitForNodeStateNoEvent polls the node row until the
-// state matches, with no `terminal/success` event-row requirement.
-// The harness's WaitForNodeState requires a terminal/success row when
-// waiting on fresh — fine for the success path, wrong for `pass`-
-// settled fresh (where the settling signal is terminal/error/<class>,
-// not terminal/success). Used by the pass-flavored terminal/error
-// rows.
 func waitForNodeStateNoEvent(h *scenario.Harness, nodeID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -87,14 +52,9 @@ func TestCascadeSignalBlind_E2E(t *testing.T) {
 
 	t.Run("attribute_changed__per_sender", testCascadeAttributeChangedPerSender)
 
-	// @constraint: Post TD-collapse-named-event-to-tags the
-	// `event/<name>` taxonomy row retires; subscribers express tag
-	// interest via CEL filters over `payload.tags` on the terminal/*
-	// signal. This row pins the new shape.
 	t.Run("terminal_success_with_tag_filter__per_sender", testCascadeTerminalSuccessWithTagFilterPerSender)
 }
 
-// @deliberate: terminal/success per-sender exact
 
 func testCascadeTerminalSuccessPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -130,7 +90,6 @@ func testCascadeTerminalSuccessPerSender(t *testing.T) {
 		"audit row for terminal/success must land in rimsky_events")
 }
 
-// @deliberate: terminal/success cross-cutting exact
 
 func testCascadeTerminalSuccessCrossCutting(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -166,7 +125,6 @@ func testCascadeTerminalSuccessCrossCutting(t *testing.T) {
 		"audit row for terminal/success must land in rimsky_events")
 }
 
-// @deliberate: terminal/error/<class> give_up flavor
 
 func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -185,9 +143,6 @@ func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 			}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
-				// @deliberate: Trailing-* prefix shape — per-sender
-				// `terminal/error/*` fires on any terminal/error/<class>
-				// signal from the named sender.
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "terminal/error/*",
 					WakeOnChange:         node.BoolPtr(true),
@@ -252,7 +207,6 @@ func testCascadeTerminalErrorGiveUpCrossCutting(t *testing.T) {
 		"audit row for terminal/error/<class> must land in rimsky_events")
 }
 
-// @deliberate: terminal/error/<class> pass flavor
 
 func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -286,8 +240,6 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 	require.NotNil(t, sender)
 	require.NotNil(t, receiver)
 
-	// @constraint: pass settles the sender fresh — the wire signal is
-	// still terminal/error/<class>; the receiver wildcards on it.
 	require.True(t, waitForNodeStateNoEvent(h, sender.ID, cascade.NodeStateFresh, 30*time.Second),
 		"sender should settle fresh under pass (the wire signal is still terminal/error/<class>)")
 	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
@@ -296,7 +248,6 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 		"audit row for terminal/error/<class> must land in rimsky_events under pass")
 }
 
-// @deliberate: attribute/<key>/changed
 
 func testCascadeAttributeChangedPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -340,16 +291,9 @@ func testCascadeAttributeChangedPerSender(t *testing.T) {
 		"audit row for attribute/<key>/changed must land in rimsky_events")
 }
 
-// @deliberate: terminal/success + CEL `when:` tag filter — the post-
-// collapse replacement for the retired `event/<name>` taxonomy row.
-// The subscriber's `when: "<tag>" in payload.tags` predicate gates the
-// fire on the sender's settling outcome carrying that tag.
 
 func testCascadeTerminalSuccessWithTagFilterPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// @deliberate: Sender's Success carries an explicit `ready` tag on
-	// the terminal verdict; the subscriber's CEL `when:` predicate
-	// gates on its presence in payload.tags.
 	h.Stub.WhenType("sender").Success(map[string]any{"k": 1}, true, "ok").Tags("ready")
 	h.Stub.WhenType("receiver").Success(map[string]any{"r": 1}, true, "rcv")
 

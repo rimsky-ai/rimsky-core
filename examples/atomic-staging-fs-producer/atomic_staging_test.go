@@ -20,25 +20,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestAtomicStaging_StageThenSwap drives the recovered filesystem
-// atomic-staging reference producer end-to-end over gRPC (in the shape
-// of claimproducer/claimproducer_test.go) and pins the stage-then-swap
-// contract that makes this a real claim-producer rather than a no-op:
-//
-//   - Open reserves a private staging directory (it exists) while the
-//     canonical view for that scope is still absent — nothing is
-//     visible to readers until Commit.
-//   - The executor writes its work product into staging.
-//   - Commit performs a real POSIX rename of staging into the canonical
-//     view — the file is now at the canonical path and the staging
-//     directory is gone (the swap moved, did not copy).
-//   - A second claim's Abandon discards its staging and leaves the
-//     committed canonical view untouched.
-//
-// These properties are the load-bearing safety guarantees of the
-// atomic-staging pattern: no partial state is ever visible at the
-// canonical path (atomic rename), and an abandoned run cannot corrupt a
-// previously-committed view.
 func TestAtomicStaging_StageThenSwap(t *testing.T) {
 	root := t.TempDir()
 	st, err := store.New(root)
@@ -53,10 +34,6 @@ func TestAtomicStaging_StageThenSwap(t *testing.T) {
 
 	const scope = "tenant-a"
 
-	// @deliberate: assert STAGED_ASYNC up front — downstream verifiers
-	// rely on the staging area existing before Commit fires; a producer
-	// that advertised a different semantics here would silently break
-	// the stage-then-swap pattern this whole test pins.
 	caps, err := client.Capabilities(ctx, &genv1.CapabilitiesRequest{})
 	if err != nil {
 		t.Fatalf("capabilities: %v", err)
@@ -111,11 +88,6 @@ func TestAtomicStaging_StageThenSwap(t *testing.T) {
 	if string(got) != payload {
 		t.Fatalf("committed bytes = %q, want %q", string(got), payload)
 	}
-	// @deliberate: Commit must rename (move), not copy — assert staging
-	// is gone afterwards. A copy-instead-of-rename implementation would
-	// leave the test passing on the canonical-bytes check above while
-	// silently breaking the atomicity guarantee this whole pattern exists
-	// to provide.
 	if dirExists(stagingPath) {
 		t.Fatalf("staging dir %q must be gone after Commit (rename, not copy)", stagingPath)
 	}
@@ -153,9 +125,6 @@ func TestAtomicStaging_StageThenSwap(t *testing.T) {
 	}
 }
 
-// startProducer stands up the server.Server in-process over a loopback
-// gRPC listener and returns a connected ClaimProducer client plus a stop
-// func. Mirrors claimproducer/claimproducer_test.go.
 func startProducer(t *testing.T, st *store.Store) (genv1.ClaimProducerClient, func()) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")

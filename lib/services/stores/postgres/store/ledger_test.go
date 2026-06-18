@@ -69,14 +69,9 @@ func TestPgLedgerNilSafe(t *testing.T) {
 	if out != nil || next != "" {
 		t.Fatalf("nil ledger List should return (nil, ''); got %+v %q", out, next)
 	}
-	// @constraint: RecordEvent on the nil receiver must also be a no-op.
 	l.RecordEvent("x", "claim_commit_failed", "ERROR", nil)
 }
 
-// TestPgLedgerRecordEvent_NonTerminal: the non-terminal append path
-// (claim_commit_failed / claim_abandon_failed) must surface in
-// History without flipping State or ClosedAt — the next retry may
-// still succeed, so the claim is not yet closed.
 func TestPgLedgerRecordEvent_NonTerminal(t *testing.T) {
 	l := NewClaimLedger(10)
 	l.RecordOpen("c1", "/foo", []byte(`"a"`), []byte(`"r"`))
@@ -110,9 +105,6 @@ func TestPgLedgerRecordEvent_NonTerminal(t *testing.T) {
 	}
 }
 
-// TestPgLedgerRecordEvent_DefaultSeverity: empty severity defaults
-// to "INFO" so the dashboard's severity filter never sees an
-// unspecified value.
 func TestPgLedgerRecordEvent_DefaultSeverity(t *testing.T) {
 	l := NewClaimLedger(10)
 	l.RecordOpen("c1", "/foo", nil, nil)

@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: Inv 10 (AcquisitionTxAtomicity) — lock acquisition is atomic with dispatch claim. The supervisor's
-// §7.3 acquisition transaction either claims dispatch + INSERTs all
-// required lock-holder rows + UPDATEs lock-holder addresses, or none of
-// these.
 package conformance
 
 import (
@@ -42,8 +38,6 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 	lockName := "acquisition-lock"
 	rollbackErr := errors.New("rollback the whole acquisition")
 
-	// @deliberate: rollback half of the atomicity check — claim dispatch + insert
-	// lock-holder + update address inside a tx that returns an error; none should land.
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors: []string{"test-executor"},
@@ -104,8 +98,6 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// @deliberate: commit half of the atomicity check — same three operations, tx returns nil;
-	// all three must land.
 	addressBytes := json.RawMessage(`{"addr":"committed"}`)
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{

@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — pins spec §10.2 "Breakpoint expiry":
-//
-//   - Install a breakpoint with ttl_seconds = 1.
-//   - Wait past t=2s so the scheduler's sweep tick deletes the
-//     breakpoint row.
-//   - Subsequent matching dispatches must NOT hit the breakpoint —
-//     the matcher set is empty after expiry.
-//
-// Pins both the §4.8 SweepExpired contract (TTL-bounded breakpoint
-// auto-deletion) and the supervisor's evaluator's tolerance of
-// "no breakpoints for this instance" (the absence of a matched row is
-// the only correctness signal).
-//
 // @concept: breakpoint
 
 package breakpoints
@@ -36,7 +23,6 @@ import (
 func TestBreakpointExpiry(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{
-		// @deliberate: Fast tick so SweepExpired fires soon after the TTL elapses.
 		SchedulerTick: 100 * time.Millisecond,
 	})
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "ok")
@@ -67,17 +53,11 @@ func TestBreakpointExpiry(t *testing.T) {
 	require.NotNil(t, getBreakpointRow(t, h, bpID),
 		"breakpoint should exist immediately after creation")
 
-	// @deliberate: Wait past the TTL + a sweep tick or two. The sweep is scheduled
-	// every 100ms; SweepExpired uses NOW() > expires_at.
 	require.Eventually(t, func() bool {
-		// @deliberate: Use includeExpired=true via direct row lookup; SweepExpired
-		// physically DELETEs the row, so Get returns nil once it fires.
 		return getBreakpointRow(t, h, bpID) == nil
 	}, 5*time.Second, 100*time.Millisecond,
 		"breakpoint row should be deleted by SweepExpired within TTL + sweep cadence")
 
-	// @deliberate: Resume the instance — the worker should dispatch unimpeded since
-	// the breakpoint is gone.
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
@@ -86,10 +66,6 @@ func TestBreakpointExpiry(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker should reach Fresh after the breakpoint expired (no pause)")
 
-	// @deliberate: And no hit row should have landed — the breakpoint was already
-	// gone by dispatch time. Probe the hit table via the InstanceID
-	// scan; an expired breakpoint deletes hits via FK CASCADE, so 0
-	// rows is the assertion.
 	var hits []persistence.BreakpointHitRow
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := h.Persist.BreakpointHits().ListSinceForInstance(ctx, iid, 0, 100, tx)

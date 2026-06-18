@@ -4,13 +4,6 @@
 
 //go:build smoke
 
-// Package all is the unified-image smoke test. Builds Dockerfile.rimsky,
-// runs the container, polls /health, asserts the SQLite startup banner
-// appears in the container logs, and verifies clean shutdown. Per
-// spec §9.6.
-//
-// Gated by `//go:build smoke`: run via `go test -tags=smoke
-// ./test/smoke/all/...`. Skips automatically when docker is unavailable.
 package all
 
 import (
@@ -29,8 +22,6 @@ func TestUnifiedImage(t *testing.T) {
 		t.Skip("docker unavailable")
 	}
 
-	// @deliberate: Resolve repo root from this test's source location so the build
-	// works regardless of the test runner's CWD.
 	_, thisFile, _, _ := runtime.Caller(0)
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
 

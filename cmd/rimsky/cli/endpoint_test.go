@@ -35,11 +35,6 @@ func TestResolveEndpoint_FlagWins(t *testing.T) {
 	}
 }
 
-// TestResolveEndpoint_FlagBeatsManifestForNonCompose — flag beats a
-// manifestContext when flag is set. The non-compose entry point is
-// meant for verbs that don't load manifests, so this code path
-// exercises the fallback when callers pass a manifestContext
-// defensively.
 func TestResolveEndpoint_FlagBeatsManifestForNonCompose(t *testing.T) {
 	t.Setenv("RIMSKY_CONTEXT", "")
 	cfg := writeConfig(t, &Config{
@@ -67,7 +62,6 @@ func TestResolveEndpointForCompose_ManifestPinConflictsWithFlag(t *testing.T) {
 			"staging": {Endpoint: "http://staging"},
 		},
 	})
-	// @deliberate: --endpoint contradicts the manifest's pinned context → error.
 	_, err := ResolveEndpointForCompose("http://flag", "http://env", cfg, "staging")
 	if err == nil {
 		t.Fatal("want error when --endpoint conflicts with manifest pin")
@@ -86,7 +80,6 @@ func TestResolveEndpointForCompose_ManifestPinMatchesFlag(t *testing.T) {
 			"staging": {Endpoint: "http://staging"},
 		},
 	})
-	// @deliberate: --endpoint matches the manifest pin's resolved endpoint → accepted.
 	got, err := ResolveEndpointForCompose("http://staging", "http://env", cfg, "staging")
 	if err != nil {
 		t.Fatal(err)

@@ -19,8 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// fakeLineageTable is an in-memory persistence.LineageTable for unit
-// tests of the writer.
 type fakeLineageTable struct {
 	rows []persistence.LineageRow
 }
@@ -116,8 +114,6 @@ func TestWriteClaimTerminalLineage_VersionIDPersisted(t *testing.T) {
 	}
 }
 
-// TestWriteClaimTerminalLineage_AbandonedOutcome pins the Abandon path:
-// a natural Abandon row carries `outcome: abandoned` (no cause field).
 func TestWriteClaimTerminalLineage_AbandonedOutcome(t *testing.T) {
 	lt := &fakeLineageTable{}
 	ctx := context.Background()
@@ -139,9 +135,6 @@ func TestWriteClaimTerminalLineage_AbandonedOutcome(t *testing.T) {
 	}
 }
 
-// TestWriteClaimTerminalLineage_ForceCancelledOutcome pins the
-// force-cancel path: the cause field is preserved in the JSON payload so
-// post-mortem queries can distinguish sibling-cancel from descendant-cancel.
 func TestWriteClaimTerminalLineage_ForceCancelledOutcome(t *testing.T) {
 	lt := &fakeLineageTable{}
 	ctx := context.Background()
@@ -168,11 +161,6 @@ func TestWriteClaimTerminalLineage_ForceCancelledOutcome(t *testing.T) {
 	}
 }
 
-// TestWriteClaimTerminalLineage_EmptyOutcomeRejected pins the
-// post-2026-05-17 contract: an empty Outcome on a claim_terminal write
-// returns an error (no silent default to `committed`). Prevents an
-// Abandon path that forgets to populate Outcome from silently producing
-// a Commit-shaped row.
 func TestWriteClaimTerminalLineage_EmptyOutcomeRejected(t *testing.T) {
 	lt := &fakeLineageTable{}
 	rec := ClaimTerminalRecord{
@@ -181,7 +169,6 @@ func TestWriteClaimTerminalLineage_EmptyOutcomeRejected(t *testing.T) {
 		NodeID:        shared.UUID(uuid.New()),
 		FrameID:       shared.UUID(uuid.New()),
 		ProducerName:  "store",
-		// @deliberate: Outcome left empty intentionally.
 	}
 	err := WriteClaimTerminalLineage(context.Background(), nil, lt,
 		shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec)
@@ -193,12 +180,6 @@ func TestWriteClaimTerminalLineage_EmptyOutcomeRejected(t *testing.T) {
 	}
 }
 
-// TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable pins the
-// cycle-2 fix: ParentRunID from the LeafRunEmitInput threads into
-// LeafRunRecord.ParentRunID, which serializes into the JSONB payload,
-// which is queryable via QueryByParentRunID. Without this end-to-end
-// round-trip the descendant walker (`GET /lineage/runs/{run_id}/descendants`)
-// returns empty for every seed.
 func TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable(t *testing.T) {
 	lt := &queryableFakeLineageTable{}
 	ctx := context.Background()
@@ -217,8 +198,6 @@ func TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable(t *testing.T) {
 	if err := WriteLeafRunLineage(ctx, nil, lt, inst, frame, time.Now().UTC(), rec); err != nil {
 		t.Fatalf("WriteLeafRunLineage: %v", err)
 	}
-	// @deliberate: Round-trip through the JSON column to confirm `parent_run_id`
-	// is present and lookup-by-parent returns the child row.
 	rows, err := lt.QueryByParentRunID(ctx, parent, 10)
 	if err != nil {
 		t.Fatalf("QueryByParentRunID: %v", err)
@@ -239,9 +218,6 @@ func TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable(t *testing.T) {
 	}
 }
 
-// queryableFakeLineageTable is the subset of fakeLineageTable that
-// supports QueryByParentRunID via JSON inspection of the in-memory rows.
-// Mirrors the postgres `record->>'parent_run_id' = $1` predicate.
 type queryableFakeLineageTable struct {
 	fakeLineageTable
 }
@@ -266,12 +242,6 @@ func (f *queryableFakeLineageTable) QueryByParentRunID(_ context.Context, parent
 	return out, nil
 }
 
-// emitFakePersist is a minimal persistence.Tables surface backing the
-// EmitLeafRunLineage end-to-end test. Only `Lineage()` and
-// `Transaction()` are honored; every other accessor returns nil. The
-// fake is intentionally narrow — `EmitLeafRunLineage` reaches into only
-// those two surfaces, and embedding a noop stub would force a sweeping
-// definition change every time `persistence.Tables` adds a method.
 type emitFakePersist struct {
 	lt persistence.LineageTable
 }
@@ -306,25 +276,9 @@ func (f *emitFakePersist) BreakpointHits() persistence.BreakpointHitTable {
 }
 
 func (f *emitFakePersist) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
-	// @deliberate: The writer is tx-agnostic — the in-memory fake doesn't care about
-	// the tx handle, so we pass nil through and run the body inline.
 	return fn(ctx, nil)
 }
 
-// TestEmitLeafRunLineage_OmitsEmptyParentRunID drives EmitLeafRunLineage
-// end-to-end via a minimal RunArgs fixture and pins the nil-pointer →
-// empty-string conversion for ParentRunID:
-//
-//  1. With in.ParentRunID == nil, the emitted row's LeafRunRecord has
-//     `ParentRunID == ""` (and the JSONB payload omits the key via
-//     `omitempty`, preserving the descendant-walker predicate).
-//  2. With in.ParentRunID = &someID, the emitted row's LeafRunRecord
-//     has `ParentRunID == someID.String()`.
-//
-// The pre-2026-05-17 shape of this test called WriteLeafRunLineage
-// directly, leaving `EmitLeafRunLineage`'s nil-pointer guard
-// (`in.ParentRunID != nil`) uncovered — a regression in that branch
-// would only surface in scenario tests.
 func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 	ctx := context.Background()
 	inst := shared.UUID(uuid.New())
@@ -343,12 +297,11 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 			NodeID:             shared.UUID(uuid.New()),
 			State:              string(cascade.NodeStateFresh),
 			SettlingSignalType: "terminal/success",
-			ParentRunID:        nil, // @deliberate: root run
+			ParentRunID:        nil,
 		})
 		if len(lt.rows) != 1 {
 			t.Fatalf("expected 1 row, got %d", len(lt.rows))
 		}
-		// @deliberate: Decode into the typed record: ParentRunID must be empty.
 		var rec LeafRunRecord
 		if err := json.Unmarshal(lt.rows[0].Record, &rec); err != nil {
 			t.Fatalf("unmarshal typed: %v", err)
@@ -356,10 +309,6 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 		if rec.ParentRunID != "" {
 			t.Fatalf("root run: ParentRunID got %q want \"\"", rec.ParentRunID)
 		}
-		// @deliberate: Decode into the raw map: the JSON key must be absent (the
-		// omitempty drop is what protects the postgres predicate
-		// `record->>'parent_run_id' = $1` from matching the empty
-		// string).
 		var raw map[string]any
 		if err := json.Unmarshal(lt.rows[0].Record, &raw); err != nil {
 			t.Fatalf("unmarshal raw: %v", err)
@@ -413,12 +362,6 @@ func TestHashHelpers_Stable(t *testing.T) {
 	}
 }
 
-// TestLeafRunRecord_TagDisciplineAndOrder pins the writer-side
-// LeafRunRecord JSON-tag discipline + field order so the wire contract
-// against `subscribers/openlineage/subscriber.go::LeafRunRecord` stays
-// load-bearing on BOTH sides. The subscriber-side mirror test lives at
-// `subscribers/openlineage/subscriber_test.go::TestLeafRunRecord_TagDisciplineAndOrder`;
-// any field change requires updating both lists in the same commit.
 func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 	t.Parallel()
 	want := []struct {
@@ -453,10 +396,6 @@ func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 	assertStructJSONShape(t, LeafRunRecord{}, want)
 }
 
-// TestClaimTerminalRecord_TagDisciplineAndOrder pins the writer-side
-// ClaimTerminalRecord JSON-tag discipline + field order against the
-// subscriber's mirror struct. Same rationale as
-// TestLeafRunRecord_TagDisciplineAndOrder.
 func TestClaimTerminalRecord_TagDisciplineAndOrder(t *testing.T) {
 	t.Parallel()
 	want := []struct {
@@ -482,9 +421,6 @@ func TestClaimTerminalRecord_TagDisciplineAndOrder(t *testing.T) {
 	assertStructJSONShape(t, ClaimTerminalRecord{}, want)
 }
 
-// assertStructJSONShape verifies that v's exported struct fields match
-// the expected list in declaration order, json-tag name, and
-// `omitempty` discipline.
 func assertStructJSONShape(t *testing.T, v any, want []struct {
 	field     string
 	jsonTag   string

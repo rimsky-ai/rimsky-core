@@ -2,12 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// parked.go — `rimsky parked list`. Surfaces the spec-named
-// `/diagnostics/parked` endpoint (F7) as a table. The admin alias
-// path `/admin/diagnostics/parked-nodes` still resolves the same
-// handler server-side for backwards compatibility.
-//
-//	@concept: parked-state
+// @concept: parked-state
 package cli
 
 import (
@@ -19,11 +14,6 @@ import (
 	"time"
 )
 
-// RunParkedList implements `parked list`.
-//
-// Usage:
-//
-//	rimsky parked list [--reason=<kind>] [--older-than=<dur>] [--instance=<uuid>]
 func RunParkedList(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("parked list", flag.ContinueOnError)
 	var common CommonFlags
@@ -51,8 +41,6 @@ func RunParkedList(ctx context.Context, args []string) int {
 	if *reason != "" {
 		q.Set("reason", *reason)
 	}
-	// @deliberate: forward to the spec-named diagnostics path; the admin-named
-	// path stays available server-side as a backwards-compat alias.
 	path := "/v1/diagnostics/parked"
 	if len(q) > 0 {
 		path += "?" + q.Encode()

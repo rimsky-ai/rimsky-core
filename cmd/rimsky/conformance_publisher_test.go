@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// conformance_publisher_test.go drives the Publisher conformance suite
-// against an in-process Publisher server that mimics the bundled sensor-cron
-// shape: a single supported kind "cron", a poll-loop that fires on the
-// per-subscription interval. Migrated from the former
-// cmd/rimsky-publisher-conformance/main_test.go; it exercises the importable
-// lib/protocols/conformance/publisher.Run directly.
 package main
 
 import (
@@ -32,9 +26,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestPublisherConformance_FixtureCron drives the suite against an
-// in-process fixture publisher whose only advertised kind is "cron".
-// The message-push check is wired up via the in-process receiver.
 func TestPublisherConformance_FixtureCron(t *testing.T) {
 	receiver := pubconformance.NewMessageReceiver()
 	receiverEndpoint, stopReceiver := startReceiver(t, receiver)
@@ -82,8 +73,6 @@ func TestPublisherConformance_FixtureCron(t *testing.T) {
 	}
 }
 
-// startReceiver spawns the message receiver HTTP server. Path shape
-// is /v1/instances/{instance_id}/messages.
 func startReceiver(t *testing.T, r *pubconformance.MessageReceiver) (endpoint string, teardown func()) {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -130,8 +119,6 @@ func splitNonEmpty(s string, sep byte) []string {
 	return out
 }
 
-// fixturePublisher is a minimal Publisher impl. Each subscription
-// fires a message every 200ms.
 type fixturePublisher struct {
 	genv1.UnimplementedPublisherServer
 	mu             sync.Mutex
@@ -250,7 +237,6 @@ func (s *fixturePublisher) tick(ctx context.Context, sub *fixtureSub) {
 	}
 }
 
-// startPublisherServer spawns the gRPC server.
 func startPublisherServer(t *testing.T, srv *fixturePublisher) (endpoint string, teardown func()) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")

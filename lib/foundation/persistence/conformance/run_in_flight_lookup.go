@@ -4,14 +4,6 @@
 
 // @concept: run-scope
 
-// @constraint: RunInFlightLookup conformance area.
-// Covers Queue.GetInFlightRunForNode under the post-2026-05-22 reshape:
-// in-flight uniqueness is keyed on (node_id, run_scope_id) via the
-// uq_node_runs_in_flight_per_run_scope partial-unique index. Two
-// concurrent RunScopes sharing a node_id MUST NOT alias on lookup.
-// Per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
-//
 // @concept: run-scope
 package conformance
 
@@ -27,8 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// testInFlightLookup_SingleRowPerScopePerNode: seed an in-flight row in
-// the main RunScope; assert GetInFlightRunForNode resolves it.
 func testInFlightLookup_SingleRowPerScopePerNode(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -59,17 +49,12 @@ func testInFlightLookup_SingleRowPerScopePerNode(t *testing.T, d persistence.Dat
 	}
 }
 
-// testInFlightLookup_NoFalsePositiveAcrossScopes: two RunScopes sharing
-// the same node_id, each with an in-flight row. Each scope's lookup
-// must return its own row, never the sibling's.
 func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 	q := d.Queue()
 
-	// @constraint: scope B's parent_run_id must reference a real
-	// rimsky_node_runs row to satisfy the FK; seed a fresh run row first.
 	parentRun := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	scopeB := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -92,9 +77,6 @@ func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.
 		t.Fatalf("Affirm A: %v", err)
 	}
 
-	// @constraint: seed the cross-scope same-node case — fix.NodeID has
-	// an in-flight row in both scopeA and scopeB. The lookups below
-	// exercise the partial-unique index's (node_id, run_scope_id) key.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, scopeB, fix.FrameID, tx)
 	}); err != nil {
@@ -130,8 +112,6 @@ func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.
 	}
 }
 
-// testInFlightLookup_ReturnsNoneWhenAbsent: empty state; lookup must
-// return (zero, false, nil).
 func testInFlightLookup_ReturnsNoneWhenAbsent(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -156,7 +136,5 @@ func testInFlightLookup_ReturnsNoneWhenAbsent(t *testing.T, d persistence.Databa
 		t.Fatalf("GetInFlightRunForNode (missing): id=%v, want zero", id)
 	}
 
-	// @deliberate: silence unused-import for time, used only by sibling
-	// conformance files in this package.
 	_ = time.Time{}
 }

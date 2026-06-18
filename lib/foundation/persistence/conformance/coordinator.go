@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: Inv 7 (CoordinatorSchedulerTick) — TrySchedulerTick mutual exclusion.
-//
-// Under SQLite the tick lock is an exclusive flock on a lock file
-// beside the database file: exclusion holds across OS processes sharing
-// the file (flock contends per open file description, so the in-process
-// acquisitions exercised here contend exactly like two processes do).
 package conformance
 
 import (

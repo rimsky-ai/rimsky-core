@@ -3,9 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @blessed-invariant: latest-symlink-no-broken-window — concurrent readers of
-// `<root>/.rimsky/latest` always observe a valid target, never a missing or
-// broken link. The TestUpdateLatestSymlink_ConcurrentReadersNeverSeeBroken
-// case below exercises the property under a high-rate update / read race.
 
 package compose
 
@@ -95,12 +92,6 @@ func TestEnsureRunDir_Collision(t *testing.T) {
 	}
 }
 
-// TestEnsureRunDir_ConcurrentClaimsDistinct stress-tests the os.Mkdir
-// atomicity claim the collision walker depends on: a dozen goroutines
-// racing on the same (timestamp, name) input must each land on a
-// distinct directory — no two callers may share a path. Without the
-// Mkdir-then-ErrExist contract, the walker would let two callers
-// agree on the same `-N` suffix.
 func TestEnsureRunDir_ConcurrentClaimsDistinct(t *testing.T) {
 	tmp := t.TempDir()
 	ts := "2026-06-13T10-30-00Z"
@@ -216,16 +207,7 @@ func TestUpdateLatestSymlink_OverwritesExisting(t *testing.T) {
 	}
 }
 
-// TestUpdateLatestSymlink_ConcurrentFirstInstall stresses the
 // @blessed-invariant: latest-symlink-no-broken-window property at
-// bootstrap: multiple writers race to install `latest` for the first
-// time in a fresh `.rimsky/`. Without the sentinel-then-swap protocol,
-// two writers can both see no live link, both stage their temp link,
-// both call rename — the loser briefly unlinks the winner's dent on
-// APFS. The sentinel installation (os.Symlink(".") on a fresh dir)
-// uses the kernel's symlink-EEXIST atomicity so exactly one bootstrap
-// writer wins; every writer then takes the swap path, which never
-// unlinks the dent. All writers must end up with a live, valid link.
 func TestUpdateLatestSymlink_ConcurrentFirstInstall(t *testing.T) {
 	tmp := t.TempDir()
 	const writers = 8
@@ -241,11 +223,6 @@ func TestUpdateLatestSymlink_ConcurrentFirstInstall(t *testing.T) {
 		rel, _ := filepath.Rel(linkDir, runDir)
 		relTargets[rel] = true
 	}
-	// @deliberate: accept the sentinel `.` as a valid observation. All
-	// writers race the very first install; the sentinel is a transient
-	// internal target a concurrent reader may legitimately see — the
-	// invariant only forbids the dent being missing, not the dent
-	// pointing at the bootstrap sentinel.
 	relTargets["."] = true
 
 	var wg sync.WaitGroup
@@ -276,18 +253,6 @@ func TestUpdateLatestSymlink_ConcurrentFirstInstall(t *testing.T) {
 	}
 }
 
-// TestUpdateLatestSymlink_ConcurrentReadersNeverSeeBroken is the
-// load-bearing test for the @blessed-invariant: latest-symlink-no-broken-window
-// property: reader goroutines hammer os.Readlink while a writer
-// alternates the symlink target between two run directories. The
-// invariant the implementation guarantees is "the link is never
-// missing" — readlink against latest never returns os.ErrNotExist —
-// and "the resolved target, when readlink succeeds, is one of the
-// known-valid targets". A transient EINVAL during the kernel's
-// atomic-swap window is not a broken-link observation: the directory
-// entry still exists, the reader retries, and the next readlink
-// succeeds with a valid target. ENOENT or an unknown target would
-// indicate the rename-window invariant was violated.
 func TestUpdateLatestSymlink_ConcurrentReadersNeverSeeBroken(t *testing.T) {
 	tmp := t.TempDir()
 	a, err := EnsureRunDir(tmp, "2026-06-13T14-00-00Z", "a")
@@ -329,11 +294,6 @@ func TestUpdateLatestSymlink_ConcurrentReadersNeverSeeBroken(t *testing.T) {
 				}
 				got, err := os.Readlink(linkPath)
 				if err != nil {
-					// @constraint: classify readlink errors against the
-					// broken-window invariant. ENOENT is the rejected
-					// observation — the dent must never be missing. EINVAL
-					// during the kernel's atomic-swap window is tolerated;
-					// the next readlink succeeds with a valid target.
 					switch {
 					case errors.Is(err, os.ErrNotExist):
 						missingLinkErrors.Add(1)
@@ -341,16 +301,7 @@ func TestUpdateLatestSymlink_ConcurrentReadersNeverSeeBroken(t *testing.T) {
 							firstErr.Store(err.Error())
 						}
 					case errors.Is(err, syscall.EINVAL):
-						// @deliberate: documented-tolerated error class
-						// — the brief swap-window observation. Counted
-						// implicitly by the absence of any other error.
 					default:
-						// @constraint: surface unexpected error classes
-						// (EACCES, EIO, anything else) rather than
-						// silently bucketing them as "benign". A subtle
-						// regression that introduces a permission / I/O
-						// race must not pass the test just because the
-						// error is neither ENOENT nor EINVAL.
 						unexpectedErrors.Add(1)
 						if firstUnexpectedErrStr.Load() == nil {
 							firstUnexpectedErrStr.Store(err.Error())

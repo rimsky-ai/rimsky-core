@@ -4,13 +4,6 @@
 
 // @concept: run-scope
 
-// @constraint: AffirmNodeRunRow conformance area.
-// Covers NodeTable.AffirmNodeRunRow — the narrow primitive that
-// ensures an in-flight rimsky_node_runs row exists for a given
-// (node_id, run_scope_id). Lazy allocation today; eager rewriting is a
-// future no-op. Per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
-//
 // @concept: run-scope
 package conformance
 
@@ -26,8 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// testAffirmNodeRunRow_InsertsWhenNoInFlight: empty state; call affirm;
-// assert GetInFlightRunForNode returns a row.
 func testAffirmNodeRunRow_InsertsWhenNoInFlight(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -58,8 +49,6 @@ func testAffirmNodeRunRow_InsertsWhenNoInFlight(t *testing.T, d persistence.Data
 	}
 }
 
-// testAffirmNodeRunRow_Idempotent: call affirm twice; assert still
-// exactly one in-flight row exists for the (node, scope) pair.
 func testAffirmNodeRunRow_Idempotent(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -102,15 +91,11 @@ func testAffirmNodeRunRow_Idempotent(t *testing.T, d persistence.Database) {
 	}
 }
 
-// testAffirmNodeRunRow_ErrorsOnClosedScope: close the scope first; the
-// next affirm must return ErrRunScopeClosed.
 func testAffirmNodeRunRow_ErrorsOnClosedScope(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// @deliberate: fresh RunScope so closing it does not disturb the
-	// fixture's main scope used by seedConformanceRunForNode.
 	scopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -133,21 +118,12 @@ func testAffirmNodeRunRow_ErrorsOnClosedScope(t *testing.T, d persistence.Databa
 	}
 }
 
-// testAffirmNodeRunRow_NoReturnValueDependency is a compile-time pin:
-// AffirmNodeRunRow returns only `error`. If a future refactor adds a
-// returned id or struct, this file would fail to build at the variable
-// declaration below. The runtime body of this subtest just sanity-checks
-// the signature shape (any return mismatch is caught at compile time).
-//
 // @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 func testAffirmNodeRunRow_NoReturnValueDependency(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// @constraint: compile-time witness — assigning the method value to a
-	// variable declared with the exact signature `func(...) error` fails to
-	// type-check if AffirmNodeRunRow grows another return value.
 	var fn func(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) error = store.Nodes().AffirmNodeRunRow
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -157,8 +133,6 @@ func testAffirmNodeRunRow_NoReturnValueDependency(t *testing.T, d persistence.Da
 	}
 }
 
-// testAffirmThenRead: call affirm; call GetInFlightRunForNode; assert
-// returns the affirmed row's id with phase='pending' and state='stale'.
 func testAffirmThenRead(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -200,6 +174,5 @@ func testAffirmThenRead(t *testing.T, d persistence.Database) {
 	if string(treeRow.State) != "stale" {
 		t.Fatalf("AffirmThenRead: state = %q, want stale", treeRow.State)
 	}
-	// @deliberate: silence unused-variable error if Queue.GetByID is dropped above.
 	_ = q
 }

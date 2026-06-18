@@ -2,30 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Post-fold regression pin for the ownership-bail path
-// (`runner_acquire_postcommit.go::handleOrphanedClaim`), the engine-
-// route companion to `verify_before_run_post_commit_test.go`.
-//
-// The sibling test proves the verify-before-run bail FIRES (no
-// dispatch, orphaned_claim_lost_race emitted). This test pins HOW the
-// bail resolves the claims it is unwinding: through the unified
-// claim-handle resolution engine (`ResolveClaimHandleTerminal`,
-// OwnershipBail source) — the single audited verb-then-delete site.
-// Pinned observables, against a real claim-producer over the wire:
-//
-//   - exactly one producer Abandon per acquired claim, targeting the
-//     claim the Open minted (verb count + verb-then-delete ordering);
-//   - the bail's own claim-handle row is deleted, while a decoy row
-//     held by a DIFFERENT supervisor on the same node survives
 //     (the deletion stays claimant-guarded, @blessed-invariant 4);
-//   - no signal is emitted (admin path): zero terminal/* rows and
-//     zero claim_resolution.* rows for the node — the only record is
-//     the orphaned_claim_lost_race admin event.
-//
-// A regression that re-grows a hand-rolled delete at the bail site, or
-// that routes the bail through the engine's Promote (leaving a
-// state='abandoned' row) instead of the OwnershipBail delete, fails
-// these assertions.
 package scenarios
 
 import (
@@ -61,10 +38,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	}
 
-	// @deliberate: Real store service over the wire: one seeded item so Open
-	// succeeds and the acquisition tx commits — only then is the
-	// post-commit steal window reachable. The Calls recorder counts the
-	// engine-fired Abandon.
 	endpointA, storeA, teardownA := stubfixture.Start(t, stubstore.Config{
 		Capabilities: syncCaps,
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
@@ -77,9 +50,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 	})
 	t.Cleanup(teardownA)
 
-	// @deliberate: NoSupervisor: the test drives runtime.RunNode directly so it can
-	// thread the PostCommitHook. The scheduler still runs and enqueues
-	// the root dispatch row.
 	h := scenario.Start(t, scenario.HarnessOpts{
 		NoSupervisor: true,
 		Stores: config.RemoteStoresConfig{
@@ -99,8 +69,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 			),
 		},
 	})
-	// @constraint: Unique consumer key so -count=3 reruns never collide on the
-	// instance-key uniqueness constraint.
 	iid := h.CreateInstance(tid, "ck-bail-engine-"+uuid.NewString()[:8], map[string]any{})
 
 	worker := h.FindNode(iid, "worker")
@@ -113,12 +81,7 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1`, worker.ID,
 	).Scan(&dispatchID))
 
-	// @constraint: Decoy claim-handle row held by a DIFFERENT supervisor on the same
-	// node. The bail must not touch it: the engine's OwnershipBail
-	// delete operates only on the rows this supervisor's acquisition
-	// created, and the delete itself is claimant-guarded
 	// (@blessed-invariant 4). Far-future expiry keeps the periodic
-	// reaper out of the picture.
 	decoyID := uuid.New()
 	decoyName := "bail-decoy-lock"
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -132,8 +95,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 		}, tx)
 	}))
 
-	// @deliberate: Dial a real gRPC producer client — the same client type the
-	// production supervisor registers.
 	clientA, err := peer.Dial(h.Ctx, "store-a", "grpc://"+endpointA, peer.TLSModeOff)
 	require.NoError(t, err)
 	t.Cleanup(clientA.Close)
@@ -143,9 +104,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	// stolen records whether the post-commit hook actually fired —
-	// guards against a silent regression where the seam stops being
-	// invoked (which would make the test pass for the wrong reason).
 	var stolen atomic.Bool
 	args := runtime.RunArgs{
 		Persist:           h.Persist,
@@ -163,13 +121,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),
 		LivenessInterval: 100 * time.Millisecond,
-		// @deliberate: Force the cross-transaction ownership flip in the window
-		// between the acquisition commit and the verify-before-run
-		// separate-read. At hook time the acquisition has COMMITTED:
-		// our claim-handle row exists, held by this supervisor, and the
-		// producer has not yet seen an Abandon — so the row the engine
-		// later deletes verifiably went through the verb-then-delete
-		// sequence rather than never existing.
 		PostCommitHook: func(ctx context.Context) {
 			var held int
 			require.NoError(t, h.Pool.QueryRow(ctx,
@@ -199,9 +150,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 	require.False(t, out.Ran,
 		"verify-before-run must bail (Ran=false) when the claim was stolen between commit and the verify-read")
 
-	// @constraint: Engine route, verb counts: exactly one Open, exactly one Abandon
-	// (per the single acquired claim), targeting the same claim_id, and
-	// never a Commit.
 	callsA := storeA.Calls()
 	require.Equal(t, 1, countCalls(callsA, "open"),
 		"store-a must have been Open'd exactly once")
@@ -221,9 +169,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 	require.Zero(t, countCalls(callsA, "commit"),
 		"store-a must never see a Commit for a bailed acquisition")
 
-	// @deliberate: Engine route, row disposition: the bail's own row is DELETED
-	// (not promoted to state='abandoned' — the acquisition is unwound,
-	// not resolved), while the foreign-held decoy survives untouched.
 	var survivors []uuid.UUID
 	rows, qerr := h.Pool.Query(h.Ctx,
 		`SELECT id FROM rimsky_claim_handles WHERE holder_node_id = $1`, worker.ID)
@@ -238,8 +183,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 	require.Equal(t, []uuid.UUID{decoyID}, survivors,
 		"the bail's own claim-handle row must be deleted (no abandoned-state residue) and the other supervisor's decoy must survive — the deletion is claimant-guarded")
 
-	// @deliberate: No signal (admin path): the node stays stale, no terminal/* and
-	// no claim_resolution.* rows land on the event log.
 	var got *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, gerr := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
@@ -258,8 +201,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 	require.Zero(t, signalCount,
 		"the bail is an admin path — it must emit no terminal/* signal and no claim_resolution.* forensics")
 
-	// @deliberate: The one admin record: exactly one orphaned_claim_lost_race for
-	// the stolen dispatch.
 	var orphanCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_events
@@ -270,7 +211,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 	require.Equal(t, 1, orphanCount,
 		"the bail must emit exactly one orphaned_claim_lost_race event for the stolen dispatch")
 
-	// @constraint: Executor never invoked.
 	require.Empty(t, h.Stub.Observed(),
 		"the executor must not be invoked when the dispatch was stolen pre-verify")
 }

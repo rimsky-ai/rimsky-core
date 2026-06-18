@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// tags.go — POST /tags, GET /tags, PUT /tags/{tag}, DELETE /tags/{tag}.
-// Per docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
-// §1.5: tags are movable aliases pointing at template content hashes.
 package controlapi
 
 import (
@@ -20,14 +17,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// tagPattern is the canonical tag identifier shape per spec §1.1.
-// Disallows hash-shape (sha256-… would fail the first-char class).
 var tagPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._:@/-]{0,254}$`)
 
-// validTag reports whether s is a syntactically valid tag identifier.
-// Per spec §1.1 the tag namespace is disjoint from the content-hash
-// namespace; explicitly reject hash-shaped strings so a tag can never
-// shadow (or be confused with) a hash on /templates/{id} routes.
 func validTag(s string) bool {
 	if !tagPattern.MatchString(s) {
 		return false
@@ -40,7 +31,6 @@ func validTag(s string) bool {
 
 type createTagRequest struct {
 	Tag string `json:"tag"`
-	// @constraint: template is a tag or hash.
 	Template string `json:"template"`
 }
 
@@ -72,10 +62,6 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid tag identifier")
 			return
 		}
-		// @constraint: server-side reservation of the compose: prefix. Placed ahead of
-		// any persistence write so a rejected create persists nothing.
-		// Only the privileged compose path (which stamps the trusted
-		// compose-origin marker) may create reserved-prefix tags.
 		if strings.HasPrefix(body.Tag, composeReservedPrefix) && !isComposeOrigin(req) {
 			badRequest(w, "tag uses reserved prefix \"compose:\" (managed by the compose command)")
 			return
@@ -89,9 +75,6 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrTemplateNotFound.Error())
 			return
 		}
-		// @constraint: POST must reject pre-existing tags; Get distinguishes
-		// pre-existing from missing because Upsert would silently overwrite,
-		// which this endpoint does not allow.
 		var existing *persistence.TemplateTagRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := deps.Persist.TemplateTags().Get(ctx, body.Tag, tx)
@@ -210,9 +193,6 @@ func handleMoveTag(deps AppDeps) http.HandlerFunc {
 func handleDeleteTag(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		tag := chi.URLParam(req, "tag")
-		// @constraint: tag-existence check must precede the dry-run gate so
-		// that a dry-run against a missing tag returns 404 like a real call —
-		// per spec "Dry-run mode": errors from validation surface as in normal flow.
 		var existing *persistence.TemplateTagRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := deps.Persist.TemplateTags().Get(ctx, tag, tx)

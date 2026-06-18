@@ -64,8 +64,6 @@ func (s *templatesImpl) GetByHash(ctx context.Context, hash string, tx persisten
 	return &out, nil
 }
 
-// LockForUpdate omits FOR UPDATE under SQLite; the surrounding
-// BEGIN IMMEDIATE writer-slot hold subsumes per-row locking.
 func (s *templatesImpl) LockForUpdate(ctx context.Context, hash string, tx persistence.Tx) (*persistence.TemplateRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT `+templateCols+` FROM rimsky_templates WHERE id = ?`, hash,

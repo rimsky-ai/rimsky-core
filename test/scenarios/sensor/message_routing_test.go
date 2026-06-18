@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// message_routing_test pins the publisher message-envelope shape that
-// bundled sensors POST to rimsky's generic
-// `POST /instances/{instance_id}/messages` endpoint. The envelope
-// carries `sender_kind: "publisher"` + `publisher_subscription_id` so
-// rimsky's capability check (the handler in
-// `code:control/controlapi/messages.go::handleCreateMessage`) can
-// validate the subscription exists and is active before insert.
-//
-// This scenario uses an inline fake receiver rather than a full rimsky
-// stack to keep the test focused on the wire shape; the deeper
-// capability-check unit tests live in
-// `code:control/controlapi/messages_test.go`.
 package sensor
 
 import (
@@ -28,10 +16,6 @@ import (
 	"testing"
 )
 
-// fakeRimsky receives POSTs from the publisher side. The contract:
-// publishers POST JSON envelopes to /instances/{instance_id}/messages
-// with `sender_kind: "publisher"` and an Idempotency-Key header. The
-// fake records what it sees for assertions.
 type fakeRimsky struct {
 	mu       sync.Mutex
 	received []recv
@@ -128,10 +112,6 @@ func TestMessageRouting_PublisherPostsEnvelopeToInstanceMessages(t *testing.T) {
 	if rec.Body["type"] != "sensor/observation" {
 		t.Errorf("body.type: %v", rec.Body["type"])
 	}
-	// @constraint: `target` is no longer on the envelope — the
-	// `rimsky_messages.target` column was retired by the message-
-	// schema-layer reshape; routing happens via the subscription's
-	// target_node on rimsky's side, not via a wire envelope field.
 	if _, present := rec.Body["target"]; present {
 		t.Errorf("body.target unexpectedly present: %v", rec.Body["target"])
 	}

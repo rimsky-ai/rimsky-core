@@ -11,11 +11,6 @@ import (
 	"time"
 )
 
-// TestRetentionDefaultsWhenAbsent asserts that a rimsky.yml with no
-// `retention:` block parses with retention ON by default — every sweep gets
-// its documented trailing window so the scheduler tick reaps stale rows out
-// of the box (E10 was dead because Retention was the zero value, which
-// disables every sweep).
 func TestRetentionDefaultsWhenAbsent(t *testing.T) {
 	cfg := mustLoadCfg(t, `
 persistence:
@@ -38,9 +33,6 @@ persistence:
 	}
 }
 
-// TestRetentionExplicitValuesHonored asserts each `retention:` key reaches
-// the parsed runtime.RetentionConfig, and an explicit zero disables that
-// sweep (the pointer-field loader distinguishes absent from zero).
 func TestRetentionExplicitValuesHonored(t *testing.T) {
 	cfg := mustLoadCfg(t, `
 persistence:
@@ -60,8 +52,6 @@ retention:
 	if r.LineageTrailing != time.Hour {
 		t.Fatalf("LineageTrailing = %s, want 1h", r.LineageTrailing)
 	}
-	// @constraint: explicit zero disables the claim-handle retention
-	// sweep — it is NOT re-defaulted to 30d.
 	if r.ClaimHandlesTrailing != 0 {
 		t.Fatalf("ClaimHandlesTrailing = %s, want 0 (explicit disable)", r.ClaimHandlesTrailing)
 	}
@@ -70,8 +60,6 @@ retention:
 	}
 }
 
-// TestRetentionNegativeRejected asserts a negative trailing window is a
-// startup error rather than a silently-ignored value.
 func TestRetentionNegativeRejected(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rimsky.yml")

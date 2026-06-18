@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// frames_test.go — handler-level tests for the cascade-graph frames-read
-// surface (GET /instances/{id}/frames + GET /instances/{id}/frames/{id}).
-// Exercises the forward join (frame → message) and the reverse join
-// (filter by triggering_message_id) the frame-origin-audit story consumes.
-
 package controlapi
 
 import (
@@ -23,9 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// seedFrameForTest inserts a synthetic typed-message envelope and a
-// queued frame whose triggering_message_id points at it. Returns the
-// (frame_id, triggering_message_id) pair for the test to assert against.
 func seedFrameForTest(
 	t *testing.T, ctx context.Context, h *harness,
 	instanceID shared.UUID, msgType string,
@@ -54,9 +46,6 @@ func seedFrameForTest(
 	return frameID, msgID
 }
 
-// TestFrames_ListReturnsAllForInstance pins the base case: every frame
-// belonging to the instance appears in the list response with its
-// triggering_message_id populated.
 func TestFrames_ListReturnsAllForInstance(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -65,8 +54,6 @@ func TestFrames_ListReturnsAllForInstance(t *testing.T) {
 
 	instID := newInstanceForMessages(t, h, "frames-list")
 	instUUID := mustParseUUID(t, instID)
-	// @deliberate: seed 3 additional frames beyond the root frame
-	// already minted at instance create.
 	want := map[string]string{}
 	for i := 0; i < 3; i++ {
 		fid, mid := seedFrameForTest(t, ctx, h, instUUID, fmt.Sprintf("test/seed-%d", i))
@@ -92,9 +79,6 @@ func TestFrames_ListReturnsAllForInstance(t *testing.T) {
 	}
 }
 
-// TestFrames_ListFilteredByTriggeringMessageID covers the reverse-join
-// surface: GET /instances/{id}/frames?triggering_message_id=<id> returns
-// only frames whose origin envelope is the named message.
 func TestFrames_ListFilteredByTriggeringMessageID(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -116,9 +100,6 @@ func TestFrames_ListFilteredByTriggeringMessageID(t *testing.T) {
 	require.Equal(t, targetMsg.String(), m["triggering_message_id"])
 }
 
-// TestFrames_GetSingleFrameJoinsMessageEnvelope covers the forward-join
-// surface: GET /instances/{id}/frames/{frame_id} returns the frame with
-// the message envelope's type/sender/sender_kind flattened on.
 func TestFrames_GetSingleFrameJoinsMessageEnvelope(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

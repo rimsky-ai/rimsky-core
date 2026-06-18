@@ -23,9 +23,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 )
 
-// supervisorYAMLConfig is the supervisor-tuning YAML loaded from
-// RIMSKY_SUPERVISOR_CONFIG. Persistence config lives in rimsky.yml under
-// RIMSKY_CONFIG, not here.
 type supervisorYAMLConfig struct {
 	SupervisorID        string                 `yaml:"supervisor_id"`
 	Concurrency         int                    `yaml:"concurrency"`
@@ -41,30 +38,6 @@ type supervisorYAMLCallback struct {
 	AdvertisePort int    `yaml:"advertise_port"`
 }
 
-// RunSupervisor wires and starts the supervisor role: supervisor-tuning
-// YAML load (RIMSKY_SUPERVISOR_CONFIG), blob-backend install, the
-// executor observability handshake, config.StartSupervisor, the
-// metrics gauge refresher, the capability refresh loop, and the
-// optional /metrics listener. The persistence driver and parsed
-// rimsky.yml config are supplied by the caller — see
-// OpenDriverFromEnv. Errors are logged on the supplied logger /
-// written to stderr (matching the standalone binary's output) and
-// returned. The returned StopFunc shuts the role down.
-//
-// The runner does NOT open, close, or otherwise own the driver;
-// that is the caller's responsibility. In unified mode a single
-// driver is shared across all three Run* runners so the persistence
-// writer slot is not contended across roles.
-//
-// Environment variables (identical to the rimsky-supervisor binary):
-//
-//	RIMSKY_SUPERVISOR_CONFIG  required; path to the supervisor YAML.
-//	RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST / _PORT  optional overrides.
-//	RIMSKY_METRICS_PORT       optional; default 0 = disabled (see
-//	                          metricsPortFor: per-role override via
-//	                          RIMSKY_METRICS_PORT_SUPERVISOR; offset
-//	                          base+1 in unified mode).
-//	RIMSKY_METRICS_HOST       optional; default 127.0.0.1.
 func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig) (StopFunc, <-chan error, error) {
 	cfgPath := os.Getenv("RIMSKY_SUPERVISOR_CONFIG")
 	if cfgPath == "" {
@@ -74,9 +47,6 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 	log := shared.NewSlogLogger(logger)
 
-	// @deliberate: resolve the /metrics port up-front so a malformed env
-	// value fails the role at startup instead of silently disabling
-	// metrics.
 	metricsPort, err := metricsPortFor("supervisor")
 	if err != nil {
 		log.Error("metrics port resolution", "error", err.Error())
@@ -153,15 +123,6 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		advertisePort = cfg.Callback.AdvertisePort
 	}
 
-	// @deliberate: surface the resolved callback advertise host (and
-	// where it came from) at startup. Executors dial this address to
-	// POST async-callback outcomes; when it is empty or a loopback, the
-	// POST fails with a bare "fetch failed" and no other diagnostic — a
-	// silent misconfiguration in any multi-container deployment. The
-	// bind host (callbackHost, typically 0.0.0.0 in a container) is NOT
-	// how executors reach the supervisor; only the advertise host is, so
-	// warn rather than log quietly when it can't be reached from another
-	// container.
 	if advertiseHost == "" || advertiseHost == "127.0.0.1" || advertiseHost == "localhost" || advertiseHost == "::1" {
 		log.Warn("callback advertise host is loopback or unset — executors on other hosts/containers cannot reach this supervisor",
 			"advertise_host", advertiseHost,
@@ -176,11 +137,6 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 			"advertise_port", advertisePort)
 	}
 
-	// @constraint: construct the BlobBackend selected by rimsky.yml's
-	// persistence.blob block and install it on the driver. The attribute
-	// write/read path consults the driver-installed backend directly;
-	// the named-event / parked-payload write paths receive it via
-	// SupervisorConfig.Blob (threaded through to RunArgs).
 	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver)
 	if err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
@@ -189,11 +145,6 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 
 	resolver := executor.NewStaticResolver(endpoints)
 
-	// @constraint: run the observability handshake against each
-	// declared executor so the dispatch-time effective-attribute-schema
-	// computation can see the advertised expected_attributes_schema. The
-	// resolver closure is plumbed into
-	// SupervisorConfig.ExpectedAttributesSchemaFor below.
 	execPeers := make([]observability.PeerSpec, 0, len(rimskyCfg.Executors.Executors))
 	for name, e := range rimskyCfg.Executors.Executors {
 		execPeers = append(execPeers, observability.PeerSpec{
@@ -204,18 +155,8 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 	disc := observability.RunHandshake(ctx, observability.NewGRPCProber(), execPeers, nil, logger)
 
-	// @constraint: per-role Prometheus registry constructed up-front so
-	// the supervisor's integration runtime can be instrumented via the
-	// MetricsHook adapter; the /metrics HTTP listener is opened below
-	// only when RIMSKY_METRICS_PORT > 0.
 	mreg := observability.NewMetricsRegistry()
 
-	// @constraint: closure that invokes
-	// controlapi.LifecyclePeersForSpec with the rimsky.yml
-	// late_bind_service_proxies baked in. Lives here (control/ layer) so
-	// the supervisor's runtime/ never imports control/ — the
-	// late-bind-aware peer set crosses the layer boundary as a function
-	// pointer (denied otherwise by .golangci.yml's runtime-purity rule).
 	lateBindProxies := rimskyCfg.LateBindServiceProxies
 	peersForSpec := func(tplSpec node.TemplateSpec) []string {
 		return controlapi.LifecyclePeersForSpec(
@@ -260,17 +201,9 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 
 	go disc.RefreshLoop(gaugeCtx, config.ObservabilityRefreshInterval(), logger)
 
-	// @constraint: capacity 2 — the metrics serve loop and the callback
-	// serve loop can each report one failure.
 	reporter := newFailureReporter(2)
 	metricsSrv := startMetricsServer(metricsHostFromEnv(), "supervisor", metricsPort, mreg, log, reporter)
 
-	// @constraint: surface a fatal post-start death of the
-	// async-callback HTTP serve loop as a role failure. Without this the
-	// supervisor runs degraded forever: executors' async callbacks
-	// black-hole while the claim loop keeps dispatching. The handle's
-	// channel closes when the serve loop exits (clean shutdown sends
-	// nothing), so this monitor exits on stop rather than leaking.
 	go func() {
 		if err, ok := <-h.CallbackServeErr(); ok && err != nil {
 			reporter.Report(fmt.Errorf("supervisor callback endpoint: %w", err))
@@ -279,9 +212,6 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 
 	stop := func(stopCtx context.Context) error {
 		var firstErr error
-		// @constraint: stopCtx's deadline is shared across both
-		// servers — the supervisor handle's shutdown and the metrics
-		// server's drain below.
 		if err := h.Shutdown(stopCtx); err != nil {
 			log.Error("supervisor shutdown", "error", err.Error())
 			firstErr = err
@@ -292,18 +222,12 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 			}
 		}
 		cancelGauges()
-		// @constraint: the driver is caller-owned — RunSupervisor MUST
-		// NOT close it. Close the fail channel so monitor goroutines
-		// reading it exit; RunSupervisor is embeddable and must not leak
-		// a monitor per start/stop cycle.
 		reporter.Close()
 		return firstErr
 	}
 	return stop, reporter.ch, nil
 }
 
-// loadSupervisorYAML reads the supervisor YAML, expanding ${ENV_VAR}
-// references.
 func loadSupervisorYAML(path string) (supervisorYAMLConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

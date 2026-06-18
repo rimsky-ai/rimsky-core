@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — pins spec §10.2 "Resume-with-overlay":
-//
-//   1. Install a pause-mode breakpoint.
-//   2. Resume the hit with an overlay that mutates an attribute that
-//      flows through to the executor's ExecuteRequest.attributes bag.
-//   3. The post-merge L6 overlay must land on the dispatched bag (the
-//      stub records every dispatch's Attributes verbatim, so the assertion
-//      is "the worker dispatch saw the overlaid value").
-//
-// The supervisor's deep-merge happens in runtime/breakpoint_eval.go;
-// the assertion here pins that the merge actually reached the executor
-// rather than just the snapshot.
-//
 // @concept: breakpoint
 
 package breakpoints
@@ -34,9 +21,6 @@ import (
 func TestResumeWithOverlay(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// @deliberate: Stub mirrors the input bag back as a no-op; we only need the
-	// Observed entry for the assertion. `ok` is the writeback slot the
-	// stub fills; `tag` is the operator-visible field the overlay sets.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "overlay-applied")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -65,9 +49,6 @@ func TestResumeWithOverlay(t *testing.T) {
 
 	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
 
-	// @deliberate: Resume WITH overlay that injects `tag` into the bag. The bag is
-	// schema-valid (additionalProperties is undefined → permissive),
-	// so the validate step inside ValidateAndPersistResume passes.
 	status, out := breakpointResume(t, h, iid, bpID, map[string]any{
 		"hit_id":  hit.ID.String(),
 		"overlay": map[string]any{"tag": "overlay-value"},
@@ -75,14 +56,10 @@ func TestResumeWithOverlay(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "resume should succeed: %v", out)
 	require.Equal(t, true, out["first_resume"])
 
-	// @deliberate: Hit row should now carry the overlay verbatim — surfaceable to a
-	// later operator inspecting the audit trail.
 	row := getHitRow(t, h, hit.ID)
 	require.NotNil(t, row.ResumeOverlay)
 	require.Equal(t, "overlay-value", row.ResumeOverlay["tag"])
 
-	// @deliberate: The dispatch should reach the executor with the overlay merged
-	// into the attribute bag. The stub records the request verbatim.
 	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
 		"stub should observe the worker dispatch after resume")
 	var seen string

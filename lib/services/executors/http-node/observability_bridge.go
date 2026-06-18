@@ -17,14 +17,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// mountObservabilityBridge wires the HTTP+JSON observability routes
-// onto the executor's existing /v1/* HTTP listener. Routes:
-//
-//	GET /observability/v1/capabilities
-//	GET /observability/v1/trace/{dispatch_id}
-//	GET /observability/v1/trace/{dispatch_id}/stream  (SSE)
-//
-// Per spec §2.1.
 func mountObservabilityBridge(mux *http.ServeMux, obs *ObservabilityServer, httpBridgeURL string) {
 	mux.HandleFunc("/observability/v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -36,11 +28,6 @@ func mountObservabilityBridge(mux *http.ServeMux, obs *ObservabilityServer, http
 			SupportsTraceStream:           true,
 			RetentionAfterTerminalSeconds: retentionSeconds,
 			HttpBridgeUrl:                 httpBridgeURL,
-			// @deliberate: mirror ObservabilityServer.Capabilities — advertise a
-			// permissive open schema so the dispatch-time gate knows the
-			// http-node executor accepts any attribute shape (it reads a
-			// fixed set of transport-config keys and serialises the rest
-			// as the implicit body).
 			ExpectedAttributesSchema: []byte(`{"type":"object"}`),
 		}
 		writeProtoJSON(w, caps)
@@ -71,17 +58,6 @@ func mountObservabilityBridge(mux *http.ServeMux, obs *ObservabilityServer, http
 	})
 }
 
-// handleTraceStreamHTTP serves the SSE form of StreamTrace. Each event
-// is emitted as one `data:` line of JSON. Unknown dispatches close
-// immediately with the same evicted shape GetTrace returns (per spec
-// §2.6).
-//
-// The subscriber-pump model in ObservabilityServer.subscribe means a
-// new subscriber registers atomically under the lock, then reads
-// events out of the per-dispatch slice at its own cursor on each
-// wakeup — so AppendEvent calls that land between snapshot capture
-// and the first read still surface in the next drain pass. Spec §2.6
-// requires no events dropped under append concurrency.
 func handleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, obs *ObservabilityServer, dispatchID string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

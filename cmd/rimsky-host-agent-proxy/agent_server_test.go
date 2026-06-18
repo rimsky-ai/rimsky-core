@@ -19,8 +19,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// newAgentTestServer stands up the HostAgent server on an in-process
-// bufconn and returns a connected HostAgentClient plus the shared state.
 func newAgentTestServer(t *testing.T) (*proxyState, genv1.HostAgentClient) {
 	t.Helper()
 	state := newProxyState()
@@ -50,7 +48,6 @@ func TestConnectRequiresRegisterFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open stream: %v", err)
 	}
-	// @deliberate: Send a Heartbeat first instead of Register — should be rejected.
 	if err := stream.Send(&genv1.ClientFrame{Body: &genv1.ClientFrame_Heartbeat{Heartbeat: &genv1.HostAgentHeartbeat{}}}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -143,7 +140,6 @@ func TestSpawnAckCorrelation(t *testing.T) {
 		t.Fatalf("agent not registered")
 	}
 
-	// @deliberate: Register a pending spawn, then have the agent client deliver an ack.
 	ackCh := conn.registerSpawnPending("spawn-1")
 
 	mustSend(t, stream, &genv1.ClientFrame{Body: &genv1.ClientFrame_SpawnAck{SpawnAck: &genv1.SpawnAck{
@@ -172,13 +168,10 @@ func TestStreamCloseDropsAgentAndNotifies(t *testing.T) {
 
 	respCh := conn.registerStream("stream-1")
 
-	// @constraint: close the client side; the server must drop the
-	// agent and close the in-flight dispatch channel.
 	if err := stream.CloseSend(); err != nil {
 		t.Fatalf("close send: %v", err)
 	}
 
-	// @constraint: the dispatch channel must be closed to signal disconnect.
 	select {
 	case _, open := <-respCh:
 		if open {
@@ -188,7 +181,6 @@ func TestStreamCloseDropsAgentAndNotifies(t *testing.T) {
 		t.Fatalf("dispatch channel not closed on disconnect")
 	}
 
-	// @constraint: the agent must be dropped from state after disconnect.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, ok := state.lookupAgent("key-1"); !ok {

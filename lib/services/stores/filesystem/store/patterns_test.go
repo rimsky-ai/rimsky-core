@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// End-to-end integration tests for the common pick-policy patterns
-// described in spec §8.1–§8.5: ring-mode, queue-mode, stage-promote,
-// one-shot ingest, and explicit-refresh static queue.
-
 package store
 
 import (
@@ -22,9 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 )
 
-// TestPattern_RingMode_LiveDiscovery — `recycle + on_open`. Cycles
-// through 2 folders for 3 rounds; midway adds a 3rd folder externally
-// and expects the on_open sync to discover it.
 func TestPattern_RingMode_LiveDiscovery(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -46,12 +39,10 @@ func TestPattern_RingMode_LiveDiscovery(t *testing.T) {
 		if !o.Available {
 			t.Fatalf("iter %d: expected Available", i)
 		}
-		// @constraint: mtime resolution requires a real delay between commits so ring-mode ordering is observable.
 		time.Sleep(2 * time.Millisecond)
 		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i), o.Result.ClaimScope, o.Result.Address))
 	}
 	must(t, os.MkdirAll(filepath.Join(root, sub, "gamma"), 0o755))
-	// @deliberate: on_open sync must discover the externally-added folder within a bounded number of cycles.
 	seen := map[string]bool{}
 	for i := 0; i < 6; i++ {
 		o, err := st.Open(context.Background(), fmt.Sprintf("c2-%d", i), "@r")
@@ -69,9 +60,6 @@ func TestPattern_RingMode_LiveDiscovery(t *testing.T) {
 	}
 }
 
-// TestPattern_QueueMode_AutoRefresh — `pop + on_drain`. Drains N
-// folders; verifies a single Unavailable per pass, and the next Open
-// re-runs sync.
 func TestPattern_QueueMode_AutoRefresh(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -102,7 +90,6 @@ func TestPattern_QueueMode_AutoRefresh(t *testing.T) {
 		t.Fatal("p1: expected Unavailable to consume drained")
 	}
 
-	// @deliberate: under pop the folders remain on disk, so a second pass re-syncs the same corpus and yields 3 picks again.
 	picks := 0
 	for {
 		o, err := st.Open(context.Background(), fmt.Sprintf("p2-%d", picks), "@r")
@@ -121,8 +108,6 @@ func TestPattern_QueueMode_AutoRefresh(t *testing.T) {
 	}
 }
 
-// TestPattern_StagePromote — `pop_and_move(target=promoted) + on_open`.
-// Each commit moves the folder to promoted/.
 func TestPattern_StagePromote(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -158,8 +143,6 @@ func TestPattern_StagePromote(t *testing.T) {
 	}
 }
 
-// TestPattern_OneShotIngest — `pop_and_delete + on_drain`. Drains N
-// folders; verifies they're gone.
 func TestPattern_OneShotIngest(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -196,10 +179,6 @@ func TestPattern_OneShotIngest(t *testing.T) {
 	}
 }
 
-// TestPattern_StaticQueue_ExplicitRefresh — `pop + explicit`. Drains
-// the queue; subsequent Opens stick at Unavailable until the operator
-// triggers a manual sync via Store.runSync (the admin endpoint goes
-// through this same code path).
 func TestPattern_StaticQueue_ExplicitRefresh(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -216,7 +195,6 @@ func TestPattern_StaticQueue_ExplicitRefresh(t *testing.T) {
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
 
-	// @deliberate: explicit sync strategy starts with zero available state until an operator triggers runSync.
 	o, err := st.Open(context.Background(), "c-0", "@r")
 	must(t, err)
 	if o.Available {

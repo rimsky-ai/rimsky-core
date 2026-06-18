@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Shared test fixtures for the N4 message-delivery scenarios.
-// Mirrors the in-memory fake under runtime/message_delivery_test.go
-// — duplicated here per cold-read rule "tracked duplication over
-// hidden coupling".
-//
 // @source: lib/runtime/message_delivery_test.go::fakeMessagesTable
 // @diverged: false
 package messages

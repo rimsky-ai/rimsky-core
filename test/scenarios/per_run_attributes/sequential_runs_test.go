@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario test for per-run attribute keying — sequential reruns
-// persist as independent attribute rows.
-//
-// Two sequential runs of the same node, separated by an admin
-// invalidate, must each persist their own attribute row keyed by
-// their own `node_run_id`. Under the legacy per-node keying, the
-// second run would overwrite the first; under per-run keying
-// (2026-05-20) each row is independent and queryable by run id.
-//
-// Per spec
-// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md.
 package per_run_attributes
 
 import (
@@ -29,11 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// TestPerRunAttributes_SequentialRunsTwoRows verifies that two
-// consecutive runs of the same node persist into TWO independent
-// attribute rows (keyed by node_run_id), rather than overwriting a
-// single per-node row. Exercises the most fundamental per-run-keying
-// invariant.
 func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -65,11 +49,6 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-two-runs", map[string]any{})
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w)
-	// @constraint: worker was previously a structural root; the
-	// subscribes: entry added for the typed-message wake demoted it
-	// from root, so the harness's empty-wake doesn't fire it. Emit
-	// the typed message here to drive the initial dispatch the test
-	// assertions expect.
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second))
@@ -85,12 +64,8 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 
 	h.Stub.WhenType("worker").Success(map[string]any{"value": "second"}, true, "ok")
 
-	// @deliberate: Trigger a fresh run via a per-target typed-message
-	// wake — the universal post-spec trigger for in-test invalidation.
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	// @deliberate: Wait until the latest attribute row has a different run id and
-	// reflects the second invocation's value.
 	deadline := time.Now().Add(15 * time.Second)
 	var latest *persistence.NodeAttributesRow
 	for time.Now().Before(deadline) {
@@ -112,8 +87,6 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 	require.Equal(t, "second", latest.Data["value"],
 		"second run's attribute data should be persisted independently")
 
-	// @deliberate: The first row should still be readable via GetByRun (per-run
-	// keying preserves history within a node).
 	var firstByRun *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.NodeAttributes().GetByRun(h.Ctx, firstRunID, tx)

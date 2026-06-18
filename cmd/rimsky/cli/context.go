@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// context.go — `ctx list/use/add/rm/current`. Operates on the local
-// ~/.rimsky/config.yml; no control-api calls.
-//
-// Handlers accept an optional configPath parameter so tests can isolate
-// the config file via t.TempDir. The main dispatcher passes
-// DefaultConfigPath().
 package cli
 
 import (
@@ -17,7 +11,6 @@ import (
 	"sort"
 )
 
-// RunCtxList implements `ctx list`.
 func RunCtxList(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx list", flag.ContinueOnError)
 	var common CommonFlags
@@ -56,7 +49,6 @@ func RunCtxList(args []string, configPath string) int {
 	return 0
 }
 
-// RunCtxUse implements `ctx use`.
 func RunCtxUse(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx use", flag.ContinueOnError)
 	if err := parseInterspersed(fs, args); err != nil {
@@ -89,7 +81,6 @@ func RunCtxUse(args []string, configPath string) int {
 	return 0
 }
 
-// RunCtxAdd implements `ctx add`.
 func RunCtxAdd(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx add", flag.ContinueOnError)
 	var endpoint string
@@ -134,7 +125,6 @@ func RunCtxAdd(args []string, configPath string) int {
 	return 0
 }
 
-// RunCtxRm implements `ctx rm`.
 func RunCtxRm(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx rm", flag.ContinueOnError)
 	if err := parseInterspersed(fs, args); err != nil {
@@ -167,7 +157,6 @@ func RunCtxRm(args []string, configPath string) int {
 	return 0
 }
 
-// RunCtxCurrent implements `ctx current`.
 func RunCtxCurrent(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx current", flag.ContinueOnError)
 	if err := parseInterspersed(fs, args); err != nil {

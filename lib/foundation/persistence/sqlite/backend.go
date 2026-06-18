@@ -18,9 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// sqliteTx is the persistence.Tx carrier for SQLite. Embeds
-// persistence.TxMarker so the type satisfies the interface; the underlying
-// *sql.Tx is reachable via unwrapTx.
 type sqliteTx struct {
 	persistence.TxMarker
 	tx *sql.Tx
@@ -37,13 +34,6 @@ func unwrapTx(tx persistence.Tx) (*sql.Tx, error) {
 	return t.tx, nil
 }
 
-// tablesImpl is the per-feature umbrella the SQLite database returns for
-// Tables(). Aspect types below downcast *tablesImpl to expose per-feature
-// method sets, mirroring the postgres impl in postgres/backend.go.
-//
-// blob/blobThreshold/blobRetention carry the spill-config triple set by
-// database.SetBlobBackend at startup; same semantics as the postgres impl
-// (see foundation/persistence/postgres/backend.go::tablesImpl).
 type tablesImpl struct {
 	db            *sql.DB
 	blob          persistence.BlobBackend
@@ -53,26 +43,18 @@ type tablesImpl struct {
 
 func newTables(db *sql.DB) *tablesImpl { return &tablesImpl{db: db} }
 
-// SetBlobBackend installs (or clears) the spill-config triple. See
-// postgres/backend.go::tablesImpl.SetBlobBackend for the contract.
-// Called by database.SetBlobBackend at startup.
 func (s *tablesImpl) SetBlobBackend(bb persistence.BlobBackend, threshold int, retention time.Duration) {
 	s.blob = bb
 	s.blobThreshold = threshold
 	s.blobRetention = retention
 }
 
-// BlobBackend returns the configured backend (or nil).
 func (s *tablesImpl) BlobBackend() persistence.BlobBackend { return s.blob }
 
-// BlobSpillThreshold returns the threshold (0 when disabled).
 func (s *tablesImpl) BlobSpillThreshold() int { return s.blobThreshold }
 
-// BlobRetention returns the orphan retention window (0 when unset).
 func (s *tablesImpl) BlobRetention() time.Duration { return s.blobRetention }
 
-// Transaction runs fn inside a sql.Tx. Rolls back on error; commits on
-// success.
 func (s *tablesImpl) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	sTx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -91,21 +73,12 @@ func (s *tablesImpl) Transaction(ctx context.Context, fn func(ctx context.Contex
 	return sTx.Commit()
 }
 
-// querier abstracts the common Exec/Query/QueryRow surface shared by
-// *sql.DB and *sql.Tx. All store SQL goes through this so the same code
-// path serves both auto-commit and transactional execution.
 type querier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// q returns the tx-bound querier. Panics on nil tx — every Table
-// method must be invoked with an explicit tx (option C / no-nil-tx
-// contract; see foundation/persistence/sqlite/deadlock_guard_test.go).
-// Callers that do not already hold a tx must open one with
-// Tables.Transaction first; the previous nil-tx auto-commit code path
-// is gone.
 func (s *tablesImpl) q(tx persistence.Tx) querier {
 	if tx == nil {
 		panic("persistence: nil tx — every Table method requires an explicit tx; wrap with Tables.Transaction")
@@ -117,12 +90,10 @@ func (s *tablesImpl) q(tx persistence.Tx) querier {
 	return t.tx
 }
 
-// scannable is implemented by both *sql.Row and *sql.Rows.
 type scannable interface {
 	Scan(dst ...any) error
 }
 
-// @deliberate: per-feature aspect types are empty wrappers over tablesImpl so each Table interface gets a distinct method set; defined here so the per-feature files (nodes.go, instances.go, ...) can attach methods on the aspect type while sharing tablesImpl's layout for the q() downcast. Mirrors the postgres pattern in postgres/backend.go.
 type (
 	templatesImpl            tablesImpl
 	templateTagsImpl         tablesImpl
@@ -152,8 +123,6 @@ var (
 	_ persistence.FrameTable                = (*framesImpl)(nil)
 )
 
-// Templates accessor methods on *tablesImpl. Each downcasts to the aspect
-// type to expose the per-feature method set.
 func (s *tablesImpl) Templates() persistence.TemplateTable       { return (*templatesImpl)(s) }
 func (s *tablesImpl) TemplateTags() persistence.TemplateTagTable { return (*templateTagsImpl)(s) }
 func (s *tablesImpl) Instances() persistence.InstanceTable       { return (*instancesImpl)(s) }
@@ -168,7 +137,6 @@ func (s *tablesImpl) Events() persistence.EventTable                 { return (*
 func (s *tablesImpl) Supervisors() persistence.SupervisorTable       { return (*supervisorsImpl)(s) }
 func (s *tablesImpl) Frames() persistence.FrameTable                 { return (*framesImpl)(s) }
 
-// q aspect-type query helpers: each forwards to (*tablesImpl).q.
 func (b *templatesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }
 func (b *templateTagsImpl) q(tx persistence.Tx) querier         { return (*tablesImpl)(b).q(tx) }
 func (b *instancesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }

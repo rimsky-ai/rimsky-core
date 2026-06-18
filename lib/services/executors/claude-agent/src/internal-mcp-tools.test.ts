@@ -35,10 +35,6 @@ describe("internal-mcp-tools schemas", () => {
   });
 
   it("ReportCompleteInput surfaces the optional signoffs field (sign-off gate bag)", () => {
-    // @deliberate: signoffs is declared in three places that drift-check by eye only:
-    // the ReportCompleteInput zod schema, TOOL_DEFINITIONS[0].inputSchema,
-    // and the runtime inline schema in internal-mcp-server.ts. Pin the two
-    // definition-surface declarations so a drop / rename here fails loudly.
     const parsed = ReportCompleteInput.parse({
       token: "tok",
       changed: true,
@@ -46,7 +42,6 @@ describe("internal-mcp-tools schemas", () => {
     });
     expect(parsed.signoffs).toEqual(["c2lnLW9uZQ==", "c2lnLXR3bw=="]);
 
-    // @deliberate: signoffs is optional — omission is valid.
     const noSignoffs = ReportCompleteInput.parse({ token: "tok", changed: true });
     expect(noSignoffs.signoffs).toBeUndefined();
 
@@ -54,8 +49,6 @@ describe("internal-mcp-tools schemas", () => {
       ReportCompleteInput.parse({ token: "tok", changed: true, signoffs: [42] }),
     ).toThrow();
 
-    // @deliberate: the descriptor surface (TOOL_DEFINITIONS[0] = report_complete) declares
-    // signoffs as an optional array-of-string too.
     const reportComplete = TOOL_DEFINITIONS[0]!;
     expect(reportComplete.name).toBe("report_complete");
     const props = (reportComplete.inputSchema as {
@@ -65,7 +58,6 @@ describe("internal-mcp-tools schemas", () => {
     expect(props).toHaveProperty("signoffs");
     expect(props.signoffs!.type).toBe("array");
     expect(props.signoffs!.items?.type).toBe("string");
-    // @deliberate: signoffs is NOT in the required list (only token + changed are).
     const required = (reportComplete.inputSchema as { required?: string[] }).required ?? [];
     expect(required).not.toContain("signoffs");
   });

@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario test for the embedded-source grammar relaxed by the
-// 2026-05-21 userdata-collapse spec: a single `source:` string may
-// contain literal text alongside one or more `{{...}}` directives, and
-// each directive admits the `| <literal>` fallback operator
-// independently.
-//
-// Per spec
-// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-// §"Substitution grammar".
 package per_run_attributes
 
 import (
@@ -25,11 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// TestPerRunAttributes_EmbeddedSource_LiteralAndDirectives verifies
-// that an embedded `source:` string mixing literal text with a
-// `params.*` directive plus a `| <literal>` fallback on a missing
-// param resolves to the fully-composed string the executor receives at
-// dispatch.
 func TestPerRunAttributes_EmbeddedSource_LiteralAndDirectives(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -49,9 +35,6 @@ func TestPerRunAttributes_EmbeddedSource_LiteralAndDirectives(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// @deliberate: Embedded source: literal head + params directive +
-						// literal middle + missing-with-fallback directive +
-						// literal tail.
 						"prompt": map[string]any{
 							"type":   "string",
 							"source": `Generate config for {{params.domain}}. Notes: {{params.notes | "none"}}. Done.`,
@@ -65,7 +48,6 @@ func TestPerRunAttributes_EmbeddedSource_LiteralAndDirectives(t *testing.T) {
 
 	iid := h.CreateInstance(tid, "ck-embedded", map[string]any{
 		"domain": "alpha",
-		// @deliberate: `notes` deliberately omitted; the directive's fallback should fire.
 	})
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w)

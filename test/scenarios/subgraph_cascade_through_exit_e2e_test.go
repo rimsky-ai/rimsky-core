@@ -2,22 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// S4 must-pass scenario — subgraph_cascade_through_exit_e2e.
-//
-// End-to-end coverage of cascade-mark-stale walking across the sub-
-// graph's exit boundary under the RunScope-first reshape per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-// §"Test coverage matrix / S4":
-//
-//   - A main-graph node `downstream` subscribes to the calling node.
-//     The cascade walker MUST reach it after the sub-graph's exit
-//     fires the carry-rule and the calling node's state advances.
-//
-// Pins the load-bearing property: cascade traversal correctly walks
-// back through the carry-rule's bridge between the sub-graph's exit
-// run (in the sub-graph RunScope) and the calling node's run (in the
-// main RunScope), so a main-graph subscriber receives the cascade
-// without being skipped.
 package scenarios
 
 import (
@@ -58,9 +42,6 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 						node.TemplateNodeDef{Type: "caller", Delegate: "worker"},
 						openAttrs,
 					),
-					// @constraint: downstream subscribes to the calling node — the
-					// cascade walker must reach it after the sub-graph's
-					// exit carry-rule transitions the caller's state.
 					scenario.MakeNode(
 						node.TemplateNodeDef{Type: "downstream", Executor: "stub",
 							Subscribes: []tmplspec.SubscriptionEntry{{Node: "caller", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}},
@@ -95,15 +76,10 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 	downstreamNode := h.FindNode(iid, "downstream")
 	require.NotNil(t, downstreamNode, "downstream node missing")
 
-	// @constraint: Exit must complete first (its terminal fires the carry-rule).
 	require.True(t,
 		h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh, 30*time.Second),
 		"inner-exit must reach fresh — its terminal fires the carry-rule")
 
-	// @constraint: downstream subscribes to caller; the cascade walker must reach
-	// it across the carry-rule's bridge between the sub-graph RunScope
-	// (where exit lives) and the main RunScope (where caller +
-	// downstream live).
 	if !h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh, 60*time.Second) {
 		t.Logf("downstream did not reach fresh; dumping current state:")
 		h.QuerySQL(`
@@ -133,9 +109,6 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 		t.Fatalf("downstream must reach fresh via cascade traversal back through the calling node")
 	}
 
-	// @deliberate: Downstream's run lives in the MAIN RunScope (not the sub-graph
-	// scope). Verifies the cascade walker correctly resolved the
-	// receiver's RunScope as main, not as the exit's sub-graph scope.
 	mainScopeID := h.GetMainRunScopeID(iid)
 	var inMain int
 	h.QueryRowSQL(`

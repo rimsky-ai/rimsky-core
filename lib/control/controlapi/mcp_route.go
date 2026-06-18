@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Mounting the in-control-api MCP protocol skin at /v1/mcp (POST
-// carries the JSON-RPC messages; GET serves the Streamable HTTP SSE
-// probe). The route is registered on the /v1 sub-router in NewApp, so
-// the externally visible path is /v1/mcp. See the
-// control/controlapi/mcp/ package for the JSON-RPC envelope and tool
-// catalog.
-//
 // @concept: control-api
 
 package controlapi
@@ -21,10 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi/mcp"
 )
 
-// routerRef is a lazily-bound http.Handler — the catalog needs the
-// chi router for in-process tool dispatch, but the router only
-// exists once NewApp has finished registering all routes. We hand
-// the catalog a routerRef whose .h is set after registration.
 type routerRef struct {
 	h http.Handler
 }
@@ -37,71 +26,29 @@ func (rr *routerRef) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rr.h.ServeHTTP(w, r)
 }
 
-// registerMCPRoute mounts the MCP protocol skin on r and stashes a
-// per-NewApp routerRef on deps.AuthState.mcpRouterRef. NewApp's tail
-// assigns the built router into that routerRef's .h field so MCP tool
-// calls can re-enter the chi pipeline. The routerRef is per-call
-// (NewApp creates one) but, because the catalog closes over it, it
-// lives for the life of the returned http.Handler.
 func registerMCPRoute(r chi.Router, deps AppDeps) {
 	if deps.AuthState == nil {
 		return
 	}
 	rr := &routerRef{}
-	// @constraint: stash the routerRef on the AppDeps via AuthState so NewApp's
-	// tail can populate it after route registration completes.
 	deps.AuthState.mcpRouterRef = rr
 	catalog := &mcp.Catalog{
 		Registry:    actionRegistryAdapter{deps.AuthState.Registry},
 		Router:      rr,
 		Description: descriptionForTool,
 		Schemas:     builtinSchemas(),
-		// @constraint: inject the identity reader + protocol-skin tagger directly
-		// rather than poking package-global hooks (which raced under
-		// parallel tests). Both reference controlapi's own helpers, which
-		// know the unexported context keys; the mcp package never imports
-		// controlapi.
 		ResolveIdentity:  IdentityFromContextOK,
 		WithProtocolSkin: WithProtocolSkin,
 	}
-	// @constraint: resources skin: a parallel-shaped catalog for the breakpoint-hits
-	// URI family. Per spec
-	// only resource family v1 exposes is `rimsky://instances/{id}/
-	// breakpoint-hits` and `rimsky://breakpoints/{bp_id}/hits`; the URI
-	// scheme parsing lives in mcp_resources.go::parseBreakpointHitsURI
-	// so this file stays a wiring layer.
 	server := &mcp.Server{
 		Tools:     catalog,
 		Resources: newBreakpointResourceCatalog(deps),
 	}
-	// @constraint: gate /mcp itself with the `mcp:read` umbrella so initialize /
-	// tools/list calls produce audit rows (per spec section "Audit
-	// and dry-run" — every authenticated request lands in the event
-	// log, including dry-runs and metadata calls). The per-tool gate
-	// still runs for `tools/call` because Catalog.Invoke re-enters
-	// the chi router through the routerRef; the umbrella's verb is
-	// `read` so the `*:read` wildcard in the bundled `read-only` role
-	// covers `tools/list` automatically.
-	//
-	// Both POST and GET are registered: POST carries the JSON-RPC
-	// messages; GET opens the MCP Streamable HTTP server-to-client SSE
-	// stream the default `type: http` client probes on connect (idle in
-	// v1 — connect-and-control only, no live push). Without the GET
-	// handler chi answers the probe with 405 and the client fails to
-	// connect. server.ServeHTTP routes by HTTP method internally.
 	gated := deps.AuthState.gateByAction("mcp:read", server.ServeHTTP)
 	r.Post("/mcp", gated)
 	r.Get("/mcp", gated)
 }
 
-// builtinSchemas returns per-tool input JSON schemas, mirroring the
-// pre-spec standalone mcp-servers/control-api/tools.go shape so an
-// MCP client (and the LLMs that drive them) sees the required
-// arguments for each tool. Tools omitted from the map fall back to
-// `{"type":"object"}` in the catalog — acceptable for argument-free
-// list tools, but write tools need explicit shapes so the client can
-// validate before round-tripping. Keep in lockstep with
-// `v1Actions` in actions.go.
 func builtinSchemas() map[string][]byte {
 	obj := []byte(`{"type":"object","additionalProperties":true}`)
 	return map[string][]byte{
@@ -170,8 +117,6 @@ func builtinSchemas() map[string][]byte {
 	}
 }
 
-// descriptionForTool resolves a tool name to a human-readable
-// description for tools/list. Looks up via the mcp.Registry.
 func descriptionForTool(reg mcp.Registry, name string) string {
 	if entry, ok := reg.EntryForTool(name); ok {
 		if entry.Description != "" {
@@ -182,11 +127,6 @@ func descriptionForTool(reg mcp.Registry, name string) string {
 	return name
 }
 
-// actionRegistryAdapter adapts the controlapi.ActionRegistry to the
-// mcp.Registry interface. The MCP package can't import controlapi
-// (controlapi imports mcp, so a back-import would close a cycle);
-// the adapter sits on the controlapi side and forwards the same
-// methods through.
 type actionRegistryAdapter struct{ inner *ActionRegistry }
 
 func (a actionRegistryAdapter) AllTools() []string { return a.inner.AllTools() }

@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// rimsky-openlineage — bundled OpenLineage subscriber reference impl.
-// Polls `table:rimsky_lineage` for new records since a stored cursor
-// and emits OpenLineage 1.x JSON events to a configured backend
-// (Marquez, DataHub, …).
-//
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §OpenLineage emitter.
-//
 //	@concept: lineage
 package main
 

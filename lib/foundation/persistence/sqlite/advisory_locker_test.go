@@ -11,10 +11,6 @@ import (
 	"time"
 )
 
-// TestTrySchedulerTick_ExcludesAcrossLockerInstances simulates two
-// processes sharing one database path with two independent locker
-// instances: the first holds the tick lock, the second must observe
-// held=false; after release the second acquires.
 func TestTrySchedulerTick_ExcludesAcrossLockerInstances(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
 	lockerA := newAdvisoryLocker(dbPath)
@@ -54,9 +50,6 @@ func TestTrySchedulerTick_ExcludesAcrossLockerInstances(t *testing.T) {
 	releaseB2()
 }
 
-// TestAcquireMigrationLock_BlocksAcrossLockerInstances pins the blocking
-// contract across two independent locker instances on one path: B's
-// acquisition does not return until A releases.
 func TestAcquireMigrationLock_BlocksAcrossLockerInstances(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
 	lockerA := newAdvisoryLocker(dbPath)
@@ -104,9 +97,6 @@ func TestAcquireMigrationLock_BlocksAcrossLockerInstances(t *testing.T) {
 	}
 }
 
-// TestAcquireMigrationLock_HonorsContextCancel pins that a blocked
-// acquisition returns when its context is cancelled instead of waiting
-// forever on the other holder.
 func TestAcquireMigrationLock_HonorsContextCancel(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
 	lockerA := newAdvisoryLocker(dbPath)

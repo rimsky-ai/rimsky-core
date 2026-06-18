@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// conformance_validation_test.go drives the Validation conformance suite
-// against an in-process Validation server. The self-test uses a tiny inline
-// implementation that mirrors executors/verifier-shape-checks/ validation
-// semantics. Migrated from the former
-// cmd/rimsky-validation-conformance/main_test.go; it exercises the importable
-// lib/protocols/conformance/validation.Run directly.
 package main
 
 import (
@@ -24,10 +18,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// fixtureValidationServer is a minimal Validation impl mirroring the
-// verifier-shape-checks validator. The cmd test package cannot
-// import the verifier-shape-checks main package; this stand-in is
-// the conformance contract reduced to its essentials.
 type fixtureValidationServer struct {
 	genv1.UnimplementedValidationServer
 }
@@ -71,8 +61,6 @@ func (s *fixtureValidationServer) Validate(_ context.Context, req *genv1.Validat
 	return &genv1.ValidateResponse{Valid: true}, nil
 }
 
-// startFixtureValidationServer spins up a Validation server on an ephemeral
-// loopback listener and returns the endpoint + teardown.
 func startFixtureValidationServer(t *testing.T) (endpoint string, teardown func()) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -92,8 +80,6 @@ func startFixtureValidationServer(t *testing.T) (endpoint string, teardown func(
 	}
 }
 
-// TestValidationConformance_Executor drives the suite against the
-// fixture Validation server with --role=executor.
 func TestValidationConformance_Executor(t *testing.T) {
 	endpoint, teardown := startFixtureValidationServer(t)
 	t.Cleanup(teardown)
@@ -111,7 +97,6 @@ func TestValidationConformance_Executor(t *testing.T) {
 			t.Errorf("%s: unexpected error: %v", r.Name, r.Err)
 		}
 	}
-	// @constraint: every executor-role check name appears in results.
 	want := map[string]bool{
 		"ExecutorHappy":                     false,
 		"ExecutorMalformedAttributesSchema": false,
@@ -130,8 +115,6 @@ func TestValidationConformance_Executor(t *testing.T) {
 	}
 }
 
-// TestValidationConformance_UnsupportedRole asserts the dispatcher
-// surfaces a precise error when an unknown role is requested.
 func TestValidationConformance_UnsupportedRole(t *testing.T) {
 	endpoint, teardown := startFixtureValidationServer(t)
 	t.Cleanup(teardown)

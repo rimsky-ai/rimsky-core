@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Task 43 — acquire_pass + subscription-driven monitor wakeup
-// (post-2026-05-14 subscription-cascade resolution).
-//
-// Two-node template: worker has `error_types: { "acquire/unavailable":
-// { policy: [pass] } }` (post-2026-05-23 reshape; was
-// `on_acquire_unavailable: { resolve: pass }`). The producer returns
-// Unavailable. Worker passes WITHOUT invoking the executor; monitor
-// subscribes to worker's terminal/error/* and runs once worker resolves.
-//
-// The legacy handler.invalidate emit / message_emitted audit-event path
-// retired with the subscription-cascade resolution; receiver-side
-// subscription declares the cascade coupling explicitly.
 package scenarios
 
 import (
@@ -42,7 +30,6 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// @deliberate: Empty queue — Open returns Unavailable.
 			},
 		},
 	})
@@ -92,16 +79,12 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, monitor)
 
-	// @constraint: Worker should pass.
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
 		"worker should record settling_signal_type=terminal/error/<class> via error_types: { acquire/unavailable: [pass] }")
 
-	// @constraint: monitor must run at least once in response to worker's resolve;
-	// the wait-set drain on worker's settle releases monitor.
 	require.True(t, waitForEventCount(t, h, monitor.ID, "terminal/success", 1, 30*time.Second),
 		"monitor must run after worker reaches fresh (subscription-driven)")
 
-	// @deliberate: Worker's executor must NOT have been invoked.
 	var workerObserved int
 	for _, o := range h.Stub.Observed() {
 		if o.NodeType == "worker" {

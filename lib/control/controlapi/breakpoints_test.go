@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// breakpoints_test.go — HTTP-level integration tests for the
-// instance-debugger breakpoint surface per spec
-// Tests exercise the four endpoints end-to-end against the pgtest
-// harness. The resume-validation domain logic is tested separately in
-// runtime/breakpoint_resume_test.go; here we focus on the transport
-// layer (parsing, defaulting, validation gates, sentinel-to-status
-// translation, idempotent replay).
-//
 // @concept: breakpoint
 
 package controlapi
@@ -30,7 +22,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// seedBPInstance boots a template + instance and returns (templateID, instanceID).
 func seedBPInstance(t *testing.T, h *harness, suffix string) (string, string) {
 	t.Helper()
 	tplBody := validTemplateBody("bp-" + suffix)
@@ -49,7 +40,6 @@ func seedBPInstance(t *testing.T, h *harness, suffix string) (string, string) {
 	return tplID, instID
 }
 
-// TestBreakpoint_CreateListDelete drives the basic CRUD shape.
 func TestBreakpoint_CreateListDelete(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -57,8 +47,6 @@ func TestBreakpoint_CreateListDelete(t *testing.T) {
 
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
-	// @constraint: create with explicit pause mode and the default overflow_policy
-	// (empty body → block_dispatch).
 	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": "root"},
@@ -70,25 +58,20 @@ func TestBreakpoint_CreateListDelete(t *testing.T) {
 	require.Equal(t, "block_dispatch", out["overflow_policy"])
 	require.Equal(t, "before_dispatch", out["checkpoint"])
 
-	// @constraint: list → 1 row.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), nil)
 	require.Equal(t, http.StatusOK, status)
 	bps, _ := out["breakpoints"].([]any)
 	require.Len(t, bps, 1)
 
-	// @constraint: delete → 204.
 	status, _ = h.httpJSON(t, "DELETE", fmt.Sprintf("/v1/instances/%s/breakpoints/%s", instID, bpID), nil)
 	require.Equal(t, http.StatusNoContent, status)
 
-	// @constraint: list → empty.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), nil)
 	require.Equal(t, http.StatusOK, status)
 	bps, _ = out["breakpoints"].([]any)
 	require.Len(t, bps, 0)
 }
 
-// TestBreakpoint_CreateDefaultsForNotifyOnly checks the notify_only
-// path resolves overflow_policy to drop_oldest by default per spec §4.8.
 func TestBreakpoint_CreateDefaultsForNotifyOnly(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -104,8 +87,6 @@ func TestBreakpoint_CreateDefaultsForNotifyOnly(t *testing.T) {
 	require.Equal(t, "drop_oldest", out["overflow_policy"])
 }
 
-// TestBreakpoint_CreateRejectsIllegalCombinations covers the spec §4.8
-// rejection branches.
 func TestBreakpoint_CreateRejectsIllegalCombinations(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -132,8 +113,6 @@ func TestBreakpoint_CreateRejectsIllegalCombinations(t *testing.T) {
 	}
 }
 
-// TestBreakpoint_CreateRejectsSignalTypeOnBeforeDispatch covers the
-// spec §4.5 rule that signal_type is only valid on after_terminal.
 func TestBreakpoint_CreateRejectsSignalTypeOnBeforeDispatch(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -148,8 +127,6 @@ func TestBreakpoint_CreateRejectsSignalTypeOnBeforeDispatch(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
-// TestBreakpoint_CreateAcceptsTrailingWildcardSignal verifies the
-// signal package's ValidateSubscriptionType admits trailing-*.
 func TestBreakpoint_CreateAcceptsTrailingWildcardSignal(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -165,16 +142,6 @@ func TestBreakpoint_CreateAcceptsTrailingWildcardSignal(t *testing.T) {
 	require.Equal(t, "terminal/error/*", out["signal_type"])
 }
 
-// TestBreakpoint_CreateRejectsRetiredEventTypePath pins the
-// TD-collapse-named-event-to-tags retirement of the `event/<name>`
-// signal-type-path at the breakpoint surface. signal.ValidateSubscriptionType
-// no longer admits `event/*` or `event/<name>`; the breakpoint create
-// handler routes through that validator so the rejection is automatic.
-// Per concept:terminal-tag, an operator who wants to break on the
-// observable discriminator that used to ride as a NamedEvent now
-// declares a `terminal/*` matcher and filters via a `payload.tags`
-// CEL predicate downstream (the matcher itself stays type-path-only;
-// payload.tags-aware breakpoint matching is handled in the eval path).
 func TestBreakpoint_CreateRejectsRetiredEventTypePath(t *testing.T) {
 	t.Parallel()
 	cases := []string{"event/discovered", "event/*"}
@@ -197,10 +164,6 @@ func TestBreakpoint_CreateRejectsRetiredEventTypePath(t *testing.T) {
 	}
 }
 
-// TestBreakpoint_CreateRejectsUnknownNodeType verifies matcher
-// validation routes through the foundation/matcher package's
-// ValidationRefs and the controlapi error translator (400 with
-// matcher.ErrInvalid).
 func TestBreakpoint_CreateRejectsUnknownNodeType(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -214,8 +177,6 @@ func TestBreakpoint_CreateRejectsUnknownNodeType(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
-// TestBreakpoint_DeleteNotFound returns 404 when the breakpoint id
-// doesn't exist.
 func TestBreakpoint_DeleteNotFound(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -227,11 +188,6 @@ func TestBreakpoint_DeleteNotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-// TestBreakpoint_ResumeHitHappyPath drives the resume route. We seed a
-// hit directly via the persistence layer (the supervisor-side
-// checkpoint write lands in Pass 5; for now this test exercises the
-// HTTP transport's parsing + sentinel translation against a hit row
-// that was inserted out-of-band).
 func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -239,7 +195,6 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	ctx := context.Background()
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
-	// @constraint: create a breakpoint via HTTP.
 	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
 	})
@@ -251,7 +206,6 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	instUUID, err := uuid.Parse(instID)
 	require.NoError(t, err)
 
-	// @deliberate: seed a hit directly so the resume handler has something to act on.
 	var hitID shared.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		id, _, err := h.persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
@@ -272,7 +226,6 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 		return nil
 	}))
 
-	// @constraint: first resume call returns first_resume=true.
 	status, out = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
 		"hit_id": hitID.String(),
 	})
@@ -280,7 +233,6 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	require.Equal(t, true, out["resumed"])
 	require.Equal(t, true, out["first_resume"])
 
-	// @constraint: replay returns first_resume=false (idempotent).
 	status, out = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
 		"hit_id": hitID.String(),
 	})
@@ -289,12 +241,6 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	require.Equal(t, false, out["first_resume"])
 }
 
-// TestBreakpoint_ListHits_HTTPMirrorsMCPResource asserts the read-only
-// GET /instances/{id}/breakpoint-hits route returns the same
-// {hits, next_since, truncated} shape the MCP resource read produces for
-// the same instance, and that ?since/?limit pagination (including the
-// fetch-+1 truncation flag) behaves. The CLI status/watch aggregators
-// (Pass 5) poll this route.
 func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -302,7 +248,6 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 	instUUID := shared.UUID(uuid.MustParse(instID))
 
-	// @constraint: seed a breakpoint + 3 hits with strictly increasing seq.
 	bpID := createBreakpointForRead(t, h, instID)
 	base := time.Now().UTC().Add(-3 * time.Minute)
 	_, seq1 := seedBPHit(t, h, bpID, instUUID, base)
@@ -311,7 +256,6 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.Less(t, seq1, seq2)
 	require.Less(t, seq2, seq3)
 
-	// @constraint: full page: all 3 hits, next_since == last seq, not truncated.
 	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	hits, _ := out["hits"].([]any)
@@ -319,9 +263,6 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.EqualValues(t, seq3, int64(out["next_since"].(float64)))
 	require.Equal(t, false, out["truncated"])
 
-	// @constraint: each row carries the same flattened envelope hitToWireShape
-	// produces (row-identity fields + snapshot fields). Cross-check the
-	// HTTP route against the MCP resource read for byte-identical rows.
 	first, _ := hits[0].(map[string]any)
 	require.EqualValues(t, seq1, int64(first["seq"].(float64)))
 	require.NotEmpty(t, first["hit_id"])
@@ -335,16 +276,12 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.Nil(t, rpcErr, "mcp read failed: %+v", rpcErr)
 	var mcpBody map[string]any
 	require.NoError(t, json.Unmarshal([]byte(contents.Text), &mcpBody))
-	// @constraint: the HTTP body marshals to the same JSON object the MCP resource
-	// serializes (both flow through writeJSON/json.Marshal of the same
-	// map shape). Compare round-tripped.
 	httpJSONBytes, err := json.Marshal(out)
 	require.NoError(t, err)
 	var httpBody map[string]any
 	require.NoError(t, json.Unmarshal(httpJSONBytes, &httpBody))
 	require.Equal(t, mcpBody, httpBody, "HTTP route and MCP resource must return identical breakpoint-hits payloads")
 
-	// @constraint: since cursor: ?since=seq1 drops the first hit, keeps seq2 + seq3.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?since=%d", instID, seq1), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	hits, _ = out["hits"].([]any)
@@ -352,9 +289,6 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.EqualValues(t, seq3, int64(out["next_since"].(float64)))
 	require.Equal(t, false, out["truncated"])
 
-	// @constraint: limit truncation: ?limit=2 over 3 hits → 2 returned, truncated
-	// true (the handler fetches limit+1 and observes the third row),
-	// next_since advances to the last returned seq (seq2).
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?limit=2", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	hits, _ = out["hits"].([]any)
@@ -362,13 +296,10 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.EqualValues(t, seq2, int64(out["next_since"].(float64)))
 	require.Equal(t, true, out["truncated"])
 
-	// @constraint: bad query param → 400 (parseSinceLimit error mapped to badRequest).
 	status, _ = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?since=-1", instID), nil)
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
-// TestBreakpoint_ListHits_InstanceNotFound returns 404 for an unknown
-// instance id.
 func TestBreakpoint_ListHits_InstanceNotFound(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -378,9 +309,6 @@ func TestBreakpoint_ListHits_InstanceNotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-// TestBreakpoint_ResumeMissingHitID returns 404 when the hit id is a
-// well-formed UUID that doesn't exist (or doesn't belong to the named
-// breakpoint).
 func TestBreakpoint_ResumeMissingHitID(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -400,7 +328,6 @@ func TestBreakpoint_ResumeMissingHitID(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-// TestBreakpoint_ResumeBadHitID rejects malformed hit_id with 400.
 func TestBreakpoint_ResumeBadHitID(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

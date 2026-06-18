@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// admin_waitset.go — GET /admin/diagnostics/wait-sets.
-//
-// Surfaces the rimsky_wait_set ledger so operators can debug stuck
-// frames ("which receiver is gated on which sender right now?").
-//
 //	@concept: wait-set
 package controlapi
 
@@ -20,11 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// WaitSetEntry is one wait-set row surfaced via /admin/diagnostics/wait-sets.
-// Post-stage-5 of the run-row lifecycle cutover, the receiver / sender
-// columns key on rimsky_node_runs(id) — see the flattened baseline
-// `001-baseline.sql` (the run-level cutover was historically migration
-// 005, collapsed into the baseline pre-v1).
 type WaitSetEntry struct {
 	FrameID           uuid.UUID `json:"frame_id"`
 	ReceiverRunID     uuid.UUID `json:"receiver_run_id"`
@@ -34,18 +24,10 @@ type WaitSetEntry struct {
 	TopicFilter       any       `json:"topic_filter,omitempty"`
 }
 
-// WaitSetResponse is the body of GET /admin/diagnostics/wait-sets.
 type WaitSetResponse struct {
 	WaitSet []WaitSetEntry `json:"wait_set"`
 }
 
-// handleAdminWaitSets handles GET /admin/diagnostics/wait-sets.
-// Required query param: frame=<uuid>. Optional: receiver_run=<uuid>
-// (filter to rows where the receiver_run_id matches). Post-stage-5 of
-// the run-row lifecycle cutover, the legacy `node=<uuid>` parameter
-// remains accepted as an alias for `receiver_run` so operators driving
-// the endpoint from saved tooling don't see a hard break, but the
-// underlying ledger keys on run id.
 func handleAdminWaitSets(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		frameStr := req.URL.Query().Get("frame")

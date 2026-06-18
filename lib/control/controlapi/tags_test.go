@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// tags_test.go — coverage for the POST /tags / PUT /tags/{tag} /
-// DELETE /tags/{tag} routes added by the 2026-05-01 control-plane
-// spec §1.5.
 package controlapi
 
 import (
@@ -15,8 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreateTag_HappyPath: POST /tags with a valid tag and an existing
-// template hash creates a tag pointing at the row.
 func TestCreateTag_HappyPath(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -34,8 +29,6 @@ func TestCreateTag_HappyPath(t *testing.T) {
 	require.Equal(t, tplID, body["template_id"])
 }
 
-// TestCreateTag_DuplicateRejected: re-POST a tag that already exists
-// returns 409.
 func TestCreateTag_DuplicateRejected(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -51,8 +44,6 @@ func TestCreateTag_DuplicateRejected(t *testing.T) {
 	require.Equal(t, http.StatusConflict, status)
 }
 
-// TestCreateTag_RejectsHashShape pins Issue 6's fix: a tag whose value
-// matches the canonical content-hash shape must fail validation.
 func TestCreateTag_RejectsHashShape(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -68,7 +59,6 @@ func TestCreateTag_RejectsHashShape(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
-// TestListTags returns the configured tags. Smoke for the list path.
 func TestListTags(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -84,8 +74,6 @@ func TestListTags(t *testing.T) {
 	require.NotEmpty(t, tags)
 }
 
-// TestMoveTag_404OnMissing: PUT /tags/{tag} on a tag that doesn't exist
-// returns 404 (operators can't accidentally create a tag via PUT).
 func TestMoveTag_404OnMissing(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -99,9 +87,6 @@ func TestMoveTag_404OnMissing(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-// TestDeleteTag_404OnMissing: DELETE /tags/{tag} on a tag that doesn't
-// exist returns 404 (operators get a clear signal rather than a silent
-// no-op 200).
 func TestDeleteTag_404OnMissing(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -112,10 +97,6 @@ func TestDeleteTag_404OnMissing(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-// TestDeleteTag_DoesNotDeleteTemplate verifies that DELETE /tags/{tag}
-// removes only the tag row; the template persists. This is the route
-// at /tags/{tag}, distinct from the template-delete route at
-// /templates/{tag_or_hash} which CAN cascade.
 func TestDeleteTag_DoesNotDeleteTemplate(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -129,7 +110,6 @@ func TestDeleteTag_DoesNotDeleteTemplate(t *testing.T) {
 	status, _ := h.httpJSON(t, "DELETE", "/v1/tags/"+tag, nil)
 	require.Equal(t, http.StatusOK, status)
 
-	// @constraint: template still resolvable by hash.
 	status, _ = h.httpJSON(t, "GET", "/v1/templates/"+tplID, nil)
 	require.Equal(t, http.StatusOK, status)
 }

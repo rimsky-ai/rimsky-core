@@ -2,16 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Reference binary for the atomic-staging pattern. Boots a gRPC
-// ClaimProducer server backed by the atomic-staging filesystem Store
-// plus a periodic sweep loop reaping leaked staging directories.
-//
-// Env vars:
-//   - RIMSKY_ATOMIC_STAGING_ROOT — filesystem path (required)
-//   - RIMSKY_LISTEN_ADDR        — gRPC listen address (default :8090)
-//   - RIMSKY_SWEEP_INTERVAL     — sweep cadence (default 5m)
-//   - RIMSKY_SWEEP_TTL          — staging TTL before sweep eligibility
-//     (default 24h)
 package main
 
 import (
@@ -32,8 +22,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// emptyHandleSet is the default for `Live`. Production wiring should
-// replace this with a Postgres-backed query against rimsky_claim_handles.
 type emptyHandleSet struct{}
 
 func (emptyHandleSet) Contains(string) bool { return false }

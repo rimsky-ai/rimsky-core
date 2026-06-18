@@ -13,22 +13,11 @@ import (
 	"time"
 )
 
-// Event is a minimal OpenLineage 1.x event envelope. Spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §OpenLineage emitter. We hand-roll the JSON shape rather than
-// depending on `github.com/OpenLineage/openlineage-go` so the
-// subscriber stays self-contained (per the plan's pre-resolved design
-// decision).
-//
 //	@concept: lineage
 type Event struct {
-	// @constraint: EventType is one of START | COMPLETE | FAIL | ABORT | OTHER (OpenLineage 1.x spec).
 	EventType string `json:"eventType"`
-	// @constraint: EventTime is RFC3339.
 	EventTime string `json:"eventTime"`
-	// @constraint: ProducerURI is the canonical rimsky URI.
 	ProducerURI string `json:"producer"`
-	// @constraint: SchemaURL is the OpenLineage spec URL.
 	SchemaURL string         `json:"schemaURL"`
 	Run       RunRef         `json:"run"`
 	Job       JobRef         `json:"job"`
@@ -37,42 +26,29 @@ type Event struct {
 	Facets    map[string]any `json:"facets,omitempty"`
 }
 
-// RunRef is the OpenLineage run identifier. `runId` is namespaced per
-// rimsky as `instance_id + child_key` so fan-out children get distinct
-// run ids while still sharing the same job alias.
 type RunRef struct {
 	RunID  string         `json:"runId"`
 	Facets map[string]any `json:"facets,omitempty"`
 }
 
-// JobRef is the OpenLineage job identifier. `name` is the template's
-// node alias (e.g. `"draft"`); `namespace` is operator-configured.
 type JobRef struct {
 	Namespace string         `json:"namespace"`
 	Name      string         `json:"name"`
 	Facets    map[string]any `json:"facets,omitempty"`
 }
 
-// DatasetRef is the OpenLineage dataset identifier. We map a held claim
-// to `(namespace = producer_name, name = scope_data_hash)` per the
-// spec §OpenLineage emitter / Dataset mapping.
 type DatasetRef struct {
 	Namespace string         `json:"namespace"`
 	Name      string         `json:"name"`
 	Facets    map[string]any `json:"facets,omitempty"`
 }
 
-// Emitter posts OpenLineage events to a configured backend. Per spec
-// §OpenLineage emitter / Transport, V1 is HTTP POST to
-// `{backend_url}/api/v1/lineage`.
-//
 //	@concept: lineage
 type Emitter struct {
 	BackendURL string
 	Client     *http.Client
 }
 
-// NewEmitter returns an Emitter with a reasonable HTTP timeout.
 func NewEmitter(backendURL string) *Emitter {
 	return &Emitter{
 		BackendURL: backendURL,
@@ -80,9 +56,6 @@ func NewEmitter(backendURL string) *Emitter {
 	}
 }
 
-// Send POSTs an Event to the configured backend. Non-2xx response
-// status is returned as a formatted error so the caller can log + retry
-// on next poll. Empty BackendURL is a no-op (used by tests).
 func (e *Emitter) Send(ctx context.Context, ev Event) error {
 	if e.BackendURL == "" {
 		return nil
@@ -108,16 +81,6 @@ func (e *Emitter) Send(ctx context.Context, ev Event) error {
 	return nil
 }
 
-// MakeLeafRunEvent maps a rimsky `record_kind = 'leaf_run'` lineage
-// record to an OpenLineage `COMPLETE` event. The mapping follows spec
-// §OpenLineage emitter:
-//   - `instance_id + child_key` → `run.runId`.
-//   - `template_node_alias` → `job.name`.
-//   - `held_claims` → `inputs[]` keyed by `(producer_name, scope_data_hash)`.
-//   - Frame-trigger metadata → custom facets (`triggerKind`, etc.).
-//
-// The `eventTime` is the lineage row's `observed_at`.
-//
 //	@concept: lineage-record
 func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string, namespace string) Event {
 	runID := instanceID
@@ -142,9 +105,6 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 			},
 		})
 	}
-	// @deliberate: project the writer's full LeafRunRecord shape into the rimsky
-	// facet block so downstream OL consumers can audit-trace the leaf run back
-	// to its node-run row (node_id, frame_id, state, scope_data_hash, error_class).
 	facets := map[string]any{
 		"rimsky": map[string]any{
 			"node_id":              rec.NodeID,
@@ -178,11 +138,6 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 	}
 }
 
-// MakeClaimTerminalEvent maps a rimsky `record_kind = 'claim_terminal'`
-// lineage record to an OpenLineage `COMPLETE` (for committed claims) or
-// `ABORT` (for abandoned / force-cancelled claims) event. Per spec
-// §OpenLineage emitter / Dataset mapping.
-//
 //	@concept: lineage-record
 func MakeClaimTerminalEvent(rec ClaimTerminalRecord, observedAt time.Time, namespace string) Event {
 	eventType := "COMPLETE"

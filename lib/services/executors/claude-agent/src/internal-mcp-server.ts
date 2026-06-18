@@ -11,61 +11,6 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { TokenRegistry } from "./token-registry.js";
 
-/**
- * MCP-HTTP callback server for the rimsky claude-agent.
- *
- * Spec: docs/specs/2026-04-25-stores-redesign-design.md §12, §16.1.
- *
- * The SDK's streamable-HTTP transport is strictly **one session per
- * transport instance** in stateful mode: once `_initialized` is true,
- * the transport rejects further initialize requests with HTTP 400
- * `Invalid Request: Server already initialized`, and validates the
- * `mcp-session-id` header on every non-init request against its single
- * captured sessionId (404 `Session not found` on mismatch). See the
- * SDK source at
- * `node_modules/@modelcontextprotocol/sdk/dist/esm/server/webStandardStreamableHttp.js:422-428`
- * and `:595-605`.
- *
- * That means a singleton transport is wrong for a multi-tenant
- * executor: the first dispatch's CLI initializes and the transport
- * binds to its sessionId; every subsequent dispatch's CLI gets HTTP
- * 400 on its initialize, surfaces it as "MCP server not connected,"
- * and the dispatch wedges until the silence timer fires.
- *
- * This module maintains a `Map<sessionId, SessionEntry>` and routes
- * incoming requests by `mcp-session-id` header:
- *   - request with no header   → new transport + McpServer, init handshake
- *   - request with known sid   → route to that transport
- *   - request with unknown sid → HTTP 404 (orphaned client; should reinit)
- *
- * Tools surfaced (per spec §12 and §16.1, and 2026-05-14 Piece 2):
- *   - `report_complete` (optional `attributes_delta`)
- *   - `report_blocked`
- *   - `report_error`
- *   - `report_park`
- *   - `attributes_read`  — returns dispatch-time attributes snapshot.
- *   - `attributes_set`   — POSTs `{delta}` to the supervisor's
- *     incremental writeback URL.
- *
- * Tools are scoped per-run via the per-run `token` argument validated
- * against `TokenRegistry`. The CLI subprocess receives the token via
- * the `RIMSKY_CALLBACK_TOKEN` env var.
- *
- * Teardown deferral: tool handlers that drive the dispatch terminal
- * (`report_complete` / `report_blocked` / `report_error` /
- * `report_park`) hand teardownCli to a `setTimeout(..., 0)` so the
- * MCP tool response is flushed back to the CLI before the subprocess
- * gets SIGTERM. Mirrors brain's `setTimeout(() => config.onTopicPublished(result), 0)`
- * pattern.
- *
- * MCP server name advertised to the Claude CLI via `--mcp-config`. The CLI
- * namespaces every tool from this server as
- * `mcp__${CALLBACK_MCP_SERVER_NAME}__<toolName>`, so the executor's
- * allowlist derivation (cli-runner.ts) MUST use this same constant to build
- * the fully-qualified tool names — a literal drift here would silently break
- * the `--allowedTools` gate under Claude Code's deferred-MCP permission
- * surface.
- */
 export const CALLBACK_MCP_SERVER_NAME = "rimsky-callback";
 
 export interface CallbackServerHandle {
@@ -86,27 +31,7 @@ export async function startInternalMcpServer(opts: {
   host?: string;
   port?: number;
   logger: Logger;
-  /**
-   * Idle eviction window. A session with no requests for this long is
-   * closed and evicted from the routing map. Default 10 minutes. Set
-   * lower in tests to exercise eviction.
-   */
   sessionIdleMs?: number;
-  /**
-   * Test seam: force a per-socket inactivity timeout (ms) on the
-   * underlying `http.Server` (`httpServer.timeout`). PRODUCTION CODE NEVER
-   * SETS THIS — the timeout discipline applied below intentionally pins
-   * every per-connection/per-request cap to 0, because long-lived MCP SSE
-   * GET streams must never be destroyed by Node's socket-inactivity cap
-   * (#11: an idle SSE stream RSTs → ECONNRESET → the node terminal-errors
-   * `agent/subprocess_exit/before_complete` even though the agent did its
-   * work). `httpServer.timeout` — not `requestTimeout` — is the knob that
-   * actually destroys an idle SSE response with ECONNRESET; a test pins it
-   * to a small value to drive that real fault on a fast clock and PROVE
-   * the SSE stream survives anyway. Leaving this unset preserves the
-   * production default; setting it must NOT reintroduce the fault, which
-   * is exactly what the `httpServer.timeout = 0` line below guarantees.
-   */
   socketTimeoutMs?: number;
 }): Promise<CallbackServerHandle> {
   const registry = new TokenRegistry();
@@ -123,8 +48,8 @@ export async function startInternalMcpServer(opts: {
       { session_id: sessionId, reason, active_sessions: sessions.size },
       "mcp.session_closed",
     );
-    void entry.transport.close().catch(() => { /* @deliberate: ignore */ });
-    void entry.mcp.close().catch(() => { /* @deliberate: ignore */ });
+    void entry.transport.close().catch(() => {});
+    void entry.mcp.close().catch(() => {});
   };
 
   const createSession = async (): Promise<SessionEntry> => {
@@ -133,9 +58,6 @@ export async function startInternalMcpServer(opts: {
       version: "1.0.0",
     });
     registerTools(mcp, registry, log);
-    // @deliberate: `transport` is captured by the onsessioninitialized closure below
-    // by reference; the binding is valid by the time the SDK fires that
-    // callback from inside handleRequest (post-init handshake).
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
       onsessioninitialized: (newSid) => {
@@ -166,9 +88,6 @@ export async function startInternalMcpServer(opts: {
       if (sid) {
         const entry = sessions.get(sid);
         if (!entry) {
-          // @deliberate: orphaned client (executor restart, eviction, etc.). Surface
-          // a 404 so the CLI can re-handshake instead of getting an
-          // ambiguous "Server not initialized" 400 from a fresh transport.
           log.warn({ session_id: sid }, "mcp.unknown_session");
           res.statusCode = 404;
           res.setHeader("content-type", "application/json");
@@ -184,7 +103,6 @@ export async function startInternalMcpServer(opts: {
         await entry.transport.handleRequest(req, res);
         return;
       }
-      // @deliberate: no sid header — should be an initialize. Mint a fresh session.
       const fresh = await createSession();
       await fresh.transport.handleRequest(req, res);
     } catch (err) {
@@ -196,42 +114,15 @@ export async function startInternalMcpServer(opts: {
     }
   });
 
-  // @deliberate: test seam (see `socketTimeoutMs` doc above). Applied BEFORE the
-  // production timeout discipline so the GREEN `httpServer.timeout = 0`
-  // line (below) deterministically overrides it.
   if (opts.socketTimeoutMs !== undefined) {
     httpServer.timeout = opts.socketTimeoutMs;
   }
 
-  // @constraint: HTTP timeout discipline (#11). A per-dispatch claude-agent run
-  // drives an MCP SSE GET stream that the CLI holds open for the entire
-  // dispatch — which can be many minutes of agent work with the stream sitting
-  // idle (no server-initiated notifications in V1). Node's per-connection /
-  // per-request caps destroy such an idle stream with ECONNRESET, which the
-  // SDK client surfaces as a transport error and the executor then
-  // mis-classifies as `agent/subprocess_exit/before_complete` — failing a
-  // dispatch the agent actually completed. Property protected: the
-  // internal-MCP SSE stream is indefinitely long-lived for the dispatch's
-  // duration. So we pin every cap that could reap a held stream to 0
-  // (disabled): `timeout` is the per-socket inactivity cap that actually RSTs
-  // an idle SSE response; `requestTimeout` is Node's per-request cap.
-  // `keepAliveTimeout` / `headersTimeout` only gate BETWEEN requests on a
-  // kept-alive socket, but we still raise them well past any plausible
-  // dispatch so a slow inter-request gap can never reap the connection.
   httpServer.timeout = 0;
   httpServer.requestTimeout = 0;
-  httpServer.keepAliveTimeout = 24 * 60 * 60 * 1000; // @deliberate: 24h
-  httpServer.headersTimeout = 24 * 60 * 60 * 1000; // 24h
+  httpServer.keepAliveTimeout = 24 * 60 * 60 * 1000;
+  httpServer.headersTimeout = 24 * 60 * 60 * 1000;
 
-  // @deliberate: surface runtime HTTP faults that would otherwise vanish into an
-  // unobservable error event. Without these, a malformed request line
-  // or a peer-protocol violation can desocket without a log line.
-  //
-  // Hardened for #11: when a killed prior CLI's socket RSTs abruptly, the
-  // socket handed to this listener may already be destroyed, so writing
-  // the 400 line throws (ERR_STREAM_DESTROYED / EPIPE). Tolerate that —
-  // an unhandled throw out of a `clientError` listener would crash the
-  // executor. Never rethrow.
   httpServer.on("clientError", (err, socket) => {
     log.warn({ error: String(err) }, "mcp.client_error");
     try {
@@ -241,8 +132,6 @@ export async function startInternalMcpServer(opts: {
         socket.destroy();
       }
     } catch (endErr) {
-      // @deliberate: already-destroyed socket (abrupt RST from a killed prior CLI).
-      // Swallow; the connection is gone and there is nothing to flush.
       log.debug({ error: String(endErr) }, "mcp.client_error_end_failed");
     }
   });
@@ -264,8 +153,6 @@ export async function startInternalMcpServer(opts: {
   const address = httpServer.address() as AddressInfo;
   const actualPort = address.port;
 
-  // @deliberate: idle-eviction sweep. Bounded interval (≥ 30s) prevents the sweep
-  // itself from becoming a hot loop in tests with a small idle window.
   const sweepIntervalMs = Math.max(30_000, Math.floor(sessionIdleMs / 4));
   const sweepTimer = setInterval(() => {
     const cutoff = Date.now() - sessionIdleMs;
@@ -273,7 +160,6 @@ export async function startInternalMcpServer(opts: {
       if (entry.lastActivityAt < cutoff) evict(sid, "idle_timeout");
     }
   }, sweepIntervalMs);
-  // @deliberate: don't keep the process alive solely for the sweep timer.
   sweepTimer.unref();
 
   return {
@@ -293,18 +179,9 @@ export async function startInternalMcpServer(opts: {
   };
 }
 
-/**
- * Registers the rimsky-callback tool surface on the supplied McpServer.
- * Exported so unit tests can wire the same tools through an InMemoryTransport
- * (mirrors brain's `registerTopicTools` test seam at
- * `skillprompting/brain/src/mcp-topic-server.ts`).
- */
 export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logger): void {
   const tokenField = z.string();
 
-  // @deliberate: defers a teardown to the next event-loop tick so the MCP tool
-  // response is flushed back to the CLI before the subprocess gets
-  // SIGTERM. Mirrors brain's `setTimeout(..., 0)` pattern.
   const deferTeardown = (td: () => Promise<void>): void => {
     setTimeout(() => {
       void td().catch((err) => {
@@ -313,12 +190,6 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     }, 0);
   };
 
-  // @deliberate: centralized invocation log. Fires once per tool call AFTER token
-  // lookup (so we can log the rimsky-side runId rather than the raw
-  // token, which is the auth secret). Tool args themselves are not
-  // logged: `attributes_set` deltas, `report_complete` change_summary,
-  // and `report_error` payloads can carry agent-generated text we
-  // shouldn't drop into the executor's log stream verbatim.
   const logCall = (name: string, runId: string): void => {
     log.info({ tool: name, run_id: runId }, "mcp.tool_called");
   };
@@ -341,9 +212,6 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
       attributes_delta: z.record(z.unknown()).optional(),
       changed: z.boolean(),
       change_summary: z.string().nullable().optional(),
-      // @constraint: Base64 Ed25519 sign-off signatures, supplied when the
-      // node requires sign-offs (`cli.required_signoffs`). Forwarded to the
-      // gate via `onComplete`; ignored when no gate is configured.
       signoffs: z.array(z.string()).optional(),
     },
     async (args) => {
@@ -489,8 +357,4 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     },
   );
 
-  // @constraint: TD-collapse-named-event-to-tags retires the
-  // `emit_named_event` MCP tool. Non-terminal observable transitions
-  // ride tags on the settling terminal verdict (concept:terminal-tag);
-  // there is no mid-dispatch emit surface.
 }

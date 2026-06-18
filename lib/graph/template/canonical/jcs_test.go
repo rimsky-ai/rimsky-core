@@ -42,11 +42,6 @@ func TestCanonicalSpecHash_Deterministic(t *testing.T) {
 }
 
 func TestCanonicalSpecHash_KeyOrderInvariant(t *testing.T) {
-	// @deliberate: Two structurally-identical specs that differ only in
-	// the field declaration order at construction time. encoding/json emits
-	// Go struct fields in struct-declaration order, but JCS sorts
-	// keys — so the two ParamsSchema maps below (whose Go literal order
-	// differs) must canonicalize identically.
 	specA := minimalSpec()
 	specA.ParamsSchema = map[string]any{"a": 1, "b": 2, "c": 3}
 
@@ -103,17 +98,6 @@ func TestCanonicalSpecHash_DistinctSpecs(t *testing.T) {
 	}
 }
 
-// TestCanonicalSpecHash_WhitespaceInvariant exercises the wrapper end-
-// to-end: encoding/json emits compact JSON for marshal calls (no
-// whitespace control surface on the wrapper), so the relevant property
-// — JCS strips any whitespace the input carries — is reachable through
-// CanonicalSpecHash by constructing two semantically identical specs
-// (the same map content with different runtime ordering) and asserting
-// matching hashes.
-//
-// The byte-level transform property (compact vs indented JSON
-// canonicalize identically) is covered by TestJCSLib_Whitespace below
-// using the underlying library directly.
 func TestCanonicalSpecHash_WhitespaceInvariant(t *testing.T) {
 	specA := minimalSpec()
 	specA.ParamsSchema = map[string]any{"x": 1, "y": 2}
@@ -133,10 +117,6 @@ func TestCanonicalSpecHash_WhitespaceInvariant(t *testing.T) {
 	}
 }
 
-// TestJCSLib_Whitespace pins the underlying library's whitespace-
-// stripping property at the byte level. Distinct from the wrapper
-// test above: this asserts the library contract, not the wrapper's
-// behaviour.
 func TestJCSLib_Whitespace(t *testing.T) {
 	spec := minimalSpec()
 	compact, err := json.Marshal(spec)
@@ -160,11 +140,6 @@ func TestJCSLib_Whitespace(t *testing.T) {
 	}
 }
 
-// TestJCSLib_NumberNormalization pins the underlying library's
-// number-normalization contract at the byte level. The wrapper does
-// not expose the same surface (Go-side TemplateSpec doesn't carry
-// arbitrary number-typed fields with this kind of representational
-// ambiguity), so the test operates on hand-written JSON inputs.
 func TestJCSLib_NumberNormalization(t *testing.T) {
 	a := []byte(`{"x": 1.0}`)
 	b := []byte(`{"x": 1}`)
@@ -195,12 +170,6 @@ func TestJCSLib_NumberNormalization(t *testing.T) {
 	}
 }
 
-// TestJCSLib_KeyOrderingByteEqual constructs two byte-level JSON
-// inputs with identical content but different key orderings, applies
-// the JCS Transform to each, and asserts the canonicalized outputs
-// are byte-equal. Pins cross-language reproducibility: the library is
-// what guarantees deterministic bytes, not encoding/json's
-// implementation-defined ordering.
 func TestJCSLib_KeyOrderingByteEqual(t *testing.T) {
 	a := []byte(`{"a": 1, "b": 2, "c": 3}`)
 	b := []byte(`{"c": 3, "a": 1, "b": 2}`)

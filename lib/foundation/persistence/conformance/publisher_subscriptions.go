@@ -21,7 +21,6 @@ func testPublisherSubscriptionLifecycle(t *testing.T, d persistence.Database) {
 	store := d.Tables()
 	subs := store.PublisherSubscriptions()
 
-	// @constraint: Get requires an explicit tx (the no-nil-tx contract).
 	getSub := func(id shared.UUID) *persistence.PublisherSubscriptionRow {
 		t.Helper()
 		var row *persistence.PublisherSubscriptionRow
@@ -45,8 +44,6 @@ func testPublisherSubscriptionLifecycle(t *testing.T, d persistence.Database) {
 			ResolvedConfig: []byte(`{"url":"https://example.invalid"}`),
 			TargetNode:     "root",
 			StartedAt:      time.Now().UTC(),
-			// @deliberate: State left empty — the driver default is `mounting`;
-			// rows are born unmounted by design.
 		})
 	}); err != nil {
 		t.Fatalf("Insert: %v", err)
@@ -78,9 +75,6 @@ func testPublisherSubscriptionLifecycle(t *testing.T, d persistence.Database) {
 		t.Fatalf("expected mounting→active CAS to update the row")
 	}
 
-	// @constraint: A late flip against a settled row is a no-op — the guard is
-	// the reconciler's defense against overwriting a concurrent
-	// lifecycle transition.
 	flipped, err = subs.CompareAndSetState(ctx, subID,
 		persistence.PublisherSubscriptionStateMounting,
 		persistence.PublisherSubscriptionStateFailed, "late flip must not land")

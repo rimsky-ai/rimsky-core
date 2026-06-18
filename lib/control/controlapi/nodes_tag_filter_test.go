@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Tests for the `?tag=` filter on GET /instances/{idOrKey}/nodes and
-// the `tags` field on each row's JSON response. Per spec
-
 package controlapi
 
 import (
@@ -20,9 +17,6 @@ func TestListNodes_TagFilter(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	// @constraint: template with one node carrying a static "setup" tag and another
-	// with a "recurring" tag. Two-node minimum reuses the existing
-	// validator-friendly shape.
 	body := map[string]any{
 		"spec": map[string]any{
 			"name":    "tag-filter-" + uuid.NewString(),
@@ -55,7 +49,6 @@ func TestListNodes_TagFilter(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, out)
 	instID := out["instance_id"].(string)
 
-	// @constraint: no filter — both rows returned, each with its tags.
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ := out["nodes"].([]any)
@@ -72,7 +65,6 @@ func TestListNodes_TagFilter(t *testing.T) {
 	require.True(t, tagsSeen["setup"])
 	require.True(t, tagsSeen["recurring"])
 
-	// @constraint: filter to setup — only one row.
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes?tag=setup", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ = out["nodes"].([]any)
@@ -80,7 +72,6 @@ func TestListNodes_TagFilter(t *testing.T) {
 	row, _ := nodes[0].(map[string]any)
 	require.Equal(t, "root", row["node_type"])
 
-	// @constraint: filter to a non-existent tag — empty.
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes?tag=nonexistent", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ = out["nodes"].([]any)

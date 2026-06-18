@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// agent_server.go — the agent-facing HostAgent.Connect handler. One
-// long-lived bidi stream per connected dev-machine agent. The first
-// frame must be Register; thereafter a reader goroutine routes inbound
-// ClientFrames by oneof and a writer goroutine drains the connection's
-// sendCh to the stream. On disconnect the connection is dropped and any
-// in-flight dispatch readers are notified via closed stream channels.
-//
 // @concept: host-agent-proxy
 
 package main
@@ -24,10 +17,8 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// proxyVersion is reported to agents on RegisterAck.
 const proxyVersion = "v1"
 
-// agentServer implements genv1.HostAgentServer.
 type agentServer struct {
 	genv1.UnimplementedHostAgentServer
 	state    *proxyState
@@ -38,7 +29,6 @@ func newAgentServer(state *proxyState) *agentServer {
 	return &agentServer{state: state, forwards: newHTTPForwarder(state)}
 }
 
-// Connect handles one agent's bidi stream for its whole lifetime.
 func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 	first, err := stream.Recv()
 	if err != nil {
@@ -52,10 +42,7 @@ func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 		return status.Error(codes.InvalidArgument, "Register.api_key is required")
 	}
 
-	// @concept: host-agent-proxy — the api-key id keys the agent index.
-	// v1 uses the api-key string verbatim as the routing key;
-	// control-api supplies the owner-api-key id on the same routing key
-	// via OnInstanceCreated.
+	// @concept: host-agent-proxy
 	apiKeyID := reg.GetApiKey()
 	conn, prior, displaced := s.state.registerAgent(apiKeyID, reg.GetAgentLabel(), reg.GetLocalCallbackBaseUrl())
 	if displaced && prior != nil {
@@ -93,9 +80,6 @@ func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 
 	readErr := s.readLoop(stream, conn)
 
-	// @constraint: teardown — drop the agent, close the writer, and
-	// notify in-flight dispatch readers via closed stream channels so
-	// they don't wedge.
 	conn.close()
 	dropped := s.state.dropAgent(apiKeyID, conn)
 	conn.closeAllStreams()
@@ -109,7 +93,6 @@ func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 	return readErr
 }
 
-// readLoop routes each inbound ClientFrame to its handler/channel.
 func (s *agentServer) readLoop(stream genv1.HostAgent_ConnectServer, conn *agentConnection) error {
 	for {
 		frame, err := stream.Recv()
@@ -128,13 +111,8 @@ func (s *agentServer) readLoop(stream genv1.HostAgent_ConnectServer, conn *agent
 		case *genv1.ClientFrame_DispatchFrame:
 			conn.deliverDispatch(body.DispatchFrame)
 		case *genv1.ClientFrame_HttpForward:
-			// @constraint: handle the local-HTTP-forward out of band so
-			// it doesn't block the reader loop on the upstream POST.
 			go s.forwards.handle(conn, body.HttpForward)
 		case *genv1.ClientFrame_Register:
-			// @constraint: a second Register on an already-registered
-			// stream is a protocol error; ignore it (the agent should
-			// open a fresh stream to re-register).
 			slog.Warn("ignoring duplicate Register on live stream", "api_key_id", redact(conn.apiKeyID))
 		default:
 			slog.Warn("unknown client frame body", "api_key_id", redact(conn.apiKeyID))
@@ -142,7 +120,6 @@ func (s *agentServer) readLoop(stream genv1.HostAgent_ConnectServer, conn *agent
 	}
 }
 
-// redact trims an api-key to a short prefix for logging.
 func redact(key string) string {
 	if len(key) <= 8 {
 		return key

@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — pins spec §10.2 "Notify-only mode":
-//
-//   1. Install a notify_only breakpoint.
-//   2. The supervisor reaches the checkpoint, writes a hit row, and
-//      continues (no waitForResume block).
-//   3. The dispatch proceeds to terminal naturally.
-//   4. The hit row remains, unresumed — the agent can read it on its
-//      next poll, but the dispatch does not depend on the agent doing so.
-//
-// notify_only is the non-blocking observability shape; this scenario
-// pins that it doesn't accidentally block the dispatch.
-//
 // @concept: breakpoint
 
 package breakpoints
@@ -57,15 +45,11 @@ func TestNotifyOnlyMode(t *testing.T) {
 	})
 	_, _ = instanceResume(t, h, iid)
 
-	// @deliberate: The dispatch should complete without an explicit resume call —
-	// notify_only does not block. The terminal/success follows the
-	// usual path; the hit row stays unresumed.
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"notify_only must not block dispatch — worker should reach Fresh without a resume call")
 
-	// @constraint: One hit row exists for the breakpoint, still unresumed.
 	hits := waitForHitCount(t, h, bpID, 1, 5*time.Second)
 	require.Len(t, hits, 1)
 	require.Nil(t, hits[0].ResumedAt,

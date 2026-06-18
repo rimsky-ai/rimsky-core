@@ -45,9 +45,6 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 	return err
 }
 
-// UpdateActiveNodeCount writes the supervisor's current active-node
-// count. Replaces the prior Heartbeat method now that supervisor-level
-// heartbeat tracking has retired.
 func (s *supervisorsImpl) UpdateActiveNodeCount(ctx context.Context, id string, activeNodeCount int, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,

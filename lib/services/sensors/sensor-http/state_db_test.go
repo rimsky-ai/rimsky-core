@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// state_db_test.go — pgtest-backed coverage for sensor-http's state
-// persistence. Confirms that publisher-subscription rows + body-hash
-// watermarks survive a stateDB reopen (simulating a process restart).
-
 package main
 
 import (
@@ -16,11 +12,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// TestSubscribe_RestartReplay_PreloadsLastHash drives the full restart
-// path that issue #2 of the 2026-05-17 review flagged: Subscribe must
-// look up the persisted body-hash via GetSubscription and pre-populate
-// the in-memory Watch so the first post-restart poll does not re-emit
-// when the body hasn't changed.
 func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 	ctx := context.Background()
 	dsn := harness.StartFreshPostgres(ctx, t)
@@ -48,8 +39,6 @@ func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 		t.Fatalf("UpdateLastHash: %v", err)
 	}
 
-	// @deliberate: Subscribe pre-populates the in-memory Watch on restart
-	// via this per-subscription read.
 	got, err := s1.GetSubscription(ctx, "sub-2")
 	if err != nil {
 		t.Fatalf("GetSubscription: %v", err)
@@ -61,8 +50,6 @@ func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 		t.Fatalf("expected LastHash=sha256-restart, got %q", got.LastHash)
 	}
 
-	// @constraint: GetSubscription returns (nil, nil) for unknown id so
-	// Subscribe can distinguish "first-ever Subscribe" from "DB error".
 	got, err = s1.GetSubscription(ctx, "sub-nonexistent")
 	if err != nil {
 		t.Fatalf("GetSubscription nonexistent: %v", err)
@@ -72,9 +59,6 @@ func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 	}
 }
 
-// TestStateDB_PersistsAcrossRestart inserts a subscription, closes the
-// state DB, reopens against the same Postgres, and asserts the
-// subscription is present with its body-hash watermark.
 func TestStateDB_PersistsAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	dsn := harness.StartFreshPostgres(ctx, t)

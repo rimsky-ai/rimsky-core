@@ -10,9 +10,6 @@ import (
 	"testing"
 )
 
-// TestExecutorEntry_ObservabilityEndpoint_Optional verifies that
-// rimsky.yml without `observability_endpoint:` parses successfully and
-// the field is empty (callers fall back to Endpoint).
 func TestExecutorEntry_ObservabilityEndpoint_Optional(t *testing.T) {
 	yamlBody := `
 persistence:
@@ -35,9 +32,6 @@ executors:
 	}
 }
 
-// TestExecutorEntry_ObservabilityEndpoint_Honored verifies that the
-// optional `observability_endpoint:` field reaches the parsed
-// ExecutorEntry.
 func TestExecutorEntry_ObservabilityEndpoint_Honored(t *testing.T) {
 	yamlBody := `
 persistence:
@@ -58,8 +52,6 @@ executors:
 	}
 }
 
-// TestStoreEntry_ObservabilityEndpoint_Honored mirrors the executor case
-// for claim-producer entries.
 func TestStoreEntry_ObservabilityEndpoint_Honored(t *testing.T) {
 	yamlBody := `
 persistence:

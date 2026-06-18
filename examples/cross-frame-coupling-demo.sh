@@ -27,22 +27,13 @@
 
 set -euo pipefail
 
-# @deliberate: resolve the script's own directory so the template path
-# works whether the operator runs the script from the repo root or via
-# an absolute path.
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 TEMPLATE_PATH="${SCRIPT_DIR}/cross-frame-coupling-demo-template.yaml"
 
 RIMSKY_ENDPOINT="${RIMSKY_ENDPOINT:-http://127.0.0.1:8080}"
 
-# @deliberate: convergence-poll budget. 60s is generous on a local
-# stack and short enough that a runaway loop or a stuck cascade exits
-# as a real failure rather than hanging the demo.
 POLL_BUDGET_SECONDS="${POLL_BUDGET_SECONDS:-60}"
 
-# @constraint: every line printed by the polling step is captured to
-# this log so the grep assertions at the end run against a structural
-# snapshot, not a flaky live tail.
 SELF_CHECK_LOG="$( mktemp -t cross-frame-coupling-demo.XXXXXXXX )"
 cleanup() {
     local rc=$?
@@ -56,10 +47,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# @constraint: the control-api accepts both YAML and JSON on POST
-# /v1/templates but the wrapping {"spec": ...} shape is mandatory.
-# `yq` does the YAML→JSON conversion inline so the script has no
-# Python dependency beyond what a typical dev box already carries.
 which yq >/dev/null 2>&1 || { echo "cross-frame-coupling-demo: yq not on PATH" >&2; exit 2; }
 which curl >/dev/null 2>&1 || { echo "cross-frame-coupling-demo: curl not on PATH" >&2; exit 2; }
 which jq >/dev/null 2>&1 || { echo "cross-frame-coupling-demo: jq not on PATH" >&2; exit 2; }

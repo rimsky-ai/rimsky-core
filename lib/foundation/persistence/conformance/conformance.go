@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package conformance is the cross-driver test suite. Both Postgres and
-// SQLite drivers must pass every test here. Run via the per-driver
-// wrappers in conformance_test.go.
-//
-// Spec: §9.1.
 package conformance
 
 import (
@@ -15,33 +10,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// RawQueryRow is the read-side companion to the per-driver rawExec
-// helper. Each entry is one row (column name → value as scanned by the
-// driver's sql layer). Used by tests that need to assert on columns
-// not surfaced by the application-layer projections (e.g. claimed_by
-// on individual rimsky_node_runs rows when sibling fan-out shares a
-// node_id and the LATERAL/ROW_NUMBER projection in nodeSelect collapses
-// them).
 type RawQueryRow = map[string]any
 
-// Suite runs every conformance check against the driver returned by
-// factory. Each subtest is independent; factory is called once per
-// subtest so each gets a fresh DB.
-//
-// rawExec is a per-driver test-helper that runs raw SQL against the
-// driver's underlying connection. Used by tests that need to bypass
-// the application-layer Create paths (e.g. the migration-backfill
-// case for instances.attribute_overrides). The helper is responsible
-// for translating the question-mark placeholders into the driver-
-// native style (`$N` for postgres, `?` for sqlite). rawExec is
-// REQUIRED: several tests call it unconditionally (the
-// instances.attribute_overrides migration-backfill case,
-// FrameSettlement/StuckFrames' last_progress_at backdating) and would
-// nil-panic without it. Both in-tree drivers supply one.
-//
-// rawQuery is the read-side companion. Returns the rows as
-// []RawQueryRow with column-name keys. Same `?` placeholder convention
-// as rawExec; same per-driver translation responsibility.
 func Suite(
 	t *testing.T,
 	factory func(*testing.T) persistence.Database,
@@ -66,17 +36,7 @@ func Suite(
 	t.Run("SelectCandidatesKeysetCursor", func(t *testing.T) { testSelectCandidatesKeysetCursor(t, factory(t)) })
 	t.Run("QueueRebindRunFrameInTx", func(t *testing.T) { testQueueRebindRunFrameInTx(t, factory(t)) })
 	t.Run("ClaimHandlesUpdateClaimScope", func(t *testing.T) { testClaimHandlesUpdateClaimScope(t, factory(t)) })
-	// @deliberate: spec 2026-05-22-fan-out-safety-scope-first-design retired
-	// NodesMarkStaleForCascade conformance — MarkStaleForCascade is now keyed
-	// on runID (pure UPDATE); allocation moved to AffirmNodeRunRow. The
-	// shaped-from-nodeID + bool-return-of-inserted contract this test pinned
-	// is gone. Replacement coverage: AffirmNodeRunRow conformance below.
-	// @deliberate: NodesListRunningBySupervisor retired alongside
-	// ListRunningBySupervisor itself — the supervisor's heartbeat tick
-	// (the sole caller) is gone with the heartbeat surface.
 
-	// @deliberate: spec 2026-05-22-fan-out-safety-scope-first-design — RunScope-first
-	// conformance group (Tasks 28–31, 55).
 	t.Run("RunScopeLifecycle", func(t *testing.T) {
 		t.Run("CreateMainAndChild", func(t *testing.T) { testRunScopeCreate_MainAndChild(t, factory(t)) })
 		t.Run("CloseStampsClosedAt", func(t *testing.T) { testRunScopeClose_StampsClosedAt(t, factory(t)) })
@@ -111,13 +71,6 @@ func Suite(
 	})
 	t.Run("RecoveryAwareDispatch", func(t *testing.T) { testRecoveryAwareDispatch(t, factory(t)) })
 	t.Run("ScratchMissingRowContract", func(t *testing.T) { testScratchMissingRowContract(t, factory(t)) })
-	// @deliberate: spec 2026-05-22-fan-out-safety-scope-first-design retired the
-	// cycle-2/3 fan-out disambiguator-specific conformance tests
-	// (NodesUpdateStateFanoutRunID, NodesClearLastOutcomeFanoutRunID,
-	// QueueRemoveForNodeFanoutRunID, QueueEnqueueFanoutPartition,
-	// QueueGetInFlightRunForNodeFanoutDisambiguator, QueueGetParkedByNodeFanoutRunID):
-	// their cases became inexpressible under uq_node_runs_in_flight_per_run_scope.
-	// Replacement coverage lives in RunStateWritesIsolatedByScope below.
 	t.Run("NodeAttributesMergeDelta", func(t *testing.T) { testNodeAttributesMergeDelta(t, factory(t)) })
 	t.Run("NodeAttributesPerRunInsertByRun", func(t *testing.T) { testNodeAttributesPerRunInsertByRun(t, factory(t)) })
 	t.Run("NodeAttributesGetLatestByNode", func(t *testing.T) { testNodeAttributesGetLatestByNode(t, factory(t)) })
@@ -143,8 +96,6 @@ func Suite(
 	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
 	t.Run("EventsListAuthPayloadFilters", func(t *testing.T) { testEventsListAuthPayloadFilters(t, factory(t)) })
 	t.Run("MessagesListByFrameID", func(t *testing.T) { testMessagesListByFrameID(t, factory(t)) })
-	// @deliberate: SchedulesDenseSameTimestampPagination retired by the
-	// 2026-05-15 plan B10 / D7 / E16 schedule-retirement cascade.
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
 	// @decision: claimant-guard-helper — no-op coverage for invariant 4:
 	// every ownership mutation must be a provable no-op for the wrong
@@ -156,27 +107,15 @@ func Suite(
 		t.Run("HandleReassignHolder", func(t *testing.T) { testClaimantGuardHandleReassignHolder(t, factory(t)) })
 		t.Run("HandleDelete", func(t *testing.T) { testClaimantGuardHandleDelete(t, factory(t)) })
 		t.Run("HandleDeleteIfExpired", func(t *testing.T) { testClaimantGuardHandleDeleteIfExpired(t, factory(t)) })
-		// @deliberate: HandleExtendHeartbeat retired alongside
-		// ClaimHandles.ExtendHeartbeat — the claim-handle lease no longer
-		// refreshes on a heartbeat tick; it bounds by the originating
-		// dispatch's runtime deadlines instead.
 		t.Run("HolderRelease", func(t *testing.T) { testClaimantGuardHolderRelease(t, factory(t)) })
 		t.Run("RunClaimSteal", func(t *testing.T) { testClaimantGuardRunClaimSteal(t, factory(t)) })
 		t.Run("RunReleaseClaim", func(t *testing.T) { testClaimantGuardRunReleaseClaim(t, factory(t)) })
 		t.Run("RunComplete", func(t *testing.T) { testClaimantGuardRunComplete(t, factory(t)) })
 		t.Run("RunRemoveForNode", func(t *testing.T) { testClaimantGuardRunRemoveForNode(t, factory(t)) })
 		t.Run("RunPark", func(t *testing.T) { testClaimantGuardRunPark(t, factory(t)) })
-		// @deliberate: RunRefreshHeartbeat + NodeUpdateHeartbeat retired
-		// alongside the heartbeat surface itself. Async-mode liveness now
-		// rides BumpLastProgressAt + RegisterAsyncAck (covered in the
-		// ParkResume bucket below); sync-mode liveness rides the
-		// supervisor's gRPC connection state, not a persisted timestamp.
 		t.Run("RunEmptyClaimantCarveOut", func(t *testing.T) { testClaimantGuardRunEmptyClaimantCarveOut(t, factory(t)) })
 		t.Run("UnguardedMutationCarveOuts", func(t *testing.T) { testClaimantGuardUnguardedMutationCarveOuts(t, factory(t)) })
 	})
-	// @constraint: driver-parity expansion — runtime-consumed behaviors with
-	// driver-specific SQL idioms (park/resume, frame lifecycle, retention
-	// sweeps, message idempotency) must pass identically on both drivers.
 	t.Run("MessageIdempotency", func(t *testing.T) {
 		t.Run("InsertOrLookup", func(t *testing.T) { testMessageIdempotencyInsertOrLookup(t, factory(t)) })
 		t.Run("DeleteOlderThan", func(t *testing.T) { testMessageIdempotencyDeleteOlderThan(t, factory(t)) })
@@ -192,11 +131,6 @@ func Suite(
 	t.Run("FrameLifecycle", func(t *testing.T) {
 		t.Run("Default", func(t *testing.T) { testFrameLifecycleSerialQueue(t, factory(t)) })
 	})
-	// @constraint: FrameSettlement is the frame engine's settlement core
-	// (frame-end detection, instance termination, source-node binding,
-	// stuck-frame warning, orphan-dispatch reaper) and carries the most
-	// driver-divergent SQL in the layer (INTERVAL arithmetic vs Go-side
-	// window math), so both drivers must prove parity here.
 	t.Run("FrameSettlement", func(t *testing.T) {
 		t.Run("NoPendingNodes", func(t *testing.T) { testFrameSettlementNoPendingNodes(t, factory(t)) })
 		t.Run("HasFailedNode", func(t *testing.T) { testFrameSettlementHasFailedNode(t, factory(t)) })
@@ -205,10 +139,6 @@ func Suite(
 		t.Run("StuckFrames", func(t *testing.T) { testFrameSettlementStuckFrames(t, factory(t), rawExec) })
 		t.Run("OrphanDispatches", func(t *testing.T) { testFrameSettlementOrphanDispatches(t, factory(t)) })
 	})
-	// @constraint: ClaimHandleQueries pins the runtime-consumed claim-handle
-	// read/repoint surface (named-lock capacity gate, anchor walks, fan-out
-	// repoint, recursive child walk, asset query) so both drivers stay in
-	// parity for these runtime reads.
 	t.Run("ClaimHandleQueries", func(t *testing.T) {
 		t.Run("CountByNamedLock", func(t *testing.T) { testClaimHandleCountByNamedLock(t, factory(t)) })
 		t.Run("AnchorsAndRepoint", func(t *testing.T) { testClaimHandleAnchorsAndRepoint(t, factory(t)) })

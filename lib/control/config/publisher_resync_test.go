@@ -19,13 +19,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// fakePublisherClient records the Subscribe / Unsubscribe / ListSubscriptions
-// calls the resync sweeper makes, so the test can assert reconciliation
-// fired against a live (drifted) publisher peer.
 type fakePublisherClient struct {
 	name string
-	// live is the publisher's view of its subscriptions — deliberately
-	// drifted from rimsky's persisted state so resync has work to do.
 	live []runtime.ListedPublisherSubscription
 
 	mu          sync.Mutex
@@ -79,8 +74,6 @@ func (c *fakePublisherClient) sawUnsubscribe(id shared.UUID) bool {
 	return false
 }
 
-// fakePublisherRegistry is a runtime.PublisherRegistry over a single fake
-// client, so the resync sweeper's All()/Get() fan-out reaches it.
 type fakePublisherRegistry struct{ client *fakePublisherClient }
 
 func (r *fakePublisherRegistry) Get(name string) (runtime.PublisherClient, bool) {
@@ -94,19 +87,6 @@ func (r *fakePublisherRegistry) All() []runtime.PublisherClient {
 	return []runtime.PublisherClient{r.client}
 }
 
-// TestPublisherResyncOnStartup proves that control-api startup reconciles
-// publisher subscriptions against the live publisher peer (F8): a sub rimsky
-// persisted as active but the publisher no longer reports is re-issued
-// (Subscribe), and a sub the publisher reports but rimsky no longer tracks
-// is torn down (Unsubscribe).
-//
-// The test drives the real StartControlAPI against a real (SQLite) store and
-// injects a fake publisher registry via the resync seam, so it asserts both
-// that StartControlAPI invokes resync AND that the reconciliation does the
-// right thing against a drifted peer.
-//
-// RED today: StartControlAPI never calls resync, so the seam override is
-// never invoked and neither Subscribe nor Unsubscribe is observed.
 func TestPublisherResyncOnStartup(t *testing.T) {
 	ctx := context.Background()
 	db := openMigratedSQLite(t)
@@ -114,19 +94,11 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 
 	const publisherName = "pub-a"
 
-	// @deliberate: droppedSubID models the rimsky-expected /
-	// publisher-missing case — resync must re-Subscribe.
 	droppedSubID := shared.UUID(uuid.New())
 	instanceID := uuid.New()
-	// @deliberate: orphanSubID models the publisher-reported /
-	// rimsky-unknown case — resync must Unsubscribe.
 	orphanSubID := shared.UUID(uuid.New())
 	orphanInstanceID := shared.UUID(uuid.New())
 
-	// @constraint: seed a live instance (template + run scope +
-	// instance) so the publisher-subscription FK resolves; then insert
-	// the active subscription rimsky believes is live but the publisher
-	// has lost (e.g. publisher restarted with empty state).
 	templateHash := "sha256-" + uuid.NewString()
 	mainRunScopeID := uuid.New()
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -169,8 +141,6 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 
 	fake := &fakePublisherClient{
 		name: publisherName,
-		// @deliberate: the publisher reports ONLY the orphan — not the
-		// dropped sub.
 		live: []runtime.ListedPublisherSubscription{
 			{
 				PublisherSubscriptionID: orphanSubID,
@@ -182,10 +152,6 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 		},
 	}
 
-	// @deliberate: inject the fake registry via the startup-resync seam and
-	// record that StartControlAPI fired it; the override runs the REAL
-	// reconciliation against the real seeded store, swapping only the
-	// publisher registry so the test exercises the production code path.
 	var resyncCalled bool
 	var mu sync.Mutex
 	done := make(chan struct{})
@@ -217,8 +183,6 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 		_ = h.Shutdown(shutCtx)
 	})
 
-	// @constraint: resync may run in a goroutine; wait for it (bounded)
-	// before asserting.
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):

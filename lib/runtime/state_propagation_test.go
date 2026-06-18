@@ -17,14 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// fakeRunTreeTable + fakeRunScopeTable are in-memory persistence accessors
-// used by the state-propagation tests. Keyed on RunID (RunTree) and
-// RunScopeID (RunScope). ListChildren walks via RunScopes whose
-// parent_run_id matches.
-//
-// The pair models the post-2026-05-22 reshape: a run row carries its
-// owning RunScopeID; the RunScope carries the (parent_run_id,
-// partition_key) tuple.
 type fakeRunTreeTable struct {
 	rows   map[shared.UUID]*persistence.RunTreeRow
 	scopes *fakeRunScopeTable
@@ -42,8 +34,6 @@ func newFakes() (*fakeRunTreeTable, *fakeRunScopeTable) {
 	}
 	return tree, scopes
 }
-
-// Create fakeRunScopeTable --- //
 
 func (f *fakeRunScopeTable) Create(_ context.Context, _ persistence.Tx, row persistence.RunScopeRow) error {
 	if row.CreatedAt.IsZero() {
@@ -111,8 +101,6 @@ func (f *fakeRunScopeTable) ListParentChain(_ context.Context, _ persistence.Tx,
 	return out, nil
 }
 
-// CreateRootRun fakeRunTreeTable --- //
-
 func (f *fakeRunTreeTable) CreateRootRun(_ context.Context, _ persistence.Tx, in persistence.CreateRootRunInput) error {
 	f.rows[in.RunID] = &persistence.RunTreeRow{
 		RunID:             in.RunID,
@@ -150,9 +138,6 @@ func (f *fakeRunTreeTable) LockTreeForUpdate(ctx context.Context, tx persistence
 	return f.GetByID(ctx, tx, runID)
 }
 
-// ListChildren returns all run rows whose owning RunScope's parent_run_id
-// equals parentRunID — the new shape after the inline parent_run_id /
-// child_key columns moved onto rimsky_run_scopes.
 func (f *fakeRunTreeTable) ListChildren(_ context.Context, _ persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
 	matchingScopes := make(map[shared.UUID]struct{})
 	for _, s := range f.scopes.rows {
@@ -193,8 +178,6 @@ func (f *fakeRunTreeTable) UpdateAggregationPolicy(_ context.Context, _ persiste
 
 func newUUID() shared.UUID { return shared.UUID(uuid.New()) }
 
-// makeChildScope creates a fan-out partition RunScope under parentRunID
-// and returns its id.
 func (f *fakeRunScopeTable) makeChildScope(parentScopeID, parentRunID shared.UUID, partition, graphName string) shared.UUID {
 	id := newUUID()
 	f.rows[id] = &persistence.RunScopeRow{
@@ -208,7 +191,6 @@ func (f *fakeRunScopeTable) makeChildScope(parentScopeID, parentRunID shared.UUI
 	return id
 }
 
-// makeRootScope creates the main RunScope.
 func (f *fakeRunScopeTable) makeRootScope(graphName string, instanceID shared.UUID) shared.UUID {
 	id := newUUID()
 	f.rows[id] = &persistence.RunScopeRow{
@@ -220,11 +202,8 @@ func (f *fakeRunScopeTable) makeRootScope(graphName string, instanceID shared.UU
 	return id
 }
 
-// strPtr returns a *string pointing to v.
 func strPtr(v string) *string { return &v }
 
-// TestPropagateFromChildState_LeafRoot — single-level fan-out, two children
-// success → parent fresh + terminal/success.
 func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	rt, scopes := newFakes()
 	frame := newUUID()
@@ -242,7 +221,6 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateRootRun: %v", err)
 	}
-	// @deliberate: Two fan-out partition RunScopes under root.
 	c1Scope := scopes.makeChildScope(rootScope, root, "a", "main")
 	c2Scope := scopes.makeChildScope(rootScope, root, "b", "main")
 	if err := rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
@@ -259,7 +237,6 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	args := PropagationArgs{RunTree: rt, RunScopes: scopes}
 	successSig := strPtr("terminal/success")
 
-	// @deliberate: First child terminates → parent still stale (other child active).
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateFresh, successSig)
 	if _, _, err := PropagateFromChildState(ctx, args, nil, c1, cascade.NodeStateFresh, successSig); err != nil {
 		t.Fatalf("PropagateFromChildState c1: %v", err)
@@ -269,7 +246,6 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 		t.Fatalf("expected root still stale after one child, got %s", rootRow.State)
 	}
 
-	// @deliberate: Second child terminates → parent fresh + terminal/success.
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFresh, successSig)
 	actions, _, err := PropagateFromChildState(ctx, args, nil, c2, cascade.NodeStateFresh, successSig)
 	if err != nil {
@@ -287,8 +263,6 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	}
 }
 
-// TestPropagateFromChildState_StrictCancelSiblings — first failure under
-// strict.cancel_siblings → parent failed + AggregateActionCancelSiblings.
 func TestPropagateFromChildState_StrictCancelSiblings(t *testing.T) {
 	rt, scopes := newFakes()
 	frame := newUUID()
@@ -312,10 +286,8 @@ func TestPropagateFromChildState_StrictCancelSiblings(t *testing.T) {
 	_ = rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
 		RunID: c2, NodeID: newUUID(), FrameID: frame, RunScopeID: c2Scope,
 	})
-	// @deliberate: c1 still running.
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateRunning, nil)
 
-	// @deliberate: c2 fails → parent failed + cancel-siblings action.
 	failedSig := strPtr("terminal/error/test_failure")
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFailed, failedSig)
 	actions, _, err := PropagateFromChildState(context.Background(), PropagationArgs{RunTree: rt, RunScopes: scopes}, nil,
@@ -335,9 +307,6 @@ func TestPropagateFromChildState_StrictCancelSiblings(t *testing.T) {
 	}
 }
 
-// TestPropagateFromChildState_NestedTree — three-level tree: leaf →
-// mid-parent → root. A leaf success rolls up through the mid-parent
-// then to the root.
 func TestPropagateFromChildState_NestedTree(t *testing.T) {
 	rt, scopes := newFakes()
 	frame := newUUID()

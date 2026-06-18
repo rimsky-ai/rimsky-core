@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Basic ring-cycle scenario through the filesystem store's pick-policy
-// dispatch, exercised over the real gRPC wire surface. Three folders
-// auto-discover under the configured sub-root; three sequential
-// Open → Commit cycles must rotate through all three (recycle).
-//
-// The pre-2026-05-24-repo-reorganization version of this test imported
-// `pkg:stores/filesystem/testfixture` from rimsky. Post-reorganization
-// the production filesystem-store impl lives here under lib/services,
-// and the rimsky-side testfixture is a stub-wrapping shim. To preserve
-// the real-store wire coverage, this rewrite bootstraps the production
-// `pkg:stores/filesystem/server` directly in the test process and
-// dials it over loopback. No rimsky bring-up is needed — the test is
-// a pure claim-producer wire exerciser.
 package stores
 
 import (
@@ -37,10 +24,6 @@ import (
 	fsstore "github.com/rimsky-ai/rimsky-core/lib/services/stores/filesystem/store"
 )
 
-// TestFsPickPolicy_BasicRingCycle verifies a full ring cycle through
-// the gRPC wire surface: pick → commit (recycle) → pick (different
-// folder) → commit → pick (third folder). Three distinct folders must
-// appear across three cycles.
 func TestFsPickPolicy_BasicRingCycle(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -106,12 +89,6 @@ func TestFsPickPolicy_BasicRingCycle(t *testing.T) {
 	}
 }
 
-// startFilesystemStore brings up the production filesystem-store
-// server in-process on loopback. Returns the gRPC dial address and a
-// teardown. Pre-2026-05-24 the in-rimsky `fsfixture.Start` exposed the
-// same shape but against the in-rimsky store package — that package
-// moved to lib/services, so this helper inlines the same start /
-// listen / serve / cancel dance.
 func startFilesystemStore(t *testing.T, cfg server.Config) (grpcAddr string, teardown func()) {
 	t.Helper()
 	grpcLis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -137,8 +114,6 @@ func startFilesystemStore(t *testing.T, cfg server.Config) (grpcAddr string, tea
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		// @deliberate: Server.Run blocks until ctx is cancelled; close `done` on
-		// return so the teardown can wait for orderly shutdown.
 		_ = server.Run(ctx, cfg, grpcLis, httpLis, adminLis)
 		close(done)
 	}()
@@ -152,5 +127,4 @@ func startFilesystemStore(t *testing.T, cfg server.Config) (grpcAddr string, tea
 	}
 }
 
-// _ guards against unused imports if a future test removes the helper.
 var _ = http.StatusOK

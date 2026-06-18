@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package checks implements the shape-check primitives the
-// verifier-shape-checks executor runs against a tabular payload. Each
-// check has a `Kind` discriminator, a `Run` method, and a small per-
-// kind config struct. Checks operate on an in-memory `[]Row` (one row
-// = `map[string]any`); the caller is responsible for loading the data
-// from the upstream claim's address.
-//
-// @deliberate: implements the verifier-executor pattern
-// (documentation-only, no successor concept).
 package checks
 
 import (
@@ -19,70 +10,36 @@ import (
 	"regexp"
 )
 
-// Row is one logical record. The verifier protocol does not pin a row
-// type; we use a JSON-shaped `map[string]any` because that matches both
-// JSON wire payloads and Parquet/Arrow column-major loaders that
-// convert per-row dict-of-fields output.
 type Row = map[string]any
 
-// Result is the per-check outcome. The aggregator at the executor
-// boundary turns N results into a single StreamClose terminal: any
-// `Pass=false` → `Error{error_class: "verifier/check_failed/<kind>"}`
-// (carrying the first failing check's `kind` suffix per
-// `concept:signal`); otherwise `Success{changed: false}` (verifiers do
-// not mutate state).
 type Result struct {
 	Kind    string
 	Pass    bool
-	Failed  []Row    // @constraint: populated only when Pass=false; capped at 100 rows by appendBounded.
-	Counts  Counters // @constraint: diagnostic counters returned to the executor for aggregation.
-	Message string   // @constraint: human-readable summary surfaced in the Error terminal.
+	Failed  []Row
+	Counts  Counters
+	Message string
 }
 
-// Counters carry numeric diagnostics shared across the check set.
 type Counters struct {
 	Rows      int
 	Failed    int
-	Threshold float64 // @constraint: populated by ratio-comparing checks (row_count_ratio); zero otherwise.
+	Threshold float64
 }
 
-// Severity classifies how a failed check is treated at run time. An
-// `error`-severity failure blocks the commit (drives the Error terminal);
-// a `warning`-severity failure is non-blocking and surfaced as a soft
-// finding while the dispatch still succeeds.
-//
-// This is a services-local copy of the platform's spec.Severity enum.
-// It is duplicated rather than imported because the consumption-side
-// services module (lib/services) is forbidden from importing lib/foundation
-// (the `consumption-side-isolation` depguard rule); the type is small,
-// stable, and the wire-string values match spec.Severity exactly.
-//
 //	@source: lib/foundation/spec/enums.go::Severity
 type Severity string
 
 const (
-	// SeverityError marks a check whose failure blocks the commit.
 	SeverityError Severity = "error"
-	// SeverityWarning marks a check whose failure is non-blocking.
 	SeverityWarning Severity = "warning"
 )
 
-// CheckSpec is the discriminated-union shape callers serialize from
-// the verifier executor's `attributes.checks`. The verifier deserializes
-// `attributes.checks[*]` into this shape and dispatches to the per-kind
-// runner. Severity defaults to SeverityError when unset by the caller —
-// a failing check blocks unless the author explicitly downgrades it to
-// a warning.
 type CheckSpec struct {
 	Kind     string         `json:"kind"`
 	Config   map[string]any `json:"config"`
 	Severity Severity       `json:"severity"`
 }
 
-// KnownKinds is the single source of truth for the check kinds Run
-// dispatches on. The registration-time Validation mix-in consumes it
-// so its `unknown_check_kind` advisory cannot drift from the runtime
-// dispatcher — keep it in lockstep with Run's switch arms.
 func KnownKinds() map[string]bool {
 	return map[string]bool{
 		"no_nulls":                true,
@@ -96,10 +53,6 @@ func KnownKinds() map[string]bool {
 	}
 }
 
-// Run dispatches a single check against rows. Returns a Result; the
-// `Pass` flag drives terminal aggregation upstream. Unknown kinds
-// produce a `Pass=false` Result with `Kind="unknown"` so the executor
-// surfaces a recognizable error without panicking.
 func Run(spec CheckSpec, rows []Row) Result {
 	switch spec.Kind {
 	case "no_nulls":
@@ -126,9 +79,6 @@ func Run(spec CheckSpec, rows []Row) Result {
 	}
 }
 
-// fieldList parses a `field` (string) or `fields` ([]string) config
-// entry into a normalized slice. Either key is accepted to keep
-// attributes YAML ergonomic.
 func fieldList(cfg map[string]any) ([]string, error) {
 	if v, ok := cfg["field"].(string); ok && v != "" {
 		return []string{v}, nil
@@ -147,7 +97,6 @@ func fieldList(cfg map[string]any) ([]string, error) {
 	return nil, fmt.Errorf("config: `field` (string) or `fields` ([]string) required")
 }
 
-// runNoNulls verifies every named field is non-null on every row.
 func runNoNulls(cfg map[string]any, rows []Row) Result {
 	fields, err := fieldList(cfg)
 	if err != nil {
@@ -172,9 +121,6 @@ func runNoNulls(cfg map[string]any, rows []Row) Result {
 	return res
 }
 
-// runNullableFieldsPresent verifies the named fields are present (key
-// in the row map) regardless of value. Distinct from no_nulls: a
-// present field with a nil value counts as present here.
 func runNullableFieldsPresent(cfg map[string]any, rows []Row) Result {
 	fields, err := fieldList(cfg)
 	if err != nil {
@@ -198,8 +144,6 @@ func runNullableFieldsPresent(cfg map[string]any, rows []Row) Result {
 	return res
 }
 
-// runPKUnique verifies the tuple `(field_1, ..., field_n)` is unique
-// across rows. Duplicate tuples surface in Result.Failed.
 func runPKUnique(cfg map[string]any, rows []Row) Result {
 	fields, err := fieldList(cfg)
 	if err != nil {
@@ -237,17 +181,13 @@ func joinParts(parts []string) string {
 	out := ""
 	for i, p := range parts {
 		if i > 0 {
-			out += "\x1f" // @deliberate: ASCII unit separator avoids collision with field-value contents in the composite key.
+			out += "\x1f"
 		}
 		out += p
 	}
 	return out
 }
 
-// runRowCountRatio verifies `len(rows) / baseline ∈ [low, high]`.
-// `baseline` is supplied via config (config.baseline) — the executor
-// reads it from the prior version's attribute (caller-pre-loaded) or
-// from a static value.
 func runRowCountRatio(cfg map[string]any, rows []Row) Result {
 	baselineRaw, ok := cfg["baseline"]
 	if !ok {
@@ -274,8 +214,6 @@ func runRowCountRatio(cfg map[string]any, rows []Row) Result {
 	return res
 }
 
-// runRowCountAbsolute verifies `len(rows) ∈ [min, max]`. `max` is
-// optional (omitting it means unbounded above).
 func runRowCountAbsolute(cfg map[string]any, rows []Row) Result {
 	minVal, ok := numeric(cfg["min"])
 	if !ok {
@@ -296,7 +234,6 @@ func runRowCountAbsolute(cfg map[string]any, rows []Row) Result {
 	return res
 }
 
-// runValueInSet verifies every row's `field` value is in `set`.
 func runValueInSet(cfg map[string]any, rows []Row) Result {
 	field, _ := cfg["field"].(string)
 	if field == "" {
@@ -327,7 +264,6 @@ func runValueInSet(cfg map[string]any, rows []Row) Result {
 	return res
 }
 
-// runRegexMatch verifies every row's `field` value matches `pattern`.
 func runRegexMatch(cfg map[string]any, rows []Row) Result {
 	field, _ := cfg["field"].(string)
 	if field == "" {
@@ -357,8 +293,6 @@ func runRegexMatch(cfg map[string]any, rows []Row) Result {
 	return res
 }
 
-// runNumericRange verifies every row's `field` value falls in
-// [min, max]. Either bound is optional; omitting both is an error.
 func runNumericRange(cfg map[string]any, rows []Row) Result {
 	field, _ := cfg["field"].(string)
 	if field == "" {
@@ -399,8 +333,6 @@ func runNumericRange(cfg map[string]any, rows []Row) Result {
 	return res
 }
 
-// numeric returns the float64 form of any numeric type emitted by
-// encoding/json (float64), or zero+false when the value is not numeric.
 func numeric(v any) (float64, bool) {
 	switch x := v.(type) {
 	case float64:
@@ -414,7 +346,6 @@ func numeric(v any) (float64, bool) {
 	case int32:
 		return float64(x), true
 	}
-	// @deliberate: reflect-fallback handles numeric kinds non-JSON loaders may surface (e.g. Arrow Decimal128 as int64).
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
 	case reflect.Float32, reflect.Float64:
@@ -427,8 +358,6 @@ func numeric(v any) (float64, bool) {
 	return 0, false
 }
 
-// numericDefault parses v as numeric, falling back to def. The bool
-// return reports whether the explicit value was used.
 func numericDefault(v any, def float64) (float64, bool) {
 	if x, ok := numeric(v); ok {
 		return x, true
@@ -436,9 +365,6 @@ func numericDefault(v any, def float64) (float64, bool) {
 	return def, false
 }
 
-// appendBounded keeps the failed-rows slice short to avoid OOMs on
-// very-large failure sets. 100 rows is enough for operator
-// diagnostics.
 func appendBounded(out []Row, r Row, cap int) []Row {
 	if len(out) >= cap {
 		return out

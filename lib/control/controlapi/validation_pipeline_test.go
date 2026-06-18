@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// validation_pipeline_test.go — F9 integration tests for the
-// Validation-mix-in pipeline at template registration. Uses a fake
-// ValidationRegistry so the test surface stays in-process.
-
 package controlapi
 
 import (
@@ -26,8 +22,6 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// fakeValidator implements runtime.ValidationClient with configurable
-// outcomes per role.
 type fakeValidator struct {
 	name           string
 	supportedRoles []string
@@ -70,7 +64,6 @@ func (f *fakeValidator) ValidateLifecycleSubscriber(_ context.Context, _ runtime
 	return f.errs, f.warns, f.rpcErr
 }
 
-// fakeValidatorRegistry is a tiny in-memory ValidationRegistry.
 type fakeValidatorRegistry struct {
 	byName map[string]runtime.ValidationClient
 }
@@ -88,7 +81,6 @@ func (r *fakeValidatorRegistry) Get(name string) (runtime.ValidationClient, bool
 	return c, ok
 }
 
-// validatorHarness wires a NewApp with the supplied validator registry.
 type validatorHarness struct {
 	*harness
 	validator *fakeValidator
@@ -127,9 +119,6 @@ func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, vfake *fakeVal
 	}
 }
 
-// TestValidationPipeline_RejectsOnError — when a validator returns
-// errors, template registration fails with 400 and surfaces the
-// findings.
 func TestValidationPipeline_RejectsOnError(t *testing.T) {
 	t.Parallel()
 	vfake := &fakeValidator{
@@ -154,8 +143,6 @@ func TestValidationPipeline_RejectsOnError(t *testing.T) {
 	require.GreaterOrEqual(t, vfake.executor, 1)
 }
 
-// TestValidationPipeline_PassesOnWarningsOnly — warnings alone do not
-// reject registration unless ?warnings_as_errors=true.
 func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
 	t.Parallel()
 	vfake := &fakeValidator{
@@ -177,8 +164,6 @@ func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
 	require.NotEmpty(t, out["template_id"])
 }
 
-// TestValidationPipeline_WarningsAsErrorsRejects — with
-// ?warnings_as_errors=true, warnings escalate to errors.
 func TestValidationPipeline_WarningsAsErrorsRejects(t *testing.T) {
 	t.Parallel()
 	vfake := &fakeValidator{

@@ -2,22 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — pins spec §10.2 "Hit auto-resume via TTL":
-//
-//   1. Install a pause-mode breakpoint with overflow_policy =
-//      auto_resume_after_ttl and hit_ttl_seconds = 1.
-//   2. The supervisor's dispatch hits the breakpoint and is parked
-//      inside waitForResume.
-//   3. No agent issues a resume call.
-//   4. Within ~2s the scheduler's sweep tick (`AutoResumeStale`) stamps
-//      `resumed_at = NOW(), resumed_by_key = 'sweeper'` on the hit row.
-//   5. The blocked runner's poll returns the resumed row and the
-//      dispatch proceeds (with no overlay) to terminal/success.
-//
-// Pins the §4.8 auto_resume_after_ttl contract: a parked dispatch is
-// guaranteed to proceed within hit_ttl_seconds + one sweep tick, even
-// if the agent never calls resume.
-//
 // @concept: breakpoint
 
 package breakpoints
@@ -36,9 +20,6 @@ import (
 
 func TestHitAutoResumeTTL(t *testing.T) {
 	t.Parallel()
-	// @deliberate: Use a fast scheduler tick so the AutoResumeStale sweep fires
-	// inside the assertion window. The default 250ms tick suffices but
-	// we explicitly request 100ms so the test is bounded tight.
 	h := scenario.Start(t, scenario.HarnessOpts{
 		SchedulerTick: 100 * time.Millisecond,
 	})
@@ -70,18 +51,13 @@ func TestHitAutoResumeTTL(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	// @constraint: Hit lands; we DO NOT issue a resume — the sweeper must do it.
 	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not be called while paused at the breakpoint")
 
-	// @deliberate: Within hit_ttl_seconds (1s) + a sweep tick (~100ms) + the runner's
-	// poll cadence (250ms), the dispatch should proceed. Give the loop
-	// 10s of slack to absorb CI jitter.
 	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
 		"executor should observe dispatch after the sweeper auto-resumes the stale hit")
 
-	// @constraint: Verify the row reflects sweeper-driven resume.
 	row := getHitRow(t, h, hit.ID)
 	require.NotNil(t, row)
 	require.NotNil(t, row.ResumedAt,

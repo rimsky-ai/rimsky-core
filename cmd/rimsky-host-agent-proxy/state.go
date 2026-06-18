@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// state.go — the proxy's in-memory state machine: connected agents,
-// lazily-spawned child processes, the spawn-dedup index, and the
-// instance binding cache. All state is lost on restart and rebuilt as
-// agents reconnect and instance state is consulted (via the
-// LifecycleSubscriber subscription or the GET /instances/{id} fallback).
-//
 // @concept: host-agent-proxy
 
 package main
@@ -19,28 +13,21 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// proxyState holds all mutable proxy state behind a single RWMutex.
-// The maps are guarded by mu; the per-agent pending-ack maps are guarded
-// by the agentConnection's own mutex (see agentConnection).
 type proxyState struct {
 	mu sync.RWMutex
 
-	agents           map[string]*agentConnection    // @constraint: api_key_id → connection
-	spawns           map[string]*spawnState         // @constraint: spawn_id → metadata
-	runScopeBindings map[runScopeBindingKey]string  // @constraint: (scope_id, binding_name) → spawn_id
-	instances        map[string]*instanceCacheEntry // @constraint: instance_id → cached binding
-	claimRoutes      map[string]claimRoute          // @constraint: claim_id → (api_key_id, spawn_id)
+	agents           map[string]*agentConnection
+	spawns           map[string]*spawnState
+	runScopeBindings map[runScopeBindingKey]string
+	instances        map[string]*instanceCacheEntry
+	claimRoutes      map[string]claimRoute
 }
 
-// claimRoute records which spawned producer holds a given claim so the
-// follow-on lifecycle RPCs (Commit/Abandon/Release) — which carry only a
-// claim_id, not an instance_id — can route back to the same child.
 type claimRoute struct {
 	apiKeyID string
 	spawnID  string
 }
 
-// newProxyState returns an empty proxyState with all maps allocated.
 func newProxyState() *proxyState {
 	return &proxyState{
 		agents:           map[string]*agentConnection{},
@@ -51,11 +38,6 @@ func newProxyState() *proxyState {
 	}
 }
 
-// agentConnection is the proxy-side handle to one connected dev-machine
-// agent. sendCh is drained by the agent_server's writer goroutine and
-// written to the bidi stream; closed exactly once when the connection is
-// dropped or displaced. The pending-ack maps correlate request frames
-// (Spawn/Reap/DispatchFrame) with their inbound responses.
 type agentConnection struct {
 	apiKeyID             string
 	agentLabel           string
@@ -65,7 +47,6 @@ type agentConnection struct {
 	closeOnce sync.Once
 	closed    chan struct{}
 
-	// @constraint: pendingMu guards pendingSpawn, pendingReap, and pendingStreams; held across delete+close in closeAllStreams so a concurrent deliverDispatch (also under pendingMu) never sends on a closed channel.
 	pendingMu      sync.Mutex
 	pendingSpawn   map[string]chan *genv1.SpawnAck
 	pendingReap    map[string]chan *genv1.Reaped
@@ -85,8 +66,6 @@ func newAgentConnection(apiKeyID, label, localCallbackBaseURL string) *agentConn
 	}
 }
 
-// send enqueues a frame to the agent, returning false if the connection
-// has been closed (the writer goroutine has stopped draining sendCh).
 func (a *agentConnection) send(frame *genv1.ServerFrame) bool {
 	select {
 	case <-a.closed:
@@ -101,15 +80,10 @@ func (a *agentConnection) send(frame *genv1.ServerFrame) bool {
 	}
 }
 
-// close marks the connection closed exactly once and closes the closed
-// channel. The sendCh is intentionally NOT closed here — the writer
-// goroutine selects on a.closed to stop, so we avoid a send-on-closed-
-// channel panic from a racing producer.
 func (a *agentConnection) close() {
 	a.closeOnce.Do(func() { close(a.closed) })
 }
 
-// registerSpawnPending registers an ack channel for an in-flight Spawn.
 func (a *agentConnection) registerSpawnPending(spawnID string) chan *genv1.SpawnAck {
 	ch := make(chan *genv1.SpawnAck, 1)
 	a.pendingMu.Lock()
@@ -162,7 +136,6 @@ func (a *agentConnection) deliverReaped(r *genv1.Reaped) {
 	}
 }
 
-// registerStream opens a per-dispatch response channel keyed by stream_id.
 func (a *agentConnection) registerStream(streamID string) chan *genv1.DispatchFrame {
 	ch := make(chan *genv1.DispatchFrame, 16)
 	a.pendingMu.Lock()
@@ -177,13 +150,6 @@ func (a *agentConnection) clearStream(streamID string) {
 	a.pendingMu.Unlock()
 }
 
-// deliverDispatch routes an inbound response frame to its stream channel.
-// The send happens under pendingMu so it cannot race closeAllStreams: once
-// closeAllStreams has deleted+closed a channel under the same lock, the
-// lookup here misses and the frame is dropped (the reader has already been
-// notified via the closed channel / a.closed). The send is non-blocking
-// against a.closed so a full buffer on a torn-down connection can't wedge
-// the lock; the channel buffer (16) absorbs the common case.
 func (a *agentConnection) deliverDispatch(frame *genv1.DispatchFrame) {
 	a.pendingMu.Lock()
 	defer a.pendingMu.Unlock()
@@ -197,11 +163,6 @@ func (a *agentConnection) deliverDispatch(frame *genv1.DispatchFrame) {
 	}
 }
 
-// closeAllStreams closes every open per-dispatch response channel. Called
-// when the agent connection drops so in-flight dispatch readers observe a
-// closed channel and synthesize a host_agent_disconnected terminal. Holds
-// pendingMu across the delete+close so a concurrent deliverDispatch (also
-// under pendingMu) never sends on a closed channel.
 func (a *agentConnection) closeAllStreams() {
 	a.pendingMu.Lock()
 	defer a.pendingMu.Unlock()
@@ -211,10 +172,6 @@ func (a *agentConnection) closeAllStreams() {
 	}
 }
 
-// spawnState records one lazily-spawned child process. originalCallback
-// holds the un-rewritten supervisor callback URL so a LocalHttpForward
-// from the child can be un-rewritten back to the supervisor. scopeID is
-// the dispatch-observable scope (the instance id in v1).
 type spawnState struct {
 	spawnID          string
 	agentAPIKeyID    string
@@ -224,16 +181,11 @@ type spawnState struct {
 	originalCallback string
 }
 
-// runScopeBindingKey indexes spawns by (scope, binding-name) for dedup:
-// one spawned process per (binding-name, scope).
 type runScopeBindingKey struct {
 	scopeID     string
 	bindingName string
 }
 
-// instanceCacheEntry is the proxy's cached view of an instance's
-// late-bound service catalog plus the owner identity and params blob,
-// populated via OnInstanceCreated or the GET /instances/{id} fallback.
 type instanceCacheEntry struct {
 	serviceBindings map[string]bindingSpec
 	ownerAPIKeyID   string
@@ -241,16 +193,6 @@ type instanceCacheEntry struct {
 	lastUpdated     time.Time
 }
 
-// bindingSpec is the v1 binding shape: a path the agent exec()s plus the
-// optional per-binding exec() overrides. Args/Env/Cwd are applied by the
-// agent at exec() (carried verbatim on the Binding wire message);
-// TimeoutSeconds is folded into the Spawn's ReadyTimeoutSeconds by the proxy
-// so a per-binding timeout bounds BOTH the agent's readiness wait and the
-// proxy's own SpawnAck wait. All four are additive and backward-compatible:
-// an absent field means today's default behavior (no extra args, inherited
-// env, the instance-level cwd, and the proxy's configured spawn timeout), so
-// a binding declared with only `path` spawns exactly as before. Unknown JSON
-// fields are ignored on parse.
 type bindingSpec struct {
 	Path           string            `json:"path"`
 	Args           []string          `json:"args,omitempty"`
@@ -259,19 +201,6 @@ type bindingSpec struct {
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
 }
 
-// registerAgent installs a new connection for apiKeyID, displacing any
-// prior connection for the same key. Returns the new connection, the
-// displaced prior connection (nil if none), and a displacedPrior flag.
-// The caller is responsible for closing the displaced connection's
-// sendCh-draining goroutine via prior.close().
-//
-// On displacement, the prior connection's spawns are dropped here under
-// the lock. The freshly-created new connection owns no spawns yet, so
-// every spawn currently keyed to apiKeyID belongs to the prior connection
-// — leaving them would let a dispatch resolve a prior spawn-id and route
-// it to the new agent (which has no such child), yielding a spurious
-// executor_crashed. The prior connection's reconnect-recovery SIGKILLs the
-// now-orphaned children on the dev machine.
 func (s *proxyState) registerAgent(apiKeyID, label, localCallbackBaseURL string) (conn *agentConnection, prior *agentConnection, displacedPrior bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -285,8 +214,6 @@ func (s *proxyState) registerAgent(apiKeyID, label, localCallbackBaseURL string)
 	return conn, prior, displacedPrior
 }
 
-// dropSpawnsForAPIKeyLocked removes every spawn (and its dedup + claim-route
-// index entries) owned by apiKeyID. Caller must hold mu.
 func (s *proxyState) dropSpawnsForAPIKeyLocked(apiKeyID string) {
 	var dropped []string
 	for spawnID, sp := range s.spawns {
@@ -299,10 +226,6 @@ func (s *proxyState) dropSpawnsForAPIKeyLocked(apiKeyID string) {
 	s.purgeClaimRoutesLocked(dropped)
 }
 
-// dropAgent removes the connection for apiKeyID only if it is still the
-// currently-registered one (a displaced prior must not evict its
-// successor). Returns the spawn-ids that were associated with the
-// dropped connection, which the caller drops from the spawn index.
 func (s *proxyState) dropAgent(apiKeyID string, conn *agentConnection) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -321,8 +244,6 @@ func (s *proxyState) dropAgent(apiKeyID string, conn *agentConnection) []string 
 	return dropped
 }
 
-// purgeClaimRoutesLocked removes every claim route whose spawn appears in
-// the dropped set. Caller must hold mu.
 func (s *proxyState) purgeClaimRoutesLocked(droppedSpawns []string) {
 	if len(droppedSpawns) == 0 {
 		return
@@ -338,7 +259,6 @@ func (s *proxyState) purgeClaimRoutesLocked(droppedSpawns []string) {
 	}
 }
 
-// lookupAgent returns the currently-registered connection for apiKeyID.
 func (s *proxyState) lookupAgent(apiKeyID string) (*agentConnection, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -346,7 +266,6 @@ func (s *proxyState) lookupAgent(apiKeyID string) (*agentConnection, bool) {
 	return conn, ok
 }
 
-// recordSpawn registers a spawned child and its dedup index entry.
 func (s *proxyState) recordSpawn(spawnID, agentAPIKeyID, scopeID, bindingName string, capabilities map[string][]byte, originalCallback string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -361,7 +280,6 @@ func (s *proxyState) recordSpawn(spawnID, agentAPIKeyID, scopeID, bindingName st
 	s.runScopeBindings[runScopeBindingKey{scopeID: scopeID, bindingName: bindingName}] = spawnID
 }
 
-// lookupSpawn returns the spawn metadata for a spawn-id.
 func (s *proxyState) lookupSpawn(spawnID string) (*spawnState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -369,8 +287,6 @@ func (s *proxyState) lookupSpawn(spawnID string) (*spawnState, bool) {
 	return sp, ok
 }
 
-// lookupSpawnByRunScopeBinding returns the dedup spawn-id for a
-// (scope, binding-name) pair, if any.
 func (s *proxyState) lookupSpawnByRunScopeBinding(scopeID, bindingName string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -378,9 +294,6 @@ func (s *proxyState) lookupSpawnByRunScopeBinding(scopeID, bindingName string) (
 	return spawnID, ok
 }
 
-// dropSpawnsForRunScope removes every spawn keyed to scopeID and returns
-// snapshots of the dropped spawns (so the caller can issue Reap frames to
-// the owning agents before the rows are gone from state).
 func (s *proxyState) dropSpawnsForRunScope(scopeID string) []spawnState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -398,8 +311,6 @@ func (s *proxyState) dropSpawnsForRunScope(scopeID string) []spawnState {
 	return dropped
 }
 
-// dropSpawn removes a single spawn (used when an inner dispatch stream
-// terminates with a crash so the next dispatch forces a fresh spawn).
 func (s *proxyState) dropSpawn(spawnID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -412,9 +323,6 @@ func (s *proxyState) dropSpawn(spawnID string) {
 	s.purgeClaimRoutesLocked([]string{spawnID})
 }
 
-// cacheInstance stores the binding catalog, owner, and params for an
-// instance. Overwrites any prior entry (lifecycle events are the
-// freshness source).
 func (s *proxyState) cacheInstance(instanceID string, serviceBindings map[string]bindingSpec, ownerAPIKeyID string, params map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -426,7 +334,6 @@ func (s *proxyState) cacheInstance(instanceID string, serviceBindings map[string
 	}
 }
 
-// lookupInstance returns the cached entry for an instance, if present.
 func (s *proxyState) lookupInstance(instanceID string) (*instanceCacheEntry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -434,15 +341,6 @@ func (s *proxyState) lookupInstance(instanceID string) (*instanceCacheEntry, boo
 	return entry, ok
 }
 
-// lookupInstanceByBinding finds the cached instance whose binding catalog
-// contains bindingName. It exists for the fronted protocols whose request
-// messages carry no instance_id (data-processing's BeginCandidate/
-// CommitCandidate/AbandonCandidate), so a dispatch resolved only by the
-// x-rimsky-service-name header can still find its owner + binding + spawn
-// scope. Returns the instance_id, the entry, and whether exactly one match
-// was found — ambiguity (the same late-bound service name bound across two
-// distinct instances) is reported as no match so the caller surfaces a
-// clean binding_not_found rather than routing to an arbitrary owner.
 func (s *proxyState) lookupInstanceByBinding(bindingName string) (string, *instanceCacheEntry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -462,9 +360,6 @@ func (s *proxyState) lookupInstanceByBinding(bindingName string) (string, *insta
 	return foundID, foundEntry, true
 }
 
-// recordClaimRoute remembers which (agent, spawn) holds a claim so the
-// follow-on Commit/Abandon/Release RPCs can route back. No-op for an
-// empty claim-id.
 func (s *proxyState) recordClaimRoute(claimID, apiKeyID, spawnID string) {
 	if claimID == "" {
 		return
@@ -474,7 +369,6 @@ func (s *proxyState) recordClaimRoute(claimID, apiKeyID, spawnID string) {
 	s.claimRoutes[claimID] = claimRoute{apiKeyID: apiKeyID, spawnID: spawnID}
 }
 
-// lookupClaimRoute returns the (agent, spawn) holding a claim.
 func (s *proxyState) lookupClaimRoute(claimID string) (claimRoute, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -482,7 +376,6 @@ func (s *proxyState) lookupClaimRoute(claimID string) (claimRoute, bool) {
 	return r, ok
 }
 
-// dropClaimRoute forgets a claim's routing entry (after Release).
 func (s *proxyState) dropClaimRoute(claimID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

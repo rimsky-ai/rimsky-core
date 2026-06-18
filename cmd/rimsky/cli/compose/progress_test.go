@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// progress_test.go — coverage for the four ProgressPrinter flavors
-// (@decision: progress-default / progress-flags). Each test verifies
-// one behavioral pillar: the default printer line-flushes immediately,
-// the quiet printer suppresses lifecycle output, the verbose printer
-// surfaces per-frame ticks the default skips, and the JSON printer
-// emits one parsable JSON object per line. The line-flush coverage is
-// load-bearing for STORY-live-progress — without it the
-// "lines-appear-as-they-happen" observable cannot hold.
 package compose
 
 import (
@@ -23,9 +15,6 @@ func TestDefaultPrinter_LineFlushed(t *testing.T) {
 	var buf bytes.Buffer
 	p := newDefaultPrinter(&buf)
 
-	// @deliberate: assertion proves the line is flushed through bufio —
-	// without an explicit flush the default 4096-byte buffer would absorb
-	// the line and buf.Len() here would be zero.
 	p.InstanceStarting("proj", "inst")
 	got := buf.String()
 	if !strings.Contains(got, "instance proj/inst: tracking") {
@@ -107,9 +96,6 @@ func TestJSONPrinter_EmitsJSONLines(t *testing.T) {
 		}
 	}
 
-	// @deliberate: per-event spot-checks (not just count + JSON-parse)
-	// because a regression that swapped two records would still satisfy
-	// the loop above.
 	var first map[string]any
 	_ = json.Unmarshal([]byte(lines[0]), &first)
 	if first["event"] != "instance_starting" {
@@ -136,16 +122,8 @@ func TestJSONPrinter_NodeRunTerminalReasonOptional(t *testing.T) {
 	}
 }
 
-// TestLinePrinter_ProseSingleSource exercises @blessed-invariant:
-// progress-prose-single-source — the shared linePrinter base owns the
-// prose shape so the default and verbose printers cannot drift. If a
-// future refactor accidentally overrides InstanceStarting /
-// NodeRunTerminal / InstanceTerminal on one of the two flavors, this
-// test surfaces the divergence as a string mismatch.
 func TestLinePrinter_ProseSingleSource(t *testing.T) {
 	emit := func(p ProgressPrinter) string {
-		// @deliberate: exercise every prose-shared method, not just one,
-		// so a flavor that overrides one but not the others is still caught.
 		p.InstanceStarting("proj", "inst")
 		p.NodeRunTerminal("proj", "inst", "node1", "success", "")
 		p.NodeRunTerminal("proj", "inst", "node2", "failure", "exec_error")

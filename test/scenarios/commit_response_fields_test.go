@@ -2,40 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// STORY-commit-response-honored acceptance proof.
-//
-// Per the spec story
-// .ok-planner/specs/2026-06-11-last-mile-stability-design.md
-// (STORY-commit-response-honored): a claim-producer author sets
-// `version_id` and `producer_metadata` on the base-protocol Commit
-// response and sees them land where the protocol says — the
-// claim-handle row's version and the fan-out parent's writeback — so
-// the fields the proto documents are real for the base protocol, not
-// only for the data-processing mix-in.
-//
-// Falsifier brief: "Base-protocol Commit response fields set by the
-// producer and absent from the row / writeback — the response body
-// still discarded." Pinned by TWO scenarios against the real assembled
-// stack (scenario.Start boots supervisor + scheduler + control-api
-// against real Postgres via testcontainers; the stub claim-producer is
-// a real remote gRPC peer stamping both fields on its CommitResponse):
-//
-//   - (a) Plain node to terminal: the producer's base-Commit
-//     `version_id` is persisted on the corresponding
-//     rimsky_claim_handles row (queried on the post-terminal
-//     state='committed' row, which persists per the claim-handle
-//     retention window — i.e. before any sweep).
-//   - (b) Fan-out: the children's base-Commit `producer_metadata` is
-//     surfaced in the parent run's writeback row under the
-//     `producer_metadata` key, one entry per partition key
-//     (base64-encoded — the writeback row is JSON and cannot carry
-//     raw bytes). The parent's own base-Commit `version_id` lands on
-//     the parent claim-handle row as well.
-//
-// No stubbed integration points on the rimsky side: the Commit verb
-// fires from the unified terminal-decision engine over the real gRPC
-// producer client (lib/runtime/peer), and the writeback surfacing runs
-// through the unified SettleChildren settlement path.
 package scenarios
 
 import (
@@ -56,20 +22,11 @@ import (
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
-// commitResponseStampedVersion / commitResponseStampedMetadata are the
-// producer-side stamps the stub puts on every base CommitResponse.
-// Metadata is deliberately non-JSON-shaped bytes to pin the
 // inert-bytes contract (@blessed-invariant 20): rimsky must surface
-// them verbatim (base64) without parsing.
 const commitResponseStampedVersion = "v-base-commit-7"
 
 var commitResponseStampedMetadata = []byte("opaque\x00producer-bytes")
 
-// TestCommitResponseFields_PlainNode_VersionIDPersisted pins
-// acceptance half (a): a plain (non-fan-out, non-data-processing) node
-// reaching its success terminal fires the base-protocol Commit; the
-// producer's `version_id` response field lands on the corresponding
-// rimsky_claim_handles row.
 func TestCommitResponseFields_PlainNode_VersionIDPersisted(t *testing.T) {
 	t.Parallel()
 
@@ -119,11 +76,6 @@ func TestCommitResponseFields_PlainNode_VersionIDPersisted(t *testing.T) {
 		h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 60*time.Second),
 		"plain-commit node must reach its success terminal")
 
-	// @deliberate: The claim-handle row persists past terminal as state='committed'
-	// (queried here well inside the retention window, before any
-	// sweep). The base-Commit response's version_id must be on it —
-	// the falsifier is exactly "set by the producer and absent from
-	// the row".
 	var versionID, state string
 	require.Eventually(t, func() bool {
 		var count int
@@ -147,14 +99,6 @@ func TestCommitResponseFields_PlainNode_VersionIDPersisted(t *testing.T) {
 			"the base-protocol response body must not be discarded)")
 }
 
-// TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback
-// pins acceptance half (b): a fan-out whose children's base-Commit
-// responses carry `producer_metadata` sees it surfaced in the parent
-// run's writeback row — one entry per partition key under the
-// `producer_metadata` key, each the child's metadata bytes
-// base64-encoded. Also asserts the parent's own base-Commit
-// `version_id` landed on the parent claim-handle row (the same
-// engine-side wiring on the aggregate-terminal path).
 func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testing.T) {
 	t.Parallel()
 
@@ -212,12 +156,6 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 		h.WaitForNodeState(parentNode.ID, cascade.NodeStateFresh, 90*time.Second),
 		"parent fan-out node must reach its aggregate success terminal")
 
-	// @deliberate: The parent claim handle — the row SplitScope partitioned,
-	// distinguished from the leaves' own freshly-Open'd claims (which
-	// share holder_node_id) by its expected_children_count > 0 —
-	// resolves to committed once all three children settle; its
-	// node_run_id is the parent fan-out run whose writeback row carries
-	// the surfaced children metadata.
 	require.Eventually(t, func() bool {
 		var committedParents int
 		h.QueryRowSQL(`
@@ -232,8 +170,6 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 	}, 90*time.Second, 50*time.Millisecond,
 		"the parent claim-handle row must resolve to state='committed' after the children settle")
 
-	// @deliberate: Every sub-claim child resolved committed (the children's commits
-	// whose response metadata the writeback must surface).
 	var committedChildren int
 	h.QueryRowSQL(`
 		SELECT COUNT(*)
@@ -245,8 +181,6 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 	require.Equal(t, 3, committedChildren,
 		"all three sub-claim children must resolve via Commit")
 
-	// @deliberate: Parent's own base-Commit version_id (engine wiring on the
-	// aggregate-terminal path).
 	var parentVersionID string
 	h.QueryRowSQL(`
 		SELECT COALESCE(version_id, '')
@@ -258,8 +192,6 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 	require.Equal(t, commitResponseStampedVersion, parentVersionID,
 		"the parent's own base-Commit version_id must be persisted on the parent claim-handle row")
 
-	// @deliberate: The fan-out parent run's writeback row must surface every
-	// committed child's producer_metadata under the partition key.
 	var writebackJSON string
 	h.QueryRowSQL(`
 		SELECT COALESCE(a.data::text, '{}')

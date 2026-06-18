@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// errors_test.go — the misconfigured-backing-root rejection: producer
-// verbs against a root that vanished (or went read-only) after startup
-// must fail with the classed `fs/root_unavailable` error, not silently
-// succeed — that classed rejection is what crosses the wire to the
-// operator's API response and `error_types:` routing.
 package store
 
 import (

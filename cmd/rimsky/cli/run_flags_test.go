@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// run_flags_test.go — unit tests for the additive `rimsky run` flag
-// parsing helpers (--param merge, --service binding resolution) and the
-// mutually-exclusive --template/<file> check. Package-internal so the
-// unexported helpers are reachable.
 package cli
 
 import (
@@ -21,7 +17,6 @@ func TestMergeParams_JSONOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// @constraint: encoding/json decodes JSON numbers to float64 by default; the assertion type-asserts float64 deliberately.
 	if got["a"].(float64) != 1 || got["b"] != "x" {
 		t.Fatalf("got %+v", got)
 	}
@@ -39,7 +34,6 @@ func TestMergeParams_KVOnly(t *testing.T) {
 }
 
 func TestMergeParams_KVOverridesJSON(t *testing.T) {
-	// @deliberate: precedence rule — --param entries apply after --params JSON; later wins on key collision.
 	got, err := mergeParams(`{"a":1,"b":2}`, RepeatedFlag{"b=99"})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +73,6 @@ func TestResolveServiceBindings_BareWithAlias(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeAliasFile(t, filepath.Join(home, ".rimsky", "aliases.yml"), "aliases:\n  codegen: /opt/codegen\n")
-	// @deliberate: chdir to an empty temp dir so the resolver finds no project-local aliases.yml and falls through to the $HOME alias file under test.
 	chdir(t, t.TempDir())
 
 	got, err := resolveServiceBindings(RepeatedFlag{"codegen"})
@@ -109,8 +102,6 @@ func TestResolveServiceBindings_Empty(t *testing.T) {
 	}
 }
 
-// TestRunRun_TemplateAndFileMutuallyExclusive asserts the additive shape's
-// guard: passing both --template and a positional <file> is exit-code 2.
 func TestRunRun_TemplateAndFileMutuallyExclusive(t *testing.T) {
 	t.Setenv("RIMSKY_CONTROL_API", "http://127.0.0.1:0")
 	t.Setenv("RIMSKY_CONTEXT", "")
@@ -124,7 +115,6 @@ func TestRunRun_TemplateAndFileMutuallyExclusive(t *testing.T) {
 	}
 }
 
-// writeAliasFile writes content to path, creating parent dirs.
 func writeAliasFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -135,8 +125,6 @@ func writeAliasFile(t *testing.T, path, content string) {
 	}
 }
 
-// chdir changes into dir for the duration of the test, restoring the prior
-// working directory on cleanup.
 func chdir(t *testing.T, dir string) {
 	t.Helper()
 	prev, err := os.Getwd()

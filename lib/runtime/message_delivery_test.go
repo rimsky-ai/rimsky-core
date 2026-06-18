@@ -16,9 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// fakeMessagesTable is an in-memory persistence.MessagesTable for unit
-// tests of the delivery helpers. Mirrors the SQL shape but skips the
-// real-driver round-trip.
 type fakeMessagesTable struct {
 	rows map[shared.UUID]*persistence.MessageRow
 }
@@ -107,8 +104,6 @@ func (f *fakeMessagesTable) List(_ context.Context, filter persistence.MessageLi
 	return persistence.PaginatedListResult[persistence.MessageRow]{Rows: out}, nil
 }
 
-// TestEnqueueMessage_ValidatesShape asserts the helper rejects missing
-// fields and unknown sender_kind values.
 func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 	m := newFakeMessages()
 	ctx := context.Background()
@@ -120,12 +115,10 @@ func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 		t.Fatalf("EnqueueMessage(good): %v", err)
 	}
 
-	// @deliberate: Empty ID rejected.
 	if err := EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{}); err == nil {
 		t.Fatal("EnqueueMessage(empty): expected error")
 	}
 
-	// @deliberate: Unknown sender_kind rejected.
 	bad := good
 	bad.ID = shared.UUID(uuid.New())
 	bad.SenderKind = "bogus"
@@ -134,14 +127,6 @@ func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 	}
 }
 
-// TestDeliverPendingMessages_OneMessagePerCall is the load-bearing
-// regression guard for the one-message-per-frame invariant. Seed ≥10
-// pending messages; assert DeliverPendingMessages returns exactly one
-// per invocation, in received-order, and the rest stay pending.
-//
-// The cheaper shape "deliver everything pending and let downstream sort it
-// out" silently collapses distinct override envelopes into one rerun and
-// is the falsifier this test exists to catch.
 func TestDeliverPendingMessages_OneMessagePerCall(t *testing.T) {
 	m := newFakeMessages()
 	ctx := context.Background()
@@ -179,7 +164,6 @@ func TestDeliverPendingMessages_OneMessagePerCall(t *testing.T) {
 		}
 	}
 
-	// @deliberate: One more call yields zero — the queue is drained.
 	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, now)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages(drained): %v", err)
@@ -189,17 +173,6 @@ func TestDeliverPendingMessages_OneMessagePerCall(t *testing.T) {
 	}
 }
 
-// TestDeliverPendingMessages_DeliveredMatchesTrigger pins the invariant
-// behind the reworded blessed-invariant comment on
-// cascadeMessageVirtualNodeSettleInTx: the message
-// `Messages().ListDeliveredForFrame(frameID)` returns is the same row
-// the frame's `triggering_message_id` column points at. The two queries
-// hit different SQL paths and the equality is by construction; this
-// test pins it so a refactor that splits the two row identities (e.g. a
-// future delivery sweep that stamps `frame_id` on a different envelope
-// than the frame's triggering message) fails loudly. The fake exercises
-// the contract: one pending message + a frame the caller pairs with it
-// → after delivery the listed row IS that message id, NOT some other.
 func TestDeliverPendingMessages_DeliveredMatchesTrigger(t *testing.T) {
 	m := newFakeMessages()
 	ctx := context.Background()
@@ -213,7 +186,6 @@ func TestDeliverPendingMessages_DeliveredMatchesTrigger(t *testing.T) {
 		Sender: "op-A", SenderKind: "operator", ReceivedAt: now,
 	})
 
-	// @deliberate: Deliver stamps delivered_at + frame_id = `frame` on the row.
 	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, now)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
@@ -222,7 +194,6 @@ func TestDeliverPendingMessages_DeliveredMatchesTrigger(t *testing.T) {
 		t.Fatalf("DeliverPendingMessages: got %+v, want one row with id=%s", res.Messages, msgID)
 	}
 
-	// @deliberate: ListDeliveredForFrame must return the exact same id — substitution reads through this path; the frame's triggering_message_id (in real deployments) points at the same row.
 	delivered, err := m.ListDeliveredForFrame(ctx, nil, frame)
 	if err != nil {
 		t.Fatalf("ListDeliveredForFrame: %v", err)

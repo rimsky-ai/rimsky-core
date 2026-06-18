@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// runner_acquire_holders.go — held-claim co-holdership inserts at
-// acquire-time. Split out of `runner_acquire.go` per the 2026-05-17
-// cold-read paydown (Item 4 / Tier 1).
-
 package runtime
 
 import (
@@ -19,26 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// insertHeldClaimHoldersAtAcquire inserts the acquirer's own
-// `rimsky_claim_holders` row when the alias is held. An alias is held
-// when its holding subgraph has at least one co-holder (declared via
-// `holds:`) beyond the acquirer — the `IsHeld()` gate below covers
-// that. Post-stage-5 of the run-row lifecycle cutover, holder rows are
-// keyed by `holder_run_id` (a `rimsky_node_runs.id`), so only the
-// acquirer's own row — whose run id is known at acquire-time — is
-// inserted here. Co-holder rows are inserted at the co-holder's own
-// acquire time (see `insertCoHolderClaimHoldersAtAcquire`), where the
-// co-holder's run id is its own in-flight acquire row.
-//
-// Inserting the acquirer's row at acquire prevents auto-terminal from
-// firing prematurely before any co-holder gets a chance to register:
-// the row stays `active` until the acquirer's release path marks it
-// (the `releaseClaim` held branch calls `markClaimHolderForRun` before
-// `CheckAndFireResolution`).
-//
-// `@blessed-invariant 13`: held-claim resolution is auto-terminal,
-// single, and aggregate-outcome-driven. The holders set this function
-// seeds is the auto-terminal's input.
 func insertHeldClaimHoldersAtAcquire(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	claimHandleID shared.UUID, cand persistence.Candidate, alias string,
@@ -60,19 +36,6 @@ func insertHeldClaimHoldersAtAcquire(
 	return nil
 }
 
-// insertCoHolderClaimHoldersAtAcquire inserts one `rimsky_claim_holders`
-// row per `holds:` co-holdership declared by this node (spec §Claim
-// co-holdership). Each entry names an upstream node-alias whose claim
-// is co-held.
-//
-// The row's `holder_run_id` is this run's id (`cand.DispatchID`);
-// `state` is `'active'`. Idempotent — duplicate inserts in the same
-// tx are blocked by the table's UNIQUE (claim_handle_id, holder_run_id).
-//
-// Runs inside the caller's tx (the acquisition tx). Per plan E4b step 2,
-// the INSERTs commit atomically with this run's own claim acquisition.
-//
-// @blessed-invariant 13
 // @concept: claim-co-holdership
 func insertCoHolderClaimHoldersAtAcquire(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
@@ -89,12 +52,6 @@ func insertCoHolderClaimHoldersAtAcquire(
 		return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: nodes.Get: %w", err)
 	}
 	if nd == nil {
-		// @constraint: the candidate's node row must exist — the scheduler
-		// tick that produced this candidate read it minutes earlier. A
-		// missing node here means the row was deleted between candidate
-		// selection and acquisition, a structural invariant violation
-		// rather than a transient race. Fail loudly so the acquisition tx
-		// rolls back instead of inserting an orphan holder row.
 		return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: node %s not found", cand.NodeID.String())
 	}
 	frameID := cand.FrameID
@@ -113,11 +70,6 @@ func insertCoHolderClaimHoldersAtAcquire(
 		}
 		lh := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmpl, upstreamType, alias)
 		if lh == nil {
-			// @deliberate: upstream's claim handle is missing — either the
-			// upstream hasn't acquired yet (DAG violation: holds.from must
-			// be an upstream dependency), or auto-terminal already fired
-			// (committed-subgraph row swept, or abandoned). Skip silently;
-			// CheckAndFireResolution is idempotent.
 			continue
 		}
 		if err := args.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
@@ -132,8 +84,6 @@ func insertCoHolderClaimHoldersAtAcquire(
 	return nil
 }
 
-// findHoldingSubgraphForAcquirer locates the (acquirerType, alias)
-// subgraph in the precomputed list.
 func findHoldingSubgraphForAcquirer(subgraphs []node.HoldingSubgraph, acquirerType, alias string) (node.HoldingSubgraph, bool) {
 	for _, sg := range subgraphs {
 		if sg.AcquirerType == acquirerType && sg.Alias == alias {

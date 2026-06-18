@@ -10,19 +10,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// UnmarshalYAML accepts two shapes per spec §3.5:
-//
-//	on_commit: pop                        # bare string for non-parameterized
-//	on_commit: { pop_and_move: target }   # one-key map for parameterized
-//
-// Anything else (null, number, sequence, multi-key map, empty map,
-// nested map) is rejected with a parse-level error.
 func (a *Action) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 	case yaml.ScalarNode:
-		// @constraint: yaml.v3 surfaces null scalars with the !!null tag, so
-		// nil-shaped action values must be caught by tag rather than empty
-		// string.
 		if node.Tag == "!!null" {
 			return fmt.Errorf("line %d: action must be a string or one-key map (got null)", node.Line)
 		}

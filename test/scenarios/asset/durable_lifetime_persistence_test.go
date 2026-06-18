@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N6 scenario — durable_lifetime_persistence.
-//
-// `lifetime: durable` claims survive auto-terminal Commit as
-// state='committed' rows on rimsky_claim_handles. The N6 contract
-// pinned here is the lifetime taxonomy: subgraph (default) vs.
-// durable. Post-Stage-3 of the 2026-05-17 claim-handle state-column
-// refactor, the auto-terminal Promote flips state from active to
-// committed and the row remains alive until
-// ReleaseHeldDurableClaims (instance termination) or the operator
-// DELETE /assets/{alias} handler. The full end-to-end (auto-terminal
-// → Promote → ListByInstanceAndState → ReleaseHeldDurableClaims)
-// needs the postgres harness; this scenario pins the foundation/spec
-// lifetime constants + the runtime ClaimHandleInsertInput shape.
 package asset
 
 import (

@@ -49,26 +49,13 @@
 
 set -euo pipefail
 
-# @deliberate: allow the test harness to inject explicit binary paths.
-# When unset the script falls back to binaries on $PATH — the bare-metal
-# path.
 RIMSKY_BIN="${RIMSKY_BIN:-rimsky}"
 RIMSKY_PROXY_BIN="${RIMSKY_PROXY_BIN:-rimsky-host-agent-proxy}"
 
-# @deliberate: state dir isolates pid + status files so concurrent runs
-# (CI, repeated manual invocations) never collide on the default
-# ~/.rimsky path.
 STATE_DIR="$( mktemp -d -t rimsky-agent-demo.XXXXXXXX )"
 
-# @deliberate: a bogus URL that DNS-fails fast so the failure-path block
-# doesn't spend the full readiness window dial-retrying a routable-but-
-# silent address. RFC 6761 reserves ".invalid" so this is guaranteed
-# bogus.
 BOGUS_PROXY="rimsky-agent-demo-bogus.invalid:65535"
 
-# @deliberate: cleanup — best-effort tear-down so a mid-script failure
-# doesn't leave a stray proxy or agent dangling. The trap fires on EXIT
-# regardless of exit code so failure exhibits leave a clean tree.
 PROXY_PID=""
 cleanup() {
     local rc=$?
@@ -76,24 +63,16 @@ cleanup() {
         kill "${PROXY_PID}" 2>/dev/null || true
         wait "${PROXY_PID}" 2>/dev/null || true
     fi
-    # @deliberate: best-effort stop of the agent if it's still running so
-    # the test harness reaps a clean tree even when an assertion fails
-    # mid-flow.
     "${RIMSKY_BIN}" agent stop --state-dir "${STATE_DIR}" >/dev/null 2>&1 || true
     rm -rf "${STATE_DIR}"
     exit "${rc}"
 }
 trap cleanup EXIT INT TERM
 
-# @deliberate: pick_free_port grabs an OS-assigned TCP port via Python
-# (universally available on dev machines) and prints it. The brief
-# close-then-reuse race is acceptable for an in-process demo fixture.
 pick_free_port() {
     python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
 }
 
-# @deliberate: wait_dialable polls a host:port until TCP connect
-# succeeds or timeout.
 wait_dialable() {
     local addr="$1"
     local timeout="$2"
@@ -109,12 +88,6 @@ wait_dialable() {
 
 echo "host-agent-control-plane-demo: state dir ${STATE_DIR}"
 
-# @deliberate: Step 1 runs the failure path FIRST — the Falsifier names
-# "start silently succeeds with a misconfigured proxy URL" as a load-bearing
-# failure mode, and putting this block before the proxy is even booted
-# means a stale pid/status file from a real prior run cannot mask the
-# diagnostic. This is the proof that `start` refuses cleanly on a
-# misconfigured proxy.
 echo "host-agent-control-plane-demo: step 1 — agent start against bogus proxy (expect failure)"
 
 set +e
@@ -132,10 +105,6 @@ if [ "${FAIL_RC}" -eq 0 ]; then
     exit 1
 fi
 
-# @constraint: the diagnostic must mention the unreachable/misconfigured
-# proxy so the operator can act on it — a silent non-zero with no
-# context is itself a Falsifier failure mode ("clear diagnostic" is
-# part of the Acceptance).
 case "${FAIL_STDERR}" in
     *"${BOGUS_PROXY}"*) ;;
     *) echo "host-agent-control-plane-demo: FAIL — failure diagnostic did not name the bogus proxy URL" >&2
@@ -151,9 +120,6 @@ case "${FAIL_STDERR}" in
        exit 1 ;;
 esac
 
-# @constraint: no agent.pid should remain after the failed start — the
-# failure must leave a clean tree so a subsequent `agent status` doesn't
-# lie.
 if [ -f "${STATE_DIR}/agent.pid" ]; then
     echo "host-agent-control-plane-demo: FAIL — failed start left a stale pid file at ${STATE_DIR}/agent.pid" >&2
     exit 1
@@ -163,17 +129,8 @@ echo "host-agent-control-plane-demo: step 1 OK — failure path refused cleanly 
 PROXY_PORT="$( pick_free_port )"
 PROXY_ADDR="127.0.0.1:${PROXY_PORT}"
 
-# @deliberate: Step 2 boots a real proxy so steps 3–5 can prove the
-# happy path: `start` against a reachable proxy, `status` reporting
-# connected against the live bidi stream, and `stop` tearing the daemon
-# down cleanly. Without a real proxy the readiness handshake cannot
-# complete and steps 3–5 would be untestable.
 echo "host-agent-control-plane-demo: step 2 — booting ${RIMSKY_PROXY_BIN} on ${PROXY_ADDR}"
 
-# @deliberate: run the proxy with no control-api fallback (this demo
-# doesn't exercise the dispatch path; the driver test does).
-# RIMSKY_LOG_LEVEL=warn keeps stderr terse so the demo's own output is
-# the load-bearing signal.
 RIMSKY_PROXY_GRPC_PORT="${PROXY_PORT}" \
 RIMSKY_LOG_LEVEL=warn \
 "${RIMSKY_PROXY_BIN}" >/dev/null 2>&1 &
@@ -192,17 +149,12 @@ START_STDOUT="$( "${RIMSKY_BIN}" agent start \
     --api-key "demo-key" )"
 echo "${START_STDOUT}"
 
-# @constraint: a successful start prints "rimsky agent started (pid N,
-# connected to ADDR)" — the "connected to" segment proves the readiness
-# handshake succeeded (not just a silent fork).
 case "${START_STDOUT}" in
     *"connected to ${PROXY_ADDR}"*) ;;
     *) echo "host-agent-control-plane-demo: FAIL — start did not report 'connected to ${PROXY_ADDR}'" >&2
        exit 1 ;;
 esac
 
-# @deliberate: capture the daemon pid for the zombie-children check at
-# stop time.
 AGENT_PID="$( cat "${STATE_DIR}/agent.pid" )"
 echo "host-agent-control-plane-demo: agent pid ${AGENT_PID}"
 
@@ -211,9 +163,6 @@ echo "host-agent-control-plane-demo: step 4 — agent status (expect connected)"
 STATUS_STDOUT="$( "${RIMSKY_BIN}" agent status --state-dir "${STATE_DIR}" )"
 echo "${STATUS_STDOUT}"
 
-# @constraint: the status report must say `connected` — anything else
-# (`disconnected`, `not running`, `status unreadable`) means the
-# sentinel reflects something other than the live bidi stream.
 case "${STATUS_STDOUT}" in
     *"connected"*) ;;
     *) echo "host-agent-control-plane-demo: FAIL — status did not report 'connected'" >&2
@@ -231,14 +180,6 @@ case "${STOP_STDOUT}" in
        exit 1 ;;
 esac
 
-# @constraint: confirm the OS process is actually gone. `agent stop`
-# returning success is necessary but not sufficient — the Falsifier
-# names "stop exits cleanly but leaves zombie children" as the load-
-# bearing failure mode. A live agent.pid after stop, or any child the
-# agent had spawned still alive, would be a real defect. The driver
-# test additionally exercises the proxy-tunneled dispatch path so it
-# can prove children spawned via dispatch are reaped; this script
-# proves the daemon itself goes away.
 deadline=$(( $( date +%s ) + 5 ))
 while [ "$( date +%s )" -lt "${deadline}" ]; do
     if ! kill -0 "${AGENT_PID}" 2>/dev/null; then
@@ -255,8 +196,6 @@ if [ -f "${STATE_DIR}/agent.pid" ]; then
     exit 1
 fi
 
-# @constraint: a second `status` after stop must report `not running` —
-# proves the stop fully tore down the recorded state.
 POST_STOP_STATUS="$( "${RIMSKY_BIN}" agent status --state-dir "${STATE_DIR}" )"
 case "${POST_STOP_STATUS}" in
     *"not running"*) ;;

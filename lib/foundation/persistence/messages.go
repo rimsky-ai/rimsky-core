@@ -12,28 +12,19 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// MessageRow is the per-row representation of table:rimsky_messages.
-//
-// Envelopes are inert in rimsky per @blessed-invariant 21: payload
-// bytes are read by named-field path only at substitution-leaf
-// extraction (graph/attribute/substitution.go::walkPath); never
-// logged, formatted, or otherwise inspected.
-//
-// SenderKind is one of {"operator", "publisher", "instance"}.
 type MessageRow struct {
 	ID          shared.UUID
 	InstanceID  shared.UUID
-	Type        string // @constraint: typed-message discriminator declared in the template messages: block
+	Type        string
 	Sender      string
 	SenderKind  string
-	Payload     json.RawMessage // @constraint: opaque per @blessed-invariant 21 — bytes inert; named-field path read only at substitution-leaf extraction
+	Payload     json.RawMessage
 	ReceivedAt  time.Time
 	DeliveredAt *time.Time
 	FrameID     *shared.UUID
 	Cancelled   bool
 }
 
-// EnqueueMessageRequest is the payload for MessagesTable.Insert.
 type EnqueueMessageRequest struct {
 	ID         shared.UUID
 	InstanceID shared.UUID
@@ -44,13 +35,6 @@ type EnqueueMessageRequest struct {
 	ReceivedAt time.Time
 }
 
-// MessageListFilter selects rows for the messages list endpoints.
-//
-// FrameID, when non-nil, narrows to the message(s) delivered into a
-// specific frame (rimsky_messages.frame_id = ?). Fan-out acquisition
-// uses it to recover the frame's trigger message so the node's
-// partition_request can be substituted from the override the message
-// carries (see runtime/runner_acquire_helpers.go::acquireFanOutIfDeclared).
 type MessageListFilter struct {
 	InstanceID      *shared.UUID
 	Type            string
@@ -60,49 +44,18 @@ type MessageListFilter struct {
 	DeliveredBefore *time.Time
 }
 
-// MessagesTable is the per-row-type Table accessor for
-// table:rimsky_messages. Used by:
-//
-//   - runtime/message_delivery.go — EnqueueMessage / DeliverPendingMessages
-//   - control/controlapi/messages.go — list / detail endpoints
 type MessagesTable interface {
-	// @agent-contract Insert enqueues a new message row (delivered_at IS NULL).
 	Insert(ctx context.Context, tx Tx, req EnqueueMessageRequest) error
 
-	// @agent-contract MarkDelivered sets delivered_at = now() and frame_id = frame
-	// for the given message id. Returns delivered=true when exactly one row was
-	// updated. Does NOT validate that the frame exists or that the message was
-	// previously pending.
 	MarkDelivered(ctx context.Context, tx Tx, id shared.UUID, frame shared.UUID, deliveredAt time.Time) (bool, error)
 
-	// @agent-contract ListPendingForInstance returns pending messages for an
-	// instance, ordered by received_at ascending. Used at frame-boundary delivery.
-	// Does NOT mark them delivered.
 	ListPendingForInstance(ctx context.Context, tx Tx, instanceID shared.UUID) ([]MessageRow, error)
 
-	// @agent-contract ListDeliveredForFrame returns the messages delivered into
-	// the given frame (frame_id = frame), ordered by received_at ascending.
-	// @constraint: Reuses the caller's tx — unlike the tx-less List, this is safe
-	// to call from inside an open transaction (the SQLite driver's MaxOpenConns=1
-	// makes a fresh-connection read from inside a tx deadlock). Used by fan-out
-	// acquisition to recover the frame's trigger message so the node's
-	// partition_request substitutes the triggering override.
 	ListDeliveredForFrame(ctx context.Context, tx Tx, frame shared.UUID) ([]MessageRow, error)
 
-	// @agent-contract Get returns a single message by id, or nil when absent.
-	// Does NOT join the message's frame or instance state.
 	Get(ctx context.Context, id shared.UUID) (*MessageRow, error)
 
-	// @agent-contract GetInTx returns a single message by id, or nil when absent,
-	// reusing the caller's open tx.
-	// @constraint: Use this from inside a transaction to avoid the SQLite
-	// MaxOpenConns=1 deadlock (a tx-less Get goes through the pool and blocks on
-	// the only connection, which is held by the open tx). The frame-engine's
-	// promotion path (graph/frame/engine.go::runAdvanceQueued) and any other
-	// inside-tx reader must use this variant.
 	GetInTx(ctx context.Context, tx Tx, id shared.UUID) (*MessageRow, error)
 
-	// @agent-contract List returns messages matching filter, paginated. Opens its
-	// own read connection; not safe to call from inside an open tx on SQLite.
 	List(ctx context.Context, filter MessageListFilter, pag ListPagination) (PaginatedListResult[MessageRow], error)
 }

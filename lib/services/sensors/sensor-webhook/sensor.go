@@ -2,24 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package main — sensor-webhook bundled sensor. Implements the
-// Publisher gRPC protocol; runs an HTTP server on a configured port
-// and, per publisher-subscription, registers a path under
-// `path_prefix`. Inbound POSTs to a registered route → push a message
-// envelope to rimsky's generic messages endpoint.
-//
-// Spec .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-// §Publisher protocol unification.
-//
 //	@concept: sensor
-//
-// Idempotency: optional `idempotency_header` config — when the inbound
-// POST carries that header, the sensor (a) deduplicates against the
-// prior value per subscription (last-seen wins) and (b) propagates
-// the header value as the `Idempotency-Key` on the rimsky message
-// POST. Useful for webhook providers that retry — the provider's
-// idempotency key suppresses duplicate emissions both locally and at
-// rimsky.
 package main
 
 import (
@@ -40,8 +23,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
 )
 
-// Watch is the in-memory state for one active webhook publisher-
-// subscription. Sensor-internal vocabulary stays as "Watch."
 type Watch struct {
 	SubscriptionID    string
 	InstanceID        string
@@ -52,38 +33,22 @@ type Watch struct {
 
 	mu        sync.Mutex
 	StartedAt time.Time
-	// @constraint: holds the most-recent idempotency-header value seen on
-	// this subscription; serveWebhook reads/writes it under w.mu to
-	// suppress duplicate emissions when the inbound header repeats.
 	LastIdempotency string
 }
 
-// SensorService implements genv1.PublisherServer for HTTP webhook
-// reception. The chi router is wired once at construction with a
-// single catch-all `POST /*` dispatcher (`dispatchWebhook`); per-
-// subscription path lookup is then a map check against
-// `pathToWatch`. This sidesteps chi's lack of route unregistration —
-// `Unsubscribe` deletes the map entry and the dispatcher returns 404
-// for stale paths without leaking chi routes.
 type SensorService struct {
 	genv1.UnimplementedPublisherServer
 	mu      sync.Mutex
 	watches map[string]*Watch
-	// pathToWatch indexes active subscriptions by their `path_prefix`
-	// so the catch-all dispatcher can resolve an inbound POST to the
-	// right subscription in O(1). Updated transactionally with
-	// `watches`.
 	pathToWatch    map[string]*Watch
 	router         *chi.Mux
 	rimskyEndpoint string
 	httpClient     *http.Client
 	clock          func() time.Time
 	logger         logger
-	// state is the optional persistence layer. nil → in-memory mode.
 	state *stateDB
 }
 
-// AttachStateDB binds an optional persistence layer.
 func (s *SensorService) AttachStateDB(state *stateDB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -96,11 +61,6 @@ type logger interface {
 	Error(msg string, args ...any)
 }
 
-// NewSensorService constructs the service. router is the chi mux the
-// binary mounts on the inbound-webhook port; pre-existing routes are
-// preserved. The constructor installs a single catch-all `POST /*`
-// dispatcher; `Subscribe` and `Unsubscribe` mutate the subscription map
-// only.
 func NewSensorService(rimskyEndpoint string, router *chi.Mux, log logger) *SensorService {
 	s := &SensorService{
 		watches:        make(map[string]*Watch),
@@ -111,17 +71,10 @@ func NewSensorService(rimskyEndpoint string, router *chi.Mux, log logger) *Senso
 		clock:          time.Now,
 		logger:         log,
 	}
-	// @deliberate: single dispatcher route per service instance — chi has
-	// no route-unregistration API, so Subscribe / Unsubscribe mutate only
-	// the in-memory map and the chi tree is never touched after this point.
 	router.Post("/*", s.dispatchWebhook)
 	return s
 }
 
-// dispatchWebhook is the single catch-all POST handler the chi router
-// is wired to at construction. It resolves the inbound URL.Path to an
-// active subscription via `pathToWatch`; misses surface as 404 with an
-// operator-visible message.
 func (s *SensorService) dispatchWebhook(rw http.ResponseWriter, req *http.Request) {
 	s.mu.Lock()
 	w, ok := s.pathToWatch[req.URL.Path]
@@ -133,7 +86,6 @@ func (s *SensorService) dispatchWebhook(rw http.ResponseWriter, req *http.Reques
 	s.serveWebhook(w, rw, req)
 }
 
-// Capabilities advertises the webhook kind.
 func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.PublisherCapabilities, error) {
 	return &genv1.PublisherCapabilities{
 		SupportedKinds: []*genv1.PublisherKindCapability{
@@ -153,11 +105,6 @@ func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv
 	}, nil
 }
 
-// Subscribe parses the resolved_config and mounts a webhook route
-// under `path_prefix`. Per `concept:publisher-subscription`, the
-// in-process pathToWatch index drives O(1) dispatch. When a state DB
-// is attached, looks up persisted state and pre-populates
-// `LastIdempotency` so dedup continues across restarts.
 func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
 	if req.GetKind() != "webhook" {
 		return nil, fmt.Errorf("sensor-webhook does not support kind %q", req.GetKind())
@@ -175,10 +122,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	if !strings.HasPrefix(cfg.PathPrefix, "/") {
 		cfg.PathPrefix = "/" + cfg.PathPrefix
 	}
-	// @constraint: the runtime side rejects an empty message_type at
-	// publisher-subscription mount time, so by the time Subscribe is
-	// called here the value is non-empty by construction. Pass through
-	// verbatim.
 	messageType := req.GetMessageType()
 	w := &Watch{
 		SubscriptionID:    req.GetPublisherSubscriptionId(),
@@ -189,9 +132,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		MessageType:       messageType,
 		StartedAt:         s.clock(),
 	}
-	// @deliberate: restart-replay — pre-populate the most-recent
-	// idempotency key from durable storage before registering the Watch
-	// so header-based dedup continues to function across restarts.
 	s.mu.Lock()
 	state := s.state
 	s.mu.Unlock()
@@ -206,8 +146,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	s.mu.Lock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
 		s.mu.Unlock()
-		// @deliberate: idempotent Subscribe — the state-DB row is already
-		// present from the prior call, so skip UpsertSubscription below.
 		return &genv1.SubscribeResponse{}, nil
 	}
 	if existing, taken := s.pathToWatch[w.PathPrefix]; taken {
@@ -231,21 +169,12 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	return &genv1.SubscribeResponse{}, nil
 }
 
-// serveWebhook executes the per-subscription reception logic. Called
-// by the catch-all chi dispatcher in `dispatchWebhook` after resolving
-// the inbound URL.Path to a live subscription via `pathToWatch`.
-//
-// Idempotency: when `IdempotencyHeader` is set and the inbound request
-// carries that header, suppress emission if the value matches the
-// most-recent seen and propagate the value as `Idempotency-Key` on
-// the rimsky POST.
 func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http.Request) {
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		http.Error(rw, "read body", http.StatusBadRequest)
 		return
 	}
-	// inboundIdem suppression — operator-opt-in.
 	var inboundIdem string
 	if w.IdempotencyHeader != "" {
 		inboundIdem = req.Header.Get(w.IdempotencyHeader)
@@ -258,8 +187,6 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 			}
 			w.LastIdempotency = inboundIdem
 			w.mu.Unlock()
-			// @constraint: read s.state under s.mu — AttachStateDB writes
-			// it under the same mu, so a bare read here would race.
 			s.mu.Lock()
 			state := s.state
 			s.mu.Unlock()
@@ -277,8 +204,6 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 		"path":        req.URL.Path,
 		"method":      req.Method,
 	}
-	// decoded decode the body as JSON for substitution-friendly
-	// observations. Non-JSON surfaces as a string.
 	var decoded any
 	if json.Unmarshal(body, &decoded) == nil {
 		obs["body"] = decoded
@@ -303,8 +228,6 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 	rw.WriteHeader(http.StatusOK)
 }
 
-// Unsubscribe removes the subscription from the dispatcher's path
-// index.
 func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -328,7 +251,6 @@ func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeReq
 	return &genv1.UnsubscribeResponse{}, nil
 }
 
-// ListSubscriptions enumerates active publisher-subscriptions.
 func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (*genv1.ListSubscriptionsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -346,18 +268,11 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 	return &genv1.ListSubscriptionsResponse{Subscriptions: out}, nil
 }
 
-// postMessage sends one message envelope to rimsky's generic messages
-// endpoint with sender_kind="publisher". Retry-with-backoff is
-// handled by `pkg:github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit`.
 func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[string]any, idempotencyKey string) error {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	// @constraint: `target_node` from the subscription registers
-	// routing on the rimsky side; the envelope wire body carries no
-	// `target` (the receipt handler has no `target` column to land it
-	// on — the `rimsky_messages.target` column was retired).
 	envelope := map[string]any{
 		"type":                      w.MessageType,
 		"payload":                   json.RawMessage(payloadBytes),

@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// breakpoint_resume_test.go — exercises ValidateAndPersistResume against
-// a SQLite-backed in-memory persistence. Covers the no-overlay paths,
-// idempotent replay, and overlay-with-schema validation by seeding
-// `snapshot.effective_schema` directly. `buildSnapshot` populates that
-// field in production via `CheckpointContext.EffectiveSchema`; tests
-// here pre-seed the same key so the seeded-schema validation path
-// matches the production wire shape.
-//
 // @concept: breakpoint
 
 package runtime_test
@@ -29,9 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// seedBreakpointResumeFixture creates a template + main run scope +
-// instance + a breakpoint and returns (instanceID, breakpointID). Used
-// as the FK target for hit rows.
 func seedBreakpointResumeFixture(t *testing.T, ctx context.Context, tables persistence.Tables) (shared.UUID, shared.UUID) {
 	t.Helper()
 	templateHash := "sha256-" + uuid.NewString()
@@ -91,15 +80,11 @@ func seedBreakpointResumeFixture(t *testing.T, ctx context.Context, tables persi
 	return instanceID, bpID
 }
 
-// createHitWithSnapshot inserts a before_dispatch hit and returns its id.
 func createHitWithSnapshot(t *testing.T, ctx context.Context, tables persistence.Tables, bpID, instanceID shared.UUID, snapshot map[string]any) shared.UUID {
 	t.Helper()
 	return createHitOfCheckpoint(t, ctx, tables, bpID, instanceID, snapshot, persistence.CheckpointBeforeDispatch)
 }
 
-// createHitOfCheckpoint inserts a hit of the named checkpoint kind and
-// returns its id. Used by tests that need to exercise the
-// after_terminal-specific resume gates.
 func createHitOfCheckpoint(t *testing.T, ctx context.Context, tables persistence.Tables, bpID, instanceID shared.UUID, snapshot map[string]any, checkpoint persistence.BreakpointCheckpoint) shared.UUID {
 	t.Helper()
 	var id shared.UUID
@@ -140,7 +125,6 @@ func openInMemoryTables(t *testing.T) persistence.Tables {
 	return d.Tables()
 }
 
-// TestValidateAndPersistResume_NotFound covers the 404 path.
 func TestValidateAndPersistResume_NotFound(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -152,8 +136,6 @@ func TestValidateAndPersistResume_NotFound(t *testing.T) {
 	}
 }
 
-// TestValidateAndPersistResume_FirstResumeNoOverlay covers the happy
-// path with no overlay (no schema validation needed).
 func TestValidateAndPersistResume_FirstResumeNoOverlay(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -173,7 +155,6 @@ func TestValidateAndPersistResume_FirstResumeNoOverlay(t *testing.T) {
 		t.Errorf("FirstResume: got false want true")
 	}
 
-	// @deliberate: Confirm the persistence row reflects the resume.
 	var got *persistence.BreakpointHitRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -190,8 +171,6 @@ func TestValidateAndPersistResume_FirstResumeNoOverlay(t *testing.T) {
 	}
 }
 
-// TestValidateAndPersistResume_IdempotentReplay confirms a second
-// resume on the same hit returns FirstResume=false and does not error.
 func TestValidateAndPersistResume_IdempotentReplay(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -215,12 +194,6 @@ func TestValidateAndPersistResume_IdempotentReplay(t *testing.T) {
 	}
 }
 
-// TestValidateAndPersistResume_OverlayNoSchema covers the
-// snapshot-lacks-effective-schema fallback: validation is skipped (with
-// a Warn log), the overlay still persists. In production
-// `buildSnapshot` always populates `effective_schema` on
-// before_dispatch hits; this test forces the absent-schema branch by
-// omitting the field from the seeded snapshot.
 func TestValidateAndPersistResume_OverlayNoSchema(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -250,16 +223,10 @@ func TestValidateAndPersistResume_OverlayNoSchema(t *testing.T) {
 	}
 }
 
-// TestValidateAndPersistResume_OverlaySchemaRejects validates the
-// "schema present" branch by seeding `effective_schema` into the
-// snapshot and using an overlay that violates a `type` constraint. The
-// shipped `buildSnapshot` produces the same shape in production via
-// `CheckpointContext.EffectiveSchema`.
 func TestValidateAndPersistResume_OverlaySchemaRejects(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
 	instanceID, bpID := seedBreakpointResumeFixture(t, ctx, tables)
-	// @deliberate: Schema: top-level requires `score: number`.
 	snapshot := map[string]any{
 		"dispatch_context": map[string]any{
 			"merged_attributes": map[string]any{"score": float64(10)},
@@ -275,7 +242,6 @@ func TestValidateAndPersistResume_OverlaySchemaRejects(t *testing.T) {
 	hitID := createHitWithSnapshot(t, ctx, tables, bpID, instanceID, snapshot)
 
 	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
-	// @deliberate: Overlay sets `score` to a string — rejected by `type: number`.
 	overlay := map[string]any{"score": "not-a-number"}
 	_, err := runtime.ValidateAndPersistResume(ctx, args, hitID, overlay, "operator")
 	if !errors.Is(err, shared.ErrResumeOverlayInvalid) {
@@ -283,14 +249,6 @@ func TestValidateAndPersistResume_OverlaySchemaRejects(t *testing.T) {
 	}
 }
 
-// TestValidateAndPersistResume_AfterTerminalOverlayRejected pins the
-// rule that overlays cannot be applied to after_terminal hits: the
-// dispatch is already committed, so an overlay could never feed back
-// into the run. The previous behavior accepted the overlay and persisted
-// it into `resume_overlay`, but the caller discards the merged bag at
-// the after_terminal call sites — silently no-op. Now the resume API
-// rejects with ErrResumeOverlayInvalid + leaves the hit unresumed so
-// the operator gets a clear diagnostic.
 func TestValidateAndPersistResume_AfterTerminalOverlayRejected(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -308,8 +266,6 @@ func TestValidateAndPersistResume_AfterTerminalOverlayRejected(t *testing.T) {
 		t.Fatalf("expected ErrResumeOverlayInvalid on after_terminal overlay, got %v", err)
 	}
 
-	// @deliberate: The hit must remain unresumed — the rejection happens before the
-	// Resume call, so the row's state didn't move.
 	var got *persistence.BreakpointHitRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -325,9 +281,6 @@ func TestValidateAndPersistResume_AfterTerminalOverlayRejected(t *testing.T) {
 		t.Errorf("hit must NOT carry the rejected overlay; got ResumeOverlay=%v", got.ResumeOverlay)
 	}
 
-	// @deliberate: Resuming the same hit with NO overlay should succeed — the
-	// after_terminal hit accepts the no-overlay case (it's just the
-	// notification half of the protocol).
 	res, err := runtime.ValidateAndPersistResume(ctx, args, hitID, nil, "operator")
 	if err != nil {
 		t.Fatalf("ValidateAndPersistResume(no overlay): %v", err)

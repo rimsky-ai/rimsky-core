@@ -130,9 +130,6 @@ func TestRunSyncReconciles(t *testing.T) {
 func TestOpenPickPolicy_Basic(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
-	// @deliberate: single folder so sync-creation map-iteration order
-	// doesn't affect the assertion (release_to_back rotation is asserted
-	// by TestCommit_ReleaseToBack).
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	pp := &PickPolicy{
 		Root:              sub,
@@ -267,10 +264,6 @@ func TestCommit_ReleaseToBack(t *testing.T) {
 	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	must(t, os.MkdirAll(filepath.Join(root, sub, "beta"), 0o755))
-	// @deliberate: first pick takes whichever sentinel happens to have
-	// the older mtime (sync creation order is map-iteration-random);
-	// record it so the rotation assertion below compares against the
-	// actually-picked folder.
 	o, _ := st.Open(context.Background(), "c-1", "@r")
 	if !o.Available {
 		t.Fatal("first pick should be Available")
@@ -278,8 +271,6 @@ func TestCommit_ReleaseToBack(t *testing.T) {
 	var first struct{ Folder string }
 	must(t, json.Unmarshal(o.Result.Payload, &first))
 	must(t, st.Commit(context.Background(), "c-1", o.Result.ClaimScope, o.Result.Address))
-	// @constraint: after release_to_back, the first folder sits at the
-	// tail; the other folder must be picked next.
 	o2, _ := st.Open(context.Background(), "c-2", "@r")
 	var second struct{ Folder string }
 	must(t, json.Unmarshal(o2.Result.Payload, &second))
@@ -301,10 +292,6 @@ func TestCommit_PopAndDelete_RemovesFolder(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, sub, "doomed")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("folder should be removed after pop_and_delete commit; stat err = %v", err)
 	}
-	// @constraint: pin the in_progress sentinel cleanup behaviour — a
-	// regression that drops the unlink in applyPickAction's
-	// pop_and_delete arm would leave a stranded sentinel here, causing
-	// a wasted-cycle visibility-timeout reclamation later.
 	inProgDir := filepath.Join(root, ".fs-store", "r", "in_progress")
 	inProg, _ := os.ReadDir(inProgDir)
 	if len(inProg) != 0 {
@@ -355,13 +342,6 @@ func TestSweep_ReclaimsExpired(t *testing.T) {
 	}
 }
 
-// TestOpenPickPolicy_StoreRootSingleEntry exercises a pick policy whose
-// Root is the store root itself (Root: "") combined with a FolderPattern
-// that matches exactly one top-level folder. This shape lets a policy
-// yield a single rw claim on a top-level subtree (here: "guidance/")
-// rather than picking from inside a folder. recycle-on-commit gives
-// the consumer a long-lived "always-available" rw claim against that
-// subtree.
 func TestOpenPickPolicy_StoreRootSingleEntry(t *testing.T) {
 	root := t.TempDir()
 	must(t, os.MkdirAll(filepath.Join(root, "guidance"), 0o755))
@@ -397,17 +377,12 @@ func TestOpenPickPolicy_StoreRootSingleEntry(t *testing.T) {
 	if scope != wantScope {
 		t.Errorf("scope = %q, want %q", scope, wantScope)
 	}
-	// @constraint: the pattern excludes "specs" and "prompts"; only
-	// "guidance" should be in available/.
 	availDir := filepath.Join(root, ".fs-store", "root", "available")
 	entries, _ := os.ReadDir(availDir)
 	got := make(map[string]bool)
 	for _, e := range entries {
 		got[e.Name()] = true
 	}
-	// @constraint: "guidance" was just claimed (rename-as-claim), so it
-	// lives in in_progress/ rather than available/; the other two must
-	// NOT be present.
 	if got["specs"] || got["prompts"] {
 		t.Errorf("non-matching top-level folders leaked into available/: %v", got)
 	}

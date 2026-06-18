@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Package scenarios registers the built-in rimsky conformance scenarios.
 
 package scenarios
 
@@ -16,13 +15,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @deliberate: execute_happy_path drives a stub-mode unary Execute
-// call and asserts the response settles as Outcome{Success} carrying
-// the synthetic `stub: true` attributes_delta marker the stub
-// executor stamps on every Success terminal. Per TD-execute-rpc-unary
-// the RPC is unary — one request, one Outcome — so the happy path
-// is structurally simple: dial, call, assert.
-//
 // @concept: executor
 func init() {
 	conformance.Register(conformance.Scenario{

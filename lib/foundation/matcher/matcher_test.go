@@ -11,11 +11,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// TestEvaluate exercises the matcher predicate directly. The runtime
-// uses Evaluate through a thin delegate (runtime/attribute_overrides.go::evaluateMatcher);
-// these tests cover each of the five recognised keys, the empty-matcher
-// wildcard, the defensive unknown-key skip, primitive-equality
-// coercion, and attribute-path walking.
 func TestEvaluate(t *testing.T) {
 	silent := shared.SilentLogger{}
 
@@ -168,8 +163,6 @@ func TestEvaluate(t *testing.T) {
 	})
 }
 
-// TestWalkAttrPath covers the path-walking helper across nested-map
-// shapes.
 func TestWalkAttrPath(t *testing.T) {
 	bag := map[string]any{
 		"a": map[string]any{
@@ -203,8 +196,6 @@ func TestWalkAttrPath(t *testing.T) {
 	}
 }
 
-// TestPrimitiveEqual covers each cross-type coercion branch in
-// isolation (TestEvaluate covers the end-to-end pathways).
 func TestPrimitiveEqual(t *testing.T) {
 	cases := []struct {
 		name string

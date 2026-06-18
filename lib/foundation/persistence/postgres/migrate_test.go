@@ -16,9 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// TestMigrateAgainstTestcontainers exercises persistence.Migrate end-to-
-// end against a fresh testcontainers Postgres. Validates that the
-// embedded SQL applies cleanly and is idempotent on re-run.
 func TestMigrateAgainstTestcontainers(t *testing.T) {
 	ctx := context.Background()
 	dsn, terminate := pgtest.StartFreshPostgresDSN(ctx, t)
@@ -36,25 +33,11 @@ func TestMigrateAgainstTestcontainers(t *testing.T) {
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	// @constraint: Migrate must be idempotent — a second invocation on an
-	// already-migrated database is a no-op (no schema churn, no error).
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("re-migrate: %v", err)
 	}
 }
 
-// TestMigration002Tags pins migration 002's contract per spec
-// 2026-05-19-multi-instance-template-ergonomics-design.md §Item 4:
-//
-//   - Column `tags` exists on `rimsky_nodes` as `TEXT[] NOT NULL` with
-//     default `'{}'`.
-//   - A row inserted WITHOUT setting `tags` materializes the default
-//     empty array (scans as `[]string{}` post-normalization).
-//   - The GIN index `rimsky_nodes_tags_idx` exists.
-//
-// Exercises the migration directly (not via the higher-level
-// `nodesImpl.Create` insert, which sets `tags` explicitly) so the
-// default-value contract is pinned at the substrate level.
 func TestMigration002Tags(t *testing.T) {
 	ctx := context.Background()
 	dsn, terminate := pgtest.StartFreshPostgresDSN(ctx, t)
@@ -72,9 +55,6 @@ func TestMigration002Tags(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	// @deliberate: this test pins substrate-level schema contracts (column
-	// types, defaults, indexes) and so reaches past the persistence
-	// interface to the raw pool via the test-only escape hatch.
 	pgPool, ok := pgpersist.PoolFromDatabaseForTest(d)
 	if !ok {
 		t.Fatalf("could not get *pgxpool.Pool from database")
@@ -99,8 +79,6 @@ func TestMigration002Tags(t *testing.T) {
 		t.Errorf("tags column data_type: got %q want %q", dataType, "ARRAY")
 	}
 	if isNotNull != "NO" {
-		// @constraint: information_schema.columns.is_nullable encodes
-		// NOT NULL as the literal string "NO" (and NULLable as "YES").
 		t.Errorf("tags column is_nullable: got %q want %q", isNotNull, "NO")
 	}
 	if colDflt == nil || *colDflt != "'{}'::text[]" {
@@ -111,20 +89,11 @@ func TestMigration002Tags(t *testing.T) {
 		t.Errorf("tags column default: got %q want %q", got, "'{}'::text[]")
 	}
 
-	// @constraint: rimsky_nodes has a NOT NULL `instance_id` FK, so a
-	// minimal template + instance must be seeded first. The schema requires
-	// (id, instance_id, node_type) at minimum on rimsky_nodes; everything
-	// else has a default — which is exactly what makes `tags` materializing
-	// `'{}'` here the contract under test.
 	if _, err := pgPool.Exec(ctx,
 		`INSERT INTO rimsky_templates (id, spec, state)
 		 VALUES ('tpl-1', '{}'::jsonb, 'deployed')`); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// @constraint: post-RunScope-first migrations,
-	// rimsky_instances.main_run_scope_id and rimsky_run_scopes.instance_id
-	// mutually FK each other, so neither row can be inserted alone — the
-	// pair must seed in a single tx under SET CONSTRAINTS ALL DEFERRED.
 	instUUID := uuid.New()
 	scopeUUID := uuid.New()
 	tx, err := pgPool.Begin(ctx)
@@ -169,7 +138,6 @@ func TestMigration002Tags(t *testing.T) {
 		t.Errorf("tags default: got %v want empty []string", tagsScan)
 	}
 
-	// idxName GIN index exists.
 	var idxName string
 	if err := pgPool.QueryRow(ctx, `
 		SELECT indexname

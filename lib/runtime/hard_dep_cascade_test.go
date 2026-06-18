@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Unit tests for the upstream-refresh cascade extension's parked-
-// upstream branch in pullForceRefreshUpstreams. Exercises the wake
-// primitive in isolation: a parked upstream + an in-frame cascade walk
-// to a receiver that declares `force_upstream_refresh: true` on that
-// upstream must route through wakeParkedReceiverInTx and emit
-// parked_resume_started.
-
 package runtime_test
 
 import (
@@ -25,26 +18,6 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// TestPullHardDepUpstreams_WakesParkedUpstream verifies the
-// parked-upstream branch of pullForceRefreshUpstreams when the upstream
-// is parked IN AN EARLIER FRAME (case 2). Setup:
-//
-//   - Template: a (sender), b (parked upstream), c (receiver). c
-//     subscribes to a (state) and carries a `force_upstream_refresh:
-//     true` subscription on b's attribute.
-//   - F1 is the running frame. a has an in-flight 'active' run id
-//     in F1. b has a parked node-run row pinned to an earlier frame
-//     F0. c has no in-flight row yet.
-//   - Invoke `runtime.CascadeSubscribersStaleInTxForTest` for sender=a.
-//     The BFS visits c (subscriber), MarkStaleForCascade(c) inserts
-//     c's pending run, then pullForceRefreshUpstreams(c) runs.
-//     `GetInFlightRunForNode(b, F1)` returns hasRun=false (b's parked
-//     row is in F0, not F1). The parked-branch probe fires:
-//     GetParkedByNode(b) → parked, wakeParkedReceiverInTx wakes b
-//     and rebinds the run to F1.
-//
-// Asserts: parked_resume_started event is emitted for b after the
-// cascade walk.
 func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -98,13 +71,6 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 		return nil
 	}))
 
-	// @deliberate: Seed an EARLIER frame F0 where b parked, then a NEW running frame
-	// F1 where the cascade walk fires. b's parked-frame is F0 so
-	// GetInFlightRunForNode(b, F1) returns hasRun=false and the
-	// parked-branch probe + wake fires.
-	//
-	// Mark F0 completed before opening F1 — the uq_rimsky_frames_running
-	// constraint admits at most one running frame per instance.
 	earlierFrameID := seedFrame(ctx, t, backend, inst.ID, bN.ID)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := backend.Frames().MarkRunningFrameTerminal(ctx, earlierFrameID,
@@ -113,8 +79,6 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	}))
 	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID)
 
-	// @deliberate: Seed sender (a) with an in-flight 'active' run in the running
-	// frame F1 so the cascade walk can resolve it as the sender.
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
@@ -124,9 +88,6 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, aN.ID)
 
-	// @deliberate: Seed b with a parked node-run row in F0 (an earlier frame).
-	// State=parked, phase=parked. parked_at NOW() so the parked-sweep
-	// doesn't preempt the test.
 	bParkedRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
@@ -135,9 +96,6 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
     `, bParkedRunID, bN.ID, earlierFrameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, earlierFrameID, bN.ID)
-
-	// @deliberate: c has no in-flight row yet — MarkStaleForCascade in the walk
-	// will insert one.
 
 	args := runtime.RunArgs{
 		Persist: backend, Queue: d.Queue(), Clock: shared.SystemClock{}, Logger: shared.SilentLogger{},
@@ -148,7 +106,6 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 		)
 	}))
 
-	// @deliberate: Verify parked_resume_started fired for b.
 	var events persistence.EventListResult
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.Events().List(ctx, persistence.EventListFilter{NodeID: &bN.ID},
@@ -166,22 +123,9 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	require.True(t, wokeUp,
 		"pullForceRefreshUpstreams must wake b's parked run and emit parked_resume_started; events: %+v",
 		events.Events)
-	_ = cN // @deliberate: silence unused warning if c never gets touched
+	_ = cN
 }
 
-// TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight verifies
-// that when an upstream-refresh upstream already has an in-flight run
-// pinned to senderFrameID (pending/active/held — i.e.
-// GetInFlightRunForNode returns hasRun=true), pullForceRefreshUpstreams
-// MUST NOT re-probe GetParkedByNode and fire wakeParkedReceiverInTx.
-// The existing wait-set blocker keys on the existing run id; an
-// extra wake would emit a duplicate `parked_resume_started` event
-// and churn state-transition surface.
-//
-// Setup: a (sender), b (upstream already pending in current frame),
-// c (receiver with `force_upstream_refresh: true` on b). After the
-// cascade walk we assert that NO parked_resume_started event fires
-// for b.
 func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -237,7 +181,6 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID)
 
-	// @deliberate: Sender a: active in current frame.
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
@@ -247,8 +190,6 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, aN.ID)
 
-	// @deliberate: Upstream b: in-flight pending in CURRENT frame (NOT parked).
-	// GetInFlightRunForNode(b, frameID) returns hasRun=true.
 	bRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
@@ -267,7 +208,6 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 		)
 	}))
 
-	// @deliberate: Assert NO parked_resume_started fired for b (it was never parked).
 	var events persistence.EventListResult
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.Events().List(ctx, persistence.EventListFilter{NodeID: &bN.ID},
@@ -280,12 +220,9 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 			"pullForceRefreshUpstreams must not fire wake on a non-parked in-flight upstream; events: %+v",
 			events.Events)
 	}
-	_ = cN // @deliberate: silence unused warning if c never gets touched
+	_ = cN
 }
 
-// makeHardDepTemplate builds a 3-node template (a, b, c) where c
-// declares `force_upstream_refresh: true` on b's attribute
-// subscription and subscribes to a's terminal/attribute signals.
 func makeHardDepTemplate() nodepkg.TemplateSpec {
 	mkSchema := func(field string) map[string]any {
 		return map[string]any{
@@ -319,11 +256,7 @@ func makeHardDepTemplate() nodepkg.TemplateSpec {
 				Type: "c", Executor: "stub",
 				Subscribes: []nodepkg.SubscriptionEntry{
 					{Node: "a", Type: "terminal/*", WakeOnChange: nodepkg.BoolPtr(true), ForceUpstreamRefresh: nodepkg.BoolPtr(false)},
-					// @deliberate: Covers the {{nodes.a.attribute.a_value}} read.
 					{Node: "a", Type: "attribute/a_value/changed", WakeOnChange: nodepkg.BoolPtr(true), ForceUpstreamRefresh: nodepkg.BoolPtr(false)},
-					// @deliberate: Migrated from attribute-field hard_dep: true on b_val.
-					// Covers the {{nodes.b.attribute.b_value}} read AND drags
-					// b into the frame on c's invalidation.
 					{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: nodepkg.BoolPtr(true), ForceUpstreamRefresh: nodepkg.BoolPtr(true)},
 				},
 				Attributes: &nodepkg.NodeAttributesDef{Schema: cSchema},

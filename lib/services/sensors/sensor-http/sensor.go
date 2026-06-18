@@ -2,29 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package main — sensor-http bundled sensor. Implements the Publisher
-// gRPC protocol; per publisher-subscription, polls a configured URL on
-// a fixed interval, applies a match predicate (status code and / or
-// JSONPath substring match), and POSTs a message envelope to rimsky's
-// generic `POST /v1/instances/{instance_id}/messages` endpoint when the
-// response body's content-hash changes.
-//
-// Spec .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-// §Publisher protocol unification.
-//
 //	@concept: sensor
-//
-// State persistence is optional. When env
-// RIMSKY_SENSOR_HTTP_STATE_DSN is set, subscriptions and body-hash
-// watermarks survive restart; otherwise the binary runs in-memory.
-// Per `concept:replica`, the v1 contract is single-replica.
-//
-// Watermarking: per-subscription high-water-mark is the SHA-256 of
-// the last-observed response body. The sensor pushes only when the
-// new body hash differs from the prior — operator-visible churn
-// reduction for sources that don't carry a monotonic version.
-// Operators wanting "push every poll regardless of body" omit `match`
-// and set a single status-only `match.status`.
 package main
 
 import (
@@ -46,24 +24,21 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
 )
 
-// Watch is the in-memory state for one active HTTP publisher-
-// subscription. Sensor-internal vocabulary stays as "Watch."
 type Watch struct {
 	SubscriptionID string
 	InstanceID     string
 	URL            string
 	PollInterval   time.Duration
-	MatchStatus    []int  // @constraint: empty → any 2xx is a match
-	MatchJSONKey   string // @constraint: dotted path within response JSON; empty → no JSON match
-	MatchJSONVal   string // @constraint: expected value at that path (substring match); empty → presence-only
+	MatchStatus    []int
+	MatchJSONKey   string
+	MatchJSONVal   string
 	TargetNode     string
 	MessageType    string
 
 	LastPollAt time.Time
-	LastHash   string // @constraint: sha256 hex of last response body that matched
+	LastHash   string
 }
 
-// SensorService implements genv1.PublisherServer for HTTP polling.
 type SensorService struct {
 	genv1.UnimplementedPublisherServer
 	mu             sync.Mutex
@@ -73,23 +48,9 @@ type SensorService struct {
 	clock          func() time.Time
 	logger         logger
 	tickInterval   time.Duration
-	// state is the optional persistence layer. nil → in-memory mode.
 	state *stateDB
 }
 
-// AttachStateDB binds an optional persistence layer for subscriptions +
-// body-hash watermarks. Pass nil to run in pure in-memory mode.
-//
-// When non-nil, it also rebuilds s.watches from state.ListAll so a
-// restarted binary resumes the durable subscriptions with their
-// body-filter + body-hash watermark (the recovered state), rather than
-// waiting for rimsky to re-Subscribe. Rimsky's
-// `ResyncPublisherSubscriptions` runs only at control-api startup,
-// not on demand, so a sensor process restart against a still-running
-// rimsky would otherwise silently drop every watch end-to-end. The
-// rebuilt Watch keeps the persisted LastHash so the first post-restart
-// poll against an unchanged body does not re-emit; this is the durable-
-// watermark contract the STORY-sensor-http falsifier brief asserts.
 func (s *SensorService) AttachStateDB(state *stateDB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -129,7 +90,6 @@ type logger interface {
 	Error(msg string, args ...any)
 }
 
-// NewSensorService constructs the in-memory service.
 func NewSensorService(rimskyEndpoint string, log logger) *SensorService {
 	return &SensorService{
 		watches:        make(map[string]*Watch),
@@ -141,7 +101,6 @@ func NewSensorService(rimskyEndpoint string, log logger) *SensorService {
 	}
 }
 
-// Capabilities advertises the http kind.
 func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.PublisherCapabilities, error) {
 	return &genv1.PublisherCapabilities{
 		SupportedKinds: []*genv1.PublisherKindCapability{
@@ -174,11 +133,6 @@ func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv
 	}, nil
 }
 
-// Subscribe parses the resolved_config and registers the
-// publisher-subscription. Idempotent on publisher_subscription_id.
-// When a state DB is attached, looks up persisted state and pre-
-// populates `LastHash` so restart-replay does not re-emit on the first
-// poll with an unchanged body.
 func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
 	if req.GetKind() != "http" {
 		return nil, fmt.Errorf("sensor-http does not support kind %q", req.GetKind())
@@ -208,10 +162,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		}
 		interval = d
 	}
-	// @constraint: the runtime side rejects an empty message_type at
-	// publisher-subscription mount time, so by the time Subscribe is
-	// called here the value is non-empty by construction. Pass through
-	// verbatim.
 	messageType := req.GetMessageType()
 	w := &Watch{
 		SubscriptionID: req.GetPublisherSubscriptionId(),
@@ -224,10 +174,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		TargetNode:     req.GetTargetNode(),
 		MessageType:    messageType,
 	}
-	// @constraint: restart-replay — look up persisted state and pre-populate the
-	// body-hash watermark before publishing the Watch into the in-memory
-	// map. Without this, the first poll after a restart re-emits even
-	// when the body hasn't changed.
 	s.mu.Lock()
 	state := s.state
 	s.mu.Unlock()
@@ -242,8 +188,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
-		// @deliberate: idempotent Subscribe — the state-DB row is already present from
-		// the prior call, so we skip the UpsertSubscription below.
 		return &genv1.SubscribeResponse{}, nil
 	}
 	s.watches[w.SubscriptionID] = w
@@ -262,7 +206,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	return &genv1.SubscribeResponse{}, nil
 }
 
-// Unsubscribe removes the subscription. Idempotent.
 func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -279,7 +222,6 @@ func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeReq
 	return &genv1.UnsubscribeResponse{}, nil
 }
 
-// ListSubscriptions enumerates active publisher-subscriptions.
 func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (*genv1.ListSubscriptionsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -297,8 +239,6 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 	return &genv1.ListSubscriptionsResponse{Subscriptions: out}, nil
 }
 
-// Tick polls any subscription whose `last_poll_at + poll_interval <=
-// now`.
 func (s *SensorService) Tick(ctx context.Context) {
 	now := s.clock()
 	s.mu.Lock()
@@ -314,10 +254,6 @@ func (s *SensorService) Tick(ctx context.Context) {
 	}
 }
 
-// pollOne issues one HTTP GET, evaluates the match predicate, and
-// pushes a message envelope when the body hash differs from the prior.
-// Updates the watermark on every poll regardless of match outcome
-// (so transient mismatches don't repeatedly fire).
 func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	s.mu.Lock()
 	w.LastPollAt = now
@@ -375,17 +311,12 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		"status":      resp.StatusCode,
 		"body_hash":   hash,
 	}
-	// @deliberate: Best-effort include a decoded JSON body so substitution can read
-	// `{{trigger.message.payload.body.<path>}}`. Non-JSON bodies surface
-	// as a string.
 	var decoded any
 	if json.Unmarshal(body, &decoded) == nil {
 		obs["body"] = decoded
 	} else {
 		obs["body"] = string(body)
 	}
-	// @constraint: idempotency key = subscription_id + body hash. Re-emitting the
-	// same body is a no-op at the server.
 	idemKey := fmt.Sprintf("%s+%s", w.SubscriptionID, hash)
 	if err := s.postMessage(ctx, w, obs, idemKey); err != nil {
 		s.logger.Warn("sensor-http.message_post_failed",
@@ -393,8 +324,6 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	}
 }
 
-// statusMatch returns true when the response status falls within the
-// configured set. Empty set defaults to "any 2xx".
 func statusMatch(code int, allowed []int) bool {
 	if len(allowed) == 0 {
 		return code >= 200 && code < 300
@@ -407,9 +336,6 @@ func statusMatch(code int, allowed []int) bool {
 	return false
 }
 
-// jsonMatch returns true when the body at `path` contains the
-// configured substring (or any value when `value` is empty), or when
-// no path is configured.
 func jsonMatch(body []byte, path, value string) bool {
 	if path == "" {
 		return true
@@ -427,13 +353,11 @@ func jsonMatch(body []byte, path, value string) bool {
 	}
 	s, ok := got.(string)
 	if !ok {
-		// @deliberate: best-effort stringify of non-string primitives.
 		s = fmt.Sprintf("%v", got)
 	}
 	return strings.Contains(s, value)
 }
 
-// walkDottedPath resolves "a.b.c" against a JSON object tree.
 func walkDottedPath(doc any, path string) (any, bool) {
 	parts := strings.Split(path, ".")
 	cur := doc
@@ -451,24 +375,16 @@ func walkDottedPath(doc any, path string) (any, bool) {
 	return cur, true
 }
 
-// sha256Hex returns the hex-encoded SHA-256 of the body.
 func sha256Hex(b []byte) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
 
-// postMessage sends one message envelope to rimsky's generic messages
-// endpoint with sender_kind="publisher". Retry-with-backoff is
-// handled by `pkg:github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit`.
 func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[string]any, idempotencyKey string) error {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	// @constraint: `target_node` from the subscription registers
-	// routing on the rimsky side; the envelope wire body carries no
-	// `target` (the receipt handler has no `target` column to land it
-	// on — the `rimsky_messages.target` column was retired).
 	envelope := map[string]any{
 		"type":                      w.MessageType,
 		"payload":                   json.RawMessage(payloadBytes),
@@ -491,7 +407,6 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 	return res.Err
 }
 
-// Run starts the tick loop. Blocks until ctx is cancelled.
 func (s *SensorService) Run(ctx context.Context) {
 	t := time.NewTicker(s.tickInterval)
 	defer t.Stop()

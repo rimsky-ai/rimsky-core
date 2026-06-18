@@ -128,8 +128,6 @@ func createBreakpoint(t *testing.T, ctx context.Context, store persistence.Table
 	return id
 }
 
-// forceExpired pushes the breakpoint's expires_at into the past using the
-// driver's raw *sql.DB escape hatch.
 func forceExpired(t *testing.T, ctx context.Context, d persistence.Database, bpID shared.UUID) {
 	t.Helper()
 	db := sqlitepersist.DBFromDatabase(d)
@@ -543,12 +541,6 @@ func TestSQLiteBreakpointHits_AutoResumeStale(t *testing.T) {
 		b.OverflowPolicy = persistence.OverflowDropOldest
 		b.HitTTLSeconds = 1
 	}))
-	// @constraint: a long-TTL hit must NOT be auto-resumed before its
-	// TTL elapses. The SQL once compared datetime()'s space-separated
-	// output (`"YYYY-MM-DD HH:MM:SS"`) lexicographically against the
-	// 'T'-separated fixed-width `now` parameter; since ' ' < 'T', every
-	// same-day expiry read as already expired and sub-24h TTLs collapsed
-	// to zero — this hit would have been resumed immediately.
 	longTTLID := createBreakpoint(t, ctx, store, newBreakpoint(instanceID, func(b *persistence.BreakpointRow) {
 		b.OverflowPolicy = persistence.OverflowAutoResumeAfterTTL
 		b.HitTTLSeconds = 3600
@@ -701,10 +693,6 @@ func TestSQLiteBreakpointHits_UnresumedCount(t *testing.T) {
 	}
 }
 
-// TestSQLiteBreakpointHits_SweepOrphanedUnresumed mirrors the postgres
-// test of the same name — reaps unresumed hits older than the cutoff
-// except those whose parent breakpoint's overflow_policy is
-// `auto_resume_after_ttl` (owned by AutoResumeStale).
 func TestSQLiteBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
 	ctx := context.Background()
 	d := openSQLiteDriver(t)

@@ -14,11 +14,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestWriteSyntheticRimskyYAML_PathsCorrect verifies the synthetic
-// rimsky.yml round-trips with persistence.driver=sqlite, a sqlite path
-// rooted at the run dir, blob backend = filesystem, and a blob root
-// also rooted at the run dir.
-
 func TestWriteSyntheticRimskyYAML_PathsCorrect(t *testing.T) {
 	tmp := t.TempDir()
 	runDir, err := EnsureRunDir(tmp, "2026-06-13T10-00-00Z", "demo")
@@ -80,12 +75,6 @@ func TestWriteSyntheticRimskyYAML_MergedExecutors(t *testing.T) {
 	}
 }
 
-// TestWriteSyntheticRimskyYAML_ManifestExecutorsFoldedAsBase pins the
-// rule that the manifest's `executors:` block is read directly here
-// (not via a caller-supplied pre-merged map): a manifest with one
-// executor and no spawn overlay must produce a synthetic config with
-// that executor present. Caller forgets-to-merge cannot silently drop
-// the manifest's executors.
 func TestWriteSyntheticRimskyYAML_ManifestExecutorsFoldedAsBase(t *testing.T) {
 	tmp := t.TempDir()
 	runDir, err := EnsureRunDir(tmp, "2026-06-13T10-04-00Z", "demo")
@@ -114,9 +103,6 @@ func TestWriteSyntheticRimskyYAML_ManifestExecutorsFoldedAsBase(t *testing.T) {
 	}
 }
 
-// TestWriteSyntheticRimskyYAML_SpawnOverlayOverridesManifest pins the
-// priority order: a spawn overlay entry sharing a name with a manifest
-// entry replaces the manifest entry in the synthetic config.
 func TestWriteSyntheticRimskyYAML_SpawnOverlayOverridesManifest(t *testing.T) {
 	tmp := t.TempDir()
 	runDir, err := EnsureRunDir(tmp, "2026-06-13T10-05-00Z", "demo")
@@ -148,13 +134,6 @@ func TestWriteSyntheticRimskyYAML_SpawnOverlayOverridesManifest(t *testing.T) {
 	}
 }
 
-// TestWriteSyntheticRimskyYAML_ExecutorProtocolsRoundTrip pins that
-// an executor entry with `protocols:` set in the manifest is serialized
-// into the synthetic rimsky.yml under the same key and round-trips
-// through the rimsky.yml loader without losing the field. The schema
-// asymmetry between the manifest and rimsky.yml is exactly the kind of
-// silent drop yaml.v3 would do if ManifestExecutorEntry omitted the
-// Protocols field — this test fails fast on that regression.
 func TestWriteSyntheticRimskyYAML_ExecutorProtocolsRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	runDir, err := EnsureRunDir(tmp, "2026-06-13T10-06-00Z", "demo")
@@ -218,7 +197,6 @@ func TestWriteSyntheticRimskyYAML_ClaimProducersFromManifest(t *testing.T) {
 	}
 }
 
-// TestLoadSiblingBlocks_PublishersAndNamedLocksFromSibling pins the
 // @decision: services-source fold-through: when a sibling rimsky.yml
 // next to the manifest declares publishers + named_locks, the verb
 // loads them and the synthetic config carries both blocks verbatim.
@@ -279,9 +257,6 @@ named_locks:
 	}
 }
 
-// TestLoadSiblingBlocks_EmptyPathNoOp pins that an absent sibling path
-// returns (nil, nil) — the normal case (no sibling rimsky.yml exists
-// next to the manifest) must not error.
 func TestLoadSiblingBlocks_EmptyPathNoOp(t *testing.T) {
 	siblings, err := LoadSiblingBlocks("")
 	if err != nil {
@@ -292,16 +267,6 @@ func TestLoadSiblingBlocks_EmptyPathNoOp(t *testing.T) {
 	}
 }
 
-// TestWriteSyntheticSupervisorYAMLWithCallbackPort_PortRoundTrips
-// asserts that the WithCallbackPort splice succeeds in substituting the
-// callback bind port and that a YAML round-trip surfaces the supplied
-// value. The drift test for the baked default
-// (TestWriteSyntheticSupervisorYAML_MatchesBakedDefault) covers
-// WriteSyntheticSupervisorYAML; this test covers the splice variant the
-// production callsite uses. Without it, a future change to the baked
-// `  port: 9100\n` line shape would silently degrade the splice to a
-// no-op (strings.Replace returns the input unchanged on no-match) and
-// concurrent one-shot runs would collide on bind port 9100.
 func TestWriteSyntheticSupervisorYAMLWithCallbackPort_PortRoundTrips(t *testing.T) {
 	tmp := t.TempDir()
 	runDir, err := EnsureRunDir(tmp, "2026-06-13T10-07-00Z", "demo")

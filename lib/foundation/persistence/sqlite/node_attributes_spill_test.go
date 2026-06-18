@@ -17,20 +17,6 @@ import (
 	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
-// TestNodeAttributesSpillRoundtrip exercises D6/D7 wiring against the
-// SQLite driver + the in-memory BlobBackend, post-per-run keying:
-//   - small payload (below threshold) stored inline; value_handle is NULL.
-//   - large payload (above threshold) spilled; value_handle non-NULL,
-//     `data` reset to '{}', read transparently dereferences.
-//   - overwriting a spilled row inserts the prior handle into
-//     rimsky_blob_orphans.
-//   - downgrading from spilled to inline clears value_handle and queues
-//     the prior handle as an orphan.
-//   - MergeDelta against a spilled row materializes, merges, re-spills.
-//
-// Per-run keying means each Upsert needs a distinct `runID` if it
-// represents a distinct run, or the same `runID` to overwrite. Here we
-// exercise overwrite semantics on a single run.
 func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	t.Setenv(persistence.ProcessRoleEnv, "unified")
 	d := openSQLite(t)
@@ -38,7 +24,6 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	rawDB := sqlitedrv.DBFromDatabase(d)
 
 	mem := persistence.NewMemoryBackend()
-	// @constraint: spill threshold is 256 bytes; small payloads below stay inline, large above spill.
 	d.SetBlobBackend(mem, 256, time.Hour)
 
 	store := d.Tables()
@@ -88,7 +73,6 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 		t.Fatalf("expected new handle on overwrite; both = %q", firstHandle)
 	}
 
-	// @constraint: overwriting a spilled row enqueues the prior handle into rimsky_blob_orphans.
 	orphRows, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), 100)
 	if err != nil {
 		t.Fatalf("orphans.DueBefore: %v", err)
@@ -106,7 +90,6 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 		t.Fatalf("first handle %q not found in orphans (got %d rows)", firstHandle, len(orphRows))
 	}
 
-	// @constraint: downgrading a spilled row to inline clears value_handle and queues the prior handle as an orphan.
 	tiny := map[string]any{"k": "v"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return attrs.Upsert(ctx, runID, nodeID, tiny, tx)
@@ -130,9 +113,6 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	}
 }
 
-// TestNodeAttributesMergeDeltaSpill exercises the spill-aware MergeDelta
-// path: starting from a spilled row, MergeDelta materializes, merges,
-// and re-spills (or downgrades to inline).
 func TestNodeAttributesMergeDeltaSpill(t *testing.T) {
 	t.Setenv(persistence.ProcessRoleEnv, "unified")
 	d := openSQLite(t)
@@ -170,7 +150,6 @@ func TestNodeAttributesMergeDeltaSpill(t *testing.T) {
 	_ = verifySpill(t, rawDB, runID, mem.Name())
 }
 
-// verifyNoSpill asserts the row's value_handle is NULL.
 func verifyNoSpill(t *testing.T, rawDB *sql.DB, runID uuid.UUID) {
 	t.Helper()
 	h, _ := readSpillHandle(t, rawDB, runID)
@@ -179,8 +158,6 @@ func verifyNoSpill(t *testing.T, rawDB *sql.DB, runID uuid.UUID) {
 	}
 }
 
-// verifySpill asserts the row's value_handle is non-empty and its
-// backend matches. Returns the handle.
 func verifySpill(t *testing.T, rawDB *sql.DB, runID uuid.UUID, wantBackend string) string {
 	t.Helper()
 	h, b := readSpillHandle(t, rawDB, runID)
@@ -193,9 +170,6 @@ func verifySpill(t *testing.T, rawDB *sql.DB, runID uuid.UUID, wantBackend strin
 	return h
 }
 
-// seedFixtureNodeAndRun inserts the FK chain (template → instance →
-// frame → node → node_run) so a rimsky_node_attributes row (post per-run
-// keying) is FK-valid. Returns (nodeID, runID).
 func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	templateID := "sha256-" + uuid.NewString()
@@ -211,7 +185,6 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	if err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// @constraint: rimsky_instances and rimsky_run_scopes mutually FK each other (DEFERRABLE INITIALLY DEFERRED) so both must be seeded in the same transaction; rimsky_node_runs also requires a run_scope_id below.
 	scopeID := uuid.New().String()
 	stx, err := rawDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -240,7 +213,6 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	if err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	// @constraint: rimsky_frames.triggering_message_id is a NOT NULL FK to rimsky_messages(id); seed the triggering message before the frame insert below.
 	msgID := uuid.New().String()
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
@@ -249,7 +221,6 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	); err != nil {
 		t.Fatalf("seed message: %v", err)
 	}
-	// @constraint: rimsky_node_runs.frame_id FK requires a frame row; seed a running frame so the run insert below succeeds.
 	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, triggering_message_id, state,
@@ -261,7 +232,6 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	if err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}
-	// @constraint: rimsky_node_attributes.node_run_id FK requires a node-run row; seed a pending run so per-run-keyed attribute writes succeed.
 	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
@@ -274,10 +244,6 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	return nodeID, runID
 }
 
-// readSpillHandle is a SQL escape hatch — the public NodeAttributeTable
-// API does not surface the value_handle/value_handle_backend columns
-// directly (the read path dereferences them transparently). The test
-// peeks at the row via the test-only DBFromDatabase accessor.
 func readSpillHandle(t *testing.T, rawDB *sql.DB, runID uuid.UUID) (string, string) {
 	t.Helper()
 	row := rawDB.QueryRowContext(context.Background(),
@@ -302,7 +268,6 @@ func readSpillHandle(t *testing.T, rawDB *sql.DB, runID uuid.UUID) (string, stri
 	return hs, bs
 }
 
-// readData returns the materialized data map for runID.
 func readData(t *testing.T, store persistence.Tables, runID uuid.UUID) map[string]any {
 	t.Helper()
 	var out *persistence.NodeAttributesRow

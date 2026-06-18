@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// app_test.go — end-to-end HTTP tests for the control API. Each test
-// spins up an httptest.Server wrapping the real chi router, backed by
-// a throwaway Postgres container via pgtest.OpenDriver.
-//
-// Coverage targets the stores redesign template shape (stores with
-// selector + intent + alias, locks-by-name, attributes, holds:) plus
-// the renamed admin/claim routes.
 package controlapi
 
 import (
@@ -39,19 +32,9 @@ type harness struct {
 	driver  persistence.Database
 	persist persistence.Tables
 	stores  *locks.Registry
-	// logger is a CapturingLogger so tests can assert presence/absence
-	// of structured log records (e.g. the
-	// `instance.attribute_overrides_*` audit lines emitted on the
-	// instance-create path). Tests that don't care about log records
-	// can ignore this field.
 	logger *shared.CapturingLogger
 }
 
-// newHarness boots Postgres, wires the app, and returns a harness +
-// teardown. Builds a *locks.Registry with two unit-test fakes
-// ("content" and "topics-ring") satisfying store.Store; the wire is
-// not exercised here (the unit tests target template validation, route
-// wiring, and persistence-backed paths — not the store protocol).
 func newHarness(t *testing.T) (*harness, func()) {
 	t.Helper()
 	ctx := context.Background()
@@ -80,15 +63,6 @@ func newHarness(t *testing.T) (*harness, func()) {
 				"topics-ring:concurrent": {Limit: 5},
 			},
 		},
-		// @constraint: wire the executor names referenced by validTemplateBody and
-		// templateWithStoresAndLocks so the validator's
-		// ExecutorDeclared hook actually runs (otherwise the hook is
-		// silently nil and missing-executor templates pass deploy).
-		// `unused-exec` is declared but intentionally not referenced by
-		// any test template — used by
-		// TestInstanceCreate_AttributeOverrides_RejectsExecutorNotReferencedByTemplate
-		// to drive the validator's "declared-but-unused executor"
-		// rejection branch end-to-end.
 		Executors: map[string]ExecutorEntry{
 			"worker":      {Transport: "grpc", Endpoint: "localhost:0"},
 			"unused-exec": {Transport: "grpc", Endpoint: "localhost:0"},
@@ -125,16 +99,11 @@ func (h *harness) httpJSON(t *testing.T, method, path string, body any) (int, ma
 	return resp.StatusCode, out
 }
 
-// httpResponse pairs the parsed body + status for tests that need
-// header-driven dispatch (e.g. Idempotency-Key).
 type httpResponse struct {
 	status int
 	body   map[string]any
 }
 
-// httpJSONWithHeaders is httpJSON plus extra request headers. Used by
-// the idempotency-key tests so the universal dedup path actually
-// fires.
 func (h *harness) httpJSONWithHeaders(t *testing.T, method, path string, body any, headers map[string]string) httpResponse {
 	t.Helper()
 	var reqBody io.Reader
@@ -161,15 +130,6 @@ func (h *harness) httpJSONWithHeaders(t *testing.T, method, path string, body an
 	return httpResponse{status: resp.StatusCode, body: out}
 }
 
-// validTemplateBody builds a minimal valid template request matching
-// the wrapped POST /templates body shape (`{spec: {...}}`). Two
-// executor-backed nodes; no stores or locks. Declares a
-// `system/invalidate` message type in the registry so message-emit
-// tests that POST `type: "system/invalidate"` pass the Pass 5
-// receipt-time registry gate. The slash-bearing type-path is required
-// by validateMessages so message-types cannot collide with node-types
-// (a real node-type is identifier-shaped; a message-type is slash-
-// bearing).
 func validTemplateBody(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
@@ -186,17 +146,10 @@ func validTemplateBody(name string) map[string]any {
 	}
 }
 
-// specOf returns the inner `spec` map of a wrapped POST /templates body.
-// Lets tests that need to mutate the spec keep the wrapped body shape.
 func specOf(body map[string]any) map[string]any {
 	return body["spec"].(map[string]any)
 }
 
-// templateWithStoresAndLocks returns a wrapped template body exercising
-// the new stores redesign fields: a node that takes a counting lock
-// and holds a pick-policy claim against the postgres store, and a
-// downstream node that reads from the filesystem store and resolves
-// the held claim.
 func templateWithStoresAndLocks(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
@@ -232,11 +185,6 @@ func templateWithStoresAndLocks(name string) map[string]any {
 					"stores": []map[string]any{
 						{"name": "content", "selector": "items/x", "intent": "r"},
 					},
-					// @constraint: post-2026-06-02 `inherits:` deletion (spec
-					// 2026-06-02-rimsky-core-remediation): co-holdership is
-					// declared via `holds:`. The review node co-holds the
-					// upstream claim-topic node's `topics-ring` claim. Outer
-					// key is the local alias; `from` names the upstream node.
 					"holds": map[string]any{
 						"topics-ring": map[string]any{"from": "claim-topic"},
 					},
@@ -314,12 +262,6 @@ func TestTemplateDeploy_UnknownStore_400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status, out)
 }
 
-// TestTemplateDeploy_ClaimResolutions_Rejected asserts that a template
-// JSON body carrying a `claim_resolutions:` block (the v3 pre-cleanup
-// shape, now removed per the 2026-04-30 stores cleanup) fails deploy
-// with an unknown-field error rather than being silently accepted with
-// the field dropped on the floor. The handler's JSON decoder uses
-// DisallowUnknownFields() to surface this.
 func TestTemplateDeploy_ClaimResolutions_Rejected(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -349,12 +291,6 @@ func TestTemplateDeploy_DependencyCycle_400(t *testing.T) {
 		"spec": map[string]any{
 			"name":    "cycle-" + uuid.NewString(),
 			"version": "v1",
-			// @constraint: post-2026-05-14: the legacy `dependencies:` field retired;
-			// the JSON decoder (`DisallowUnknownFields`) rejects bodies
-			// carrying it. Subscription cycles between two nodes are no
-			// longer rejected at deploy time — the wait-set semantics
-			// turn them into a defer-loop across frames — so this test
-			// pins the parse-time rejection of the retired field.
 			"nodes": []map[string]any{
 				{"type": "a", "executor": "worker", "dependencies": []string{"b"}},
 				{"type": "b", "executor": "worker", "dependencies": []string{"a"}},
@@ -373,8 +309,6 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	tplBody := validTemplateBody("inst-lc-" + uuid.NewString())
 	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	// @constraint: transition register → deployed; instance creation requires
-	// state='deployed' per spec §2.2.
 	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
@@ -403,9 +337,6 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	nodes, _ := out["nodes"].([]any)
 	require.Len(t, nodes, 2)
 
-	// @constraint: drive the instance terminal — DELETE refuses to fire the
-	// OnInstanceTerminated fan-out against a still-active instance
-	// (spec §2.4).
 	pgtest.ExecForTest(context.Background(), t, h.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
 
@@ -435,9 +366,6 @@ func TestInstanceCreate_IsIdle(t *testing.T) {
 	instID := out["instance_id"].(string)
 	require.NotEmpty(t, instID)
 
-	// @constraint: post-spec instance creation is idle — no frame is
-	// enqueued, no synthetic message lands in the ledger, no node-run
-	// row exists until a sender posts a message.
 	// @story: instance-create-is-idle
 	var frameCount int
 	pgtest.QueryRowForTest(ctx, t, h.driver,
@@ -474,8 +402,6 @@ func TestInstanceDuplicateConsumerKey_Idempotent(t *testing.T) {
 	firstID := firstOut["instance_id"].(string)
 	require.NotEmpty(t, firstID)
 
-	// @constraint: per spec §2.2 idempotent re-create: a second POST with the same
-	// (template_hash, instance_key) returns the existing row at 200 OK.
 	status, secondOut := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": ck,
@@ -496,14 +422,7 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	status, _ := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusConflict, status)
 
-	// @constraint: post-stage-3 state lives on rimsky_node_runs.
-	// Post-spec instance creation is idle, so we seed both a frame and
-	// a failed node_run row directly to put the node in the failed
-	// state for the reset gate test.
 	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1`, nodeRow.ID)
-	// @constraint: post-spec the instance has no frame at create-time,
-	// so we synthesize a triggering message + frame to satisfy the
-	// node_run FK on frame_id.
 	var mainScopeID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, h.driver, `
         SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1
@@ -537,8 +456,6 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFailed, loaded.State)
 	require.Nil(t, loaded.FrameID)
 
-	// @constraint: post-spec the reset endpoint is a pure retry-budget
-	// clear — it neither enqueues an envelope nor opens a frame.
 	// @story: node-admin
 	// @decision: node-reset-as-pure-retry-budget-clear
 	var resetFrameCount int
@@ -573,10 +490,6 @@ func TestEventsList(t *testing.T) {
 	inst := seedInstance(t, h, "ev-"+uuid.NewString())
 	nodeRow := firstNode(t, h, inst)
 
-	// @constraint: append an audit event directly so the events list has at least one
-	// row for the node — the operator-invalidate route retired with the
-	// 2026-06-14 message-schema-layer reshape, so this test no longer
-	// drives the audit event through that endpoint.
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.persist.Events().Append(ctx, persistence.EventAppendInput{
 			InstanceID: &inst.ID,
@@ -608,8 +521,6 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-// TestClaimHoldersRoute_EmptyList verifies the new
-// /lock-holders/{id}/claim-holders route is wired through NewApp.
 func TestClaimHoldersRoute_EmptyList(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -620,10 +531,6 @@ func TestClaimHoldersRoute_EmptyList(t *testing.T) {
 	holders, _ := out["holders"].([]any)
 	require.Empty(t, holders)
 }
-
-// seedInstance retired by the 2026-05-15 plan B10 /
-// D7 / E16 schedule-retirement cascade. The /admin/scheduled-nodes/.../
-// force-fire endpoint is gone.)
 
 func seedInstance(t *testing.T, h *harness, tplName string) persistence.InstanceRow {
 	t.Helper()

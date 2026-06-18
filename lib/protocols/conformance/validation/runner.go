@@ -2,14 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Package validation is the importable form of the Validation mix-in
-// conformance suite. The `rimsky conformance validation` subcommand is a
-// thin wrapper that dials the endpoint and invokes Run; tests can
-// invoke Run directly against an in-process or testcontainers-hosted
-// service that advertises the validation protocol.
-//
-// The roles supported by the suite mirror the proto's role oneof:
-// executor, claim_producer, lifecycle_subscriber, sensor.
 
 package validation
 
@@ -21,15 +13,11 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// CheckResult is one row of conformance output. Err nil on pass.
 type CheckResult struct {
 	Name string
 	Err  error
 }
 
-// Run drives the conformance suite for the given role. Each role has
-// its own happy-path and malformed-input probes; the dispatcher
-// routes on the role string.
 func Run(ctx context.Context, c genv1.ValidationClient, role string) []CheckResult {
 	results := make([]CheckResult, 0, 4)
 	switch role {
@@ -56,8 +44,6 @@ func Run(ctx context.Context, c genv1.ValidationClient, role string) []CheckResu
 	return results
 }
 
-// checkExecutorHappy fires Validate against a well-shaped executor
-// context. Pins shape only.
 func checkExecutorHappy(ctx context.Context, c genv1.ValidationClient) CheckResult {
 	schema, _ := json.Marshal(map[string]any{
 		"type": "object",
@@ -86,9 +72,6 @@ func checkExecutorHappy(ctx context.Context, c genv1.ValidationClient) CheckResu
 	return CheckResult{Name: "ExecutorHappy"}
 }
 
-// checkExecutorMalformedAttributesSchema fires Validate with malformed
-// JSON in the attributes_schema and asserts `valid` is false with at
-// least one error finding.
 func checkExecutorMalformedAttributesSchema(ctx context.Context, c genv1.ValidationClient) CheckResult {
 	req := &genv1.ValidateRequest{
 		Role: "executor",
@@ -124,9 +107,6 @@ func checkExecutorMalformedAttributesSchema(ctx context.Context, c genv1.Validat
 	return CheckResult{Name: "ExecutorMalformedAttributesSchema"}
 }
 
-// checkExecutorMissingContext fires Validate with role="executor" but
-// no executor context. The check asserts the validator surfaces an
-// error rather than crashing.
 func checkExecutorMissingContext(ctx context.Context, c genv1.ValidationClient) CheckResult {
 	req := &genv1.ValidateRequest{Role: "executor"}
 	resp, err := c.Validate(ctx, req)
@@ -142,14 +122,10 @@ func checkExecutorMissingContext(ctx context.Context, c genv1.ValidationClient) 
 	return CheckResult{Name: "ExecutorMissingContext"}
 }
 
-// checkUnknownRole fires Validate with an unknown role string. The
-// validator may surface an error finding OR return a gRPC error; the
-// check tolerates either path. It must not return Valid=true.
 func checkUnknownRole(ctx context.Context, c genv1.ValidationClient) CheckResult {
 	req := &genv1.ValidateRequest{Role: "unknown-role-conformance"}
 	resp, err := c.Validate(ctx, req)
 	if err != nil {
-		// @constraint: gRPC error is an acceptable rejection path.
 		return CheckResult{Name: "UnknownRole"}
 	}
 	if resp.GetValid() {
@@ -161,8 +137,6 @@ func checkUnknownRole(ctx context.Context, c genv1.ValidationClient) CheckResult
 	return CheckResult{Name: "UnknownRole"}
 }
 
-// checkClaimProducerHappy fires Validate against a well-shaped
-// claim_producer context. Pins RPC shape.
 func checkClaimProducerHappy(ctx context.Context, c genv1.ValidationClient) CheckResult {
 	req := &genv1.ValidateRequest{
 		Role: "claim_producer",
@@ -183,8 +157,6 @@ func checkClaimProducerHappy(ctx context.Context, c genv1.ValidationClient) Chec
 	return CheckResult{Name: "ClaimProducerHappy"}
 }
 
-// checkLifecycleSubscriberHappy fires Validate against a well-shaped
-// lifecycle_subscriber context.
 func checkLifecycleSubscriberHappy(ctx context.Context, c genv1.ValidationClient) CheckResult {
 	req := &genv1.ValidateRequest{
 		Role: "lifecycle_subscriber",
@@ -199,8 +171,6 @@ func checkLifecycleSubscriberHappy(ctx context.Context, c genv1.ValidationClient
 	return CheckResult{Name: "LifecycleSubscriberHappy"}
 }
 
-// checkSensorHappy fires Validate against a well-shaped sensor
-// context.
 func checkSensorHappy(ctx context.Context, c genv1.ValidationClient) CheckResult {
 	req := &genv1.ValidateRequest{
 		Role: "sensor",

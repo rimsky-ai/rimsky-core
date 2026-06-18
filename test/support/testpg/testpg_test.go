@@ -11,10 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TestStartFreshPostgresDSN_BasicConnect confirms the helper returns a
-// usable DSN — a fresh connection pool opens and a trivial query
-// succeeds. No migrations are applied: the test exercises only the
-// vanilla Postgres surface that downstream service authors get.
 func TestStartFreshPostgresDSN_BasicConnect(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

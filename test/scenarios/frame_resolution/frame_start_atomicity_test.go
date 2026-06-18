@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies blessed invariant 18 (spec §18): "Frame-start atomicity —
-// queued→running transition AND source-node state='stale', frame_id=$frame_id
-// writes happen in one transaction."
-//
-// Mechanism: insert a queued frame; race two concurrent frame.RunTick
-// goroutines. Exactly one CAS wins; the other rolls back. After the
-// dust settles, the running frame's source nodes show state='stale'
-// (or have already cascaded onward) with the frame_id set, atomically.
 package frame_resolution
 
 import (
@@ -40,20 +32,10 @@ func TestFrameStartAtomicity(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// @deliberate: Reset to a clean queued frame state for full control. Post-
-	// stage-3 cutover: state lives on rimsky_node_runs; clearing the
-	// in-flight run rows + the node-row frame_id is the equivalent
-	// reset.
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
-	// @constraint: rimsky_frames.triggering_message_id is NOT NULL;
-	// seed a typed envelope first. The frame-engine expects stale
-	// runs already present at frame-enqueue time (the emitter /
-	// instance-factory inserts them); seed a stale run row directly
-	// here so the engine has a node to track and the frame does not
-	// race straight through queued → running → completed.
 	messageID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_messages
 	    (id, instance_id, type, sender, sender_kind)
@@ -74,7 +56,6 @@ func TestFrameStartAtomicity(t *testing.T) {
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`,
 		frameID, uuid.UUID(worker.ID))
 
-	// @deliberate: Race two RunTicks.
 	var wg sync.WaitGroup
 	const N = 4
 	wg.Add(N)
@@ -86,12 +67,9 @@ func TestFrameStartAtomicity(t *testing.T) {
 	}
 	wg.Wait()
 
-	// @deliberate: Exactly one frame should have advanced to running (per uq_rimsky_frames_running).
 	require.Equal(t, 1, countFramesByState(t, h, iid, "running"),
 		"exactly one frame should be running after the race")
 
-	// @deliberate: Atomic visibility: running row has started_at set, AND the source node
-	// has state='stale' (or has progressed onward via supervisor) with the matching frame_id.
 	var state string
 	var startedAt *time.Time
 	h.QueryRowSQL(
@@ -100,7 +78,6 @@ func TestFrameStartAtomicity(t *testing.T) {
 	require.Equal(t, "running", state)
 	require.NotNil(t, startedAt, "running frame must have started_at set atomically")
 
-	// @deliberate: Post-stage-3 cutover: state comes from the in-flight run row.
 	var nodeState string
 	var nodeFrameID *uuid.UUID
 	h.QueryRowSQL(

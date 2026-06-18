@@ -18,7 +18,6 @@ import (
 	sqlitepersist "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 
-	// @deliberate: redundant-looking blank import — pgtest already pulls in the postgres driver, but importing it here keeps this file's intent (driving both drivers from one place) explicit.
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 )
 
@@ -47,26 +46,18 @@ func TestConformanceSQLite(t *testing.T) {
 	}, sqliteRawExec, sqliteRawQuery)
 }
 
-// postgresRawExec runs raw SQL against the postgres driver's pool via
-// the pgtest-provided ExecForTest escape hatch (which keeps this test
-// file outside the pgx-isolation depguard rule). Translates `?`
-// placeholders to `$N` so the same SQL works against both drivers in
-// the conformance suite.
 func postgresRawExec(t *testing.T, d persistence.Database, sql string, args ...any) {
 	t.Helper()
 	pgSQL := translatePlaceholders(sql)
 	pgtest.ExecForTest(context.Background(), t, d, pgSQL, args...)
 }
 
-// postgresRawQuery is the read-side companion to postgresRawExec.
 func postgresRawQuery(t *testing.T, d persistence.Database, sql string, args ...any) []RawQueryRow {
 	t.Helper()
 	pgSQL := translatePlaceholders(sql)
 	return pgtest.QueryRowsForTest(context.Background(), t, d, pgSQL, args...)
 }
 
-// sqliteRawExec runs raw SQL against the sqlite driver's *sql.DB. The
-// `?` placeholders pass through verbatim.
 func sqliteRawExec(t *testing.T, d persistence.Database, sql string, args ...any) {
 	t.Helper()
 	db := sqlitepersist.DBFromDatabase(d)
@@ -75,9 +66,6 @@ func sqliteRawExec(t *testing.T, d persistence.Database, sql string, args ...any
 	}
 }
 
-// sqliteRawQuery is the read-side companion to sqliteRawExec. Returns
-// one map per row keyed by column name. Driver columns scan as
-// []byte / string / int64 / nil per modernc.org/sqlite's defaults.
 func sqliteRawQuery(t *testing.T, d persistence.Database, sql string, args ...any) []RawQueryRow {
 	t.Helper()
 	db := sqlitepersist.DBFromDatabase(d)
@@ -112,10 +100,6 @@ func sqliteRawQuery(t *testing.T, d persistence.Database, sql string, args ...an
 	return out
 }
 
-// translatePlaceholders rewrites `?` placeholders into `$1, $2, ...`
-// for postgres. Naïve scan — does not honor `?` inside string
-// literals, which is fine for the conformance test SQL (no `?`
-// outside placeholders).
 func translatePlaceholders(sql string) string {
 	var b strings.Builder
 	n := 0

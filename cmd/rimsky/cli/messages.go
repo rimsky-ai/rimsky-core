@@ -2,13 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// messages.go — `rimsky messages tail|show` (plan G3).
-//
-// `tail` polls GET /instances/{id}/messages with a watermark on
-// `received_at`; `show <id>` fetches one message via GET /messages/{id}.
-// Both honour the standard --endpoint / --format flags.
-//
-//	@concept: message
+// @concept: message
 package cli
 
 import (
@@ -20,13 +14,6 @@ import (
 	"time"
 )
 
-// RunMessagesTail implements `messages tail`.
-//
-// Usage:
-//
-//	rimsky messages tail --instance <id> [--type ping/recheck] \
-//	    [--sender-kind operator] \
-//	    [--follow] [--poll-interval 1s]
 func RunMessagesTail(ctx context.Context, args []string) int {
 	var (
 		instance, msgType, senderKind string
@@ -63,14 +50,12 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	// @deliberate: client-side watermark on `received_at` re-emits only newer
-	// rows; avoids relying on the server's empty-page NextCursor for follow mode.
 	var lastSeen time.Time
 	for {
 		page, err := c.ListInstanceMessages(signalCtx, id, ListMessagesQuery{
 			Type:           msgType,
 			SenderKind:     senderKind,
-			DeliveredAfter: "", // @deliberate: empty — local `received_at` watermark gates re-emit.
+			DeliveredAfter: "",
 			Limit:          100,
 		})
 		if err != nil {
@@ -106,7 +91,6 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 	}
 }
 
-// RunMessagesShow implements `messages show <id>`.
 func RunMessagesShow(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("messages show", args, nil)
 	if code != 0 {

@@ -2,21 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Task 40 — frame_timeout_progressing_loop.
-//
-// Per spec §7, frame_timeout_ms now measures "no progress in window."
-// A progressing self-invalidate loop where each iteration advances the
-// frame's last_progress_at must NOT trip the soft-warning observer,
-// even if total runtime exceeds the timeout window.
-//
-// Mechanism: seed a running frame with the minimum-allowed timeout
-// (60s, the schema floor) but with last_progress_at refreshed each
-// iteration. Then refresh last_progress_at (as the supervisor's
-// persistence write path does on every node-state transition) and
-// confirm the observer does not fire. Finally, stop refreshing and
-// confirm the observer does fire — proving the test apparatus
-// actually exercises the predicate. The frame state stays running
-// throughout: the observer is purely advisory.
 package scenarios
 
 import (
@@ -47,16 +32,10 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// @deliberate: Drop any auto-created frames so we have full control. Post-
-	// stage-3 cutover: state lives on rimsky_node_runs.
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
-	// @deliberate: Seed a running frame with timeout = 60000ms (schema floor). The
-	// node is stale within the frame; no claimed dispatches. The
-	// rimsky_frames.triggering_message_id NOT NULL FK requires a typed
-	// envelope to exist first so the frame's FK resolves.
 	const timeoutMs = 60000
 	messageID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_messages
@@ -78,9 +57,6 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2, $3)
 	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
 
-	// @deliberate: Drive 5 progress refreshes simulating a self-invalidate loop. Each
-	// iteration sets last_progress_at to NOW() — modeling the supervisor's
-	// node-state-transition write path.
 	var progressBuf bytes.Buffer
 	progressLogger := slog.New(slog.NewTextHandler(&progressBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	for i := 0; i < 5; i++ {
@@ -96,10 +72,6 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 		"progressing frame must NOT trip the stuck-frame warning; got logger output: %q",
 		progressBuf.String())
 
-	// @deliberate: Now stop refreshing — back-date last_progress_at past the timeout
-	// window — and confirm the observer now fires. Sanity check that the
-	// test apparatus actually exercises the predicate. The frame state
-	// stays running because the observer is non-destructive.
 	var stuckBuf bytes.Buffer
 	stuckLogger := slog.New(slog.NewTextHandler(&stuckBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	h.ExecSQL(`UPDATE rimsky_frames SET last_progress_at = NOW() - interval '5 minutes' WHERE frame_id = $1`, frameID)

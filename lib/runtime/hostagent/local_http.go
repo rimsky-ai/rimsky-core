@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// local_http.go — the agent's local HTTP listener. Spawned children post
-// their rimsky-side HTTP traffic (async callbacks, attribute writebacks,
-// publisher message emits) to this listener because the proxy rewrote those
-// URLs onto the agent's local_callback_base_url. The catch-all handler wraps
-// each request as a LocalHttpForward, tunnels it through the live stream, and
-// awaits the matching LocalHttpResponse (keyed by a fresh forward_id) before
-// writing the proxied response back to the child.
-//
 // @concept: host-agent
 package hostagent
 
@@ -23,13 +15,8 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// localForwardTimeout bounds how long the handler waits for a
-// LocalHttpResponse before returning 504 to the spawned child.
 const localForwardTimeout = 30 * time.Second
 
-// localForwardHandler returns the catch-all HTTP handler. currentAgent
-// resolves the live connection's agent (nil when no stream is up — the agent
-// reconnects with backoff, so a callback that races a reconnect gets 503).
 func localForwardHandler(currentAgent func() *agent) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a := currentAgent()
@@ -41,8 +28,6 @@ func localForwardHandler(currentAgent func() *agent) http.Handler {
 	})
 }
 
-// forwardHTTP wraps one inbound request as a LocalHttpForward, tunnels it,
-// and writes the awaited LocalHttpResponse back to the spawned child.
 func (a *agent) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -60,8 +45,6 @@ func (a *agent) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 	respCh := a.registerForward(forwardID)
 	defer a.clearForward(forwardID)
 
-	// @constraint: proxy un-rewrites the URL against the originating spawn's
-	// recorded callback, so the full URL the child saw is forwarded verbatim.
 	url := "http://" + r.Host + r.URL.RequestURI()
 	if !a.send(&genv1.ClientFrame{Body: &genv1.ClientFrame_HttpForward{HttpForward: &genv1.LocalHttpForward{
 		ForwardId: forwardID,
@@ -94,7 +77,6 @@ func (a *agent) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// registerForward creates the pending channel for a forward_id.
 func (a *agent) registerForward(forwardID string) chan *genv1.LocalHttpResponse {
 	ch := make(chan *genv1.LocalHttpResponse, 1)
 	a.forwardMu.Lock()
@@ -103,7 +85,6 @@ func (a *agent) registerForward(forwardID string) chan *genv1.LocalHttpResponse 
 	return ch
 }
 
-// clearForward removes and closes the pending channel for a forward_id.
 func (a *agent) clearForward(forwardID string) {
 	a.forwardMu.Lock()
 	if ch, ok := a.pendingForwards[forwardID]; ok {
@@ -113,14 +94,10 @@ func (a *agent) clearForward(forwardID string) {
 	a.forwardMu.Unlock()
 }
 
-// deliverHTTPResponse routes an inbound LocalHttpResponse to its waiter.
 func (a *agent) deliverHTTPResponse(resp *genv1.LocalHttpResponse) {
 	a.forwardMu.Lock()
 	ch, ok := a.pendingForwards[resp.GetForwardId()]
 	a.forwardMu.Unlock()
-	// @deliberate: drop late or unknown forward_id — the waiter has
-	// already torn down (timeout, cancel) and there is nothing to
-	// route to; the response is discarded silently.
 	if !ok {
 		return
 	}

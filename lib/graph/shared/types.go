@@ -10,12 +10,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// Severity / BackoffKind / JitterKind are aliased from foundation/spec
-// because they appear on persisted row types (policy-action backoff /
-// jitter in TemplateSpec.Nodes[].ErrorTypes; the Severity enum is also
-// re-used by service-side observability events). The canonical home is
-// foundation/spec; this package re-exports for graph-layer call sites.
-
 type Severity = spec.Severity
 
 const (
@@ -37,10 +31,6 @@ const (
 	JitterPlusMinus = spec.JitterPlusMinus
 )
 
-// AccessKind / MessageType / RenderResourcePath are graph-layer only —
-// they do not appear on persisted rows and have no foundation/spec
-// counterpart.
-
 type AccessKind string
 
 const (
@@ -57,7 +47,6 @@ const (
 	MessageRecalculate MessageType = "recalculate"
 )
 
-// RenderResourcePath renders segments as "a:b:c" for display.
 func RenderResourcePath(segs []string) string {
 	return strings.Join(segs, ":")
 }

@@ -13,7 +13,6 @@ import (
 	"os"
 )
 
-// RunAuthRotate implements `rimsky auth rotate <name-or-id>`.
 func RunAuthRotate(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth rotate", flag.ContinueOnError)
 	var (

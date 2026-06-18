@@ -2,49 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// End-to-end proof that the control-api SERVER itself guards the reserved
-// `compose:` tag / instance_key prefix against any foreign client, while
-// compose-originated writes still succeed — against the REAL assembled
-// product.
-//
-// S-control-api-mcp-compose-prefix-server-guard: as an operator, when any
-// client (not just the bundled CLI) tries to create a template tag or
-// instance whose tag/instance_key uses the reserved `compose:` prefix, the
-// control-api server itself rejects it, so the compose-managed namespace
-// stays disjoint from manually-authored artifacts no matter which client
-// made the call.
-//
-// Unlike a handler-altitude unit test, this drives the REAL control-api
-// handler inside the running rimsky-all-in-one image over real HTTP (a raw
-// POST with no CLI in the loop — the precise "any client" the story names),
-// so the guard proven here is the shipped server-side reservation in
-// `handleCreateTag` / `handleCreateInstance` reached through the chi router,
-// the auth middleware chain, and the baked SQLite backend. The control-api,
-// scheduler, and supervisor are the real value-delivering components; the
-// in-tree stub executor stands in for "whatever executor your deployment
-// provides" so the manifest's worker node can be claimed/dispatched, but the
-// thing under test — the reserved-prefix guard — is the real, shipped
-// control-api code path.
-//
-// The story's three observable claims are each asserted at the wire:
-//
-//	(1) A raw HTTP POST /tags with a `compose:`-prefixed tag and NO
-//	    compose-origin marker returns 400 with a reserved-prefix diagnostic,
-//	    AND leaves no trace: a subsequent GET /tags omits the tag.
-//	(2) A raw HTTP POST /instances supplying a `compose:`-prefixed
-//	    instance_key with no compose-origin marker returns 400 with the same
-//	    diagnostic, AND the instance is not created: GET /instances/{key}
-//	    returns 404.
-//	(3) Driving the SAME class of writes through the real compose engine
-//	    (compose.RunComposeUp, which stamps the trusted compose-origin
-//	    marker) SUCCEEDS: the compose-prefixed tag resolves to a deployed
-//	    template and the compose-prefixed instance exists. So the guard
-//	    DISCRIMINATES compose-originated writes from foreign ones — it does
-//	    not block the prefix unconditionally.
-//
-// If the guard ever regresses (a foreign client's `compose:` write silently
-// accepted, or a legitimate compose-origin write blocked), this test fails on
-// the observable HTTP status / persisted state, not a Docker error.
 package scenarios
 
 import (
@@ -60,33 +17,14 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// guardProject is the compose project the success leg reconciles under; the
-// engine namespaces every tag / instance_key it manages as
-// `compose:<project>:<...>`, so the prefix below is what the server guard
-// admits ONLY for compose-origin writes.
 const guardProject = "project-alpha"
 
-// guardPrefix is the reserved namespace the compose engine stamps on the
-// resources it manages for guardProject. The raw (foreign) POSTs below use
-// exactly this shape and MUST be rejected; the compose-origin writes using
-// the same shape MUST succeed.
 const guardPrefix = "compose:" + guardProject + ":"
 
-// TestControlAPIComposePrefixGuard_E2E proves the server-side reserved-prefix
-// guard end to end against the live control-api: a foreign (no-CLI, no
-// compose-origin marker) raw POST of a `compose:`-prefixed tag or
-// instance_key is rejected 400 and persists nothing, while the SAME writes
-// driven through the real compose engine (which stamps the compose-origin
-// marker) succeed — proving the guard discriminates on origin, not on the
-// bare prefix.
 func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// @constraint: stub executor must be reachable on the shared network before
-	// rimsky/all starts — the control-api fires a Capabilities handshake against
-	// declared executors at startup. Network first, then the executor peer, then
-	// rimsky on the baked SQLite default.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
 
@@ -96,11 +34,6 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// @deliberate: a real registered+deployed template gives the foreign POST
-	// /tags a valid `template` to name. The reserved-prefix guard sits AHEAD of
-	// the template lookup, so the rejection does not depend on the template —
-	// but using a real hash keeps the request well-formed in every other
-	// respect, isolating the prefix guard as the sole cause of the 400.
 	foreignTemplateHash := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":    "compose-prefix-guard-foreign",
@@ -123,7 +56,6 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
 		t.Fatalf("raw POST /tags 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
 	}
-	// @constraint: rejected create must have left no row — GET /tags omits it.
 	if tagListed(t, ep, foreignTag) {
 		t.Fatalf("after a rejected foreign POST /tags, GET /tags still lists %q — the rejected create must persist nothing", foreignTag)
 	}
@@ -141,31 +73,18 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
 		t.Fatalf("raw POST /instances 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
 	}
-	// @constraint: rejected create must have left no instance — GET /instances/{key} returns 404.
 	if getStatus := instanceGetStatus(t, ep, foreignInstanceKey); getStatus != http.StatusNotFound {
 		t.Fatalf("after a rejected foreign POST /instances, GET /instances/%s returned %d, want 404 — the instance must not exist",
 			foreignInstanceKey, getStatus)
 	}
 
-	// @deliberate: compose.RunComposeUp stamps the trusted compose-origin
-	// marker (X-Rimsky-Compose-Origin: 1) on every write, which the server
-	// guard admits for the reserved prefix — proving the guard discriminates
-	// on origin, not on the bare prefix. The manifest declares one template
-	// (tagged so the engine produces `compose:project-alpha:gtpl@1`) and one
-	// instance (key `compose:project-alpha:ginst`).
 	manifestPath := writeGuardComposeManifest(t)
 	if code := compose.RunComposeUp(ctx, []string{"-f", manifestPath, "--endpoint", ep.BaseURL, "--yes"}); code != 0 {
 		t.Fatalf("rimsky compose up exited %d (want 0) — the compose-origin write of a reserved-prefix tag/instance must be admitted by the server guard", code)
 	}
 
-	// @deliberate: client identical to the engine's, for read-back assertions
-	// against the live control-api. Bare BaseURL — the control-api serves bare
-	// paths.
 	c := cli.NewClient(ep.BaseURL)
 
-	// @constraint: compose-prefixed tag must resolve to a registered+deployed
-	// template — the server admitted the compose-origin reserved-prefix tag
-	// write that it rejected from the foreign client above.
 	const composeTag = guardPrefix + "gtpl@1"
 	tpl, err := c.GetTemplate(ctx, composeTag)
 	if err != nil {
@@ -175,8 +94,6 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 		t.Fatalf("compose template behind tag %q is in state %q, want deployed", composeTag, tpl.State)
 	}
 
-	// @constraint: compose-prefixed instance must exist — same discrimination,
-	// on the instance-create path.
 	const composeInstanceKey = guardPrefix + "ginst"
 	inst, err := c.GetInstance(ctx, composeInstanceKey)
 	if err != nil {
@@ -187,22 +104,6 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 	}
 }
 
-// TestControlAPIComposePrefixGuard_PermissionGated_E2E proves the
-// header-alone rejection path that the parent test cannot reach: it
-// switches the stack out of anonymous mode by minting an admin key, then
-// mints a NON-admin api-key whose grant carries `tag:create` and
-// `instance:create` but NOT `compose:origin`. With that key as Bearer,
-// a raw POST to /tags / /instances with the X-Rimsky-Compose-Origin
-// marker header MUST be rejected with the same reserved-prefix
-// diagnostic the no-header anonymous path returns — proving the header
-// is a CLAIM, not a trust boundary, and that the `compose:origin`
-// permission is the load-bearing check.
-//
-// Why this needs its own scenario: the parent test runs against an
-// anonymous-mode stack (`AnonymousIdentity` carries `Grant{{Action:
-// "*"}}` so its CheckGrant of `compose:origin` is automatically
-// satisfied). Until a real api-key without `compose:origin` is on the
-// wire we cannot prove the header-only rejection path exists.
 func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -216,16 +117,10 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// @deliberate: mint admin via anonymous mode (zero keys → anonymous identity
-	// is the only caller, and it holds `{"action": "*"}`). Future requests must
-	// carry a Bearer.
 	adminKey := mintAPIKey(t, ep, "", "compose-guard-admin", []map[string]any{
 		{"action": "*"},
 	})
 
-	// @constraint: non-admin api-key carries ONLY the actions a `compose:` write
-	// requires — explicitly NOT `compose:origin`. This is the key whose
-	// header-stamped POST must be rejected.
 	nonAdminKey := mintAPIKey(t, ep, adminKey, "compose-guard-nonadmin", []map[string]any{
 		{"action": "tag:create"},
 		{"action": "tag:read"},
@@ -236,8 +131,6 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 		{"action": "template:read"},
 	})
 
-	// @deliberate: deployed template the foreign /tags POST can name, so the
-	// 400 is attributable to the prefix guard, not a missing template.
 	templateHash := deployScenarioTemplateAuth(t, ep, adminKey, map[string]any{
 		"spec": map[string]any{
 			"name":    "compose-prefix-perm-guard",
@@ -263,7 +156,6 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
 		t.Fatalf("POST /tags 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
 	}
-	// @constraint: rejected create must persist nothing — GET /tags omits it.
 	if tagListedAuth(t, ep, adminKey, foreignTag) {
 		t.Fatalf("after a rejected non-admin POST /tags, GET /tags still lists %q — the rejected create must persist nothing", foreignTag)
 	}
@@ -284,16 +176,11 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
 		t.Fatalf("POST /instances 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
 	}
-	// @constraint: instance must not exist after the rejected POST.
 	if got := instanceGetStatusAuth(t, ep, adminKey, foreignInstanceKey); got != http.StatusNotFound {
 		t.Fatalf("after a rejected non-admin POST /instances, GET /instances/%s returned %d, want 404",
 			foreignInstanceKey, got)
 	}
 
-	// @deliberate: sanity — same key WITHOUT the header lands on the same
-	// rejection, proving the header-only branch matches the header-absent
-	// branch when the permission is missing. Belt-and-suspenders against a
-	// regression that decoupled the two branches.
 	status, raw = ep.PostJSONWithHeaders(t, "/v1/tags", map[string]any{
 		"tag":      foreignTag,
 		"template": templateHash,
@@ -309,10 +196,6 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 	}
 }
 
-// mintAPIKey POSTs /auth/keys with the supplied name + grant entries and
-// returns the resulting plaintext token. callerKey is the Bearer used to
-// authenticate the mint (empty string for the anonymous-mode bootstrap
-// admin create).
 func mintAPIKey(t *testing.T, ep harness.RimskyEndpoint, callerKey, name string, perms []map[string]any) string {
 	t.Helper()
 	headers := map[string]string{}
@@ -338,9 +221,6 @@ func mintAPIKey(t *testing.T, ep harness.RimskyEndpoint, callerKey, name string,
 	return resp.Plaintext
 }
 
-// deployScenarioTemplateAuth is deployScenarioTemplate but authenticated.
-// Authenticated mode is required once a key has been minted (no more
-// anonymous floor).
 func deployScenarioTemplateAuth(t *testing.T, ep harness.RimskyEndpoint, bearer string, body map[string]any) string {
 	t.Helper()
 	authHeader := map[string]string{"Authorization": "Bearer " + bearer}
@@ -365,8 +245,6 @@ func deployScenarioTemplateAuth(t *testing.T, ep harness.RimskyEndpoint, bearer 
 	return resp.TemplateID
 }
 
-// tagListedAuth walks /tags as bearer to check whether a tag exists. The
-// auth variant of tagListed for permission-gated scenarios.
 func tagListedAuth(t *testing.T, ep harness.RimskyEndpoint, bearer, name string) bool {
 	t.Helper()
 	cursor := ""
@@ -400,20 +278,12 @@ func tagListedAuth(t *testing.T, ep harness.RimskyEndpoint, bearer, name string)
 	}
 }
 
-// instanceGetStatusAuth is instanceGetStatus authenticated.
 func instanceGetStatusAuth(t *testing.T, ep harness.RimskyEndpoint, bearer, key string) int {
 	t.Helper()
 	status, _ := ep.GetJSON(t, "/v1/instances/"+key, bearer)
 	return status
 }
 
-// writeGuardComposeManifest writes a rimsky-compose.yml plus its referenced
-// template spec into a fresh temp dir and returns the manifest path. The
-// engine namespaces the declared tag/instance under
-// `compose:<project>:<...>`, so this manifest's tag `gtpl@1` becomes
-// `compose:project-alpha:gtpl@1` and instance `ginst` becomes
-// `compose:project-alpha:ginst` on the wire — exactly the prefixed names the
-// foreign POSTs above were rejected for.
 func writeGuardComposeManifest(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -441,9 +311,6 @@ instances:
 	return manifestPath
 }
 
-// tagListed reports whether the named tag appears in GET /tags. Walks pages
-// (GET /tags has no server-side name filter) so a tag on a later page is not
-// missed. Used to prove a rejected foreign create persisted nothing.
 func tagListed(t *testing.T, ep harness.RimskyEndpoint, name string) bool {
 	t.Helper()
 	cursor := ""
@@ -477,10 +344,6 @@ func tagListed(t *testing.T, ep harness.RimskyEndpoint, name string) bool {
 	}
 }
 
-// instanceGetStatus returns the HTTP status of GET /instances/{key}. The
-// route resolves an instance_key as well as an id, so a 404 proves no
-// instance with that key exists. Used to prove a rejected foreign
-// instance-create persisted nothing.
 func instanceGetStatus(t *testing.T, ep harness.RimskyEndpoint, key string) int {
 	t.Helper()
 	status, _ := ep.GetJSON(t, "/v1/instances/"+key, "")

@@ -4,18 +4,10 @@
 
 //go:build windows
 
-// agent_process_windows.go — process probes/teardown for the agent
-// daemon lifecycle on Windows. Mirror of the unix signal-based twin
-// (agent_process_unix.go). Windows has no SIGTERM delivery for
-// unrelated processes, so "graceful terminate" degrades to
-// TerminateProcess — the daemon's reap loop is therefore unix-only
-// behavior; on Windows stop is immediate.
-
 package cli
 
 import "golang.org/x/sys/windows"
 
-// processAlive reports whether pid names a live process.
 func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false
@@ -33,8 +25,6 @@ func processAlive(pid int) bool {
 	return code == stillActive
 }
 
-// terminateProcess stops pid. No SIGTERM equivalent exists for an
-// unrelated process on Windows, so this is a hard TerminateProcess.
 func terminateProcess(pid int) error {
 	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
 	if err != nil {
@@ -44,7 +34,6 @@ func terminateProcess(pid int) error {
 	return windows.TerminateProcess(h, 1)
 }
 
-// killProcess force-kills pid, best-effort.
 func killProcess(pid int) {
 	_ = terminateProcess(pid)
 }

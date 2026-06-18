@@ -80,12 +80,6 @@ func TestSubscribe_RejectsBadBackend(t *testing.T) {
 	}
 }
 
-// TestObjectStoreRejectsUnregisteredBackend pins J3: with the default
-// wiring (memory-only), the sensor must NOT accept or advertise backends
-// it cannot service. A Subscribe naming an unregistered backend (s3) is
-// rejected with an error that names s3, Capabilities advertises a
-// `backend` enum of exactly the registered set (["memory"]), and a
-// memory Subscribe still succeeds.
 func TestObjectStoreRejectsUnregisteredBackend(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	s.SetBackend("memory", NewMemoryLister())
@@ -221,9 +215,6 @@ func TestTick_LastModifiedWatermark(t *testing.T) {
 	s.clock = func() time.Time { return pin }
 	lister := NewMemoryLister()
 	s.SetBackend("memory", lister)
-	// @deliberate: fixture inserts objects out-of-order so the assertion
-	// confirms sort-by-watermark drives the emission order, not insertion
-	// order.
 	lister.Put("test-bucket", ObjectMeta{Name: "z.json", LastModified: pin.Add(-2 * time.Hour)})
 	lister.Put("test-bucket", ObjectMeta{Name: "a.json", LastModified: pin.Add(-1 * time.Hour)})
 

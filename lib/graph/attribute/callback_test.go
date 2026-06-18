@@ -21,12 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// fakeAttributesStore is a tiny in-memory NodeAttributeTable used by the
-// callback handler test. It keeps the test independent of the postgres
-// helpers in store.go (those are exercised in store_test.go via
-// testcontainers).
-//
-// Post 2026-05-20 per-run keying: the store keys on RunID.
 type fakeAttributesStore struct {
 	mu   sync.Mutex
 	rows map[shared.UUID]*Row
@@ -79,9 +73,6 @@ func cloneMap(m map[string]any) map[string]any {
 	return out
 }
 
-// mountHandler constructs a chi router with the §12.5 route and returns a
-// configured test server. The router is needed because Handler relies on
-// chi.URLParam.
 func mountHandler(t *testing.T, deps HandlerDeps) *httptest.Server {
 	t.Helper()
 	r := chi.NewRouter()
@@ -151,7 +142,6 @@ func TestHandler_HappyPath(t *testing.T) {
 	if row.Data["area"] != "northwest" {
 		t.Fatalf("area not preserved: %v", row.Data["area"])
 	}
-	// @deliberate: json decode lifts numbers to float64; compare as float64.
 	if got, ok := row.Data["x"].(float64); !ok || got != 1 {
 		t.Fatalf("x not merged: %v (%T)", row.Data["x"], row.Data["x"])
 	}

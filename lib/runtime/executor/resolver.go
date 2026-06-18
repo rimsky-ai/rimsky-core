@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package executor provides the supervisor-side executor client and
-// name→endpoint resolver. Executors are peer services; rimsky never runs
-// an executor in-process (except test stubs). Templates reference
-// executors by name; the supervisor config maps names to endpoints.
 package executor
 
 import (
@@ -15,42 +11,22 @@ import (
 )
 
 type Endpoint struct {
-	// @constraint: Transport must be "grpc" or "http"; validated at
-	// config-parse time.
 	Transport string
 	URL       string
-	// TLS is the dial mode: "off" (plaintext) or "required" (verified
-	// TLS). Validated at config-parse time; empty is treated as "off".
 	TLS string
 }
 
-// DispatchContext carries instance/run-scope identity into resolver
-// lookups. Named DispatchContext (rather than ResolveContext) to avoid
-// the symbol clash with graph/attribute/substitution.go::ResolveContext,
-// which is rimsky's existing substitution context.
 type DispatchContext struct {
-	// Ctx is the caller's context. Threaded into the late-bind binding
-	// lookup (a DB hit) so it honors the dispatch's deadline/cancellation
-	// rather than running uncancellable on context.Background(). May be
-	// nil; resolvers fall back to context.Background() when so.
 	Ctx context.Context
-	// @constraint: empty InstanceID / RunScopeID signal non-instance-scoped
-	// resolution; the late-bind path short-circuits when InstanceID is
-	// empty.
 	InstanceID string
 	RunScopeID string
 }
 
 type Resolver interface {
 	Resolve(name string, ctx DispatchContext) (Endpoint, bool)
-	// @agent-contract: AcceptedNames returns all configured executor
-	// names, used as the supervisor's accept list when claiming dispatch
-	// rows. Does not include names reachable only via late-bind
-	// fallback.
 	AcceptedNames() []string
 }
 
-// StaticResolver is backed by a map set at supervisor startup.
 type StaticResolver struct {
 	mu sync.RWMutex
 	m  map[string]Endpoint
@@ -64,12 +40,6 @@ func NewStaticResolver(m map[string]Endpoint) *StaticResolver {
 	return &StaticResolver{m: cp}
 }
 
-// Register adds a name→endpoint mapping after construction. Used by
-// supervisor startup to seed inproc builtin executor aliases (so the
-// dispatch path's Resolver.Resolve(alias) returns the inproc endpoint
-// without operator config). Safe to call concurrently with Resolve /
-// AcceptedNames; later writes overwrite earlier ones.
-//
 // @concept: executor
 func (r *StaticResolver) Register(name string, ep Endpoint) {
 	r.mu.Lock()
@@ -94,29 +64,12 @@ func (r *StaticResolver) AcceptedNames() []string {
 	return out
 }
 
-// LateBindResolver chains after a static resolver. For names not in
-// the static map, it consults a per-instance service_bindings lookup
-// hook and a static late_bind_service_proxies map (loaded from
-// rimsky.yml). If both produce a hit, it returns the proxy's endpoint
-// (resolved via the underlying static resolver).
-//
-// The dispatch path attaches the original service name to the call
-// context via the per-call gRPC interceptor (Pass 4); the proxy
-// reads the header to route. LateBindResolver does not add any
-// metadata to the returned Endpoint.
 type LateBindResolver struct {
 	static         Resolver
 	lookupBindings func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error)
-	// @constraint: lateBindProxies maps protocol name (e.g. "executor")
-	// to the static-resolver service name of the proxy that fronts late-
-	// bound bindings for that protocol.
 	lateBindProxies map[string]string
 }
 
-// NewLateBindResolver wraps a static resolver with late-bind fallback.
-// When lookupBindings is nil or lateBindProxies is empty, the resolver
-// behaves as a passthrough — the static resolver's results are
-// returned unchanged.
 func NewLateBindResolver(
 	static Resolver,
 	lookupBindings func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error),
@@ -161,20 +114,6 @@ func (r *LateBindResolver) AcceptedNames() []string {
 	return r.static.AcceptedNames()
 }
 
-// Unwrap exposes the inner static resolver so callers seeding inproc
-// builtin aliases (e.g. supervisor startup) can reach the underlying
-// `StaticResolver.Register` surface even when the dispatch-side
-// resolver is wrapped by LateBindResolver. Returns the underlying
-// Resolver — typically a *StaticResolver in production; tests may wrap
-// a different shape and the caller does the type assertion.
-//
-// STORY-inproc-utility-executor's "no operator config needed" property
-// holds in late-bind deployments only because this hook lets the
-// supervisor seed the inproc alias on the same static map the
-// resolver consults. Without it the seed would silently no-op against
-// the *LateBindResolver type assertion and `kind: loop_counter`
-// dispatches would resolve to unresolved_executor.
-//
 // @concept: executor
 func (r *LateBindResolver) Unwrap() Resolver {
 	return r.static

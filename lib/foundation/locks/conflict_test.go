@@ -10,9 +10,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-// TestClaimScopesByteEqual covers the rimsky-side byte-equal claim-scope
-// conflict predicate (per v3 spec §7.7). Empty claim-scopes never conflict;
-// identical bytes conflict; different bytes do not.
 func TestClaimScopesByteEqual(t *testing.T) {
 	cases := []struct {
 		name string
@@ -40,12 +37,7 @@ func TestClaimScopesByteEqual(t *testing.T) {
 	}
 }
 
-// TestModeCoexistsMatrix exhaustively walks the C3.1 matrix per v3 spec
-// §4.10 invariant 4b / spec §8.5 carry-forward. Sync block: r×r ✓; r×w /
-// w×r / w×w ✗. Async block: r×r / r×w / w×r ✓; w×w ✗.
 func TestModeCoexistsMatrix(t *testing.T) {
-	// @deliberate: every sync write_semantics value should behave the
-	// same way; assert both Direct and StagedBlocking pairings.
 	syncSemantics := []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync}
 	for _, sem := range syncSemantics {
 		t.Run("sync-"+string(sem)+"-r-r", func(t *testing.T) {
@@ -70,7 +62,6 @@ func TestModeCoexistsMatrix(t *testing.T) {
 		})
 	}
 
-	// @constraint: async block (staged_async).
 	async := claimproducer.WriteSemanticsStagedAsync
 	t.Run("async-r-r", func(t *testing.T) {
 		if !ModeCoexists(claimproducer.IntentRead, async, claimproducer.IntentRead, async) {
@@ -94,11 +85,6 @@ func TestModeCoexistsMatrix(t *testing.T) {
 	})
 }
 
-// TestModeCoexistsCrossQuadrant exercises the unreachable-but-defensive
-// cross-block path. The helper returns true (no conflict) when one
-// claim is sync and the other is async — the upstream filter normally
-// prevents this combo because two claims on the same store share its
-// write_semantics.
 func TestModeCoexistsCrossQuadrant(t *testing.T) {
 	if !ModeCoexists(claimproducer.IntentRead, claimproducer.WriteSemanticsSync, claimproducer.IntentRead, claimproducer.WriteSemanticsStagedAsync) {
 		t.Fatal("cross-quadrant r×r should report no conflict")
@@ -108,8 +94,6 @@ func TestModeCoexistsCrossQuadrant(t *testing.T) {
 	}
 }
 
-// TestModeCoexistsSymmetric: the matrix is symmetric in both arguments.
-// Verify exhaustively across all (intent×semantics)² combinations.
 func TestModeCoexistsSymmetric(t *testing.T) {
 	intents := []claimproducer.Intent{claimproducer.IntentRead, claimproducer.IntentReadWrite}
 	semantics := []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync, claimproducer.WriteSemanticsStagedAsync}

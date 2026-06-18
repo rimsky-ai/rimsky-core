@@ -2,33 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// fanout_strict_cascade_e2e — pins the cross-scope cascade bridge from
-// parent settlement under strict aggregation per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
-//
-// Under strict aggregation, the fan-out parent only settles when ALL
-// children resolve. The parent's settlement goes through the
-// aggregation walker (code:runtime/state_propagation.go::walkUpwards),
-// NOT through applyTerminalComplete on the parent. Without the cross-
-// scope cascade bridge in PropagateIfChildAfterTerminal, the parent's
-// downstream main-graph subscribers would never receive the cascade
-// because the walker doesn't fire cascadeSubscribersStaleInTx for the
-// parent.
-//
-// This test:
-//
-//  1. Deploys a fan-out parent with strict aggregation + 3 partitions.
-//  2. Each partition child returns Success.
-//  3. Asserts the downstream main-graph subscriber receives the
-//     cascade and reaches state=fresh — which only happens if the
-//     bridge in PropagateIfChildAfterTerminal fires
-//     cascadeSubscribersStaleInTx for the parent on settlement.
-//
-// The complementary F1 (`fanout_success_cascade_e2e`) test uses
-// best_effort aggregation; the parent settles on the FIRST child's
-// terminal via the standard applyTerminal path, which naturally fires
-// the cascade — that's the incidental path. This test pins the
-// architectural path.
 package scenarios
 
 import (
@@ -66,8 +39,6 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 		},
 	})
 
-	// @constraint: All children + downstream succeed cleanly. Strict aggregation
-	// requires all-children-resolved for the parent to settle to fresh.
 	h.Stub.WhenType("fan-parent").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("downstream").Success(map[string]any{"ok": true}, true, "ok")
 
@@ -88,11 +59,6 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 					FanOut: &tmplspec.FanOutSpec{
 						Claim:            "data",
 						PartitionRequest: `{"partition_keys":["a","b","c"]}`,
-						// @constraint: Strict aggregation — parent only settles when
-						// ALL children resolve. Pins the bridge path:
-						// parent settlement via aggregation walker MUST
-						// fire cascadeSubscribersStaleInTx for the
-						// parent's downstream subscribers.
 						ErrorPolicy: tmplspec.AggregationPolicy{Kind: tmplspec.AggregationKindStrict},
 					},
 				},
@@ -130,11 +96,6 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 	}, 60*time.Second, 100*time.Millisecond,
 		"all three partition children should reach state=fresh")
 
-	// @constraint: Pin: under STRICT aggregation, parent settlement goes through
-	// walkUpwards (not applyTerminal on the parent), so the cascade
-	// bridge in PropagateIfChildAfterTerminal MUST fire to wake the
-	// downstream subscriber. If the bridge is missing, downstream
-	// stays stale forever and this fails on timeout.
 	require.True(t,
 		h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh, 60*time.Second),
 		"downstream must reach fresh via cross-scope cascade bridge "+

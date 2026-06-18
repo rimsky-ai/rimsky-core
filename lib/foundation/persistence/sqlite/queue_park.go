@@ -21,10 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// ParkActiveInTx transitions a node-run row from phase='active' to
-// phase='parked' under the supplied claimant guard. Park no longer
-// carries inline payload bytes or a session token — resume state rides
-// attribute carry-forward (concept:parked-state).
 func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in persistence.ParkActiveInput) error {
 	if tx == nil {
 		return errors.New("sqlite.ParkActiveInTx: tx required")
@@ -67,8 +63,6 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 	return nil
 }
 
-// ListParkedReadyForResume returns up to limit parked rows whose resume_at
-// has elapsed (resume_at <= cutoff).
 func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Time, limit int) ([]persistence.ParkedRow, error) {
 	if limit <= 0 {
 		limit = 100
@@ -92,8 +86,6 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 	return scanSqliteParkedRows(rows)
 }
 
-// ListParkedOverdue returns parked rows whose parked_at +
-// max_park_duration_seconds is older than now.
 func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit int) ([]persistence.ParkedRow, error) {
 	if limit <= 0 {
 		limit = 100
@@ -118,11 +110,6 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 	if err != nil {
 		return nil, err
 	}
-	// @constraint: SQLite has no native interval arithmetic, so the
-	// overdue predicate (parked_at + max_park_duration_seconds <= now)
-	// is enforced app-side. The resume_at gate (NULL or strictly in the
-	// future) prevents racing the deadline-elapsed wake path, which
-	// picks rows whose resume_at <= now; see the postgres mirror.
 	out := make([]persistence.ParkedRow, 0, len(all))
 	for _, r := range all {
 		if r.MaxParkDurationSeconds == nil {
@@ -140,9 +127,6 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 	return out, nil
 }
 
-// ListParkedDiagnostic returns currently-parked rows for the admin
-// diagnostic endpoints. Joins rimsky_nodes for the instance_id needed
-// by the endpoints' frame/instance grouping.
 func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
 	if tx == nil {
 		return nil, errors.New("sqlite.ListParkedDiagnostic: tx required")
@@ -219,9 +203,6 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 	return out, nil
 }
 
-// GetParkedByNode returns the parked row for a (node, run scope) pair,
-// or (nil, nil) when no parked row exists.
-//
 // @concept: run-scope
 func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.db.QueryRowContext(ctx,
@@ -244,10 +225,6 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, run
 	return r, nil
 }
 
-// ResumeParkedInTx transitions parked→pending so the next
-// SelectCandidates tick picks the row up via the standard atomic
-// acquisition path. Park reason metadata is preserved on the row;
-// resume state rides attribute carry-forward (concept:parked-state).
 func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) (bool, error) {
 	if tx == nil {
 		return false, errors.New("sqlite.ResumeParkedInTx: tx required")
@@ -272,12 +249,6 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 	return rowsAffected == 1, nil
 }
 
-// RebindRunFrameInTx updates rimsky_node_runs.frame_id for the given
-// dispatch row to `newFrameID`.
-//
-// Returns `persistence.ErrRunRowMissing` when no row matches
-// `dispatchID`: callers always reach this primitive after resolving
-// the run row, so a silent no-op would hide programmer errors.
 func (q *queueImpl) RebindRunFrameInTx(
 	ctx context.Context, tx persistence.Tx,
 	dispatchID, newFrameID shared.UUID,
@@ -302,7 +273,6 @@ func (q *queueImpl) RebindRunFrameInTx(
 	return nil
 }
 
-// GetRetryNoProgress returns counter + per-row override.
 func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (int, *int, error) {
 	var (
 		count    int
@@ -327,10 +297,6 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 	return count, nil, nil
 }
 
-// SetRetryNoProgressForNodeInTx writes the carry-forward retry counter
-// onto the freshly-inserted pending run row for (node_id, run_scope_id).
-// Scoped to `phase = 'pending' AND claimed_by IS NULL`.
-//
 // @concept: run-scope
 func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error {
 	if tx == nil {
@@ -351,7 +317,6 @@ func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persis
 	return nil
 }
 
-// UpdateDispatchTuningInTx writes the per-row dispatch tuning columns.
 func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error {
 	var park, retries any
 	if maxParkDurationSeconds != nil {
@@ -373,18 +338,6 @@ func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence
 	return nil
 }
 
-// LoadScratchInTx returns the persisted scratch triple for a dispatch
-// row. Spill resolution is the caller's responsibility, via
-// `concept:blob-backend`.
-//
-// Asymmetry with WriteScratchInTx is deliberate: a missing row degrades
-// to an empty-scratch result so recovery-enqueue load sites treat a
-// retired or already-GC'd prior row as "no carry-forward state".
-// WriteScratchInTx is strict (returns persistence.ErrRunRowMissing on
-// 0 rows affected) because the executor's mid-dispatch checkpoint
-// contract requires the missing-row case to surface
-// (STORY-opaque-executor-scratch).
-//
 // @concept: executor
 func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) ([]byte, string, string, error) {
 	if tx == nil {
@@ -417,15 +370,6 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, disp
 	return inline, hStr, bStr, nil
 }
 
-// WriteScratchInTx persists scratch onto a dispatch row.
-//
-// Returns `persistence.ErrRunRowMissing` when no row matches
-// `dispatchID`. The scratch HTTP callback is the only signal an
-// executor has that its mid-dispatch state was persisted; a silent
-// no-op on missing row would let an executor believe it has
-// checkpointed state that will never reach the next dispatch,
-// violating STORY-opaque-executor-scratch's round-trip contract.
-//
 // @concept: executor
 func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error {
 	if tx == nil {
@@ -459,7 +403,6 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dis
 	return nil
 }
 
-// scanSqliteParkedRows iterates the cursor.
 func scanSqliteParkedRows(rows *sql.Rows) ([]persistence.ParkedRow, error) {
 	var out []persistence.ParkedRow
 	for rows.Next() {
@@ -475,8 +418,6 @@ func scanSqliteParkedRows(rows *sql.Rows) ([]persistence.ParkedRow, error) {
 	return out, nil
 }
 
-// rowScanner abstracts *sql.Row and *sql.Rows so scanOneSqliteParkedRow
-// can serve both QueryRow and iteration paths.
 type rowScanner interface {
 	Scan(dest ...any) error
 }

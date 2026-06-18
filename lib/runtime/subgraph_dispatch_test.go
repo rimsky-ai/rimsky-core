@@ -13,9 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// makeSubgraphTemplate dispatch unit tests — pure helpers; the integration-tx
-// wiring is covered by N3 scenario tests.
-
 func makeSubgraphTemplate(graphName string) *node.TemplateSpec {
 	return &node.TemplateSpec{
 		Name: "delegating-template",
@@ -138,11 +135,6 @@ func TestIsSubgraphExit(t *testing.T) {
 	}
 }
 
-// TestSubgraphParentSuccessCascade_StateMachineTransition — state-machine
-// cross-check: confirms the parent's running→running self-transition
-// under `ReasonSubGraphInternalCascadeFired` is legal. The state-machine
-// is exhaustively tested in foundation/cascade; this is a quick smoke
-// that the runtime helper's transition-reason claim matches.
 func TestSubgraphParentSuccessCascade_StateMachineTransition(t *testing.T) {
 	_, err := cascade.NextStateParent(cascade.NodeStateRunning, cascade.ReasonSubGraphInternalCascadeFired)
 	if err != nil && !cascade.IsParentAggregateOK(err) {

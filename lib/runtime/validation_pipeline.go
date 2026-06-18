@@ -2,28 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// validation_pipeline.go — E1 / F9. Template-registration validation
-// pipeline.
-//
-// Spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Protocol surfaces / Validation / Pipeline integration.
-//
 // @concept: validation
-//
-// Two stages, ordered:
-//
-//  1. `expected_attributes_schema` static check (existing; lives in
-//     `graph/node/template_validator.go::checkAttributesSchema` and
-//     runs at canonicalization against the merged effective attribute
-//     schema).
-//  2. `Validate` RPC fan-out (this file). For each service the template
-//     references that advertises Validation for the relevant role,
-//     rimsky issues `Validate(...)` and collects errors / warnings.
-//
-// Unreachable services obey the operator-configured policy
-// (`registration.unreachable_validator: strict | permissive_warn`,
-// default permissive_warn — registration succeeds with a warning).
 
 package runtime
 
@@ -37,10 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/clientiface"
 )
 
-// @constraint: re-exports of the wire-shape types from
-// `runtime/clientiface/` (Apache-licensed). The canonical docs live on
-// the alias targets. See `data_processing.go` for the licensing-boundary
-// rationale.
 type (
 	ValidationFinding                = clientiface.ValidationFinding
 	ValidationOutcome                = clientiface.ValidationOutcome
@@ -54,32 +29,12 @@ type (
 	UnreachableValidatorPolicy       = clientiface.UnreachableValidatorPolicy
 )
 
-// UnreachableValidatorPermissiveWarn is the default policy: registration
-// succeeds with a warning when a referenced service cannot be reached.
 const UnreachableValidatorPermissiveWarn = clientiface.UnreachableValidatorPermissiveWarn
 
-// UnreachableValidatorStrict makes registration fail when any referenced
-// service cannot be reached.
 const UnreachableValidatorStrict = clientiface.UnreachableValidatorStrict
 
-// ExpectedAttributesSchemaLookup returns the named executor's
-// advertised `expected_attributes_schema` JSON bytes (the
-// ObservabilityCapabilities contribution to the merged effective
-// attribute schema). nil → skip executor-side merging (the pipeline
-// then sends the bare L2 schema to validators, matching pre-collapse
-// behaviour). Empty bytes also mean "no schema visible".
 type ExpectedAttributesSchemaLookup func(executor string) ([]byte, bool)
 
-// RunValidationPipeline iterates the canonicalized template, walks the
-// services each node references, and aggregates findings into a single
-// `ValidationOutcome`. Unreachable validators obey `policy`. With a nil
-// registry (or one returning nothing), the pipeline is a no-op success.
-//
-// @deliberate: the pipeline is additive — it does not re-run the
-// static `expected_attributes_schema` checks the template validator
-// already performs at canonicalization against the merged effective
-// attribute schema. Errors at the static step were already reported
-// with a 400; this pipeline runs only after static validation passes.
 func RunValidationPipeline(
 	ctx context.Context,
 	reg ValidationRegistry,
@@ -105,11 +60,6 @@ func RunValidationPipeline(
 		}
 	}
 
-	// @deliberate: the validation protocol's per-role surface is
-	// unchanged across the publisher-unification rename; the template-DSL
-	// block renames from `sensors:` to `publishers:` but the inner role
-	// name on the Validation protocol stays "sensor" (sensors are one
-	// kind of publisher; the validation role is kind-shaped).
 	for _, publisher := range tpl.Publishers {
 		client, ok := reg.Get(publisher.Name)
 		if !ok || !clientAdvertisesRole(client, "sensor") {
@@ -123,11 +73,6 @@ func RunValidationPipeline(
 		appendFindings(&out, client.Name(), "sensor", "", errs, warns, err, policy)
 	}
 
-	// @deliberate: LifecycleSubscriber-role has no per-template iteration
-	// in V1 — the per-template lifecycle validation is covered by the
-	// `OnTemplateRegistered` fan-out the templates handler already
-	// performs. Per-template iteration is gated on a future operator
-	// config that maps lifecycle subscribers explicitly.
 	_ = templateID
 
 	return out, nil
@@ -146,15 +91,7 @@ func runExecutorRoleCheck(
 	if !ok || !clientAdvertisesRole(client, "executor") {
 		return nil
 	}
-	// @constraint: send the merged effective attribute schema (executor's
-	// expected_attributes_schema ∪ L1 template defaults ∪ L2 node
-	// schema) to executor-side validators. Pre-collapse, the bare L2
-	// schema was sufficient because L1 defaults lived in a separate
-	// userdata bag; post-collapse, executor validators that read
-	// `properties.<key>.default` (e.g. verifier-shape-checks's `checks`
-	// field) need to see L1 contributions too. Per spec
-	// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-	// §"Design changes" / @concept: validation.
+	// @concept: validation.
 	var nodeSchema map[string]any
 	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 		nodeSchema = n.Attributes.Schema
@@ -162,10 +99,6 @@ func runExecutorRoleCheck(
 	var execSchema map[string]any
 	if execSchemaLookup != nil {
 		if bytesIn, ok := execSchemaLookup(n.Executor); ok && len(bytesIn) > 0 {
-			// @deliberate: unmarshal failures fall back to a nil executor
-			// schema — the static-schema check earlier in registration
-			// already reports those, so the pipeline doesn't
-			// double-error.
 			_ = json.Unmarshal(bytesIn, &execSchema)
 		}
 	}
@@ -243,9 +176,6 @@ func clientAdvertisesRole(c ValidationClient, role string) bool {
 	return false
 }
 
-// appendFindings folds per-call results into the outcome aggregate.
-// RPC errors fold per policy: permissive_warn → warning; strict →
-// error.
 func appendFindings(
 	out *ValidationOutcome,
 	service, role, nodeAlias string,

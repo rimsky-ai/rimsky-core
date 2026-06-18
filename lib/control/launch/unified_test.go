@@ -16,7 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// TestUnifiedStack_DrainReversesStartOrder covers
 // @blessed-invariant: unified-stack-reverse-drain — Drain MUST invoke
 // the per-role StopFuncs in reverse of start order so the operator-
 // facing control-api stops first, before the engines under it. The
@@ -38,8 +37,6 @@ func TestUnifiedStack_DrainReversesStartOrder(t *testing.T) {
 		}
 	)
 
-	// @constraint: start order matches the production
-	// StartUnifiedStack — scheduler, supervisor, control-api.
 	stack := &UnifiedStack{
 		stops: []StopFunc{
 			makeStop("scheduler"),
@@ -64,20 +61,14 @@ func TestUnifiedStack_DrainReversesStartOrder(t *testing.T) {
 	}
 }
 
-// TestUnifiedStack_DrainEmptyIsNoOp guards the partial-startup path:
-// if StartUnifiedStack fails before any role started, the returned
-// UnifiedStack (constructed for the in-StartUnifiedStack rollback
-// drain) has zero stops and Drain must be safe.
 func TestUnifiedStack_DrainEmptyIsNoOp(t *testing.T) {
 	stack := &UnifiedStack{
 		failCh:   make(chan RoleFailure, 3),
 		failBufN: 3,
 	}
-	// @constraint: should return without panic.
 	stack.Drain(context.Background(), time.Second)
 }
 
-// TestStartUnifiedStack_OneDriverAcrossRunners is the direct
 // structural exhibit for @blessed-invariant: one-driver-per-process:
 // the three role-runner seams record the persistence.Database pointer
 // they receive, and the test asserts all three observed the SAME
@@ -103,10 +94,6 @@ func TestStartUnifiedStack_OneDriverAcrossRunners(t *testing.T) {
 		seenDrivers = append(seenDrivers, d)
 		mu.Unlock()
 		ch := make(chan error)
-		// @constraint: do not close ch — the stack's monitor goroutine
-		// treats an ok=false receive as the clean-shutdown path. Leaving
-		// ch open lets the goroutine block until the test returns, which
-		// is fine.
 		return fakeStop, ch, nil
 	}
 	runSchedulerFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig) (StopFunc, <-chan error, error) {
@@ -140,20 +127,12 @@ func TestStartUnifiedStack_OneDriverAcrossRunners(t *testing.T) {
 	}
 }
 
-// fakeDriver is a no-op persistence.Database used only for pointer-
-// identity comparison in TestStartUnifiedStack_OneDriverAcrossRunners.
-// Every method panics — the test never calls one.
 type fakeDriver struct{ persistence.Database }
 
-// discardWriter is an io.Writer sink that swallows everything; used to
-// silence the slog.Logger threaded into StartUnifiedStack.
 type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
-// TestUnifiedStack_FailChDeliversFailure covers the merged failure
-// channel surface: a RoleFailure pushed onto the channel surfaces on
-// FailCh in the expected shape.
 func TestUnifiedStack_FailChDeliversFailure(t *testing.T) {
 	stack := &UnifiedStack{
 		failCh:   make(chan RoleFailure, 3),

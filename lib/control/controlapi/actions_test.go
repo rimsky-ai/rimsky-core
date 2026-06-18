@@ -51,26 +51,17 @@ func TestActionRegistry_RejectsDuplicates(t *testing.T) {
 	if err := r.Register(ActionEntry{Action: "a:read", Routes: []Route{{"GET", "/a"}}, MCPTools: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
-	// @constraint: same action twice.
 	if err := r.Register(ActionEntry{Action: "a:read", Routes: []Route{{"GET", "/x"}}}); err == nil {
 		t.Fatalf("expected duplicate-action error")
 	}
-	// @constraint: same route under a different action.
 	if err := r.Register(ActionEntry{Action: "b:read", Routes: []Route{{"GET", "/a"}}}); err == nil {
 		t.Fatalf("expected route-collision error")
 	}
-	// @constraint: same MCP tool under a different action.
 	if err := r.Register(ActionEntry{Action: "c:read", Routes: []Route{{"GET", "/c"}}, MCPTools: []string{"a"}}); err == nil {
 		t.Fatalf("expected tool-collision error")
 	}
 }
 
-// TestValidateGrantScope_RejectsUnknownDimension proves the mint-time
-// scope-dimension validator catches an unknown scope key on an action
-// whose ScopeDimensions list is non-empty. Regression target: a typo
-// like `{action: "template:register", scope: {"templet_tag": "x"}}`
-// (missing 'a' in templet) silently denied every request before this
-// validator existed.
 func TestValidateGrantScope_RejectsUnknownDimension(t *testing.T) {
 	r := NewActionRegistry()
 	if err := r.Register(ActionEntry{
@@ -92,17 +83,11 @@ func TestValidateGrantScope_RejectsUnknownDimension(t *testing.T) {
 	}
 }
 
-// TestValidateGrantScope_RejectsScopeOnNonscopeableAction proves the
-// validator rejects ANY non-empty scope on an action whose
-// ScopeDimensions list is empty (no scopeable dimension exists; the
-// grant author is mis-using scope). Example: `{action: "auth:read",
-// scope: {"foo": "bar"}}`.
 func TestValidateGrantScope_RejectsScopeOnNonscopeableAction(t *testing.T) {
 	r := NewActionRegistry()
 	if err := r.Register(ActionEntry{
 		Action: "thing:read",
 		Routes: []Route{{"GET", "/things"}},
-		// @constraint: ScopeDimensions left nil — action has no scopeable dimension.
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -118,9 +103,6 @@ func TestValidateGrantScope_RejectsScopeOnNonscopeableAction(t *testing.T) {
 	}
 }
 
-// TestValidateGrantScope_AdmitsKnownDimension is the green-path
-// sanity check: an entry whose scope key matches the action's
-// ScopeDimensions passes validation.
 func TestValidateGrantScope_AdmitsKnownDimension(t *testing.T) {
 	r := NewActionRegistry()
 	if err := r.Register(ActionEntry{
@@ -139,9 +121,6 @@ func TestValidateGrantScope_AdmitsKnownDimension(t *testing.T) {
 	}
 }
 
-// TestValidateGrantScope_AdmitsEmptyScopeOnUnscopeable proves the
-// validator allows an unscoped entry against an unscopeable action —
-// no scope is the only legal shape there.
 func TestValidateGrantScope_AdmitsEmptyScopeOnUnscopeable(t *testing.T) {
 	r := NewActionRegistry()
 	if err := r.Register(ActionEntry{
@@ -156,11 +135,6 @@ func TestValidateGrantScope_AdmitsEmptyScopeOnUnscopeable(t *testing.T) {
 	}
 }
 
-// TestValidateGrantScope_SkipsWildcards proves wildcard-action entries
-// (`*`, `<noun>:*`, `*:<verb>`) are NOT rejected at mint time even when
-// carrying a scope. The wildcard spans many actions with mixed
-// ScopeDimensions, so the validator cannot pick one "correct" set; the
-// scope is matched at request time against the routed action.
 func TestValidateGrantScope_SkipsWildcards(t *testing.T) {
 	r := NewActionRegistry()
 	r.Build()
@@ -173,12 +147,6 @@ func TestValidateGrantScope_SkipsWildcards(t *testing.T) {
 	}
 }
 
-// TestV1Registry_TemplateTagDimensionPopulated pins the per-action
-// ScopeDimensions list against the auth_request_target.go switch — the
-// dimension annotations on the seven scopeable actions must stay in
-// lockstep with the resolver. If a future change adds a new
-// scopeable dimension to requestTargets, this test reds and forces a
-// matching update to ActionEntry.ScopeDimensions.
 func TestV1Registry_TemplateTagDimensionPopulated(t *testing.T) {
 	r := BuildV1Registry()
 	want := []string{
@@ -216,13 +184,9 @@ func TestActionRegistry_BadActionString(t *testing.T) {
 	}
 }
 
-// TestV1Registry verifies BuildV1Registry produces a registry that
-// covers every action listed in the spec table. The supplemental
-// `observability:read` action is allowed beyond the spec table.
 func TestV1Registry(t *testing.T) {
 	r := BuildV1Registry()
 
-	// @constraint: spec-table actions (from spec section "Action grammar").
 	specTableActions := []string{
 		"instance:read", "instance:create", "instance:terminate",
 		"template:read", "template:register", "template:deploy",
@@ -253,7 +217,6 @@ func TestV1Registry(t *testing.T) {
 			t.Errorf("V1 registry missing spec-table action %q", a)
 		}
 	}
-	// @constraint: surplus actions in registry beyond the spec table.
 	specSet := map[string]bool{}
 	for _, a := range specTableActions {
 		specSet[a] = true
@@ -265,14 +228,9 @@ func TestV1Registry(t *testing.T) {
 		}
 	}
 	sort.Strings(surplus)
-	// @constraint: actions sanctioned by specs beyond the original control-plane spec
-	// table are listed here so the cross-check stays loud about
-	// truly-unsanctioned additions while admitting the instance-debugger
-	// surface added by spec
 	allowed := map[string]bool{
 		"observability:read": true,
 		"mcp:read":           true,
-		// @constraint: instance-debugger surface (concept:breakpoint).
 		"instance:pause":    true,
 		"instance:resume":   true,
 		"instance:kill":     true,
@@ -280,27 +238,12 @@ func TestV1Registry(t *testing.T) {
 		"breakpoint:create": true,
 		"breakpoint:resume": true,
 		"breakpoint:delete": true,
-		// @constraint: template lint surface (spec 2026-05-28-quality-of-life-features).
 		"template:validate": true,
-		// @constraint: audit read surface (spec 2026-05-29-console-upstream-auth-audit-and-fixes):
-		// the auth.* slice of the event log, granted separately from event:read.
 		"audit:read": true,
-		// @constraint: compose-origin capability marker: gates the privileged
-		// `compose:<project>:<...>` reserved-prefix bypass on tag-create
-		// / instance-create. No route maps to this action; CheckGrant
-		// consults it server-side when the X-Rimsky-Compose-Origin
-		// header is stamped. Only the compose-CLI's privileged key
-		// carries it.
 		"compose:origin": true,
-		// @deliberate: cascade-graph frames-read surface. The read
-		// endpoints expose rimsky_frames.triggering_message_id wiring
-		// the frame-origin-audit story consumes.
 		// @story: frame-origin-audit
 		"instance:list-frames": true,
 		"instance:read-frame":  true,
-		// @deliberate: debug-channel ad-hoc operator override on a
-		// paused or pause-mode-breakpoint-hit instance; gated to the
-		// debuggable lifecycle states only.
 		// @story: debug-channel
 		"instance:debug-override": true,
 	}
@@ -311,14 +254,6 @@ func TestV1Registry(t *testing.T) {
 	}
 }
 
-// TestBuiltinSchemasLockstep guards the lockstep the builtinSchemas
-// doc-comment promises: every WRITE tool advertised in v1Actions must
-// carry an explicit (non-fallback) inputSchema so an MCP client can
-// validate args before round-tripping. Read tools may fall back to the
-// generic `{"type":"object"}` (argument-free list tools are fine), but a
-// write tool with no shape silently degrades to the generic object and
-// the client loses argument validation. Without this guard the gap is
-// invisible (the catalog defaults a missing entry to the generic shape).
 func TestBuiltinSchemasLockstep(t *testing.T) {
 	schemas := builtinSchemas()
 	for _, e := range v1Actions {
@@ -335,32 +270,8 @@ func TestBuiltinSchemasLockstep(t *testing.T) {
 	}
 }
 
-// TestRegistryCoversRouter walks every route registered under the
-// gated route group and asserts the action registry knows about it.
-// The spec made this cross-check load-bearing (plan D7): without it,
-// a future route registered without `gate()` would silently bypass
-// the audit + auth pipeline and the only signal would be a missing
-// event-log row.
-//
-// Builds a synthetic router by calling each registerXxxRoutes helper
-// against a chi.Router seeded with AuthState (so `gate()` returns the
-// auth-aware HandlerFunc). The walk only checks route presence; no
-// request ever reaches a handler.
-//
-// Exempts:
-//   - GET /health (predates auth; serves load-balancer + k8s probes)
-//   - /v1/observability/* (wildcard chi pattern; covered by the
-//     `observability:read` umbrella action)
-//
-// Failure modes the test catches:
-//   - A new (METHOD, PATTERN) wired into a register* helper without
-//     a matching `Routes:` entry in v1Actions.
-//   - A route accidentally mounted in the gated route group without
-//     a corresponding action — this would not be gated and would
-//     produce no audit row.
 func TestRegistryCoversRouter(t *testing.T) {
 	state := &AuthState{
-		// @constraint: tables is unused during route registration.
 		Tables:   nil,
 		Registry: BuildV1Registry(),
 		Clock:    shared.SystemClock{},
@@ -370,9 +281,6 @@ func TestRegistryCoversRouter(t *testing.T) {
 		AuthState: state,
 	}
 	r := chi.NewRouter()
-	// @constraint: mirror NewApp's `/v1/` mount so chi.Walk reports `/v1/...`
-	// patterns — the action registry stores routes under their full
-	// `/v1/` paths so the byRoutePattern lookup below matches.
 	r.Route("/v1", func(v1 chi.Router) {
 		registerTemplatesRoutes(v1, deps)
 		registerTagsRoutes(v1, deps)
@@ -390,8 +298,6 @@ func TestRegistryCoversRouter(t *testing.T) {
 		registerMCPRoute(v1, deps)
 	})
 
-	// @constraint: build a quick (METHOD pattern → action) lookup from the
-	// registry.
 	reg := state.Registry
 	byRoutePattern := map[string]string{}
 	for _, action := range reg.AllActions() {
@@ -431,20 +337,6 @@ func TestRegistryCoversRouter(t *testing.T) {
 	}
 }
 
-// TestRegistryRoutesAreActuallyGated complements TestRegistryCoversRouter:
-// for every (method, pattern) the registry knows about, mount a real
-// router fronted by a NewApp with a live AuthState, seed a single
-// active API key (so the deployment is in authenticated mode rather
-// than anonymous-mode fallback), and assert that an unauthenticated
-// request returns 401. A route registered without `gate()` would
-// match the pattern but return its handler's response (200 / 400 /
-// 404), which this test catches.
-//
-// The test substitutes URL parameters with placeholder UUID / string
-// values so chi can route the request — the goal is to verify the
-// gate runs BEFORE the handler, not to exercise handler logic. The
-// gate runs as part of the IdentityResolver middleware which short-
-// circuits with 401 before any URL-param decoding.
 func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -466,9 +358,6 @@ func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 		Clock:    clock,
 		Logger:   shared.SilentLogger{},
 	}
-	// @constraint: seed a single active key so IsAnonymousMode returns false and
-	// no-Bearer requests get the 401 path rather than the anonymous-
-	// mode synthetic identity.
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return d.Tables().APIKeys().Insert(ctx, persistence.APIKey{
 			ID:          shared.UUID{1, 2, 3},
@@ -504,15 +393,12 @@ func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 		if exempt(method, route) {
 			return nil
 		}
-		// @constraint: replace chi param placeholders with concrete values.
 		url := substituteChiParams(route)
 		req, err := http.NewRequest(method, srv.URL+url, strings.NewReader("{}"))
 		if err != nil {
 			return err
 		}
 		req.Header.Set("Content-Type", "application/json")
-		// @constraint: intentionally no Authorization header — we want to verify the
-		// gate fires before the handler.
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return err
@@ -533,13 +419,6 @@ func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 	}
 }
 
-// TestV1Registry_ExposesDebuggerTools verifies the 6 debugger-surface
-// actions added by spec
-// as MCP tools through the existing action-registry → tools/list
-// pipeline. Belt-and-braces with TestV1Registry's surplus check —
-// that test asserts the action strings exist; this test asserts they
-// flow through to the MCP tool catalog so the polling agent can
-// discover them.
 func TestV1Registry_ExposesDebuggerTools(t *testing.T) {
 	r := BuildV1Registry()
 	wantTools := []string{
@@ -561,11 +440,6 @@ func TestV1Registry_ExposesDebuggerTools(t *testing.T) {
 	}
 }
 
-// substituteChiParams replaces chi-style `{name}` URL parameters in a
-// path with safe placeholder values. The substitutions are chosen so
-// chi's router accepts them (UUIDs for `{id}`-shaped params, opaque
-// strings otherwise); they are NOT expected to resolve to real rows
-// because the gate-or-401 check fires before any DB lookup.
 func substituteChiParams(route string) string {
 	const placeholderUUID = "00000000-0000-0000-0000-000000000000"
 	out := route
@@ -580,9 +454,6 @@ func substituteChiParams(route string) string {
 		}
 		name := out[i+1 : i+j]
 		var v string
-		// @constraint: heuristic: param names containing "id" get UUIDs; everything
-		// else gets a safe literal. Wildcard suffixes (e.g. `{*}`) get
-		// the empty string.
 		switch {
 		case strings.HasPrefix(name, "*"):
 			v = ""
@@ -596,9 +467,6 @@ func substituteChiParams(route string) string {
 	return out
 }
 
-// sha256OfString returns the SHA-256 of s as a 32-byte slice. Kept
-// inline to avoid pulling crypto/sha256 into actions.go's import block
-// for the production code path.
 func sha256OfString(s string) []byte {
 	h := auth.Hash(s)
 	return h[:]

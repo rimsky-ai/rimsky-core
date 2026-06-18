@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// claim_producer_handler.go — the supervisor-facing ClaimProducer
-// protocol handler. Open resolves (owner → agent → binding) and lazily
-// spawns the producer (expected_protocols: [claim_producer]), forwards
-// the unary RPC via a DispatchFrame, and awaits one response frame.
-// Commit/Abandon/Release route to the same spawned producer via the
-// claim-id → spawn route recorded at Open. Proxy-side failures surface as
-// gRPC error statuses carrying the error_class in a google.rpc.ErrorInfo
-// detail (the shape the supervisor's claim-producer client decodes).
-//
 // @concept: host-agent-proxy
 
 package main
@@ -31,7 +22,6 @@ import (
 
 const protocolClaimProducer = "claim_producer"
 
-// claimProducerHandler implements genv1.ClaimProducerServer.
 type claimProducerHandler struct {
 	genv1.UnimplementedClaimProducerServer
 	state        *proxyState
@@ -49,10 +39,6 @@ func newClaimProducerHandler(state *proxyState, cfg Config) *claimProducerHandle
 	}
 }
 
-// Capabilities advertises the full write-semantics envelope. The proxy is
-// transport — per-claim realized semantics come from each spawned
-// producer's Open response, so the proxy advertises all four values and
-// does not narrow the envelope.
 func (h *claimProducerHandler) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	return &genv1.CapabilitiesResponse{
 		WriteSemanticsAllowed: []genv1.WriteSemantics{
@@ -66,14 +52,13 @@ func (h *claimProducerHandler) Capabilities(_ context.Context, _ *genv1.Capabili
 	}, nil
 }
 
-// Open resolves+spawns the producer and forwards the unary Open RPC.
 func (h *claimProducerHandler) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 	res, rerr := resolveAndSpawn(
 		ctx, h.state, h.fetch,
 		[]string{protocolClaimProducer},
 		req.GetInstanceId(),
 		req.GetRunScopeId(),
-		"", // @deliberate: claim-producer has no callback URL to rewrite
+		"",
 		h.spawnTimeout,
 	)
 	if rerr != nil {
@@ -95,13 +80,10 @@ func (h *claimProducerHandler) Open(ctx context.Context, req *genv1.OpenRequest)
 		return nil, claimProducerStatus(&resolveError{class: errClassExecutorCrashed, msg: "unmarshal open response: " + err.Error()})
 	}
 
-	// @constraint: record the claim route so Commit/Abandon/Release
-	// (which carry only a claim_id) route back to this spawned producer.
 	h.state.recordClaimRoute(req.GetClaimId(), res.agent.apiKeyID, res.spawnID)
 	return &resp, nil
 }
 
-// Commit forwards the unary Commit RPC to the producer holding the claim.
 func (h *claimProducerHandler) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
 	agent, spawnID, rerr := h.routeByClaim(req.GetClaimId())
 	if rerr != nil {
@@ -122,7 +104,6 @@ func (h *claimProducerHandler) Commit(ctx context.Context, req *genv1.CommitRequ
 	return &resp, nil
 }
 
-// Abandon forwards the unary Abandon RPC to the producer holding the claim.
 func (h *claimProducerHandler) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
 	agent, spawnID, rerr := h.routeByClaim(req.GetClaimId())
 	if rerr != nil {
@@ -143,7 +124,6 @@ func (h *claimProducerHandler) Abandon(ctx context.Context, req *genv1.AbandonRe
 	return &resp, nil
 }
 
-// Release forwards the unary Release RPC and forgets the claim route.
 func (h *claimProducerHandler) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
 	agent, spawnID, rerr := h.routeByClaim(req.GetClaimId())
 	if rerr != nil {
@@ -165,7 +145,6 @@ func (h *claimProducerHandler) Release(ctx context.Context, req *genv1.ReleaseRe
 	return &resp, nil
 }
 
-// routeByClaim resolves the live agent + spawn for an existing claim.
 func (h *claimProducerHandler) routeByClaim(claimID string) (*agentConnection, string, *resolveError) {
 	route, ok := h.state.lookupClaimRoute(claimID)
 	if !ok {
@@ -181,11 +160,6 @@ func (h *claimProducerHandler) routeByClaim(claimID string) (*agentConnection, s
 	return agent, route.spawnID, nil
 }
 
-// forwardUnary tunnels a serialized unary request to the spawned child
-// over a fresh dispatch stream and awaits exactly one response frame. The
-// verb names which ClaimProducer RPC the agent must invoke on the child —
-// it rides the wire because Commit/Abandon/Release are byte-identical at
-// claim_id and the agent cannot infer the verb from the payload shape.
 func forwardUnary(ctx context.Context, agent *agentConnection, spawnID string, payload []byte, verb genv1.DispatchFrame_ClaimProducerVerb, timeout time.Duration) ([]byte, *resolveError) {
 	streamID := uuid.NewString()
 	respCh := agent.registerStream(streamID)
@@ -220,10 +194,6 @@ func forwardUnary(ctx context.Context, agent *agentConnection, spawnID string, p
 	}
 }
 
-// claimProducerStatus maps a resolveError to a gRPC status carrying the
-// error_class in a google.rpc.ErrorInfo detail. Missing-binding-style
-// faults use FailedPrecondition; all other proxy-side faults use Internal
-// (the shape the supervisor's claim-producer client decodes).
 func claimProducerStatus(rerr *resolveError) error {
 	code := codes.Internal
 	if rerr.class == errClassBindingNotFound {
@@ -240,9 +210,6 @@ func claimProducerStatus(rerr *resolveError) error {
 	return withInfo.Err()
 }
 
-// claimProducerObsHandler implements genv1.ClaimProducerObservabilityServer.
-// The proxy advertises a minimal observability envelope — per-claim
-// detail comes from each spawned producer.
 type claimProducerObsHandler struct {
 	genv1.UnimplementedClaimProducerObservabilityServer
 }

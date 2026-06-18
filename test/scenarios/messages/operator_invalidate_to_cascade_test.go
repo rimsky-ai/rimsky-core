@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N4 scenario — operator_invalidate_to_cascade.
-//
-// An operator POSTs an `invalidate` message; at frame boundary the
-// scheduler delivers it and the subscription walker stale-marks the
-// matching receivers. The N4 contract pinned here is the
-// enqueue → deliver round-trip: the message is enqueued with
-// sender_kind="operator", and DeliverPendingMessages stamps it
-// delivered_at + frame_id.
 package messages
 
 import (

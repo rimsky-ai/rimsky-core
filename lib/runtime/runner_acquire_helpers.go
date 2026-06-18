@@ -2,15 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Helpers split out of runner_acquire.go to keep the orchestration
-// shell (tryAcquire) focused on the §7.3 atomic-acquisition steps
-// without the per-feature detail of fan-out sub-claim acquisition or
-// resume-metadata reload. Both helpers preserve the original
-// transactional semantics — they run inside the caller's open
-// rimsky-side tx and roll back together with the rest of tryAcquire
-// on any returned error.
-//
-// @source: lib/runtime/runner_acquire.go::tryAcquire (cycle-7 extraction)
+// @source: lib/runtime/runner_acquire.go
 
 package runtime
 
@@ -28,13 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-// acquireFanOutIfDeclared performs the E4 atomic sub-claim acquisition
-// when the template node declares `fan_out:`. Splits the parent claim's
-// scope into sub-scopes inside the caller's open tx. Sub-claims persist
-// with `parent_claim_handle_id` pointing at the parent so the recursive
-// auto-terminal (E3) resolves bottom-up correctly. A failure aborts the
-// whole acquisition (returned error rolls the caller's tx back).
-//
 // @concept: fan-out
 // @concept: claim-tree
 func acquireFanOutIfDeclared(
@@ -45,14 +30,6 @@ func acquireFanOutIfDeclared(
 	if nodeDef == nil || nodeDef.FanOut == nil {
 		return nil
 	}
-	// @constraint: only the root run of a fan-out tree splits. Children re-use the
-	// parent's node_id (per `runtime/fanout_dispatch.go::dispatchFanOutChildren`)
-	// and therefore inherit the same `nodeDef.FanOut` block; without this
-	// guard each child re-fires SplitScope and creates grand-children
-	// indefinitely. The "child" predicate is "this run's RunScope has a
-	// parent_run_id" — fan-out-partition / sub-graph RunScopes carry one,
-	// the main RunScope does not.
-	//
 	// @concept: fan-out
 	// @concept: run-scope
 	if scopes := args.Persist.RunScopes(); scopes != nil {
@@ -60,10 +37,6 @@ func acquireFanOutIfDeclared(
 			return nil
 		}
 	}
-	// @constraint: locate the acquiredLocks entry whose Alias matches the
-	// FanOut.Claim reference. The validator (D4) rejects fan_out blocks
-	// that reference an unknown alias, so this lookup is best-effort
-	// safe at runtime.
 	fanOutClaim := nodeDef.FanOut.Claim
 	var parent *AcquiredLock
 	for i := range acquiredLocks {
@@ -75,8 +48,6 @@ func acquireFanOutIfDeclared(
 	if parent == nil {
 		return nil
 	}
-	// @constraint: `parent.Spec` is `any` — narrow to ClaimSpec; named locks
-	// can't be fan-out targets (no producer name).
 	parentClaimSpec, ok := parent.Spec.(claimproducer.ClaimSpec)
 	if !ok {
 		args.Logger.Warn("tryAcquire: fan-out alias references non-claim spec; ignored",
@@ -85,20 +56,6 @@ func acquireFanOutIfDeclared(
 		return nil
 	}
 	frameID := cand.FrameID
-	// @constraint: substitute partition_request with the runtime-resolved trigger
-	// payload before handing it to SplitScope. The fan-out node's
-	// partition_request is authored to pull an operator-supplied
-	// override off the triggering message (canonical form
-	// `{{trigger.message.payload.partition_request_override |
-	// <template-default>}}`); the override rides the delivered
-	// message's payload keyed to this frame.
-	//
-	// Load-bearing property: the bytes that reach AcquireSubClaims /
-	// SplitScope are the SUBSTITUTED bytes (the override genuinely
-	// binds), not the literal template. Passing the literal verbatim
-	// silently drops every override because the `{{trigger…}}`
-	// directive is never resolved and the `|`-fallback to the
-	// template default always fires.
 	partitionRequest, err := substituteFanOutPartitionRequest(ctx, args, tx, frameID, out, nodeDef.FanOut.PartitionRequest)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: fan-out partition_request substitution failed",
@@ -117,21 +74,9 @@ func acquireFanOutIfDeclared(
 		FrameID:             &frameID,
 		LivenessInterval:    livenessInterval,
 		PartitionRequest:    partitionRequest,
-		// @constraint: sub-claims inherit the parent claim's lifetime. parentClaimSpec.Lifetime
-		// is the rimsky-internal plain-string carried on the ClaimSpec (lib/protocols
-		// may not import lib/foundation/spec); convert to spec.ClaimLifetime here.
-		// AcquireSubClaims defaults an empty value to "subgraph". @concept: claim-lifetime
+		// @concept: claim-lifetime
 		Lifetime: spec.ClaimLifetime(parentClaimSpec.Lifetime),
-		// @constraint: sub-claims inherit the parent's is_held so the rows survive
-		// the leaf's active terminal until the parent's recursive
-		// resolution walks them. Without this, non-held sub-claim
-		// rows drop at active terminal and the parent's aggregation
-		// sees an empty children set, Committing prematurely.
 		ParentIsHeld: parent.IsHeld,
-		// @constraint: AggregationPolicy is snapshotted onto the parent claim
-		// handle so the recursive walker computes a true aggregate
-		// Commit/Abandon decision over all children's outcomes
-		// (cycle 4 issue C).
 		AggregationPolicy: nodeDef.FanOut.ErrorPolicy,
 	})
 	if err != nil {
@@ -145,37 +90,6 @@ func acquireFanOutIfDeclared(
 	return nil
 }
 
-// substituteFanOutPartitionRequest resolves a fan-out node's
-// partition_request template against the frame's trigger message and
-// returns the producer-interpreted bytes to hand to SplitScope.
-//
-// The directive the operator authors is canonically
-// `{{trigger.message.payload.partition_request_override | <default>}}`:
-// it pulls the operator-supplied `partition_request_override` off the
-// message delivered into this frame. The override is bound through
-// ResolveContext.TriggerMessagePayload — the slot resolveTriggerValue
-// reads — so the substituted bytes carry the operator's override, not
-// the template default.
-//
-// Trigger message recovery (the load-bearing ordering): message
-// delivery marks rimsky_messages.frame_id and invalidates the target
-// node BEFORE the resulting node-run is acquired, so by the time
-// fan-out acquisition runs the delivered message for this frame is
-// present and recoverable by frame_id. We bind it only when EXACTLY
-// one delivered message exists for the frame; zero or more than one →
-// leave TriggerMessagePayload empty so the directive's `|`-fallback
-// (or ErrMissingSource for a strict directive) governs — never a
-// silent wrong-partition run. (Conflicting-override coalescing into
-// one frame is prevented by the conflict-aware delivery pass.)
-//
-// Value→bytes conversion: SubstituteValue lifts a whole `{{…}}`
-// directive to its JSON value. A string result (a string-shaped
-// override, or a literal partition_request with no directives such as
-// "all") flows through as its raw bytes — preserving the producer's
-// existing interpretation. A non-string result (object/array/number/
-// bool) is JSON-encoded, the form a producer that splits on a
-// structured override expects.
-//
 // @concept: fan-out
 func substituteFanOutPartitionRequest(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
@@ -184,21 +98,8 @@ func substituteFanOutPartitionRequest(
 	resolveCtx := attributes.ResolveContext{
 		Params: instanceParamsRaw(out),
 		Claim:  out.HeldClaims,
-		// @constraint: defense-in-depth — thread the template's declared
-		// message-type set so `{{messages.<type>.<field>}}` references
-		// against undeclared types fail with ErrMissingSource even on
-		// fan-out partition_request substitution. Mirrors
-		// `buildResolveContextForDispatch` in runner_dispatch.go.
 		RegistryDeclaredTypes: declaredMessageTypesForTemplate(ctx, args, out.TemplateHash, tx),
 	}
-	// @constraint: bind both payload bytes AND message-type. The fan-out
-	// partition_request path historically reads only
-	// `{{trigger.message.payload.X}}`, but the typed-message arm
-	// (`{{messages.<type>.<field>}}`) shares the same resolver function
-	// and must see the same triggering-message envelope so a fan-out
-	// node whose partition_request reads through the typed-message
-	// grammar resolves the same way (one substitution engine, two
-	// surfaces).
 	payload, mtype := triggerMessageForFrame(ctx, args, tx, frameID)
 	if len(payload) > 0 {
 		resolveCtx.TriggerMessagePayload = payload
@@ -220,10 +121,6 @@ func substituteFanOutPartitionRequest(
 	return b, nil
 }
 
-// instanceParamsRaw marshals the acquisition's instance params blob to
-// raw JSON for the substitution ResolveContext, mirroring the shaping
-// buildLockSpecs performs. Returns nil when there are no params (nil is
-// treated as empty by the resolver).
 func instanceParamsRaw(out *acquisition) json.RawMessage {
 	if out == nil || len(out.InstanceParams) == 0 {
 		return nil
@@ -235,25 +132,6 @@ func instanceParamsRaw(out *acquisition) json.RawMessage {
 	return b
 }
 
-// triggerMessageForFrame returns the (payload, type) tuple of the
-// single delivered message bound to frameID, or (nil, "") when zero or
-// more than one delivered message exists. The type is the
-// `rimsky_messages.type` discriminator that the substitution engine's
-// `messages.<type>.<field>` arm matches against (see
-// `code:graph/attribute/substitution.go::resolveMessagesValue`).
-//
-// Reuses the caller's open acquisition tx via the tx-aware
-// ListDeliveredForFrame. The tx-less Messages().List would deadlock
-// here: under the SQLite driver's MaxOpenConns=1, a fresh-connection
-// read from inside the open tx blocks forever waiting for the only pool
-// conn (held by the tx). The delivered row is visible inside the tx
-// because message delivery committed it before this acquisition began
-// (see the ordering note on substituteFanOutPartitionRequest).
-//
-// Per @blessed-invariant 20/21 the payload bytes are inert — forwarded
-// verbatim into the substitution context, never logged or transformed.
-// The type-path discriminator is identifier-shaped and safe to log; the
-// payload is not.
 func triggerMessageForFrame(
 	ctx context.Context, args RunArgs, tx persistence.Tx, frameID shared.UUID,
 ) (json.RawMessage, string) {
@@ -273,17 +151,6 @@ func triggerMessageForFrame(
 	return rows[0].Payload, rows[0].Type
 }
 
-// loadScratchIntoAcquisition reads the dispatch row's scratch bytes
-// (inline or spilled) and stamps them onto `out.Scratch` so
-// buildExecuteRequest populates `ExecuteRequest.scratch`. Mirrors the
-// resume-payload loader: best-effort blob materialization — a missing
-// backend, backend-name mismatch, or fetch error degrades to empty
-// scratch with a logged warn, NOT a failed acquisition.
-// STORY-opaque-executor-scratch's load-bearing property is round-trip
-// integrity when the read succeeds; a transient backend outage
-// degrading to empty is acceptable because the executor sees
-// `len(scratch) == 0` and handles it the same as a fresh dispatch.
-//
 // @concept: executor
 func loadScratchIntoAcquisition(
 	ctx context.Context, args RunArgs, tx persistence.Tx, out *acquisition,
@@ -296,11 +163,9 @@ func loadScratchIntoAcquisition(
 		return
 	}
 	if handle == "" {
-		// @deliberate: either no scratch at all, or inline scratch — pass through.
 		out.Scratch = inline
 		return
 	}
-	// @deliberate: spilled scratch — materialize through the configured BlobBackend.
 	if args.Blob == nil {
 		args.Logger.Warn("tryAcquire: spilled scratch but no BlobBackend configured; passing empty scratch to executor",
 			"node_id", cand.NodeID.String(),

@@ -121,7 +121,6 @@ func TestCompile_PKUnique(t *testing.T) {
 
 	t.Run("interpret zero rows scanned → pass", func(t *testing.T) {
 		c, _ := Compile(CheckSpec{Kind: "pk_unique", Config: map[string]any{"fields": []any{"id"}}}, "s", "t")
-		// @deliberate: Runner passes false when no row returned; Interpret must treat that as pass.
 		res := c.Interpret(false)
 		if !res.Pass {
 			t.Fatalf("expected pass when no duplicate, got %+v", res)
@@ -147,7 +146,6 @@ func TestCompile_InvalidIdentifiers(t *testing.T) {
 		{"s", ""},
 		{"123start", "items"},
 		{"s", "with-dash"},
-		// @constraint: identifier validator rejects SQL-injection attempts in schema names.
 		{"s; DROP TABLE", "items"},
 	}
 	for _, tc := range tests {
@@ -172,9 +170,6 @@ func TestCompile_UnknownKind(t *testing.T) {
 	}
 }
 
-// fakeRows / fakeConn provide a minimal Conn implementation so Run can
-// be exercised without a real database. Each Query call answers from
-// the pre-canned response keyed by SQL.
 type fakeRows struct {
 	values [][]any
 	idx    int
@@ -264,8 +259,6 @@ func TestRun_EmptySpecsRejected(t *testing.T) {
 }
 
 func TestSelectOnlyEnforcement(t *testing.T) {
-	// @constraint: selectOnlyRegex must reject non-SELECT SQL and leading comments
-	// to keep the check executor read-only.
 	sqls := []string{
 		"DROP TABLE s.t",
 		"INSERT INTO s.t VALUES (1)",

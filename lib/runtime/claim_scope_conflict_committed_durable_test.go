@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Regression coverage for the claim-scope-conflict property the Stage-4
-// claim-handle state-column refactor must preserve: a committed-
-// durable row continues to occupy its claim-scope (asset surface) and any
-// subsequent acquire of the same byte-equal claim-scope sees it via
-// ListByProducerClaimScope, even though `holder_supervisor_id` is NULL.
-
 package runtime_test
 
 import (
@@ -70,12 +64,10 @@ func TestClaimScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 		}, tx)
 	}))
 
-	// @deliberate: promote A to committed simulates durable-Commit at terminal.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Promote(ctx, idA, "sup-A", spec.ClaimHandleStateCommitted, tx)
 	}))
 
-	// @deliberate: Verify the row is state='committed', holder_supervisor_id NULL.
 	var rowA *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, idA, tx)
@@ -87,14 +79,6 @@ func TestClaimScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 	require.Equal(t, spec.ClaimLifetimeDurable, rowA.Lifetime)
 	require.Empty(t, rowA.HolderSupervisorID, "committed row must have holder_supervisor_id NULL")
 
-	// @deliberate: ListByProducerClaimScope MUST surface the committed-durable row so
-	//    a new acquire's in-Go scope-conflict check sees the
-	//    byte-equal scope as taken. This is the load-bearing property:
-	//    a committed-durable row remains in conflict-detection scope
-	//    until its producer Releases it (via instance termination or
-	//    operator DELETE /assets/{alias}). Without this, two writers
-	//    could simultaneously hold the same logical scope —
-	//    @blessed-invariant 4b violation.
 	var hits []persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		rows, err := backend.ClaimHandles().ListByProducerClaimScope(ctx, producer, tx)
@@ -110,10 +94,6 @@ func TestClaimScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 }
 
 func TestClaimScopeConflict_CommittedSubgraphDoesNotConflict(t *testing.T) {
-	// @deliberate: Counterpoint to the durable case: a committed-subgraph row does
-	// NOT participate in conflict detection. The producer Released the
-	// scope on subgraph-Commit; only the rimsky-side ledger row
-	// lingers for forensics until retention sweep reaps it.
 	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)

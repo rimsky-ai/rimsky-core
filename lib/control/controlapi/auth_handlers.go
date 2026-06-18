@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// HTTP handlers backing the /auth/keys/* surface. See spec
-// "Control-api endpoints / Auth endpoints".
 //
 // @concept: api-key
 
@@ -25,7 +23,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// keyDTO is the public JSON shape for an API key (no plaintext).
 type keyDTO struct {
 	ID             shared.UUID  `json:"id"`
 	Name           string       `json:"name"`
@@ -56,14 +53,6 @@ func rowToDTO(row persistence.APIKey) keyDTO {
 	}
 }
 
-// handleCreateKey backs POST /auth/keys. Mints a new key; surfaces
-// the plaintext exactly once. Validates the requested grant against
-// the action registry (wildcards are accepted without registry
-// lookup; exact action strings must be registered).
-//
-// Dry-run (`?dry_run=true`): after grant validation succeeds, the
-// handler returns a placeholder envelope and mints NO plaintext
-// credential and persists no row (the dry-run never-mutates property;
 // @concept: dry-run). In anonymous-mode (zero active keys) the
 // envelope notes that committing the first key exits anonymous mode.
 func handleCreateKey(deps AppDeps) http.HandlerFunc {
@@ -82,11 +71,6 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "name is required")
 			return
 		}
-		// @constraint: canonicalize: trim whitespace on action strings before
-		// validation so an operator's accidental `"node:reset "`
-		// surfaces as either accepted (after trim) or rejected with
-		// a precise error rather than a confusing
-		// `unknown action: node:reset ` (trailing space).
 		for i := range body.Permissions {
 			body.Permissions[i].Action = strings.TrimSpace(body.Permissions[i].Action)
 		}
@@ -94,10 +78,6 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		// @constraint: reject any exact action string that isn't in the registry.
-		// Wildcards (`*`, `<noun>:*`, `*:<verb>`) are accepted without
-		// registry lookup — they match what's registered at request
-		// time, not at mint time.
 		for _, e := range body.Permissions {
 			if e.Action == "*" || strings.HasSuffix(e.Action, ":*") || strings.HasPrefix(e.Action, "*:") {
 				continue
@@ -107,25 +87,10 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
-		// @constraint: reject any grant whose scope map carries a key the action
-		// doesn't declare. The action-grammar check above only verifies
-		// the action STRING; a typo like `{action:"template:register",
-		// scope:{"templet_tag":"analytics"}}` (note the missing 'a')
-		// passes the grammar check but silently denies every request
-		// because `templet_tag` is never emitted by requestTargets. The
-		// per-action ScopeDimensions registry catches these at mint
-		// time. Wildcard entries are skipped (they span multiple
-		// actions; their scope is matched at request time against the
-		// routed action's dimension).
 		if err := deps.AuthState.Registry.ValidateGrantScope(body.Permissions); err != nil {
 			badRequest(w, err.Error())
 			return
 		}
-		// @constraint: dry-run: grant validation passed; skip the mint + insert. Mint
-		// NO plaintext (a previewed key must never surface a usable
-		// credential) and persist no row — return a placeholder id
-		// mirroring instance:create's "dry-run-not-persisted". In
-		// anonymous-mode the note warns that committing the first key
 		// exits anonymous mode. @concept: dry-run.
 		if ModeFromContext(r.Context()) == auth.ModeDryRun {
 			details := map[string]any{
@@ -168,13 +133,6 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 				return
 			}
 			if errors.Is(err, persistence.ErrAPIKeyHashCollision) {
-				// @constraint: genuinely impossible at random for SHA-256 over
-				// 264 random bits; in practice this surfaces when a
-				// previous deploy left a stale row. 500 is the
-				// honest status code (the operator's
-				// configuration's drifted, not the request's), but
-				// the error body carries the recovery path so
-				// operator dashboards aren't left guessing.
 				writeJSON(w, http.StatusInternalServerError, map[string]any{
 					"error":    "api-key key_hash collision",
 					"hint":     "most likely a stale row from a previous deploy; pre-v1 remedy is to drop the conflicting row and retry the mint",
@@ -204,7 +162,6 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleListKeys backs GET /auth/keys.
 func handleListKeys(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		nameFilter := r.URL.Query().Get("name_filter")
@@ -222,7 +179,6 @@ func handleListKeys(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleShowKey backs GET /auth/keys/{nameOrID}.
 func handleShowKey(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		nameOrID := chi.URLParam(r, "nameOrID")
@@ -239,9 +195,6 @@ func handleShowKey(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleRevokeKey backs DELETE /auth/keys/{nameOrID}. Refuses if the
-// revocation would leave zero active keys unless
-// ?force_leave_anonymous=true is set.
 func handleRevokeKey(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -273,8 +226,6 @@ func handleRevokeKey(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// @constraint: dry-run: key resolved and the last-key guard passed; skip the
-		// MarkRevoked mutation and write the envelope before any state
 		// change (the dry-run never-mutates property; @concept: dry-run).
 		if WriteDryRunResponse(w, r, "would_have_revoked_key", map[string]any{
 			"key_id": row.ID.String(),
@@ -287,21 +238,10 @@ func handleRevokeKey(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if !found {
-			// @constraint: row was deleted between the lookup above and the
-			// UPDATE — vanishingly unlikely pre-v1 (no DELETE path
-			// exists), but keep the branch defensive.
 			notFoundResp(w, "no such key")
 			return
 		}
 		if !changed {
-			// @constraint: row exists but a prior revoker (typically the
-			// rotation-grace sweep) already set revoked_at. The
-			// original revoker already fired auth.key_revoked +
-			// dropped the anon cache; emitting another row here
-			// would double-count this revocation in the audit log
-			// with a misleading reason="manual". Return 200 with
-			// `already_revoked: true` so operators can tell which
-			// path landed.
 			writeJSON(w, http.StatusOK, map[string]any{
 				"id":              row.ID,
 				"name":            row.Name,
@@ -325,10 +265,6 @@ func handleRevokeKey(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleRotateKey backs POST /auth/keys/{nameOrID}/rotate. Atomic:
-// inside one tx, sets revoke_at on the old row (so it drops out of
-// the partial unique-name index) and inserts the new row with the
-// same name + permissions.
 func handleRotateKey(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -361,9 +297,6 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "cannot rotate a revoked key"})
 			return
 		}
-		// @constraint: dry-run: key resolved, grace parsed, and not-revoked confirmed;
-		// skip the rotate transaction. The gate is BEFORE auth.Mint so a
-		// previewed rotate mints no plaintext and persists nothing (the
 		// dry-run never-mutates property; @concept: dry-run).
 		if WriteDryRunResponse(w, r, "would_have_rotated_key", map[string]any{
 			"key_id": oldRow.ID.String(),
@@ -396,8 +329,6 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		deps.AuthState.InvalidateAnonCache()
-		// @constraint: uniform actor key — a rotation is found by its
-		// new key id; KeyName is preserved across the rotation.
 		deps.AuthState.EmitKeyRotated(ctx, auth.KeyRotatedPayload{
 			KeyID:    newRow.ID,
 			KeyName:  oldRow.Name,
@@ -416,8 +347,6 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleAuthStatus backs GET /auth/status. Returns the deployment's
-// auth mode + key counts.
 func handleAuthStatus(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -428,18 +357,6 @@ func handleAuthStatus(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// @constraint: sum admin keys by listing all active keys and inspecting
-		// their grants. Cheap in V1 (few keys); cache by V2 if it
-		// becomes a hot path.
-		//
-		// Definition of admin: the grant contains the literal `*`
-		// entry. Expansions that cover the same surface (e.g.
-		// `[*:read, *:write, ...]`) do NOT count — operators relying
-		// on those expansions should mint a true `*` grant if they
-		// want it reflected here. The spec section "auth/status"
-		// reserves "admin_count" for the literal-`*` definition;
-		// keeping the loop narrow keeps the metric stable across
-		// future wildcard-expansion changes.
 		rows, err := keys.List(ctx, false, "", nil)
 		if err != nil {
 			writeError(w, err)
@@ -479,8 +396,6 @@ func handleAuthStatus(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// lookupByNameOrID resolves a path segment that may be a UUID or a
-// human-readable name. Tries UUID parse first; falls back to GetByName.
 func lookupByNameOrID(ctx context.Context, t persistence.APIKeyTable, nameOrID string) (persistence.APIKey, bool, error) {
 	if id, err := uuid.Parse(nameOrID); err == nil {
 		return t.GetByID(ctx, id, nil)

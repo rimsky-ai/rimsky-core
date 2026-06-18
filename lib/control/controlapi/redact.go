@@ -6,14 +6,6 @@ package controlapi
 
 import "strings"
 
-// ApplyParamsRedact returns a copy of params with each top-level key listed
-// in redact replaced by the sentinel "[REDACTED]". Shallow only (nested
-// object keys are not walked) — matches spec §5.5 (params_redact on
-// TemplateSpec).
-//
-// If redact is empty, returns the original map (not a copy). If any key
-// contains a dot, logs a note (not an error) — dotted keys aren't supported
-// in v1.
 func ApplyParamsRedact(params map[string]any, redact []string) map[string]any {
 	if len(redact) == 0 {
 		return params

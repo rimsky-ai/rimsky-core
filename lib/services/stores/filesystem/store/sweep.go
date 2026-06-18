@@ -14,12 +14,6 @@ import (
 	"time"
 )
 
-// RunSweep runs the visibility-timeout sweep. Returns when ctx is cancelled.
-//
-// Per spec §7.5: purely store-internal; does not consult
-// rimsky_claim_handles. Reclaimed in-progress sentinels also clear any
-// drained sentinel for the policy so on_drain mode picks the
-// recently-reclaimed work back up.
 func (s *Store) RunSweep(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 60 * time.Second
@@ -64,13 +58,6 @@ func (s *Store) sweepOnce() error {
 			src := filepath.Join(inProg, e.Name())
 			dst := filepath.Join(avail, folder)
 			if err := os.Rename(src, dst); err != nil {
-				// @deliberate: ENOENT means a concurrent terminal RPC removed the
-				// in-progress sentinel just before sweep tried to rename it. Nothing
-				// was returned to available/, so reclaimed must NOT be set — spec
-				// §5.3 case #2 (sweep returns the sentinel to available/) only covers
-				// the actual-rename path. Setting reclaimed=true on ENOENT would
-				// clobber a still-needed drained sentinel and burn an extra
-				// Unavailable cycle on the next Open.
 				if !errors.Is(err, fs.ErrNotExist) {
 					slog.Warn("filesystem store: sweep reclaim", "selector", selector, "folder", folder, "error", err.Error())
 				}

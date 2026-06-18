@@ -13,12 +13,6 @@ import (
 	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
-// TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy inserts a
-// rimsky_wait_set row for each of the two signal classes the legacy
-// CHECK rejects but the new CHECK admits — 'transient' and 'terminal' —
-// against a freshly-migrated SQLite and asserts every insert succeeds.
-// Also asserts that 'message' is rejected by the post-011 CHECK: the
-// virtual-node-settle model has no wait-set rows under that bucket.
 func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()
@@ -39,7 +33,6 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// @constraint: rimsky_instances and rimsky_run_scopes mutually reference each other via FK, so both rows must be inserted inside a single transaction to satisfy deferred FK checks at commit.
 	stx, err := rawDB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
@@ -60,7 +53,6 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// @constraint: rimsky_frames.triggering_message_id is NOT NULL FK into rimsky_messages (post-010 schema), so a triggering message must be seeded before the frame row.
 	msgID := uuid.New().String()
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
@@ -69,7 +61,6 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed message: %v", err)
 	}
-	// @constraint: rimsky_frames CHECK enforces frame_timeout_ms >= 60000, so the seed value must clear the floor.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, triggering_message_id, state, frame_timeout_ms, started_at)
@@ -78,7 +69,6 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}
-	// @constraint: uq_node_runs_in_flight_per_run_scope forbids two in-flight runs sharing (node_id, run_scope_id), so the receiver and sender runs each need their own node.
 	for _, nID := range []string{receiverNodeID, senderNodeID} {
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id) VALUES (?, ?, 'fixture', ?)`,
@@ -102,7 +92,6 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 		}
 	}
 
-	// @deliberate: each of the two broadened topic_kind values must be admitted by the post-006 / post-011 CHECK; the legacy CHECK (001-schema.sql) rejects both, and 'message' is no longer admitted post-011, so it is asserted separately below as a REJECTION.
 	for _, topicKind := range []string{"transient", "terminal"} {
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_wait_set

@@ -2,22 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// subgraph_exit_carry_empty_test.go — pins the EMPTY-attribute sub-graph
-// exit through the RUNNER wrapper (`applyTerminalCompleteSubgraphExit`,
-// the same call the runner terminal path makes in
-// `runner_terminal.go::applyTerminalComplete`). An exit that terminates
-// with no attribute map must still run the FULL settlement minus the
-// attribute upsert: the sub-graph RunScope closes and the
-// `subgraph.exit_carry` forensics event is emitted. Early-returning on
-// the empty map (the pre-fix `if len(merged) == 0 { return nil }`)
-// skipped `SettleChildren` entirely and leaked the scope open — the
-// defect class this test pins closed.
-//
-// Lives in `package runtime` so it can construct the unexported
-// `acquisition` value the wrapper consumes; the non-empty carry shapes
-// are covered against the `SettleChildren` primitive in
-// `test/scenarios/subgraph/exit_carry_rule_test.go`.
-
 package runtime
 
 import (
@@ -52,11 +36,6 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 	t.Cleanup(func() { _ = d.Close() })
 	tables := d.Tables()
 
-	// @deliberate: Seed the persisted sub-graph shape the carry-rule fires against: a
-	// calling-node parent run in the instance's main RunScope plus an
-	// exit leaf run inside a child RunScope whose parent_run_id points
-	// back at the parent run. Mirrors the fixture in
-	// test/scenarios/subgraph/exit_carry_rule_test.go::makeFixture.
 	templateHash := "sha256-" + uuid.NewString()
 	instanceID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
@@ -172,18 +151,12 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		NodeDef:    &node.TemplateNodeDef{Type: "inner-exit", Executor: "test-executor", IsSubgraphExit: true},
 	}
 
-	// @deliberate: Drive the runner wrapper with an EMPTY attribute map — the exact
-	// shape an exit produces when its executor terminates with no
-	// writeback. The wrapper encodes a nil Writeback and the primitive
-	// must run the full settlement minus the attribute upsert.
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return applyTerminalCompleteSubgraphExit(ctx, args, acq, map[string]any{}, tx)
 	}); err != nil {
 		t.Fatalf("applyTerminalCompleteSubgraphExit (empty attributes): %v", err)
 	}
 
-	// @deliberate: (a) The sub-graph RunScope is CLOSED — the empty carry must not
-	// leak the child execution context open.
 	var scope *persistence.RunScopeRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -196,7 +169,6 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		t.Errorf("sub-graph RunScope not closed after empty-attribute exit settlement")
 	}
 
-	// @deliberate: (b) The `subgraph.exit_carry` forensics event is emitted.
 	var res persistence.EventListResult
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -217,8 +189,6 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		t.Errorf("no subgraph.exit_carry event after empty-attribute exit settlement")
 	}
 
-	// @deliberate: The parent run's writeback row stays empty — the empty carry skips
-	// ONLY the attribute upsert.
 	var attrs *persistence.NodeAttributesRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error

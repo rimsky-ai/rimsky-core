@@ -16,13 +16,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// messagesImpl is the Postgres-backed persistence.MessagesTable — the
-// unified message queue per spec §Unified message layer.
 type messagesImpl tablesImpl
 
 var _ persistence.MessagesTable = (*messagesImpl)(nil)
 
-// Messages returns the postgres MessagesTable impl.
 func (s *tablesImpl) Messages() persistence.MessagesTable { return (*messagesImpl)(s) }
 
 func (b *messagesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
@@ -58,12 +55,6 @@ func (b *messagesImpl) MarkDelivered(ctx context.Context, tx persistence.Tx, id 
 	return tag.RowsAffected() == 1, nil
 }
 
-// listPendingForInstanceSQL returns the OLDEST pending undelivered
-// message for the instance. LIMIT 1 is load-bearing: the one-message-
-// per-frame property in `code:lib/runtime/message_delivery.go::DeliverPendingMessages`
-// names this SELECT as the structural single-row gate. Removing the
-// LIMIT would let bursty operator traffic materialize N rows per tick
-// just to pick one.
 const listPendingForInstanceSQL = `
 SELECT id, instance_id, type, sender, sender_kind, payload,
        received_at, delivered_at, frame_id, cancelled
@@ -119,12 +110,6 @@ func (b *messagesImpl) Get(ctx context.Context, id shared.UUID) (*persistence.Me
 	return &out[0], nil
 }
 
-// GetInTx mirrors Get but reads through the caller's open tx. The
-// postgres pool can satisfy a fresh-connection read concurrent with
-// an open tx, so the deadlock GetInTx exists to defeat is SQLite-
-// specific; the postgres impl provides this variant for interface
-// symmetry, and so the frame-engine's promotion path participates in
-// the same tx (avoiding a read-before-commit visibility hazard).
 func (b *messagesImpl) GetInTx(ctx context.Context, tx persistence.Tx, id shared.UUID) (*persistence.MessageRow, error) {
 	rows, err := b.q(tx).Query(ctx, getMessageSQL, id)
 	if err != nil {
@@ -141,9 +126,6 @@ func (b *messagesImpl) GetInTx(ctx context.Context, tx persistence.Tx, id shared
 	return &out[0], nil
 }
 
-// List is a paginated list with filter. V1 implementation supports
-// instance_id + type + sender_kind + frame_id filters; cursor pagination
-// follows received_at DESC.
 func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {
 	args := []any{}
 	where := "WHERE TRUE"
@@ -216,7 +198,4 @@ func collectMessages(rows pgx.Rows) ([]persistence.MessageRow, error) {
 	return out, nil
 }
 
-// ErrMessagesNotWired is the sentinel reserved for paths that the V1
-// schema admits but the V1 runtime has not yet exercised end-to-end.
-// Kept here so future callers can errors.Is() check.
 var ErrMessagesNotWired = errors.New("messages: runtime path not wired")

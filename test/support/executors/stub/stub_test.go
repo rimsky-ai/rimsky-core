@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// stub_test.go — stub Executor coverage under the unary RPC shape
-// (TD-execute-rpc-unary). Each test stands up the stub on a real
-// loopback gRPC listener, dispatches Execute(req), and asserts on the
-// settling Outcome plus the recorded ObservedRequest list.
-
 package stub
 
 import (
@@ -23,7 +18,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// listenForTest stands up the stub on a real loopback gRPC listener.
 func listenForTest(t testing.TB, s *Stub) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -69,14 +63,10 @@ func TestScripted_Error(t *testing.T) {
 	require.NoError(t, err)
 	e := outcome.GetError()
 	require.NotNil(t, e, "expected Error outcome")
-	// @constraint: unscoped classes are prefixed with `stub/` per signal taxonomy.
 	require.Equal(t, "stub/CONFIG", e.GetErrorClass())
 	require.Equal(t, "bad", e.GetPayload().AsMap()["hint"])
 }
 
-// TestScripted_ErrorHierarchicalClassPassesThrough verifies an
-// operator-supplied hierarchical class (containing `/`) is not
-// re-prefixed.
 func TestScripted_ErrorHierarchicalClassPassesThrough(t *testing.T) {
 	s := New()
 	s.WhenType("t.err2").Error("executor_blocked/quota", nil)
@@ -122,8 +112,6 @@ func TestScripted_AwaitAsyncCallback(t *testing.T) {
 	require.Equal(t, int64(5000), a.GetExpectedCompletionMs())
 }
 
-// TestScripted_Tags pins the executor-attached tags onto the settling
-// terminal (concept:terminal-tag).
 func TestScripted_Tags(t *testing.T) {
 	s := New()
 	s.WhenType("t.tags").Success(nil, true, "").Tags("alpha", "beta")
@@ -146,7 +134,6 @@ func TestDelayRespectsContextCancellation(t *testing.T) {
 
 	start := time.Now()
 	_, err := c.Execute(ctx, &genv1.ExecuteRequest{NodeType: "t.slow"})
-	// @deliberate: Expect the call to error out (deadline) rather than return a settling Outcome.
 	require.Error(t, err)
 	require.Less(t, time.Since(start), 400*time.Millisecond, "should return quickly after cancellation")
 }
@@ -161,9 +148,6 @@ func TestUnknownNodeTypeReturnsError(t *testing.T) {
 	require.Contains(t, err.Error(), "no script for node_type")
 }
 
-// TestObservedRequestCapturesAttributes verifies the stub records the
-// dispatch-time `attributes` bag so supervisor / scenario tests can
-// assert that rimsky wired the unified attribute bag through.
 func TestObservedRequestCapturesAttributes(t *testing.T) {
 	s := New()
 	s.WhenType("t.obs").Success(map[string]any{}, false, "")
@@ -195,8 +179,6 @@ func TestObservedRequestCapturesAttributes(t *testing.T) {
 	require.Equal(t, "https://example.test/api", obs[0].Attributes["endpoint"])
 }
 
-// TestObservedRequest_CapturesCandidateHandles verifies per-store
-// candidate handles round-trip into the recorded ObservedRequest.
 func TestObservedRequest_CapturesCandidateHandles(t *testing.T) {
 	s := New()
 	s.WhenType("t.handles").Success(nil, false, "")
@@ -218,8 +200,6 @@ func TestObservedRequest_CapturesCandidateHandles(t *testing.T) {
 	require.Equal(t, []byte("ch-2"), obs[0].CandidateHandles["shadow"])
 }
 
-// TestStubModeReturnsImmediateComplete verifies stub mode short-circuits
-// to Outcome{Success} carrying attributes_delta from StubAttributesFor.
 func TestStubModeReturnsImmediateComplete(t *testing.T) {
 	s := New().EnableStubMode()
 	addr := listenForTest(t, s)
@@ -235,9 +215,6 @@ func TestStubModeReturnsImmediateComplete(t *testing.T) {
 	require.Equal(t, "1970-01-01T00:00:00Z", success.GetAttributesDelta().AsMap()["fetched_at"])
 }
 
-// TestStubModeUnknownTypeReturnsEmptyDelta verifies stub mode tolerates
-// unknown node_types — StubAttributesFor returns `{}` and Execute
-// emits Outcome{Success} with an empty attributes_delta.
 func TestStubModeUnknownTypeReturnsEmptyDelta(t *testing.T) {
 	s := New().EnableStubMode()
 	addr := listenForTest(t, s)
@@ -251,8 +228,6 @@ func TestStubModeUnknownTypeReturnsEmptyDelta(t *testing.T) {
 	require.Equal(t, map[string]any{}, success.GetAttributesDelta().AsMap())
 }
 
-// TestStubMode_ParkProbeReturnsPark covers the stub-mode park probe
-// (probe_park attribute) returning Park with the parsed reason.
 func TestStubMode_ParkProbeReturnsPark(t *testing.T) {
 	s := New().EnableStubMode()
 	addr := listenForTest(t, s)
@@ -276,8 +251,6 @@ func TestStubMode_ParkProbeReturnsPark(t *testing.T) {
 	require.Equal(t, "demo", park.GetReasonLabel())
 }
 
-// TestHoldUntilBlocksUntilSignal verifies the HoldUntil builder blocks
-// Execute until the channel closes.
 func TestHoldUntilBlocksUntilSignal(t *testing.T) {
 	hold := make(chan struct{})
 	s := New()

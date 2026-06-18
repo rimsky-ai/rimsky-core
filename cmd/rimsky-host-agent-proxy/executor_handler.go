@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// executor_handler.go — the supervisor-facing Executor protocol handler.
-// Per TD-execute-rpc-unary the Executor.Execute RPC is unary: the
-// proxy resolves the dispatch to an owner's agent + spawned child,
-// rewrites the callback URL onto the agent's local listener, tunnels
-// the ExecuteRequest into the child via a DispatchFrame, awaits the
-// agent's reply DispatchFrame carrying the Outcome, unmarshals it,
-// and returns it on the unary call. Proxy-side failures surface as
-// Outcome{Error{error_class}}.
-//
 // @concept: host-agent-proxy
 
 package main
@@ -29,7 +20,6 @@ import (
 
 const protocolExecutor = "executor"
 
-// executorHandler implements genv1.ExecutorServer.
 type executorHandler struct {
 	genv1.UnimplementedExecutorServer
 	state        *proxyState
@@ -45,7 +35,6 @@ func newExecutorHandler(state *proxyState, cfg Config) *executorHandler {
 	}
 }
 
-// Execute resolves, spawns, tunnels, and returns the unary Outcome.
 func (h *executorHandler) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	res, rerr := resolveAndSpawn(
 		ctx, h.state, h.fetch,
@@ -59,9 +48,6 @@ func (h *executorHandler) Execute(ctx context.Context, req *genv1.ExecuteRequest
 		return executorTerminalError(rerr.class, rerr.msg), nil
 	}
 
-	// @constraint: rewrite the callback URL onto the agent's local
-	// listener so the spawned child posts callbacks into the tunnel
-	// rather than dialing the supervisor directly (which it can't reach).
 	forwarded := proto.Clone(req).(*genv1.ExecuteRequest)
 	forwarded.CallbackUrl = rewriteCallbackURL(req.GetCallbackUrl(), res.agent.localCallbackBaseURL)
 
@@ -86,10 +72,6 @@ func (h *executorHandler) Execute(ctx context.Context, req *genv1.ExecuteRequest
 
 	select {
 	case <-ctx.Done():
-		// @constraint: the supervisor cancelled the Execute call; send
-		// a terminal CANCEL frame so the spawned executor's call is
-		// torn down rather than left running until the child terminates
-		// on its own.
 		res.agent.send(&genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
 			SpawnId:  res.spawnID,
 			Protocol: protocolExecutor,
@@ -115,9 +97,6 @@ func (h *executorHandler) Execute(ctx context.Context, req *genv1.ExecuteRequest
 	}
 }
 
-// executorTerminalError synthesises an Outcome{Error{class}} so a
-// proxy-side failure surfaces through the same terminal-handler
-// pipeline a real executor's Error outcome takes.
 func executorTerminalError(class, message string) *genv1.Outcome {
 	var payload *structpb.Struct
 	if message != "" {
@@ -133,9 +112,6 @@ func executorTerminalError(class, message string) *genv1.Outcome {
 	}
 }
 
-// executorObsHandler implements genv1.ExecutorObservabilityServer. The
-// proxy itself has no fixed capability schema — it serves whatever name
-// the supervisor dispatches — so it advertises an empty envelope.
 type executorObsHandler struct {
 	genv1.UnimplementedExecutorObservabilityServer
 }

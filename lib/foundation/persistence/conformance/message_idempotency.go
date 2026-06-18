@@ -2,29 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: MessageIdempotency conformance area.
-// Pins the universal Idempotency-Key dedup tuple behavior the
-// control-api message-emit path depends on (per concept:message):
-//
-//   - InsertOrLookup fresh insert returns inserted=true with the
-//     supplied message id (the handler maps this to 201 Created).
-//   - Replay of the SAME dedup tuple returns inserted=false with the
-//     ORIGINAL message id and created_at (the handler maps this to
-//     200 OK with the original message_id — the operator-visible
-//     status-code distinction).
-//   - The dedup tuple carries BOTH the sender_kind and sender_subject
-//     discriminators: two distinct api-keys (different sender_subject)
-//     and a publisher named like an operator (different sender_kind)
-//     must NOT cross-collide on the same Idempotency-Key.
-//   - DeleteOlderThan removes exactly the rows past the cutoff; a
-//     replay of a swept tuple inserts fresh (at-most-once dedup is
-//     bounded by cfg:messages.idempotency_ttl_seconds, not forever).
-//
-// The postgres driver implements InsertOrLookup as a single
-// ON CONFLICT … RETURNING (xmax = 0) statement while sqlite uses
-// INSERT OR IGNORE + a follow-up SELECT — a driver-specific SQL idiom
-// pair with real drift risk, which is why every observable above is
-// asserted identically on both drivers.
 package conformance
 
 import (
@@ -38,9 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// idempotencyInsertOrLookup wraps one InsertOrLookup call in its own tx
-// (mirroring the production message-create tx) and fails the test on a
-// driver error.
 func idempotencyInsertOrLookup(
 	ctx context.Context, t *testing.T, d persistence.Database,
 	row persistence.MessageIdempotencyRow,
@@ -59,8 +33,6 @@ func idempotencyInsertOrLookup(
 	return out, inserted
 }
 
-// testMessageIdempotencyInsertOrLookup pins the fresh-insert vs
-// conflict-replay contract plus both dedup-tuple discriminators.
 func testMessageIdempotencyInsertOrLookup(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -74,8 +46,6 @@ func testMessageIdempotencyInsertOrLookup(t *testing.T, d persistence.Database) 
 		MessageID:      shared.UUID(uuid.New()),
 	}
 
-	// @constraint: fresh insert returns inserted=true with the supplied
-	// message id (the handler maps this to 201 Created).
 	first, inserted := idempotencyInsertOrLookup(ctx, t, d, base)
 	if !inserted {
 		t.Fatalf("fresh InsertOrLookup returned inserted=false")
@@ -84,10 +54,6 @@ func testMessageIdempotencyInsertOrLookup(t *testing.T, d persistence.Database) 
 		t.Fatalf("fresh InsertOrLookup message id = %s, want %s", first.MessageID, base.MessageID)
 	}
 
-	// @constraint: replay of the identical dedup tuple with a DIFFERENT
-	// message id returns inserted=false with the ORIGINAL message id and
-	// created_at (the handler returns 200 with the original message_id;
-	// no duplicate envelope is created).
 	replay := base
 	replay.MessageID = shared.UUID(uuid.New())
 	got, inserted := idempotencyInsertOrLookup(ctx, t, d, replay)
@@ -97,17 +63,10 @@ func testMessageIdempotencyInsertOrLookup(t *testing.T, d persistence.Database) 
 	if got.MessageID != base.MessageID {
 		t.Fatalf("replay returned message id %s, want original %s", got.MessageID, base.MessageID)
 	}
-	// @constraint: replay must return the ORIGINAL row's created_at, not
-	// the replay's. Tolerance is a millisecond because the drivers store
-	// at different precisions (timestamptz µs vs RFC3339Nano text) but
-	// both must return the stored original surfaced by fresh-insert.
 	if diff := got.CreatedAt.Sub(first.CreatedAt); diff < -time.Millisecond || diff > time.Millisecond {
 		t.Fatalf("replay created_at %v drifted from original %v", got.CreatedAt, first.CreatedAt)
 	}
 
-	// @constraint: sender_subject discriminator — a second api-key
-	// reusing the same Idempotency-Key against the same instance must
-	// insert fresh (no cross-caller replay leak).
 	otherSubject := base
 	otherSubject.SenderSubject = "api-key-B"
 	otherSubject.MessageID = shared.UUID(uuid.New())
@@ -117,9 +76,6 @@ func testMessageIdempotencyInsertOrLookup(t *testing.T, d persistence.Database) 
 			inserted, got.MessageID, otherSubject.MessageID)
 	}
 
-	// @constraint: sender_kind discriminator — a publisher whose
-	// publisher_name is the literal "operator" must not share a dedup
-	// tuple with operator-side emits.
 	publisherKind := base
 	publisherKind.SenderKind = "publisher"
 	publisherKind.SenderSubject = ""
@@ -130,8 +86,6 @@ func testMessageIdempotencyInsertOrLookup(t *testing.T, d persistence.Database) 
 			inserted, got.MessageID, publisherKind.MessageID)
 	}
 
-	// @constraint: sender discriminator — a different publisher name
-	// owns its own dedup tuple.
 	otherSender := publisherKind
 	otherSender.Sender = "publisher-two"
 	otherSender.MessageID = shared.UUID(uuid.New())
@@ -141,9 +95,6 @@ func testMessageIdempotencyInsertOrLookup(t *testing.T, d persistence.Database) 
 	}
 }
 
-// testMessageIdempotencyDeleteOlderThan pins the retention sweep: only
-// rows past the cutoff are removed, the count is exact, and a swept
-// tuple becomes insertable again (dedup is TTL-bounded, not eternal).
 func testMessageIdempotencyDeleteOlderThan(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -210,8 +161,6 @@ func testMessageIdempotencyDeleteOlderThan(t *testing.T, d persistence.Database)
 			inserted, got.MessageID, resend.MessageID)
 	}
 
-	// @constraint: a second sweep at the same cutoff is a no-op — the
-	// deleted count is exact, not best-effort.
 	deleted, err = table.DeleteOlderThan(ctx, now.Add(-1*time.Hour))
 	if err != nil {
 		t.Fatalf("second DeleteOlderThan: %v", err)

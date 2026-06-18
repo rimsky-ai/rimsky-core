@@ -14,14 +14,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @deliberate: park_reason_emission asserts the Park outcome carries
-// a typed reason from the closed two-value set
-// (PARK_REASON_AWAIT_CALLBACK | PARK_REASON_SNOOZE). Per
-// TD-remove-resume-context the Park outcome no longer carries
-// `payload` or `session_token` — those proto fields are reserved.
-// State that needs to ride across the park boundary lives on
-// `attributes_delta`.
-//
 // @concept: parked-state
 func init() {
 	conformance.Register(conformance.Scenario{

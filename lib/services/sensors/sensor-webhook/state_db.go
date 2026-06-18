@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// state_db.go — sensor-webhook per-binary state persistence.
-//
-// When env RIMSKY_SENSOR_WEBHOOK_STATE_DSN is set, publisher-
-// subscription rows + per-subscription last-idempotency-key persist
-// across restarts. This is what allows webhook providers' retry semantics
-// to keep working across sensor-webhook restarts.
-//
-// Driver constraint: the DSN MUST be a Postgres DSN (the schema uses
-// `now()` and `TIMESTAMPTZ`, which are Postgres-only). SQLite is not
-// supported; leave the env var empty for in-memory mode.
 package main
 
 import (
@@ -103,8 +93,6 @@ func (s *stateDB) DeleteSubscription(ctx context.Context, subscriptionID string)
 	return err
 }
 
-// UpdateLastIdempotency persists the most-recent idempotency-key seen.
-// Webhook providers' retry semantics are preserved across restarts.
 func (s *stateDB) UpdateLastIdempotency(ctx context.Context, subscriptionID, key string) error {
 	if s == nil {
 		return nil
@@ -115,7 +103,6 @@ func (s *stateDB) UpdateLastIdempotency(ctx context.Context, subscriptionID, key
 	return err
 }
 
-// SubscriptionState is the persisted shape returned by ListAll.
 type SubscriptionState struct {
 	SubscriptionID     string
 	InstanceID         string
@@ -151,10 +138,6 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	return out, rows.Err()
 }
 
-// GetSubscription returns the persisted state for a single subscription,
-// or (nil, nil) if no row exists. Used by Subscribe to pre-populate the
-// most-recent inbound idempotency key so deduping continues to function
-// across restarts.
 func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*SubscriptionState, error) {
 	if s == nil {
 		return nil, nil

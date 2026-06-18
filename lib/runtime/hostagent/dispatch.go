@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// dispatch.go — relays a DispatchFrame to the spawned child's local gRPC
-// server and streams the response(s) back on the same stream-id. Executor
-// dispatch is server-streaming: the agent opens Execute, sends the request,
-// and forwards each ExecuteEvent as a DATA DispatchFrame, terminating on the
-// inner StreamClose. Claim-producer dispatch is unary: the agent forwards one
-// request and sends one response frame. The wire DispatchFrame carries the
-// claim_producer_verb naming which ClaimProducer RPC to invoke on the child —
-// CommitRequest/AbandonRequest/ReleaseRequest are byte-identical at claim_id,
-// so the agent must NOT infer the verb from the payload shape (doing so
-// silently commits an Abandon/Release, a state-integrity bug).
-//
 // @concept: host-agent
 package hostagent
 
@@ -26,9 +15,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @constraint: every protocol the host-agent-proxy fronts has a name here so
-// the agent can route an inbound dispatch to the right child RPC uniformly —
-// the proxy is a transparent forwarder, not a per-protocol special case.
 const (
 	protocolExecutor       = "executor"
 	protocolClaimProducer  = "claim_producer"
@@ -37,14 +23,7 @@ const (
 	protocolDataProcessing = "data_processing"
 )
 
-// handleDispatchFrame relays one inbound DispatchFrame to the live child and
-// sends the response frame(s) back on the same stream-id. Errors surface as a
-// terminal CANCEL frame so the proxy can translate them into the supervisor-
-// facing error_class.
 func (a *agent) handleDispatchFrame(ctx context.Context, df *genv1.DispatchFrame) {
-	// @constraint: an inbound CANCEL frame is the proxy relaying a supervisor-
-	// side cancellation — cancel the matching in-flight dispatch's child stream.
-	// It is not a fresh dispatch, so there is no child RPC to start here.
 	if df.GetKind() == genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL {
 		a.cancelDispatch(df.GetStreamId())
 		return
@@ -71,19 +50,12 @@ func (a *agent) handleDispatchFrame(ctx context.Context, df *genv1.DispatchFrame
 	}
 }
 
-// dispatchExecutor forwards an ExecuteRequest to the child's Executor
-// server and sends the returned Outcome back as a single DATA frame on
-// the same stream-id. Executor.Execute is unary per
-// TD-execute-rpc-unary; the agent is now a one-shot request/response
-// relay rather than a stream forwarder.
 func (a *agent) dispatchExecutor(ctx context.Context, child *liveChild, df *genv1.DispatchFrame) {
 	var req genv1.ExecuteRequest
 	if err := proto.Unmarshal(df.GetPayload(), &req); err != nil {
 		a.sendDispatchCancel(df)
 		return
 	}
-	// @constraint: a per-dispatch cancelable context is required so an inbound
-	// CANCEL frame for this stream_id can tear down the child's inner Execute call.
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	a.registerDispatchCancel(df.GetStreamId(), cancel)
 	defer a.clearDispatchCancel(df.GetStreamId())
@@ -101,10 +73,6 @@ func (a *agent) dispatchExecutor(ctx context.Context, child *liveChild, df *genv
 	a.sendDispatchData(df, payload)
 }
 
-// dispatchClaimProducer forwards a unary claim-producer RPC to the child and
-// sends one response frame back. The verb is read from the DispatchFrame's
-// claim_producer_verb field — never inferred from the payload shape, because
-// Commit/Abandon/Release are byte-identical at claim_id.
 func (a *agent) dispatchClaimProducer(ctx context.Context, child *liveChild, df *genv1.DispatchFrame) {
 	respBytes, err := forwardClaimProducerUnary(ctx, child, df.GetClaimProducerVerb(), df.GetPayload())
 	if err != nil {
@@ -115,11 +83,6 @@ func (a *agent) dispatchClaimProducer(ctx context.Context, child *liveChild, df 
 	a.sendDispatchData(df, respBytes)
 }
 
-// forwardClaimProducerUnary invokes the verb-named ClaimProducer RPC on the
-// child and returns the serialized response. The verb is authoritative: the
-// request messages for Commit/Abandon/Release are wire-identical at claim_id,
-// so the agent must dispatch the RPC the supervisor actually called rather
-// than guess from the payload.
 func forwardClaimProducerUnary(ctx context.Context, child *liveChild, verb genv1.DispatchFrame_ClaimProducerVerb, payload []byte) ([]byte, error) {
 	client := genv1.NewClaimProducerClient(child.conn)
 
@@ -169,15 +132,6 @@ func forwardClaimProducerUnary(ctx context.Context, child *liveChild, verb genv1
 	}
 }
 
-// dispatchUnaryByMethod forwards a unary RPC for the non-executor,
-// non-claim-producer fronted protocols (publisher / validation /
-// data-processing) to the child and sends one response frame back. The
-// target RPC is read from the DispatchFrame's rpc_method field — never
-// inferred from the payload shape, because these protocols expose multiple
-// unary RPCs whose request messages are distinct types (the generic
-// analogue of why claim_producer_verb is authoritative for the
-// claim-producer path). This is the uniform path that makes the proxy a
-// transparent forwarder for every protocol it fronts.
 func (a *agent) dispatchUnaryByMethod(ctx context.Context, child *liveChild, df *genv1.DispatchFrame) {
 	respBytes, err := forwardUnaryByMethod(ctx, child, df.GetProtocol(), df.GetRpcMethod(), df.GetPayload())
 	if err != nil {
@@ -189,12 +143,6 @@ func (a *agent) dispatchUnaryByMethod(ctx context.Context, child *liveChild, df 
 	a.sendDispatchData(df, respBytes)
 }
 
-// forwardUnaryByMethod invokes the rpc_method-named RPC on the child for the
-// given protocol and returns the serialized response. rpc_method is
-// authoritative: the agent dispatches the RPC the supervisor-facing handler
-// actually called rather than guessing from the payload, so a Subscribe is
-// never silently delivered as an Unsubscribe (etc.) on a side-effecting
-// service.
 func forwardUnaryByMethod(ctx context.Context, child *liveChild, protocol, rpcMethod string, payload []byte) ([]byte, error) {
 	switch protocol {
 	case protocolPublisher:
@@ -208,7 +156,6 @@ func forwardUnaryByMethod(ctx context.Context, child *liveChild, protocol, rpcMe
 	}
 }
 
-// forwardPublisherUnary dispatches one Publisher RPC named by rpcMethod.
 func forwardPublisherUnary(ctx context.Context, child *liveChild, rpcMethod string, payload []byte) ([]byte, error) {
 	client := genv1.NewPublisherClient(child.conn)
 	switch rpcMethod {
@@ -237,7 +184,6 @@ func forwardPublisherUnary(ctx context.Context, child *liveChild, rpcMethod stri
 	}
 }
 
-// forwardValidationUnary dispatches the single Validation RPC (Validate).
 func forwardValidationUnary(ctx context.Context, child *liveChild, rpcMethod string, payload []byte) ([]byte, error) {
 	client := genv1.NewValidationClient(child.conn)
 	switch rpcMethod {
@@ -256,9 +202,6 @@ func forwardValidationUnary(ctx context.Context, child *liveChild, rpcMethod str
 	}
 }
 
-// forwardDataProcessingUnary dispatches one DataProcessing RPC named by
-// rpcMethod. BeginCandidate/CommitCandidate/AbandonCandidate request
-// messages are distinct types, so rpc_method (not payload shape) selects.
 func forwardDataProcessingUnary(ctx context.Context, child *liveChild, rpcMethod string, payload []byte) ([]byte, error) {
 	client := genv1.NewDataProcessingClient(child.conn)
 	switch rpcMethod {
@@ -297,8 +240,6 @@ func forwardDataProcessingUnary(ctx context.Context, child *liveChild, rpcMethod
 	}
 }
 
-// sendDispatchData sends a DATA DispatchFrame back to the proxy on the
-// originating stream-id. Returns false if the stream is torn down.
 func (a *agent) sendDispatchData(df *genv1.DispatchFrame, payload []byte) bool {
 	return a.send(&genv1.ClientFrame{Body: &genv1.ClientFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
 		SpawnId:  df.GetSpawnId(),
@@ -309,23 +250,18 @@ func (a *agent) sendDispatchData(df *genv1.DispatchFrame, payload []byte) bool {
 	}}})
 }
 
-// registerDispatchCancel records the cancel func for an in-flight dispatch
-// stream so an inbound CANCEL frame can tear it down.
 func (a *agent) registerDispatchCancel(streamID string, cancel context.CancelFunc) {
 	a.dispatchMu.Lock()
 	a.dispatchCancels[streamID] = cancel
 	a.dispatchMu.Unlock()
 }
 
-// clearDispatchCancel removes a dispatch stream's cancel func after the
-// dispatch completes.
 func (a *agent) clearDispatchCancel(streamID string) {
 	a.dispatchMu.Lock()
 	delete(a.dispatchCancels, streamID)
 	a.dispatchMu.Unlock()
 }
 
-// cancelDispatch cancels the in-flight dispatch for streamID, if any.
 func (a *agent) cancelDispatch(streamID string) {
 	a.dispatchMu.Lock()
 	cancel, ok := a.dispatchCancels[streamID]
@@ -335,8 +271,6 @@ func (a *agent) cancelDispatch(streamID string) {
 	}
 }
 
-// sendDispatchCancel sends a terminal CANCEL DispatchFrame so the proxy can
-// translate the failure into the supervisor-facing error_class.
 func (a *agent) sendDispatchCancel(df *genv1.DispatchFrame) {
 	a.send(&genv1.ClientFrame{Body: &genv1.ClientFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
 		SpawnId:  df.GetSpawnId(),

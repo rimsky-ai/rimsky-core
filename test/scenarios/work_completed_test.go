@@ -2,24 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Executable acceptance proof for the work_started / work_completed
-// ledger pairing: an operator or auditor reading the event log can pair
-// every work_started event whose dispatch reaches a terminal with a
-// work_completed event, so durations and did-everything-finish audits
-// are computable from the ledger. Dispatches that never reach
-// applyTerminal are paired where rimsky observes the loss: the
-// dispatch-deadline sweep (SweepExecutorDeadlines) releases the claim
-// with an `executor_quiet` or `max_runtime_exceeded` error class and
-// the subsequent retry / give_up emits work_completed. A work_started
-// whose supervisor died therefore stays unpaired until the sweep's
-// next pass releases the orphaned run.
-//
-// Two runs are driven to terminal through the real stack (supervisor +
-// stub executor + persistence): one completing successfully, one
-// erroring through a give_up policy. For each, the proof reads the
-// append-only event ledger and asserts exactly one work_started and
-// exactly one work_completed for the dispatch, with matching node and
-// dispatch identifiers and the terminal kind carried on the completion.
 package scenarios
 
 import (
@@ -35,16 +17,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// assertWorkPair reads the node's event ledger and asserts the
-// work_started / work_completed pairing the story promises: exactly one
-// of each, node identifiers matching, the same dispatch_id on both
-// payloads (the run identifier the pair is joined on), and the terminal
-// kind stamped on the completion.
 func assertWorkPair(t *testing.T, h *scenario.Harness, nodeID foundationshared.UUID, wantTerminalKind string) {
 	t.Helper()
-	// @deliberate: The work_completed append is a best-effort post-commit audit tx —
-	// it can land moments after the state flip a state-based wait
-	// observes. Anchor on the append-only ledger.
 	completed := eventwait.WaitForEvent(h.Ctx, t, h.Persist,
 		eventwait.Matcher{NodeID: &nodeID, Kind: "work_completed"}, 15*time.Second)
 	started := eventwait.Events(h.Ctx, t, h.Persist,
@@ -59,8 +33,6 @@ func assertWorkPair(t *testing.T, h *scenario.Harness, nodeID foundationshared.U
 	require.Equal(t, nodeID, *s.NodeID, "work_started node id")
 	require.Equal(t, nodeID, *c.NodeID, "work_completed node id")
 
-	// @constraint: The pair joins on dispatch_id — the run identifier both halves
-	// carry. Durations are computable from the two rows' timestamps.
 	sDispatch, ok := s.Payload["dispatch_id"].(string)
 	require.True(t, ok, "work_started payload must carry dispatch_id, got %v", s.Payload)
 	require.NotEmpty(t, sDispatch)
@@ -76,9 +48,6 @@ func assertWorkPair(t *testing.T, h *scenario.Harness, nodeID foundationshared.U
 		"work_completed must not precede its work_started twin")
 }
 
-// TestWorkCompletedPairsWorkStartedOnComplete drives a node to a
-// successful terminal and proves the ledger pairing with terminal kind
-// "complete".
 func TestWorkCompletedPairsWorkStartedOnComplete(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -100,9 +69,6 @@ func TestWorkCompletedPairsWorkStartedOnComplete(t *testing.T) {
 	assertWorkPair(t, h, n.ID, "complete")
 }
 
-// TestWorkCompletedPairsWorkStartedOnErrored drives a node through a
-// give_up error terminal and proves the pairing holds on the failure
-// branch too, with terminal kind "errored".
 func TestWorkCompletedPairsWorkStartedOnErrored(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})

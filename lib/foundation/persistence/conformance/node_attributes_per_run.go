@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: NodeAttributesPerRun conformance area.
-// Exercises the per-run keying of `rimsky_node_attributes` (post
-// 2026-05-20). Covers:
-//
-//   - Insert-by-run and GetByRun round-trip.
-//   - GetLatestByNode returns the most-recent run's row.
-//   - Cascade delete: dropping the run row drops the attribute row.
-//   - Denormalized node_id matches the run's canonical node_id.
 package conformance
 
 import (
@@ -22,8 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// testNodeAttributesPerRunInsertByRun verifies that Upsert(runID, nodeID, ...)
-// followed by GetByRun(runID) round-trips data and reads back both ids.
 func testNodeAttributesPerRunInsertByRun(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -63,8 +53,6 @@ func testNodeAttributesPerRunInsertByRun(t *testing.T, d persistence.Database) {
 	}
 }
 
-// testNodeAttributesGetLatestByNode verifies that GetLatestByNode returns
-// the row with the most-recent updated_at when multiple runs exist.
 func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -77,9 +65,6 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("Upsert A: %v", err)
 	}
 
-	// @constraint: sleep so the second row's updated_at strictly exceeds
-	// the first's, regardless of underlying clock granularity — the
-	// latest-by-node assertion depends on the strict ordering.
 	time.Sleep(10 * time.Millisecond)
 	runB := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -106,9 +91,6 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("GetLatestByNode: data.which=%v want B", latest.Data["which"])
 	}
 
-	// @constraint: GetLatestByNode for a node with no rows returns
-	// (nil, nil) — not an error — so callers can distinguish "absent" from
-	// "lookup failed" without sentinel errors.
 	missingNodeID := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.NodeAttributes().GetLatestByNode(ctx, missingNodeID, fix.MainRunScopeID, tx)
@@ -124,8 +106,6 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 	}
 }
 
-// testNodeAttributesCascadeDeleteWithRun verifies that deleting the
-// underlying rimsky_node_runs row cascades to the attribute row.
 func testNodeAttributesCascadeDeleteWithRun(t *testing.T, d persistence.Database, rawExec func(t *testing.T, d persistence.Database, sql string, args ...any)) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -150,11 +130,6 @@ func testNodeAttributesCascadeDeleteWithRun(t *testing.T, d persistence.Database
 		t.Fatalf("attribute row missing before delete")
 	}
 
-	// @deliberate: delete the run row via raw SQL because RunTreeTable
-	// exposes no Delete method — run rows are append-only in production,
-	// so this conformance test reaches under the table interface to
-	// trigger the cascade rather than adding a Delete method just for
-	// tests.
 	rawExec(t, d, "DELETE FROM rimsky_node_runs WHERE id = ?", runID)
 
 	var post *persistence.NodeAttributesRow
@@ -170,9 +145,6 @@ func testNodeAttributesCascadeDeleteWithRun(t *testing.T, d persistence.Database
 	}
 }
 
-// testNodeAttributesPerRunDenormConsistency verifies that the
-// denormalized node_id on the attribute row matches the run's canonical
-// node_id from rimsky_node_runs.
 func testNodeAttributesPerRunDenormConsistency(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)

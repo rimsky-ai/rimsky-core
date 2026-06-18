@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Parked-state lifecycle scenario tests covering the runtime built in
-// E1–E5: applyTerminalPark + SweepParkedNodes + the unified-invalidate
-// wake path + max_park_duration overrun. Per the 2026-05-08 platform-
-// extensions plan E6.
 
 package scenarios
 
@@ -29,31 +25,9 @@ import (
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
-// TestParkedLifecycleResumeOnDeadline covers E6 case (a). Executor emits
-// Park with resume_at 2s in the future. SweepParkedNodes wakes
-// the row when the deadline elapses.
-//
-// Note: the sweep transitions phase parked→pending and node state
-// parked→stale; the standard scheduler/ready-sweep + frame engine then
-// re-dispatches the row. The test asserts the wake event was logged;
-// the post-wake completion is asserted by the external-invalidate test
-// (the wake mechanism is identical).
 func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// @constraint: resumeAt is the wall-clock deadline at which SweepParkedNodes wakes
-	// the parked node. It must outlast deploy → create → reach-parked plus
-	// the two parked-window probes (phase/resume_at and the leaf-run
-	// lineage), since those read the row while it is still parked. The race
-	// that flaked this test under full-suite load was an *accumulated*-
-	// latency one: the phase probe used to run dead last — after the
-	// park-signal wait and the lineage probe — so their combined latency
-	// could push it past the deadline, the sweep having already woken the
-	// node (phase then observed `completed`). The fix below reorders the
-	// two deadline-sensitive probes to run immediately after the parked
-	// transition; 15s then leaves clear buffer even on a heavily loaded
-	// host while keeping the resume comfortably inside the post-resume 30s
-	// `WaitForNodeState` windows.
 	resumeAt := time.Now().Add(15 * time.Second)
 	h.Stub.WhenType("worker").
 		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "rate_limit", resumeAt)
@@ -69,21 +43,9 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// @constraint: Wait for the park transition.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked")
 
-	// @constraint: Two things must happen immediately after the parked transition,
-	// before any further wait can let the resume_at deadline elapse:
-	//  (a) swap the worker to its resume Success script, so the deadline
-	//      wake dispatches cleanly instead of re-running the Park script
-	//      (`WhenType` replaces the entire per-type script in the stub);
-	//  (b) capture the parked phase + persisted resume_at while the row is
-	//      still parked.
-	// Running both here — rather than dead last, after the park-signal and
-	// lineage probes — removes the accumulated-latency race that flaked
-	// this test under full-suite load: the phase read now runs ~ms after
-	// the parked transition instead of seconds later.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "resumed")
 
 	var phase string
@@ -98,22 +60,9 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	t.Logf("parked row: phase=%s resume_at=%v (now=%v, resume_at-now=%v)",
 		phase, *resumeAtStored, time.Now(), time.Until(*resumeAtStored))
 
-	// @deliberate: Verify the canonical terminal/park/* signal event was emitted
-	// (Pass 5 retired the legacy `park_requested` fixed-string row in
-	// favor of the signal type-path). The test uses the snooze flavor
-	// per its `resumeAt` deadline; the executor stub maps a Park with
-	// `resume_at` to ParkReason_SNOOZE. WaitForEventKind matches the
-	// historical event, so it is race-free against the resume.
 	require.True(t, h.WaitForEventKind(worker.ID, "terminal/park/snooze", 5*time.Second),
 		"terminal/park/snooze signal event should be recorded")
 
-	// @deliberate: Lineage assertion: the leaf-run lineage row for the parked terminal
-	// MUST carry settling_signal_type=terminal/park/snooze. EmitLeafRunLineage
-	// in `runner_terminal_park.go::applyTerminalPark` threads `parkSigType`
-	// through; an empty field would mean the writer dropped the value. This
-	// query is LIMIT 1 ORDER BY observed_at DESC, so it must still run inside
-	// the parked window (the 15s budget covers it) — once the resume lands a
-	// newer leaf-run row, it would return that instead.
 	var parkSettlingSignal string
 	h.QueryRowSQL(
 		`SELECT record->>'settling_signal_type' FROM rimsky_lineage
@@ -127,29 +76,17 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 
 	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
 		"sweep should wake the parked node when resume_at elapses")
-	// @deliberate: Verify the resume_reason on the parked_resume_started
-	// audit event payload is "deadline_elapsed" — SweepParkedNodes
-	// stamps it on the wake event so dashboards / scenarios can
-	// distinguish deadline-elapsed wakes from external invalidates.
 	row := lastEventPayload(t, h, worker.ID, "parked_resume_started")
 	require.Equal(t, "deadline_elapsed", row["resume_reason"],
 		"deadline-elapsed wake must persist resume_reason=deadline_elapsed; "+
 			"got %v", row["resume_reason"])
-	// @deliberate: And the worker should ultimately reach fresh after the resume
-	// dispatch completes.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker should reach fresh after deadline-elapsed resume")
 }
 
-// TestParkedLifecycleMaxParkDurationOverrun covers E6 case (c). Set
-// max_park_duration on the template; park indefinitely (no resume_at);
-// after the duration, the watchdog forces failure with
-// error_class=park_timeout.
 func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// @deliberate: Park indefinitely so SweepParkedNodes' watchdog branch fires; the
-	// runtime measures overrun against parked_at + max_park_duration.
 	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "waiting", time.Time{})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -169,85 +106,15 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked")
 
-	// @deliberate: Wait past the cap. SweepParkedNodes runs every tick (250ms), so
-	// within 5s the watchdog should force failure.
 	require.True(t, h.WaitForEventKind(worker.ID, "park_timeout", 15*time.Second),
 		"watchdog should fire park_timeout after max_park_duration")
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 15*time.Second),
 		"worker should land in failed after park_timeout")
 }
 
-// @constraint: TestParkedLifecycleUnspecifiedReasonRejected retired per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md:
-// PARK_REASON_UNSPECIFIED was removed entirely in the 7→2 collapse —
-// the only legal ParkReason values are now AWAIT_CALLBACK and SNOOZE,
-// and proto3 dropped the unspecified zero value at the wire layer.
-// The "reject unspecified" runtime test is no longer expressible.
 
-// TestParkedLifecycleHeldClaimRetentionAcrossPark covers E6 case (e).
-// A node holds a claim, parks, then resumes. The claim handle row in
-// rimsky_claim_handles survives across the park boundary (its parent
-// node-run's parked phase does not delete the handle), and the
-// resume runs the same handle through to the active terminal which
-// fires the auto-terminal Commit/Abandon.
-//
-// Without held-claim retention across park, the auto-terminal Abandon
-// would either fire prematurely at park (collapsing the held subgraph)
-// or never fire (leaking producer state). The test asserts the handle
-// row is present at all three checkpoints: pre-park, mid-park, and
-// post-resume completion (post-terminal it is auto-deleted).
-//
-// Notes (diagnostic — testcontainer-startup-bound, not a
-// production-code bug):
-//
-//	Symptom (flagged across cycles 4, 6, 7): under heavy parallel
-//	load the resume_at scheduling could fire BEFORE the Success
-//	script replaced the Park script, causing a re-park loop and a
-//	WaitForNodeState(..., Fresh) timeout.
-//
-//	Root cause located: NOT a race in
-//	runtime.SweepParkedNodes or the wake-parked-node path. The
-//	race is between (a) the test's own setup sequence (deploy
-//	template → create instance → wait-for-parked → SQL probes →
-//	re-script stub) and (b) the wall-clock resume_at deadline. The
-//	setup sequence's wall-time is dominated by testcontainer
-//	cold-start: each scenario test calls pgmigrate.OpenDriver which
-//	spins up its own postgres:14-alpine container; the harness's
-//	per-poll Docker state-query is "~1-6s under saturated parallel
-//	load; occasional 15-20s spikes" (see
-//	testpg/testpg.go::StartFreshPostgresDSN). Under the
-//	historical 1-2s resume_at budget the sweep could fire before
-//	the rescript landed.
-//
-//	Ruled out: SweepParkedNodes' wake path (sub-second once
-//	triggered), the auto-terminal Commit logic (separate held-
-//	subgraph completion test exercises it directly), the stub
-//	executor's WhenType swap (in-process, instantaneous), the
-//	wait-set drain logic.
-//
-//	Resolution: the 10s resume_at + the 30s WaitForNodeState
-//	budgets below were chosen to cover one testcontainer
-//	cold-start spike plus the in-process steady-state latency,
-//	with no overlap into the resume window. Do NOT compress these
-//	without first re-instrumenting the harness to share a single
-//	postgres container across scenarios (see also
-//	`runtime/sweep_claim_handle_retention_test.go`
-//	::TestSweepClaimHandleRetention_SweepsSubgraphCommittedPastCutoff
-//	for the same testcontainer-cold-start diagnosis on a
-//	non-scenario test).
 func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	t.Parallel()
-	// @deliberate: Two-node scenario: `acquirer` holds a scope-claim with alias
-	// "held"; the held subgraph contains both itself and the
-	// downstream `inheritor`. The acquirer parks while the inheritor
-	// is still pending, exercising rimsky_claim_handles retention
-	// across the active → parked transition. After resume +
-	// completion of both nodes, auto-terminal fires Commit on the
-	// held claim and the claim-handle row is deleted.
-	//
-	// Uses a scope-claim (not a pick-policy queue) so the resume
-	// dispatch's fresh acquisition tx doesn't fight an exhausted
-	// queue.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
 		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
@@ -263,22 +130,9 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 			},
 		},
 	})
-	// @constraint: resumeAt must be far enough in the future that, under heavy
-	// parallel testcontainer load, the entire setup-through-parked-
-	// state-probe sequence completes BEFORE SweepParkedNodes can pick
-	// the row up — otherwise the sweep dispatches under the still-Park
-	// script (the resume's Success script is registered below, after
-	// parked-state probes), the node re-parks, and the test times out
-	// on `WaitForNodeState(..., Fresh)`. Observed parallel setup
-	// latency on a loaded host runs ~5-10s; 10s gives clear buffer
-	// while keeping resume comfortably inside the post-resume 30s
-	// WaitForNodeState windows. The original 1s budget assumed cold-
-	// container speeds and was the documented flake source.
 	resumeAt := time.Now().Add(10 * time.Second)
 	h.Stub.WhenType("acquirer").
 		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "checkpoint", resumeAt)
-	// @deliberate: Inheritor is pre-scripted but won't be reached until the
-	// acquirer resumes and completes.
 	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "inheritor-done")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -309,20 +163,8 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
 		"acquirer should reach parked")
 
-	// @deliberate: Re-script the acquirer for the resume dispatch BEFORE the parked-
-	// state SQL probes run, and BEFORE the wall-clock approaches the
-	// scripted resume_at. WhenType replaces the entire script in the
-	// stub's per-type map, so this swap turns the next Execute call on
-	// "acquirer" into a Success terminal. Pairing the swap with the
-	// generous resume_at above closes the time-based wake race: even
-	// under heavy testcontainer load the Success script is in place
-	// long before SweepParkedNodes can pick the parked row up.
 	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "resumed")
 
-	// @deliberate: While parked, verify the node-run row is in phase='parked'
-	// AND the rimsky_claim_handles row for the held claim survives
-	// (the auto-terminal Abandon must not fire while the inheritor
-	// hasn't run yet).
 	var phase string
 	var parkedReason *string
 	h.QueryRowSQL(
@@ -335,9 +177,6 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.Equal(t, "snooze", *parkedReason,
 		"parked_reason should store the enum form (snake_case); TIME_WAIT collapsed to SNOOZE per the 2026-05-22 ParkReason collapse")
 
-	// @deliberate: Held claim_handle row exists during park: the held subgraph
-	// (acquirer + inheritor) is still active, so auto-terminal cannot
-	// fire yet.
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_handles lh
@@ -359,15 +198,6 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.True(t, h.WaitForWorkerRequestDeleted(inh.ID, 30*time.Second),
 		"inheritor node-run should be deleted after completion")
 
-	// @deliberate: Auto-terminal fires Commit (both held subgraph members completed
-	// successfully); claim_handle rows are then removed. Allow a
-	// generous polling window — the auto-terminal sweep runs at the
-	// scheduler tick cadence, and the resume path may briefly hold a
-	// transient second claim_handle until its own terminal release
-	// fires.
-	// Post-Stage-3 of the claim-handle state-column refactor: terminal
-	// flips state (Promote-not-delete). Assert the row reaches state=
-	// committed (auto-terminal Commit) instead of being deleted.
 	var activeCount int
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
@@ -393,13 +223,6 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 		"at least one claim_handle row must be state=committed after auto-terminal Commit")
 }
 
-// TestParkedLifecycleParkTimeoutAbandonsHeldClaim covers E6 case (c)'s
-// held-claim path. A held node parks indefinitely and overruns
-// max_park_duration; the watchdog must fail the row AND fire Abandon
-// on the held claim handle (blessed invariant 13). Without the
-// abandonHeldClaimsForOverdueNode path, the rimsky_claim_handles row
-// would survive and only be reaped by the orphan-claim sweep — without
-// firing the Abandon verb that the producer requires for cleanup.
 func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	t.Parallel()
 	endpoint, store, teardown := stubfixture.Start(t, stubstore.Config{
@@ -452,15 +275,6 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
 		"acquirer should reach parked")
 
-	// @deliberate: The watchdog branch in SweepParkedNodes runs failOverdueParkedRow,
-	// which marks the held claim-holder rows 'failed' and fires
-	// CheckAndFireResolution. With any failed holder, auto-terminal
-	// resolves the claim by firing Abandon on the producer (blessed
-	// invariant 13).
-	//
-	// The 30s wait budget (extended from cycle-4's 15s) absorbs the
-	// scheduler-tick + sweep-tick interleave plus testcontainers/Docker
-	// latency under heavy parallel load.
 	require.True(t, h.WaitForEventKind(acq.ID, "park_timeout", 30*time.Second),
 		"watchdog should fire park_timeout")
 	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateFailed, 30*time.Second),
@@ -468,10 +282,6 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	require.True(t, h.WaitForWorkerRequestDeleted(acq.ID, 30*time.Second),
 		"node-run should be deleted after timeout abandon")
 
-	// @deliberate: Auto-terminal Abandon: post-Stage-3 of the claim-handle state-
-	// column refactor, the rimsky_claim_handles row is PROMOTED (not
-	// deleted); the producer's Abandon verb fired (visible on
-	// store.Calls()). Assert the row is in state=abandoned.
 	var abandonedCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_handles lh
@@ -507,8 +317,6 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 		"producer Abandon verb must fire on park-timeout for held claim (blessed invariant 13)")
 }
 
-// lastEventPayload returns the payload JSON for the most recent
-// rimsky_events row of (node, kind). Used to assert resume_reason etc.
 func lastEventPayload(t *testing.T, h *scenario.Harness, nodeID shared.UUID, kind string) map[string]any {
 	t.Helper()
 	var rawJSON []byte
@@ -522,6 +330,4 @@ func lastEventPayload(t *testing.T, h *scenario.Harness, nodeID shared.UUID, kin
 	return out
 }
 
-// _ uses persistence to keep the import alive when the scenario test
-// adds future raw queries needing persistence types.
 var _ = persistence.NodeRow{}

@@ -17,29 +17,8 @@ import (
 	"time"
 )
 
-// AdminHandler returns an http.Handler for the fs store's admin
-// surface. v1 ships two endpoints:
-//
-//	POST /admin/bump-to-head/{selector}
-//	  body: {"folder": "<folder-name>"}
-//	  responses: 204 | 400 | 404 | 409 | 500
-//
-//	POST /admin/sync/{selector}
-//	  body: none (reconciles available/ against the policy root on disk)
-//	  responses: 204 | 400 | 500
-//
-// Selector path-param accepts the raw "@policy-name" form or its
-// percent-encoded "%40policy-name" form. Mirrors pg's URL-shape
-// convention (stores/postgres/store/admin.go).
 func (s *Store) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
-	// @constraint: POST /admin/sync/{selector} is the operator-triggered queue
-	// refresh. For sync_strategy: explicit|never policies, Open never auto-syncs,
-	// so a folder that lands on disk after the queue drains is invisible until
-	// an operator re-primes the queue here. runSync reconciles available/ against
-	// the policy root; it is idempotent and concurrency-safe via pp.syncMu, so a
-	// redundant POST is harmless. Mirrors the bump-to-head handler's method
-	// guard and selector decoding; takes no body.
 	mux.HandleFunc("/admin/sync/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -102,11 +81,6 @@ func (s *Store) AdminHandler() http.Handler {
 			http.Error(w, "folder must not start with '.'", http.StatusBadRequest)
 			return
 		}
-		// @constraint: reject any path-traversal shape — embedded separators, "..",
-		// or anything that filepath.Clean wouldn't preserve as a single component.
-		// Without this, FolderPattern-less policies could accept "foo/../../etc"
-		// and have filepath.Join resolve outside pp.Root. Mirrors openRegional's
-		// escape-check stance.
 		if strings.ContainsAny(folder, `/\`) {
 			http.Error(w, "folder must not contain path separators", http.StatusBadRequest)
 			return

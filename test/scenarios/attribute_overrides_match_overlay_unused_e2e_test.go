@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — unused by_match entries surface as 0 in the per-entry
-// match counter at instance terminal.
-//
-// Per concept:attribute the per-entry counter on
-// rimsky_instances.attribute_overrides_match_counts is the
-// "silent miss becomes loud miss" surface that makes matcher-overlay
-// testing safe against producer key-scheme changes. Counters that
-// stay at 0 at instance terminal flag matchers that never fired.
 package scenarios
 
 import (
@@ -46,9 +38,6 @@ func TestAttributeOverridesMatchOverlayUnused_CounterZeroForNonFiringEntries(t *
 		},
 	})
 
-	// @constraint: Five entries; only #0 (node_type=worker) and #2 (empty matcher)
-	// match the worker dispatch. The other three target a child_key
-	// the harness never produces (no fan-out), so they never fire.
 	overrides := map[string]any{
 		"by_match": []any{
 			map[string]any{

@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies blessed invariant 19 (spec §18): "frame_id flows with
-// cascade. No rimsky_node_runs row has frame_id IS NULL. No rimsky_nodes
-// row in state stale or running has frame_id IS NULL."
-//
-// Runs a multi-node cascade (source → middle → leaf) to a mid-flight
-// state, asserts the invariant holds across the lifecycle, and asserts
-// that completed nodes have frame_id cleared while failed nodes
-// preserve it.
 package frame_resolution
 
 import (
@@ -49,11 +41,9 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	leaf := h.FindNode(iid, "leaf")
 	require.NotNil(t, leaf)
 
-	// @deliberate: Wait for the cascade to reach the leaf.
 	require.True(t, h.WaitForNodeState(leaf.ID, cascade.NodeStateFresh, 15*time.Second),
 		"leaf did not reach fresh")
 
-	// @deliberate: Invariant: no NULL frame_id on any rimsky_node_runs row anywhere.
 	var nullDispatches int
 	err := h.Pool.QueryRow(context.Background(),
 		`SELECT count(*) FROM rimsky_node_runs WHERE frame_id IS NULL`).Scan(&nullDispatches)
@@ -61,11 +51,6 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	require.Equal(t, 0, nullDispatches,
 		"invariant 19 violated: %d rimsky_node_runs rows have NULL frame_id", nullDispatches)
 
-	// @deliberate: Invariant: no in-flight run row in state IN ('stale','running')
-	// with NULL frame_id (post-stage-3: state lives on the run row).
-	// rimsky_node_runs.frame_id is NOT NULL so this is structurally
-	// guaranteed, but we keep the predicate for symmetry with the
-	// invariant 19 audit.
 	var nullNodes int
 	err = h.Pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM rimsky_node_runs
@@ -77,10 +62,6 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	require.Equal(t, 0, nullNodes,
 		"invariant 19 violated: %d non-fresh in-flight run rows have NULL frame_id", nullNodes)
 
-	// @constraint: On completion: nodes return to fresh and rimsky_nodes.frame_id is
-	// cleared (per spec §6.2 — completed clears frame_id, failed
-	// preserves it). Post-stage-3: state comes from the in-flight run
-	// row; fresh = no in-flight row.
 	for _, nodeType := range []string{"worker", "middle", "leaf"} {
 		nID := h.FindNode(iid, nodeType).ID
 		var state string

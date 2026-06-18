@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N1 scenario — error_policy_first.
-//
-// `first` aggregation: first success → parent success +
-// AggregateActionCancelNonWinners; all failed → failed.
 package runtree
 
 import (

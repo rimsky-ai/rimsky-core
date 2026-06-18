@@ -12,20 +12,7 @@ import (
 	"testing"
 )
 
-// TestRulesDoc_CitedPathsExist is the doc-drift accuracy gate for
-// .claude/rules/rules.md.
-//
 // @story: rules-doc-accuracy
-//
-// It scans the rules document for every repo-relative filesystem path it
-// instructs a contributor to use and asserts each resolves against the current
-// tree (via os.Stat, not text-only matching) so a regression — a stale path or
-// a dead make target — fails this test under `go test ./...` and therefore CI.
-// It also pins the specific positive/negative contract: the rebuild
-// instruction must name the real mechanism (`make core-images`) and must carry
-// NONE of the currently-dead references (the absent deploy/ paths, the bare
-// executors/claude-agent prefix that the tree relocated under lib/services/,
-// and the relocated stores-redesign sketch path).
 func TestRulesDoc_CitedPathsExist(t *testing.T) {
 	root := repoRoot(t)
 	rulesPath := filepath.Join(root, ".claude", "rules", "rules.md")
@@ -35,14 +22,6 @@ func TestRulesDoc_CitedPathsExist(t *testing.T) {
 	}
 	content := string(raw)
 
-	// @deliberate: Part 1 — every cited repo-relative path must exist
-	// on disk. The Search Scoping section lists ignore-globs to EXCLUDE
-	// from file searches (e.g. `vendor/`, `tmp/`) — conventional
-	// patterns that need not exist in any given checkout, not paths the
-	// document instructs a contributor to run against. Drop that line
-	// before the existence scan so a correct ignore-glob is never
-	// flagged as a dead path. (Drift in that section's executor-prefix
-	// entries is still caught by the Part-2 negative contract below.)
 	scannable := dropSearchScopingLine(content)
 	var missing []string
 	seen := map[string]bool{}
@@ -60,14 +39,10 @@ func TestRulesDoc_CitedPathsExist(t *testing.T) {
 			len(missing), strings.Join(missing, ", "))
 	}
 
-	// @deliberate: Part 2 — positive accuracy contract: the rebuild
-	// instruction must name the real mechanism.
 	if !strings.Contains(content, "make core-images") {
 		t.Errorf("rules.md must instruct the image rebuild via `make core-images`, but that token is absent")
 	}
 
-	// @deliberate: negative accuracy contract — none of the
-	// currently-dead references may remain in rules.md.
 	deadRefs := []string{
 		"deploy/build-images.sh",
 		"deploy/docker-compose.yml",
@@ -81,11 +56,6 @@ func TestRulesDoc_CitedPathsExist(t *testing.T) {
 	}
 }
 
-// dropSearchScopingLine removes the single "Exclude from file searches:" line
-// from the rules content. Those backtick tokens are ignore-globs (search
-// EXCLUSIONS), not run-against paths, so they are out of scope for the
-// path-existence gate per the accuracy-check intent ("every filesystem path the
-// document instructs contributors to run"). All other lines are preserved.
 func dropSearchScopingLine(content string) string {
 	lines := strings.Split(content, "\n")
 	kept := make([]string, 0, len(lines))
@@ -98,16 +68,6 @@ func dropSearchScopingLine(content string) string {
 	return strings.Join(kept, "\n")
 }
 
-// citedPaths extracts every backtick-quoted token from the markdown that looks
-// like a literal, os.Stat-able repo-relative filesystem path. The contract
-// (per the accuracy-gate design): a token qualifies when it contains a "/" AND
-// either ends in "/" (a directory ref) or ends in a known file extension
-// (.sh/.yml/.yaml/.md/.go). Illustrative, non-literal tokens are excluded:
-// URLs (http://, https://), `make ...` targets, glob-bearing tokens ("*", e.g.
-// lib/protocols/proto/v1/*.proto), and brace-expansion tokens ("{", e.g.
-// .../{postgres,sqlite}/...). Each backtick span may contain a whole command
-// (with spaces), so spans are split on whitespace into individual candidate
-// tokens before the path test is applied.
 func citedPaths(content string) []string {
 	var out []string
 	for _, span := range backtickSpans(content) {
@@ -120,14 +80,10 @@ func citedPaths(content string) []string {
 	return out
 }
 
-// looksLikeRepoPath applies the literal-path classifier described on citedPaths.
 func looksLikeRepoPath(tok string) bool {
 	if !strings.Contains(tok, "/") {
 		return false
 	}
-	// @constraint: exclude illustrative / non-literal forms (URLs,
-	// make-targets, glob-bearing tokens) so the path-existence gate
-	// does not flag them as dead paths.
 	if strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") {
 		return false
 	}
@@ -137,7 +93,6 @@ func looksLikeRepoPath(tok string) bool {
 	if strings.ContainsAny(tok, "*{") {
 		return false
 	}
-	// @constraint: accept directory refs or known concrete file extensions.
 	if strings.HasSuffix(tok, "/") {
 		return true
 	}
@@ -149,21 +104,15 @@ func looksLikeRepoPath(tok string) bool {
 	return false
 }
 
-// backtickSpans returns the content of every `...` backtick-delimited span in
-// the markdown (the inner text, exclusive of the surrounding backticks).
 func backtickSpans(content string) []string {
 	var spans []string
 	parts := strings.Split(content, "`")
-	// @constraint: odd indices are inside a backtick pair; even indices are outside.
 	for i := 1; i < len(parts); i += 2 {
 		spans = append(spans, parts[i])
 	}
 	return spans
 }
 
-// repoRoot resolves the repository root from the test file's own directory,
-// walking up until a go.work or .git marker is found, so the test is
-// independent of the working directory `go test` was invoked from.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)

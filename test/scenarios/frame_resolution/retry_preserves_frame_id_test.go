@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies that an applyErrorPolicy → retry path that transitions
-// a node back to 'stale' preserves frame_id. Frame-end detection
-// (runFrameEndDetection) filters by `n.frame_id = f.frame_id`, so a
-// retried-but-still-in-the-same-frame node must continue to count as
-// in-flight under the running frame's predicate.
-//
-// This test catches review Issue 8: if a transition back to stale
-// inadvertently cleared frame_id, frame-end could fire prematurely
-// while the retry was in flight.
 package frame_resolution
 
 import (
@@ -27,14 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// TestRetryDoesNotPrematurelyEndFrame is a targeted check: while the
-// node is in the stale-after-retry-release state but before the
-// re-enqueued dispatch claims, the frame-end predicate must NOT fire
-// (the node still has frame_id pointing at the running frame).
-//
-// We drive this directly via SQL to model the supervisor's retry path
-// behaviour without depending on stub-script support for retry
-// sequences.
 func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -53,9 +36,6 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// @deliberate: Wipe any auto-enqueued initial frame + in-flight rows for this
-	// instance so the test starts clean. Post-stage-3 cutover: state
-	// lives on rimsky_node_runs.
 	_, err := h.Pool.Exec(h.Ctx,
 		`DELETE FROM rimsky_node_runs WHERE node_id = $1`, uuid.UUID(worker.ID))
 	require.NoError(t, err)
@@ -67,12 +47,6 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 		uuid.UUID(worker.ID))
 	require.NoError(t, err)
 
-	// @deliberate: Manually create a running frame; mark the worker stale via an
-	// in-flight pending run row pinned to the frame (simulating what
-	// runAdvanceQueued does at frame-start). Pass 1 of the message-
-	// schema-layer plan added the rimsky_frames.triggering_message_id
-	// NOT NULL FK; seed a typed envelope first so the frame's FK
-	// resolves.
 	messageID := uuid.New()
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
@@ -89,8 +63,6 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET frame_id=$1 WHERE id=$2`,
 		frameID, uuid.UUID(worker.ID))
 	require.NoError(t, err)
-	// @deliberate: Insert the in-flight active running run row (state machine reads
-	// current state from here for the retry simulation below).
 	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_node_runs
@@ -99,23 +71,17 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
 	require.NoError(t, err)
 
-	// @constraint: Simulate the runner's retry path: UpdateState(running → stale,
-	// ReasonPolicyRetry) must preserve the node-row frame_id.
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		return h.Persist.Nodes().UpdateState(h.Ctx,
 			worker.ID, h.GetMainRunScopeID(iid), "stale", cascade.ReasonPolicyRetry, nil, tx)
 	}))
 
-	// @deliberate: Re-read frame_id; it must still be set.
 	var preservedFrameID *uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&preservedFrameID))
 	require.NotNil(t, preservedFrameID, "retry must preserve frame_id on the stale node")
 	require.Equal(t, frameID, *preservedFrameID)
 
-	// @deliberate: The frame-end predicate counts in-flight run rows in state
-	// IN ('stale','running') for the frame. With the retried node in
-	// stale + matching frame_id, the predicate must not fire.
 	var inflight int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
 		SELECT count(*) FROM rimsky_node_runs r

@@ -17,7 +17,6 @@ func TestLedgerRecordsOpenAndCommit(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	target := filepath.Join(root, "foo")
-	// @deliberate: target path is computed but unused — direct-mode Open does not require pre-existence
 	_ = target
 	if _, err := st.Open(context.Background(), "claim-1", "foo"); err != nil {
 		t.Fatalf("Open: %v", err)
@@ -66,11 +65,6 @@ func TestLedgerGetMissing(t *testing.T) {
 	}
 }
 
-// TestLedgerRecordEvent_NonTerminal exercises the non-terminal append
-// path used by claim_commit_failed / claim_abandon_failed. The
-// observation must be appended to the claim's history without
-// flipping State or stamping ClosedAt — those are reserved for
-// terminal events.
 func TestLedgerRecordEvent_NonTerminal(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	if _, err := st.Open(context.Background(), "claim-1", "foo"); err != nil {

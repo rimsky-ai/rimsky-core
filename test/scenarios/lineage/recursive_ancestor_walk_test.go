@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N7 scenario — recursive_ancestor_walk.
-//
-// Lineage rows form a parent_run_id chain across the run-tree;
-// downstream tools recover ancestry by walking the chain via the
-// `record->>'parent_run_id'` JSONB path. This scenario pins the walk
-// behavior end-to-end: a multi-level chain (root → child → grandchild)
-// produces rows whose `parent_run_id` values trace back to the
-// originating root, and the walk terminates correctly at the root
-// (parent_run_id empty / key absent).
 package lineage
 
 import (
@@ -26,20 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// TestRecursiveAncestorWalk_ChainsParentRunID seeds a parent_run_id
-// chain of depth 3 (root → child → grandchild) and walks the chain
-// upward from grandchild via the in-memory queryable fake. The walk
-// must:
-//
-//  1. Recover the immediate parent from grandchild's record (= child's run_id).
-//  2. Recover the grandparent from child's record (= root's run_id).
-//  3. Terminate at root (parent_run_id empty / JSON key absent).
-//
-// Without ParentRunID on the emitted record the walk would have
-// nothing to chain through; the pre-2026-05-17 version of this test
-// inserted N rows at the same frame and only asserted distinct ids,
-// which never exercised the walk behavior that the file's docstring
-// claimed.
 func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 	t.Parallel()
 	lt := &queryableLineage{}
@@ -96,7 +73,6 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 			t.Fatalf("walk: unmarshal at hop %d: %v", hops, err)
 		}
 		if rec.ParentRunID == "" {
-			// @deliberate: Reached the root — terminate.
 			break
 		}
 		parent, err := uuid.Parse(rec.ParentRunID)
@@ -107,7 +83,6 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 		visited = append(visited, current)
 	}
 
-	// @constraint: The walk must have produced [grandchild, child, root].
 	if len(visited) != 3 {
 		t.Fatalf("walk: visited %d runs want 3 (chain root→child→grandchild)", len(visited))
 	}
@@ -121,12 +96,6 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 		t.Errorf("walk hop 2: got %s want root %s", visited[2], rootRunID)
 	}
 
-	// @deliberate: QueryByParentRunID exercises the JSONB predicate path the
-	// postgres + sqlite drivers both implement. The in-memory fake
-	// re-parses JSON in-process — mirroring the predicate — so the
-	// pin is "ParentRunID on the record persists into a queryable
-	// shape." Cross-driver coverage of the SQL predicate itself lives
-	// in the conformance suite (`testLineageQueryByParentRunID`).
 	rows, err := lt.QueryByParentRunID(ctx, rootRunID, 10)
 	if err != nil {
 		t.Fatalf("QueryByParentRunID(root): %v", err)
@@ -143,9 +112,6 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 	}
 }
 
-// queryableLineage extends fakeLineage with a JSON-aware
-// QueryByParentRunID + findByRunID lookup used by the walk test.
-// Mirrors the postgres `record->>'parent_run_id' = $1` predicate.
 type queryableLineage struct {
 	fakeLineage
 }
@@ -170,9 +136,6 @@ func (f *queryableLineage) QueryByParentRunID(_ context.Context, parentRunID sha
 	return out, nil
 }
 
-// findByRunID looks up a leaf_run row by its record.run_id (not the
-// row id; the row id is the lineage row PK, the run_id is the
-// rimsky_node_runs id).
 func (f *queryableLineage) findByRunID(runID shared.UUID) (persistence.LineageRow, bool) {
 	for _, r := range f.rows {
 		if r.RecordKind != persistence.LineageRecordKindLeafRun {
@@ -189,16 +152,6 @@ func (f *queryableLineage) findByRunID(runID shared.UUID) (persistence.LineageRo
 	return persistence.LineageRow{}, false
 }
 
-// TestRecursiveAncestorWalk_ChainsSubstitutionRefs pins the cycle-6
-// fix: the ancestor walker resolves upstream lineage rows by reading
-// `substitution_refs` entries with `source_kind: "run"` and parsing
-// the `source_version_or_id` as a UUID. Without this wiring,
-// `GET /lineage/runs/{seed}/ancestors` returns empty for every seed
-// because the writer never populated SubstitutionRefs.
-//
-// Seeds a chain (root → child → grandchild) where each child cites
-// its upstream as `source_kind: "run"`; verifies the walker recovers
-// the full chain.
 func TestRecursiveAncestorWalk_ChainsSubstitutionRefs(t *testing.T) {
 	t.Parallel()
 	lt := &queryableLineage{}

@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// rimsky-license-check verifies the per-file license headers and the
-// import-graph boundary defined by licensing.yml at the repo root.
-//
-// Usage:
-//
-//	rimsky-license-check                  # verify; exit 1 on violations
-//	rimsky-license-check --stamp          # add missing headers in place
-//
-// The boundary rule: Apache-classified Go files cannot import
-// AGPL-classified packages. AGPL files may import Apache freely. Header
-// text on every source file must match the file's classification. Every
-// apache/agpl entry in licensing.yml must point at a path that exists, and
-// every source file must be classified — the two checks keep licensing.yml
-// in exact correspondence with the tree.
 package main
 
 import (

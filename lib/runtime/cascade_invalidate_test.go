@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Tests for RecalculateNode. Backed by the real persistence.Database
-// via the pgtest harness; a lightweight in-memory fake satisfies
-// persistence.Queue so the test can assert on dispatch behavior without
-// depending on the Postgres queue implementation.
 package runtime_test
 
 import (
@@ -25,17 +21,10 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// invTestQueue is an in-memory fake persistence.Queue. Named to avoid
-// colliding with fakeQueue in pure_cascade_test.go (same package); this
-// variant additionally records RemoveForNode calls.
 type invTestQueue struct {
 	mu           sync.Mutex
 	enqueued     []persistence.DispatchRequest
 	removedNodes []shared.UUID
-	// @deliberate: real, when non-nil, is the underlying postgres queue;
-	// the fake delegates GetInFlightRunForNode to it so the post-stage-5
-	// cascade walker can resolve receiver / sender run ids without re-
-	// implementing the SQL here.
 	real persistence.Queue
 }
 
@@ -121,9 +110,6 @@ func (f *invTestQueue) ListInFlightRunPhases(ctx context.Context, tx persistence
 	return map[shared.UUID][]string{}, nil
 }
 
-// ParkActiveInTx and the surrounding parked-lifecycle helpers are no-ops
-// here: invTestQueue is the cascade-invalidate test fixture and these
-// tests never park nodes.
 func (f *invTestQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ persistence.ParkActiveInput) error {
 	return nil
 }
@@ -238,18 +224,13 @@ func newFixture(t *testing.T) *fixture {
 	}
 }
 
-// createNodeInState seeds a node in the requested state. Post-stage-3
-// cutover: state lives on rimsky_node_runs, so 'stale' / 'running' are
-// seeded by inserting an in-flight run row with the desired state. The
-// 'fresh' case requires only the rimsky_nodes row (no run row). Stale /
-// running nodes get a frame_id so the dispatch enqueue path satisfies
-// @blessed-invariant:dispatch-row-bound-to-frame.
+// @blessed-invariant: dispatch-row-bound-to-frame.
 func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade.NodeState, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
 	ctx := context.Background()
 	var n persistence.NodeRow
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_ = deps // @deliberate: legacy: dependency-edge resolution is now via subscription-edge map
+		_ = deps
 		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
 			Executor: executor,
@@ -263,16 +244,12 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	if state == cascade.NodeStateFresh {
 		return n
 	}
-	// @deliberate: Reuse existing running frame for this instance if any; otherwise
-	// insert a fresh one.
 	var count int
 	pgtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
 		[]any{f.instance.ID}, &count)
 	var frameID shared.UUID
 	if count == 0 {
-		// @deliberate: Seed a synthetic typed-message envelope so the
-		// rimsky_frames.triggering_message_id FK is satisfied.
 		msgID := uuid.New()
 		pgtest.ExecForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_messages
@@ -295,7 +272,6 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
 	n.FrameID = &frameID
-	// @deliberate: Insert the in-flight run row in the requested state.
 	runPhase := "pending"
 	if state == cascade.NodeStateRunning {
 		runPhase = "active"
@@ -308,12 +284,6 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	n.State = state
 	return n
 }
-
-// @deliberate: TestInvalidateNode_* coverage retired with the
-// operator-invalidate surface (messaging schema-layer reshape).
-// Operator-initiated invalidation now lands as a typed message on the
-// gated debug channel; that surface is exercised by the debug-channel
-// scenario tests, not from this file.
 
 func TestRecalculateNode_FreshTarget_IsNoOp(t *testing.T) {
 	t.Parallel()
@@ -340,11 +310,6 @@ func TestRecalculateNode_FreshTarget_IsNoOp(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, after.State)
 }
 
-// TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp asserts that a
-// stale node with at least one wait-set row gating it on a sender stays
-// queued: RecalculateNode is a no-op when the wait-set is non-empty.
-// Under the post-2026-05-14 subscription-cascade model, the wait-set
-// row is the eligibility-gate; depsness retires.
 func TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -353,9 +318,6 @@ func TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp(t *testing.T) {
 	dep := f.createNodeInState(t, "worker", cascade.NodeStateStale)
 	target := f.createNodeInState(t, "worker", cascade.NodeStateStale)
 
-	// @deliberate: Seed a wait-set row gating target on dep in the running frame.
-	// Post-stage-5 the wait-set keys on run id, so resolve each node's
-	// in-flight run id via the queue.
 	require.NotNil(t, target.FrameID)
 	var depRunID, targetRunID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, f.driver,
@@ -384,10 +346,6 @@ func TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp(t *testing.T) {
 	require.Empty(t, eq)
 }
 
-// TestRecalculateNode_StaleWithEmptyWaitSetAndExecutor_EnqueuesDispatch
-// asserts the post-drain dispatch path: once the wait-set is empty (the
-// settled-state drain ran when the sender resolved), RecalculateNode
-// enqueues the target for dispatch.
 func TestRecalculateNode_StaleWithEmptyWaitSetAndExecutor_EnqueuesDispatch(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -395,7 +353,6 @@ func TestRecalculateNode_StaleWithEmptyWaitSetAndExecutor_EnqueuesDispatch(t *te
 
 	target := f.createNodeInState(t, "runner", cascade.NodeStateStale)
 	require.NotNil(t, target.FrameID)
-	// @deliberate: No wait-set rows seeded — empty by default.
 
 	err := runtime.RecalculateNode(ctx, runtime.RecalculateArgs{
 		Persist: f.persist, Queue: f.q, Clock: f.clock, Logger: f.log,
@@ -409,9 +366,6 @@ func TestRecalculateNode_StaleWithEmptyWaitSetAndExecutor_EnqueuesDispatch(t *te
 	require.Equal(t, "runner", eq[0].ExecutorName)
 }
 
-// TestRecalculateNode_StaleNoExecutor_NoEnqueue confirms a pure-cascade
-// (empty executor) node is skipped by RecalculateNode regardless of
-// wait-set state — the scheduler's pure-cascade sweep handles it.
 func TestRecalculateNode_StaleNoExecutor_NoEnqueue(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

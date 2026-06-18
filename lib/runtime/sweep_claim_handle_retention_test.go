@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Coverage for SweepClaimHandleRetention's cutoff + exempt-from-sweep
-// predicates. Seeds claim_handle rows in known states and asserts the
-// sweep deletes/preserves per the documented policy.
-
 package runtime_test
 
 import (
@@ -25,10 +21,6 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// seedClaimHandleForSweep inserts a claim_handle row, optionally
-// promotes it to the given state, and (when resolvedAt is non-zero)
-// backdates the `resolved_at` column directly via SQL so the row
-// looks "old" to the retention sweep.
 func seedClaimHandleForSweep(
 	ctx context.Context, t *testing.T, d persistence.Database,
 	supervisorID string, lifetime spec.ClaimLifetime,
@@ -37,7 +29,6 @@ func seedClaimHandleForSweep(
 	t.Helper()
 	backend := d.Tables()
 
-	// @deliberate: Need an instance + node to anchor the row's FKs.
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "ret-sweep-" + uuid.NewString(), Version: "1",
 		Nodes: []node.TemplateNodeDef{{Type: "n", Executor: "stub"}},
@@ -75,7 +66,6 @@ func seedClaimHandleForSweep(
 		}, tx); err != nil {
 			return err
 		}
-		// @deliberate: Promote to the requested terminal state (if any).
 		if promote != "" && promote != spec.ClaimHandleStateActive {
 			if err := backend.ClaimHandles().Promote(ctx, chID, supervisorID, promote, tx); err != nil {
 				return err
@@ -85,7 +75,6 @@ func seedClaimHandleForSweep(
 	}))
 
 	if !resolvedAt.IsZero() {
-		// @deliberate: Backdate resolved_at directly via SQL.
 		pool, ok := pgpersist.PoolFromDatabaseForTest(d)
 		require.True(t, ok, "PoolFromDatabaseForTest failed")
 		_, err := pool.Exec(ctx,
@@ -101,7 +90,6 @@ func TestSweepClaimHandleRetention_DoesNotSweepDurableCommitted(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 
-	// @deliberate: Durable + committed row with resolved_at well in the past.
 	oneYearAgo := time.Now().Add(-365 * 24 * time.Hour)
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-1",
 		spec.ClaimLifetimeDurable, spec.ClaimHandleStateCommitted, oneYearAgo)
@@ -116,39 +104,6 @@ func TestSweepClaimHandleRetention_DoesNotSweepDurableCommitted(t *testing.T) {
 	require.Equal(t, spec.ClaimHandleStateCommitted, row.State)
 }
 
-// @deliberate: Notes (diagnostic — testcontainer-startup-bound, not a
-// production-code bug):
-//
-//	Symptom: under heavy parallel load (full
-//	./foundation/persistence/... + ./runtime/... runs with -race +
-//	-parallel=N), this test occasionally hits the default `go test`
-//	per-test timeout (10m unless overridden) — not because the test
-//	logic is slow, but because pgtest.OpenDriver below has to spin
-//	up a fresh postgres:14-alpine container and the per-poll Docker
-//	state-query can spike to 15-20s under contention.
-//
-//	Ruled out: the production code under test —
-//	runtime.SweepClaimHandleRetention is a single synchronous SQL
-//	DELETE with a deterministic predicate
-//	(state IN ('committed','abandoned') AND lifetime='subgraph' AND
-//	resolved_at < $cutoff). The test calls it inline; there is no
-//	scheduler, no supervisor, no executor, and no polling loop.
-//	Once OpenDriver returns the latency to assertion is sub-second.
-//
-//	Root cause located: testcontainer cold-start latency in
-//	testpg/testpg.go::StartFreshPostgresDSN. That helper
-//	already documents the 300s container-startup ceiling and the
-//	"~1-6s per Docker poll under saturated parallel load;
-//	occasional 15-20s spikes" envelope; under -parallel=N the
-//	container starts compete for the same docker socket.
-//
-//	Resolution: rely on `go test -timeout` (10m default) plus the
-//	300s wait-strategy ceiling inside StartFreshPostgresDSN. No
-//	in-test deadline is set here because the work itself is
-//	bounded — adding one would only mask a real container-startup
-//	regression. If a future flake recurs here, look at docker
-//	daemon health and parallel-container saturation, not at the
-//	sweep predicate.
 func TestSweepClaimHandleRetention_SweepsSubgraphCommittedPastCutoff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -173,8 +128,6 @@ func TestSweepClaimHandleRetention_SweepsAbandonedPastCutoff(t *testing.T) {
 	d := pgtest.OpenDriver(ctx, t)
 
 	oneYearAgo := time.Now().Add(-365 * 24 * time.Hour)
-	// @deliberate: Abandoned rows are swept regardless of lifetime — try durable to
-	// confirm.
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-3",
 		spec.ClaimLifetimeDurable, spec.ClaimHandleStateAbandoned, oneYearAgo)
 
@@ -192,7 +145,6 @@ func TestSweepClaimHandleRetention_DoesNotSweepWithinCutoff(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 
-	// @deliberate: resolved_at = 1 hour ago, within the 30-day cutoff.
 	oneHourAgo := time.Now().Add(-1 * time.Hour)
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-4",
 		spec.ClaimLifetimeSubgraph, spec.ClaimHandleStateCommitted, oneHourAgo)
@@ -211,9 +163,6 @@ func TestSweepClaimHandleRetention_DoesNotSweepActive(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 
-	// @deliberate: Active row — resolved_at is NULL on active rows; the sweep
-	// predicate filters them out via `state IN ('committed','abandoned')`
-	// AND `resolved_at < cutoff`. Defense in depth.
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-5",
 		spec.ClaimLifetimeSubgraph, spec.ClaimHandleStateActive, time.Time{})
 
@@ -232,7 +181,6 @@ func TestSweepClaimHandleRetention_DisabledByZeroTrailing(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 
-	// @deliberate: Seed a row that would otherwise be swept.
 	oneYearAgo := time.Now().Add(-365 * 24 * time.Hour)
 	seedClaimHandleForSweep(ctx, t, d, "sup-6",
 		spec.ClaimLifetimeSubgraph, spec.ClaimHandleStateCommitted, oneYearAgo)
@@ -243,7 +191,6 @@ func TestSweepClaimHandleRetention_DisabledByZeroTrailing(t *testing.T) {
 	require.Equal(t, 0, n, "zero trailing must disable the sweep")
 }
 
-// getClaimHandleByID returns the row or nil if gone.
 func getClaimHandleByID(ctx context.Context, t *testing.T, d persistence.Database, id shared.UUID) *persistence.ClaimHandleRow {
 	t.Helper()
 	var row *persistence.ClaimHandleRow

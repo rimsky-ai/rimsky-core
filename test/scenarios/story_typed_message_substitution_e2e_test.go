@@ -2,31 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// STORY-typed-message-substitution acceptance proof.
-//
-// As a template author, I read from and compose message bodies using
-// the same substitution grammar that handles node attributes, with
-// each message type addressable by its declared name, so that message
-// bodies are first-class typed attribute blocks that flow across
-// frames.
-//
-// Acceptance shape (per spec):
-//   - Receiver-side: a node's attribute schema referencing
-//     `{{messages.<type>.<typo'd-field>}}` rejects at registration.
-//   - Emitter-side: an emit-node whose attribute schema declares a
-//     field the destination body_schema doesn't carry rejects at
-//     registration.
-//   - Runtime: a working back-edge cycle resolves the receiver's
-//     `{{messages.<type>.<field>}}` directive against the actual
-//     envelope body.
-//   - Code path: the same resolver function services both
-//     `{{nodes.X.attribute.Y}}` and `{{messages.X.Y}}` directives.
-//
-// The code-path assertion lives at
-// `lib/graph/attribute/substitution_test.go::TestSubstitution_
-// SharedResolverServicesNodesAndMessages` (added by Task 53). This
-// file carries the end-to-end registration and runtime proofs.
-//
 // @story: typed-message-substitution
 // @concept: message-schema
 package scenarios
@@ -48,10 +23,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// TestStoryTypedMessageSubstitution_RejectsReceiverTypoFieldAtRegistration
-// pins the receiver-side rejection leg: a node that reads
-// `{{messages.<type>.<typo'd-field>}}` is rejected at template
-// registration with an error naming the offending field.
 func TestStoryTypedMessageSubstitution_RejectsReceiverTypoFieldAtRegistration(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -80,11 +51,6 @@ func TestStoryTypedMessageSubstitution_RejectsReceiverTypoFieldAtRegistration(t 
 				"schema": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// @deliberate: typo — the body_schema declares
-						// `reason`, not `not_a_real_field`. Registration
-						// must refuse, naming the offending field, so
-						// the author sees the typo at registration
-						// rather than at dispatch.
 						"observed": map[string]any{
 							"type":   "string",
 							"source": "{{messages.ping/recheck.not_a_real_field}}",
@@ -111,10 +77,6 @@ func TestStoryTypedMessageSubstitution_RejectsReceiverTypoFieldAtRegistration(t 
 		"rejection diagnostic must name the typo'd field; body=%s", string(raw))
 }
 
-// TestStoryTypedMessageSubstitution_RejectsEmitterExtraFieldAtRegistration
-// pins the emitter-side rejection leg: an emit-node whose attribute
-// schema declares a field the destination body_schema doesn't have is
-// rejected at registration.
 func TestStoryTypedMessageSubstitution_RejectsEmitterExtraFieldAtRegistration(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -141,9 +103,6 @@ func TestStoryTypedMessageSubstitution_RejectsEmitterExtraFieldAtRegistration(t 
 					"properties": map[string]any{
 						"pong_status": map[string]any{"type": "string"},
 						// @concept: message-emitter-node — extra field
-						// the destination body doesn't have. "Hidden
-						// state is not allowed because the attribute
-						// set IS the body."
 						"extra_field": map[string]any{"type": "string"},
 					},
 					"required": []any{"pong_status"},
@@ -168,28 +127,10 @@ func TestStoryTypedMessageSubstitution_RejectsEmitterExtraFieldAtRegistration(t 
 		"rejection diagnostic must name the offending field; body=%s", string(raw))
 }
 
-// TestStoryTypedMessageSubstitution_RuntimeResolutionThroughBackEdge
-// pins the runtime resolution leg: a working back-edge cycle reads
-// the cascade-emitted message's body via the typed-message
-// substitution grammar.
-//
-// The receiver's attribute schema references `{{messages.<type>.
-// <field>}}`. After the emit-node lands the envelope, the next frame
-// opens with that envelope as the triggering message; the receiver
-// dispatches; substitution resolves the body field.
-//
-// The acceptance falsifier this test pins: "the runtime resolves
-// `{{messages.X.Y}}` and `{{nodes.X.attribute.Y}}` through two
-// different resolver functions" — instead, the receiver's dispatch
-// goes through the same resolver, which is verified at the unit-test
-// layer (lib/graph/attribute/substitution_test.go).
 func TestStoryTypedMessageSubstitution_RuntimeResolutionThroughBackEdge(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// @deliberate: the receiver node reads the message body's `reason`
-	// field; the stub records that value back as its attribute so the
-	// test can verify the substitution resolved.
 	h.Stub.WhenType("receiver").Success(map[string]any{
 		"echoed_reason": "saw-it",
 	}, true, "receiver ran")
@@ -245,20 +186,12 @@ func TestStoryTypedMessageSubstitution_RuntimeResolutionThroughBackEdge(t *testi
 	require.Truef(t, resp.status == http.StatusOK || resp.status == http.StatusCreated,
 		"message POST must succeed; status=%d body=%s", resp.status, string(resp.raw))
 
-	// @deliberate: substitution at dispatch resolves
-	// `{{messages.ping/recheck.reason}}` against the envelope's body —
-	// the same resolver function the unit test exercises for both
-	// substitution surfaces.
 	receiver := h.FindNode(iid, "receiver")
 	require.NotNil(t, receiver)
 	require.True(t,
 		h.WaitForEventKind(receiver.ID, "terminal/success", 20*time.Second),
 		"receiver did not run — substitution may have failed")
 
-	// @deliberate: read the persisted attribute row — substitution must
-	// have resolved `reason_from_body` to the envelope's reason field.
-	// Assert on the stored value rather than the wire shape so the
-	// test is robust to any cosmetic JSON projection changes.
 	var resolvedBody []byte
 	h.QueryRowSQL(
 		`SELECT data FROM rimsky_node_attributes

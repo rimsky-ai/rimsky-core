@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// conformance_test.go — flag-surface tests for the `rimsky conformance
-// <protocol>` subcommands. The seven handlers were folded in from the former
-// standalone cmd/rimsky-*-conformance binaries; their flag sets are the
-// implementer-facing contract, so these tests pin that each subcommand
-// registers exactly its documented flags, rejects unknown ones, and maps a
-// missing required input to the right exit code. They exercise only the
-// parse/validate prefix of each handler — every case returns before any
-// network dial — so no executor/endpoint is needed.
 package main
 
 import (
@@ -19,11 +11,6 @@ import (
 	"testing"
 )
 
-// captureStderr redirects os.Stderr to a pipe for the duration of fn and
-// returns everything written. The conformance handlers write their flag
-// usage (on -h) and their required-flag diagnostics to os.Stderr; capturing
-// it both keeps test output clean and lets us assert on the content. Not
-// safe for t.Parallel — it swaps a process-global.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	orig := os.Stderr
@@ -45,8 +32,6 @@ func captureStderr(t *testing.T, fn func()) string {
 	return <-done
 }
 
-// runCapt invokes a conformance handler with args, capturing stderr, and
-// returns the handler's exit code plus what it wrote.
 func runCapt(t *testing.T, fn func([]string) int, args []string) (int, string) {
 	t.Helper()
 	var code int
@@ -54,11 +39,6 @@ func runCapt(t *testing.T, fn func([]string) int, args []string) (int, string) {
 	return code, out
 }
 
-// conformanceSubcommands mirrors the dispatch table in conformance.go. The
-// flags slice is the exact set each handler's FlagSet must register; reqMsg is
-// the diagnostic emitted when the required input is absent; reqExit is the
-// exit code for that missing-input path (probe uses 1, the rest use 2 — a
-// distinction carried over verbatim from the original standalone binaries).
 var conformanceSubcommands = []struct {
 	name    string
 	run     func([]string) int
@@ -117,11 +97,6 @@ var conformanceSubcommands = []struct {
 	},
 }
 
-// TestConformanceSubcommandsRegisterDocumentedFlags asserts each handler's
-// FlagSet declares exactly its documented flags — no more, no fewer. A dropped
-// or renamed flag is a silent regression the build/lint can't catch, so we pin
-// the surface here. `-h` makes the FlagSet print its full flag list (and
-// nothing else) before the handler returns.
 func TestConformanceSubcommandsRegisterDocumentedFlags(t *testing.T) {
 	for _, sc := range conformanceSubcommands {
 		t.Run(sc.name, func(t *testing.T) {
@@ -131,10 +106,6 @@ func TestConformanceSubcommandsRegisterDocumentedFlags(t *testing.T) {
 					t.Errorf("subcommand %q: documented flag --%s missing from usage:\n%s", sc.name, f, usage)
 				}
 			}
-			// @deliberate: guard the inverse direction — the only flag tokens
-			// in the usage should be the documented ones. flag's PrintDefaults
-			// renders each flag on its own line beginning with "  -<name>", so
-			// the parser keys on that prefix.
 			for _, line := range strings.Split(usage, "\n") {
 				trimmed := strings.TrimSpace(line)
 				if !strings.HasPrefix(trimmed, "-") {
@@ -152,9 +123,6 @@ func TestConformanceSubcommandsRegisterDocumentedFlags(t *testing.T) {
 	}
 }
 
-// TestConformanceSubcommandsRejectUnknownFlags asserts each handler uses
-// ContinueOnError and surfaces an unknown flag as a non-zero exit, rather than
-// silently ignoring it.
 func TestConformanceSubcommandsRejectUnknownFlags(t *testing.T) {
 	for _, sc := range conformanceSubcommands {
 		t.Run(sc.name, func(t *testing.T) {
@@ -169,10 +137,6 @@ func TestConformanceSubcommandsRejectUnknownFlags(t *testing.T) {
 	}
 }
 
-// TestConformanceSubcommandsRequireTheirInputs asserts that, with no args, each
-// handler reports its missing required input and exits with the documented code
-// — before attempting any network connection. This pins both the validation
-// and the exit-code mapping (notably probe=1 vs the rest=2).
 func TestConformanceSubcommandsRequireTheirInputs(t *testing.T) {
 	for _, sc := range conformanceSubcommands {
 		t.Run(sc.name, func(t *testing.T) {
@@ -187,11 +151,6 @@ func TestConformanceSubcommandsRequireTheirInputs(t *testing.T) {
 	}
 }
 
-// TestDispatchConformanceRouting pins the top-level dispatcher: usage on no
-// args, clean help, a clear error on an unknown subcommand, and that each
-// documented name routes to its handler (verified by the handler's own
-// required-input diagnostic appearing — and the unknown-subcommand path NOT
-// firing).
 func TestDispatchConformanceRouting(t *testing.T) {
 	if code, out := runCapt(t, dispatchConformance, nil); code != 2 || !strings.Contains(out, "usage: rimsky conformance") {
 		t.Errorf("empty args: want exit 2 + usage, got exit %d, out:\n%s", code, out)

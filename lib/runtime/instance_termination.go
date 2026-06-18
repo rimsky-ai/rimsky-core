@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// instance_termination.go — E9. Instance termination cleanup.
-//
-// Spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Held-durable claim lifecycle. When an instance terminates, the
-// runtime walks the instance's committed-durable claim_handles
-// (state = 'committed' AND lifetime = 'durable') and calls
-// `ClaimProducer.Release` on each (sequentially); failure to release
-// does not block instance-termination completion — the operator can
-// re-run the cleanup explicitly.
-//
 // @concept: claim-lifetime
 // @concept: claim-handle
 
@@ -29,33 +18,18 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// HeldDurableReleaseReport summarizes the outcome of the
-// instance-termination held-durable Release walk.
 type HeldDurableReleaseReport struct {
 	Attempted int
 	Succeeded int
 	Failures  []HeldDurableReleaseFailure
 }
 
-// HeldDurableReleaseFailure carries a per-claim Release failure for
-// operator follow-up. Inert in rimsky.
 type HeldDurableReleaseFailure struct {
 	ClaimHandleID shared.UUID
 	ProducerName  string
 	Err           error
 }
 
-// ReleaseHeldDurableClaims walks the instance's committed-durable
-// claim_handles (state = 'committed' AND lifetime = 'durable') and
-// calls `ClaimProducer.Release` on each. Returns a per-claim report so
-// the operator can see which producers succeeded vs failed. The
-// claim_handles row is deleted only on Release success; failures leave
-// the row in place for retry. The function name preserves the public
-// surface from the pre-Stage-4 wire shape; internally the row-discovery
-// query is `ListByInstanceAndState(committed, durable)`.
-//
-// Caller responsibility: invoke inside an Instance.Terminate flow
-// after all running runs have completed.
 func ReleaseHeldDurableClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	instanceID shared.UUID, log shared.Logger,
@@ -72,10 +46,6 @@ func ReleaseHeldDurableClaims(
 		if r.ProducerName != nil {
 			producerName = *r.ProducerName
 		}
-		// @constraint: resolve the producer late-bind-aware so a producer
-		// bound to a per-instance proxy at acquire time is released
-		// through the same proxy; falls through to bare Get when no
-		// late-bind config is set.
 		producer, ok := args.StoreRegistry.GetWithContext(ctx, producerName, instanceID.String())
 		if !ok {
 			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
@@ -85,9 +55,6 @@ func ReleaseHeldDurableClaims(
 			continue
 		}
 		claimID := claimproducer.ClaimID(r.ID.String())
-		// @constraint: stamp the producer name onto the context so a
-		// host-agent-proxy fronting the claim-producer protocol can
-		// route this Release by service name.
 		relCtx := peer.WithServiceName(ctx, producerName)
 		if err := producer.Release(relCtx, claimID, []byte(r.ClaimScopeData), []byte(r.Address)); err != nil {
 			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
@@ -99,13 +66,6 @@ func ReleaseHeldDurableClaims(
 			}
 			continue
 		}
-		// @constraint: DeleteResolved is absence-guarded — the row has
-		// `holder_supervisor_id IS NULL` by construction post-Promote
-		// (the post-Stage-4 CHECK constraint nulls the column whenever
-		// `state` exits `'active'`). See @blessed-invariant 4 (post-
-		// refactor): non-active-row deletions are guarded by absence +
-		// the row-discovery query filter
-		// (`ListByInstanceAndState(instance, committed, durable)`).
 		if err := args.ClaimHandles.DeleteResolved(ctx, r.ID, tx); err != nil {
 			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
 				ClaimHandleID: r.ID, ProducerName: producerName,

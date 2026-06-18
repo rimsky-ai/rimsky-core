@@ -18,18 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Append inserts an event row. If Payload is nil we insert {} so the column's
-// NOT NULL constraint stays satisfied. If OccurredAt is nil the DB default
-// (NOW()) is used.
-//
-// The typed Kind is marshaled to its canonical wire form via
-// Kind.String() at the persistence boundary (per
-// decision:event-log-kind-enum). A zero / unrecognized typed value
-// stringifies to "" and we refuse the write — silently inserting an
-// empty kind would create observability blind spots indistinguishable
-// from a missing row to consumers filtering by kind. Nil-tx
-// enforcement happens first via s.q(tx) (preserved by the assignment
-// order).
 func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput, tx persistence.Tx) error {
 	ex := s.q(tx)
 	kindWire := in.Kind.String()
@@ -57,8 +45,6 @@ func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput
 	return err
 }
 
-// List returns events matching filter, ordered by (occurred_at DESC, id DESC)
-// per spec §1.2.5. Cursor is an opaque base64-JSON encoding of (occurred_at, id).
 func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.EventListResult, error) {
 	ex := s.q(tx)
 	limit := pag.Limit
@@ -80,11 +66,6 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 	if len(filter.KindIn) > 0 {
 		kindInArg = filter.KindIn
 	}
-	// @constraint: auth-payload filters are NULL-tolerant predicates
-	// ($N IS NULL → no-op) so a nil pointer never excludes a row.
-	// response_status is stored as a JSON number;
-	// payload->>'response_status' renders it as text, so we compare
-	// against the int cast to text.
 	var respStatusArg any
 	if filter.ResponseStatus != nil {
 		respStatusArg = strconv.Itoa(*filter.ResponseStatus)
@@ -174,10 +155,6 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 	return persistence.EventListResult{Events: out, NextCursor: nextCursor}, nil
 }
 
-// LastTerminalByNodes returns the most-recent dispatch-terminal event
-// (kind in {work_completed, error}) per node id. The DISTINCT ON
-// projection picks the latest row per node in a single SELECT,
-// avoiding the per-node N+1 the cascade-graph builder previously did.
 func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.UUID, tx persistence.Tx) (map[shared.UUID]persistence.EventRow, error) {
 	out := make(map[shared.UUID]persistence.EventRow, len(nodeIDs))
 	if len(nodeIDs) == 0 {
@@ -241,12 +218,6 @@ func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.U
 	return out, nil
 }
 
-// DeleteOlderThan deletes rimsky_events rows whose occurred_at is before
-// cutoff. The audit log is time-keyed (no frame FK), so the trailing
-// trace-retention window alone bounds it. Standalone sweep — no
-// caller-supplied tx; run directly against the pool (mirroring
-// Lineage.DeleteOlderThan) so the scheduler tick can call it without a
-// surrounding Tables.Transaction.
 func (s *eventsImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
 	tag, err := (*tablesImpl)(s).pool.Exec(ctx,
 		`DELETE FROM rimsky_events WHERE occurred_at < $1`, cutoff)
@@ -304,11 +275,6 @@ func nullableInt64(p *int64) any {
 	return *p
 }
 
-// nullableStringPtr maps a *string filter field to a query arg: nil →
-// SQL NULL (the predicate short-circuits to a no-op), non-nil → the
-// dereferenced value. Distinct from nullableString (which maps an empty
-// string to NULL); here an empty-but-non-nil filter is a real "= ”"
-// match, so we never collapse it.
 func nullableStringPtr(p *string) any {
 	if p == nil {
 		return nil

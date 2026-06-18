@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Action-vocabulary tests for the postgres store. The validator
-// + dispatch surface tests run without a live pool. The Pop / Recycle
-// SQL paths run against a throwaway postgres container (testcontainers)
-// — see TestPGAction_Pop_RowDeleted and TestPGAction_Recycle_RowReturnsToQueue.
-
 package store
 
 import (
@@ -26,17 +21,6 @@ import (
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-// TestPGMigration_OldFieldNames pins that an operator config using the
-// pre-v2 field names (`on_commit_default`) and old action values
-// (`release_to_back`, `delete`) is rejected at config-load. The
-// pg-store cmd's yamlPickPolicy now uses `on_commit` / `on_give_up`
-// (with action.Action types), so the old field names are silently
-// dropped by yaml.v3 and the action then validates as zero-Kind.
-//
-// The validator rejects zero-Kind with the "required (got null or
-// missing)" error from the issue-11 path — operators upgrading from
-// the v1 schema see a clear "this field is missing" message rather
-// than the opaque `unknown action ""` we used to emit.
 func TestPGMigration_OldFieldNames(t *testing.T) {
 	type yamlPickPolicy struct {
 		ItemsTable               string        `yaml:"items_table"`
@@ -72,12 +56,6 @@ visibility_timeout_seconds: 60
 	}
 }
 
-// startTestPostgres spins up a throwaway postgres container for the
-// SQL-path tests below. Returns a connection pool + DSN. The
-// container is torn down via t.Cleanup. Mirrors the
-// foundation/internal/pgtest helper but lives here so this test file
-// can stay inside the stores/ depguard envelope without reaching
-// across modules.
 func startTestPostgres(t *testing.T) (*pgxpool.Pool, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -112,8 +90,6 @@ func startTestPostgres(t *testing.T) (*pgxpool.Pool, string) {
 	return pool, dsn
 }
 
-// createTestItemsTable creates an items table matching the schema the
-// pg-store expects (mirrors test/smoke/setup.go::createTopicsItemsTable).
 func createTestItemsTable(t *testing.T, pool *pgxpool.Pool, table string) {
 	t.Helper()
 	stmt := fmt.Sprintf(`
@@ -135,10 +111,6 @@ func createTestItemsTable(t *testing.T, pool *pgxpool.Pool, table string) {
 	}
 }
 
-// TestPGAction_Pop_RowDeleted exercises the Pop SQL path
-// (`DELETE FROM <items_table> WHERE claim_token = $1`) end-to-end:
-// seed → Open → Commit (Pop) → assert row gone → assert second Open
-// returns Unavailable. Spec §10.7 mandates this test.
 func TestPGAction_Pop_RowDeleted(t *testing.T) {
 	pool, dsn := startTestPostgres(t)
 	const tbl = "items_pop_test"
@@ -198,12 +170,6 @@ func TestPGAction_Pop_RowDeleted(t *testing.T) {
 	}
 }
 
-// TestPGAction_Recycle_RowReturnsToQueue exercises the Recycle SQL path
-// (`UPDATE ... SET state='available', claim_token=NULL, claimed_at=NULL,
-// sequence=nextval(...)`) end-to-end. Seed → Open → Commit (Recycle) →
-// assert row returned to 'available' with claim_token cleared and a
-// fresh sequence value (so the row tail-rotates on FIFO ordering).
-// Spec §10.7 mandates this test.
 func TestPGAction_Recycle_RowReturnsToQueue(t *testing.T) {
 	pool, dsn := startTestPostgres(t)
 	const tbl = "items_recycle_test"
@@ -284,8 +250,6 @@ func TestPGAction_Recycle_RowReturnsToQueue(t *testing.T) {
 	}
 }
 
-// TestPGYAMLAcceptsNewVocabulary pins the positive case: the new
-// inline vocabulary parses cleanly and validator accepts it.
 func TestPGYAMLAcceptsNewVocabulary(t *testing.T) {
 	type yamlPickPolicy struct {
 		ItemsTable               string        `yaml:"items_table"`

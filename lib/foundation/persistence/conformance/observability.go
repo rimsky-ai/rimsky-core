@@ -16,9 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// testInstancesFindAnyByInstanceKey verifies the cross-driver behavior
-// of InstanceTable.FindAnyByInstanceKey: returns (nil, nil) when no
-// matching row exists; resolves a row inserted via Create.
 func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
@@ -81,8 +78,6 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
 	}
 }
 
-// testStoreLifecycleListByStore verifies LifecycleIdempotencyTable.ListByStore
-// returns rows for any scope when filtered by store registration name.
 func testStoreLifecycleListByStore(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
@@ -136,8 +131,6 @@ func testStoreLifecycleListByStore(t *testing.T, d persistence.Database) {
 	}
 }
 
-// testEventsListDescending checks that events are returned newest-first
-// per spec §1.2.5.
 func testEventsListDescending(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
@@ -215,14 +208,6 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 	}
 }
 
-// testEventsListAuthPayloadFilters exercises the JSONB-payload filters
-// on EventListFilter that back GET /audit (spec
-// 2026-05-29-console-upstream-auth-audit-and-fixes). It inserts
-// auth.access_attempted rows with varied key_id / action /
-// response_status / mode / request_path payloads and asserts each
-// filter narrows correctly across both drivers. The load-bearing
-// property: a nil filter pointer is a no-op (never excludes a row), and
-// each non-nil filter genuinely narrows the result set.
 func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
@@ -235,9 +220,6 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 	keyA := uuid.NewString()
 	keyB := uuid.NewString()
 
-	// @constraint: each row's payload mirrors the shape of
-	// auth.AccessAttemptedPayload (the keys GET /audit filters on) —
-	// response_status is a JSON number; mode is a string.
 	rows := []map[string]any{
 		{"key_id": keyA, "key_name": "alpha", "action": "instance:create", "response_status": 201, "mode": "execute", "request_path": "/instances"},
 		{"key_id": keyA, "key_name": "alpha", "action": "instance:read", "response_status": 200, "mode": "execute", "request_path": "/instances/abc"},
@@ -315,8 +297,6 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 		t.Fatalf("Mode execute = %d rows, want 3", len(got))
 	}
 
-	// @constraint: the RequestPath filter (audit "target") MUST narrow
-	// to the single matching row; a path with no row matches nothing.
 	got = list(persistence.EventListFilter{KindIn: kindIn, RequestPath: sp("/instances")})
 	if len(got) != 1 {
 		t.Fatalf("RequestPath /instances = %d rows, want 1", len(got))

@@ -4,11 +4,6 @@
 
 // @concept: breakpoint
 
-// @constraint: conformance area conformance area.
-// dispatch rows whose owning instance is paused. Cross-driver
-// conformance for the supervisor cooperation half of concept:breakpoint
-// (the candidate-selection filter; spec §5.2 soft-pause semantics).
-//
 // @concept: breakpoint
 package conformance
 
@@ -32,9 +27,6 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 
 	activeFix := seedFixtureSet(ctx, t, d)
 
-	// @deliberate: reuse activeFix.TemplateHash so the paused instance shares
-	// the same template row — exercising the filter without re-seeding template
-	// state.
 	pausedInstanceID := shared.UUID(uuid.New())
 	pausedRunScopeID := shared.UUID(uuid.New())
 	pausedNodeID := shared.UUID(uuid.New())
@@ -63,8 +55,6 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		}, tx); err != nil {
 			return err
 		}
-		// @constraint: synthetic envelope satisfies the
-		// rimsky_frames.triggering_message_id NOT NULL FK.
 		pausedMessageID := shared.UUID(uuid.New())
 		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         pausedMessageID,
@@ -108,9 +98,6 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		t.Fatalf("enqueue active row: %v", err)
 	}
 
-	// @constraint: SelectCandidates surfaces the active node's row and filters
-	// out the paused instance's row — the supervisor-cooperation half of
-	// concept:breakpoint soft-pause semantics.
 	probeErr := errors.New("rollback probe")
 	var sawActive, sawPaused bool
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

@@ -6,9 +6,6 @@ package auth
 
 import "testing"
 
-// TestCheckGrant_ModeFloor: a matched entry's identity-bound mode floor
-// is reported on CheckResult.Mode. An entry pinned to `dry_run` yields
-// ModeDryRun; an `execute`-or-unset entry defaults to ModeExecute.
 func TestCheckGrant_ModeFloor(t *testing.T) {
 	dryRun := Grant{{Action: "instance:create", Mode: ModeDryRun}}
 	res := CheckGrant(dryRun, "instance:create", nil)
@@ -35,12 +32,6 @@ func TestCheckGrant_ModeFloor(t *testing.T) {
 	}
 }
 
-// TestCheckGrant_ExecuteBeatsDryRun_OrderIndependent: when a grant
-// carries two entries that BOTH match the same request — one pinned to
-// ModeDryRun and one to ModeExecute — the matcher must resolve to
-// ModeExecute regardless of the order the entries sit in. The fix
-// removes the previous first-match-wins behavior where flipping the
-// grant order silently downgraded an execute-eligible key to dry_run.
 func TestCheckGrant_ExecuteBeatsDryRun_OrderIndependent(t *testing.T) {
 	dryThenExec := Grant{
 		{Action: "instance:create", Mode: ModeDryRun},
@@ -68,9 +59,6 @@ func TestCheckGrant_ExecuteBeatsDryRun_OrderIndependent(t *testing.T) {
 		})
 	}
 
-	// @deliberate: a tag-scoped dry_run entry and an unscoped execute
-	// entry both subset-satisfy a request for that tag — execute still
-	// wins, and entry indices remain insignificant.
 	scopedMix := Grant{
 		{Action: "template:deploy", Scope: map[string]string{"template_tag": "analytics"}, Mode: ModeDryRun},
 		{Action: "template:deploy", Mode: ModeExecute},
@@ -84,9 +72,6 @@ func TestCheckGrant_ExecuteBeatsDryRun_OrderIndependent(t *testing.T) {
 	}
 }
 
-// TestCheckGrant_ScopeMatch: a scoped entry is honored by the matcher —
-// it allows an in-scope target, denies an out-of-scope target, and
-// denies a target missing the scoped key entirely.
 func TestCheckGrant_ScopeMatch(t *testing.T) {
 	g := Grant{{Action: "template:register", Scope: map[string]string{"template_tag": "analytics"}}}
 
@@ -110,8 +95,6 @@ func TestCheckGrant_ScopeMatch(t *testing.T) {
 		t.Fatalf("nil target against a scoped entry must deny: %+v", nilTarget)
 	}
 
-	// @deliberate: an unscoped entry for the same action matches any target
-	// regardless of extra keys, so least-privilege is opt-in per entry.
 	unscoped := Grant{{Action: "template:register"}}
 	if !CheckGrant(unscoped, "template:register", map[string]string{"template_tag": "billing"}).Allowed {
 		t.Fatalf("unscoped entry should allow any target")

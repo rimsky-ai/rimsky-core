@@ -2,47 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package main — sensor-object-store bundled sensor. Implements the
-// Publisher gRPC protocol; per publisher-subscription, polls an
-// object-store bucket+prefix on a fixed interval and emits one message
-// envelope per new object (or new object version, per
-// `watermark_field`).
-//
-// Spec .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-// §Publisher protocol unification.
-//
 //	@concept: sensor
-//
-// Backends: the sensor is structured around a narrow `ObjectLister`
-// interface (List(prefix) -> []ObjectMeta) so a single poll loop drives
-// every backend. The default bundled image always registers the in-
-// memory lister ("memory") and conditionally registers the filesystem
-// lister ("filesystem", when env RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT is
-// set). It advertises and accepts exactly the registered set — it
-// rejects s3/gcs/azure at Subscribe rather than no-op'ing on them at
-// poll time. S3 / GCS / Azure are not implemented here (deliberately
-// cut to keep the cloud SDKs out of the default build); a production
-// build registers its own listers via SetBackend before Run, after
-// which Capabilities advertises and Subscribe accepts exactly the
-// registered set.
-//
-// Watermarking: per-subscription high-watermark is the maximum value
-// seen for the configured `watermark_field` (one of `name`,
-// `last_modified`). New observations are objects whose watermark value
-// strictly exceeds the prior watermark. Idempotency: re-listing the
-// same set without any new object produces zero observations.
-//
-// Restart durability: when a state DSN is configured, the binary
-// persists each subscription + its watermark cursor to a Postgres
-// table. On restart, AttachStateDB rebuilds the in-memory watches
-// from that durable state — recovering each subscription's bucket /
-// prefix / watermark_field and the live cursor (watermark_name or
-// watermark_time). The first post-restart poll re-lists the bucket
-// and skips objects whose watermark value is `<= cursor`, so an
-// object emitted before the restart is NOT re-emitted after.
-// Without this rebuild, the in-memory watch map would start empty
-// and no poll would happen until rimsky re-issued Subscribe
-// (which it does only at control-api startup, not on demand).
 package main
 
 import (
@@ -62,9 +22,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
 )
 
-// ObjectMeta is the per-object snapshot the lister returns. Inert in
-// the sensor — we only project (name, last_modified, size, etag) into
-// the observation body.
 type ObjectMeta struct {
 	Name         string
 	LastModified time.Time
@@ -72,38 +29,26 @@ type ObjectMeta struct {
 	ETag         string
 }
 
-// ObjectLister is the narrow per-backend interface. Production wires
-// S3 / GCS / Azure implementations; tests inject a fake via SetBackend.
 type ObjectLister interface {
 	List(ctx context.Context, bucket, prefix string) ([]ObjectMeta, error)
 }
 
-// Watch is the in-memory state for one active object-store publisher-
-// subscription. Sensor-internal vocabulary stays as "Watch."
 type Watch struct {
 	SubscriptionID string
 	InstanceID     string
-	Backend        string // @constraint: must be a name registered via SetBackend; default build registers only "memory"
+	Backend        string
 	Bucket         string
 	Prefix         string
 	PollInterval   time.Duration
-	WatermarkField string // @constraint: one of "name" | "last_modified"
+	WatermarkField string
 	TargetNode     string
 	MessageType    string
 
 	LastPollAt    time.Time
-	WatermarkName string    // @constraint: populated only when WatermarkField == "name"
-	WatermarkTime time.Time // @constraint: populated only when WatermarkField == "last_modified"
+	WatermarkName string
+	WatermarkTime time.Time
 }
 
-// SensorService implements genv1.PublisherServer for object-store
-// polling.
-//
-// `listers` is keyed by backend name. The default build registers only
-// "memory"; production builds register additional backends (e.g. s3,
-// gcs, azure) at startup via SetBackend. Subscribe and Capabilities are
-// both driven off this map so the sensor only ever accepts/advertises
-// backends it can actually service.
 type SensorService struct {
 	genv1.UnimplementedPublisherServer
 	mu             sync.Mutex
@@ -114,24 +59,9 @@ type SensorService struct {
 	clock          func() time.Time
 	logger         logger
 	tickInterval   time.Duration
-	// state is the optional persistence layer. nil → in-memory mode.
 	state *stateDB
 }
 
-// AttachStateDB binds an optional persistence layer for subscriptions +
-// watermark cursors. Pass nil to run in pure in-memory mode.
-//
-// When non-nil, it also rebuilds s.watches from state.ListAll so a
-// restarted binary resumes the durable subscriptions with their
-// recovered watermark cursor (watermark_name or watermark_time),
-// rather than waiting for a Subscribe replay. Recovery is by cursor,
-// never by recompute: a row whose cursor is the name of an object
-// already emitted before the restart keeps that cursor, so the first
-// post-restart poll will skip that same-named object instead of re-
-// emitting it. Without this rebuild the durability story for
-// STORY-sensor-object-store does not hold — the in-memory watches
-// map starts empty after process start, and a sensor that lost its
-// watches polls nothing at all.
 func (s *SensorService) AttachStateDB(state *stateDB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -182,8 +112,6 @@ type logger interface {
 	Error(msg string, args ...any)
 }
 
-// NewSensorService constructs the service with an empty lister registry.
-// Callers register backends via SetBackend.
 func NewSensorService(rimskyEndpoint string, log logger) *SensorService {
 	return &SensorService{
 		watches:        make(map[string]*Watch),
@@ -196,27 +124,12 @@ func NewSensorService(rimskyEndpoint string, log logger) *SensorService {
 	}
 }
 
-// SetBackend registers an ObjectLister under the given backend name.
-//
-// This is the sole extension point for object-store backends. The
-// default bundled image registers only the in-memory backend
-// ("memory"), so it advertises and accepts only "memory". A production
-// build that needs s3/gcs/azure constructs its own binary, registers
-// the corresponding listers via SetBackend before calling Run, and the
-// sensor then advertises (Capabilities) and accepts (Subscribe) exactly
-// the set of registered backends — keeping the cloud SDKs out of the
-// default build. Used by tests (memory fake) and by main() at startup.
 func (s *SensorService) SetBackend(name string, l ObjectLister) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.listers[name] = l
 }
 
-// registeredBackends returns the sorted set of backend names this build
-// can service. Callers must hold s.mu. Used by Subscribe (to name the
-// serviceable set in a rejection) and Capabilities (to advertise only
-// backends that are actually wired), so the sensor never accepts or
-// advertises a backend it could only no-op on at poll time.
 func (s *SensorService) registeredBackends() []string {
 	out := make([]string, 0, len(s.listers))
 	for name := range s.listers {
@@ -226,11 +139,6 @@ func (s *SensorService) registeredBackends() []string {
 	return out
 }
 
-// Capabilities advertises the object-store kind. The `backend` enum is
-// built from the listers actually registered on this build (J3) so the
-// sensor never advertises a backend it cannot service — the default
-// image advertises only ["memory"]; a production build that registered
-// s3/gcs/azure listers advertises those too.
 func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.PublisherCapabilities, error) {
 	s.mu.Lock()
 	backends := s.registeredBackends()
@@ -261,10 +169,6 @@ func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv
 	}, nil
 }
 
-// Subscribe parses resolved_config and registers the publisher-
-// subscription. When a state DB is attached, looks up persisted state
-// and pre-populates the watermark cursor so restart-replay does not
-// re-emit objects emitted before the restart.
 func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
 	if req.GetKind() != "object-store" {
 		return nil, fmt.Errorf("sensor-object-store does not support kind %q", req.GetKind())
@@ -285,10 +189,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	if cfg.Bucket == "" {
 		return nil, fmt.Errorf("resolved_config.bucket required")
 	}
-	// @deliberate: validate against the listers actually registered on this
-	// build (J3) so Subscribe rejects backends the poll loop could only
-	// no-op on; the default image services only "memory", production
-	// builds wire s3/gcs/azure via SetBackend before Run.
 	s.mu.Lock()
 	_, backendRegistered := s.listers[cfg.Backend]
 	registered := s.registeredBackends()
@@ -310,10 +210,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		}
 		interval = d
 	}
-	// @constraint: the runtime side rejects an empty message_type at
-	// publisher-subscription mount time, so by the time Subscribe is
-	// called here the value is non-empty by construction. Pass through
-	// verbatim.
 	messageType := req.GetMessageType()
 	w := &Watch{
 		SubscriptionID: req.GetPublisherSubscriptionId(),
@@ -326,9 +222,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		TargetNode:     req.GetTargetNode(),
 		MessageType:    messageType,
 	}
-	// @constraint: load the persisted watermark cursor BEFORE registering
-	// the Watch so the first post-restart poll skips already-emitted
-	// objects rather than re-emitting them.
 	s.mu.Lock()
 	state := s.state
 	s.mu.Unlock()
@@ -346,8 +239,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
-		// @deliberate: idempotent Subscribe — the state-DB row is already
-		// present from the prior call, so skip the UpsertSubscription below.
 		return &genv1.SubscribeResponse{}, nil
 	}
 	s.watches[w.SubscriptionID] = w
@@ -369,7 +260,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	return &genv1.SubscribeResponse{}, nil
 }
 
-// Unsubscribe removes the publisher-subscription. Idempotent.
 func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -386,7 +276,6 @@ func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeReq
 	return &genv1.UnsubscribeResponse{}, nil
 }
 
-// ListSubscriptions enumerates active publisher-subscriptions.
 func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (*genv1.ListSubscriptionsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -404,7 +293,6 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 	return &genv1.ListSubscriptionsResponse{Subscriptions: out}, nil
 }
 
-// Tick polls due subscriptions. One message envelope per new object.
 func (s *SensorService) Tick(ctx context.Context) {
 	now := s.clock()
 	s.mu.Lock()
@@ -420,8 +308,6 @@ func (s *SensorService) Tick(ctx context.Context) {
 	}
 }
 
-// pollOne lists the bucket+prefix, filters by the watermark, and
-// pushes one message envelope per new object.
 func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	s.mu.Lock()
 	w.LastPollAt = now
@@ -439,8 +325,6 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		return
 	}
 
-	// @constraint: sort by watermark field ascending so observations emit
-	// in order AND the watermark advances deterministically.
 	sort.Slice(objs, func(i, j int) bool {
 		switch w.WatermarkField {
 		case "last_modified":
@@ -468,9 +352,6 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 			s.mu.Unlock()
 			continue
 		}
-		// @deliberate: advance the watermark BEFORE post so a post failure
-		// does not re-emit — the plan's pre-resolved decision favors
-		// at-most-once over at-least-once delivery.
 		switch cur.WatermarkField {
 		case "last_modified":
 			cur.WatermarkTime = o.LastModified
@@ -515,18 +396,11 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	}
 }
 
-// postMessage sends one message envelope to rimsky's generic messages
-// endpoint with sender_kind="publisher". Retry-with-backoff is
-// handled by `pkg:github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit`.
 func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[string]any, idempotencyKey string) error {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	// @constraint: `target_node` from the subscription registers
-	// routing on the rimsky side; the envelope wire body carries no
-	// `target` (the receipt handler has no `target` column to land it
-	// on — the `rimsky_messages.target` column was retired).
 	envelope := map[string]any{
 		"type":                      w.MessageType,
 		"payload":                   json.RawMessage(payloadBytes),
@@ -549,7 +423,6 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 	return res.Err
 }
 
-// Run starts the tick loop. Blocks until ctx is cancelled.
 func (s *SensorService) Run(ctx context.Context) {
 	t := time.NewTicker(s.tickInterval)
 	defer t.Stop()

@@ -13,9 +13,6 @@ import (
 	"testing"
 )
 
-// withStdin replaces os.Stdin with a pipe carrying input for the duration
-// of the test, restoring it on cleanup. The non-terminal stdin exercises
-// promptAPIKey's scriptable fallback (no terminal echo suppression).
 func withStdin(t *testing.T, input string) {
 	t.Helper()
 	r, w, err := os.Pipe()

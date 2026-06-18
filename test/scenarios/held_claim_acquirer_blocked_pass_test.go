@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Held-claim acquirer + executor returns an error with
-// error_class=executor_blocked + error_types: { executor_blocked: { policy: [pass] } }
-// (post-2026-05-23 reshape; was on_executor_errored: {resolve: pass}).
-// Validates that auto-terminal fires immediately on the acquirer's
-// pass-resolution: the held subgraph aborts (acquirer failed to produce
-// work) and rimsky_claim_handles is released without waiting for
-// inheritors to reach a terminal they would never reach.
-//
-// Regression coverage for the leak where the pass-resolution path on
-// a held claim (now `applyErrorPolicy::applyResolvedAction`'s
-// `DispositionEnd + ColorFresh` branch in `runner_error_policy.go`)
-// only marked the acquirer's claim_holders row, leaving inheritors'
-// rows in 'active' indefinitely and stranding the rimsky_claim_handles
-// row + remaining rimsky_claim_holders rows.
 package scenarios
 
 import (
@@ -46,10 +32,6 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// @deliberate: One item so Open returns Acquired and we exercise the
-				// post-acquisition Blocked path (vs. the
-				// on_acquire_unavailable path in
-				// held_claim_acquirer_passes_test.go).
 				InitialItems: []json.RawMessage{
 					json.RawMessage(`{"i":1}`),
 				},
@@ -68,13 +50,6 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 			},
 		},
 	})
-	// @constraint: Acquirer's executor returns an executor-blocked error. Inheritor
-	// would succeed if it ran — it must not. It subscribes to the
-	// acquirer's terminal/success, which does not match the acquirer's
-	// terminal/error/<class> pass settlement, so the cascade does not
-	// wake it; on top of that the held-subgraph abort fails the
-	// inheritors' claim_holders rows when the acquirer fails to produce
-	// work.
 	h.Stub.WhenType("acquirer").Error("executor_blocked", map[string]any{
 		"reason": "blocked_class",
 		"why":    "stub-blocked",
@@ -115,17 +90,9 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	// @constraint: Acquirer should settle fresh under the pass branch.
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/", 30*time.Second),
 		"acquirer should record settling_signal_type=terminal/error/<class> under error_types: { executor_blocked: { policy: [pass] } }")
 
-	// @constraint: Auto-terminal must fire promptly because the acquirer-failure
-	// path now fails all inheritor claim_holders rows (the fix for the
-	// held-claim leak). Post-Stage-3 of the claim-handle state-column
-	// refactor: auto-terminal flips the row's state (Promote-not-
-	// delete) rather than deleting it. Validate that every claim-handle
-	// for this instance is in a terminal state (committed or abandoned)
-	// without waiting for inheritor terminals.
 	deadline := time.Now().Add(30 * time.Second)
 	var activeCount int
 	for time.Now().Before(deadline) {
@@ -142,9 +109,6 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 	require.Equal(t, 0, activeCount,
 		"every rimsky_claim_handles row for this instance must reach a terminal state — auto-terminal must fire when the held-claim acquirer takes resolve=pass; non-zero indicates the inheritor-rows-active leak has regressed")
 
-	// @deliberate: Inheritor must remain fresh — it subscribes to terminal/success,
-	// which does not match the acquirer's terminal/error/<class> pass
-	// settlement, so the cascade does not wake it.
 	var inhRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().Get(h.Ctx, inh.ID, tx)

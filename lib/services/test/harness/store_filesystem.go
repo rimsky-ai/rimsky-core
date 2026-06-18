@@ -19,37 +19,15 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// storeFilesystemImage is the locally-built production filesystem-store
-// image. Built by `make service-images`.
 const storeFilesystemImage = "rimsky-store-filesystem:latest"
 
-// FilesystemStoreSpec is the in-test config for a peer filesystem-store
-// container. Mirrors the YAML shape that
-// `stores/filesystem/cmd/main.go` reads from
-// STORE_FILESYSTEM_CONFIG, projected to the in-network endpoint a
-// rimsky peer would dial.
 type FilesystemStoreSpec struct {
-	// PickPolicies are passed verbatim into the in-container YAML.
 	PickPolicies map[string]FilesystemPickPolicy `yaml:"pick_policies"`
-	// SweepIntervalSeconds defaults to 60 when zero.
 	SweepIntervalSeconds int `yaml:"sweep_interval_seconds"`
-	// SeedFolders are folder paths (relative to /workspace) that must
-	// exist on the host bind-mount BEFORE the store starts. Required
-	// for the store's startup pick-policy `root: <path>` stat check.
-	// Each entry is a slice of path segments (e.g. {"docs","alpha"}).
 	SeedFolders [][]string
-	// AdvertiseHTTPBridge, when true, sets the store's `http_bridge_url`
-	// to the in-network HTTP+JSON observability bridge URL and exposes
-	// the HTTP port so the test process can dial the bridge directly.
-	// Required for proofs that exercise the dashboard's per-store
-	// observability surface (the rimsky dashboard surfaces this URL via
-	// `GET /v1/observability/stores/{name}` so the operator's browser
-	// can fetch claim detail / stream / list / admin views from the
-	// store directly).
 	AdvertiseHTTPBridge bool
 }
 
-// FilesystemPickPolicy mirrors `stores/filesystem/cmd/main.go::yamlPickPolicy`.
 type FilesystemPickPolicy struct {
 	Root                     string `yaml:"root"`
 	FolderPattern            string `yaml:"folder_pattern,omitempty"`
@@ -59,33 +37,12 @@ type FilesystemPickPolicy struct {
 	SyncStrategy             string `yaml:"sync_strategy,omitempty"`
 }
 
-// FilesystemStoreEndpoint is the bring-up result for a peer fs-store.
 type FilesystemStoreEndpoint struct {
-	// InternalEndpoint is the in-network endpoint to pass to
-	// harness.WithClaimProducer (e.g. "grpc://store-filesystem:9100").
 	InternalEndpoint string
-	// HostDir is the host-side directory mounted into the container.
-	// Tests use this to seed pick-policy folders before drive.
 	HostDir string
-	// HostHTTPBridge is the host-mapped HTTP+JSON observability bridge
-	// base URL (e.g. "http://127.0.0.1:32777"). Empty unless the spec
-	// set AdvertiseHTTPBridge=true. Tests that exercise the dashboard's
-	// per-store observability surface dial this directly to fetch claim
-	// detail / stream / list / admin views — the in-network
-	// `http_bridge_url` the store advertises to rimsky is not reachable
-	// from the test process, so the test reaches the bridge via this
-	// mapped port.
 	HostHTTPBridge string
 }
 
-// StartFilesystemStore brings up the production filesystem-store image
-// on the given docker network with the given alias. Returns the
-// in-network endpoint and the host directory mounted at /workspace
-// inside the container.
-//
-// Seed the directory BEFORE the container starts — the store's
-// sweep_strategy=on_open discovers folders at Open time, but a fully
-// stable test wants the seeded layout in place at startup.
 func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias string, spec FilesystemStoreSpec) FilesystemStoreEndpoint {
 	t.Helper()
 
@@ -93,8 +50,6 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 	if err := os.MkdirAll(hostDir, 0o755); err != nil {
 		t.Fatalf("harness: mkdir hostDir: %v", err)
 	}
-	// @constraint: seed folders before the store starts so pick-policy
-	// `root:` stat checks at startup find the directories that exist.
 	for _, parts := range spec.SeedFolders {
 		all := append([]string{hostDir}, parts...)
 		dir := filepath.Join(all...)
@@ -103,12 +58,6 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 		}
 	}
 
-	// @deliberate: when AdvertiseHTTPBridge is set, the store advertises
-	// its in-network HTTP bridge URL through
-	// ClaimProducerObservabilityCapabilities so rimsky's dashboard surface
-	// (`GET /v1/observability/stores/{name}`) can expose it to operators.
-	// The test process reaches the same bridge via the host-mapped port
-	// returned in HostHTTPBridge.
 	httpBridgeURL := ""
 	if spec.AdvertiseHTTPBridge {
 		httpBridgeURL = fmt.Sprintf("http://%s:9110", alias)
@@ -131,9 +80,6 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 			ContainerFilePath: "/etc/store/config.yml",
 			FileMode:          0o644,
 		}),
-		// @constraint: bind-mount the host directory at /workspace; the
-		// spec's pick-policy roots resolve relative to the container's
-		// configured `root: /workspace`.
 		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
 			hc.Binds = append(hc.Binds, hostDir+":/workspace:rw,delegated")
 		}),
@@ -170,9 +116,6 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 	}
 }
 
-// SeedFolder creates an empty folder under the fs-store's host
-// directory so pick-policy roots can auto-discover it. The path
-// segments are joined under HostDir.
 func (e FilesystemStoreEndpoint) SeedFolder(t testing.TB, parts ...string) {
 	t.Helper()
 	all := append([]string{e.HostDir}, parts...)
@@ -182,12 +125,6 @@ func (e FilesystemStoreEndpoint) SeedFolder(t testing.TB, parts ...string) {
 	}
 }
 
-// renderFilesystemConfig serializes the in-container YAML config the
-// store binary reads. Inlines the small format rather than pulling in
-// gopkg.in/yaml.v3 here. httpBridgeURL, when non-empty, is rendered as
-// the `http_bridge_url:` field the store advertises in its
-// ClaimProducerObservabilityCapabilities (which rimsky surfaces through
-// the dashboard's per-store observability route).
 func renderFilesystemConfig(spec FilesystemStoreSpec, httpBridgeURL string) string {
 	var b strings.Builder
 	b.WriteString("root: /workspace\n")

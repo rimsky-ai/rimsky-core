@@ -10,7 +10,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// @deliberate: Row-type aliases — canonical definitions live in foundation/spec.
 type (
 	ErrorTypePolicy = spec.ErrorTypePolicy
 	PolicyAction    = spec.PolicyAction
@@ -18,18 +17,6 @@ type (
 	ResolvedAction  = spec.ResolvedAction
 )
 
-// Evaluate advances the policy chain by one step for a given error
-// occurrence. See spec §4.2 and §7.3.
-//
-// Action vocabulary (4 values; reshape per
-// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`):
-//   - policy == nil (unknown error class) → give_up("unknown_error_class")
-//   - different error class → reset counters
-//   - retry / discard_claims_then_retry: if counter < count, increment +
-//     schedule backoff; else advance action_index and recurse
-//   - pass: settle as fresh; chain advances so a subsequent same-class
-//     error doesn't pass again
-//   - give_up: terminal
 func Evaluate(policy *ErrorTypePolicy, state EvaluatorState, errorClass string, rng func() float64) ResolvedAction {
 	if rng == nil {
 		rng = rand.Float64
@@ -83,10 +70,6 @@ func step(chain []PolicyAction, state EvaluatorState, errorClass string, rng fun
 			ActionIndex: state.ActionIndex + 1, RetryCounter: 0, CurrentErrorClass: errorClass,
 		}, errorClass, rng)
 	case "pass":
-		// @deliberate: pass settles the run as fresh (color decided at
-		// runtime-side via Resolution.Color). The chain advances so a
-		// subsequent same-class error in the same dispatch wouldn't
-		// `pass` again.
 		return ResolvedAction{
 			Kind: "pass",
 			NewState: EvaluatorState{

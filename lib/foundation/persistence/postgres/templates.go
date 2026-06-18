@@ -20,9 +20,6 @@ import (
 
 const templateCols = `id, spec, state, registered_at, source`
 
-// Insert writes a new template row. Returns ErrTemplateInUse on
-// duplicate id (caller should treat as idempotent re-register and
-// short-circuit per spec §1.5).
 func (s *templatesImpl) Insert(ctx context.Context, in persistence.TemplateInsertInput, tx persistence.Tx) error {
 	ex := s.q(tx)
 	specBytes, err := json.Marshal(in.Spec)
@@ -52,7 +49,6 @@ func (s *templatesImpl) Insert(ctx context.Context, in persistence.TemplateInser
 	return nil
 }
 
-// GetByHash returns a TemplateRow or nil when not found.
 func (s *templatesImpl) GetByHash(ctx context.Context, hash string, tx persistence.Tx) (*persistence.TemplateRow, error) {
 	ex := s.q(tx)
 	row := ex.QueryRow(ctx,
@@ -68,8 +64,6 @@ func (s *templatesImpl) GetByHash(ctx context.Context, hash string, tx persisten
 	return &out, nil
 }
 
-// LockForUpdate runs SELECT … FOR UPDATE on the template row. Used by
-// state-transition handlers to serialize against concurrent transitions.
 func (s *templatesImpl) LockForUpdate(ctx context.Context, hash string, tx persistence.Tx) (*persistence.TemplateRow, error) {
 	ex := s.q(tx)
 	row := ex.QueryRow(ctx,
@@ -85,7 +79,6 @@ func (s *templatesImpl) LockForUpdate(ctx context.Context, hash string, tx persi
 	return &out, nil
 }
 
-// List returns a page of templates ordered (registered_at DESC, id DESC).
 func (s *templatesImpl) List(
 	ctx context.Context,
 	filter persistence.TemplateListFilter,
@@ -158,7 +151,6 @@ func (s *templatesImpl) List(
 	return persistence.PaginatedListResult[persistence.TemplateRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
-// UpdateState updates rimsky_templates.state for the given hash.
 func (s *templatesImpl) UpdateState(ctx context.Context, hash string, newState persistence.TemplateState, tx persistence.Tx) error {
 	ex := s.q(tx)
 	tag, err := ex.Exec(ctx,
@@ -175,15 +167,6 @@ func (s *templatesImpl) UpdateState(ctx context.Context, hash string, newState p
 	return nil
 }
 
-// DeleteByHash removes the template row. The schema enforces ON DELETE
-// RESTRICT against tags and instances; if either still references the
-// template, this returns the underlying Postgres FK violation. Callers
-// should pre-check those constraints and produce a more useful error.
-//
-// Per spec §1.6: rimsky_lifecycle_idempotencies rows for the (template-scope,
-// hash) tuple are cleaned up here transactionally so a follow-on
-// re-register starts with empty bookkeeping. The caller's tx (when
-// supplied) participates in the same atomic step.
 func (s *templatesImpl) DeleteByHash(ctx context.Context, hash string, tx persistence.Tx) error {
 	ex := s.q(tx)
 	if _, err := ex.Exec(ctx,

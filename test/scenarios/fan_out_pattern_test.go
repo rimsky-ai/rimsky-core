@@ -2,23 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario 4 — root pure-cascade node fans out to N executor downstreams;
-// when the root fires at instance creation, every downstream runs.
-//
-// Migrated to the stores-redesign template grammar (spec §11): nodes are
-// constructed via scenario.MakeNode + the fluent helpers. The root is a
-// pure-cascade node (no executor, no stores); each child is an
-// executor-backed leaf with a per-node attributes schema documenting the
-// shape its executor's attributes_delta is expected to take.
-//
-// Pre-2026-05-15 the root carried `schedule: "* * * * *"` and the test
-// poked `rimsky_schedules.next_fire_at` to drive a fire. The 2026-05-15
-// plan D7 + E16 + B10 schedule-retirement cascade retired the per-node
-// `schedule:` field; cron is now the bundled `sensor-cron`'s concern.
-// For pure-cascade fan-out from a root node, the instance-creation
-// initial frame is enough to drive the cascade — the root is a root
-// (no upstream), so the scenario harness's
-// `driveFrameAndEnqueue(instance_id)` fires it on the first tick.
 package scenarios
 
 import (
@@ -43,9 +26,6 @@ func TestFanOutPattern(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "fan-out", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			// @deliberate: Pure-cascade root; no executor / no stores. The harness's
-			// instance-creation initial-frame fires this root on the
-			// first scheduler tick after CreateInstance.
 			scenario.MakeNode(node.TemplateNodeDef{Type: "root"}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "child_a", Executor: "stub"},

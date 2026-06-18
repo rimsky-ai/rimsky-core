@@ -2,32 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Executable proof for STORY-uncovered-read-rejected — control-API
-// boundary half (spec 2026-06-14-explicit-substitution-cascade-behavior).
-//
-// The validator unit tests in
-// lib/graph/node/template_validator_substitution_coverage_test.go
-// pin the structured-entry shape in-process. This scenario test boots
-// the real assembled stack via testcontainers and submits the
-// uncovered-ref templates through the actual POST /v1/templates HTTP
-// boundary the operator interacts with — so the proof exercises the
-// response-rendering site that builds the JSON the operator sees
-// (lib/control/controlapi/templates.go), not just the validator that
-// produces the structured entries.
-//
-// Per TD-uncovered-substitution-error-shape: the rationale for the
-// structured shape is programmatic fix-suggestion delivered through
-// the operator's actual surface — keep the proof at that surface.
-//
-// Each sub-test asserts HTTP 400; that the response body carries a
-// `validation_errors` array containing exactly one entry with
-// `kind: "substitution_ref_uncovered"` for the test's receiver; that
-// the entry's six fields match the expected payload (kind,
-// receiver_node_type, ref, attribute_property, suggested_subscribes_entry,
-// suggested_subscribes_note); that the suggested_subscribes_entry is a
-// flat drop-in JSON object with exactly four keys; and that
-// suggested_subscribes_note is non-empty and mentions both flag names.
-//
 //	@story: uncovered-substitution-rejected
 package scenarios
 
@@ -41,11 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// TestRegistrationRejectsUncoveredSubstitution submits each uncovered
-// substitution-ref template to POST /v1/templates and asserts the
-// rejection response carries the structured `substitution_ref_uncovered`
-// entry the operator (human or LLM) can act on programmatically.
-//
 //	@story: uncovered-substitution-rejected
 func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 	t.Parallel()
@@ -76,8 +45,6 @@ func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 			refContains:      "nodes.foo.attribute",
 			attrPropContains: "all_of_foo",
 			suggestedSender:  "foo",
-			// @deliberate: per-field subscription does not cover the
-			// whole-pull; the wildcard is required (coverage asymmetry).
 			suggestedType: "attribute/*",
 		},
 	}
@@ -138,12 +105,6 @@ func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 		})
 	}
 
-	// @deliberate: TD-collapse-named-event-to-tags retired the
-	// `nodes.<X>.event.<name>` substitution form. The directive grammar
-	// now rejects it at parse time, so the rejection no longer carries
-	// the structured `substitution_ref_uncovered` entry — it surfaces as
-	// a directive-grammar error in the validation_errors array. Confirm
-	// the registration still fails HTTP 400 with a recognisable message.
 	t.Run("event_ref_retired", func(t *testing.T) {
 		resp := postJSON(t, h.ControlBase+"/v1/templates", map[string]any{
 			"spec": eventUncoveredSpec("uncovered-event-ref", "1"),
@@ -171,9 +132,6 @@ func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 	})
 }
 
-// perFieldUncoveredSpec builds the inner `spec:` map for a template
-// whose receiver reads {{nodes.foo.attribute.bar}} via per-field
-// source: directive but declares no covering subscription.
 func perFieldUncoveredSpec(name, version string) map[string]any {
 	return map[string]any{
 		"name":    name,
@@ -183,7 +141,6 @@ func perFieldUncoveredSpec(name, version string) map[string]any {
 			{
 				"type":     "rcv",
 				"executor": "stub",
-				// @deliberate: no subscribes — the substitution ref is uncovered.
 				"attributes": map[string]any{
 					"schema": map[string]any{
 						"type": "object",
@@ -200,10 +157,6 @@ func perFieldUncoveredSpec(name, version string) map[string]any {
 	}
 }
 
-// wholePullUncoveredSpec builds the inner `spec:` map for a template
-// whose receiver reads {{nodes.foo.attribute}} (whole-pull) with only
-// a per-field attribute/bar/changed subscription on foo. The
-// asymmetry rule rejects this: the wildcard attribute/* is required.
 func wholePullUncoveredSpec(name, version string) map[string]any {
 	return map[string]any{
 		"name":    name,
@@ -237,10 +190,6 @@ func wholePullUncoveredSpec(name, version string) map[string]any {
 	}
 }
 
-// eventUncoveredSpec builds the inner `spec:` map for a template whose
-// receiver reads {{nodes.foo.event.something_happened}} — the retired
-// event substitution form. The directive grammar rejects this at parse
-// time per TD-collapse-named-event-to-tags.
 func eventUncoveredSpec(name, version string) map[string]any {
 	return map[string]any{
 		"name":    name,
@@ -250,7 +199,6 @@ func eventUncoveredSpec(name, version string) map[string]any {
 			{
 				"type":     "rcv",
 				"executor": "stub",
-				// @deliberate: no subscribes — the event ref is uncovered.
 				"attributes": map[string]any{
 					"schema": map[string]any{
 						"type": "object",
@@ -267,11 +215,6 @@ func eventUncoveredSpec(name, version string) map[string]any {
 	}
 }
 
-// findRegistrationCoverageEntry scans the validation_errors array for
-// the structured substitution_ref_uncovered entry matching the given
-// receiver and ref substring, asserts exactly one such entry is
-// present, and returns it. Fatals when zero or two-or-more entries
-// match — both are falsifier conditions.
 func findRegistrationCoverageEntry(t *testing.T, errs []any, receiver, refContains string) map[string]any {
 	t.Helper()
 	matches := []map[string]any{}

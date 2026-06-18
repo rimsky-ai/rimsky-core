@@ -84,8 +84,6 @@ func TestObservability_ListClaims(t *testing.T) {
 	}
 }
 
-// fakeStreamServer adapts to the ClaimProducerObservability_StreamClaimServer
-// interface for unit-test consumption.
 type fakeStreamServer struct {
 	genv1.ClaimProducerObservability_StreamClaimServer
 	ctx    context.Context

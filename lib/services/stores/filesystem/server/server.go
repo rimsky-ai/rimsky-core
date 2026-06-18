@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package server adapts the store-internal filesystem Store to the
-// rimsky ClaimProducer + LifecycleSubscriber gRPC + HTTP+JSON bridge.
 package server
 
 import (
@@ -27,29 +25,16 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// gracefulStopBudget bounds grpcSrv.GracefulStop() so a hung in-flight
-// RPC can't strand the server when ctx is cancelled.
 const gracefulStopBudget = 5 * time.Second
 
-// Config is the operator-facing config for the filesystem store-service.
 type Config struct {
 	Root          string
 	PickPolicies  map[string]*fsstore.PickPolicy
 	SweepInterval time.Duration
-	// HTTPBridgeURL is the externally-reachable HTTP base URL for
-	// dashboard clients. Surfaced through ClaimProducerObservabilityCapabilities.
-	// Empty when not declared; the dashboard then falls back to the
-	// dispatch endpoint and HTTP-only routes (claims/admin) won't work.
 	HTTPBridgeURL string
-	// EnableLifecycle, when true, registers the LifecycleSubscriber
-	// service alongside ClaimProducer. Currently a no-op subscriber.
 	EnableLifecycle bool
 }
 
-// Run starts the gRPC and HTTP+JSON listeners and serves until ctx is
-// cancelled. cmd/main.go and testfixture/ both call this; main loads
-// cfg from YAML, testfixture builds it programmatically. adminLis may
-// be nil — when nil, the admin handler is not exposed.
 func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listener) error {
 	st, err := fsstore.New(fsstore.Config{
 		Root:         cfg.Root,
@@ -109,18 +94,11 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	return nil
 }
 
-// Server implements genv1.ClaimProducerServer.
 type Server struct {
 	genv1.UnimplementedClaimProducerServer
 	store *fsstore.Store
 }
 
-// producerDeclaredErrorClasses is the error-class vocabulary the store
-// names on the ClaimProducer surface: the google.rpc.ErrorInfo Reason
-// stamped on faulted producer verbs (fs/root_unavailable). Advertised
-// on CapabilitiesResponse.declared_error_classes so the template
-// validator's `error_types:` range-check accepts these keys.
-//
 // @source: lib/services/stores/postgres/server/server.go:producerDeclaredErrorClasses
 // @diverged: true
 // @reason: the filesystem store transmits a single class (no swap staging).
@@ -130,7 +108,6 @@ func producerDeclaredErrorClasses() []string {
 	}
 }
 
-// Capabilities returns the store's advertised capability struct.
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.store.Capabilities()
 	out := make([]genv1.WriteSemantics, 0, len(c.WriteSemanticsAllowed))
@@ -143,11 +120,6 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 	}, nil
 }
 
-// Open delegates to the store logic and packages the OpenOutcome
-// as the wire-form OpenResponse oneof. Validates `intent` against
-// the wire schema (only "r" or "rw") before dispatching, mirroring
-// the HTTP bridge's gate so direct-gRPC callers can't bypass the
-// check.
 func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 	if intent := req.GetIntent(); intent != "r" && intent != "rw" {
 		return nil, fmt.Errorf("filesystem.Open: intent must be \"r\" or \"rw\", got %q", intent)
@@ -171,7 +143,6 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 	}, nil
 }
 
-// Commit delegates.
 func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
 	if err := s.store.Commit(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
 		return nil, classedStatus(err)
@@ -179,7 +150,6 @@ func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.C
 	return &genv1.CommitResponse{}, nil
 }
 
-// Abandon delegates.
 func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
 	if err := s.store.Abandon(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
 		return nil, classedStatus(err)
@@ -187,7 +157,6 @@ func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1
 	return &genv1.AbandonResponse{}, nil
 }
 
-// Release delegates.
 func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
 	if err := s.store.Release(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
 		return nil, classedStatus(err)
@@ -195,16 +164,6 @@ func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1
 	return &genv1.ReleaseResponse{}, nil
 }
 
-// classedStatus maps a store-side error into a gRPC status. When the
-// error carries a rimsky error_class (a *fsstore.ClassedError, e.g. the
-// `fs/root_unavailable` misconfigured-backing-root rejection), the class
-// is stamped into a google.rpc.ErrorInfo detail (Reason = class) — the
-// exact shape `lib/runtime/peer.extractErrorClass` decodes — so the
-// supervisor routes the producer-verb fault through the operator's
-// `error_types:` chain and the control-api surfaces the class + message
-// on API-triggered verbs instead of an anonymous failure.
-// An unclassed error passes through as a bare Internal status.
-//
 // @source: lib/services/stores/postgres/server/server.go:classedStatus
 func classedStatus(err error) error {
 	if err == nil {

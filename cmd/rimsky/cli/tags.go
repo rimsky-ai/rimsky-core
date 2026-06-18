@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// tags.go — `tag create/list/get/mv/rm`.
-//
-// `tag get` does a list-and-filter against GET /tags because the
-// control-api does not expose a per-tag GET endpoint (spec §1.6).
 package cli
 
 import (
@@ -16,7 +12,6 @@ import (
 	"strings"
 )
 
-// RunTagCreate implements `tag create`.
 func RunTagCreate(ctx context.Context, args []string) int {
 	var template string
 	fs, common, endpoint, code := runWithCommon("tag create", args, func(fs *flag.FlagSet) {
@@ -48,7 +43,6 @@ func RunTagCreate(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunTagList implements `tag list`.
 func RunTagList(ctx context.Context, args []string) int {
 	var prefix string
 	fs, common, endpoint, code := runWithCommon("tag list", args, func(fs *flag.FlagSet) {
@@ -101,7 +95,6 @@ func pagedListTags(ctx context.Context, c *Client, q ListTagsQuery) ([]Tag, erro
 	return all, nil
 }
 
-// RunTagGet implements `tag get` via list-and-filter (spec §1.6).
 func RunTagGet(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("tag get", args, nil)
 	if code != 0 {
@@ -137,9 +130,6 @@ func RunTagGet(ctx context.Context, args []string) int {
 	return 1
 }
 
-// RunTagMv implements `tag mv`. Refuses to operate on compose-owned
-// tags (those with the reserved prefix); compose owns its tags' lifecycle
-// and a manual move would silently violate that invariant. See spec §8.3.
 func RunTagMv(ctx context.Context, args []string) int {
 	var template string
 	fs, common, endpoint, code := runWithCommon("tag mv", args, func(fs *flag.FlagSet) {
@@ -170,9 +160,6 @@ func RunTagMv(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunTagRm implements `tag rm`. Refuses to operate on compose-owned
-// tags (those with the reserved prefix); compose owns its tags'
-// lifecycle. See spec §8.3.
 func RunTagRm(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("tag rm", args, nil)
 	if code != 0 {

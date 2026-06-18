@@ -11,8 +11,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestSubscriberAcksLifecycle asserts the subscriber returns a non-nil ack and
-// no error for representative notifications across the lifecycle surface.
 func TestSubscriberAcksLifecycle(t *testing.T) {
 	s := &Subscriber{}
 	ctx := context.Background()

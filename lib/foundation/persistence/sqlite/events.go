@@ -24,18 +24,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Append inserts an event row. The typed Kind is marshaled to its
-// canonical wire form via Kind.String() at the persistence boundary
-// (per decision:event-log-kind-enum). A zero / unrecognized typed
-// value stringifies to "" and we refuse the write — silently
-// inserting an empty kind would create observability blind spots
-// indistinguishable from a missing row to consumers filtering by
-// kind.
-//
-// Nil-tx enforcement (option C / no-nil-tx contract — see
-// deadlock_guard_test.go) is preserved: q(tx) panics first, so
-// callers that pass a nil tx still get the deadlock guard rather
-// than an empty-kind error masquerading as the real problem.
 func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput, tx persistence.Tx) error {
 	ex := s.q(tx)
 	kindWire := in.Kind.String()
@@ -96,9 +84,6 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		untilArg = formatTime(*filter.Until)
 	}
 
-	// @constraint: auth-payload predicates are NULL-tolerant
-	// (`? IS NULL OR ...`) so a nil pointer never excludes a row;
-	// action prefix uses LIKE with a trailing %.
 	var keyIDArg, keyNameArg, actionExactArg, actionPrefixArg, respStatusArg, modeArg, requestPathArg any
 	if filter.KeyID != nil {
 		keyIDArg = *filter.KeyID
@@ -122,8 +107,6 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		requestPathArg = *filter.RequestPath
 	}
 
-	// @constraint: sqlite has no native array bind, so the kind_in IN (...)
-	// clause is built dynamically; skipped when filter.KindIn is empty.
 	kindInClause := ""
 	args := []any{
 		nodeArg, nodeArg, instArg, instArg, kindArg, kindArg,
@@ -141,8 +124,6 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		}
 		kindInClause = " AND kind IN (" + placeholders + ")"
 	}
-	// @constraint: auth-payload binds must be appended after the kind_in
-	// clause so their positions line up with the placeholders below.
 	args = append(args,
 		keyIDArg, keyIDArg,
 		keyNameArg, keyNameArg,
@@ -244,10 +225,6 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 	return persistence.EventListResult{Events: out, NextCursor: nextCursor}, nil
 }
 
-// LastTerminalByNodes returns the most-recent dispatch-terminal event
-// per node id. SQLite has no DISTINCT ON, so the implementation is a
-// correlated-subquery filter (sufficient for the cascade-graph use
-// case where node lists are bounded by template size).
 func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.UUID, tx persistence.Tx) (map[shared.UUID]persistence.EventRow, error) {
 	out := make(map[shared.UUID]persistence.EventRow, len(nodeIDs))
 	if len(nodeIDs) == 0 {
@@ -340,12 +317,6 @@ func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.U
 	return out, nil
 }
 
-// DeleteOlderThan deletes rimsky_events rows whose occurred_at is before
-// cutoff. The audit log is time-keyed (no frame FK), so the trailing
-// trace-retention window alone bounds it. Standalone sweep — no
-// caller-supplied tx; run directly against the db handle (mirroring
-// Lineage.DeleteOlderThan) so the scheduler tick can call it without a
-// surrounding Tables.Transaction.
 func (s *eventsImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
 	res, err := (*tablesImpl)(s).db.ExecContext(ctx,
 		`DELETE FROM rimsky_events WHERE occurred_at < ?`, formatTime(cutoff))

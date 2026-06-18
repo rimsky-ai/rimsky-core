@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: NodeAttributesMergeDelta conformance area.
-// Covers NodeAttributeTable.MergeDelta:
-//
-//   - shallow merge with nested keys (top-level keys overwrite, but the
-//     value at each top-level key is replaced wholesale, not deep-merged)
-//   - nil-delta touch path (bumps updated_at; no-op when row absent)
-//   - missing-row case returns a wrapped persistence.ErrNotFound (verified
-//     via errors.Is so both drivers must agree on the sentinel)
 package conformance
 
 import (
@@ -28,10 +20,8 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// @constraint: every NodeAttributes row keys on a real node_run_id; seed one for this run before exercising MergeDelta.
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
-	// @constraint: MergeDelta against an absent row must surface a wrapped persistence.ErrNotFound (both drivers agree on the sentinel).
 	missingRunID := uuid.New()
 	err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.NodeAttributes().MergeDelta(ctx, missingRunID,
@@ -57,12 +47,10 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		t.Fatalf("Upsert seed: %v", err)
 	}
 
-	// @constraint: shallow merge — top-level keys overwrite wholesale; existing untouched top-level keys are retained.
 	delta := map[string]any{
 		"top2": "v2",
 		"nested": map[string]any{
 			"a": float64(99),
-			// @deliberate: b is omitted so the wholesale replacement of "nested" must drop the prior b entry.
 		},
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -98,10 +86,8 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		t.Fatalf("shallow merge: nested.b still present after wholesale replace; got %v", nestedAny["b"])
 	}
 
-	// @constraint: nil-delta on an existing row bumps updated_at without mutating data.
 	priorUpdatedAt := got.UpdatedAt
 	priorData := got.Data
-	// @deliberate: sleep so updated_at can advance under both backends — Postgres NOW() is microsecond-resolution and SQLite's nowUTC() is RFC3339Nano.
 	time.Sleep(10 * time.Millisecond)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.NodeAttributes().MergeDelta(ctx, runID, nil, tx)
@@ -133,7 +119,6 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// @constraint: nil-delta against an absent row is a silent no-op (no error), distinct from the ErrNotFound path above.
 	missingRunID2 := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.NodeAttributes().MergeDelta(ctx, missingRunID2, nil, tx)
@@ -142,9 +127,4 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 	}
 }
 
-// equalAny returns true if a and b are deeply equal under Go's
-// json.Unmarshal-into-any decoding. We can't import reflect.DeepEqual at
-// the package level without bringing in the universe, but the values we
-// store here are constrained enough that recursing on jsonValueEqual
-// suffices.
 func equalAny(a, b any) bool { return jsonValueEqual(a, b) }

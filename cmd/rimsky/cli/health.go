@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// health.go — `rimsky health`. Prints the control-api's /health response.
 package cli
 
 import (
@@ -12,7 +11,6 @@ import (
 	"os"
 )
 
-// RunHealth implements the `health` verb.
 func RunHealth(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("health", flag.ContinueOnError)
 	var common CommonFlags

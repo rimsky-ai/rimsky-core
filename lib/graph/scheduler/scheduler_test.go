@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Tests for the scheduler main loop (Start / tick / sweeps). Uses the
-// pgtest harness plus the real Postgres-backed persistence.Database so
-// the advisory-lock path is exercised end-to-end.
 package scheduler
 
 import (
@@ -27,12 +24,6 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// pgSchedulerTickLockKey mirrors the constant in
-// foundation/persistence/postgres/coordinator.go, duplicated here so the
-// scheduler-tests package does not need to import the postgres driver
-// package directly. Kept in sync via the conformance suite (any drift
-// would surface as a test passing here while the postgres coordinator's
-// TrySchedulerTick blocks on a different key).
 const pgSchedulerTickLockKey int64 = 4853127298010834892
 
 type schedFixture struct {
@@ -90,18 +81,11 @@ func newSchedFixture(t *testing.T) *schedFixture {
 	}
 }
 
-// createNode inserts a node and forces its state via UPDATE for paths that
-// need to skip the state-machine (e.g. directly creating a running node).
-// Non-fresh nodes (stale/running) get a frame_id pointing at a freshly-
-// seeded running rimsky_frames row so the dispatch enqueue path
-// (blessed-invariant 19) can read frame_id from the node row.
 func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.NodeState, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
 	ctx := context.Background()
 	var n persistence.NodeRow
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
-		// @deliberate: deps unused — dependency-edge resolution is now
-		// via the subscription-edge map.
 		_ = deps
 		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
@@ -113,9 +97,6 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 		n = row
 		return nil
 	})
-	// @deliberate: state lives on rimsky_node_runs. The 'fresh' case
-	// requires no run row; stale / running seed an in-flight run row in
-	// the requested state.
 	if state == cascade.NodeStateFresh {
 		return n
 	}
@@ -141,9 +122,6 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 	return n
 }
 
-// lookupRunningFrame returns the running frame_id for instanceID, or
-// (zero, false) when none exists. Uses a count-then-fetch pattern so
-// the test helper does not fatal on no-rows.
 func lookupRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, instanceID shared.UUID) (shared.UUID, bool) {
 	t.Helper()
 	var count int
@@ -163,10 +141,6 @@ func lookupRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, inst
 	return got, true
 }
 
-// insertRunningFrame inserts a new running rimsky_frames row anchored to
-// instanceID (the sourceNodeID arg is retained for call-site clarity but
-// no longer threaded into the frame row — every frame carries a
-// triggering_message_id instead, which the helper seeds synthetically).
 func insertRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
 	_ = sourceNodeID
@@ -186,12 +160,6 @@ func insertRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, inst
 	return frameID
 }
 
-// @deliberate: legacy `setHeartbeat` helper deleted alongside its
-// callers in Pass 1; the historic name has no live consumers after
-// TD-three-dispatch-deadlines and the test fixture below no longer
-// needs to seed the retired heartbeat column.
-
-// schedConfig returns a Config wired to the fixture's persistence layer.
 func (f *schedFixture) schedConfig() Config {
 	return Config{
 		Persist:               f.persist,
@@ -211,7 +179,6 @@ func TestScheduler_TicksAndStops(t *testing.T) {
 	cfg.TickInterval = 50 * time.Millisecond
 	h := Start(cfg)
 
-	// @deliberate: Give the loop a couple of ticks to run.
 	time.Sleep(150 * time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -224,14 +191,11 @@ func TestScheduler_ReadySweep_EnqueuesExecutorNodes(t *testing.T) {
 	ctx := context.Background()
 	f := newSchedFixture(t)
 
-	// @deliberate: Dep is fresh; target is stale + executor-backed →
-	// ListReadyForDispatch should pick it up.
 	dep := f.createNode(t, "worker", cascade.NodeStateFresh)
 	target := f.createNode(t, "runner", cascade.NodeStateStale, dep.ID)
 
 	require.NoError(t, tick(ctx, f.schedConfig(), nil))
 
-	// @deliberate: Dispatch row exists for the target.
 	var count int
 	pgtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT COUNT(*) FROM rimsky_node_runs WHERE node_id = $1`,
@@ -245,14 +209,8 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	ctx := context.Background()
 	f := newSchedFixture(t)
 
-	// @deliberate: stale node with a claimed dispatch row whose
-	// claimed_at is past the cutoff — ListOrphanedClaims + ReleaseClaim
-	// should fire.
 	n := f.createNode(t, "worker", cascade.NodeStateStale)
 	require.NotNil(t, n.FrameID)
-	// @deliberate: EnqueuedAt in the past so the SelectCandidates
-	// `enqueued_at <= NOW()` predicate isn't flaky against the postgres
-	// container's clock.
 	require.NoError(t, f.queue.Enqueue(ctx, persistence.DispatchRequest{
 		NodeID: n.ID, ExecutorName: "worker", EnqueuedAt: time.Now().Add(-time.Second),
 		FrameID:    *n.FrameID,
@@ -279,13 +237,6 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 		return nil
 	}))
 
-	// @deliberate: simulate a row that went async (async_ack_id set,
-	// per-row effective_max_quiet_period_seconds denormalized) and has
-	// been quiet for longer than its cap. The real
-	// runner_dispatch.go::registerAsyncIfSet path runs this denormalization
-	// at AwaitAsyncCallback registration; this test stamps the row
-	// directly to simulate that production state. Per
-	// TD-three-dispatch-deadlines + concept:dispatch-deadlines.
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_node_runs
 		    SET last_progress_at = NOW() - INTERVAL '10 minutes',
@@ -297,13 +248,11 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 
 	require.NoError(t, tick(ctx, f.schedConfig(), nil))
 
-	// @deliberate: Claim released: claimed_by IS NULL.
 	own, err := f.queue.GetClaimedBy(ctx, dispatchID)
 	require.NoError(t, err)
 	assert.Equal(t, "unclaimed", own.Kind,
 		"expected orphan claim to be released")
 
-	// @deliberate: orphaned_claim_released event appended.
 	var events persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		e, err := f.persist.Events().List(ctx,
@@ -316,31 +265,17 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	require.NotEmpty(t, events.Events, "expected an orphaned_claim_released event")
 }
 
-// TestScheduler_AdvisoryLockBlocksSecondReplica pins blessed-invariant 7:
-// when one scheduler replica already holds the per-tick advisory lock
-// (TrySchedulerTick has returned held=true), a second tick observes
-// held=false and skips its sweeps. The first replica's lock-holding is
-// faked via pgtest.HoldAdvisoryLock against the per-tick lock key
-// duplicated as `pgSchedulerTickLockKey` above.
 func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newSchedFixture(t)
 
-	// @deliberate: create a ready node — if the tick runs it will be
-	// enqueued.
 	dep := f.createNode(t, "worker", cascade.NodeStateFresh)
 	target := f.createNode(t, "runner", cascade.NodeStateStale, dep.ID)
 
-	// @deliberate: acquire the advisory lock on a separate connection
-	// and hold it while calling tick. tick should see TrySchedulerTick
-	// → held=false and skip.
 	release := pgtest.HoldAdvisoryLock(ctx, t, f.driver, pgSchedulerTickLockKey)
 	defer release()
 
-	// @deliberate: tick needs a *different* connection from the pool
-	// to attempt its lock. Use a background goroutine + short wait so
-	// this test doesn't wedge if the pool is single-capacity.
 	done := make(chan error, 1)
 	go func() {
 		done <- tick(ctx, f.schedConfig(), nil)
@@ -353,11 +288,6 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 		t.Fatal("tick did not return within 10s while other replica held the lock")
 	}
 
-	// @deliberate: Skipped tick means the ready-sweep did NOT run; the in-flight
-	// stale run row seeded by createNode stays in phase='pending' with
-	// claimed_by NULL. Post-stage-3 cutover the run row carries state,
-	// so a "dispatch happened" symptom is "phase advanced to active or
-	// row claimed" — neither should occur while the lock is held.
 	var (
 		phase     string
 		claimedBy sql.NullString
@@ -371,10 +301,6 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 	assert.False(t, claimedBy.Valid, "run row should not be claimed under advisory-lock contention")
 }
 
-// erroringAdvisoryLocker is a stub AdvisoryLocker whose TrySchedulerTick
-// always errors. The embedded interface is nil — any other method call
-// panics, which is itself an assertion that the tick touches nothing
-// else on the locker after a lock error.
 type erroringAdvisoryLocker struct {
 	persistence.AdvisoryLocker
 	calls int32
@@ -385,19 +311,11 @@ func (l *erroringAdvisoryLocker) TrySchedulerTick(context.Context) (bool, func()
 	return false, nil, errors.New("simulated advisory-lock failure")
 }
 
-// TestScheduler_AdvisoryLockErrorSkipsSweepPass pins the lock-error-is-
-// lock-held rule (concept:advisory-lock invariant): when TrySchedulerTick
-// errors, the tick logs and skips the whole sweep pass — it must NOT fall
-// through to running the sweeps unlocked, because under DB flakiness that
-// permits the concurrent multi-replica sweeping the lock exists to
-// prevent (@blessed-invariant 7).
 func TestScheduler_AdvisoryLockErrorSkipsSweepPass(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newSchedFixture(t)
 
-	// @deliberate: Seed a ready node — if the tick erroneously ran its sweeps, the
-	// sweeps, the pending run row would be claimed / advanced.
 	dep := f.createNode(t, "worker", cascade.NodeStateFresh)
 	target := f.createNode(t, "runner", cascade.NodeStateStale, dep.ID)
 
@@ -405,15 +323,10 @@ func TestScheduler_AdvisoryLockErrorSkipsSweepPass(t *testing.T) {
 	locker := &erroringAdvisoryLocker{}
 	cfg.AdvisoryLocker = locker
 
-	// @deliberate: a lock error is treated as lock-held — tick returns
-	// nil (skip, not failure; the next interval retries) without
-	// running any sweep.
 	require.NoError(t, tick(ctx, cfg, nil))
 	assert.EqualValues(t, 1, atomic.LoadInt32(&locker.calls),
 		"tick should attempt the lock exactly once")
 
-	// @deliberate: No sweep ran: the seeded in-flight run row is untouched (same
-	// observable as the lock-contention test above).
 	var (
 		phase     string
 		claimedBy sql.NullString
@@ -429,18 +342,11 @@ func TestScheduler_AdvisoryLockErrorSkipsSweepPass(t *testing.T) {
 		"run row must stay unclaimed when the lock attempt errors")
 }
 
-// TestScheduler_BreakpointSweeps pins the Pass-7 wiring: a single tick
-// must (a) delete TTL-expired `rimsky_instance_breakpoints` rows and
-// (b) auto-resume unresumed `rimsky_breakpoint_hits` rows that have
-// outlived their breakpoint's `hit_ttl_seconds` and whose breakpoint
-// uses overflow_policy = 'auto_resume_after_ttl'.
 func TestScheduler_BreakpointSweeps(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newSchedFixture(t)
 
-	// @deliberate: expired breakpoint (drop_oldest, short ttl) — should
-	// be deleted by the SweepExpired branch.
 	expiredTTL := 60
 	expired := persistence.BreakpointRow{
 		InstanceID:     f.instance.ID,
@@ -453,9 +359,6 @@ func TestScheduler_BreakpointSweeps(t *testing.T) {
 		CreatedByKey:   "test-key",
 	}
 
-	// @deliberate: auto-resume breakpoint (hit_ttl=1s) with one
-	// unresumed hit — AutoResumeStale should flip resumed_at +
-	// resumed_by_key='sweeper'.
 	autoBP := persistence.BreakpointRow{
 		InstanceID:     f.instance.ID,
 		Matcher:        map[string]any{"label": "auto"},
@@ -491,9 +394,6 @@ func TestScheduler_BreakpointSweeps(t *testing.T) {
 		return nil
 	}))
 
-	// @deliberate: force the expired breakpoint's expires_at into the
-	// past, and backdate the hit's hit_at so it's older than
-	// hit_ttl_seconds.
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_instance_breakpoints SET expires_at = NOW() - interval '1 hour' WHERE id = $1`,
 		expiredID)
@@ -503,7 +403,6 @@ func TestScheduler_BreakpointSweeps(t *testing.T) {
 
 	require.NoError(t, tick(ctx, f.schedConfig(), nil))
 
-	// @deliberate: Expired breakpoint deleted; auto breakpoint survives.
 	var (
 		gotExpired, gotAuto *persistence.BreakpointRow
 		gotHit              *persistence.BreakpointHitRow
@@ -530,5 +429,4 @@ func TestScheduler_BreakpointSweeps(t *testing.T) {
 		"AutoResumeStale must stamp resumed_by_key='sweeper'")
 }
 
-// @deliberate: unused-variable warning from `sync` if the file gets trimmed.
 var _ = sync.Mutex{}

@@ -11,9 +11,6 @@ import (
 	"testing"
 )
 
-// loadCfgErr writes body to a temp rimsky.yml and returns the error from
-// LoadRimskyConfigYAML (nil on success). Mirror of mustLoadCfg for the
-// rejection path.
 func loadCfgErr(t *testing.T, body string) error {
 	t.Helper()
 	dir := t.TempDir()
@@ -25,15 +22,6 @@ func loadCfgErr(t *testing.T, body string) error {
 	return err
 }
 
-// TestLoadRimskyConfigYAML_RejectsRetiredAliases drives the real config
-// loader against each retired YAML alias from the 2026-05-12 nomenclature
-// resolution and asserts a clear, specific error naming the retired key.
-// A valid config (using the current `claim_producers` / `write_semantics_
-// allowed` spellings) still loads.
-//
-// The rejections are load-bearing: a v0 config carried forward would
-// silently lose its `stores:` / `write_semantics:` block under a tolerant
-// loader rather than erroring, so the loader must reject loudly.
 func TestLoadRimskyConfigYAML_RejectsRetiredAliases(t *testing.T) {
 	t.Run("retired top-level `stores:` key rejected", func(t *testing.T) {
 		body := `

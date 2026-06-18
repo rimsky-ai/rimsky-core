@@ -33,17 +33,12 @@ func TestRegisterAgentDisplacesPrior(t *testing.T) {
 func TestRegisterAgentDropsPriorSpawnsOnDisplacement(t *testing.T) {
 	s := newProxyState()
 	s.registerAgent("key-1", "host-a", "")
-	// @deliberate: The prior connection lazily spawned a child and recorded a claim route.
 	s.recordSpawn("spawn-1", "key-1", "inst-1", "codegen", nil, "")
 	s.recordClaimRoute("claim-1", "key-1", "spawn-1")
 	if _, ok := s.lookupSpawn("spawn-1"); !ok {
 		t.Fatalf("precondition: spawn should be recorded")
 	}
 
-	// @constraint: a second connection for the same key displaces the
-	// prior. The prior's spawns must be dropped so a dispatch can't
-	// resolve a spawn the new agent has no child for (which would
-	// surface a spurious executor_crashed).
 	s.registerAgent("key-1", "host-b", "")
 
 	if _, ok := s.lookupSpawn("spawn-1"); ok {
@@ -62,13 +57,11 @@ func TestDropAgentOnlyEvictsCurrent(t *testing.T) {
 	first, _, _ := s.registerAgent("key-1", "a", "")
 	second, _, _ := s.registerAgent("key-1", "b", "")
 
-	// @constraint: dropping the displaced prior must not evict its successor.
 	s.dropAgent("key-1", first)
 	if got, ok := s.lookupAgent("key-1"); !ok || got != second {
 		t.Fatalf("dropping prior must not evict successor")
 	}
 
-	// @constraint: dropping the current connection evicts it.
 	s.dropAgent("key-1", second)
 	if _, ok := s.lookupAgent("key-1"); ok {
 		t.Fatalf("dropping current should evict")
@@ -84,11 +77,9 @@ func TestSpawnDedupByScopeBinding(t *testing.T) {
 		t.Fatalf("dedup lookup miss: ok=%v got=%q", ok, got)
 	}
 
-	// @constraint: different binding name in the same scope is a distinct spawn.
 	if _, ok := s.lookupSpawnByRunScopeBinding("inst-1", "other"); ok {
 		t.Fatalf("different binding name should not dedup")
 	}
-	// @constraint: different scope is a distinct spawn.
 	if _, ok := s.lookupSpawnByRunScopeBinding("inst-2", "codegen"); ok {
 		t.Fatalf("different scope should not dedup")
 	}
@@ -146,7 +137,6 @@ func TestClaimRouteLifecycle(t *testing.T) {
 		t.Fatalf("claim route lookup miss: ok=%v route=%+v", ok, route)
 	}
 
-	// @constraint: dropping the spawn purges its claim routes.
 	s.dropSpawn("spawn-1")
 	if _, ok := s.lookupClaimRoute("claim-1"); ok {
 		t.Fatalf("claim route should be purged when its spawn is dropped")

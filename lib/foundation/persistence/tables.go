@@ -6,13 +6,6 @@ package persistence
 
 import "context"
 
-// Tables is the umbrella interface aggregating every per-row-type Table
-// accessor a rimsky process needs. Database impls (postgres + sqlite) under
-// foundation/persistence/<driver>/ return this from Database.Tables(). Most
-// callers depend only on a subset of the methods; the umbrella keeps
-// wiring code (cmd/* startup) compact.
-//
-// @constraint: every accessor method must return a non-nil table — a nil return is a driver-wiring bug, and callers do not nil-check.
 type Tables interface {
 	Templates() TemplateTable
 	TemplateTags() TemplateTagTable

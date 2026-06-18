@@ -178,7 +178,6 @@ func TestValidate_MultiError(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error")
 	}
-	// @constraint: Errors.Join produces a multi-error; the wrapped slice is visible via the Unwrap() []error interface.
 	var joined interface{ Unwrap() []error }
 	if !errors.As(err, &joined) {
 		t.Fatalf("expected a joined error, got %T", err)
@@ -353,7 +352,6 @@ func TestSiblingRimskyYMLPath_Present(t *testing.T) {
 	if got == "" {
 		t.Fatalf("expected sibling path, got empty")
 	}
-	// @constraint: the returned path resolves to the same file as the sibling we just wrote.
 	gotAbs, _ := filepath.Abs(got)
 	wantAbs, _ := filepath.Abs(siblingPath)
 	if gotAbs != wantAbs {

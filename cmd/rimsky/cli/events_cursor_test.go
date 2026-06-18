@@ -15,35 +15,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 )
 
-// TestEventsFollowOpaqueCursor drives `instance events --follow` across more
-// than one full page of events against the honest clitest mock — the mock
-// now mirrors the live control-api's real cursor contract: results are
-// newest-first ((occurred_at, id) DESC), `next_cursor` is an opaque base64
-// keyset token, and a non-base64 cursor is rejected with a 500
-// (`events.list: bad cursor`) exactly as the real persistence layer rejects
-// it.
-//
-// This is the regression test for issue #1: the CLI used to fabricate a
-// numeric cursor (`fmt.Sprintf("%d", lastSeenID)`), which the real server —
-// and now the honest mock — rejects, so `rimsky watch` / `instance events
-// --follow` 500'd on the first cursor advance. The fixed CLI passes the
-// server's opaque `next_cursor` token straight back and keeps `lastSeenID`
-// purely as a local dedup high-watermark.
-//
-// The assertion is the cross-page invariant: every seeded event ID prints
-// exactly once and the follow loop never errors. With >1 full page this
-// only holds if (a) the CLI pages through the backlog via the opaque token
-// rather than a numeric seq, and (b) the dedup high-watermark survives the
-// newest-first page order (an event on an older page must still print even
-// though a higher-ID event on the newer page was seen first).
 func TestEventsFollowOpaqueCursor(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
 
-	// @constraint: seed two full pages plus a partial third (limit is 100);
-	// distinct strictly-increasing occurred_at timestamps make the keyset
-	// total and page boundaries deterministic regardless of seeding speed.
 	const total = 250
 	base := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	for i := 0; i < total; i++ {
@@ -83,8 +59,6 @@ func TestEventsFollowOpaqueCursor(t *testing.T) {
 		done <- cli.RunInstanceEvents(ctx, []string{"--follow", "--poll-interval", "20ms", inst.ID})
 	}()
 
-	// @deliberate: 400ms lets the 20ms poll page through all three pages and
-	// poll a few more times after draining, before cancel.
 	time.Sleep(400 * time.Millisecond)
 	cancel()
 	exit := <-done

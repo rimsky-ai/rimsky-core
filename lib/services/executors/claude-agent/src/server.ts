@@ -17,72 +17,19 @@ import { expectedAttributesSchemaBytes, resolveDeclaredTags, declaredErrorClasse
 import { CliConfigError, isCliConfigError } from "./cli-config-error.js";
 import type { McpCatalog } from "./mcp-catalog.js";
 
-/**
- * Implements the gRPC Executor surface. Always responds with the
- * async-handoff pattern: the unary `Execute` RPC returns
- * `AwaitAsyncCallback` immediately, the agent runs in the background,
- * and the final outcome is POSTed to `${callback_url}/v1/callback/{ack_id}`.
- *
- * Per TD-execute-rpc-unary the `Execute` RPC is unary — no Heartbeat,
- * no StreamClose, no per-event stream. Per TD-collapse-named-event-to-tags
- * non-terminal observable transitions retire entirely; tags ride on the
- * settling terminal verdict (concept:terminal-tag). Per
- * TD-claude-agent-session-attribute-only the session_token rides
- * `attributes_delta` on Park (and incoming `req.attributes` on the
- * resume dispatch), not Park.session_token (the proto field is
- * reserved).
- */
 export interface GrpcServerConfig {
   host: string;
   port: number;
   callback: CallbackServerHandle;
   cliRunner?: CliRunner;
-  /**
-   * Auth config used when constructing the default CLI runner. Required
-   * unless `cliRunner` is supplied (tests inject a fake runner that
-   * doesn't spawn `claude`).
-   */
   cliAuth?: CliAuthConfig;
   silenceTimeoutMs: number;
   logger: Logger;
-  /**
-   * Startup MCP-server catalog (S-executors-mcp-catalog-transports). Parsed
-   * once at startup and threaded into every dispatch's `runAgent` so a node's
-   * `cli.mcp_servers` `{ ref: }` resolves against the catalog.
-   */
   mcpCatalog?: McpCatalog;
-  /**
-   * Inline-server policy (`allow_inline`, default false) gating whether inline
-   * `cli.mcp_servers` entries are permitted at dispatch.
-   */
   mcpAllowInline?: boolean;
-  /**
-   * Optional override of the HTTP POST function used to deliver the final
-   * callback. Tests swap this out to avoid real network calls.
-   */
   postCallback?: PostCallbackFn;
-  /**
-   * Optional override for the writeback POST used by the `attributes_set`
-   * MCP tool. Threaded through to `runAgent`.
-   */
   postAttributes?: PostAttributesFn;
-  /**
-   * Optional observability ledger. When provided, the gRPC Execute
-   * handler:
-   *   - records `step_started` on receipt, keyed by the supervisor's
-   *     `dispatch_id` (or the locally minted ackId when absent)
-   *   - records one of `step_completed` / `step_failed` /
-   *     `step_blocked` / `step_parked` from the outcome path so each
-   *     terminal kind shows up distinctly in dashboards
-   * The same ledger instance is normally shared with the HTTP bridge so
-   * dashboards can fetch traces via either transport.
-   */
   observability?: Observability;
-  /**
-   * When non-empty, advertised via `ExecutorObservability.Capabilities`
-   * as the externally-reachable HTTP+JSON observability bridge URL.
-   * Mirrors the value exposed by `mountObservability(...)`.
-   */
   observabilityHttpBridgeUrl?: string;
 }
 
@@ -101,46 +48,16 @@ interface ExecuteRequest {
   node_id?: string;
   instance_id?: string;
   node_type?: string;
-  /** Per-run typed attributes object (spec §5.7). The unified attribute
-   * bag carries both rimsky-resolved inputs (`model`, `system_prompt`,
-   * `user_prompt`, `cli.*`, ...) and executor-populated outputs.
-   * Source-driven fields are pre-populated by rimsky at dispatch. */
   attributes?: unknown;
-  /** Declared JSON Schema for `attributes` (spec §5.7.1). */
   attributes_schema?: unknown;
-  /** Per-store handles keyed by store-config name (spec §12.1). Surfaced
-   * to the agent via the attribute bag — no in-process interpretation. */
   stores?: Record<string, unknown>;
   callback_url?: string;
   cancel_token?: string;
-  /** Supervisor-side rimsky_dispatch.id (proto field 12). Used by
-   * the executor observability ledger as the per-dispatch trace key.
-   *
-   * Field number 10 (`resumed`) is reserved on the wire under
-   * stores-redesign-v2 (proto reserves both number and name). Resume is
-   * universal; the substrate detects resumed-vs-fresh internally.
-   * Field number 11 (`run_attempt`) is reserved on the wire under the
-   * 2026-05-20 per-run attribute keying spec — each dispatch has a
-   * fresh dispatch_id; consumers keying on attempts use dispatch_id. */
   dispatch_id?: string;
-  /** Recovery-aware fields (per the 2026-05-22 fan-out safety
-   * scope-first spec §Recovery-aware executor protocol). When this
-   * dispatch supersedes a failed / stale-recovered / recalculated
-   * predecessor for the same (run_scope_id, node_id), the supervisor
-   * stamps the predecessor's dispatch_id here so the executor can
-   * identify itself as a continuation. `prior_dispatch_disposition`
-   * classifies why (`stale_recovery` | `retry_after_error` |
-   * `recalculate`). Both fields are optional and unset on initial
-   * dispatches. */
   prior_dispatch_id?: string;
   prior_dispatch_disposition?: string;
 }
 
-// @constraint: Outcome wraps the four-variant oneof — Success / Error /
-// Park / AwaitAsyncCallback — per the unary executor protocol. Only the
-// `await_async` shape is emitted from `Execute` itself; the final
-// settling terminal rides the callback POST body (see
-// `outcomeToCallbackBody`).
 interface OutcomeWire {
   await_async?: { async_ack_id: string; expected_completion_ms: number };
 }
@@ -148,20 +65,6 @@ interface OutcomeWire {
 type ExecuteUnaryCall = grpc.ServerUnaryCall<ExecuteRequest, OutcomeWire>;
 type ExecuteUnaryReply = grpc.sendUnaryData<OutcomeWire>;
 
-/**
- * @agent-contract
- * what: Constructs the gRPC server hosting `Executor.Execute`, binds to
- *   `host:port`, and wires the async-handoff agent run path.
- * how: `await startGrpcServer(config)`; `shutdown()` stops the server
- *   gracefully.
- * handles: stub-mode short-circuit; JSON-Schema validation of
- *   `attributes_delta` writes; silence / subprocess-exit fault mapping
- *   to a StreamClose Error outcome on the wire; bridging the
- *   supervisor's incremental writeback URL into the internal-MCP
- *   `attributes_set` tool.
- * does-not-handle: supervisor-side state transitions, commit, or on_error
- *   routing; those remain in the supervisor process.
- */
 export async function startGrpcServer(
   config: GrpcServerConfig,
 ): Promise<RunningServer> {
@@ -177,13 +80,6 @@ export async function startGrpcServer(
       handleExecute(call, reply, config, cliRunner, post),
   });
 
-  // @deliberate: plan A1 — register the ExecutorObservability service so
-  // the rimsky supervisor's discovery handshake succeeds against the gRPC
-  // endpoint (otherwise the cached `expected_attributes_schema` and
-  // `declared_tags` are never populated and dispatch-time
-  // effective-attribute-schema computation silently falls through). The
-  // handlers bridge into the same `Observability` ledger the HTTP+JSON
-  // routes expose.
   server.addService(pkg.rimsky.v1.ExecutorObservability.service, {
     Capabilities: (
       _call: grpc.ServerUnaryCall<unknown, unknown>,
@@ -197,7 +93,6 @@ export async function startGrpcServer(
         http_bridge_url: config.observabilityHttpBridgeUrl ?? "",
         expected_attributes_schema: Buffer.from(expectedAttributesSchemaBytes()),
         declared_tags: resolveDeclaredTags(),
-        // @deliberate: 2026-05-23 signal-taxonomy Pass 6: hierarchical error vocabulary.
         declared_error_classes: declaredErrorClasses,
       });
     },
@@ -244,7 +139,6 @@ export async function startGrpcServer(
       }
       const obs = config.observability;
       if (!obs) {
-        // @deliberate: mirror GetTrace's evicted-shape close.
         call.write(traceEventToProto({
           event_id: randomUUID(),
           timestamp: new Date().toISOString(),
@@ -254,13 +148,6 @@ export async function startGrpcServer(
         call.end();
         return;
       }
-      // @deliberate: spec §2.5: idle-close after RIMSKY_OBS_IDLE_TIMEOUT_MS (default
-      // 5 minutes). Without this, a StreamTrace request for an unknown
-      // dispatch_id would create a fresh empty record (`complete:false`,
-      // not yet evicted) and pin server-side resources indefinitely
-      // since no events would ever arrive to drive a `trace_complete`.
-      // Mirror the HTTP+JSON sibling's `armIdle()` protection in
-      // `observability.ts::mountObservability`.
       const idleMs = Number(process.env.RIMSKY_OBS_IDLE_TIMEOUT_MS ?? 5 * 60 * 1000);
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       let closed = false;
@@ -316,8 +203,6 @@ export async function startGrpcServer(
       },
     );
   });
-  // @deliberate: grpc-js 1.10+: server starts listening automatically after bindAsync; the
-  // prior `server.start()` call is a deprecated no-op in recent versions.
 
   const actualAddr = `${config.host}:${boundPort}`;
   config.logger.info({ addr: actualAddr }, "claude-agent gRPC server listening");
@@ -346,19 +231,9 @@ function handleExecute(
 ): void {
   const req = call.request;
   const ackId = randomUUID();
-  // @deliberate: per the 2026-05-20 per-run keying refactor, the writeback URL's run_id
-  // segment must equal the supervisor's dispatch_id so attributesAuth can
-  // verify the cancel_token. The node_id is a poor proxy because it is
-  // stable across runs of the same node — multiple dispatches of the same
-  // node would collide in trace ledgers and reuse a stale run_id at
-  // writeback. Fall back to a fresh UUID only when no dispatch_id was
-  // supplied (stub-mode probes, ad-hoc unit tests).
   const runId = req.dispatch_id && req.dispatch_id.length > 0
     ? req.dispatch_id
     : randomUUID();
-  // @deliberate: trace ledger key: prefer the supervisor-supplied dispatch_id so
-  // dashboards can fetch traces by it (proto field 12). When absent
-  // (stub-mode probes, ad-hoc unit tests), fall back to the ackId.
   const traceId = req.dispatch_id && req.dispatch_id.length > 0
     ? req.dispatch_id
     : ackId;
@@ -390,12 +265,6 @@ function handleExecute(
     });
   }
 
-  // @constraint: TD-execute-rpc-unary — `Execute` is unary. Reply with
-  // `AwaitAsyncCallback` immediately so the supervisor persists the
-  // `async_ack_id` against the dispatch row; the agent runs in the
-  // background and the final settling terminal rides the HTTP+JSON
-  // callback POST. There is no Heartbeat, no StreamClose, no per-event
-  // stream — the gRPC call returns once with `{ await_async }`.
   reply(null, {
     await_async: {
       async_ack_id: ackId,
@@ -403,8 +272,6 @@ function handleExecute(
     },
   });
 
-  // @deliberate: Run the agent in the background; deliver the final
-  // outcome via HTTP POST to `${callback_url}/v1/callback/{ackId}`.
   void runAndCallback(req, ackId, traceId, runId, config, cliRunner, post, logger);
 }
 
@@ -418,19 +285,6 @@ async function runAndCallback(
   post: PostCallbackFn,
   logger: Logger,
 ): Promise<void> {
-  // @deliberate: fast-fail dispatches (CliConfigError thrown by
-  // resolveHostServers, dispatch_id missing, malformed attributes)
-  // settle in single-digit milliseconds. The supervisor registers the
-  // async ack id AFTER receiving the unary `Execute` reply — a sequence
-  // that takes tens of milliseconds. Without this defensive yield, the
-  // fast-fail callback POST races ahead of the registration, the
-  // supervisor responds 404 (unknown ack id), the supervisor never
-  // receives the failure terminal, and the node hangs in `running`
-  // until the quiet-period / max-runtime sweep reaps it. Slow
-  // (CLI-spawning) dispatches don't hit this because the spawn itself
-  // takes longer than the registration window. Property protected:
-  // dispatch-time failures land on the FIRST callback POST, not via
-  // the quiet-period sweep.
   await new Promise((r) => setTimeout(r, 100));
   try {
     const attributes = toRecord(req.attributes);
@@ -447,13 +301,8 @@ async function runAndCallback(
       cwdFromStore: stringOrUndefined(attributes.cwd_from_store),
       cwdOverride: stringOrUndefined(attributes.cwd),
       cliConfig: parseCliConfig(attributes.cli),
-      // @deliberate: startup MCP catalog + allow_inline policy thread through so a node's
-      // `cli.mcp_servers` `{ ref: }` resolves against the catalog at dispatch.
       mcpCatalog: config.mcpCatalog,
       mcpAllowInline: config.mcpAllowInline,
-      // @deliberate: raw dispatch_id (not runId): the sign-off gate binds to and
-      // enforces non-emptiness on this, distinct from the UUID-fallback
-      // runId above.
       dispatchId: req.dispatch_id ?? "",
       callbackUrl: req.callback_url ?? "",
       cancelToken: req.cancel_token ?? "",
@@ -462,11 +311,6 @@ async function runAndCallback(
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
       postAttributes: config.postAttributes,
-      // @constraint: TD-claude-agent-session-attribute-only — the
-      // session token rides attributes only. When `attributes.session_token`
-      // is non-empty the CLI resumes the prior conversation; otherwise a
-      // fresh CLI conversation runs. The retired Park-side resume_context
-      // channel does not exist on the wire (its proto field is reserved).
       sessionToken: stringOr(attributes.session_token, ""),
     });
     const body = outcomeToCallbackBody(outcome);
@@ -499,12 +343,6 @@ async function runAndCallback(
       logger.warn({ outcome: outcome.kind }, "no callback_url; outcome dropped");
     }
   } catch (e) {
-    // @deliberate: A CliConfigError means a present-but-malformed cli.* config (e.g. a
-    // required_signoffs entry missing public_key) — a host configuration error, not an
-    // executor fault. Surface it as the declared `agent/attribute_invalid` class so a
-    // misconfigured sign-off gate fails LOUDLY (same fail-loud mode as the
-    // empty-dispatch_id path in agent-run.ts) instead of silently degrading to an
-    // ungated run.
     const errorClass = isCliConfigError(e)
       ? e.errorClass
       : "agent/internal_error";
@@ -532,31 +370,14 @@ async function runAndCallback(
   }
 }
 
-/**
- * Build the full callback URL. The supervisor-supplied `callback_url` is the
- * base address of its callback server (e.g. `http://supervisor:9100`); the
- * per-async path `/v1/callback/{async_ack_id}` is appended here so the Go
- * supervisor's chi router can extract the ack ID from the URL path.
- */
 function buildCallbackUrl(base: string, ackId: string): string {
   const trimmed = base.replace(/\/+$/, "");
   return `${trimmed}/v1/callback/${encodeURIComponent(ackId)}`;
 }
 
-
-/**
- * Exported for unit tests; not part of the agent-contract surface.
- */
 export function outcomeToCallbackBody(
   outcome: AgentOutcome,
 ): Record<string, unknown> {
-  // @constraint: AsyncCallbackBody carries exactly one outcome variant
-  // (success | error | park). Per TD-collapse-named-event-to-tags the
-  // `events[]` slot retires entirely — non-terminal observable
-  // transitions ride tags on the settling verdict instead. Per
-  // TD-claude-agent-session-attribute-only the session_token rides
-  // `attributes_delta` on Park; the proto Park.payload and
-  // Park.session_token fields are reserved.
   if (outcome.kind === "complete") {
     return {
       success: {
@@ -567,9 +388,6 @@ export function outcomeToCallbackBody(
     };
   }
   if (outcome.kind === "blocked") {
-    // @deliberate: post-E.2 collapse: `Blocked` maps to
-    // `Error{error_class: "agent/blocked"}` (renamed 2026-05-23 per
-    // signal-taxonomy spec, hierarchical-class convention).
     return {
       error: {
         error_class: "agent/blocked",
@@ -578,14 +396,6 @@ export function outcomeToCallbackBody(
     };
   }
   if (outcome.kind === "park_requested") {
-    // @constraint: The supervisor consumes `reason` as the closed
-    // two-value ParkReason projection (await_callback | snooze) per
-    // spec
-    // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-    // §ParkReason collapse. `reason_note` is the free-form human
-    // annotation; inert in rimsky. `attributes_delta` is the
-    // session-token carry-forward channel — session_token is written
-    // here and read off `req.attributes.session_token` on resume.
     const parkBody: Record<string, unknown> = {
       reason: outcome.reason,
       reason_note: outcome.reasonNote ?? "",
@@ -610,20 +420,6 @@ export function outcomeToCallbackBody(
   };
 }
 
-// @deliberate: unwraps a google.protobuf.Struct value (as decoded by @grpc/proto-loader
-// with the default options: { fields: { [key]: Value } }) into a plain
-// object. Without this, downstream lookups like `attributes.model` see
-// `undefined` because the actual value is at `attributes.fields.model.stringValue`.
-// Unwrap a google.protobuf.Value carried over the wire by @grpc/proto-loader.
-// Accepts both shapes proto-loader can produce:
-//   - keepCase: true → {kind: "string_value", string_value: "x"} (snake_case;
-//     this is the production setting, see proto-loader.ts).
-//   - keepCase: false → {kind: "stringValue", stringValue: "x"} (camelCase).
-//   - older fixtures that omit the kind discriminator and present the
-//     value field directly.
-// Reading both forms keeps server.ts's type narrowing correct regardless of
-// which encoding the caller used (production gRPC vs hand-rolled test fixtures).
-// Exported for unit tests; not part of the agent-contract surface.
 export function unwrapStructValue(v: unknown): unknown {
   if (v === null || v === undefined) return null;
   if (typeof v !== "object") return v;
@@ -652,9 +448,6 @@ export function unwrapStructValue(v: unknown): unknown {
   return v;
 }
 
-/**
- * Exported for unit tests; not part of the agent-contract surface.
- */
 export function unwrapStruct(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== "object") return {};
   const fields = (v as { fields?: Record<string, unknown> }).fields;
@@ -668,21 +461,12 @@ export function unwrapStruct(v: unknown): Record<string, unknown> {
 
 function toRecord(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== "object" || Array.isArray(v)) return {};
-  // @deliberate: google.protobuf.Struct shape from @grpc/proto-loader: a top-level
-  // `fields` map of Value-typed entries with a `kind` discriminator.
-  // Plain object shape is also accepted (e.g. from in-process tests).
   if ("fields" in v && typeof (v as { fields?: unknown }).fields === "object") {
     return unwrapStruct(v);
   }
   return v as Record<string, unknown>;
 }
 
-/**
- * Unwraps the per-store `StoreHandle.handle` Struct into a plain object
- * so downstream consumers (resolveCwd, attribute substitution) can read
- * `stores[alias].handle.address` as a string. Without this, `.handle` is
- * the raw Struct shape and `.handle.address` is `undefined`.
- */
 function unwrapStores(stores: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(stores)) {
@@ -720,16 +504,6 @@ function stringArrayOrUndefined(v: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-/**
- * Parses the `attributes.cli` sub-object into the typed shape consumed
- * by runAgent + cliRunner. Returns `undefined` when the input is
- * missing or empty, so the executor's defaults (current behavior) take
- * effect.
- *
- * Field-to-spawn-arg mapping is documented on `CliSpawnRequest` in
- * cli-runner.ts; rimsky never inspects the values, so the validation
- * here is type-shape-only.
- */
 export function parseCliConfig(v: unknown): {
   bare?: boolean;
   permissionMode?: string;
@@ -758,15 +532,10 @@ export function parseCliConfig(v: unknown): {
   if (ad !== undefined) out!.addDirs = ad;
   const mb = stringOrUndefined(cli.max_budget_usd);
   if (mb !== undefined) out!.maxBudgetUsd = mb;
-  // @deliberate: attributes.cli.handle_rate_limits — default true (J9). Explicit
-  // false disables the auto-park behavior.
   const hr = boolOrUndefined(cli.handle_rate_limits);
   if (hr !== undefined) out!.handleRateLimits = hr;
   const msc = numberOrUndefined(cli.max_schema_corrections);
   if (msc !== undefined) out!.maxSchemaCorrections = msc;
-  // @deliberate: sign-off gate: host-wired validator MCP servers and the required
-  // (public_key, path) signature pairs. Type-shape-only validation,
-  // like every other field here — rimsky never inspects the values.
   const ms = parseMcpServers(cli.mcp_servers);
   if (ms !== undefined) out!.mcpServers = ms;
   const rs = parseRequiredSignoffs(cli.required_signoffs);
@@ -777,19 +546,6 @@ export function parseCliConfig(v: unknown): {
 }
 
 // @source: lib/services/executors/claude-agent/src/server.ts (parseMcpServers) — mirrored in http-bridge.ts.
-// Parses cli.mcp_servers into the executor's host-server shape. Two entry
-// shapes (S-executors-mcp-catalog-transports):
-//   - `{ ref: <name> }` — a catalog reference resolved at dispatch against
-//     the startup catalog. Only the non-empty string `ref` is validated
-//     here; the referenced transport (http/stdio/module/http-loopback) is
-//     resolved in agent-run.ts.
-//   - inline `{ name, url, headers, allowed_tools }` — a server declared on
-//     the node. Permitted only when the `allow_inline` policy is true
-//     (enforced in agent-run.ts); the shape is still validated here.
-// A present-but-malformed entry throws CliConfigError rather than being
-// silently dropped: mcp_servers wires the validator servers the sign-off
-// gate depends on, so a dropped entry could unwire a validator the host
-// intended the agent to reach. Field-absent (`v` not an array) ⇒ undefined.
 function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
   if (v === undefined || v === null) return undefined;
   if (!Array.isArray(v)) {
@@ -803,7 +559,6 @@ function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
       throw new CliConfigError(`cli.mcp_servers[${i}] must be an object`);
     }
     const e = item as Record<string, unknown>;
-    // @deliberate: catalog reference shape.
     if ("ref" in e) {
       if (typeof e.ref !== "string" || e.ref.length === 0) {
         throw new CliConfigError(
@@ -813,7 +568,6 @@ function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
       out.push({ ref: e.ref });
       continue;
     }
-    // @deliberate: inline server shape.
     if (typeof e.name !== "string" || e.name.length === 0) {
       throw new CliConfigError(
         `cli.mcp_servers[${i}].name must be a non-empty string`,
@@ -840,13 +594,6 @@ function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
 }
 
 // @source: lib/services/executors/claude-agent/src/server.ts (parseRequiredSignoffs) — mirrored in http-bridge.ts.
-// Parses cli.required_signoffs, mapping snake_case public_key → publicKey
-// and carrying through the optional path. A present-but-malformed entry
-// (missing / non-string / empty public_key) throws CliConfigError rather
-// than being silently dropped: required_signoffs is a security gate, and a
-// dropped entry would silently weaken (or disable) enforcement, letting
-// unsigned output resolve to terminal success. Field-absent (`v` not an
-// array) ⇒ undefined (no gate).
 function parseRequiredSignoffs(
   v: unknown,
 ): { publicKey: string; path?: string }[] | undefined {
@@ -875,8 +622,6 @@ function parseRequiredSignoffs(
 }
 
 // @source: lib/services/executors/claude-agent/src/server.ts (parseStringRecord) — mirrored in http-bridge.ts.
-// Parses a flat string→string map (e.g. mcp_servers[].headers). Non-string
-// values are dropped; an empty/absent map ⇒ undefined.
 function parseStringRecord(v: unknown): Record<string, string> | undefined {
   if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
   const out: Record<string, string> = {};
@@ -899,11 +644,6 @@ function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
   return auth;
 }
 
-/**
- * Default callback poster. Uses Node's built-in `fetch`. Failures are
- * logged but not retried here; the supervisor's quiet-period /
- * max-runtime sweep will reap the node if the callback never arrives.
- */
 export const defaultPostCallback: PostCallbackFn = async (url, body, logger) => {
   try {
     const res = await fetch(url, {
@@ -922,16 +662,6 @@ export const defaultPostCallback: PostCallbackFn = async (url, body, logger) => 
   }
 };
 
-/**
- * Converts an `Observability` ledger TraceEvent into the wire shape the
- * proto-loader-generated `ExecutorObservability` service expects. The
- * loader's `enums: String` option means `severity` stays as the proto
- * constant name. `timestamp` is a `google.protobuf.Timestamp`
- * `{seconds, nanos}` pair; `attributes` is a `google.protobuf.Struct`
- * with a recursive `Value` envelope per field.
- *
- * Exported for unit tests; not part of the agent-contract surface.
- */
 export function traceEventToProto(ev: TraceEvent): Record<string, unknown> {
   return {
     event_id: ev.event_id,
@@ -944,26 +674,14 @@ export function traceEventToProto(ev: TraceEvent): Record<string, unknown> {
   };
 }
 
-/**
- * Exported for unit tests; not part of the agent-contract surface.
- */
 export function isoToProtoTimestamp(iso: string): { seconds: string; nanos: number } {
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return { seconds: "0", nanos: 0 };
-  // @deliberate: google.protobuf.Timestamp requires `nanos` ∈ [0, 999_999_999] and
-  // `seconds` to be the floor of the wall time. Using `Math.trunc` would
-  // produce a negative `nanos` (and a non-floor `seconds`) for pre-epoch
-  // sub-second inputs (e.g. -500ms → trunc=0, nanos=-500_000_000), which
-  // violates the proto contract. `Math.floor` keeps the remainder in the
-  // valid range for both positive and negative inputs.
   const seconds = Math.floor(ms / 1000);
   const nanos = (ms - seconds * 1000) * 1_000_000;
   return { seconds: seconds.toString(), nanos };
 }
 
-/**
- * Exported for unit tests; not part of the agent-contract surface.
- */
 export function jsToProtoStruct(value: unknown): { fields: Record<string, unknown> } | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "object" || Array.isArray(value)) return null;
@@ -974,9 +692,6 @@ export function jsToProtoStruct(value: unknown): { fields: Record<string, unknow
   return { fields };
 }
 
-/**
- * Exported for unit tests; not part of the agent-contract surface.
- */
 export function jsToProtoValue(value: unknown): Record<string, unknown> {
   if (value === null || value === undefined) {
     return { null_value: "NULL_VALUE" };

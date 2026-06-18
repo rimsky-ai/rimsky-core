@@ -2,22 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scope-claim scenario coverage — invariant 4b (single-writer-per-
-// scope) and invariant 10 (atomic acquisition).
-//
-// The test starts a stub store-service via the loopback gRPC fixture
-// (stores/stub/testfixture.Start), deploys a template whose worker
-// node holds an `rw` claim against `selector: "/scope-A"`, and
-// confirms that:
-//   - the worker node reaches `fresh` (acquisition + dispatch +
-//     terminal succeed end-to-end through the wire).
-//   - the stub store recorded one `open` call followed by one
-//     terminal-side action (commit, by default).
-//
-// This exercises the §7.3 atomic acquisition path through the gRPC
-// bridge — the v3 replacement for the deleted v2 in-process Factory
-// pattern. A future variant can introduce a second contending acquirer
-// to specifically pin the byte-equal scope-conflict predicate.
 package stores
 
 import (
@@ -35,9 +19,6 @@ import (
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
-// TestScopeClaimEndToEnd drives one scope-claim acquisition
-// through the loopback gRPC fixture and asserts the store saw the
-// expected verb sequence.
 func TestScopeClaimEndToEnd(t *testing.T) {
 	t.Parallel()
 
@@ -74,8 +55,6 @@ func TestScopeClaimEndToEnd(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
-	// @constraint: The stub store-service must have observed at least one open and
-	// one commit/abandon — confirming the wire round-trip happened.
 	deadline := time.Now().Add(2 * time.Second)
 	var sawOpen, sawTerminal bool
 	for time.Now().Before(deadline) {

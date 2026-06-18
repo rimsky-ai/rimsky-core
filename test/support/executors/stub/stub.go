@@ -2,25 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package stub is a test-double Executor implementation in the
-// Meszaros sense — scripted canned outcomes for tests and conformance.
-// NOT a skeleton template for writing your own executor; implement the
-// Executor gRPC service against protocols/proto/v1/executor.proto.
-//
-// Per TD-execute-rpc-unary the Executor.Execute RPC is unary; the
-// stub returns the settling Outcome directly.
-//
-// Two primary uses:
-//   - executors/stub/stubtest — wrapper for in-process scenario tests
-//     in test/scenarios/. Tests script per-node-type behavior via
-//     Stub.WhenType("…").Success/Error/Park/… and assert on the
-//     supervisor's reaction.
-//   - rimsky-executor-conformance — known-good target for protocol
-//     conformance checks (when run with --require-stub-mode).
-//
-// EnableStubMode shortcuts scripted behavior with immediate-success
-// outcomes plus StubAttributesFor(node_type)-shaped attributes_delta;
-// the conformance harness uses this mode.
 package stub
 
 import (
@@ -36,12 +17,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// parkReasonFromStorageForm maps the lower_snake_case storage form
-// (e.g. "await_callback") back to the proto enum value. Unknown
-// inputs (including empty) fall back to PARK_REASON_AWAIT_CALLBACK,
-// the safer default in the closed two-value set (no auto-resume).
-// Mirrors the runtime helper of the same name to keep the stub
-// self-contained.
 func parkReasonFromStorageForm(s string) genv1.ParkReason {
 	if s == "" {
 		return genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
@@ -59,8 +34,6 @@ const (
 	termSuccess terminalKind = iota
 	termError
 	termAsync
-	// @deliberate: termPark scripts a Park outcome (parking the node until
-	// resume_at).
 	termPark
 )
 
@@ -76,18 +49,11 @@ type script struct {
 	delay             time.Duration
 	parkReason        genv1.ParkReason
 	parkReasonNote    string
-	parkResumeAt      time.Time // @deliberate: zero ⇒ indefinite park (no resume_at)
-	// tags are the executor-attached subscriber-visible discriminators
-	// per concept:terminal-tag, threaded onto Success/Error/Park.
+	parkResumeAt      time.Time
 	tags []string
-	// @deliberate: holdUntil, when non-nil, blocks the run until the
-	// channel closes (or the call context cancels). Lets eligibility
-	// tests hold a sender in-flight at a deterministic midpoint
-	// instead of racing wall-clock delays.
 	holdUntil <-chan struct{}
 }
 
-// Stub is a scripted Executor server for tests.
 type Stub struct {
 	genv1.UnimplementedExecutorServer
 	mu       sync.Mutex
@@ -96,15 +62,6 @@ type Stub struct {
 	observed []ObservedRequest
 }
 
-// ObservedRequest captures the dispatch-time fields a test may want to assert
-// against. Under the 2026-05-21 userdata collapse the executor receives a
-// single unified attribute bag (source-resolved + static-default + post-
-// merge L3/L4 overrides) — recorded here per call so tests can verify the
-// supervisor wired the bag through correctly.
-//
-// CallbackURL and CancelToken are recorded so scenario tests exercising
-// the §12.5 incremental-writeback path can POST per-field deltas back to
-// the supervisor with the same auth shape a real executor would use.
 type ObservedRequest struct {
 	NodeID                   string
 	InstanceID               string
@@ -113,17 +70,13 @@ type ObservedRequest struct {
 	CallbackURL              string
 	CancelToken              string
 	DispatchID               string
-	PriorDispatchID          string                         // @deliberate: empty when unset on the wire
-	PriorDispatchDisposition genv1.PriorDispatchDisposition // @deliberate: PRIOR_NONE when unset on the wire
-	// CandidateHandles records the per-store-alias candidate_handle bytes
-	// carried on each ExecuteRequest.StoreHandle.
+	PriorDispatchID          string
+	PriorDispatchDisposition genv1.PriorDispatchDisposition
 	CandidateHandles map[string][]byte
 }
 
-// New constructs a Stub with no scripted node types registered.
 func New() *Stub { return &Stub{scripts: map[string]*script{}} }
 
-// EnableStubMode switches the Stub into immediate-success mode.
 func (s *Stub) EnableStubMode() *Stub {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -131,8 +84,6 @@ func (s *Stub) EnableStubMode() *Stub {
 	return s
 }
 
-// Observed returns a snapshot of every ExecuteRequest the stub has seen since
-// construction. Safe to call concurrently with in-flight Execute calls.
 func (s *Stub) Observed() []ObservedRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -141,14 +92,11 @@ func (s *Stub) Observed() []ObservedRequest {
 	return out
 }
 
-// TypeBuilder registers scripted behavior for nodes of a specific type.
 type TypeBuilder struct {
 	s   *Stub
 	typ string
 }
 
-// WhenType begins scripting behavior for the given node_type. Default
-// terminal is a Success outcome with changed=true.
 func (s *Stub) WhenType(t string) *TypeBuilder {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -157,7 +105,6 @@ func (s *Stub) WhenType(t string) *TypeBuilder {
 	return &TypeBuilder{s: s, typ: t}
 }
 
-// Success configures the scripted terminal as a Success outcome on the wire.
 func (b *TypeBuilder) Success(result any, changed bool, changeSummary string) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -166,9 +113,6 @@ func (b *TypeBuilder) Success(result any, changed bool, changeSummary string) *T
 	return b
 }
 
-// Error configures the scripted terminal as an Error outcome on the
-// wire. Per `concept:signal` hierarchical convention, the stub prefixes
-// single-segment classes with `stub/` at emit time.
 func (b *TypeBuilder) Error(class string, payload any) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -177,7 +121,6 @@ func (b *TypeBuilder) Error(class string, payload any) *TypeBuilder {
 	return b
 }
 
-// AwaitAsyncCallback configures the scripted terminal as an AwaitAsyncCallback outcome.
 func (b *TypeBuilder) AwaitAsyncCallback(ackID string, completionMs int64) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -186,9 +129,6 @@ func (b *TypeBuilder) AwaitAsyncCallback(ackID string, completionMs int64) *Type
 	return b
 }
 
-// Park configures the scripted terminal as a Park outcome. Per
-// TD-remove-resume-context, Park carries no session_token / payload
-// bytes — resume state rides attribute carry-forward.
 func (b *TypeBuilder) Park(reason genv1.ParkReason, reasonNote string, resumeAt time.Time) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -200,9 +140,6 @@ func (b *TypeBuilder) Park(reason genv1.ParkReason, reasonNote string, resumeAt 
 	return b
 }
 
-// Tags scripts the executor-attached tags on the settling outcome
-// (concept:terminal-tag). Duplicates are collapsed at decode by the
-// supervisor.
 func (b *TypeBuilder) Tags(tags ...string) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -210,9 +147,6 @@ func (b *TypeBuilder) Tags(tags ...string) *TypeBuilder {
 	return b
 }
 
-// HoldUntil blocks each run of this node type until ch closes (or the
-// call context cancels). Gives dispatch-eligibility tests a
-// deterministic midpoint.
 func (b *TypeBuilder) HoldUntil(ch <-chan struct{}) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -220,7 +154,6 @@ func (b *TypeBuilder) HoldUntil(ch <-chan struct{}) *TypeBuilder {
 	return b
 }
 
-// Delay sleeps for d before returning the outcome.
 func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -228,8 +161,6 @@ func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 	return b
 }
 
-// Execute implements genv1.ExecutorServer with a unary RPC returning
-// the scripted Outcome.
 func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	var candidateHandles map[string][]byte
 	if len(req.GetStores()) > 0 {
@@ -318,9 +249,6 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 			return nil, err
 		}
 		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
-			// @deliberate: 2026-05-23 signal-taxonomy Pass 6: prefix
-			// unscoped classes with `stub/` so the stub follows the
-			// hierarchical-class convention.
 			ErrorClass: prefixedStubClass(sc.errorClass),
 			Payload:    v,
 			Tags:       sc.tags,
@@ -344,15 +272,11 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 	return nil, fmt.Errorf("stub: unknown terminal kind %d", sc.terminal)
 }
 
-// stubFixtures maps node_type to a default attributes_delta the stub
-// returns when stub mode is enabled.
 var stubFixtures = map[string]map[string]any{
 	"items.fetch":    {"items": []any{}, "fetched_at": "1970-01-01T00:00:00Z"},
 	"items.classify": {"category": "unclassified"},
 }
 
-// StubAttributesFor returns the default attributes_delta for a node_type
-// when the stub is running in stub mode.
 func StubAttributesFor(nodeType string) map[string]any {
 	src, ok := stubFixtures[nodeType]
 	if !ok {
@@ -365,9 +289,6 @@ func StubAttributesFor(nodeType string) map[string]any {
 	return out
 }
 
-// prefixedStubClass returns class unchanged if it already contains a
-// `/` (operator-supplied hierarchical class) or is empty; otherwise
-// it returns `stub/<class>`.
 func prefixedStubClass(class string) string {
 	if class == "" {
 		return class
@@ -378,16 +299,12 @@ func prefixedStubClass(class string) string {
 	return "stub/" + class
 }
 
-// toStruct converts an arbitrary input into a structpb.Struct for use
-// as Success.AttributesDelta or Error.Payload.
 func toStruct(v any) (*structpb.Struct, error) {
 	if v == nil {
 		return nil, nil
 	}
 	m, ok := v.(map[string]any)
 	if !ok {
-		// @deliberate: Wrap non-map scalars under a single "value" field so the test
-		// fixture can still observe them when needed.
 		return structpb.NewStruct(map[string]any{"value": fmt.Sprintf("%v", v)})
 	}
 	return structpb.NewStruct(m)

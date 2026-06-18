@@ -62,23 +62,14 @@ for image in "${ALL_IN_ONE_IMAGE}" "${SENSOR_IMAGE}"; do
     fi
 done
 
-# @deliberate: unique names so concurrent runs (CI, repeated manual
-# invocations) never collide on container/network names.
 RUN_ID="$( date +%s )-$$"
 NET="rimsky-sub-mount-demo-${RUN_ID}"
 SENSOR="rimsky-sub-mount-demo-sensor-${RUN_ID}"
 RIMSKY="rimsky-sub-mount-demo-rimsky-${RUN_ID}"
 TMP_DIR="$( mktemp -d -t rimsky-sub-mount-demo.XXXXXXXX )"
 
-# @deliberate: best-effort cleanup so a mid-script failure doesn't
-# leave stray containers or the network dangling. Fires on EXIT
-# regardless of exit code.
 cleanup() {
     local rc=$?
-    # @constraint: best-effort unpause first — a failure between
-    # `docker pause` and `docker unpause` leaves the sensor paused, and
-    # older daemons refuse `rm -f` on a paused container, which would
-    # strand the network too (both errors swallowed by `|| true`s).
     docker unpause "${SENSOR}" >/dev/null 2>&1 || true
     docker rm -f "${SENSOR}" "${RIMSKY}" >/dev/null 2>&1 || true
     docker network rm "${NET}" >/dev/null 2>&1 || true
@@ -87,10 +78,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# @deliberate: json_get <python-expr> reads JSON on stdin and prints
-# the evaluated expression against the parsed object bound as `d`.
-# Empty output on any parse/lookup error so callers can poll without
-# aborting mid-loop.
 json_get() {
     python3 -c "
 import sys, json
@@ -106,10 +93,6 @@ except Exception:
 echo "subscription-mounting-demo: [1/6] booting the stack (network ${NET})"
 docker network create "${NET}" >/dev/null
 
-# @deliberate: the sensor peer comes up FIRST so rimsky's startup
-# eager-dial of the declared publisher succeeds; the slowness is
-# injected by PAUSING the container afterwards, not by making it
-# unreachable at boot.
 docker run -d --name "${SENSOR}" \
     --network "${NET}" --network-alias sensor \
     -e RIMSKY_SENSOR_OBJECT_STORE_PORT=9083 \
@@ -117,11 +100,6 @@ docker run -d --name "${SENSOR}" \
     -e RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT=/data/object-store \
     "${SENSOR_IMAGE}" >/dev/null
 
-# @deliberate: rimsky.yml is the all-in-one SQLite default plus the
-# publishers: block naming the sensor peer, and ref_validation_mode
-# none so the demo template's executor-less reactor node registers
-# (the proof axis is the subscription lifecycle + the persisted
-# publisher message, not the reactor's run).
 cat > "${TMP_DIR}/rimsky.yml" <<'YAML'
 persistence:
   driver: sqlite
@@ -161,9 +139,6 @@ echo "subscription-mounting-demo: stack healthy at ${BASE}"
 echo "subscription-mounting-demo: [2/6] pausing the sensor — the publisher is now deliberately slow to respond"
 docker pause "${SENSOR}" >/dev/null
 
-# @deliberate: register + deploy the template with a publishers: block.
-# The watcher publisher polls the filesystem-backend bucket `events`
-# every second.
 TEMPLATE_BODY='{
   "spec": {
     "name": "subscription-mounting-demo",

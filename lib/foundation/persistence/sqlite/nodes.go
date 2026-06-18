@@ -6,11 +6,6 @@
 // @diverged: true
 // @reason: parallel driver — SQLite dialect (positional ? params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
 
-// nodes.go — SQLite-backed persistence.NodeTable.
-//
-// @blessed-invariant 1: state machine rejects illegal transitions.
-// UpdateState never short-circuits on from==to; the node-state machine
-// alone decides legality.
 package sqlite
 
 import (
@@ -28,11 +23,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// nodeCols / nodeSelect mirror the postgres impl: state +
-// settling_signal_type + claimed_by come from the in-flight
-// rimsky_node_runs row; identity + scheduling metadata come from
-// rimsky_nodes. The COALESCE(r.state, 'fresh') is the cutover rule: a
-// node with no in-flight run row is implicitly 'fresh'.
 const nodeCols = `
   n.id, n.instance_id, n.node_type, n.executor,
   COALESCE(r.state, 'fresh') AS state, r.settling_signal_type,
@@ -43,9 +33,6 @@ const nodeCols = `
   CASE WHEN r.phase IN ('pending','active','held','parked') THEN r.run_scope_id END AS in_flight_run_scope_id
 `
 
-// nodeSelect — see postgres mirror. SQLite emulation uses ROW_NUMBER
-// over rimsky_node_runs to pick the most-relevant run row per node.
-// Includes all phases (completed terminals carry settling_signal_type).
 const nodeSelect = `FROM rimsky_nodes n
 LEFT JOIN (
     SELECT id, node_id, state, settling_signal_type, claimed_by, frame_id, phase, run_scope_id,
@@ -57,14 +44,8 @@ LEFT JOIN (
       FROM rimsky_node_runs
 ) r ON r.node_id = n.id AND r.rk = 1`
 
-// Create inserts a new rimsky_nodes identity row. Post-stage-3 cutover:
-// state lives on rimsky_node_runs only; a freshly-created node implicitly
-// defaults to 'fresh' (no in-flight run row).
 func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, tx persistence.Tx) (persistence.NodeRow, error) {
 	now := nowUTC()
-	// @constraint: SQLite stores the array as a JSON-encoded TEXT column (sibling
-	// convention with accepted_stores / required_stores; see migrations
-	// 001-baseline.sql#17). nil/empty Tags → "[]".
 	tagsJSON, terr := encodeTagsJSON(in.Tags)
 	if terr != nil {
 		return persistence.NodeRow{}, fmt.Errorf("nodes.Create: encode tags: %w", terr)
@@ -124,10 +105,6 @@ func (s *nodesImpl) ListByInstancePaged(
 	return s.ListByInstancePagedFiltered(ctx, instanceID, pag, persistence.NodeListFilter{}, tx)
 }
 
-// ListByInstancePagedFiltered narrows the page by an optional
-// NodeListFilter. Empty filter is identical to ListByInstancePaged.
-// Tags are JSON-encoded TEXT on sqlite; the SQL uses
-// json_each / EXISTS for the array-contains check.
 func (s *nodesImpl) ListByInstancePagedFiltered(
 	ctx context.Context,
 	instanceID foundationshared.UUID,
@@ -182,10 +159,6 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 	return persistence.PaginatedListResult[persistence.NodeRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
-// ListReadyForDispatch — post-stage-3: state lives on rimsky_node_runs;
-// dispatch-ready means an in-flight pending stale run row + empty
-// wait-set.
-//
 //	@concept: wait-set
 func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
@@ -227,9 +200,6 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 	return collectNodes(rows)
 }
 
-// ListRunning returns nodes with an in-flight rimsky_node_runs row in
-// state='running'. Post-stage-3: all state-bearing columns live on the
-// run row.
 func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+nodeCols+` `+nodeSelect+`
@@ -242,7 +212,6 @@ func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persi
 	return collectNodes(rows)
 }
 
-// CountByState — see postgres mirror.
 func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[cascade.NodeState]int, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT COALESCE(r.state, 'fresh') AS s, count(*)
@@ -272,18 +241,6 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[ca
 	return out, nil
 }
 
-// UpdateState enforces the node state machine on every call, mirroring
-// the postgres impl. SQLite has no SELECT FOR UPDATE; the surrounding
-// BEGIN IMMEDIATE writer-slot hold serialises the SELECT+UPDATE atomically.
-//
-// `settlingSignalType` is the canonical signal type-path
-// (concept:signal) recorded on settling transitions; nil preserves the
-// existing column value via COALESCE.
-//
-// `runScopeID` disambiguates which in-flight rimsky_node_runs row to
-// address — required for fan-out children that share a node_id with
-// the parent and siblings. See the interface contract for the fan-out
-// rationale.
 func (s *nodesImpl) UpdateState(
 	ctx context.Context,
 	id foundationshared.UUID,
@@ -296,13 +253,6 @@ func (s *nodesImpl) UpdateState(
 	return s.enforceAndUpdate(ctx, s.q(tx), id, runScopeID, state, reason, settlingSignalType)
 }
 
-// enforceAndUpdate — sqlite mirror. See postgres impl for the cutover
-// rationale: state lives on rimsky_node_runs; rimsky_nodes carries only
-// identity + scheduling metadata + frame_id.
-//
-// `targetRunID` (when non-nil) narrows the in-flight SELECT to the
-// specific row identified by the caller, addressing the fan-out
-// ambiguity where multiple in-flight rows share a node_id.
 func (s *nodesImpl) enforceAndUpdate(
 	ctx context.Context,
 	ex querier,
@@ -332,8 +282,6 @@ func (s *nodesImpl) enforceAndUpdate(
 			current = cascade.NodeState(stateStr.String)
 		}
 	case errors.Is(err, sql.ErrNoRows):
-		// @deliberate: no in-flight row — check the most-recent terminal-failed run
-		// so the state machine can validate fresh-target reset transitions.
 		var failedScan sql.NullString
 		fErr := ex.QueryRowContext(ctx,
 			`SELECT state FROM rimsky_node_runs
@@ -345,15 +293,12 @@ func (s *nodesImpl) enforceAndUpdate(
 		case fErr == nil && failedScan.Valid:
 			current = cascade.NodeState(failedScan.String)
 		case fErr == nil, errors.Is(fErr, sql.ErrNoRows):
-			// @deliberate: empty branch — current stays 'fresh' when no failed terminal exists.
 		default:
 			return fmt.Errorf("nodes.updateState: select failed run: %w", fErr)
 		}
 	default:
 		return fmt.Errorf("nodes.updateState: select run row: %w", err)
 	}
-	// @deliberate: fetch node row frame_id separately to cover fresh / unbound paths
-	// where no in-flight run row carries the frame.
 	var nodeFrameIDStr sql.NullString
 	if err := ex.QueryRowContext(ctx,
 		`SELECT frame_id FROM rimsky_nodes WHERE id = ?`, id.String(),
@@ -381,8 +326,6 @@ func (s *nodesImpl) enforceAndUpdate(
 	} else {
 		settlingArg = *settlingSignalType
 	}
-	// @constraint: rimsky_nodes metadata update only — state column lives on
-	// rimsky_node_runs post-stage-3 cutover.
 	if _, err := ex.ExecContext(ctx,
 		`UPDATE rimsky_nodes
 		   SET updated_at = ?,
@@ -404,7 +347,6 @@ func (s *nodesImpl) enforceAndUpdate(
 			return fmt.Errorf("nodes.updateState: run-row update: %w", err)
 		}
 	case state == cascade.NodeStateFresh:
-		// @deliberate: empty branch — fresh has no in-flight run row to write.
 	case state == cascade.NodeStateStale && (current == cascade.NodeStateFailed || current == cascade.NodeStateFresh):
 		if nodeFrameIDStr.Valid {
 			if _, err := ex.ExecContext(ctx,
@@ -428,8 +370,6 @@ func (s *nodesImpl) enforceAndUpdate(
 	default:
 		return fmt.Errorf("nodes.updateState: no in-flight run row for node %s on transition to %q (reason %q)", id, state, reason.Kind)
 	}
-	// @deliberate: frame progress prefers the run row's frame_id, falling back to
-	// the node row's frame_id to cover the fresh / cascade-target window.
 	var progressFrame sql.NullString
 	switch {
 	case runFrameIDStr.Valid:
@@ -468,15 +408,6 @@ func (s *nodesImpl) SetFrameID(ctx context.Context, id foundationshared.UUID, fr
 	return err
 }
 
-// ClearSettlingSignalType clears settling_signal_type to NULL on the
-// in-flight run row. The rimsky_nodes.updated_at bump preserves dashboard
-// ordering.
-//
-// `runScopeID` targets the specific in-flight row — required for
-// fan-out children to prevent the clear from landing on a sibling.
-//
-// Replaces the retired ClearLastOutcome alongside Pass 5 of spec
-// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
 func (s *nodesImpl) ClearSettlingSignalType(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
 	if _, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs SET settling_signal_type = NULL
@@ -492,13 +423,6 @@ func (s *nodesImpl) ClearSettlingSignalType(ctx context.Context, id foundationsh
 	return err
 }
 
-// ResetFailedTerminalSettlingSignalType clears settling_signal_type to
-// NULL on the most-recent failed-terminal run row in the supplied
-// RunScope. SQLite mirror of the postgres impl. Skips the rimsky_nodes
-// updated_at bump when no row was updated (driver-drift fix).
-//
-// Replaces the retired ResetFailedTerminalLastOutcome alongside Pass 5
-// of spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
 func (s *nodesImpl) ResetFailedTerminalSettlingSignalType(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
 	var idStr string
 	err := s.q(tx).QueryRowContext(ctx,
@@ -519,16 +443,12 @@ func (s *nodesImpl) ResetFailedTerminalSettlingSignalType(ctx context.Context, i
 	); err != nil {
 		return fmt.Errorf("nodes.ResetFailedTerminalSettlingSignalType: %w", err)
 	}
-	// @deliberate: bump rimsky_nodes.updated_at so dashboards re-sort.
 	_, err = s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_nodes SET updated_at = ? WHERE id = ?`,
 		nowUTC(), id.String())
 	return err
 }
 
-// GetFailedTerminalRunScopeID returns the run_scope_id of the
-// most-recent failed-terminal `rimsky_node_runs` row for the node.
-// Returns nil when no failed-terminal row exists.
 func (s *nodesImpl) GetFailedTerminalRunScopeID(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) (*foundationshared.UUID, error) {
 	var scopeStr string
 	err := s.q(tx).QueryRowContext(ctx,
@@ -556,10 +476,6 @@ func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundations
 	return err
 }
 
-// MarkStaleForCascade — pure UPDATE keyed by run_id. SQLite mirror of
-// postgres impl. Allocation is the cascade walker's responsibility via
-// AffirmNodeRunRow.
-//
 // @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
 // tx-atomic.
 // @concept: cascade
@@ -581,7 +497,6 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationsha
 	if n == 0 {
 		return nil
 	}
-	// @deliberate: bind node row frame_id so the dashboard reflects the cascade target.
 	if _, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_nodes SET frame_id = ?, updated_at = ?
 		  WHERE id = (SELECT node_id FROM rimsky_node_runs WHERE id = ?)`,
@@ -592,31 +507,9 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationsha
 	return nil
 }
 
-// AffirmNodeRunRow ensures an in-flight run row exists for (nodeID,
-// runScopeID). No-op if one exists; INSERT pending+stale if not.
-// Errors with ErrRunScopeClosed when the RunScope is closed.
-//
-// Mirrors postgres AffirmNodeRunRow: the closed_at check is folded
-// into the INSERT's source-row JOIN so cross-backend symmetry holds —
-// even though SQLite's BEGIN IMMEDIATE write-serialisation already
-// prevents the TOCTOU between SELECT-then-INSERT, future refactors
-// reading just this file see the same invariant enforced at INSERT
-// time. When the INSERT affects zero rows we re-resolve the cause:
-// row already in-flight (silent success), scope closed
-// (ErrRunScopeClosed), or scope absent (error).
-//
 // @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 // @concept: run-scope
 func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshared.UUID, runScopeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
-	// @constraint: cascade-emit (concept:message-emitter-node) routes through
-	// the supervisor's dispatch path but has `n.executor == ''`. To admit
-	// such rows through SelectCandidates' executor-accepted branch,
-	// AffirmNodeRunRow stamps the sentinel `@emit-message` on the dispatch
-	// row's `executor_name` when the template node declares an
-	// `emits_message:` field. The supervisor auto-injects `@emit-message`
-	// into its `accepted_executors` list. Mirrors the postgres path; the
-	// sentinel constant is declared as `runtime.EmitMessageDispatchName`.
-	//
 	// @story: cascade-emit
 	// @concept: message-emitter-node
 	res, err := s.q(tx).ExecContext(ctx,
@@ -671,9 +564,6 @@ func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshare
 	if affected > 0 {
 		return nil
 	}
-	// @deliberate: zero rows means one of three causes — (a) row already in-flight
-	// (silent success), (b) scope closed (return ErrRunScopeClosed), or (c) scope
-	// absent (error). Re-resolve via separate SELECT.
 	var closedAt sql.NullString
 	err = s.q(tx).QueryRowContext(ctx,
 		`SELECT closed_at FROM rimsky_run_scopes WHERE id = ?`, runScopeID.String(),
@@ -687,13 +577,9 @@ func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshare
 	if closedAt.Valid {
 		return persistence.ErrRunScopeClosed
 	}
-	// @deliberate: row already in-flight — affirm is a silent success.
 	return nil
 }
 
-// HasRunForNodeInFrame reports whether any rimsky_node_runs row
-// (any phase) exists for the given node in the given frame.
-//
 //	@concept: signal
 func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) (bool, error) {
 	var n int
@@ -707,10 +593,6 @@ func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundations
 	return n > 0, nil
 }
 
-// GetRunByDispatchIDForUpdate returns the run row for the given
-// dispatch_id (== rimsky_node_runs.id). SQLite holds the row lock
-// implicitly within BEGIN IMMEDIATE.
-//
 // @blessed-invariant: callback-determinism — Callback determinism.
 func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	var (
@@ -836,9 +718,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	return r, nil
 }
 
-// encodeTagsJSON marshals a tag slice into the JSON-encoded TEXT shape
-// used by the sqlite tags column. Empty slice / nil → "[]" (matches
-// the column DEFAULT and downstream JSON-array consumers).
 func encodeTagsJSON(tags []string) (string, error) {
 	if len(tags) == 0 {
 		return "[]", nil
@@ -850,8 +729,6 @@ func encodeTagsJSON(tags []string) (string, error) {
 	return string(b), nil
 }
 
-// decodeTagsJSON unmarshals a JSON-encoded tags column into a slice.
-// NULL or empty → empty slice (matches the NodeRow contract).
 func decodeTagsJSON(s sql.NullString) ([]string, error) {
 	if !s.Valid || s.String == "" || s.String == "[]" {
 		return []string{}, nil

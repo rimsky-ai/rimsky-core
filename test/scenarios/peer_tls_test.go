@@ -2,32 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// STORY-peer-tls-enforced executable proof.
-//
-// As an operator who configures `tls: required` on a peer service, I
-// get a TLS-verified connection to that peer — and a loud failure if
-// the peer cannot present credentials — so that the config key means
-// what it says (TD-peer-tls-enforcement + TD-tls-mode-validation).
-//
-//  1. A stub gRPC claim-producer peer serves with a self-signed
-//     localhost certificate. The REAL dial path (peer.Dial — the same
-//     function dialRemoteStores runs at startup) under `tls: required`
-//     establishes a verified TLS channel and exchanges the
-//     Capabilities request end-to-end — negating the falsifier's
-//     "connection observed on the wire in plaintext" clause: the
-//     server side holds TLS-only credentials, so a plaintext dial
-//     cannot have produced the response.
-//  2. Companion: the same stub served PLAINTEXT, dialed under
-//     `tls: required`, fails loudly with an error naming the peer and
-//     the mode — negating the falsifier's "key accepted and silently
-//     ignored" clause.
-//  3. Control: the plaintext stub under `tls: off` (today's default)
-//     still works, pinning that off stays plaintext.
-//
-// The test injects its self-signed CA into the credential helper's
-// root pool via the explicit test seam
-// (peer.SetTLSRootCAsForTesting); the production default remains
-// system roots.
 
 package scenarios
 
@@ -52,9 +26,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// tlsProofProducer is a minimal genv1.ClaimProducerServer: just enough
-// Capabilities surface for peer.Dial's startup handshake to complete
-// (Dial rejects an empty write_semantics_allowed envelope).
 type tlsProofProducer struct {
 	genv1.UnimplementedClaimProducerServer
 }
@@ -66,10 +37,6 @@ func (tlsProofProducer) Capabilities(context.Context, *genv1.CapabilitiesRequest
 	}, nil
 }
 
-// selfSignedLocalhostCert mints an ephemeral self-signed certificate
-// valid for 127.0.0.1 and returns the server's TLS keypair plus a cert
-// pool holding the certificate (the pool the dialing side verifies
-// against).
 func selfSignedLocalhostCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -101,9 +68,6 @@ func selfSignedLocalhostCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, pool
 }
 
-// serveStubProducer starts the stub claim-producer on a loopback
-// listener (TLS when cert is non-nil, plaintext otherwise) and returns
-// its address. Stopped via t.Cleanup.
 func serveStubProducer(t *testing.T, cert *tls.Certificate) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -124,9 +88,6 @@ func serveStubProducer(t *testing.T, cert *tls.Certificate) string {
 	return lis.Addr().String()
 }
 
-// TestPeerTLS_Required_VerifiedTLSEndToEnd dials a TLS-serving stub
-// peer under `tls: required` through the real peer.Dial path and
-// exchanges the Capabilities request.
 func TestPeerTLS_Required_VerifiedTLSEndToEnd(t *testing.T) {
 	cert, pool := selfSignedLocalhostCert(t)
 	addr := serveStubProducer(t, &cert)
@@ -142,8 +103,6 @@ func TestPeerTLS_Required_VerifiedTLSEndToEnd(t *testing.T) {
 	}
 	defer client.Close()
 
-	// @deliberate: Exchange a request over the established channel and assert real
-	// data crossed the wire: the stub's advertised envelope.
 	caps, err := client.Capabilities(ctx)
 	if err != nil {
 		t.Fatalf("Capabilities over TLS channel: %v", err)
@@ -153,9 +112,6 @@ func TestPeerTLS_Required_VerifiedTLSEndToEnd(t *testing.T) {
 	}
 }
 
-// TestPeerTLS_Required_PlaintextPeer_LoudFailure dials a PLAINTEXT
-// stub under `tls: required` and asserts the loud failure names the
-// peer and the mode.
 func TestPeerTLS_Required_PlaintextPeer_LoudFailure(t *testing.T) {
 	addr := serveStubProducer(t, nil)
 
@@ -175,8 +131,6 @@ func TestPeerTLS_Required_PlaintextPeer_LoudFailure(t *testing.T) {
 	}
 }
 
-// TestPeerTLS_Off_StaysPlaintext pins the default: `tls: off` against
-// a plaintext peer is today's working behavior.
 func TestPeerTLS_Off_StaysPlaintext(t *testing.T) {
 	addr := serveStubProducer(t, nil)
 

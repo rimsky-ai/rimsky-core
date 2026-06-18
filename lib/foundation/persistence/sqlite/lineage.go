@@ -21,8 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// lineageImpl is the SQLite-backed persistence.LineageTable — the
-// content lineage projection per spec §Content lineage.
 type lineageImpl tablesImpl
 
 var _ persistence.LineageTable = (*lineageImpl)(nil)
@@ -40,13 +38,6 @@ func (b *lineageImpl) Insert(ctx context.Context, tx persistence.Tx, row persist
 	if row.ObservedAt.IsZero() {
 		row.ObservedAt = time.Now().UTC()
 	}
-	// @constraint: `leaf_run` rows carry outcome="" by design; `claim_terminal`
-	// writers (`runtime.WriteClaimTerminalLineage`) reject empty outcome at the
-	// call site. Pass row.Outcome through verbatim.
-	// @constraint: observed_at goes through formatTime (fixed-width UTC text) —
-	// a raw time.Time bind would store modernc's zone-embedded t.String() form,
-	// which breaks the retention DELETE / ORDER BY / range filters on non-UTC
-	// hosts.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertLineageSQL,
 		row.ID.String(), row.RecordKind, row.InstanceID.String(),
 		row.FrameID.String(), formatTime(row.ObservedAt), row.Record, row.Outcome)
@@ -56,7 +47,6 @@ func (b *lineageImpl) Insert(ctx context.Context, tx persistence.Tx, row persist
 	return nil
 }
 
-// sqliteGetByRunIDSQL queries by JSON extraction; SQLite supports json_extract.
 const sqliteGetByRunIDSQL = `
 SELECT id, record_kind, instance_id, frame_id, observed_at, record, outcome
   FROM rimsky_lineage
@@ -147,13 +137,6 @@ func (b *lineageImpl) QueryByParentRunID(ctx context.Context, parentRunID shared
 	return scanLineage(rows)
 }
 
-// sqliteLineagePruneWhereSQL is the shared predicate for both
-// DeleteOlderThan (the live prune) and CountOlderThan (the dry-run
-// preview): rows older than the cutoff whose corresponding run AND
-// claim_handle are no longer present. Defined once so the dry-run count
-// is a true preview of the live delete — keeping the WHERE clause
-// byte-identical across the two statements is the load-bearing
-// invariant (see persistence.LineageTable.CountOlderThan doc).
 const sqliteLineagePruneWhereSQL = `
  WHERE observed_at < ?
    AND NOT EXISTS (
@@ -191,9 +174,6 @@ func scanLineage(rows *sql.Rows) ([]persistence.LineageRow, error) {
 	for rows.Next() {
 		var r persistence.LineageRow
 		var idStr, instanceStr, frameStr string
-		// @constraint: observed_at is fixed-width UTC TEXT; scan as a string and
-		// run through parseTime (per queue_park.go::LoadResumeMetadataInTx)
-		// instead of scanning into time.Time.
 		var observedAtStr string
 		if err := rows.Scan(
 			&idStr, &r.RecordKind, &instanceStr, &frameStr,

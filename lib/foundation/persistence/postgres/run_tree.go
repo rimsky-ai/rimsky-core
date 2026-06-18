@@ -18,16 +18,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// runTreeImpl is the Postgres-backed persistence.RunTreeTable — CRUD +
-// locking on the run-tree extension of rimsky_node_runs. Under
-// RunScope-first, the tree shape lives on rimsky_run_scopes; this
-// table projects the per-run aggregation_policy + state columns and
-// joins across run_scope_id when listing children.
 type runTreeImpl tablesImpl
 
 var _ persistence.RunTreeTable = (*runTreeImpl)(nil)
 
-// RunTree exposes the run-tree accessor. See `foundation/persistence/run_tree.go`.
 func (s *tablesImpl) RunTree() persistence.RunTreeTable { return (*runTreeImpl)(s) }
 
 func (b *runTreeImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
@@ -80,7 +74,6 @@ func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in 
 		stores = []string{}
 	}
 	executor := nullableText(in.ExecutorName)
-	// @deliberate: idempotent INSERT via WHERE NOT EXISTS keyed on (node_id, run_scope_id) — re-driving the same child create on retry is a no-op.
 	_, err = b.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id,
@@ -130,8 +123,6 @@ func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, 
 	return row, nil
 }
 
-// ListChildren returns all in-flight runs in RunScopes whose
-// parent_run_id equals parentRunID. Walks via rimsky_run_scopes JOIN.
 func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
 	rows, err := b.q(tx).Query(ctx,
 		`SELECT nr.id, nr.node_id, nr.frame_id, nr.run_scope_id, nr.phase,
@@ -197,7 +188,6 @@ func (b *runTreeImpl) UpdateAggregationPolicy(
 	return nil
 }
 
-// scanRunTreeRow scans a pgx.Row into a *RunTreeRow.
 func scanRunTreeRow(row pgx.Row) (*persistence.RunTreeRow, error) {
 	var (
 		out            persistence.RunTreeRow
@@ -223,7 +213,6 @@ func scanRunTreeRow(row pgx.Row) (*persistence.RunTreeRow, error) {
 	return &out, nil
 }
 
-// scanRunTreeRowFromRows reuses the same scan against a pgx.Rows.
 func scanRunTreeRowFromRows(rows pgx.Rows) (*persistence.RunTreeRow, error) {
 	var (
 		out            persistence.RunTreeRow

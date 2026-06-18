@@ -2,28 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package main — openlineage subscriber. Polls `table:rimsky_lineage`
-// for new rows since a stored cursor and emits OpenLineage 1.x JSON
-// events to a configured backend.
-//
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §OpenLineage emitter.
-//
 //	@concept: lineage
 //	@concept: lineage-record
-//
-// Polling (not LifecycleSubscriber events) is the V1 transport per the
-// plan's pre-resolved decisions: it treats the subscriber as a passive
-// reader of the projection, decoupled from the live lifecycle path. The
-// cursor is the most-recent `observed_at` already emitted; new rows
-// are read with `observed_at > $cursor` ordered by `observed_at`.
-//
-// Pgx is allowed under `subscribers/` per `.golangci.yml`'s
-// `pgx-isolation` allowlist (extended in this dispatch). The subscriber
-// is a standalone binary; it never imports `runtime/` or the
-// persistence Tables interfaces — both layers live behind the
-// service-protocol boundary, and the subscriber reads only the
-// lineage projection.
 package main
 
 import (
@@ -38,9 +18,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// LineageRow mirrors the columns the subscriber reads from
-// `table:rimsky_lineage`. The `Record` field is decoded into either
-// LeafRunRecord or ClaimTerminalRecord based on `RecordKind`.
 type LineageRow struct {
 	ID         uuid.UUID
 	RecordKind string
@@ -50,18 +27,6 @@ type LineageRow struct {
 	Record     json.RawMessage
 }
 
-// LeafRunRecord mirrors the `record_kind = 'leaf_run'` shape from
-// spec §rimsky_lineage / Leaf-run record shape. Field-by-field
-// alignment with `runtime/lineage_writer.go::LeafRunRecord` is
-// load-bearing — the wire-contract test in `subscriber_test.go` pins
-// the json-tag discipline (required vs `omitempty`) AND the field
-// order (writer-side is canonical).
-//
-// Required (no `omitempty`) on both sides: `run_id`, `node_id`,
-// `frame_id`, `state`, `settling_signal_type` — every leaf-run
-// lineage row must carry the run/node/frame identity plus the
-// state-machine verdict, otherwise the row is meaningless for the
-// OpenLineage emitter and the ancestor walker.
 type LeafRunRecord struct {
 	RunID              string         `json:"run_id"`
 	NodeID             string         `json:"node_id"`
@@ -80,10 +45,6 @@ type LeafRunRecord struct {
 	AttributesHash     string         `json:"attributes_hash,omitempty"`
 	ScopeDataHash      string         `json:"claim_scope_data_hash,omitempty"`
 	State              string         `json:"state"`
-	// SettlingSignalType is the canonical signal type-path the run
-	// settled with (concept:signal). Replaces the retired LastOutcome
-	// projection per Pass 5 of spec
-	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
 	SettlingSignalType string            `json:"settling_signal_type"`
 	Changed            bool              `json:"changed,omitempty"`
 	TerminalKind       string            `json:"terminal_kind,omitempty"`
@@ -92,10 +53,6 @@ type LeafRunRecord struct {
 	Extra              map[string]any    `json:"extra,omitempty"`
 }
 
-// HeldClaimRef is one entry of LeafRunRecord.HeldClaims. The
-// `claim_scope_data_hash` JSON tag is the canonical wire shape
-// (`runtime/lineage_writer.go::LeafRunHeldClaim`); the Go field name is
-// kept as `ScopeDataHash` for brevity within the subscriber package.
 type HeldClaimRef struct {
 	ClaimHandleID string `json:"claim_handle_id"`
 	Role          string `json:"role"`
@@ -103,38 +60,12 @@ type HeldClaimRef struct {
 	ScopeDataHash string `json:"claim_scope_data_hash"`
 }
 
-// SubstitutionRef is one entry of LeafRunRecord.SubstitutionRefs.
-// Mirrors runtime/lineage_writer.go::SubstitutionRef — the field shapes
-// must stay byte-for-byte aligned. The richer object shape (vs a bare
-// `[]string`) lets `/lineage/by-source/{kind}/{id}` discriminate by
-// source kind, and lets the ancestor walker resolve upstream lineage by
-// RUN id rather than node-type.
 type SubstitutionRef struct {
 	SourceKind        string `json:"source_kind"`
 	SourceNodeAlias   string `json:"source_node_alias,omitempty"`
 	SourceVersionOrID string `json:"source_version_or_id,omitempty"`
 }
 
-// ClaimTerminalRecord mirrors the `record_kind = 'claim_terminal'` shape
-// (Commit + Abandon + force-cancelled). The Outcome field discriminates
-// the per-row terminal disposition.
-//
-// `OpenLineageRunRef` is the run identity the emitter keys on for the
-// emitted OL `Run.RunID`. It is NOT a parent-run reference in the
-// run-tree sense — see the writer-side struct comment in
-// `runtime/lineage_writer.go::ClaimTerminalRecord` for the rationale.
-//
-// Field-by-field alignment with `runtime/lineage_writer.go::ClaimTerminalRecord`
-// is load-bearing — the wire-contract test in `subscriber_test.go` pins
-// the json-tag discipline (required vs `omitempty`) AND the field
-// order (writer-side is canonical).
-//
-// Required (no `omitempty`) on both sides: `claim_handle_id`, `run_id`,
-// `node_id`, `frame_id`, `outcome` — every claim-terminal row must
-// carry the claim/run/node/frame identity plus the terminal disposition
-// (`committed | abandoned | force_cancelled`), otherwise the row
-// cannot be reconstructed against `rimsky_claim_handles` and the
-// emitted OpenLineage event would mislabel the lineage graph.
 type ClaimTerminalRecord struct {
 	ClaimHandleID       string         `json:"claim_handle_id"`
 	RunID               string         `json:"run_id"`
@@ -152,14 +83,6 @@ type ClaimTerminalRecord struct {
 	ProducerMetadata    map[string]any `json:"producer_metadata,omitempty"`
 }
 
-// Subscriber owns the polling loop + cursor state. Construct with
-// New, drive with Run.
-//
-// Cursor shape is `(observed_at, id)` so two rows sharing the same
-// `observed_at` (no UNIQUE constraint on the column) are not skipped
-// across ticks. The fetch predicate uses the lexicographic tuple
-// comparison (`(observed_at, id) > ($1, $2)`); the cursor advances to
-// the LAST successfully-emitted row's tuple after each tick.
 type Subscriber struct {
 	cfg      Config
 	rimsky   *pgxpool.Pool
@@ -167,12 +90,10 @@ type Subscriber struct {
 	emitter  *Emitter
 	logger   *slog.Logger
 	nowFn    func() time.Time
-	cursorAt time.Time // @constraint: in-memory mirror of `rimsky_openlineage_cursor.last_observed_at`
-	cursorID uuid.UUID // @constraint: in-memory mirror of `rimsky_openlineage_cursor.last_id`
+	cursorAt time.Time
+	cursorID uuid.UUID
 }
 
-// New constructs a Subscriber against the two configured DSNs +
-// emitter. Returns an error if either connection pool fails to open.
 func New(ctx context.Context, cfg Config, logger *slog.Logger) (*Subscriber, error) {
 	rimsky, err := pgxpool.New(ctx, cfg.RimskyDSN)
 	if err != nil {
@@ -205,7 +126,6 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*Subscriber, err
 	return s, nil
 }
 
-// Close releases the connection pools.
 func (s *Subscriber) Close() {
 	if s.rimsky != nil {
 		s.rimsky.Close()
@@ -215,27 +135,6 @@ func (s *Subscriber) Close() {
 	}
 }
 
-// ensureCursorTable creates `rimsky_openlineage_cursor` on the state DB
-// if missing. Singleton row keyed on the configured Namespace so one
-// state DB can host cursors for multiple namespaced subscribers.
-//
-// Schema carries `(last_observed_at, last_id)` so the per-tick cursor
-// can survive rows that share the same `observed_at` (no UNIQUE
-// constraint on `rimsky_lineage.observed_at` — two rows can land in
-// the same microsecond on busy systems).
-//
-// Forward-compat migration: pre-cycle-2 cursor rows lack `last_id`.
-// `ADD COLUMN IF NOT EXISTS` backfills missing rows with the zero
-// UUID by default, but the zero UUID would corrupt the
-// `(observed_at, id) > ($1, $2)` tuple comparison: any non-zero UUID
-// is strictly greater than the zero UUID, so the very first poll on
-// a backfilled cursor would re-emit every row already delivered at
-// the cursor's `observed_at` (the predicate matches any row at the
-// same `observed_at` whose id ≠ zero). Bump backfilled rows to the
-// canonical max UUID (`ff..ff`) so the post-migration semantics match
-// "I've emitted everything ≤ this observed_at": every row at the
-// cursor's `observed_at` falls on the `≤` side until the cursor
-// advances on the next emit.
 func (s *Subscriber) ensureCursorTable(ctx context.Context) error {
 	if _, err := s.state.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS rimsky_openlineage_cursor (
@@ -251,9 +150,6 @@ func (s *Subscriber) ensureCursorTable(ctx context.Context) error {
 		    ADD COLUMN IF NOT EXISTS last_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'`); err != nil {
 		return err
 	}
-	// @deliberate: Repair pre-cycle-2 cursors that came through the ADD COLUMN
-	// default path. Idempotent: rows whose `last_id` was set by a
-	// prior persistCursor (non-zero) are left alone.
 	_, err := s.state.Exec(ctx, `
 		UPDATE rimsky_openlineage_cursor
 		   SET last_id = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
@@ -261,8 +157,6 @@ func (s *Subscriber) ensureCursorTable(ctx context.Context) error {
 	return err
 }
 
-// loadCursor reads the persisted cursor row for the configured namespace
-// (or seeds it at epoch zero when missing).
 func (s *Subscriber) loadCursor(ctx context.Context) error {
 	var (
 		at time.Time
@@ -291,7 +185,6 @@ func (s *Subscriber) loadCursor(ctx context.Context) error {
 	return err
 }
 
-// persistCursor writes the in-memory cursor back to the state DB.
 func (s *Subscriber) persistCursor(ctx context.Context) error {
 	_, err := s.state.Exec(ctx,
 		`UPDATE rimsky_openlineage_cursor
@@ -302,11 +195,6 @@ func (s *Subscriber) persistCursor(ctx context.Context) error {
 	return err
 }
 
-// fetchSince reads up to BatchSize lineage rows whose `(observed_at, id)`
-// tuple is strictly greater than the current cursor, in (observed_at,
-// id) ASC order. The tuple comparison ensures rows that share the same
-// `observed_at` as the cursor row are not skipped — only rows with the
-// same `observed_at` but a `<=` id are excluded.
 func (s *Subscriber) fetchSince(ctx context.Context) ([]LineageRow, error) {
 	rows, err := s.rimsky.Query(ctx, `
 		SELECT id, record_kind, instance_id, frame_id, observed_at, record
@@ -331,17 +219,6 @@ func (s *Subscriber) fetchSince(ctx context.Context) ([]LineageRow, error) {
 	return out, rows.Err()
 }
 
-// tick runs one poll iteration: fetch, emit, advance + persist cursor.
-// Decode failures (`toEvent` returns an error) advance the cursor past
-// the bad row — the row will never become decodable, so blocking the
-// loop would stall the subscriber forever on one malformed payload.
-// Emit failures (transient backend errors) DO halt the loop without
-// advancing the cursor; the next tick retries from the same point.
-//
-// The cursor advances to `(row.ObservedAt, row.ID)` of the last
-// row processed (emitted or decode-failed-and-skipped). The tuple
-// shape protects against same-`observed_at` rows being skipped across
-// ticks (no UNIQUE on `rimsky_lineage.observed_at`).
 func (s *Subscriber) tick(ctx context.Context) error {
 	rows, err := s.fetchSince(ctx)
 	if err != nil {
@@ -362,8 +239,6 @@ func (s *Subscriber) tick(ctx context.Context) error {
 				"id", r.ID.String(),
 				"record_kind", r.RecordKind,
 				"error", err.Error())
-			// @deliberate: Decode failures are permanent. Advance past the
-			// undecodable row so the cursor doesn't stall here.
 			lastAt = r.ObservedAt
 			lastID = r.ID
 			progressed = true
@@ -390,8 +265,6 @@ func (s *Subscriber) tick(ctx context.Context) error {
 	return nil
 }
 
-// toEvent decodes the per-kind record JSON and dispatches to the
-// matching MakeXxx mapper.
 func (s *Subscriber) toEvent(r LineageRow) (Event, error) {
 	switch r.RecordKind {
 	case "leaf_run":
@@ -411,8 +284,6 @@ func (s *Subscriber) toEvent(r LineageRow) (Event, error) {
 	}
 }
 
-// Run loops on PollInterval until ctx is cancelled. Per-tick errors are
-// logged at WARN; the loop continues.
 func (s *Subscriber) Run(ctx context.Context) {
 	t := time.NewTicker(s.cfg.PollInterval)
 	defer t.Stop()

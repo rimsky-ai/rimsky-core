@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: Inv 14 (ClaimScopeByteEquality) — claim-scope conflict is byte-equal.
-//
-// Per spec §7.7 the store canonicalises claim-scope bytes before handing
-// them to rimsky, so two claim-scopes that should conflict produce byte-equal
-// claim_scope_data on the wire. For round-trip equality across drivers the
-// test compares semantic JSON equality (decode-and-compare), since
-// Postgres JSONB normalises whitespace at storage time while SQLite TEXT
-// preserves the exact bytes — both behaviours satisfy "the bytes come
-// back in a stable canonical form" per the store contract.
 package conformance
 
 import (
@@ -24,8 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// jsonEqual returns true when a and b are JSON values with the same
-// semantic content (whitespace and key-order insensitive).
 func jsonEqual(a, b []byte) bool {
 	var av, bv any
 	if err := json.Unmarshal(a, &av); err != nil {
@@ -96,10 +85,6 @@ func testClaimScopeByteEquality(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// @constraint: rimsky_claim_handles does not unique-constrain scope; the
-	// supervisor's in-go conflict predicate is what catches scope conflicts,
-	// so two byte-equal scope inserts must both land and ListByProducerClaimScope
-	// must return both with byte-equal scope_data.
 	insert(t, scopeA)
 	insert(t, scopeA)
 
@@ -114,8 +99,6 @@ func testClaimScopeByteEquality(t *testing.T, d persistence.Database) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 scope rows, got %d", len(rows))
 	}
-	// @constraint: store canonicalisation guarantees byte-equal scopes round-trip
-	// byte-equal across drivers, and the stored bytes stay semantically equal to the input.
 	if string(rows[0].ClaimScopeData) != string(rows[1].ClaimScopeData) {
 		t.Fatalf("byte-equal claim-scopes did not round-trip equal:\n  %q\n  %q",
 			string(rows[0].ClaimScopeData), string(rows[1].ClaimScopeData))

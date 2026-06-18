@@ -2,20 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Package blobbackend is the importable form of the BlobBackend
-// in-process conformance suite. Unlike the wire-protocol conformance
-// runners (executor, claim-producer, publisher, ...) this one
-// exercises an in-process Go interface — there is no peer service to
-// dial. External Go authors implementing a custom BlobBackend can
-// invoke Run from their own tests to verify the contract.
-//
-// The Backend interface mirrors rimsky's internal
-// `pkg:foundation/persistence.BlobBackend` minimally — only the
-// methods the conformance suite exercises. Production backends
-// (memory / filesystem / pg-largeobject) live in rimsky-internal
-// `pkg:foundation/persistence`; the cmd binary adapts each to this
-// surface.
-
 package blobbackend
 
 import (
@@ -26,8 +12,6 @@ import (
 	"sync"
 )
 
-// Backend is the minimal interface the conformance suite exercises.
-//
 // @source: lib/foundation/persistence/blob.go::BlobBackend
 // @diverged: true
 // @reason: rimsky's internal BlobBackend takes a typed BlobKey
@@ -36,40 +20,21 @@ import (
 // reduced and `Handle`/`Key` collapse to []byte hints. The cmd
 // binary adapts the concrete backends to this surface.
 type Backend interface {
-	// @agent-contract: Write persists bytes and returns an opaque handle.
-	// Does NOT guarantee any particular handle format — callers must treat
-	// it as opaque.
 	Write(ctx context.Context, hint string, bytes []byte) (Handle, error)
-	// @agent-contract: Read returns the bytes referenced by handle.
-	// Implementations MUST return an error matching errors.Is(err,
-	// ErrBlobNotFound) when the handle is unknown.
 	Read(ctx context.Context, handle Handle) ([]byte, error)
-	// @agent-contract: ReadRange returns a byte range. Implementations
-	// MUST return an error matching errors.Is(err, ErrBlobNotFound) when
-	// the handle is unknown.
 	ReadRange(ctx context.Context, handle Handle, offset, length int64) ([]byte, error)
-	// @agent-contract: Delete removes the blob and MUST be idempotent —
-	// a second Delete of the same handle returns nil, not an error.
 	Delete(ctx context.Context, handle Handle) error
 }
 
-// Handle is the opaque identifier the backend returns from Write.
 type Handle string
 
-// ErrBlobNotFound is returned by Read / ReadRange when the handle is
-// unknown. The conformance check uses errors.Is to detect this; the
-// concrete backend implementation must wrap (or alias) its own
-// missing-blob sentinel to satisfy the contract.
 var ErrBlobNotFound = errors.New("blobbackend: handle not found")
 
-// CheckResult is one row of conformance output.
 type CheckResult struct {
 	Name string
 	Err  error
 }
 
-// Run drives the BlobBackend conformance checks against the supplied
-// backend. Each check is independent; failures do not short-circuit.
 func Run(ctx context.Context, be Backend) []CheckResult {
 	checks := []struct {
 		name string

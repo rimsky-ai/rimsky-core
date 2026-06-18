@@ -13,7 +13,6 @@ import (
 	"os"
 )
 
-// RunAuthRevoke implements `rimsky auth revoke <name-or-id>`.
 func RunAuthRevoke(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth revoke", flag.ContinueOnError)
 	var (

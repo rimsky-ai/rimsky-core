@@ -18,116 +18,43 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 )
 
-// ValidationError is a blocking problem with a template. Path locates
-// the offending element using JSONPath-ish notation.
 type ValidationError struct {
 	Path string
 	Msg  string
 }
 
-// ValidationWarning is a non-blocking problem.
 type ValidationWarning struct {
 	Path string
 	Msg  string
 }
 
-// ValidationResult is returned by ValidateTemplate. Ok() is true when
-// no errors were found (warnings are allowed).
-//
-// StructuredErrors carries entries whose shape is richer than the
-// flat `{path, msg}` of `Errors` — currently the substitution-ref
-// coverage check emits `substitution_ref_uncovered` entries here so
-// operators receive a drop-in copy-pasteable `suggested_subscribes_entry`
-// alongside the human-readable explanation. Per
-// decision:validation-errors-additive-not-uniform and
-// decision:uncovered-substitution-error-shape.
-//
-// Note for future contributors: there is no `StructuredWarnings`
-// counterpart by design — every structured entry kind introduced so
-// far is a hard rejection (the structured shape's reason for existing
-// is to carry a copy-pasteable fix for a registration-blocking
-// problem). When a future structured entry kind needs to be advisory
-// rather than rejecting, add the symmetric `StructuredWarnings`
-// `[]map[string]any` slice at the same time and update `Ok()` to
-// match the existing rejection contract.
 type ValidationResult struct {
 	Errors           []ValidationError
 	Warnings         []ValidationWarning
 	StructuredErrors []map[string]any
 }
 
-// Ok reports whether the template passed validation (no errors).
-// Both `Errors` and `StructuredErrors` count as rejecting findings.
 func (r ValidationResult) Ok() bool {
 	return len(r.Errors) == 0 && len(r.StructuredErrors) == 0
 }
 
-// instantiationPlaceholderRe matches `{params.<key>}` placeholders.
 var instantiationPlaceholderRe = regexp.MustCompile(`\{params\.[a-zA-Z_][a-zA-Z0-9_]*\}`)
 
-// anyBraceRe matches any single-`{...}` segment that isn't part of a
-// double-`{{...}}` directive.
 var anyBraceRe = regexp.MustCompile(`\{[^{}]*\}`)
 
-// dispatchDirectiveRe matches `{{<inside>}}` directives.
 var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
-// @deliberate: dispatchDirectiveRe / directiveBodyRe accept the six substitution
-// kinds: `claim`, `params`, `nodes`, `trigger`, `child`, and `messages`.
-// The legacy `deps.X.Y` form retired post-2026-05-14. The `trigger` and
-// `child` kinds were added by spec §E14 (data-platform-extensions). The
-// `messages` kind was added by the 2026-06-14 message-schema-layer plan
-// (typed-message body addressing).
-//
-// directiveBodyRe further parses the inside of `{{...}}` against the
-// known source kinds.
 var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|trigger|child|messages)\.(.+)$`)
 
-// RefValidationMode is the operator-set, startup-level mode governing
-// ALL registration-time reference validation across service types
-// (executors, stores/claim-producers, named locks, executor schemas).
-// It is set once by the operator, not per-template, and decides whether
-// a reference whose target cannot be validated at registration is a hard
-// error, a silent skip, or whether reference validation runs at all.
-//
-// The zero value is RefValidateAll (strict): a RegistryHooks left
-// without an explicit mode validates every reference and hard-fails on
-// any it cannot validate. This keeps unit tests and any caller that
-// forgets to set the mode on the strictest, safest footing.
-//
-// Whatever a relaxed mode (available/none) skips at registration is not
-// skipped forever — it is mandatory at instantiation (concept:instance),
-// where all referenced services exist.
-//
 //	@concept: template
 type RefValidationMode int
 
 const (
-	// RefValidateAll (default, zero value) validates every referenced
-	// service and hard-fails registration if any reference cannot be
-	// validated — including a not-yet-provisioned executor/store/lock
-	// (declared=false) and an executor whose expected_attributes_schema
-	// is not visible (the readOnly leg becomes a hard error instead of a
-	// silent skip).
 	RefValidateAll RefValidationMode = iota
-	// @deliberate: RefValidateAvailable validates references to
-	// provisioned services (declared=true / schema visible) and skips
-	// references whose target is not yet provisioned. A
-	// genuinely-invalid reference to a PROVISIONED service is still
-	// rejected; this mode is the always-on soft-fail behaviour made
-	// explicit and uniform across the executor / store / lock / schema
-	// legs.
 	RefValidateAvailable
-	// @deliberate: RefValidateNone performs no registration-time
-	// reference validation at all: the four reference legs
-	// (executor-declared, store-declared, lock-declared, executor-schema)
-	// are skipped entirely regardless of provisioning state.
 	RefValidateNone
 )
 
-// String returns the operator-facing spelling of the mode — the same
-// tokens accepted by the templates.ref_validation_mode config key
-// (all / available / none).
 func (m RefValidationMode) String() string {
 	switch m {
 	case RefValidateAll:
@@ -140,15 +67,6 @@ func (m RefValidationMode) String() string {
 	return fmt.Sprintf("RefValidationMode(%d)", int(m))
 }
 
-// refValidationModeRejection builds the self-documenting message every
-// reference-validation failure carries: it states the failing
-// reference (refDesc), names the active mode, states that the mode is
-// what made the unvalidatable reference fatal, and names the
-// templates.ref_validation_mode config key with its relaxed settings —
-// so the register-before-provision workflow is discoverable from the
-// error message itself. All four reference legs (executor-declared,
-// store-declared, named-lock-declared, executor-schema) share this
-// builder so the four messages stay consistent.
 func refValidationModeRejection(refDesc string, mode RefValidationMode) string {
 	return fmt.Sprintf(
 		"%s; reference validation failed under mode %q — mode %q makes a reference that "+
@@ -158,114 +76,32 @@ func refValidationModeRejection(refDesc string, mode RefValidationMode) string {
 		refDesc, mode, mode)
 }
 
-// RegistryHooks bundles the registry-dependent lookups the validator
-// uses. All fields may be nil; a nil hook short-circuits to "skip the
-// corresponding check," which is useful for unit tests that don't wire
-// a registry.
-//
-// Per the v3 stores-redesign, rimsky no longer recognises pick-policy
-// selectors — the store is the only entity that does. The v2
-// IsPickPolicySelector hook (and the "pick-policy claims must be intent:
-// rw" check it drove) was deleted as part of the inertness cleanup.
 type RegistryHooks struct {
-	// RefValidationMode is the operator-set registration-time reference-
-	// validation mode (all / available / none). Zero value =
-	// RefValidateAll (strict). Governs validateExecutorDeclared,
-	// validateStores' StoreDeclared leg, validateLocks' NamedLockDeclared
-	// leg, and the executor-schema legs in validateAttributesSchema.
 	RefValidationMode RefValidationMode
 
-	// StoreDeclared returns true when `name` is declared in the
-	// operator's stores: block. Used by validateStores to reject
-	// references to unknown stores.
 	StoreDeclared func(name string) bool
-	// NamedLockDeclared returns true when `name` is declared in the
-	// operator's named_locks: block. Drives the "templates reference
-	// named locks by name only" check.
 	NamedLockDeclared func(name string) bool
-	// ExecutorDeclared returns true when `name` is declared in the
-	// operator's executors: block (rimsky.yml per docs/specs/2026-05-
-	// 01-control-plane-and-store-lifecycle-design.md §3.1). Drives the
-	// per-node executor-name check.
 	ExecutorDeclared func(name string) bool
 
-	// ExecutorDeclaredTags returns the set of tag names the named
-	// executor advertises via
-	// proto:executor_observability.proto::ObservabilityCapabilities.declared_tags
-	// (concept:terminal-tag). Used by validateNodeSubscriptions to
-	// reject `when: "<tag>" in payload.tags` predicates that name a
-	// tag the executor does not declare. nil → skip the check (e.g.
-	// tests that don't wire an observability cache).
 	ExecutorDeclaredTags func(name string) ([]string, bool)
 
-	// ExecutorDeclaredErrorClasses returns the set of error-class paths
-	// the named executor advertises via
-	// ObservabilityCapabilities.declared_error_classes. Mirrors
-	// ExecutorDeclaredTags. Used by validateErrorTypes' vocabulary
-	// union and by the validator's range-check of terminal/error/*
-	// subscriptions against the sender's executor. nil → the executor
-	// contributes no vocabulary and the subscription check is skipped.
-	//
 	//	@concept: signal
 	ExecutorDeclaredErrorClasses func(name string) ([]string, bool)
 
-	// StoreDeclaredErrorClasses returns the set of error-class paths
-	// the named claim producer advertises via
-	// claim_producer.proto::CapabilitiesResponse.declared_error_classes
-	// (captured by the startup capabilities handshake). Used by
-	// validateErrorTypes: an `error_types:` key is attributable when it
-	// matches the executor's declared classes, the `acquire/*` synthetic
-	// family, or the declared classes of any producer reachable from the
-	// node's `stores:` block. nil → producers contribute no vocabulary.
-	//
 	//	@concept: signal
 	//	@concept: error-policy
 	StoreDeclaredErrorClasses func(name string) ([]string, bool)
 
-	// ExecutorExpectedAttributesSchema returns the JSON Schema bytes the
-	// named executor advertises via
-	// ObservabilityCapabilities.expected_attributes_schema. Empty bytes
-	// mean "no schema; accept any attributes." nil → skip the check.
-	//
-	// Used by checkAttributesSchema to (a) merge into the per-node
-	// effective attribute schema at registration and (b) recognise
-	// properties the executor marks `readOnly: true` (executor-write-
-	// back populates at commit; template need not declare a source or
-	// default).
 	ExecutorExpectedAttributesSchema func(name string) ([]byte, bool)
 
-	// StoreAdvertisesDataProcessing returns true when the named store's
-	// Capabilities.Protocols includes "data_processing". Used to gate
-	// `claims: lifetime: durable` per spec §Lifetime and the asset
-	// pattern (the asset pattern requires DataProcessing-capable
-	// producers). nil → skip the check.
 	StoreAdvertisesDataProcessing func(name string) bool
 
-	// StoreAdvertisesSplitScope returns true when the named store's
-	// Capabilities.SupportsSplitScope is set. Used to gate
-	// `fan_out:` declarations per spec §Fan-out template DSL.
-	// nil → skip the check.
 	StoreAdvertisesSplitScope func(name string) bool
 
-	// KindAliases is the static `kind:` → executor-alias resolver used by
-	// validateKindDeclaration to range-check the optional `kind:` field
-	// on each template node. Populated at supervisor startup alongside
-	// the InProcessRegistry (one entry per inproc handler with a kind
-	// sugar). nil → any node that declares `kind:` is rejected as
-	// unregistered, mirroring the behavior of an unknown executor.
-	//
-	// The validator only READS from the map; the canonicalizer
-	// (`CanonicalizeKindSugar`) performs the kind→executor substitution
-	// after validation succeeds, so the validator itself never mutates
-	// the spec.
-	//
 	// @concept: node
 	KindAliases *KindAliasMap
 }
 
-// ValidateTemplate walks a parsed template and reports errors per spec
-// §18. hooks supplies registry-dependent lookups; pass an empty
-// RegistryHooks to skip them.
 func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult {
 	var res ValidationResult
 	if spec == nil {
@@ -280,9 +116,6 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	}
 	validateFrameTimeout(spec, &res)
 
-	// @deliberate: D1 — canonicalize nested `graphs:` shape into flat
-	// Nodes for the downstream per-node validation. Pre-v1 accepts both
-	// shapes; the canonicalizer rejects templates that mix them.
 	canonicalizeGraphs(spec, &res)
 
 	if len(spec.Nodes) == 0 {
@@ -290,14 +123,6 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		return res
 	}
 
-	// @deliberate: Template-author defaults validation runs after
-	// canonicalization so it sees the flattened Nodes list and can
-	// cross-check each `defaults.attributes.by_executor.<name>` routing
-	// key against the template's actual executor names. Per the
-	// structural-inertness discipline (concept:inertness), only routing
-	// keys are inspected; fragment values are never read. Hooks are
-	// threaded so the known-executor set honors `kind:` sugar via the
-	// alias map.
 	validateDefaults(spec, hooks, &res)
 
 	declared := make(map[string]int, len(spec.Nodes))
@@ -318,22 +143,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		declared[n.Type] = i
 	}
 
-	// @deliberate: `messages:` registry validation runs before the
-	// per-node passes so downstream cross-checks (subscribes'
-	// message-type-shape leg, substitution-ref future passes) can consult
-	// the declared set. `declared` (real node-types) is threaded through
-	// so the validator can reject a declared message-type whose value
-	// also exists as a node-type — the slash-bearing rule keeps real
-	// node-types out of the message-type partition, but a defensive
-	// cross-check at the message-side declaration surfaces the collision
-	// even when the grammar happens to be lax.
 	declaredMessages := validateMessages(spec, declared, &res)
-	// @deliberate: body-field set per declared message-type, built once
-	// for the validator run. Threaded into validateSubscribes so the CEL
-	// `when:` cross-check on `payload.attributes_delta.<field>` (the
-	// bridge field the message-virtual-node settle signal populates from
-	// the body) matches the rigor of the `{{messages.T.field}}`
-	// substitution cross-check below.
 	messageBodyFieldsForCEL := buildMessageBodyFieldSet(spec)
 
 	for i, n := range spec.Nodes {
@@ -343,12 +153,6 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateExecutorCoherence(n, base, hooks, &res)
 		validateExecutorDeclared(n, base, hooks, &res)
 		validateKindDeclaration(n, base, hooks, &res)
-		// @deliberate: Message-emitter node-kind (`emits_message:`) —
-		// registration-time validation that the named type is declared in
-		// the template's `messages:` registry and the node's `attributes:`
-		// block matches the destination type's `body_schema` exactly. Per
-		// concept:message-emitter-node: the attribute set IS the body, so
-		// a superset is rejected (hidden state has nowhere to land).
 		validateEmitsMessage(n, base, spec, declaredMessages, &res)
 		validateStores(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
@@ -358,41 +162,11 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateDispatchDeadlines(n, base, &res)
 		validateHolds(n, base, spec, declared, &res)
 		validateFanOut(n, base, hooks, &res)
-		// @deliberate: operator-facing tags admit only
-		// `{{params.<key>}}` substitution at materialization time.
 		validateTagsAtRegistration(n, base, spec, &res)
 	}
 
-	// @deliberate: Publishers block validation. The persisted column
-	// is `target_node TEXT NOT NULL` with no empty-string sentinel, so
-	// reject empty entries here rather than surfacing a pgx NOT NULL
-	// violation at instance-create time. Per
-	// spec:2026-05-17-sensor-messaging-unification-design §Open items #1.
-	//
-	// `declaredMessages` is threaded through so publishers' `message_type`
-	// references can be cross-checked against the template's `messages:`
-	// registry at registration: a publisher declaring an undeclared
-	// `message_type` would otherwise register and silently fail at every
-	// emit (the receipt-time gate returns 400 for the lifetime of every
-	// instance). Per spec §Components / Message-schema registry: the
-	// registry's whole point is to surface the mismatch at template-author
-	// time, not at runtime.
 	validatePublishers(spec, declared, declaredMessages, &res)
 
-	// @deliberate: Post-pass `{{messages.<type>.<field>}}` cross-check.
-	// For each directive: confirm `<type>` is declared in the template's
-	// `messages:` registry, and (when a field is named) confirm `<field>`
-	// is a property in that entry's body_schema. Bare-form
-	// `messages.<type>` (whole-body pull) is admitted without a field
-	// check. The same extractor feeds the auto-subscribe inverse-edge
-	// builder below — one walk, two consumers.
-	//
-	// Per the spec §Load-bearing property "one substitution engine, two
-	// surfaces" — the validator's cross-check rejects typo'd `<type>` /
-	// `<field>` directives at registration; the runtime resolver is the
-	// dynamic defense for the edge case that the validator cannot catch
-	// (runtime-interpolated directives).
-	//
 	// @concept: message-schema
 	messageRefs := ExtractMessageRefsFromTemplate(*spec)
 	messageBodyFields := buildMessageBodyFieldSet(spec)
@@ -408,15 +182,10 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 				continue
 			}
 			if ref.Field == "" {
-				// @deliberate: bare-form pull — whole body, no field to cross-check.
 				continue
 			}
 			fields, ok := messageBodyFields[ref.MessageType]
 			if !ok {
-				// @deliberate: the message-type is declared but has no
-				// body_schema (empty body is admitted by validateMessages).
-				// A directive that names a field against an empty-body type
-				// cannot resolve and is rejected at registration.
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
 					Msg: fmt.Sprintf("substitution ref `messages.%s.%s` reads a field but message type %q declares no body_schema (empty body)",
@@ -434,23 +203,10 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		}
 	}
 
-	// @deliberate: post-pass substitution-ref cross-checks. Both checks
-	// consume the same parsed `{{nodes.<X>.<kind>.<name>}}` directives
-	// extracted from the attribute schemas. They emit independent
-	// rejections so an operator sees the full set in one round-trip.
-	//
-	// - validateSubstitutionRefExistence — does the named sender exist?
-	//   does the named attribute/event exist on the sender?
-	// - validateSubstitutionRefCoverage — does the receiver carry an
-	//   explicit subscribes: entry whose (sender, type) would deliver
-	//   the implied signal? Per decision:substitution-ref-coverage-required.
 	refs := ExtractSubstitutionRefsFromTemplate(*spec)
 	validateSubstitutionRefExistence(spec, declared, hooks, refs, &res)
 	validateSubstitutionRefCoverage(spec, refs, &res)
 
-	// @deliberate: Hard-dep cycle detection. The cascade walker assumes the hard-dep
-	// assumes the hard-dep edge graph is acyclic; surface cycles at
-	// registration so they cannot reach runtime.
 	if _, err := BuildHardDepEdges(*spec); err != nil {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: "graphs",
@@ -461,9 +217,6 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	return res
 }
 
-// attributeKeyDeclared reports whether `key` appears under
-// sender.Attributes.Schema.properties. Pure-cascade senders or senders
-// without an attribute schema return false (no attribute to read).
 func attributeKeyDeclared(sender TemplateNodeDef, key string) bool {
 	if sender.Attributes == nil || len(sender.Attributes.Schema) == 0 {
 		return false
@@ -476,10 +229,6 @@ func attributeKeyDeclared(sender TemplateNodeDef, key string) bool {
 	return declared
 }
 
-// validateFrameTimeout enforces the surviving frame template requirement:
-// frame_timeout_ms ≥ 60000 when set. The pre-message-schema-layer
-// `frame_resolution_mode:` toggle (coalesce | serial_queue) retires; one
-// message per frame is the only delivery shape.
 func validateFrameTimeout(spec *TemplateSpec, res *ValidationResult) {
 	if spec.FrameTimeoutMs != 0 && spec.FrameTimeoutMs < FrameTimeoutMinMs {
 		res.Errors = append(res.Errors, ValidationError{
@@ -490,20 +239,6 @@ func validateFrameTimeout(spec *TemplateSpec, res *ValidationResult) {
 	}
 }
 
-// effectiveExecutor returns the executor identity a template node
-// resolves to at registration time, honoring the `kind:` sugar. When
-// the node declares `executor:` directly, that wins; otherwise, when
-// the node declares `kind:` and the alias map resolves it, the
-// kind-aliased executor is returned. Returns "" when neither resolves.
-//
-// This helper lets the per-node validation legs that key on the
-// executor identity (executor-schema reference legs, executor-name
-// known-set for defaults, mutual-exclusion against delegate) treat
-// kind-sugar nodes the same as nodes declaring the executor directly.
-// The validator MUST NOT mutate the input spec (CanonicalizeKindSugar
-// runs after validation succeeds; the caller hashes the spec bytes
-// for content-addressed identity), so this helper is read-only.
-//
 // @concept: node
 func effectiveExecutor(n TemplateNodeDef, hooks RegistryHooks) string {
 	if n.Executor != "" {
@@ -516,21 +251,6 @@ func effectiveExecutor(n TemplateNodeDef, hooks RegistryHooks) string {
 	return alias
 }
 
-// validateDefaults inspects only the routing keys under
-// `spec.Defaults.Attributes.ByExecutor`, rejecting entries whose executor
-// name does not match any node's `Executor`. The fragment values are
-// never inspected (preserves the structural-inertness discipline for
-// attribute values; concept:inertness).
-//
-// A node declaring `kind: X` resolves through the alias map to the same
-// executor identity its post-canonicalize form would carry, so a
-// template that legitimately combines
-// `defaults.attributes.by_executor[<kind-aliased executor>]` with
-// `kind: X` is accepted. Without this, the L1 template-defaults surface
-// would silently stop working for kind-sugar nodes (the kind-aliased
-// executor never enters the known set, since `n.Executor` is empty
-// pre-canonicalize).
-//
 // @concept: attribute
 // @concept: node
 func validateDefaults(spec *TemplateSpec, hooks RegistryHooks, res *ValidationResult) {
@@ -556,8 +276,6 @@ func validateDefaults(spec *TemplateSpec, hooks RegistryHooks, res *ValidationRe
 	}
 }
 
-// ApplyFrameResolutionDefaults fills FrameTimeoutMs with the spec's
-// default (FrameTimeoutDefaultMs) when zero.
 func ApplyFrameResolutionDefaults(spec *TemplateSpec) {
 	if spec == nil {
 		return
@@ -567,33 +285,6 @@ func ApplyFrameResolutionDefaults(spec *TemplateSpec) {
 	}
 }
 
-// validateErrorTypes range-checks every policy action against the
-// canonical 4-value vocabulary (`pass | give_up | retry |
-// discard_claims_then_retry`). The pre-2026-05-23 vocabulary
-// (`invalidate`, `discard_then_retry`, `resume_then_retry`) all reject
-// through the generic check with the new error message. Per
-// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`.
-//
-// Also range-checks each error-class key against the union of the
-// declared vocabularies a key may legitimately come from:
-//
-//   - the node's executor's declared_error_classes
-//     (executor_observability.proto),
-//   - the reserved synthetic `acquire/*` family and the other
-//     runtime-synthesized classes (they originate rimsky-side),
-//   - the declared_error_classes of every claim producer reachable
-//     from the node's `stores:` block (claim_producer.proto) — the
-//     runtime routes producer-classified acquisition failures by
-//     these, so the validator must accept what the runtime routes.
-//
-// A key attributable to no declared vocabulary is an advisory WARNING
-// (res.Warnings), never a hard rejection: peers MAY declare nothing,
-// and an undeclared vocabulary must not lock operators out of routing
-// classes the system itself emits. Silent-skip only when no vocabulary
-// information is available at all (every hook unwired or every lookup
-// returns ok=false — e.g. unit tests without a registry, or every
-// referenced peer unreachable at registration).
-//
 //	@concept: error-policy
 //	@concept: signal
 func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks RegistryHooks, res *ValidationResult) {
@@ -603,14 +294,6 @@ func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks 
 		"retry":                     true,
 		"discard_claims_then_retry": true,
 	}
-	// @deliberate: Resolve the executor identity through
-	// `effectiveExecutor` so the error-class vocabulary check applies
-	// uniformly whether the node was authored with `executor:` directly
-	// or with the `kind:` sugar. Without this, a `kind:`-declared node
-	// would silently skip per-class validation (no `executorClasses`
-	// fetched, `vocabularyKnown=false`, every class accepted), defeating
-	// the spec's "kind is sugar for executor" claim — same fix shape as
-	// `validateAttributesSchema`.
 	executorForClasses := effectiveExecutor(n, hooks)
 	var executorClasses []string
 	vocabularyKnown := false
@@ -661,13 +344,6 @@ func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks 
 	}
 }
 
-// isRuntimeSynthesizedErrorClass reports whether className is a
-// runtime-emitted (not executor-emitted) error class. Operators may
-// declare `error_types:` policies for these regardless of what the
-// node's executor advertises; the range-check skips them. Includes
-// the `acquire/*` synthetic prefix (pre-dispatch acquisition failure
-// per concept:error-policy) and the attribute-pipeline error classes
-// emitted by runtime/runner.go and runtime/runner_terminal.go.
 func isRuntimeSynthesizedErrorClass(className string) bool {
 	if strings.HasPrefix(className, "acquire/") {
 		return true
@@ -684,11 +360,6 @@ func isRuntimeSynthesizedErrorClass(className string) bool {
 	return false
 }
 
-// errorClassMatchesDeclared reports whether class matches any entry in
-// declared. An entry matches if it equals class exactly, or if it ends
-// with `*` and is a (slash-or-end-bounded) prefix of class. Per
-// `proto:executor_observability.proto::ObservabilityCapabilities.declared_error_classes`.
-//
 //	@concept: signal
 func errorClassMatchesDeclared(class string, declared []string) bool {
 	for _, d := range declared {
@@ -705,23 +376,11 @@ func errorClassMatchesDeclared(class string, declared []string) bool {
 	return false
 }
 
-// validateAcquireUnavailablePolicyAdvised emits an advisory warning
-// (not an error) when a node declares `stores:` but does NOT declare an
-// `error_types: { "acquire/unavailable": ... }` policy. Pre-dispatch
-// acquisition failure routes through the operator's `error_types:`
-// chain via synthetic class `acquire/unavailable`; absent a declared
-// policy the default is fail-fast (give_up("unknown_error_class")), not
-// implicit retry. Operators that want retry on contention must opt in
-// explicitly.
-//
 //	@concept: error-policy
 func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res *ValidationResult) {
 	if len(n.Stores) == 0 {
 		return
 	}
-	// @deliberate: skip the advisory when an entry matches
-	// `acquire/unavailable` exactly OR via a prefix wildcard (e.g.
-	// `acquire/*`).
 	for key := range n.ErrorTypes {
 		if key == "acquire/unavailable" {
 			return
@@ -741,42 +400,12 @@ func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res
 	})
 }
 
-// validateSubscribes enforces SubscriptionEntry shape rules under the
-// 2026-05-23 signal-taxonomy reshape: `type:` is a canonical signal
-// type-path (exact or trailing-`*` prefix); `when:` is an optional CEL
-// predicate over the signal payload. The pre-reshape structured filter
-// dimensions (on/when/outcome/error_class/reason/name/kind/sender/
-// sender_kind/target) are gone.
-//
-// `declaredMessages` is the set of message-type-paths declared in the
-// template's `messages:` registry. A subscription whose `node:` value is
-// of message-type shape (slash-bearing, not a declared node-type) must
-// match a declared `messages:` entry — Pass 5 of the 2026-06-14 message-
-// schema-layer reshape tightens the Pass 4 loosened rule, which admitted
-// any slash-bearing value.
-//
 //	@concept: node-subscription
 //	@concept: signal
 //	@concept: message-schema
-//
-// `messageBodyFields` carries, per declared message-type, the set of
-// top-level property names in its `body_schema`. Threaded into the
-// CEL `when:` compile for message-virtual-node subscriptions so a
-// `payload.attributes_delta.<field>` reference is cross-checked
-// against the body-schema's field set — the same registration-time
-// rigor the `{{messages.T.field}}` substitution validator applies.
 func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int, declaredMessages map[string]struct{}, messageBodyFields map[string]map[string]struct{}, hooks RegistryHooks, tmpl *TemplateSpec, res *ValidationResult) {
 	for i, s := range n.Subscribes {
 		sbase := fmt.Sprintf("%s.subscribes[%d]", base, i)
-		// @deliberate: cascade-shape flags are required — no defaults
-		// apply. Record missing-flag rejections but DO NOT short-circuit
-		// the rest of the per-entry checks: the operator should see every
-		// problem in one round-trip (node-declared, type-canonical,
-		// when-CEL, terminal/event vocabulary), not peel them one
-		// resubmit at a time. The downstream cross-cutting-incoherence
-		// check below guards on `refreshKnown` so it only fires when the
-		// ForceUpstreamRefresh pointer is non-nil. Per
-		// decision:cascade-flags-required-no-defaults.
 		wakeKnown := s.WakeOnChange != nil
 		refreshKnown := s.ForceUpstreamRefresh != nil
 		if !wakeKnown {
@@ -791,13 +420,6 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				Msg:  "force_upstream_refresh is required (true or false); no default applies",
 			})
 		}
-		// @deliberate: node and Instance are mutually exclusive. Check
-		// the structural mutex BEFORE the cross-cutting +
-		// force_upstream_refresh coherence check — an entry carrying
-		// both `node:` and `instance: true` is not actually
-		// cross-cutting; surfacing the mutex violation first gives the
-		// operator the fundamental problem rather than a derived
-		// "incoherent combination" message.
 		if s.Node == "" && !s.Instance {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase,
@@ -812,13 +434,6 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			})
 			continue
 		}
-		// @deliberate: cross-cutting + force_upstream_refresh is
-		// incoherent — a cross-cutting (instance: true) subscription
-		// names no specific sender, so there is no upstream to refresh.
-		// Reject the combination at registration. Only fire when the
-		// flag is known (refreshKnown); the missing-flag rejection above
-		// is the right diagnosis when ForceUpstreamRefresh is nil. Per
-		// decision:cross-cutting-no-force-upstream-refresh.
 		if refreshKnown && s.Instance && *s.ForceUpstreamRefresh {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase,
@@ -826,18 +441,6 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			})
 			continue
 		}
-		// @deliberate: `node:` must reference a declared node-type OR a
-		// declared message-type from the template's `messages:` registry.
-		// Message arrival is a virtual-node settle (per the 2026-06-14
-		// message-schema-layer reshape): receivers subscribe to a
-		// message-type via `node: <message-type>, type: terminal/success`.
-		//
-		// Real node-types are identifier-shaped (no slash, validated
-		// elsewhere); message-type-paths are slash-bearing. The slash
-		// check cleanly partitions the two surfaces. A slash-bearing
-		// `node:` MUST match a declared `messages:` entry, otherwise the
-		// subscription registers but can never fire (the cascade walker
-		// has no virtual-node-type to walk).
 		if s.Node != "" {
 			_, isDeclaredNode := declared[s.Node]
 			_, isDeclaredMessage := declaredMessages[s.Node]
@@ -857,8 +460,6 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				continue
 			}
 		}
-		// @deliberate: `type:` is required and must match the canonical
-		// taxonomy.
 		if strings.TrimSpace(s.Type) == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase + ".type",
@@ -873,28 +474,9 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			})
 			continue
 		}
-		// @deliberate: `when:` must compile against the resolved payload
-		// schema. When the subscription is on a message-virtual-node (the
-		// `node:` value is a declared message-type), also cross-check
-		// chained `payload.attributes_delta.<field>` references against
-		// the message-type's body_schema. Without this leg the CEL side
-		// would silently admit body-field typos while the substitution
-		// validator's {{messages.T.field}} leg rejects them — asymmetric
-		// coverage of STORY-typed-message-substitution's falsifier
-		// ("a typo in a `messages:` body field on either side registers
-		// without error"). A real-node subscription falls back to the bare
-		// CompileWhen path, which uses the canonical taxonomy's payload
-		// schema for the top-level field set only.
 		if s.When != "" {
 			var compileErr error
 			if _, isMessageType := declaredMessages[s.Node]; isMessageType {
-				// @deliberate: body-schema entry may be absent (declared
-				// with no body_schema or an unparseable one — both
-				// surfaced by validateMessages earlier). Treat absent as
-				// empty so a `payload.attributes_delta.<field>` reference
-				// is rejected with the "not in body_schema" diagnostic; an
-				// empty-body message-type cannot legally drive a CEL
-				// body-field read.
 				bodyFields, present := messageBodyFields[s.Node]
 				if !present {
 					bodyFields = map[string]struct{}{}
@@ -910,34 +492,12 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				})
 			}
 		}
-		// @deliberate: cross-check `terminal/error/<class>` exact-path
-		// subscriptions against the union of the sender's declared
-		// vocabularies — its executor's declared_error_classes AND every
-		// producer in its stores: block (producer-classified acquisition
-		// failures land as `terminal/error/<producer class>`, so the
-		// validator must accept what the runtime routes). Match rule:
-		// leaf matches a declared class iff (a) the class is exact and
-		// equals leaf, or (b) the class ends in `*` and is a prefix of
-		// leaf. An unmatched leaf is an advisory WARNING, never a hard
-		// rejection — same semantics as `validateErrorTypes`: peers MAY
-		// declare nothing, and an incomplete vocabulary must not lock
-		// operators out of routing classes the system emits. Silent-skip
-		// when no vocabulary information is available at all (hooks
-		// unwired / every lookup ok=false). Skip the cross-check when
-		// the subscription names a message-virtual-node (not a declared
-		// real node-type) — message-virtual-nodes have no executor /
-		// stores vocabulary to consult.
 		_, isRealNode := declared[s.Node]
 		if isRealNode && tmpl != nil && strings.HasPrefix(s.Type, "terminal/error/") &&
 			!strings.HasSuffix(s.Type, "*") {
 			senderIdx := declared[s.Node]
 			sender := tmpl.Nodes[senderIdx]
 			leaf := strings.TrimPrefix(s.Type, "terminal/error/")
-			// @deliberate: bypass runtime-synthesized error classes
-			// (`acquire/*` and the attribute-pipeline classes) — they
-			// are emitted by rimsky, not by any peer, so no vocabulary
-			// declares them. Mirrors the bypass in
-			// `validateErrorTypes` above.
 			if !isRuntimeSynthesizedErrorClass(leaf) {
 				vocabularyKnown := false
 				matched := false
@@ -965,16 +525,6 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				}
 			}
 		}
-		// @deliberate: Per TD-collapse-named-event-to-tags the
-		// `event/<name>` subscription form has retired — replaced by
-		// `type: terminal/* when: "<tag>" in payload.tags`. The
-		// tag-vocabulary cross-check (concept:terminal-tag gate-1)
-		// keys on the CEL when: predicate's literal tag operands: a
-		// `"foo" in payload.tags` clause is rejected at registration
-		// when "foo" is not in the emitter's declared_tags. Same
-		// "advisory warning, not hard rejection" posture as the
-		// error-class block above so an incomplete declared_tags
-		// vocabulary does not lock operators out.
 		if isRealNode && tmpl != nil && s.When != "" && hooks.ExecutorDeclaredTags != nil {
 			senderIdx := declared[s.Node]
 			sender := tmpl.Nodes[senderIdx]
@@ -998,17 +548,6 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			}
 		}
 	}
-	// @deliberate: duplicate-key conflict detection. Two entries with
-	// the same (sender, type, when, scope, frame) but different
-	// cascade-shape flag values would silently dedup in the edge map
-	// (containsEdge is a full-equality check including the flags) —
-	// leaving the first-written entry's flags in force and dropping the
-	// second's without an operator-visible diagnostic. That's exactly
-	// the kind of invisible behavior
-	// decision:cascade-flags-required-no-defaults set out to eliminate,
-	// so we reject conflicting flag values at registration.
-	// Exact-duplicate entries (same key, same flags) are permitted and
-	// collapse harmlessly at the edge builder.
 	type subKey struct {
 		node     string
 		instance bool
@@ -1023,8 +562,6 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 	groups := map[subKey][]subEntry{}
 	for i, s := range n.Subscribes {
 		if s.WakeOnChange == nil || s.ForceUpstreamRefresh == nil {
-			// @deliberate: missing-flag entries already rejected above;
-			// skip the conflict pass for them (no flag value to compare).
 			continue
 		}
 		k := subKey{
@@ -1062,16 +599,6 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 	}
 }
 
-// validateSubstitutionRefExistence walks every parsed substitution ref
-// and confirms (a) the named sender node-type exists in the template
-// and (b) the named attribute key / event name is declared on that
-// sender. Sibling to validateSubstitutionRefCoverage: both consume the
-// same `refs` map but answer different questions — does the ref name a
-// real symbol on a real upstream (this function) vs. does the receiver
-// declare a covering subscription for that symbol
-// (validateSubstitutionRefCoverage). Both checks emit independent
-// rejections so an operator sees the full set in one round-trip.
-//
 //	@concept: attribute
 //	@concept: node-subscription
 func validateSubstitutionRefExistence(
@@ -1109,26 +636,6 @@ func validateSubstitutionRefExistence(
 	}
 }
 
-// validateSubstitutionRefCoverage walks every substitution ref per
-// receiver and rejects refs that no `subscribes:` entry matches. Emits
-// one structured `substitution_ref_uncovered` entry into
-// `res.StructuredErrors` per uncovered ref so the operator receives a
-// drop-in copy-pasteable `suggested_subscribes_entry` alongside the
-// human-readable note.
-//
-// Coverage rules (per decision:coverage-wildcard-asymmetry):
-//
-//	{{nodes.X.attribute.Y}} <- attribute/Y/changed OR attribute/*
-//	{{nodes.X.attribute}}   <- attribute/* only (wildcard required)
-//
-// The asymmetry — per-field reads are covered by the wildcard but the
-// whole-pull is NOT covered by a per-field subscription — keeps the
-// coverage check conservative: a whole-pull read sees every field on
-// the sender, so the subscription has to be the wildcard that fires on
-// any field change. Symmetric coverage would silently miss field
-// additions to the sender that the receiver's whole-pull would then
-// see uncovered.
-//
 //	@concept: node-subscription
 //	@concept: attribute
 //	@decision: substitution-ref-coverage-required
@@ -1138,11 +645,6 @@ func validateSubstitutionRefCoverage(tmpl *TemplateSpec, refs map[string][]subst
 	if tmpl == nil {
 		return
 	}
-	// @deliberate: build a per-receiver index of subscribes: entries
-	// keyed by (sender node-type, signal type). The receiver's coverage
-	// check reads only this index; cross-cutting entries (Instance=true)
-	// name no specific sender and never cover a per-sender substitution
-	// ref.
 	indexByReceiver := make(map[string]map[coverageEntryKey]struct{}, len(tmpl.Nodes))
 	for _, n := range tmpl.Nodes {
 		idx := map[coverageEntryKey]struct{}{}
@@ -1184,29 +686,15 @@ func validateSubstitutionRefCoverage(tmpl *TemplateSpec, refs map[string][]subst
 	}
 }
 
-// coverageEntryKey is the (sender node-type, signal type-path) tuple
-// used to index a receiver's subscribes: block for the coverage check.
 type coverageEntryKey struct {
 	sender string
 	typ    string
 }
 
-// coverageMatch reports whether `idx` (the receiver's per-sender,
-// per-type subscription index) covers `ref`. Returns the canonical
-// "suggested" type-path the operator should add when the ref is
-// uncovered.
-//
-// Per decision:coverage-wildcard-asymmetry:
-//
-//	{{nodes.X.attribute.Y}} → required attribute/Y/changed; covered by
-//	                          exact attribute/Y/changed OR attribute/*
-//	{{nodes.X.attribute}}   → required attribute/*; covered only by
-//	                          exact attribute/* (wildcard required)
 func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (suggestedType string, covered bool) {
 	switch ref.TopicKind {
 	case "attribute":
 		if ref.Name == "" {
-			// @deliberate: whole-pull — only the wildcard covers it.
 			suggestedType = "attribute/*"
 			if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: "attribute/*"}]; ok {
 				return suggestedType, true
@@ -1222,34 +710,13 @@ func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (sugg
 		}
 		return suggestedType, false
 	}
-	// @deliberate: unknown topic kind — treat as covered to avoid
-	// spurious rejections; the directive parser admits only attribute so
-	// this is unreachable.
 	return "", true
 }
 
 func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
-	// @deliberate: D2 — `executor:`, `delegate:`, and `emits_message:`
-	// are mutually exclusive. Per spec §Sub-graphs / Identity and
-	// absorption + concept:message-emitter-node, a node declares EXACTLY
-	// ONE dispatch mode. Any two set is rejected; all three likewise.
-	// The "none set" path is legal for pure-cascade pseudo-nodes —
-	// pure-cascade is a fourth implicit mode, not a fourth declared one.
-	//
-	// Post-absorption skip: when canonicalizeGraphs has absorbed a
-	// absorbed a sub-graph entry into this calling node, `Executor` is
-	// the entry's (canonicalizer-merged), not the author's. The
-	// mutual-exclusion check on the author's declaration moved to
-	// `absorbEntryIntoCaller`, where it sees the original caller +
-	// entry shapes before the merge collapses them. Skipping here
-	// avoids a false positive on every absorbed caller.
 	hasExecutor := n.Executor != ""
 	hasDelegate := n.Delegate != ""
 	hasEmitsMessage := n.EmitsMessage != ""
-	// @deliberate: two-set combinations (the absorbed-caller skip applies
-	// only to the executor/delegate pair — a canonicalizer that ever
-	// absorbs onto an emit-node would be a fresh bug, but the rejection
-	// here surfaces the bad combination either way).
 	if hasExecutor && hasDelegate && !n.IsSubgraphEntryAbsorbed {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: fmt.Sprintf("%s.delegate", base),
@@ -1274,17 +741,7 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHoo
 				n.Delegate, n.EmitsMessage),
 		})
 	}
-	// @deliberate: "Neither set" check honors `kind:` sugar — a kind-sugar
-	// node resolves to an executor via the alias map at canonicalization,
-	// so it has an executor for purposes of the pure-cascade advisory even
-	// though `n.Executor == ""` pre-canonicalize. Without this, every
-	// kind-sugar template that declares attributes (the typical
-	// `loop_counter` shape) emits a spurious "pure-cascade node declares
-	// attributes" warning.
 	if !hasExecutor && !hasDelegate && !hasEmitsMessage && effectiveExecutor(n, hooks) == "" {
-		// @deliberate: pure-cascade pseudo-node — legal. Warn only if an
-		// attribute schema is declared (those properties have no executor
-		// to consume them).
 		if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 			res.Warnings = append(res.Warnings, ValidationWarning{
 				Path: fmt.Sprintf("%s.attributes", base),
@@ -1294,14 +751,6 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHoo
 	}
 }
 
-// validateKindDeclaration rejects nodes that declare both `kind:` and
-// `executor:` (the two are mutually exclusive) and nodes whose `kind:`
-// value resolves to no registered alias. The kind → executor
-// substitution itself is performed by the canonicalizer
-// (`CanonicalizeKindSugar`) after validation succeeds — the validator
-// MUST NOT mutate the input spec, because the caller may hash the spec
-// bytes for content-addressed identity.
-//
 // @concept: node
 func validateKindDeclaration(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
 	if n.Kind == "" {
@@ -1314,14 +763,6 @@ func validateKindDeclaration(n TemplateNodeDef, base string, hooks RegistryHooks
 		})
 		return
 	}
-	// @deliberate: `kind:` resolves to an executor at canonicalize-time,
-	// which `validateExecutorCoherence`'s mutual-exclusion rule forbids
-	// alongside a sub-graph delegation. The pre-canonicalize executor
-	// field is empty for kind-sugar nodes, so the mutual-exclusion check
-	// there would slip a `kind:` + `delegate:` combination through and
-	// produce a runtime-invalid spec (post-canonicalize: both Executor
-	// and Delegate set). Reject here, where the kind declaration is
-	// known.
 	if n.Delegate != "" {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: base + ".kind",
@@ -1346,24 +787,16 @@ func validateKindDeclaration(n TemplateNodeDef, base string, hooks RegistryHooks
 	}
 }
 
-// validateExecutorDeclared rejects nodes that reference an executor not
-// declared in the operator's rimsky.yml executors block. No-op when
-// the node has no executor (pure-cascade) or when the hook is not
-// supplied (unit tests that don't wire a registry).
 func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
 	if n.Executor == "" || hooks.ExecutorDeclared == nil {
 		return
 	}
-	// @deliberate: Mode none drops the reference leg entirely.
 	if hooks.RefValidationMode == RefValidateNone {
 		return
 	}
 	if hooks.ExecutorDeclared(n.Executor) {
 		return
 	}
-	// @deliberate: executor is not provisioned — mode available skips
-	// the not-yet-provisioned reference (deferring it to the mandatory
-	// instantiation gate); mode all hard-fails.
 	if hooks.RefValidationMode == RefValidateAvailable {
 		return
 	}
@@ -1375,28 +808,6 @@ func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHook
 	})
 }
 
-// validateEmitsMessage enforces the message-emitter-node registration-
-// time invariants from concept:message-emitter-node:
-//
-//  1. The named message type is declared in the template's `messages:`
-//     registry. A reference to an unknown type rejects loud.
-//  2. The node's `attributes:` schema matches the destination message
-//     type's `body_schema` exactly — same set of property names, same
-//     per-property `type`, same `required:` set. Supersets reject (the
-//     emit-node exists to produce the message; hidden state is rejected
-//     because it has nowhere to land in the envelope body).
-//
-// The structural-equality predicate is `properties` keys identical,
-// each property's declared `type` identical, and `required:` lists
-// identical as sets. It is intentionally a tight equality check, not a
-// JSON Schema subtyping pass — the spec calls for exact-match (per
-// concept:message-emitter-node's "same field set, same types").
-//
-// No-op when EmitsMessage is empty. The hook-style dependency on the
-// declared-messages set is threaded from the top-level pass so the
-// substitution-ref / publisher-ref / emit-ref checks all read the same
-// authoritative source.
-//
 // @concept: message-emitter-node
 func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, declaredMessages map[string]struct{}, res *ValidationResult) {
 	if n.EmitsMessage == "" {
@@ -1424,10 +835,6 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 		})
 		return
 	}
-	// @deliberate: find the destination message-type body_schema. The
-	// receiver-side substitution-ref validator already cross-checks
-	// `{{messages.<type>.<field>}}` refs against this schema; the
-	// emit-node body shape obeys the same authoritative source.
 	var dest *MessageSchema
 	if spec != nil {
 		for i := range spec.Messages {
@@ -1438,9 +845,6 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 		}
 	}
 	if dest == nil {
-		// @deliberate: declaredMessages says the type is declared; if we
-		// cannot also find it on spec.Messages something has gone wrong
-		// above — surface defensively rather than dereference nil.
 		res.Errors = append(res.Errors, ValidationError{
 			Path: base + ".emits_message",
 			Msg: fmt.Sprintf(
@@ -1454,9 +858,6 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 		nodeSchema = n.Attributes.Schema
 	}
 	// @concept: message-emitter-node — the attributes block IS the body.
-	// An empty body_schema on the destination means the body carries no
-	// declared fields; the emit-node's attributes schema must likewise
-	// carry no declared properties.
 	var bodyShape map[string]any
 	if len(dest.BodySchema) > 0 {
 		var raw any
@@ -1471,10 +872,6 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 	bodyRequired := emitsMessageRequiredSet(bodyShape)
 	nodeRequired := emitsMessageRequiredSet(nodeSchema)
 
-	// @deliberate: field-set equality. A property declared on one side
-	// but not the other is a mismatch. Each side reports its own
-	// diagnostic so the author sees BOTH missing-on-body AND
-	// missing-on-node, not just the first.
 	for name := range nodeProps {
 		if _, ok := bodyProps[name]; !ok {
 			res.Errors = append(res.Errors, ValidationError{
@@ -1495,10 +892,6 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 			})
 		}
 	}
-	// @deliberate: per-property type equality where both declare a
-	// `type:`. The emit-node's resolved attributes get serialized
-	// verbatim into the envelope body; a declared type-disagreement
-	// would produce a body whose shape contradicts the type registry.
 	for name, np := range nodeProps {
 		bp, ok := bodyProps[name]
 		if !ok {
@@ -1515,8 +908,6 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 			})
 		}
 	}
-	// @deliberate: required-set equality. The two sets must match as
-	// sets — order is irrelevant.
 	for r := range nodeRequired {
 		if _, ok := bodyRequired[r]; !ok {
 			res.Errors = append(res.Errors, ValidationError{
@@ -1539,9 +930,6 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 	}
 }
 
-// emitsMessageProperties returns the `properties` map from a schema-
-// shaped value, or an empty map if absent / not a map. The schema may
-// itself be nil (the node declared no attributes block at all).
 func emitsMessageProperties(schema map[string]any) map[string]map[string]any {
 	out := map[string]map[string]any{}
 	if schema == nil {
@@ -1555,20 +943,12 @@ func emitsMessageProperties(schema map[string]any) map[string]map[string]any {
 		if m, ok := raw.(map[string]any); ok {
 			out[name] = m
 		} else {
-			// @deliberate: a non-object property declaration is
-			// structurally invalid JSON Schema; surface as an empty map
-			// so the caller's field-set comparison still records the
-			// field's presence (the JSON-Schema-validity check elsewhere
-			// — validateMessages and validateAttributesSchema — surfaces
-			// the underlying shape error).
 			out[name] = map[string]any{}
 		}
 	}
 	return out
 }
 
-// emitsMessageRequiredSet returns the `required:` field of a schema as
-// a set. Treats absent / wrong-type values as empty.
 func emitsMessageRequiredSet(schema map[string]any) map[string]struct{} {
 	out := map[string]struct{}{}
 	if schema == nil {
@@ -1590,12 +970,6 @@ func emitsMessageRequiredSet(schema map[string]any) map[string]struct{} {
 	return out
 }
 
-// validateStores enforces the per-node store-usage rules from spec §18:
-//   - Each store name must resolve via storeKindOf (when supplied).
-//   - Aliases are unique within a node.
-//   - Intent must be "r" or "rw".
-//   - Selectors may carry {{...}} directives; this pass is grammar-only.
-//   - {{params.x}} placeholders inside selectors are accepted.
 func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
 	seenAlias := make(map[string]int, len(n.Stores))
 	for j, s := range n.Stores {
@@ -1607,11 +981,6 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 			})
 			continue
 		}
-		// @deliberate: Store-declared reference leg. Governed by the operator-set
-		// operator-set reference-validation mode — none skips it;
-		// available skips a not-yet-provisioned store (falling through
-		// to the structural intent/selector checks, which apply
-		// regardless); all hard-fails on an undeclared store.
 		if hooks.StoreDeclared != nil && hooks.RefValidationMode != RefValidateNone {
 			if !hooks.StoreDeclared(name) && hooks.RefValidationMode != RefValidateAvailable {
 				res.Errors = append(res.Errors, ValidationError{
@@ -1654,9 +1023,6 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 		}
 		seenAlias[alias] = j
 
-		// @deliberate: D5 — claim `lifetime:` validation per the
-		// data-platform-extensions design (§Lifetime and the asset
-		// pattern).
 		switch s.Lifetime {
 		case "", ClaimLifetimeSubgraph, ClaimLifetimeDurable:
 		default:
@@ -1667,11 +1033,6 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 					s.Lifetime, ClaimLifetimeSubgraph, ClaimLifetimeDurable),
 			})
 		}
-		// @deliberate: `lifetime: durable` requires the producer to
-		// advertise the DataProcessing mix-in protocol. The hook
-		// reports the per-store capability snapshot when available;
-		// silent skip when the hook is nil (e.g. unit-test paths
-		// without a registry).
 		if s.Lifetime == ClaimLifetimeDurable && hooks.StoreAdvertisesDataProcessing != nil {
 			if !hooks.StoreAdvertisesDataProcessing(name) {
 				res.Errors = append(res.Errors, ValidationError{
@@ -1685,20 +1046,11 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 	}
 }
 
-// @deliberate: ClaimLifetimeSubgraph and ClaimLifetimeDurable mirror the constants
-// in foundation/spec; they're re-declared here as local constants only
-// for readability inside the validator. The canonical source is
-// foundation/spec/graphs.go.
 const (
 	ClaimLifetimeSubgraph = "subgraph"
 	ClaimLifetimeDurable  = "durable"
 )
 
-// validateLocks enforces the named-lock declarations. Limit lives in
-// operator config (named_locks: block); the template only references
-// the lock by name. Validator checks for non-empty name and uniqueness
-// within a node, plus (when the registry hook is supplied) that every
-// referenced name is declared in the operator's named_locks: block.
 func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
 	seen := make(map[string]int, len(n.Locks))
 	for j, l := range n.Locks {
@@ -1719,15 +1071,7 @@ func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *Val
 			continue
 		}
 		seen[name] = j
-		// @deliberate: named-lock-declared reference leg, governed by
-		// the operator-set reference-validation mode — none skips it;
-		// available skips a not-yet-provisioned (undeclared) lock; all
-		// hard-fails.
 		if hooks.NamedLockDeclared != nil && hooks.RefValidationMode != RefValidateNone {
-			// @deliberate: skip the check when the name carries an
-			// unresolved substitution placeholder (e.g.
-			// "model-{params.tier}") — the resolved name is unknown
-			// until dispatch.
 			if !strings.ContainsAny(name, "{") && !hooks.NamedLockDeclared(name) &&
 				hooks.RefValidationMode != RefValidateAvailable {
 				res.Errors = append(res.Errors, ValidationError{
@@ -1741,30 +1085,6 @@ func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *Val
 	}
 }
 
-// validateAttributesSchema parses the JSON Schema and checks that
-// every `source:` directive in `properties[*].source` is syntactically
-// valid. Sources admit literal text and one or more {{...}} directives;
-// each directive resolves independently against its source kind
-// (`nodes`, `claim`, `params`, `trigger`, `child`). Per-directive
-// strict-default with `?` opt-in to lenient.
-//
-// Also runs checkAttributesSchema: each property must declare at most
-// one of `source:` or `default:`, and must satisfy one of "has source",
-// "has default", or "is marked readOnly: true in the executor's
-// expected_attributes_schema" (executor-write-back populates at commit).
-//
-// Also runs validateCompositionAgainstExecutor when the executor's
-// expected_attributes_schema is visible: (a) type-redeclaration
-// conflicts (L2 vs executor), (b) closed-schema-forbidden properties
-// (L1 + L2 can't introduce undeclared properties when the executor's
-// schema sets additionalProperties: false), (c) default-value-vs-
-// executor-type checks via JSON Schema (catches deep-nested type
-// mismatches in L1/L2 default values).
-//
-// Referenced upstream node names must exist in the template; referenced
-// claim aliases must be acquired by this node OR co-held via `holds:`
-// declarations (concept:claim-co-holdership).
-//
 // @concept: attribute
 func validateAttributesSchema(n TemplateNodeDef, base string, declared map[string]int, spec *TemplateSpec, hooks RegistryHooks, res *ValidationResult) {
 	if n.Attributes == nil || len(n.Attributes.Schema) == 0 {
@@ -1792,18 +1112,10 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		})
 	}
 
-	// @deliberate: directAliases enumerates the aliases this node
-	// directly acquires.
 	directAliases := make(map[string]struct{}, len(n.Stores))
 	for _, s := range n.Stores {
 		directAliases[s.AliasOf()] = struct{}{}
 	}
-	// @deliberate: heldAliases enumerates the aliases this node
-	// co-holds via `holds:` (the sole co-holdership directive;
-	// concept:claim-co-holdership). Each holds entry's local alias is
-	// bound into the leaf's per-claim slot at dispatch, so
-	// `{{claim.<alias>...}}` reads against it are valid — same as a
-	// direct alias.
 	heldAliases := make(map[string]struct{}, len(n.Holds))
 	for alias := range n.Holds {
 		heldAliases[alias] = struct{}{}
@@ -1832,45 +1144,12 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		}
 	}
 
-	// @deliberate: Compute the effective schema (executor's expected schema ∪ L1
-	// schema ∪ L1 defaults ∪ L2 node declaration) and run the unified-
-	// attribute-surface check against it. The merged schema is also
-	// what the runtime recomputes at dispatch (recompute-rather-than-
-	// persist).
-	//
-	// @deliberate: the executor-schema reference legs (readOnly-
-	// fallback, L2-readOnly-authorship, and
-	// validateCompositionAgainstExecutor) are governed by the
-	// operator-set reference-validation mode — none skips the legs
-	// entirely (the schema isn't even looked up; the unified-surface
-	// check runs with execSchemaVisible=false so only the
-	// mode-independent "at most one of source/default" rule fires);
-	// available validates against the executor's schema when it is
-	// visible and soft-skips when it is not; all validates against the
-	// executor's schema when visible and HARD-FAILS when the executor
-	// has a schema reference that is not visible.
 	if hooks.RefValidationMode == RefValidateNone {
-		// @deliberate: mode none — no registration-time executor-schema
-		// reference validation. Run only the executor-independent
-		// unified-surface rule ("at most one of source/default") over
-		// the L2 schema.
 		effective := MergeAttributeDefaults(nil, nil, n.Attributes.Schema)
 		checkAttributesSchema(effective, n.Attributes.Schema, nil, map[string]bool{}, false, sbase, res)
 		return
 	}
 
-	// @deliberate: Resolve the executor identity through
-	// `effectiveExecutor` so the schema-cross-check legs apply uniformly
-	// whether the node was authored with `executor:` directly or with
-	// the `kind:` sugar. Without this, a `kind:`-declared node would
-	// silently skip the executor-schema reference legs (readOnly-
-	// fallback gate, executor-schema visibility check, default-value-vs-
-	// executor-type checks), because CanonicalizeKindSugar runs AFTER
-	// validation returns. The asymmetry would defeat the spec's "kind is
-	// sugar for executor" claim (a template authored with `executor:
-	// rimsky.loop_counter` would get the cross-check; the same template
-	// with `kind:
-	// loop_counter` would not).
 	executorForSchema := effectiveExecutor(n, hooks)
 
 	var execSchema map[string]any
@@ -1893,12 +1172,6 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		execReadOnlyProps = map[string]bool{}
 	}
 
-	// @deliberate: Mode all hard-fails when the node references an executor whose
-	// executor whose expected_attributes_schema cannot be validated at
-	// registration (the executor is named but its schema is not
-	// visible). Strict counterpart of the available-mode soft-skip
-	// below: under `all`, an unvalidatable schema reference is a
-	// missing-reference error rather than a deferral.
 	if !execSchemaVisible && hooks.RefValidationMode == RefValidateAll &&
 		executorForSchema != "" && hooks.ExecutorExpectedAttributesSchema != nil {
 		res.Errors = append(res.Errors, ValidationError{
@@ -1921,28 +1194,6 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 	}
 }
 
-// validateCompositionAgainstExecutor enforces three executor-authority
-// rules over the composed (executor ∪ L1 ∪ L2) attribute schema:
-//
-//  1. **Type-redeclaration conflicts.** When L2 redeclares a property's
-//     `type:` and the executor also declares one for the same property,
-//     the types must match. The executor is authoritative on types.
-//  2. **Closed-schema-forbidden properties.** When the executor's schema
-//     sets `additionalProperties: false` and the executor does not
-//     declare a property `X`, neither L1 nor L2 may introduce `X`. L1
-//     adding a value for an undeclared property is symmetric to L2
-//     declaring it.
-//  3. **Default-value vs. executor-type checks.** L1 + L2 default values
-//     compose into a "defaults-only" data bag (L2 wins on collision);
-//     the bag is JSON-Schema-validated against the executor's raw
-//     schema. Catches deep-nested type mismatches that the flat
-//     property-type comparison in (1) cannot see.
-//
-// Only fires when the executor's expected schema is visible (per the
-// soft-fail discipline elsewhere in this validator). Adds findings to
-// `res.Errors`; surfaces at the operator layer as
-// `template_validation_failed`.
-//
 // @concept: attribute
 func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[string]any, sbase string, res *ValidationResult) {
 	if execSchema == nil {
@@ -1951,11 +1202,6 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 	execProps, _ := execSchema["properties"].(map[string]any)
 	nodeProps, _ := nodeSchema["properties"].(map[string]any)
 	additionalProperties, hasAddProps := execSchema["additionalProperties"]
-	// @deliberate: the closed-schema gate fires only when the
-	// executor's schema both has a `properties` block (i.e. is not
-	// permissive) and explicitly declares `additionalProperties:
-	// false`. JSON Schema's default for `additionalProperties` is true;
-	// absence ⇒ open.
 	closed := false
 	if hasAddProps {
 		if b, ok := additionalProperties.(bool); ok && !b {
@@ -1963,8 +1209,6 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 		}
 	}
 
-	// @deliberate: type-redeclaration conflicts — walk L2's declared
-	// properties.
 	for name, raw := range nodeProps {
 		nodeProp, ok := raw.(map[string]any)
 		if !ok {
@@ -1992,7 +1236,6 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 		}
 	}
 
-	// @deliberate: closed-schema-forbidden properties (L2 and L1).
 	if closed && execProps != nil {
 		for name := range nodeProps {
 			if _, declared := execProps[name]; !declared {
@@ -2008,8 +1251,6 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 			if _, declared := execProps[name]; declared {
 				continue
 			}
-			// @deliberate: avoid duplicate reporting if L2 also
-			// declared it.
 			if _, declaredInNode := nodeProps[name]; declaredInNode {
 				continue
 			}
@@ -2022,11 +1263,6 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 		}
 	}
 
-	// @deliberate: default-value-vs-executor-type checks. Compose L1 +
-	// L2 default values into a single map; L2 wins on collision per the
-	// most-specific-wins rule. Then JSON-Schema-validate the composed
-	// bag against the executor's raw schema. Catches deep-nested type
-	// mismatches the flat property-type check above cannot see.
 	defaultsBag := map[string]any{}
 	for name, val := range l1Defaults {
 		defaultsBag[name] = val
@@ -2043,14 +1279,6 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 	if len(defaultsBag) == 0 {
 		return
 	}
-	// @deliberate: Strip `required:` from the executor schema before validating the
-	// validating the defaults bag. The defaults bag is an
-	// intentionally-partial subset of what the dispatch bag will hold —
-	// properties bound via `source:` and properties the executor will
-	// write (`readOnly: true`) have no entry in defaults. Enforcing
-	// `required:` against that subset would fire false-positive
-	// missing-property errors at registration. This pass only catches
-	// type / nested-shape mismatches on values that are present.
 	schemaForDefaults := schemaWithoutTopLevelRequired(execSchema)
 	if err := validateAgainstSchema(schemaForDefaults, defaultsBag); err != nil {
 		res.Errors = append(res.Errors, ValidationError{
@@ -2062,13 +1290,6 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 	}
 }
 
-// schemaWithoutTopLevelRequired returns a shallow clone of `schema`
-// with the top-level `required` key removed. Used by
-// validateCompositionAgainstExecutor's defaults-bag pass: that bag is
-// a proper subset of the dispatch-time bag (only static defaults
-// populated; source-bound and executor-written properties are absent),
-// so `required:` enforcement against it would fire false positives.
-// The clone is shallow — nested schemas keep their `required:` keys.
 func schemaWithoutTopLevelRequired(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
@@ -2086,12 +1307,6 @@ func schemaWithoutTopLevelRequired(schema map[string]any) map[string]any {
 	return out
 }
 
-// validateAgainstSchema compiles `schema` and validates `data` against
-// it. Returns nil on success, the underlying validation error on
-// failure. Used by validateCompositionAgainstExecutor's nested-default
-// check; mirrors the call shape graph/attribute/validate.go::Validate
-// uses but stays local because the validator layer does not depend on
-// the runtime's phase taxonomy.
 func validateAgainstSchema(schema, data map[string]any) error {
 	schemaBytes, err := json.Marshal(schema)
 	if err != nil {
@@ -2116,10 +1331,6 @@ func validateAgainstSchema(schema, data map[string]any) error {
 	return compiled.Validate(normalized)
 }
 
-// jsonValuesEqual compares two JSON-decoded `type:` declarations. Both
-// scalar string types ("string", "object") and array unions
-// (["string","null"]) are admissible. Equality is structural after
-// json round-trip to normalize map types.
 func jsonValuesEqual(a, b any) bool {
 	ab, errA := json.Marshal(a)
 	bb, errB := json.Marshal(b)
@@ -2129,13 +1340,6 @@ func jsonValuesEqual(a, b any) bool {
 	return bytes.Equal(ab, bb)
 }
 
-// isValidFallbackLiteral reports whether s is a JSON literal admitted
-// on the right side of the substitution fallback operator: `null`,
-// `true`, `false`, a JSON number, or a quoted JSON string. Composite
-// literals (`{}`, `[]`) are rejected. Per spec
-// Numeric admission goes through json.Unmarshal rather than
-// strconv.ParseFloat so the validator rejects the same shapes the
-// runtime rejects (`NaN`, `Inf`, `.5`, etc. — non-JSON-number forms).
 func isValidFallbackLiteral(s string) bool {
 	if s == "null" || s == "true" || s == "false" {
 		return true
@@ -2151,14 +1355,6 @@ func isValidFallbackLiteral(s string) bool {
 	return json.Unmarshal([]byte(s), &n) == nil
 }
 
-// checkAttributeSource enforces directive syntax + reference validity
-// for a `source:` value. Per the 2026-05-21 userdata collapse the
-// grammar accepts literal text alongside one or more `{{...}}`
-// directives in a single source string; each directive resolves
-// independently against its source kind. Per-directive strict-default
-// with `?` opt-in to lenient (mutually exclusive with `| <literal>`
-// fallback).
-//
 // @concept: attribute
 func checkAttributeSource(src, path string, declared map[string]int, directAliases, heldAliases map[string]struct{}, res *ValidationResult) {
 	trimmed := strings.TrimSpace(src)
@@ -2182,15 +1378,8 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 	}
 }
 
-// checkAttributeDirectiveBody validates the body of one `{{...}}`
-// directive (caller has already stripped the outer braces). Handles
-// `?` lenient marker and `| <literal>` fallback parsing, then routes
-// to per-kind validation.
 func checkAttributeDirectiveBody(body, path string, declared map[string]int, directAliases, heldAliases map[string]struct{}, res *ValidationResult) {
 	body = strings.TrimSpace(body)
-	// @deliberate: pipe-fallback parsing first (longest reach) so a
-	// trailing `?` is still recognised on the left side of the pipe if
-	// present.
 	hasFallback := false
 	hasLenient := false
 	if idx := strings.Index(body, "|"); idx >= 0 {
@@ -2213,9 +1402,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 		body = left
 		hasFallback = true
 	}
-	// @deliberate: Lenient `?` marker (must appear at the end of the directive body
-	// directive body after optional whitespace and before the optional
-	// `| <literal>` fallback (already stripped).
 	if strings.HasSuffix(body, "?") {
 		hasLenient = true
 		body = strings.TrimSpace(strings.TrimSuffix(body, "?"))
@@ -2240,12 +1426,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 	parts := strings.Split(rest, ".")
 	switch kind {
 	case "claim":
-		// @deliberate: valid forms are claim.<alias>.address,
-		// claim.<alias>.claim_scope, and
-		// claim.<alias>.payload(.<field-path>?). The bare-form
-		// `claim.<alias>.payload` (no trailing field path) resolves to
-		// the whole payload object per spec §Item 3 "Empty trailing
-		// path".
 		if len(parts) < 2 || parts[0] == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
@@ -2263,10 +1443,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 				})
 			}
 		case "payload":
-			// @deliberate: bare form `claim.<alias>.payload` is
-			// admitted (whole-payload pull). A trailing path is also
-			// fine; an explicit empty trailing segment (`...payload.`)
-			// is rejected.
 			if len(parts) > 2 && parts[2] == "" {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
@@ -2279,8 +1455,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 				Msg:  fmt.Sprintf("claim directive %q second segment must be address|claim_scope|payload", body),
 			})
 		}
-		// @deliberate: alias must be acquired here (stores:) or
-		// co-held (holds:).
 		_, isOwn := directAliases[alias]
 		_, isHeld := heldAliases[alias]
 		if !isOwn && !isHeld {
@@ -2297,11 +1471,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 			})
 		}
 	case "nodes":
-		// @deliberate: substitution form is
-		// nodes.<node>.attribute(.<field>?…). The bare form
-		// `nodes.<node>.attribute` (no trailing field path) resolves to
-		// the whole attribute object per spec §Item 3 "Empty trailing
-		// path".
 		if len(parts) < 2 || parts[0] == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
@@ -2311,9 +1480,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 		}
 		switch parts[1] {
 		case "attribute":
-			// @deliberate: nodes.<node>.attribute(.<field>?…) — an
-			// explicit empty trailing segment (`...attribute.`) is
-			// rejected; a missing trailing path is the bare form.
 			if len(parts) > 2 && parts[2] == "" {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
@@ -2334,10 +1500,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 			})
 		}
 	case "trigger":
-		// @deliberate: trigger.message.payload(.<field-path>?) — the
-		// bare form `trigger.message.payload` (no trailing field path)
-		// resolves to the whole trigger message payload per spec §Item
-		// 3.
 		if len(parts) < 2 || parts[0] != "message" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
@@ -2359,7 +1521,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 			})
 		}
 	case "child":
-		// @deliberate: only child.partition_key is admitted.
 		if len(parts) != 1 || parts[0] != "partition_key" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
@@ -2367,19 +1528,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 			})
 		}
 	case "messages":
-		// @deliberate: messages.<type>(.<field>?). The bare form
-		// `messages.<type>` (no trailing field path) resolves to the
-		// whole triggering-message body per the resolver's bare-form
-		// admission, mirroring trigger.message.payload and
-		// nodes.X.attribute.
-		//
-		// Shape-only check here: confirms the directive parses as
-		// messages.<type>[.<field>]. The cross-check that <type> is
-		// declared in the template's `messages:` registry AND that
-		// <field> is a property in that entry's body_schema runs in
-		// ValidateTemplate's post-pass section, where the declared-set
-		// is in scope alongside the substitution-ref post-pass for
-		// `nodes.*` reads.
 		if len(parts) < 1 || parts[0] == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
@@ -2401,10 +1549,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 	}
 }
 
-// checkScopeDirectives spot-checks a scope pattern. Scope patterns
-// may contain dispatch-time `{{...}}` directives and instantiation-time
-// `{params.x}` placeholders. Stray single-brace tokens that aren't
-// `{params.x}` are flagged as malformed.
 func checkScopeDirectives(s, path string, res *ValidationResult) {
 	checkDispatchDirectives(s, path, res)
 	stripped := dispatchDirectiveRe.ReplaceAllString(s, "")
@@ -2422,9 +1566,6 @@ func checkLockNameDirectives(s, path string, res *ValidationResult) {
 	checkScopeDirectives(s, path, res)
 }
 
-// checkDispatchDirectives validates every `{{...}}` body in s against
-// the substitution grammar. Resolution is dispatch-time; this pass is
-// grammar-only.
 func checkDispatchDirectives(s, path string, res *ValidationResult) {
 	for _, m := range dispatchDirectiveRe.FindAllStringSubmatch(s, -1) {
 		body := strings.TrimSpace(m[1])
@@ -2444,14 +1585,6 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 	}
 }
 
-// validateMaxParkDuration + validateOnEvent removed by the 2026-05-14
-// subscription-cascade resolution: cycles are now a runtime concern
-// driven by the deferred `frame: next` queue, and `on_event:` is
-// retired in favor of receiver-side subscriptions.)
-
-// validateMaxParkDuration parses MaxParkDuration via time.ParseDuration
-// and rejects malformed values. Empty string is valid (= "use deployment
-// default").
 func validateMaxParkDuration(n TemplateNodeDef, base string, res *ValidationResult) {
 	if n.MaxParkDuration == "" {
 		return
@@ -2464,12 +1597,6 @@ func validateMaxParkDuration(n TemplateNodeDef, base string, res *ValidationResu
 	}
 }
 
-// validateDispatchDeadlines parses the three TD-three-dispatch-deadlines
-// knobs (sync_rpc_deadline, max_quiet_period, max_runtime) via
-// time.ParseDuration. Empty strings are valid (= use deployment
-// default). A negative duration is rejected — deadlines are nonneg by
-// construction.
-//
 // @concept: dispatch-deadlines
 func validateDispatchDeadlines(n TemplateNodeDef, base string, res *ValidationResult) {
 	for _, kv := range []struct {
@@ -2500,24 +1627,11 @@ func validateDispatchDeadlines(n TemplateNodeDef, base string, res *ValidationRe
 	}
 }
 
-// AttributesSchemaCheckError reports a unified-attribute-surface
-// violation found by CheckEffectiveAttributesSchema. The path is in
-// `properties.<name>` form (no leading `attributes.schema`), suitable
-// for embedding in registration error messages or dispatch failure
-// classes.
 type AttributesSchemaCheckError struct {
 	Path string
 	Msg  string
 }
 
-// CheckEffectiveAttributesSchema enforces the unified-attribute-surface
-// invariant on a merged effective schema and returns one error per
-// violating property. The exported entry point is used by runtime
-// dispatch to re-enforce the rule once the executor's expected schema
-// is visible (the validator's registration-time pass soft-fails the
-// readOnly leg when the discovery cache hasn't populated yet; runtime
-// reapplies under the same MergeAttributeDefaults shape).
-//
 // @concept: attribute
 func CheckEffectiveAttributesSchema(effective, nodeSchema, execSchema map[string]any, executorReadOnlyProps map[string]bool, execSchemaVisible bool) []AttributesSchemaCheckError {
 	var out []AttributesSchemaCheckError
@@ -2545,16 +1659,6 @@ func CheckEffectiveAttributesSchema(effective, nodeSchema, execSchema map[string
 			continue
 		}
 		_, execEnumerates := execProps[name]
-		// @deliberate: a property the executor does not enumerate is
-		// unconstrained when the executor's schema is open — it
-		// declares no `properties` block (fully permissive, e.g.
-		// `{"type":"object"}`) or admits extensions via
-		// `additionalProperties` (not `false`). The executor has
-		// delegated naming authority for such properties, so the
-		// readOnly-fallback and readOnly-authorship legs below don't
-		// apply — there is no fixed set of executor-written properties
-		// to compare against. An enumerated property still goes through
-		// both legs.
 		propUnconstrained := schemaHasNoProps || (execOpen && !execEnumerates)
 		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !propUnconstrained {
 			out = append(out, AttributesSchemaCheckError{
@@ -2579,17 +1683,6 @@ func CheckEffectiveAttributesSchema(effective, nodeSchema, execSchema map[string
 	return out
 }
 
-// IsPermissiveExecutorSchema reports whether the executor's advertised
-// schema declares "no constraint on attribute shape" — a missing
-// `properties` block. The unified-attribute-surface check skips the
-// readOnly-fallback leg for permissive schemas: an executor that
-// declines to enumerate its properties cannot be checked against
-// "which properties am I supposed to produce?" because the set is open.
-//
-// An executor that declares `"properties": {}` is NOT permissive — it
-// is declaring "closed: I have zero properties." That's a meaningful
-// contract distinct from "I don't enumerate."
-//
 // @concept: attribute
 func IsPermissiveExecutorSchema(execSchema map[string]any) bool {
 	if execSchema == nil {
@@ -2599,27 +1692,6 @@ func IsPermissiveExecutorSchema(execSchema map[string]any) bool {
 	return !hasProps
 }
 
-// executorSchemaAllowsExtensions reports whether the executor's advertised
-// schema EXPLICITLY opts into accepting properties it does not enumerate —
-// i.e. it carries an `additionalProperties` directive that is either the
-// boolean `true` or a schema object (e.g. `{"type":"string"}`). Such an
-// executor has delegated naming authority for extension properties: a
-// template author may declare those properties (source-bound, default,
-// write-back, or `readOnly: true`) without the executor enumerating them, so
-// the readOnly-fallback and readOnly-authorship legs of the unified-attribute-
-// surface check do not apply to an unenumerated property here.
-//
-// An ABSENT `additionalProperties` returns false even though strict JSON
-// Schema would default it to true. The unified-attribute-surface check treats
-// the presence of a `properties` block as "the executor declares its
-// contract" (see IsPermissiveExecutorSchema): an unenumerated property under
-// such a schema must still justify how it is populated (source / default /
-// executor readOnly) unless the executor explicitly opens the door. Only the
-// explicit directive delegates that authority. An explicit `additionalProperties:
-// false` (closed) also returns false. The value-type check for extension
-// properties under a schema-object value lives in
-// validateCompositionAgainstExecutor.
-//
 // @concept: attribute
 func executorSchemaAllowsExtensions(execSchema map[string]any) bool {
 	if execSchema == nil {
@@ -2632,40 +1704,9 @@ func executorSchemaAllowsExtensions(execSchema map[string]any) bool {
 	if b, ok := add.(bool); ok {
 		return b
 	}
-	// @deliberate: schema-object value ⇒ extensions admitted (subject
-	// to that subschema).
 	return true
 }
 
-// checkAttributesSchema enforces the unified-attribute-surface
-// invariant: each property must satisfy one of (a) has `source:`,
-// (b) has `default:`, or (c) is marked `readOnly: true` in the
-// executor's expected_attributes_schema (executor-write-back populates
-// at commit). Properties with both `source:` and `default:` are also
-// rejected.
-//
-// The template author's L2 declaration cannot set `readOnly: true` on
-// a property the executor's schema does not also mark `readOnly: true`
-// — the executor is authoritative on which properties it produces.
-//
-// `effective` is the merged effective schema (executor's
-// expected_attributes_schema ∪ L1 defaults ∪ L2 node declaration).
-// `nodeSchema` is the per-node L2 schema (used for `readOnly`
-// authorship checks since L1 doesn't carry `readOnly`).
-//
-// `execSchemaVisible` reports whether the executor's expected schema
-// was available at validation time. When false (no discovery hook
-// wired, executor not yet handshaked, or the executor advertises no
-// schema), the readOnly-fallback leg is skipped — without the
-// executor's schema we cannot tell whether a sourceless/defaultless
-// property is one the executor produces. The "at most one of
-// source/default" rule and the L2-readOnly-authorship rule still
-// fire unconditionally. Runtime dispatch's
-// `runtime/runner_dispatch.go::resolveAttributes` reapplies the full
-// check once the executor's schema is visible at dispatch time
-// (`code:runtime/runner_dispatch.go` calls
-// `node.CheckEffectiveAttributesSchema`).
-//
 // @concept: attribute
 func checkAttributesSchema(effective, nodeSchema, execSchema map[string]any, executorReadOnlyProps map[string]bool, execSchemaVisible bool, sbase string, res *ValidationResult) {
 	if effective == nil {
@@ -2692,13 +1733,6 @@ func checkAttributesSchema(effective, nodeSchema, execSchema map[string]any, exe
 			continue
 		}
 		_, execEnumerates := execProps[name]
-		// @deliberate: readOnly-fallback leg. A property the executor
-		// does not enumerate is unconstrained when the executor's
-		// schema declares no `properties` block (fully permissive) or
-		// admits extensions via `additionalProperties` (not `false`) —
-		// the executor has delegated naming authority, so there is no
-		// per-name comparison to make. An enumerated property still
-		// goes through both legs.
 		propUnconstrained := schemaHasNoProps || (execOpen && !execEnumerates)
 		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !propUnconstrained {
 			res.Errors = append(res.Errors, ValidationError{
@@ -2707,18 +1741,6 @@ func checkAttributesSchema(effective, nodeSchema, execSchema map[string]any, exe
 			})
 			continue
 		}
-		// @deliberate: L2 cannot grant `readOnly: true` on a property
-		// the executor's schema does not also mark `readOnly: true` —
-		// the executor is authoritative on which of its attributes it
-		// produces.
-		//
-		// Skipped when the executor's schema isn't visible
-		// at validation time — without it the executor's set of
-		// produced properties is unknown, so trust the author's
-		// declaration. Runtime dispatch reapplies the rule once the
-		// executor schema is known. Also skipped for properties the
-		// executor leaves unconstrained under an open schema — the
-		// author owns extension properties the executor admits by name.
 		if nodeProps != nil && execSchemaVisible && !propUnconstrained {
 			if rawNode, present := nodeProps[name]; present {
 				if nodeProp, ok := rawNode.(map[string]any); ok {
@@ -2734,10 +1756,6 @@ func checkAttributesSchema(effective, nodeSchema, execSchema map[string]any, exe
 	}
 }
 
-// extractReadOnlyProps returns the set of top-level property names with
-// `readOnly: true` in the executor's expected_attributes_schema.
-// Returns an empty map when the schema is nil or has no `properties`.
-//
 // @concept: attribute
 func extractReadOnlyProps(schema map[string]any) map[string]bool {
 	out := map[string]bool{}
@@ -2760,17 +1778,6 @@ func extractReadOnlyProps(schema map[string]any) map[string]bool {
 	return out
 }
 
-// MergeAttributeDefaults computes the per-node effective attribute
-// schema as the union of (1) the executor's expected_attributes_schema,
-// (2) the L1 template defaults (`spec.Defaults.Attributes.ByExecutor`),
-// and (3) the node's L2 attribute schema. Most specific wins on
-// `default:`. Types come from the executor's schema where declared;
-// L1 contributes `default:` entries only; L2 deep-merges over both.
-//
-// Pure function — used both by the template validator at registration
-// and by the runtime at dispatch (recompute path; see
-// runtime/runner_dispatch.go::substituteAttributesSchema).
-//
 // @concept: attribute
 func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any, nodeSchema map[string]any) map[string]any {
 	out := deepCopyJSON(execSchema)
@@ -2782,8 +1789,6 @@ func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any
 		props = map[string]any{}
 		out["properties"] = props
 	}
-	// @deliberate: L1 — for each (attr, value), set
-	// properties[attr].default.
 	for attr, val := range l1Defaults {
 		prop, _ := props[attr].(map[string]any)
 		if prop == nil {
@@ -2792,7 +1797,6 @@ func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any
 		}
 		prop["default"] = val
 	}
-	// @deliberate: L2 — deep-merge the node's properties on top.
 	if nodeSchema != nil {
 		if nodeProps, ok := nodeSchema["properties"].(map[string]any); ok {
 			for attr, raw := range nodeProps {
@@ -2802,18 +1806,9 @@ func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any
 				}
 				existing, _ := props[attr].(map[string]any)
 				if existing == nil {
-					// @deliberate: Deep copy so L2's prop isn't aliased.
 					props[attr] = deepCopyJSON(nodeProp)
 					continue
 				}
-				// @deliberate: `source:` and `default:` are mutually
-				// exclusive on a property. If L2 supplies one, it
-				// overrides L1's choice of the other — drop the
-				// pre-existing key so the effective schema doesn't
-				// carry both into checkAttributesSchema (which would
-				// reject the template). Most-specific-wins per the
-				// userdata-collapse "Resolution waterfall" / "Effective
-				// schema computation".
 				if _, l2HasSource := nodeProp["source"]; l2HasSource {
 					delete(existing, "default")
 				}
@@ -2825,8 +1820,6 @@ func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any
 				}
 			}
 		}
-		// @deliberate: Carry over `required` from the node schema (union with any
-		// (union with any existing list from the executor's schema).
 		if nodeReq, ok := nodeSchema["required"].([]any); ok && len(nodeReq) > 0 {
 			existingReq, _ := out["required"].([]any)
 			seen := map[string]bool{}
@@ -2843,10 +1836,6 @@ func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any
 			}
 			out["required"] = existingReq
 		}
-		// @deliberate: additionalProperties — the executor is
-		// authoritative when it declared the key (closed-schema
-		// policy); if the executor didn't declare it, fall back to the
-		// node's declaration.
 		if _, execHas := out["additionalProperties"]; !execHas {
 			if v, ok := nodeSchema["additionalProperties"]; ok {
 				out["additionalProperties"] = v
@@ -2869,19 +1858,10 @@ func deepCopyJSON(v map[string]any) map[string]any {
 	return out
 }
 
-// parseDurationStrict wraps time.ParseDuration. Wrapped to keep the
-// validator's call-sites uniform with other "parse and report" helpers.
 func parseDurationStrict(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
-// validateTagsAtRegistration walks every tag string on a node and
-// enforces the materialization-time substitution rules:
-//
-//   - Only `{{params.<key>}}` directives are admitted (no other source
-//     kinds resolve at instance creation).
-//   - The `<key>` MUST be declared in TemplateSpec.ParamsSchema.properties.
-//
 // @concept: node
 func validateTagsAtRegistration(n TemplateNodeDef, base string, spec *TemplateSpec, res *ValidationResult) {
 	if len(n.Tags) == 0 {
@@ -2909,8 +1889,6 @@ func validateTagsAtRegistration(n TemplateNodeDef, base string, spec *TemplateSp
 				})
 				continue
 			}
-			// @deliberate: Take the top-level params key only — params.<key>.<sub>...
-			// params.<key>.<sub>... resolves the same root key.
 			topKey := rest
 			if dot := strings.Index(rest, "."); dot >= 0 {
 				topKey = rest[:dot]
@@ -2925,9 +1903,6 @@ func validateTagsAtRegistration(n TemplateNodeDef, base string, spec *TemplateSp
 	}
 }
 
-// paramsSchemaProperties returns the `properties` map of the template's
-// `params_schema` as `map[string]any` (the JSON Schema canonical shape).
-// Returns nil when params_schema is absent or has no properties.
 func paramsSchemaProperties(spec *TemplateSpec) map[string]any {
 	if spec == nil || spec.ParamsSchema == nil {
 		return nil
@@ -2936,17 +1911,6 @@ func paramsSchemaProperties(spec *TemplateSpec) map[string]any {
 	return props
 }
 
-// validatePublishers checks the top-level `publishers:` block. Every
-// entry must declare `name`, `kind`, and `target_node`; `target_node`
-// must reference a declared node type; `message_type` must reference a
-// declared entry in the template's `messages:` registry. This catches
-// missing fields at template registration so operators see a clear
-// validation error instead of a pgx NOT NULL violation when the row is
-// inserted into table:rimsky_publisher_subscriptions at instance-create,
-// AND so a publisher carrying a `message_type` no template entry
-// declares fails loudly at registration rather than silently 400ing at
-// every emit for the lifetime of the instance.
-//
 // @concept: message-schema
 func validatePublishers(spec *TemplateSpec, declared map[string]int, declaredMessages map[string]struct{}, res *ValidationResult) {
 	seenNames := make(map[string]struct{}, len(spec.Publishers))
@@ -2982,18 +1946,6 @@ func validatePublishers(spec *TemplateSpec, declared map[string]int, declaredMes
 				Msg:  fmt.Sprintf("target_node %q does not reference a declared node type", p.TargetNode),
 			})
 		}
-		// @deliberate: message_type is required AND must match the
-		// template's `messages:` registry. The legacy "invalidate"
-		// default retired with the envelope's kind→type rename, so an
-		// omitted message_type must fail at registration rather than
-		// silently taking a stale default at mount time. The registry
-		// cross-check rejects typos (or types the template author meant
-		// to declare but forgot) at registration; without it, the
-		// publisher mounts successfully and every emit fails the
-		// receipt-time gate at
-		// code:control/controlapi/messages.go::handleCreateMessage with
-		// HTTP 400 — invisible until the publisher actually tries to
-		// emit.
 		mt := strings.TrimSpace(p.MessageType)
 		if mt == "" {
 			res.Errors = append(res.Errors, ValidationError{
@@ -3018,23 +1970,6 @@ func validatePublishers(spec *TemplateSpec, declared map[string]int, declaredMes
 	}
 }
 
-// buildMessageBodyFieldSet returns a map from declared message-type-path
-// to the set of top-level property names in its body_schema. Empty /
-// missing body_schema produces a missing entry (not an empty set) so
-// the caller can distinguish "declared with no body shape" from
-// "declared with an empty {properties:{}}". Used by the post-pass
-// cross-check for `{{messages.<type>.<field>}}` directives: a directive
-// reading a named field against a missing entry is rejected with a
-// clear empty-body diagnostic; a directive reading an unknown field
-// against a present entry is rejected with a field-not-declared
-// diagnostic.
-//
-// Reads each entry's body_schema as JSON and extracts the top-level
-// `properties` keys. The same jsonschema/v5 path validateMessages uses
-// has already confirmed the schema parses and compiles; this helper
-// reads it as plain JSON for property-key extraction only — no
-// schema-semantic interpretation.
-//
 // @concept: message-schema
 func buildMessageBodyFieldSet(spec *TemplateSpec) map[string]map[string]struct{} {
 	out := map[string]map[string]struct{}{}
@@ -3044,20 +1979,10 @@ func buildMessageBodyFieldSet(spec *TemplateSpec) map[string]map[string]struct{}
 		}
 		var shape map[string]any
 		if err := json.Unmarshal(m.BodySchema, &shape); err != nil {
-			// @deliberate: validateMessages already surfaces this as a
-			// registration error; the post-pass cross-check skips the
-			// entry rather than produce a duplicate diagnostic. Bare-form
-			// pulls against an unparseable schema also skip; the
-			// underlying schema error is already on the result.
 			continue
 		}
 		props, ok := shape["properties"].(map[string]any)
 		if !ok {
-			// @deliberate: no top-level properties block — admit the
-			// entry with an empty field set so a named-field directive
-			// is rejected with the "field not declared" diagnostic
-			// rather than the empty-body diagnostic. (An object schema
-			// without `properties` has no addressable fields.)
 			out[m.Type] = map[string]struct{}{}
 			continue
 		}
@@ -3070,39 +1995,6 @@ func buildMessageBodyFieldSet(spec *TemplateSpec) map[string]map[string]struct{}
 	return out
 }
 
-// validateMessages walks the template-level `messages:` registry and
-// enforces four rules:
-//
-//  1. Each entry's `type:` is non-empty and matches a sensible type-path
-//     grammar (slash-bearing, non-empty segments, no whitespace) — this
-//     is the syntactic shape receivers subscribe to via
-//     `node: <type>, type: terminal/success`. The taxonomy-validator in
-//     `concept:signal` rejects `message/*` paths from emit-shape vocab;
-//     message types are a *separate* type-path space rooted at the
-//     template registry, not the signal taxonomy, so the grammar here
-//     is structural (a non-empty path with no leading/trailing slash
-//     and no whitespace) rather than taxonomy-membership.
-//  2. Each `type:` is unique across entries — a duplicate registry entry
-//     is structurally ambiguous (which body_schema applies?) and is
-//     rejected at registration.
-//  3. Each `type:` does NOT collide with a declared real node-type. The
-//     slash-bearing rule is the primary partition, but a defensive
-//     cross-check at the message-side declaration catches the case
-//     where a node-type happens to be slash-bearing too — without it,
-//     `validateSubscribes` resolves `node: <name>` against the
-//     node-type set first (line 723) and silently routes the
-//     subscription to the wrong sender; the cascade walker would then
-//     key on the node-type and the message-virtual-node settle path's
-//     edge lookup loses.
-//  4. Each `body_schema:` parses as a valid JSON Schema. The same
-//     compiler the attribute-schema pass uses (jsonschema/v5) is the
-//     authority; failures surface verbatim so authors see the
-//     underlying parse error.
-//
-// Returns the set of declared message-type-paths so downstream passes
-// (subscribes' message-type-shape leg; future substitution-ref checks)
-// can consult registry membership.
-//
 // @concept: message-schema
 func validateMessages(spec *TemplateSpec, declared map[string]int, res *ValidationResult) map[string]struct{} {
 	declaredMessages := make(map[string]struct{}, len(spec.Messages))
@@ -3113,30 +2005,12 @@ func validateMessages(spec *TemplateSpec, declared map[string]int, res *Validati
 		base := fmt.Sprintf("messages[%d]", i)
 		t := strings.TrimSpace(m.Type)
 		if t == "" {
-			// @constraint: the empty type-path is reserved-for-runtime
-			// per decision:empty-message-as-root-trigger — every
-			// template's declared-types set carries an implicit `""`
-			// entry seeded automatically at registration; the
-			// author-declared form is refused so a template cannot
-			// claim a body shape against the implicit-virtual.
 			res.Errors = append(res.Errors, ValidationError{
 				Path: base + ".type",
 				Msg:  `type "" is reserved-for-runtime (the implicit empty-message wake trigger seeded automatically at registration; author-declared empty-type entries are refused)`,
 			})
 			continue
 		}
-		// @deliberate: structural type-path grammar: no whitespace;
-		// non-empty segments only; no leading or trailing slash; AT
-		// LEAST ONE slash (i.e. at least two segments). The
-		// slash-bearing requirement is the first-line partition that
-		// keeps message-types from colliding with real node-types in
-		// subscribes' `node:` field: real node-types are conventionally
-		// identifier-shaped (no slash) and the slash-bearing path is
-		// resolved against the message registry. The collision-
-		// rejection rule below is the defense in depth — a node-type
-		// that happens to be slash-bearing too would otherwise win at
-		// validateSubscribes and silently route the subscription to the
-		// wrong sender.
 		if strings.ContainsAny(t, " \t\n\r") {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: base + ".type",
@@ -3153,12 +2027,6 @@ func validateMessages(spec *TemplateSpec, declared map[string]int, res *Validati
 		}
 		segmentsValid := true
 		segmentHasDot := false
-		// @deliberate: walk every segment without early-exit: a
-		// type-path containing BOTH an empty segment AND a dot-bearing
-		// segment must surface both diagnostics in one validation pass,
-		// otherwise the author fixes one only to be rejected on the next
-		// attempt for the other (asymmetric — which one wins depends on
-		// segment order).
 		for _, seg := range strings.Split(t, "/") {
 			if seg == "" {
 				segmentsValid = false
@@ -3168,17 +2036,6 @@ func validateMessages(spec *TemplateSpec, declared map[string]int, res *Validati
 				segmentHasDot = true
 			}
 		}
-		// @deliberate: both diagnostics may fire on the same
-		// `messages[i].type` — the loop above collects them
-		// independently. Emit each one as its own ValidationError so the
-		// author sees both reasons in a single validation pass (the
-		// original early-`break` variant surfaced only whichever
-		// offending segment appeared first, forcing the author to
-		// fix-and-retry to discover the other). After either fires,
-		// skip to the next message: the downstream slash-bearing /
-		// duplicate / collision checks operate on a well-formed
-		// type-path and would otherwise emit spurious follow-on errors
-		// against the same malformed entry.
 		segmentErrored := false
 		if !segmentsValid {
 			res.Errors = append(res.Errors, ValidationError{
@@ -3188,16 +2045,6 @@ func validateMessages(spec *TemplateSpec, declared map[string]int, res *Validati
 			segmentErrored = true
 		}
 		if segmentHasDot {
-			// @deliberate: the substitution-directive parser
-			// (code:graph/attribute/substitution.go::resolveMessagesValue
-			// and code:graph/node/subscription_edges.go::parseMessageDirective)
-			// splits the directive body on `.`. A type-path segment
-			// containing `.` would misparse the directive
-			// `{{messages.<type>.<field>}}` — the parser would treat
-			// the pre-`.` segment as the type and the post-`.` segment
-			// as the field, silently routing to the wrong source.
-			// Reject at registration so authors see the constraint
-			// before it bites at runtime.
 			res.Errors = append(res.Errors, ValidationError{
 				Path: base + ".type",
 				Msg: fmt.Sprintf(
@@ -3225,16 +2072,6 @@ func validateMessages(spec *TemplateSpec, declared map[string]int, res *Validati
 			})
 			continue
 		}
-		// @deliberate: cross-check against the real node-type set: a
-		// message-type that ALSO names a declared node-type is
-		// structurally ambiguous in `subscribes:`'s `node: <name>`
-		// field — validateSubscribes resolves against the node-type set
-		// first, so the subscription would silently bind to the node
-		// rather than the message-virtual-node. Slash-bearing
-		// message-types and identifier-shaped node-types do not
-		// normally collide, but the node-type grammar admits slashes
-		// today; reject the collision at the message declaration so the
-		// author sees the conflict before it bites at runtime.
 		if _, nodeCollision := declared[t]; nodeCollision {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: base + ".type",
@@ -3245,17 +2082,9 @@ func validateMessages(spec *TemplateSpec, declared map[string]int, res *Validati
 			continue
 		}
 		declaredMessages[t] = struct{}{}
-		// @deliberate: JSON Schema validation. An absent / empty
-		// body_schema is admitted (an empty body has no shape to
-		// constrain); a non-empty schema must parse and compile via the
-		// same jsonschema/v5 path the attribute-schema validator uses,
-		// so authors get the underlying parse error verbatim.
 		if len(m.BodySchema) == 0 {
 			continue
 		}
-		// @deliberate: reject body_schema that is not a JSON object (a
-		// bare scalar / array is structurally not a JSON Schema
-		// fragment).
 		var schemaShape any
 		if err := json.Unmarshal(m.BodySchema, &schemaShape); err != nil {
 			res.Errors = append(res.Errors, ValidationError{
@@ -3290,30 +2119,9 @@ func validateMessages(spec *TemplateSpec, declared map[string]int, res *Validati
 	return declaredMessages
 }
 
-// payloadTagsLiteralRE captures literal tag operands of `payload.tags`
-// CEL membership expressions in either operand order:
-//
-//	"foo" in payload.tags
-//	payload.tags.contains("foo")
-//
-// The regex is conservative — it matches single- and double-quoted
-// string literals only, so non-literal operands (variables, function
-// calls returning a string) are silently skipped. The
-// concept:terminal-tag gate-1 check is advisory: a tag in a literal
-// operand the executor does not declare yields a registration
-// warning; a non-literal operand passes the gate and is enforced at
-// runtime by readExecutorOutcome's gate-2 check on the actual
-// emitted tag set.
-//
 // @concept: terminal-tag
 var payloadTagsLiteralRE = regexp.MustCompile(`["']([^"']+)["']\s+in\s+payload\.tags|payload\.tags\.contains\(\s*["']([^"']+)["']\s*\)`)
 
-// extractPayloadTagLiterals returns the literal tag operands that
-// appear in `payload.tags` membership expressions inside a CEL
-// `when:` predicate. Non-literal operands (variables, sub-expressions)
-// are not surfaced — the runtime gate-2 check on the emitter's
-// declared_tags is the catch-all for those.
-//
 // @concept: terminal-tag
 func extractPayloadTagLiterals(when string) []string {
 	if when == "" {

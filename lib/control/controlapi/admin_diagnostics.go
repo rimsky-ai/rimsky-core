@@ -2,23 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// admin_diagnostics.go implements the read-only admin diagnostics
-// endpoints (plan G1, G2):
-//
-//   - GET /admin/diagnostics/held-frames  — frames with at least one
-//     parked node (the platform-level "held" notion: a frame's
-//     downstream work is awaiting external action).
-//   - GET /admin/diagnostics/parked-nodes  — every currently-parked
-//     node, optional filter ?reason=<name>.
-//
-// The admin-invalidate POST retired with the 2026-06-14
-// message-schema-layer reshape (operators who want to invalidate post
-// a typed message via `POST /instances/{id}/messages` with a
-// template-declared `messages:` type; ad-hoc force-stale lives at the
-// gated `POST /debug/override` endpoint).
-//
-// Auth: standard admin perimeter (deps.Auth middleware applies). The
-// endpoints are read-only.
 package controlapi
 
 import (
@@ -35,19 +18,12 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// isKnownParkReasonFilter returns true when v matches the snake_case
-// projection of any ParkReason enum value. Empty input is rejected by
-// the caller; this helper only validates non-empty values.
 func isKnownParkReasonFilter(v string) bool {
 	upper := "PARK_REASON_" + strings.ToUpper(v)
 	_, ok := genv1.ParkReason_value[upper]
 	return ok
 }
 
-// knownParkReasonFilters returns the sorted set of snake_case
-// ParkReason values usable as the `?reason=` filter — the closed
-// two-value set per the post-collapse ParkReason invariant
-// (proto:executor.proto::ParkReason).
 func knownParkReasonFilters() []string {
 	out := make([]string, 0, len(genv1.ParkReason_name))
 	for _, name := range genv1.ParkReason_name {
@@ -60,12 +36,6 @@ func knownParkReasonFilters() []string {
 	return out
 }
 
-// registerAdminDiagnosticsRoutes wires the admin diagnostics endpoints.
-//
-// F7 — `GET /diagnostics/parked?reason=` is the spec-named operator
-// surface (§Parked-state taxonomy / Control-api filter); it shares
-// the handler with the older `/admin/diagnostics/parked-nodes` path
-// so both shapes are valid and exhibit identical behaviour.
 func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/admin/diagnostics/held-frames", gate(deps, "diagnostics:read", handleAdminHeldFrames(deps)))
 	r.Get("/admin/diagnostics/parked-nodes", gate(deps, "parked-node:read", handleAdminParkedNodes(deps)))
@@ -73,20 +43,11 @@ func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/admin/diagnostics/wait-sets", gate(deps, "waitset:read", handleAdminWaitSets(deps)))
 }
 
-// HeldFramesResponse is the body of GET /admin/diagnostics/held-frames.
-//
-// FramesWithoutFrameID surfaces parked rows whose node_run lacks a
-// frame_id (typically pure-cascade-adjacent or legacy rows that registered
-// before the frame model). They cannot be bucketed under a real held
-// frame — the endpoint reports them out-of-band so operators can see they
-// exist without polluting the by-frame bucket with synthetic
-// empty-string keys.
 type HeldFramesResponse struct {
 	Frames               []HeldFrameEntry  `json:"frames"`
 	FramesWithoutFrameID []ParkedNodeEntry `json:"frames_without_frame_id,omitempty"`
 }
 
-// HeldFrameEntry summarises one frame that has at least one parked node.
 type HeldFrameEntry struct {
 	FrameID    string         `json:"frame_id"`
 	InstanceID string         `json:"instance_id"`
@@ -95,7 +56,6 @@ type HeldFrameEntry struct {
 	NodeStates []NodeStateRow `json:"node_states"`
 }
 
-// NodeStateRow is the per-node summary inside a HeldFrameEntry.
 type NodeStateRow struct {
 	NodeID     string `json:"node_id"`
 	State      string `json:"state"`
@@ -103,12 +63,10 @@ type NodeStateRow struct {
 	ReasonNote string `json:"reason_note,omitempty"`
 }
 
-// ParkedNodesResponse is the body of GET /admin/diagnostics/parked-nodes.
 type ParkedNodesResponse struct {
 	ParkedNodes []ParkedNodeEntry `json:"parked_nodes"`
 }
 
-// ParkedNodeEntry summarises one currently-parked node.
 type ParkedNodeEntry struct {
 	InstanceID string     `json:"instance_id"`
 	NodeID     string     `json:"node_id"`
@@ -118,11 +76,6 @@ type ParkedNodeEntry struct {
 	ReasonNote string     `json:"reason_note,omitempty"`
 }
 
-// handleAdminHeldFrames lists every frame whose state is 'running' AND
-// has at least one parked node. The query joins
-// rimsky_node_runs (phase='parked') against rimsky_frames via
-// frame_id; rows that lack a frame_id are excluded silently (defensive
-// against pure-cascade nodes whose dispatch never registered a frame).
 func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		out := HeldFramesResponse{Frames: []HeldFrameEntry{}}
@@ -131,14 +84,6 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			// @constraint: group by frame_id. Rows without a frame_id can't be
-			// represented as a held frame (the endpoint is documented
-			// as "frames currently in held state") — report them in
-			// a separate FramesWithoutFrameID list so the by-frame
-			// bucket is not contaminated with a synthetic
-			// empty-string key whose InstanceID/HeldSince would
-			// arbitrarily reflect whichever orphan row was seen
-			// first.
 			groups := map[string]*HeldFrameEntry{}
 			for _, p := range parked {
 				if p.FrameID == "" {
@@ -187,13 +132,6 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleAdminParkedNodes returns every parked node_run row.
-// Optional ?reason=<snake_case> filter; empty reason value is treated
-// as "no filter." Per the 2026-05-14 ParkReason-typed cycle, the
-// `reason` query param is validated against the typed enum's
-// snake_case projection; unknown values return HTTP 400 with the
-// allowed set.
-//
 //	@concept: parked-state
 func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
@@ -234,9 +172,6 @@ func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// listParkedDiagnostic queries the read projection directly via the
-// persistence.Queue accessor. The query joins rimsky_nodes for
-// instance_id so the endpoint can group by frame without a second read.
 func listParkedDiagnostic(ctx context.Context, tx persistence.Tx, deps AppDeps, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
 	if deps.Queue == nil {
 		return nil, nil

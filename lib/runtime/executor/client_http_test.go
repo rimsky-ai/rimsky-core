@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// TLS-mode enforcement on the HTTP-bridge executor transport
-// (STORY-peer-tls-enforced): `tls: required` is honored on the wire —
-// never accepted-and-ignored — and a plaintext URL under required fails
-// loudly naming the peer and the mode.
-
 package executor
 
 import (
@@ -22,8 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// stubBridgeHandler serves the unary HTTP-bridge wire shape: a single
-// Outcome JSON body per TD-execute-rpc-unary.
 func stubBridgeHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/Execute" {
@@ -38,9 +31,6 @@ func stubBridgeHandler() http.Handler {
 	})
 }
 
-// TestHTTPClientTLSRequiredVerifiedExchange — `tls: required` + https
-// endpoint: the REAL NewHTTPClient path performs a verified TLS
-// handshake and exchanges a request.
 func TestHTTPClientTLSRequiredVerifiedExchange(t *testing.T) {
 	srv := httptest.NewTLSServer(stubBridgeHandler())
 	defer srv.Close()
@@ -64,8 +54,6 @@ func TestHTTPClientTLSRequiredVerifiedExchange(t *testing.T) {
 	}
 }
 
-// TestHTTPClientTLSRequiredRejectsPlaintextScheme — `tls: required` +
-// plaintext http:// URL: rejected at client construction.
 func TestHTTPClientTLSRequiredRejectsPlaintextScheme(t *testing.T) {
 	_, err := NewHTTPClient(Endpoint{Transport: "http", URL: "http://plaintext-bridge:8080", TLS: peer.TLSModeRequired})
 	if err == nil {
@@ -79,9 +67,6 @@ func TestHTTPClientTLSRequiredRejectsPlaintextScheme(t *testing.T) {
 	}
 }
 
-// TestHTTPClientTLSRequiredUnverifiedPeerFailsLoudly — `tls: required` +
-// https URL whose peer presents an unverifiable cert: handshake fails
-// loudly, naming the peer + mode.
 func TestHTTPClientTLSRequiredUnverifiedPeerFailsLoudly(t *testing.T) {
 	srv := httptest.NewTLSServer(stubBridgeHandler())
 	defer srv.Close()
@@ -100,7 +85,6 @@ func TestHTTPClientTLSRequiredUnverifiedPeerFailsLoudly(t *testing.T) {
 	}
 }
 
-// TestHTTPClientTLSOffPlaintext — `tls: off` stays plaintext.
 func TestHTTPClientTLSOffPlaintext(t *testing.T) {
 	srv := httptest.NewServer(stubBridgeHandler())
 	defer srv.Close()
@@ -119,8 +103,6 @@ func TestHTTPClientTLSOffPlaintext(t *testing.T) {
 	}
 }
 
-// TestClientPoolKeyIncludesTLSMode — entries sharing a URL with
-// different `tls:` modes must not share one pooled client.
 func TestClientPoolKeyIncludesTLSMode(t *testing.T) {
 	srv := httptest.NewTLSServer(stubBridgeHandler())
 	defer srv.Close()

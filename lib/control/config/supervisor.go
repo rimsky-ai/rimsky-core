@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Public API for embedding a rimsky supervisor into a host process.
 package config
 
 import (
@@ -18,13 +17,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 )
 
-// SupervisorConfig wires a supervisor process. Per spec §6.1 — the
-// stores config is a thin "name → endpoint + declared capabilities"
-// form; the supervisor dials each entry and validates the
-// Capabilities() handshake at startup.
 type SupervisorConfig struct {
 	SupervisorID string
-	// Driver is the unified persistence driver. Required.
 	Driver            persistence.Database
 	Clock             shared.Clock
 	Logger            shared.Logger
@@ -32,106 +26,39 @@ type SupervisorConfig struct {
 	LivenessInterval  time.Duration
 	ClaimPollInterval time.Duration
 	Resolver          executor.Resolver
-	// Stores is the parsed `stores:` block from rimsky.yml: an
-	// endpoint URL plus declared capabilities per entry.
 	Stores RemoteStoresConfig
-	// NamedLocks is the operator-side named-lock config. Empty /
-	// missing → no named locks declared; templates that reference
-	// named locks will fail registry-dependent validation.
 	NamedLocks   locks.NamedLocksConfig
 	CallbackHost string
 	CallbackPort int
-	// CallbackAdvertiseHost / CallbackAdvertisePort override the
-	// host:port embedded in the `callback_url` handed to executors.
 	CallbackAdvertiseHost string
 	CallbackAdvertisePort int
 
-	// Blob is the active BlobBackend; threaded into the integration
-	// runtime so named-event and parked-payload writes can spill.
-	// Nil = no spill at those sites (the attribute persistence path
-	// uses the same backend via the driver's Store, configured via
-	// Driver.SetBlobBackend at startup).
 	Blob persistence.BlobBackend
-	// BlobSpillThreshold is the spill cutoff in bytes; zero disables.
 	BlobSpillThreshold int
-	// ExpectedAttributesSchemaFor returns the named executor's
-	// advertised expected_attributes_schema bytes (JSON Schema).
-	// Optional. When set, the supervisor threads it through to the
-	// runtime so dispatch-time effective-schema computation can merge
-	// the executor's contribution against L1 template defaults and L2
-	// per-node declarations. Production wiring constructs this from
-	// observability.NewExpectedAttributesSchemaResolver(disc).
-	//
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
-	// Metrics is the prometheus instrumentation hook (plan I2).
-	// Optional; nil → no-op everywhere. Production wiring constructs an
-	// observability.RegistryHook from the per-process MetricsRegistry.
 	Metrics runtime.MetricsHook
-	// MaxParkDuration is the deployment-level per-reason max_park_duration
-	// cap map. Threaded into the SweepParkedNodes path so the watchdog
-	// can fail parked runs that overrun their per-reason cap even when
-	// the per-row col:rimsky_node_runs.max_park_duration_seconds is NULL.
 	MaxParkDuration map[string]time.Duration
 
-	// LifecyclePeersForSpec returns the lifecycle peer names that should
-	// receive instance- and run-scope-keyed events for a given template
-	// spec. Production wiring supplies a closure that calls
-	// controlapi.LifecyclePeersForSpec with the rimsky.yml
-	// late_bind_service_proxies map baked in. The closure lives in the
-	// control/ layer (cmd/rimsky-supervisor/main.go) so runtime/ never
-	// imports control/ (denied by .golangci.yml's runtime-purity rule).
-	//
-	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
 	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
 
-	// LifecycleSubs is the supervisor's outbound LifecycleSubscriber
-	// registry. Populated by StartSupervisor via DialLifecycleSubscribers
-	// (the same helper control-api uses). Used to fire OnRunScopeTerminal
-	// for sub-graph and fanout-partition scope closes.
 	LifecycleSubs *locks.LifecycleRegistry
 
-	// Executors mirrors the rimsky.yml executors: block. The supervisor
-	// needs it for DialLifecycleSubscribers (which walks the union of
-	// claim_producers: + executors: looking for peers whose protocols:
-	// list includes lifecycle_subscriber). Existing supervisor wiring
-	// already takes Stores but not Executors; adding this field is a
-	// prerequisite for the DialLifecycleSubscribers call.
 	Executors ExecutorsConfig
 
-	// LateBindServiceProxies passes the rimsky.yml late-bind map through
-	// to the supervisor for use in SelectCandidatesRequest construction
-	// and Registry option wiring (protocol name → proxy service name).
 	LateBindServiceProxies map[string]string
 
-	// ExtraInprocHandlers lets a test or embedder register additional
-	// inproc executor handlers alongside the rimsky-bundled builtins.
-	// Threaded into runtime.Config.ExtraInprocHandlers; see that field
-	// for the contract. Production wiring leaves this nil. Per
 	// TD-inproc-registry. @concept: executor
 	ExtraInprocHandlers map[string]executor.InProcessHandler
 }
 
-// SupervisorHandle is the lifecycle handle returned by StartSupervisor.
 type SupervisorHandle interface {
 	Shutdown(ctx context.Context) error
 	CallbackAddr() string
-	// @agent-contract: CallbackRegistry exposes the supervisor's
-	// callback registry for test-only callers (the F4
-	// callback-determinism scenario; see runtime.Handle.CallbackRegistry
-	// doc). Production callers should NOT reach into the registry
-	// directly.
 	CallbackRegistry() *runtime.CallbackRegistry
-	// @agent-contract: CallbackServeErr surfaces a fatal post-start
-	// death of the supervisor's async-callback HTTP serve loop (see
-	// runtime.Handle.CallbackServeErr). At most one error is ever sent;
-	// the channel closes when the serve loop exits. Supervising callers
-	// forward it onto the role fail channel.
 	CallbackServeErr() <-chan error
 }
 
-// StartSupervisor starts a supervisor process. SupervisorID must be
-// unique across running supervisors (typically hostname+pid).
 func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if cfg.SupervisorID == "" {
 		return nil, fmt.Errorf("StartSupervisor: SupervisorID required")
@@ -150,24 +77,11 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
 	}
-	// @deliberate: dial the supervisor's outbound LifecycleSubscriber
-	// peers (the same helper control-api uses). The supervisor fires
-	// OnRunScopeTerminal to these peers at sub-graph and
-	// fanout-partition scope closes.
 	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.Stores, cfg.Executors)
 	if err != nil {
 		registry.Close()
 		return nil, fmt.Errorf("StartSupervisor: dial lifecycle subscribers: %w", err)
 	}
-	// @constraint: dial the supervisor's DataProcessing mix-in clients
-	// for any claim-producer / executor peer whose `protocols:` list
-	// declares `data_processing`. The supervisor needs these at fan-out
-	// acquisition (BeginCandidate per sub-claim) and at leaf terminal
-	// (CommitCandidate / AbandonCandidate). Without this the candidate
-	// handle is never minted and the fan-out leaf dispatches with an
-	// empty `StoreHandle.candidate_handle`. Publishers don't live in the
-	// supervisor config, so the publishers arg is empty; only the
-	// DataProcessing registry is consumed here.
 	_, _, dataProcessors, dpClosers, err := DialPublisherAndValidationRegistries(
 		context.Background(), cfg.Stores, cfg.Executors, RemotePublishersConfig{})
 	if err != nil {
@@ -242,9 +156,6 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	}, nil
 }
 
-// supervisorHandleWithRegistry wraps runtime.Handle to release the
-// remote-store + lifecycle-subscriber + data-processing gRPC connections
-// at shutdown.
 type supervisorHandleWithRegistry struct {
 	inner               SupervisorHandle
 	registry            *locks.Registry

@@ -2,24 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N3 scenario — exit_carry_rule.
-//
-// At exit's leaf-run terminal, the supervisor copies exit's writeback
-// to the parent run's writeback row in the same transaction as exit's
-// terminal write. Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Sub-graphs / Aggregation / Writeback carry-rule for exit.
-//
-// The carry is the carry-verbatim settlement shape of the unified
-// settle-children primitive (`runtime.SettleChildren`): it consults the
-// run-tree row + RunScope to locate the parent, validates the writeback
-// bytes JSON-decode, upserts the parent's attribute row, and closes the
-// sub-graph RunScope — all inside the caller's tx. Per
 // @blessed-invariant 20 the primitive does not mangle bytes — it
-// round-trips through json.Unmarshal only to enforce the schema
-// contract. Exercised here against a real SQLite backend so the
-// carry-writeback + scope-close atomicity is asserted against actual
-// persisted rows.
 package subgraph
 
 import (
@@ -38,10 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// carryFixture is the persisted sub-graph shape the carry-rule fires
-// against: a calling-node parent run in the instance's main RunScope,
-// plus an exit leaf run inside a child RunScope whose parent_run_id
-// points back at the parent run.
 type carryFixture struct {
 	tables      persistence.Tables
 	instanceID  shared.UUID
@@ -51,8 +30,6 @@ type carryFixture struct {
 	exitNodeID  shared.UUID
 }
 
-// openSQLiteTables opens a throwaway file-backed SQLite database and
-// migrates it.
 func openSQLiteTables(t *testing.T) persistence.Tables {
 	t.Helper()
 	ctx := context.Background()
@@ -70,8 +47,6 @@ func openSQLiteTables(t *testing.T) persistence.Tables {
 	return d.Tables()
 }
 
-// makeFixture seeds template → main RunScope → instance → nodes →
-// frame → parent run → sub-graph RunScope → exit run.
 func makeFixture(t *testing.T) carryFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -148,7 +123,6 @@ func makeFixture(t *testing.T) carryFixture {
 		if _, err := tables.Frames().PromoteQueuedFrameToRunning(ctx, frameID, tx); err != nil {
 			return err
 		}
-		// @constraint: parent (calling-node) run in the main scope.
 		if err := tables.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
 			RunID: parentRunID, NodeID: callerNodeID, FrameID: frameID,
 			RunScopeID: mainScopeID,
@@ -183,9 +157,6 @@ func makeFixture(t *testing.T) carryFixture {
 	}
 }
 
-// settleCarry drives runtime.SettleChildren with the carry-verbatim
-// policy inside one transaction — the same shape the runner-tx wrapper
-// (applyTerminalCompleteSubgraphExit) uses.
 func settleCarry(fx carryFixture, exitRunID shared.UUID, writeback json.RawMessage) error {
 	args := runtime.RunArgs{Persist: fx.tables, Logger: shared.SilentLogger{}}
 	return fx.tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
@@ -200,8 +171,6 @@ func settleCarry(fx carryFixture, exitRunID shared.UUID, writeback json.RawMessa
 	})
 }
 
-// readParentAttrs loads the parent run's attribute row inside a tx
-// (the sqlite driver enforces the no-nil-tx contract).
 func readParentAttrs(t *testing.T, fx carryFixture) *persistence.NodeAttributesRow {
 	t.Helper()
 	var attrs *persistence.NodeAttributesRow
@@ -225,9 +194,7 @@ func TestSettleChildren_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 		t.Fatalf("SettleChildren (carry-verbatim): %v", err)
 	}
 
-	// @deliberate: The carry landed verbatim on the PARENT run's attribute row
 	// (@blessed-invariant: exit-node-writeback-to-parent — exit-node-writeback flows to parent run
-	// writeback).
 	attrs := readParentAttrs(t, fx)
 	if attrs == nil {
 		t.Fatalf("parent run has no attribute row after carry")
@@ -239,8 +206,6 @@ func TestSettleChildren_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 		t.Errorf("carried row_count = %v, want 1024", got)
 	}
 
-	// @deliberate: The child execution context closed atomically with the carry
-	// (carry-rule atomicity: same transaction as the writeback).
 	var scope *persistence.RunScopeRow
 	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -289,8 +254,6 @@ func TestSettleChildren_CarryVerbatim_RejectsRunWithoutParent(t *testing.T) {
 	t.Parallel()
 	fx := makeFixture(t)
 
-	// @constraint: The PARENT run lives in the main RunScope (no parent_run_id) —
-	// settling it as if it were a sub-graph exit must error.
 	wb := json.RawMessage(`{"a":1}`)
 	if err := settleCarry(fx, fx.parentRunID, wb); err == nil {
 		t.Fatalf("expected error for run without parent (root run cannot carry to a parent)")
@@ -302,13 +265,6 @@ func TestSettleChildren_CarryVerbatim_EmptyWritebackSkipsOnlyAttributeCarry(t *t
 	ctx := context.Background()
 	fx := makeFixture(t)
 
-	// @constraint: An empty writeback skips ONLY the attribute upsert: per spec
-	// §Writeback carry-rule for exit, "if exit never runs ... the
-	// parent's writeback row remains empty." Zero-byte writeback is
-	// equivalent — but the REST of the settlement (RunScope close,
-	// exit-carry forensics) must still run, or the scope leaks open.
-	// The runner-wrapper twin of this case lives in
-	// lib/runtime/subgraph_exit_carry_empty_test.go.
 	if err := settleCarry(fx, fx.exitRunID, nil); err != nil {
 		t.Errorf("SettleChildren with empty writeback should succeed, got: %v", err)
 	}
@@ -316,7 +272,6 @@ func TestSettleChildren_CarryVerbatim_EmptyWritebackSkipsOnlyAttributeCarry(t *t
 	if attrs != nil && len(attrs.Data) > 0 {
 		t.Errorf("parent writeback row should remain empty on empty carry, got %v", attrs.Data)
 	}
-	// @deliberate: The sub-graph RunScope still closes on the empty carry.
 	var scope *persistence.RunScopeRow
 	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error

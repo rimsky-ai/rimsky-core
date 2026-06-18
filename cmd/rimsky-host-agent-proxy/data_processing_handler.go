@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// data_processing_handler.go — the supervisor-facing DataProcessing
-// protocol handler. The proxy is a transparent forwarder: each
-// DataProcessing RPC resolves the dispatch to an owner's agent +
-// lazily-spawned child (expected_protocols: [data_processing]), tunnels the
-// serialized request via a DispatchFrame carrying rpc_method, awaits one
-// response frame, and unmarshals it into the protocol's response type.
-// DataProcessing request messages carry no instance_id, so the dispatch
-// resolves purely by the x-rimsky-service-name header (the cached instance
-// binding that names the late-bound data-processor). Proxy-side faults
-// surface as gRPC error statuses carrying the error_class in a
-// google.rpc.ErrorInfo detail — no protocol ships as a stub.
-//
 // @concept: host-agent-proxy
 
 package main
@@ -31,7 +19,6 @@ import (
 
 const protocolDataProcessing = "data_processing"
 
-// dataProcessingHandler implements genv1.DataProcessingServer.
 type dataProcessingHandler struct {
 	genv1.UnimplementedDataProcessingServer
 	state        *proxyState
@@ -49,14 +36,10 @@ func newDataProcessingHandler(state *proxyState, cfg Config) *dataProcessingHand
 	}
 }
 
-// Capabilities advertises a generic data-processing envelope. The proxy is
-// transport — the real capability surface comes from each spawned
-// data-processor's own Capabilities, read by the agent at handshake time.
 func (h *dataProcessingHandler) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.DataProcessingCapabilities, error) {
 	return &genv1.DataProcessingCapabilities{Materializations: []string{"full"}}, nil
 }
 
-// BeginCandidate forwards the unary BeginCandidate to the spawned producer.
 func (h *dataProcessingHandler) BeginCandidate(ctx context.Context, req *genv1.BeginCandidateRequest) (*genv1.BeginCandidateResponse, error) {
 	var resp genv1.BeginCandidateResponse
 	if rerr := h.forward(ctx, "BeginCandidate", req, &resp); rerr != nil {
@@ -65,7 +48,6 @@ func (h *dataProcessingHandler) BeginCandidate(ctx context.Context, req *genv1.B
 	return &resp, nil
 }
 
-// CommitCandidate forwards the unary CommitCandidate to the spawned producer.
 func (h *dataProcessingHandler) CommitCandidate(ctx context.Context, req *genv1.CommitCandidateRequest) (*genv1.CommitCandidateResponse, error) {
 	var resp genv1.CommitCandidateResponse
 	if rerr := h.forward(ctx, "CommitCandidate", req, &resp); rerr != nil {
@@ -74,8 +56,6 @@ func (h *dataProcessingHandler) CommitCandidate(ctx context.Context, req *genv1.
 	return &resp, nil
 }
 
-// AbandonCandidate forwards the unary AbandonCandidate to the spawned
-// producer. Its response is google.protobuf.Empty.
 func (h *dataProcessingHandler) AbandonCandidate(ctx context.Context, req *genv1.AbandonCandidateRequest) (*emptypb.Empty, error) {
 	var resp emptypb.Empty
 	if rerr := h.forward(ctx, "AbandonCandidate", req, &resp); rerr != nil {
@@ -84,8 +64,6 @@ func (h *dataProcessingHandler) AbandonCandidate(ctx context.Context, req *genv1
 	return &resp, nil
 }
 
-// forward resolves the dispatch by service name, marshals req, tunnels it
-// via the agent under rpcMethod, and unmarshals the response frame into resp.
 func (h *dataProcessingHandler) forward(ctx context.Context, rpcMethod string, req, resp proto.Message) *resolveError {
 	res, rerr := resolveAndSpawnByService(ctx, h.state, h.fetch, []string{protocolDataProcessing}, "", "", h.spawnTimeout)
 	if rerr != nil {

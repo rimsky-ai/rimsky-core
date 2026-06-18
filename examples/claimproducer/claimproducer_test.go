@@ -16,9 +16,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestOpenReturnsAcquired starts the example producer in-process and asserts the
-// acquisition happy path: Open returns the Acquired arm of the OpenResponse
-// oneof with a non-empty address, and Capabilities advertises READ_ONLY.
 func TestOpenReturnsAcquired(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

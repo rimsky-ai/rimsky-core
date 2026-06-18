@@ -22,7 +22,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// GetByRun returns the attribute row for runID or (nil, nil) when absent.
 func (s *nodeAttributesImpl) GetByRun(ctx context.Context, runID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT node_run_id, node_id, data, updated_at, value_handle, value_handle_backend
@@ -32,12 +31,6 @@ func (s *nodeAttributesImpl) GetByRun(ctx context.Context, runID shared.UUID, tx
 	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetByRun")
 }
 
-// GetLatestByNode returns the most-recent attribute row for the
-// (node, run scope) pair. Returns (nil, nil) when no row exists.
-//
-// Under RunScope-first (per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md),
-// the lookup is scoped: callers pick the RunScope first.
 func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT a.node_run_id, a.node_id, a.data, a.updated_at, a.value_handle, a.value_handle_backend
@@ -51,11 +44,6 @@ func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.
 	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetLatestByNode")
 }
 
-// scanAttributeRow scans a single attribute row (six columns:
-// node_run_id, node_id, data, updated_at, value_handle, value_handle_backend)
-// and dereferences any blob-spilled value through the active backend.
-// Returns (nil, nil) when the underlying scan returns sql.ErrNoRows.
-// `op` is the calling method name, used in wrapped error messages.
 func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row rowScanner, op string) (*persistence.NodeAttributesRow, error) {
 	var (
 		runIDStr     string
@@ -152,9 +140,6 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 		dataToSave = "{}"
 	}
 
-	// @deliberate: always write value_handle / value_handle_backend (NULL
-	// when not spilled) so a downgrade from spilled-to-inline correctly
-	// clears the prior pointer.
 	var (
 		nullHandle  any
 		nullBackend any
@@ -190,21 +175,6 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 	return nil
 }
 
-// MergeDelta runs a SHALLOW merge. SQLite has no JSONB `||`; we read,
-// merge in Go, and write back. Per spec §5.7.2.
-//
-// Spill-aware: when the existing row is spilled, materialize via GetByRun,
-// merge, and re-Upsert (which re-applies the spill decision and queues
-// orphans). When inline today, run the legacy read-then-write merge.
-//
-// nil-delta is a no-op merge: bumps updated_at if the row exists, silent
-// no-op if absent. Mirrors postgres impl semantics.
-//
-// Atomicity: the read-then-write runs inside the caller's tx — a tx is
-// mandatory on every Table method (tablesImpl.q panics on nil), and the
-// DSN's _txlock=immediate makes the tx a BEGIN IMMEDIATE whose
-// writer-slot hold keeps the merge atomic across OS processes sharing
-// the database file, not just across goroutines.
 func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, delta map[string]any, tx persistence.Tx) error {
 	if delta == nil {
 		_, err := s.q(tx).ExecContext(ctx,
@@ -287,10 +257,6 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, 
 	return nil
 }
 
-// readPriorBlobHandle returns the value_handle / value_handle_backend
-// for runID (or empty strings when the row does not exist or has no
-// handle). Errors only on actual query failure — absence is signaled
-// by both return strings being empty.
 func readPriorBlobHandle(ctx context.Context, q querier, runID shared.UUID) (string, string, error) {
 	row := q.QueryRowContext(ctx,
 		`SELECT value_handle, value_handle_backend

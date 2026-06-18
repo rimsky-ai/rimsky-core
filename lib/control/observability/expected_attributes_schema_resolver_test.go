@@ -13,23 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// TestExpectedAttributesSchemaResolver_BehavioralValidation drives the
-// observability concept's `userdata_schema` (= `expected_attributes_schema`)
-// surface end-to-end through BOTH enforcement points the concept claims:
-// template registration AND dispatch. The schema bytes originate from the
-// real discovery cache, are surfaced by the real resolver
-// (NewExpectedAttributesSchemaResolver), and are then fed into the real
-// validators (node.ValidateTemplate at registration, attributes.Validate at
-// dispatch). A conforming payload passes; a schema-violating payload is
-// rejected with a clear, attributable error at each point.
-//
-// This is the behavioral counterpart to the proto/shape smoke coverage of
-// the handshake: it confirms the advertised schema is actually consulted at
-// the validation gates, not merely parsed.
 func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
-	// @constraint: the executor advertises a closed schema — `model` must be a string,
-	// and no other top-level properties are admitted. The closed-schema and
-	// type-authority assertions below depend on this shape.
 	const executorName = "agent"
 	advertisedSchema := []byte(`{
 		"type": "object",
@@ -39,8 +23,6 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 		"additionalProperties": false
 	}`)
 
-	// @constraint: populate the real discovery cache as the startup handshake would,
-	// then build the real resolver over it.
 	disc := NewDiscovery(nil)
 	disc.SetExecutor(PeerEntry{
 		Name:         executorName,
@@ -54,9 +36,6 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 		t.Fatal("NewExpectedAttributesSchemaResolver returned nil for a non-nil discovery")
 	}
 
-	// @constraint: sanity: the resolver surfaces the advertised bytes for the known
-	// executor and reports ok=false for an unknown one. The validators
-	// below depend on this lookup behaving as the dispatch path expects.
 	gotSchema, ok := resolver(executorName)
 	if !ok {
 		t.Fatalf("resolver(%q): ok=false, want true (executor is in the cache with a schema)", executorName)
@@ -68,11 +47,6 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 		t.Fatal("resolver returned ok=true for an executor absent from the cache")
 	}
 
-	// @deliberate: registration-time enforcement —
-	// The registration validator consults the advertised schema via the
-	// ExecutorExpectedAttributesSchema hook (the same shape the control
-	// API wires from the discovery cache). The executor is authoritative
-	// on types, so an L2 redeclaration that conflicts must be rejected.
 	hooks := node.RegistryHooks{
 		ExecutorDeclared: func(name string) bool { return name == executorName },
 		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
@@ -108,8 +82,6 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 	})
 
 	t.Run("registration: type-conflicting template rejected", func(t *testing.T) {
-		// @constraint: L2 redeclares `model` as integer; the advertised schema says
-		// string. The executor is authoritative — registration rejects.
 		res := node.ValidateTemplate(validSpec("integer"), hooks)
 		if res.Ok() {
 			t.Fatal("type-conflicting template passed registration; advertised schema was not enforced")
@@ -120,8 +92,6 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 	})
 
 	t.Run("registration: undeclared property rejected under closed schema", func(t *testing.T) {
-		// @constraint: the advertised schema is closed (additionalProperties: false);
-		// an L2 property the executor does not enumerate is rejected.
 		spec := validSpec("string")
 		props := spec.Nodes[0].Attributes.Schema["properties"].(map[string]any)
 		props["unknown_field"] = map[string]any{"type": "string", "default": "x"}
@@ -134,11 +104,6 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 		}
 	})
 
-	// @deliberate: dispatch-time enforcement —
-	// At dispatch the merged effective schema is validated against the
-	// resolved attribute bag (post-merge/post-substitution). The resolved
-	// bytes are the same advertised schema; a bag whose `model` is the
-	// wrong type must be rejected.
 	dispatchSchemaBytes, ok := resolver(executorName)
 	if !ok {
 		t.Fatal("resolver(executorName) ok=false at dispatch stage")
@@ -171,8 +136,6 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 	})
 }
 
-// anyErrorContains reports whether any validation error's message contains
-// sub. Keeps the assertion legible without a per-call closure.
 func anyErrorContains(errs []node.ValidationError, sub string) bool {
 	for _, e := range errs {
 		if strings.Contains(e.Msg, sub) {
@@ -182,10 +145,6 @@ func anyErrorContains(errs []node.ValidationError, sub string) bool {
 	return false
 }
 
-// mustParseSchema decodes advertised schema bytes into the map shape the
-// dispatch validator consumes, mirroring runtime's effective-schema build
-// (runtime/runner_dispatch.go::computeEffectiveAttributeSchema json.Unmarshals
-// the resolver bytes the same way).
 func mustParseSchema(t *testing.T, b []byte) map[string]any {
 	t.Helper()
 	var schema map[string]any

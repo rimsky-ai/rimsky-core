@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// instances.go — `instance create/list/get/status/delete/kill/nodes/events`.
 package cli
 
 import (
@@ -17,14 +16,10 @@ import (
 	"time"
 )
 
-// uuidPattern is the canonical lowercase hex UUID shape (v4 or v5).
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// LooksLikeUUID reports whether s is the canonical UUID shape.
 func LooksLikeUUID(s string) bool { return uuidPattern.MatchString(s) }
 
-// parseParams reads --params flag value, accepting either inline JSON or
-// "@file" syntax pointing at a JSON file.
 func parseParams(s string) (map[string]any, error) {
 	if s == "" {
 		return nil, nil
@@ -46,7 +41,6 @@ func parseParams(s string) (map[string]any, error) {
 	return out, nil
 }
 
-// RunInstanceCreate implements `instance create`.
 func RunInstanceCreate(ctx context.Context, args []string) int {
 	var params, instanceKey string
 	fs, common, endpoint, code := runWithCommon("instance create", args, func(fs *flag.FlagSet) {
@@ -93,7 +87,6 @@ func RunInstanceCreate(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunInstanceList implements `instance list`.
 func RunInstanceList(ctx context.Context, args []string) int {
 	var template, keyPrefix string
 	fs, common, endpoint, code := runWithCommon("instance list", args, func(fs *flag.FlagSet) {
@@ -155,7 +148,6 @@ func pagedListInstances(ctx context.Context, c *Client, q ListInstancesQuery) ([
 	return all, nil
 }
 
-// RunInstanceGet implements `instance get`.
 func RunInstanceGet(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("instance get", args, nil)
 	if code != 0 {
@@ -191,7 +183,6 @@ func RunInstanceGet(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunInstanceDelete implements `instance delete`.
 func RunInstanceDelete(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("instance delete", args, nil)
 	if code != 0 {
@@ -211,14 +202,6 @@ func RunInstanceDelete(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunInstanceKill implements `instance kill`: force-terminate a (possibly
-// stuck) instance via POST /instances/{idOrKey}/terminate. Termination is
-// destructive — it abandons any in-flight node-runs — so it refuses unless
-// the operator opts in with --force or the common --yes flag.
-//
-// kill makes the instance terminal but does NOT free its instance_key; the
-// follow-up `rimsky instance delete <id>` removes the row (its terminal
-// guard now passes) and frees the key.
 func RunInstanceKill(ctx context.Context, args []string) int {
 	var reason string
 	var force bool
@@ -263,14 +246,8 @@ func RunInstanceKill(ctx context.Context, args []string) int {
 	return 0
 }
 
-// statusReportEventLimit bounds the recent-events and pending-hits fan-out
-// for `instance status`. Status is a snapshot, not a full history dump.
 const statusReportEventLimit = 50
 
-// InstanceStatus is the assembled one-shot snapshot `instance status`
-// renders: the instance projection plus the three per-instance read
-// fan-outs (nodes, recent events, pending breakpoint hits). The JSON
-// shape doubles as the `-o json` envelope.
 type InstanceStatus struct {
 	Instance       *Instance        `json:"instance"`
 	Nodes          []Node           `json:"nodes"`
@@ -278,12 +255,6 @@ type InstanceStatus struct {
 	BreakpointHits []map[string]any `json:"breakpoint_hits"`
 }
 
-// gatherInstanceStatus fans out GetInstance + ListInstanceNodes +
-// ListEvents + ListBreakpointHits for one already-resolved instance UUID
-// and assembles them into an InstanceStatus, the one-shot snapshot
-// `instance status` renders. The four reads are independent; a failure on
-// any is returned to the caller. (`watch` does not use this — it runs its
-// own incremental poll loop over the same read sources.)
 func gatherInstanceStatus(ctx context.Context, c *Client, uuid string) (*InstanceStatus, error) {
 	inst, err := c.GetInstance(ctx, uuid)
 	if err != nil {
@@ -309,11 +280,6 @@ func gatherInstanceStatus(ctx context.Context, c *Client, uuid string) (*Instanc
 	}, nil
 }
 
-// RunInstanceStatus implements `instance status`: a client-side aggregator
-// that fans out across the existing per-instance read endpoints (instance
-// projection, node states, recent events, pending breakpoint hits) and
-// renders one combined snapshot. No new server endpoint — purely a
-// composition over reads.
 func RunInstanceStatus(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("instance status", args, nil)
 	if code != 0 {
@@ -349,9 +315,6 @@ func RunInstanceStatus(ctx context.Context, args []string) int {
 	return 0
 }
 
-// printInstanceStatus renders the human view of an InstanceStatus: an
-// instance header (KV), a per-node state table, a recent-events table, and
-// a pending-hits table.
 func printInstanceStatus(status *InstanceStatus) {
 	inst := status.Instance
 	state := "running"
@@ -401,7 +364,6 @@ func printInstanceStatus(status *InstanceStatus) {
 	EmitTable(os.Stdout, []string{"SEQ", "CHECKPOINT", "MODE", "HIT_ID"}, hitRows)
 }
 
-// RunInstanceNodes implements `instance nodes`.
 func RunInstanceNodes(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("instance nodes", args, nil)
 	if code != 0 {
@@ -430,8 +392,6 @@ func RunInstanceNodes(ctx context.Context, args []string) int {
 	return 0
 }
 
-// RunInstanceEvents implements `instance events`. With --follow, polls
-// GET /events?instance_id=… until interrupted.
 func RunInstanceEvents(ctx context.Context, args []string) int {
 	var follow bool
 	var pollInterval time.Duration
@@ -462,27 +422,10 @@ func RunInstanceEvents(ctx context.Context, args []string) int {
 	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	// @constraint: cursor discipline mirrors the live control-api's keyset
-	// pagination (foundation/persistence/{sqlite,postgres}/events.go): the
-	// event log is read newest-first ((occurred_at, id) DESC) and
-	// NextCursor is an OPAQUE base64 keyset token that walks backward
-	// through history. The CLI must pass that exact token back —
-	// fabricating a numeric cursor (the old fmt.Sprintf("%d", lastSeenID))
-	// makes the server 500 with "events.list: bad cursor" on the first
-	// advance (issue #1). NextCursor is set only on a full page; a partial
-	// page returns "" to signal the backlog is drained.
-	// @constraint: lastSeenID is a purely-local dedup high-watermark and
-	// is NEVER sent as a cursor. Because pages arrive newest-first, the
-	// skip test uses a per-poll snapshot (prevSeen) rather than the
-	// running max: the first event of a full backlog is the global newest,
-	// so updating the watermark mid-drain would suppress every older
-	// (lower-ID) event on the following pages. We compare each event
-	// against the watermark as it stood at the start of the poll and only
-	// advance the committed watermark after the whole backlog is drained.
 	var lastSeenID int64
 	for {
 		prevSeen := lastSeenID
-		nextCursor := "" // @constraint: opaque server token; empty re-scans the newest page
+		nextCursor := ""
 		for {
 			page, err := c.ListEvents(signalCtx, ListEventsQuery{InstanceID: id, Cursor: nextCursor, Limit: 100})
 			if err != nil {
@@ -505,9 +448,8 @@ func RunInstanceEvents(ctx context.Context, args []string) int {
 				}
 			}
 			if page.NextCursor == "" {
-				break // @constraint: partial page: backlog drained for this poll
+				break
 			}
-			// @constraint: full page — continue draining older events via the opaque token, without sleeping.
 			nextCursor = page.NextCursor
 		}
 		if !follow {

@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// sweep_message_idempotencies.go — retention sweep over
-// rimsky_message_idempotencies. Universal idempotency dedup rows expire
-// after a configured trailing window (default 24h). A retry that arrives
-// past the window is treated as a fresh message — dedup tokens are
-// short-lived by design.
-//
-// Sibling to `SweepClaimHandleRetention`: serialized via the scheduler-
-// tick advisory lock. No per-row claimant guard required — the rows
-// have no holder.
-//
 // @concept: message
 
 package runtime
@@ -25,9 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// SweepMessageIdempotencies deletes idempotency rows older than
-// `cfg.MessageIdempotenciesTrailing`. Returns the deleted-rows count.
-// Disabled when the trailing duration is <= 0.
 func SweepMessageIdempotencies(
 	ctx context.Context, mit persistence.MessageIdempotencyTable, cfg RetentionConfig,
 	now time.Time, log shared.Logger,

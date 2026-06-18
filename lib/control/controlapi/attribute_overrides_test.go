@@ -114,9 +114,6 @@ func TestValidateAttributeOverrides(t *testing.T) {
 			errContains: "by_node entry must be an object",
 		},
 		{
-			// @constraint: issue #4 coverage: a null fragment value is structurally
-			// not an object; reject with "must be an object" rather than
-			// flowing through to declared/used checks.
 			name: "by_executor entry is null",
 			input: map[string]any{
 				"by_executor": map[string]any{
@@ -137,9 +134,6 @@ func TestValidateAttributeOverrides(t *testing.T) {
 			errContains: "by_node entry must be an object",
 		},
 		{
-			// @constraint: issue #3 coverage: executor declared in rimsky.yml but not
-			// referenced by any template node is rejected — overrides
-			// targeting it would silently no-op at dispatch.
 			name: "by_executor: declared executor not referenced by template",
 			input: map[string]any{
 				"by_executor": map[string]any{
@@ -150,11 +144,6 @@ func TestValidateAttributeOverrides(t *testing.T) {
 			errContains: "executor not referenced by any template node",
 		},
 		{
-			// @constraint: JSON `null` at the top-level for `by_executor` decodes to
-			// untyped nil; the type assertion `raw.(map[string]any)`
-			// fails so the validator must reject with the standard
-			// "must be an object" message rather than panicking or
-			// flowing through to the inner-entry checks.
 			name: "by_executor at top-level is null",
 			input: map[string]any{
 				"by_executor": nil,
@@ -193,8 +182,6 @@ func TestValidateAttributeOverrides(t *testing.T) {
 	}
 }
 
-// TestValidateAttributeOverrides_ByMatch covers the by_match matcher-
-// overlay grammar added per
 func TestValidateAttributeOverrides_ByMatch(t *testing.T) {
 	executors := map[string]ExecutorEntry{
 		"claude-agent": {Transport: "grpc", Endpoint: "claude-agent:9090"},
@@ -286,11 +273,6 @@ func TestValidateAttributeOverrides_ByMatch(t *testing.T) {
 			},
 		},
 		{
-			// @constraint: symmetry with the missing-matcher case above. A JSON
-			// producer may serialise a nil matcher either way; both
-			// shapes are equivalent to the runtime evaluator
-			// (`len(matcher) == 0` → wildcard) and the validator must
-			// agree.
 			name: "by_match entry explicit matcher: null (treated as wildcard)",
 			input: map[string]any{
 				"by_match": []any{
@@ -302,9 +284,6 @@ func TestValidateAttributeOverrides_ByMatch(t *testing.T) {
 			},
 		},
 		{
-			// @constraint: non-object, non-null matcher remains a hard reject. A
-			// JSON array or scalar matcher is a typo, not a wildcard
-			// — the loud-rejection vocabulary stays.
 			name: "by_match entry matcher: array still rejected",
 			input: map[string]any{
 				"by_match": []any{
@@ -501,10 +480,6 @@ func TestValidateAttributeOverrides_ByMatch(t *testing.T) {
 			},
 		},
 		{
-			// @constraint: spec: empty-string child_key is the non-fan-out sentinel,
-			// not a matcher target. Accepting it would silently fire on
-			// every non-fan-out dispatch, contradicting the spec's
-			// "matchers specifying child_key won't apply to them" rule.
 			name: "matcher.child_key empty string rejected",
 			input: map[string]any{
 				"by_match": []any{

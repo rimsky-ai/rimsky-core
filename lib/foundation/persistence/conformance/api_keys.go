@@ -21,8 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// TestAPIKeys exercises the APIKeyTable surface against the supplied
-// driver. Called from postgres + sqlite per-driver wrappers.
 func TestAPIKeys(t *testing.T, d persistence.Database) {
 	t.Helper()
 	ctx := context.Background()
@@ -124,7 +122,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 	})
 
 	t.Run("ActiveCount", func(t *testing.T) {
-		// @deliberate: ActiveCount's predicate is global, not test-scoped, so prior subtests' rows must be revoked before counting.
 		all, err := keys.List(ctx, true, "", nil)
 		if err != nil {
 			t.Fatalf("list: %v", err)
@@ -148,7 +145,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if err != nil || n != 1 {
 			t.Fatalf("ActiveCount after insert: n=%d err=%v", n, err)
 		}
-		// @constraint: future-expiry must still count as active.
 		idFuture := uuid.New()
 		exp := now.Add(1 * time.Hour)
 		hash = sha256Of([]byte("rk_future_exp"))
@@ -160,12 +156,10 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if err != nil || n != 2 {
 			t.Fatalf("ActiveCount after future-exp: n=%d err=%v", n, err)
 		}
-		// @constraint: past-expiry must drop the row from the active count.
 		n, err = keys.ActiveCount(ctx, now.Add(2*time.Hour), nil)
 		if err != nil || n != 1 {
 			t.Fatalf("ActiveCount after expiry passes: n=%d err=%v", n, err)
 		}
-		// @constraint: a row in rotation-grace (revoke_at > now, revoked_at NULL) counts as active.
 		idGrace := uuid.New()
 		future := now.Add(1 * time.Hour)
 		hash = sha256Of([]byte("rk_in_grace"))
@@ -177,14 +171,12 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if err != nil || n != 3 {
 			t.Fatalf("ActiveCount with in-grace: n=%d err=%v", n, err)
 		}
-		// @constraint: once revoke_at <= now, the row drops out of the active count even before the sweep flips revoked_at.
 		n, err = keys.ActiveCount(ctx, future.Add(time.Second), nil)
 		if err != nil || n != 1 {
 			t.Fatalf("ActiveCount past-grace: n=%d err=%v", n, err)
 		}
 	})
 
-	// @agent-contract: MarkRevoked returns (changed, found) so callers (handleRevokeKey) can suppress duplicate auth.key_revoked emissions when the rotation-grace sweep revoked first.
 	t.Run("MarkRevoked_Idempotent", func(t *testing.T) {
 		id := uuid.New()
 		hash := sha256Of([]byte("rk_idem"))
@@ -245,7 +237,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 
-	// @constraint: name uniqueness is enforced via a partial unique index gated on revoke_at IS NULL, so rotation can stage a new row before sweeping the old one.
 	t.Run("UniqueNameDuringRotation", func(t *testing.T) {
 		hash1 := sha256Of([]byte("rk_dup_a"))
 		hash2 := sha256Of([]byte("rk_dup_b"))

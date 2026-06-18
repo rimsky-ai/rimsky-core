@@ -14,18 +14,6 @@ import (
 	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
-// TestParkedNodeRunHoldsFrameOpen pins frame-end correctness: a running
-// frame whose only node_run is parked is NOT drained. A parked run is
-// unresolved work — the frame is held open until the park is woken and
-// the run resolves to a true terminal (completed/failed). If
-// ListRunningFramesNoPendingNodes returned the frame, the engine would
-// flip it to `completed` while a node sits parked, losing the parked
-// node's eventual resume.
-//
-// Production parks land both phase='parked' (queue_park.go::ParkActiveInTx)
-// and state='parked' (Nodes.UpdateState → cascade.NodeStateParked, fired
-// by runtime/runner_terminal_park.go::applyTerminalPark). We seed both so
-// the predicate is exercised against the real on-disk shape.
 func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()
@@ -44,8 +32,6 @@ func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// @constraint: post-RunScope-first, instance and main_run_scope FK
-	// each other mutually; seed in one tx with deferred constraints.
 	scopeID := uuid.New().String()
 	stx, err := rawDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -67,10 +53,6 @@ func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// @constraint: rimsky_frames.triggering_message_id is NOT NULL FK;
-	// seed the message that opened the frame before inserting the frame.
-	// @constraint: rimsky_frames CHECK requires frame_timeout_ms >= 60000;
-	// use the minimum permitted value, the test never trips the timeout.
 	msgID := uuid.New().String()
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
@@ -94,9 +76,6 @@ func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	// @deliberate: seed the frame's only node_run as fully parked
-	// (phase + state), with no stale/running runs, to assert the
-	// predicate holds the frame open on park alone.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)

@@ -21,21 +21,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// inTx runs fn inside a fresh short Tables.Transaction. Read-only
-// observability handlers all share this shape: a single read or a small
-// fan-out followed by JSON serialization. Wrapping each persistence
-// call in its own short tx keeps each handler invocation simple under
-// option C (every Table method requires an explicit tx).
 func inTx(ctx context.Context, tables persistence.Tables, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return tables.Transaction(ctx, fn)
 }
 
-// Deps bundles the dependencies the observability HTTP handlers need.
-// The persistence layer is consumed via the typed Tables/Queue
-// interfaces; no driver-specific subpackages are imported here. The
-// peer specs reflect the rimsky.yml `executors:` and `claim_producers:`
-// blocks projected via PeerSpec — keeps the package free of
-// control/config.
 type Deps struct {
 	Tables    persistence.Tables
 	Queue     persistence.Queue
@@ -45,8 +34,6 @@ type Deps struct {
 	Discovery *Discovery
 }
 
-// Routes mounts the read-only observability endpoints under the parent
-// chi router. Per spec §1.2.
 func Routes(r chi.Router, deps Deps) {
 	r.Get("/stores", handleListStores(deps))
 	r.Get("/stores/{name}", handleGetStore(deps))
@@ -57,9 +44,6 @@ func Routes(r chi.Router, deps Deps) {
 	r.Get("/templates/{hash}", handleGetTemplate(deps))
 	r.Get("/instances", handleListInstances(deps))
 	r.Get("/instances/{id}", handleGetInstance(deps))
-	// @constraint: (/schedules retired by the 2026-05-15 plan B10 / D7 / E16
-	// schedule-retirement cascade; cron firing is owned by
-	// sensors/sensor-cron/.)
 
 	r.Get("/frames", handleListFrames(deps))
 	r.Get("/frames/{id}", handleGetFrame(deps))
@@ -455,12 +439,6 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 			eventRes = e
 			return err
 		})
-		// latestBag is the node's most-recent resolved attribute bag — its
-		// forensic last-attribute snapshot, the Data map of the row
-		// NodeAttributes().GetLatestByNode returns for (node, main run
-		// scope). nil → the node has never executed; the key is then an
-		// empty object so the surface is stable across executed/unexecuted
-		// nodes (the test treats absent and empty-object identically).
 		var latestBag map[string]any
 		_ = inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
 			inst, err := deps.Tables.Instances().Get(ctx, id, tx)
@@ -551,7 +529,6 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 			badRequest(w, "invalid dispatch id")
 			return
 		}
-		// @constraint: direct point-lookup; avoids scanning the live dispatch table.
 		match, err := deps.Queue.GetByID(r.Context(), id)
 		if err != nil {
 			internalErr(w, err)
@@ -565,9 +542,6 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 		if match.ClaimedBy != nil {
 			state = "claimed"
 		}
-		// @deliberate: direct (frame_id, node_id) lookup of the matching
-		// lock-holder avoids the full holder-list scan; surfaces the
-		// dispatch → claim_id link for the dashboard.
 		var claimID *shared.UUID
 		var instanceID *shared.UUID
 		var nodeType string
@@ -575,10 +549,6 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 			if holder, err := deps.Tables.ClaimHandles().GetByFrameAndNode(ctx, match.NodeID, match.FrameID, tx); err == nil && holder != nil {
 				claimID = &holder.ID
 			}
-			// @constraint: also surface instance_id and node_type so the dashboard can
-			// resolve the executor's `dispatch_url_template` substitution
-			// markers ({dispatch_id}, {instance_id}, {node_type}) per
-			// spec §2.2 on the dispatch-detail page.
 			if nodeRow, err := deps.Tables.Nodes().Get(ctx, match.NodeID, tx); err == nil && nodeRow != nil {
 				id := nodeRow.InstanceID
 				instanceID = &id
@@ -756,8 +726,6 @@ func handleSystemHealth(deps Deps) http.HandlerFunc {
 			internalErr(w, err)
 			return
 		}
-		// @constraint: Postgres connectivity probe (spec §1.2.6). Driver may be nil
-		// in some test fixtures — surface as "unknown" in that case.
 		pgStatus := "unknown"
 		if deps.Driver != nil {
 			pingCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)

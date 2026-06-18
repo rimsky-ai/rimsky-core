@@ -119,8 +119,6 @@ func (s *templateTagsImpl) List(
 	return persistence.PaginatedListResult[persistence.TemplateTagRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
-// Delete removes a tag row. Returns (true, nil) when a row was deleted,
-// (false, nil) when the tag did not exist.
 func (s *templateTagsImpl) Delete(ctx context.Context, tag string, tx persistence.Tx) (bool, error) {
 	ex := s.q(tx)
 	cmd, err := ex.Exec(ctx,

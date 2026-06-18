@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package server adapts the store-internal stub Store to the rimsky
-// ClaimProducer + LifecycleSubscriber gRPC + HTTP+JSON bridge.
 package server
 
 import (
@@ -26,41 +24,19 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// gracefulStopBudget bounds grpcSrv.GracefulStop() so a hung in-flight
-// RPC can't strand the server when ctx is cancelled. Mirrors the
-// postgres server's pattern.
 const gracefulStopBudget = 5 * time.Second
 
-// Config is the operator-facing config.
 type Config struct {
 	Substrate stubstore.Config
-	// EnableLifecycle, when true, registers the LifecycleSubscriber
-	// service alongside ClaimProducer. The stub's lifecycle subscriber
-	// is a no-op (returns nil from every method).
 	EnableLifecycle bool
-	// EnableDataProcessing, when true, registers the DataProcessing
-	// gRPC service alongside ClaimProducer and flips Capabilities to
-	// advertise `data_processing` in Protocols.
-	//
-	// SplitScope and ScopesConflict are always implemented on the
-	// ClaimProducer surface (advertised via SupportsSplitScope /
-	// SupportsScopesConflict in Capabilities) — the stub is the
-	// M / N6 / N7 / O1 self-test target and both are cheap.
 	EnableDataProcessing bool
 }
 
-// Run starts the gRPC + HTTP listeners and serves until ctx is
-// cancelled. Mirrors the filesystem signature; postgres adds an admin
-// listener (5th arg) for items insertion, while filesystem and stub
-// have no admin surface.
 func Run(ctx context.Context, cfg Config, grpcLis, httpLis net.Listener) error {
 	st := stubstore.New(cfg.Substrate)
 	return RunWithStore(ctx, cfg, st, grpcLis, httpLis)
 }
 
-// RunWithStore is the testfixture-friendly entry point: callers pass an
-// already-constructed *stubstore.Store so they can keep a handle for
-// test assertions while the server's lifetime is bounded by ctx.
 func RunWithStore(ctx context.Context, cfg Config, st *stubstore.Store, grpcLis, httpLis net.Listener) error {
 	srv := &Server{Store: st, EnableDataProcessing: cfg.EnableDataProcessing}
 	grpcSrv := grpc.NewServer()
@@ -97,25 +73,13 @@ func RunWithStore(ctx context.Context, cfg Config, st *stubstore.Store, grpcLis,
 	return nil
 }
 
-// Server implements genv1.ClaimProducerServer. SplitScope and
-// ScopesConflict are implemented in-process on this surface; the
-// stub-store advertises both via Capabilities so M / N6 / N7 / O1
-// can drive the SplitScope fan-out path without a separate fixture.
 type Server struct {
 	genv1.UnimplementedClaimProducerServer
 	Store          *stubstore.Store
 	DataProcessing *dataprocessing.Server
-	// EnableDataProcessing mirrors Config.EnableDataProcessing so
-	// Capabilities flips the `data_processing` protocol advertisement
-	// without reading DataProcessing == nil (which a test might
-	// inject for the no-DP case).
 	EnableDataProcessing bool
 }
 
-// Capabilities returns the store's advertised capability struct.
-// SplitScope and ScopesConflict are always advertised on the
-// stub-store wire so the M / N / O suites can pin against a single
-// fixture without juggling per-test caps.
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.Store.Capabilities()
 	out := make([]genv1.WriteSemantics, 0, len(c.WriteSemanticsAllowed))
@@ -131,18 +95,10 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 		SupportsSplitScope:     true,
 		SupportsScopesConflict: true,
 		Protocols:              protocols,
-		// @deliberate: Producer-declared acquisition-failure vocabulary
-		// (claim_producer.proto::CapabilitiesResponse.declared_error_classes).
-		// The observability handshake captures this into the discovery
-		// cache, where the template registration validator's
-		// error_types: range-check reads it.
 		DeclaredErrorClasses: c.DeclaredErrorClasses,
 	}, nil
 }
 
-// Open delegates. Validates `intent` against the wire schema (only "r"
-// or "rw") before dispatching, mirroring the HTTP bridge's gate so
-// direct-gRPC callers can't bypass the check.
 func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 	if intent := req.GetIntent(); intent != "r" && intent != "rw" {
 		return nil, fmt.Errorf("stub.Open: intent must be \"r\" or \"rw\", got %q", intent)
@@ -152,9 +108,6 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 		return nil, err
 	}
 	if !outcome.Available {
-		// @deliberate: error_class carries the producer-declared acquisition-failure
-		// class (empty when the store names none) — rimsky's
-		// acquisition-failure routing keys error_types: on it.
 		return &genv1.OpenResponse{
 			Result: &genv1.OpenResponse_Unavailable{Unavailable: &genv1.Unavailable{
 				ErrorClass: outcome.UnavailableClass,
@@ -171,10 +124,6 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 	}, nil
 }
 
-// Commit delegates, stamping the configured base-Commit response
-// fields (version_id / producer_metadata) when the store carries them
-// — the fixture for scenarios proving rimsky honors the CommitResponse
-// body.
 func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
 	if err := s.Store.Commit(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
 		return nil, err
@@ -186,7 +135,6 @@ func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.C
 	}, nil
 }
 
-// Abandon delegates.
 func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
 	if err := s.Store.Abandon(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
 		return nil, err
@@ -194,7 +142,6 @@ func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1
 	return &genv1.AbandonResponse{}, nil
 }
 
-// Release delegates.
 func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
 	if err := s.Store.Release(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
 		return nil, err
@@ -202,11 +149,6 @@ func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1
 	return &genv1.ReleaseResponse{}, nil
 }
 
-// SplitScope partitions the parent claim's scope into N sub-scopes
-// per partition_request. The stub-store delegates to the
-// DataProcessing impl when present (so both surfaces share the same
-// decoder); falls back to the standalone decoder otherwise. Per spec
-// §Fan-out template DSL and concept:fan-out.
 func (s *Server) SplitScope(ctx context.Context, req *genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error) {
 	if s.DataProcessing != nil {
 		return s.DataProcessing.SplitScope(ctx, req)

@@ -16,8 +16,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// freeTestPort returns an OS-assigned free port for the agent's local listener
-// so the test knows where to POST.
 func freeTestPort(t *testing.T) int {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -29,15 +27,10 @@ func freeTestPort(t *testing.T) int {
 	return port
 }
 
-// TestLocalHTTPForwardRoundTrip drives the full Run loop: the agent binds its
-// local listener, a child's HTTP POST is wrapped as a LocalHttpForward,
-// tunneled to the fake proxy, answered with a LocalHttpResponse, and the
-// status/body/headers are written back to the HTTP caller.
 func TestLocalHTTPForwardRoundTrip(t *testing.T) {
 	fp := startFakeProxy(t)
 	port := freeTestPort(t)
 
-	// @deliberate: The fake proxy answers every LocalHttpForward with a 201 echo.
 	go func() {
 		<-fp.connected
 		for {
@@ -65,7 +58,6 @@ func TestLocalHTTPForwardRoundTrip(t *testing.T) {
 	})
 	fp.waitConnected(t)
 
-	// @deliberate: POST to the agent's local listener; expect the proxy's echoed response.
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/v1/callback/ack-1"
 	var resp *http.Response
 	var err error
@@ -94,15 +86,10 @@ func TestLocalHTTPForwardRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLocalHTTPForwardTimeout asserts a forward with no matching response
-// surfaces a 504 to the caller after the bounded wait. Uses a short-circuit:
-// the forward channel is registered but never delivered, so we test the
-// handler's timeout branch directly with a tiny override.
 func TestLocalHTTPForwardTimeout(t *testing.T) {
 	fp := startFakeProxy(t)
 	port := freeTestPort(t)
 
-	// @deliberate: Proxy connects but never answers forwards.
 	runAgentInBackground(t, Config{
 		RimskyURL:  fp.addr,
 		APIKey:     "k",
@@ -110,10 +97,6 @@ func TestLocalHTTPForwardTimeout(t *testing.T) {
 	})
 	fp.waitConnected(t)
 
-	// @deliberate: Drain forwards without replying so the handler hits its timeout. We
-	// can't wait the full 30s in a test, so assert the forward is at least
-	// emitted and the channel mechanics hold; full timeout is covered by the
-	// handler's deterministic select.
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/whatever"
 	go func() { _, _ = http.Post(url, "text/plain", strings.NewReader("x")) }()
 

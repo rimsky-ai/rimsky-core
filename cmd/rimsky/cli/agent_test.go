@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-// TestRunAgentUsage asserts the dispatcher rejects missing / unknown
-// subcommands with exit code 2.
 func TestRunAgentUsage(t *testing.T) {
 	if got := RunAgent(nil); got != 2 {
 		t.Fatalf("RunAgent(nil) = %d, want 2", got)
@@ -27,8 +25,6 @@ func TestRunAgentUsage(t *testing.T) {
 	}
 }
 
-// TestAgentStatusNotRunning asserts status returns 0 and reports not-running
-// when no pid file exists.
 func TestAgentStatusNotRunning(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if got := runAgentStatus(nil); got != 0 {
@@ -36,8 +32,6 @@ func TestAgentStatusNotRunning(t *testing.T) {
 	}
 }
 
-// TestAgentStopNotRunning asserts stop is a no-op success when no pid file
-// exists.
 func TestAgentStopNotRunning(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if got := runAgentStop(nil); got != 0 {
@@ -45,9 +39,6 @@ func TestAgentStopNotRunning(t *testing.T) {
 	}
 }
 
-// TestAgentStatusStopLifecycle writes a pid file for a real long-lived helper
-// process, asserts status sees it alive, then stop SIGTERMs it and removes the
-// pid file.
 func TestAgentStatusStopLifecycle(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -89,13 +80,10 @@ func TestAgentStatusStopLifecycle(t *testing.T) {
 	t.Fatal("helper still alive after stop")
 }
 
-// TestAgentStatusStalePID asserts status reports not-running for a pid that is
-// no longer alive.
 func TestAgentStatusStalePID(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// @deliberate: run-then-reap leaves a dead pid we can write into the pid file.
 	helper := exec.Command("true")
 	if err := helper.Run(); err != nil {
 		t.Fatalf("run helper: %v", err)
@@ -109,13 +97,11 @@ func TestAgentStatusStalePID(t *testing.T) {
 		t.Fatalf("write pid: %v", err)
 	}
 
-	// @deliberate: status returns 0 even on a stale pid; this only guards against errors.
 	if got := runAgentStatus(nil); got != 0 {
 		t.Fatalf("status (stale pid) = %d, want 0", got)
 	}
 }
 
-// TestSplitNonEmpty covers the allow-paths flag parser.
 func TestSplitNonEmpty(t *testing.T) {
 	got := splitNonEmpty(" /a/* , ,./b ", ",")
 	if len(got) != 2 || got[0] != "/a/*" || got[1] != "./b" {

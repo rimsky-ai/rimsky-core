@@ -10,56 +10,20 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-// ModeCoexists reports whether two claims with given intents on stores
-// with given write_semantics can coexist on overlapping scopes, per the
-// spec §8.5 matrix.
-//
-//	          | sync-r | sync-w | async-r | async-w
-//	-----------|--------|--------|---------|--------
-//	  sync-r   |   ✅   |   ❌   |  (n/a)  |  (n/a)
-//	  sync-w   |   ❌   |   ❌   |  (n/a)  |  (n/a)
-//	  async-r  |  (n/a) |  (n/a) |    ✅   |    ✅
-//	  async-w  |  (n/a) |  (n/a) |    ✅   |    ❌
-//
-// Two claims on the same store share its write_semantics — cross-quadrant
-// cells are unreachable in normal acquisition (the caller filters by
-// producer_name first). When this helper is called for two claims on the
-// same store, semA == semB; the function nonetheless handles the
-// cross-quadrant inputs by returning true (no conflict) so callers don't
-// need to special-case.
-//
-// The w×w false in both blocks is the structural single-writer-per-scope
-// rule.
 func ModeCoexists(intentA claimproducer.Intent, semA claimproducer.WriteSemantics, intentB claimproducer.Intent, semB claimproducer.WriteSemantics) bool {
 	syncA := isSync(semA)
 	syncB := isSync(semB)
 	if syncA != syncB {
-		// @deliberate: cross-quadrant — the (semantics, intent) blocks
-		// are independent. Reachable only if a caller compares two
-		// claims from different stores, which the upstream filter
-		// usually rules out; return true ("no semantic conflict")
-		// rather than blocking.
 		return true
 	}
 	rwA := intentA == claimproducer.IntentReadWrite
 	rwB := intentB == claimproducer.IntentReadWrite
 	if syncA {
-		// @constraint: sync block — r×r ✅; r×w / w×r / w×w ❌.
 		return !rwA && !rwB
 	}
-	// @constraint: async block — r×r ✅, r×w ✅, w×r ✅, w×w ❌.
 	return !(rwA && rwB)
 }
 
-// ClaimScopesByteEqual reports whether two store-supplied claim-scope byte
-// slices are equal under byte-wise comparison. The rimsky-side
-// implementation of the conflict comparison (per spec §7.7) — v2's
-// per-producer scope conflict comparison is byte-equal; producers canonicalize
-// claim-scope bytes such that byte-equal correctly indicates conflict.
-//
-// Empty claim-scopes never conflict: an absent claim-scope (e.g. a NamedLockSpec
-// row in a scope-keyed scan) cannot collide with another claim-scope.
-//
 // @concept: claim-scope
 func ClaimScopesByteEqual(a, b []byte) bool {
 	if len(a) == 0 || len(b) == 0 {
@@ -68,11 +32,6 @@ func ClaimScopesByteEqual(a, b []byte) bool {
 	return bytes.Equal(a, b)
 }
 
-// isSync reports whether the given write_semantics value is in the sync
-// block. Sync and BlockingAsync block on r×rw conflicts (sync block);
-// StagedAsync does not (async block); ReadOnly cannot mutate so the
-// matrix degenerates — treat ReadOnly as sync (r-only claims trivially
-// coexist with any other r-only claim and never conflict on w).
 func isSync(ws claimproducer.WriteSemantics) bool {
 	switch ws {
 	case claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync, claimproducer.WriteSemanticsReadOnly:
@@ -80,6 +39,5 @@ func isSync(ws claimproducer.WriteSemantics) bool {
 	case claimproducer.WriteSemanticsStagedAsync:
 		return false
 	}
-	// @deliberate: unrecognized values fall through as sync (conservative).
 	return true
 }

@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// client_errors.go — APIError carries non-2xx control-api responses.
 package cli
 
 import (
@@ -11,9 +10,6 @@ import (
 	"net/http"
 )
 
-// APIError is a non-2xx response from the control-api. The decoded JSON
-// body (if any) is stored verbatim; callers can read structured fields
-// like "error", "validation_errors", or "details" from Body.
 type APIError struct {
 	Status int
 	URL    string
@@ -21,8 +17,6 @@ type APIError struct {
 	Body   map[string]any
 }
 
-// Error returns a human-readable representation. Includes the status,
-// the method and URL, and the body's "error" field if present.
 func (e *APIError) Error() string {
 	msg := ""
 	if e.Body != nil {
@@ -36,8 +30,6 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("control-api %s %s: %d %s", e.Method, e.URL, e.Status, msg)
 }
 
-// Message returns just the body's "error" field if present, falling
-// back to the standard HTTP status text.
 func (e *APIError) Message() string {
 	if e.Body != nil {
 		if v, ok := e.Body["error"].(string); ok && v != "" {
@@ -47,13 +39,10 @@ func (e *APIError) Message() string {
 	return http.StatusText(e.Status)
 }
 
-// IsNotFound reports whether err is an APIError with status 404.
 func IsNotFound(err error) bool { return statusEquals(err, http.StatusNotFound) }
 
-// IsConflict reports whether err is an APIError with status 409.
 func IsConflict(err error) bool { return statusEquals(err, http.StatusConflict) }
 
-// IsBadRequest reports whether err is an APIError with status 400.
 func IsBadRequest(err error) bool { return statusEquals(err, http.StatusBadRequest) }
 
 func statusEquals(err error, status int) bool {

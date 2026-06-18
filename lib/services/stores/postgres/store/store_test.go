@@ -10,11 +10,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 )
 
-// TestValidIdent covers the construction-time validation of operator-
-// supplied items_table names. The store uses fmt.Sprintf to
-// interpolate the table name into SQL; rejecting non-identifier inputs
-// at construction is the only thing standing between operator typo and
-// SQL injection.
 func TestValidIdent(t *testing.T) {
 	cases := []struct {
 		s    string
@@ -43,8 +38,6 @@ func TestValidIdent(t *testing.T) {
 	}
 }
 
-// TestValidPickAction covers the pick-action vocabulary check —
-// pg-store supports pop and recycle only.
 func TestValidPickAction(t *testing.T) {
 	good := []action.Kind{action.Pop, action.Recycle}
 	for _, a := range good {
@@ -67,9 +60,6 @@ func TestValidPickAction(t *testing.T) {
 	}
 }
 
-// TestNewRejectsEmptyConnection covers the early-fail at construction
-// when the operator forgets the connection string. Doesn't need a real
-// pool because the check happens before pgxpool.New.
 func TestNewRejectsEmptyConnection(t *testing.T) {
 	if _, err := New(t.Context(), Config{}); err == nil {
 		t.Fatal("New with empty Connection should error; got nil")

@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// TestPickCanonicalRoute pins the tool-aware route selection. A plain
-// shortest-path heuristic mis-routes the `_list` tools (and even
-// `_get` tools whose collection route is shorter); selection must honor
-// both the args' satisfiable placeholders and the tool-name suffix.
 func TestPickCanonicalRoute(t *testing.T) {
 	withArgs := func(keys ...string) map[string]json.RawMessage {
 		m := map[string]json.RawMessage{}
@@ -46,12 +42,8 @@ func TestPickCanonicalRoute(t *testing.T) {
 		args   map[string]json.RawMessage
 		want   string
 	}{
-		// @constraint: `node_list` supplies idOrKey → the by-instance collection route,
-		// NOT the shorter by-id /nodes/{id}.
 		{"node_list → by-instance collection", "node_list", nodeRoutes, withArgs("idOrKey"), "/instances/{idOrKey}/nodes"},
 		{"node_get → by-id item", "node_get", nodeRoutes, withArgs("id"), "/nodes/{id}"},
-		// @constraint: message_list and message_get BOTH supply `id`; only the suffix
-		// disambiguates the otherwise-equally-satisfiable routes.
 		{"message_list → instance messages", "message_list", msgRoutes, withArgs("id"), "/instances/{id}/messages"},
 		{"message_get → message item", "message_get", msgRoutes, withArgs("id"), "/messages/{id}"},
 		{"instance_list → collection", "instance_list", instRoutes, withArgs(), "/instances"},

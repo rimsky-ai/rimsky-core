@@ -20,16 +20,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// CallbackReceiver is the conformance-side endpoint that async
-// executors POST their terminal verdicts to. It listens on a
-// kernel-allocated port and routes each incoming POST by
-// `async_ack_id` to a per-scenario channel registered ahead of time
-// via Register.
-//
-// Per TD-collapse-named-event-to-tags + TD-remove-resume-context the
-// body shape is the AsyncCallbackBody outcome oneof
-// (success / error / park) with no `events` array and no
-// session_token / payload bytes on Park — those are gone.
 type CallbackReceiver struct {
 	srv          *http.Server
 	bindAddr     string
@@ -38,15 +28,11 @@ type CallbackReceiver struct {
 	wait         map[string]chan *genv1.Outcome
 }
 
-// ReceiverOptions configures the address the receiver binds and the URL it
-// advertises to executors.
 type ReceiverOptions struct {
 	BindHost      string
 	AdvertiseHost string
 }
 
-// StartCallbackReceiver binds an HTTP listener and returns a CallbackReceiver
-// ready to accept POSTs at `${URL()}/v1/callback/{async_ack_id}`.
 func StartCallbackReceiver(opts ...ReceiverOptions) (*CallbackReceiver, error) {
 	o := ReceiverOptions{}
 	if len(opts) > 0 {
@@ -79,7 +65,6 @@ func StartCallbackReceiver(opts ...ReceiverOptions) (*CallbackReceiver, error) {
 	return r, nil
 }
 
-// URL returns the absolute base URL the receiver advertises.
 func (r *CallbackReceiver) URL() string {
 	if r == nil {
 		return ""
@@ -87,7 +72,6 @@ func (r *CallbackReceiver) URL() string {
 	return r.advertiseURL
 }
 
-// Register reserves a channel for a future callback addressed to ackID.
 func (r *CallbackReceiver) Register(ackID string) <-chan *genv1.Outcome {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -99,7 +83,6 @@ func (r *CallbackReceiver) Register(ackID string) <-chan *genv1.Outcome {
 	return ch
 }
 
-// Close stops the HTTP listener.
 func (r *CallbackReceiver) Close() error {
 	if r == nil || r.srv == nil {
 		return nil
@@ -110,7 +93,6 @@ func (r *CallbackReceiver) Close() error {
 }
 
 func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
-	// @constraint: path is /v1/callback/{async_ack_id}.
 	parts := strings.Split(strings.TrimPrefix(req.URL.Path, "/v1/callback/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
 		http.Error(w, "missing async_ack_id", http.StatusBadRequest)
@@ -141,8 +123,6 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// parseCallbackBody parses the AsyncCallbackBody shape into an Outcome.
-//
 // @source: lib/runtime/callback.go::parseAsyncCallback
 // @diverged: true
 // @reason: The supervisor parses a typed body via json.Unmarshal into

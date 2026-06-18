@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Lock-spec construction + template lookup helpers.
-//
-// Two primitives, two types: locks.NamedLockSpec and claimproducer.ClaimSpec.
-// There is no LockSpec interface; this file's helpers operate on `any`
-// values and dispatch by type-switch.
-//
-// Deterministic ordering (blessed-invariant 3): (kind, sort_key) with
-// "named" < "scope" and:
-//   - NamedLockSpec sort key: Name
-//   - ClaimSpec sort key:     ProducerName + ":" + Selector (post-substitution)
-
 package runtime
 
 import (
@@ -28,9 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-// sortLockSpecs orders specs by (kind, sort_key) per blessed-invariant
-// 3. Inputs may be NamedLockSpec or ClaimSpec values; unknown types
-// sort last.
 func sortLockSpecs(specs []any) {
 	sort.SliceStable(specs, func(i, j int) bool {
 		ki, kj := kindForSpec(specs[i]), kindForSpec(specs[j])
@@ -41,9 +27,6 @@ func sortLockSpecs(specs []any) {
 	})
 }
 
-// kindForSpec returns the kind tag for a spec value.
-// "named" < "scope"; the lexical ordering matches the spec table
-// (blessed-invariant 3).
 func kindForSpec(sp any) string {
 	switch sp.(type) {
 	case locks.NamedLockSpec:
@@ -54,7 +37,6 @@ func kindForSpec(sp any) string {
 	return "zzz"
 }
 
-// sortKeyForSpec computes the sort key for a spec (blessed-invariant 3).
 func sortKeyForSpec(sp any) string {
 	switch v := sp.(type) {
 	case locks.NamedLockSpec:
@@ -65,9 +47,6 @@ func sortKeyForSpec(sp any) string {
 	return ""
 }
 
-// producerNameForSpec returns the producer name for ClaimSpec, or "" for
-// NamedLockSpec. Used to populate the `producer_name` audit-log payload
-// field on claim-kind events.
 func producerNameForSpec(sp any) string {
 	if v, ok := sp.(claimproducer.ClaimSpec); ok {
 		return v.ProducerName
@@ -75,23 +54,6 @@ func producerNameForSpec(sp any) string {
 	return ""
 }
 
-// buildLockSpecs translates the template's per-node-type Stores+Locks
-// declarations into concrete spec values. Substitutes `{{params.x}}`,
-// `{{nodes.<n>.attribute.<f>}}`, and
-// `{{claim.<alias>.{address|claim_scope|payload.<f>}}}` (when the alias has
-// a live co-held claim) into the selector and named-lock name per
-// the substitution grammar.
-//
-// All persistence reads share the caller's tx — passing nil here would
-// self-deadlock against the SQLite driver's single-connection pool
-// (the tx holds the only conn; a nil-tx auto-commit would block
-// forever). See foundation/persistence/sqlite/deadlock_guard_test.go.
-// runScopeID is the RunScope this acquisition lives in (computed at the
-// acquire site from the run-tree row — it is NOT in scope here otherwise,
-// unlike InstanceID which derives from inst). It is stamped onto each
-// ClaimSpec.RunScopeID so the claim-producer Open path can carry it to the
-// host-agent-proxy for per-run-scope spawn isolation. Zero-valued for the
-// degenerate / non-fanned-out path; the proxy falls back to instance keying.
 func buildLockSpecs(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	nd *persistence.NodeRow, def *node.TemplateNodeDef, inst *persistence.InstanceRow,
@@ -108,26 +70,11 @@ func buildLockSpecs(
 		}
 		paramsRaw = b
 	}
-	// @deliberate: substitution context comes from the drained wait-set rows
-	// for this receiver in this frame. The lock-substitution path runs at
-	// acquisition phase, but by then the wait-set is settled (rows drained) —
-	// that's what made the receiver eligible. The same builder works for both
-	// phases.
 	deps, err := BuildAttributeDeps(ctx, tx, args, dispatchID, frameID)
 	if err != nil {
 		return nil, err
 	}
-	// @deliberate: bind the frame's triggering message so the lock-name
-	// substitution path admits `{{trigger.message.payload.X}}` and the
-	// `{{messages.<type>.<field>}}` arm uniformly with dispatch-time
-	// substitution — one resolver function services both directive
-	// shapes.
 	triggerPayload, triggerType := triggerMessageForFrame(ctx, args, tx, frameID)
-	// @constraint: defense-in-depth — thread the template's declared
-	// message-type set so `{{messages.<type>.<field>}}` references
-	// against undeclared types fail with ErrMissingSource even on
-	// lock-name substitution. Mirrors `buildResolveContextForDispatch`
-	// in runner_dispatch.go.
 	var templateHash string
 	if inst != nil {
 		templateHash = inst.TemplateHash
@@ -162,16 +109,8 @@ func buildLockSpecs(
 			Alias:        sref.AliasOf(),
 			TemplateID:   instTemplateScope(inst),
 			InstanceID:   instInstanceScope(inst),
-			// @constraint: carry the run-scope onto the OpenRequest so the
-			// host-agent-proxy keys per-run-scope spawn isolation on the
-			// claim-producer path too. Empty for the zero/degenerate
-			// run-scope (proxy falls back to instance keying).
 			// @concept: host-agent-proxy
 			RunScopeID: runScopeIDString(runScopeID),
-			// @constraint: carry the template store-ref's lifetime hint
-			// ("subgraph" / "durable") through to the persistence boundary.
-			// NodeStoreRef.Lifetime is a plain string; acquireClaim converts
-			// it to spec.ClaimLifetime at the ClaimHandleInsertInput.
 			// @concept: claim-lifetime
 			Lifetime: sref.Lifetime,
 		})
@@ -179,23 +118,6 @@ func buildLockSpecs(
 	return out, nil
 }
 
-// loadInheritedClaimsForNode resolves the per-alias `{{claim.<alias>}}`
-// substitution context for a co-holder at acquire-time. Returns the
-// upstream's `ClaimResult` (address + scope bytes) per alias, sourced
-// from `rimsky_claim_handles` rows the upstream nodes hold.
-//
-// Resolution source: `holds:` declarations on the node's template (spec
-// §Claim co-holdership) — each entry names an upstream node-alias; the
-// upstream's claim handle for the matching alias is the source of the
-// address bytes.
-//
-// Pre-stage-5 the runtime joined through `rimsky_claim_holders` rows
-// the supervisor eagerly inserted at acquire-time of the acquirer; the
-// post-stage-5 model defers the holder INSERT to the co-holder's own
-// dispatch time, so the lookup now starts from the template directive
-// and walks to the upstream's `rimsky_claim_handles` row directly.
-//
-// Reuses the caller's tx (option C / no-nil-tx). See buildLockSpecs.
 func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistence.Tx, nd *persistence.NodeRow) map[string]claimproducer.ClaimResult {
 	if nd == nil {
 		return nil
@@ -212,9 +134,6 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistenc
 	if nodeDef == nil {
 		return nil
 	}
-	// @deliberate: nodes without `holds:` skip the per-binding lookup
-	// entirely. Avoids a ListByInstance + per-handle roundtrip on every
-	// acquire of a non-co-holding node.
 	if len(nodeDef.Holds) == 0 {
 		return nil
 	}
@@ -226,12 +145,6 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistenc
 	return out
 }
 
-// collectCoHeldClaims walks the node's `holds:` block and populates
-// `out` with the upstream claim handle's address for each declared
-// co-holdership. Silently skips entries that don't resolve (the
-// upstream's acquire has not landed yet, or the upstream's template
-// node is missing).
-//
 // @concept: claim-co-holdership
 func collectCoHeldClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
@@ -266,10 +179,6 @@ func collectCoHeldClaims(
 	}
 }
 
-// findInstanceNodeByType returns the rimsky_nodes row in the instance
-// whose NodeType matches `t`. Returns nil when the instance does not
-// declare that type (the canonicalizer flattens sub-graphs into a
-// single instance topology; per-node lookup is by type).
 func findInstanceNodeByType(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	instanceID shared.UUID, t string,
@@ -286,10 +195,6 @@ func findInstanceNodeByType(
 	return nil
 }
 
-// lookupClaimHandleForAlias finds the most recent rimsky_claim_handles
-// row anchored on the upstream node for the named alias. Multiple aliases
-// against the same producer_name disambiguate via the selector substitution
-// pass (aliasFromAcquirerStores' inverse).
 func lookupClaimHandleForAlias(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	upstreamNodeID shared.UUID, tmplSpec *node.TemplateSpec,
@@ -326,11 +231,6 @@ func lookupClaimHandleForAlias(
 	return best
 }
 
-// instTemplateScope returns the template-scope id sent to the store on
-// Open. Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-
-// design.md §4.2: the supervisor populates this from the dispatch row's
-// instance → template lookup. Returns the empty string when the
-// instance row is unavailable; the store treats empty as scope-absent.
 func instTemplateScope(inst *persistence.InstanceRow) string {
 	if inst == nil {
 		return ""
@@ -338,8 +238,6 @@ func instTemplateScope(inst *persistence.InstanceRow) string {
 	return inst.TemplateHash
 }
 
-// instInstanceScope returns the instance-scope id (the rimsky-generated
-// instance UUID) sent to the store on Open.
 func instInstanceScope(inst *persistence.InstanceRow) string {
 	if inst == nil {
 		return ""
@@ -347,8 +245,6 @@ func instInstanceScope(inst *persistence.InstanceRow) string {
 	return inst.ID.String()
 }
 
-// lookupTemplate fetches the template for an instance, or nil on miss.
-// Reuses the caller's tx (option C / no-nil-tx). See buildLockSpecs.
 func lookupTemplate(ctx context.Context, args RunArgs, tx persistence.Tx, inst *persistence.InstanceRow) *node.TemplateSpec {
 	if inst == nil {
 		return nil
@@ -360,14 +256,6 @@ func lookupTemplate(ctx context.Context, args RunArgs, tx persistence.Tx, inst *
 	return &tmpl.Spec
 }
 
-// templateAttributeDefaultsFor returns the already-routed by-executor
-// attribute fragment from the bound template's
-// `Defaults.Attributes.ByExecutor[executor]`. Returns nil when the
-// template, defaults, or per-executor entry is absent. The runtime
-// path threads this through `acquisition.TemplateAttributeDefaults`
-// onto `computeEffectiveAttributeSchema` as the L1 layer merged into
-// the effective schema at dispatch.
-//
 // @concept: attribute
 func templateAttributeDefaultsFor(tmpl *node.TemplateSpec, executor string) map[string]any {
 	if tmpl == nil || tmpl.Defaults == nil || tmpl.Defaults.Attributes == nil {
@@ -380,7 +268,6 @@ func templateAttributeDefaultsFor(tmpl *node.TemplateSpec, executor string) map[
 	return frag
 }
 
-// lookupNodeDef returns the per-node-type def from a template, or nil.
 func lookupNodeDef(tmpl *node.TemplateSpec, nodeType string) *node.TemplateNodeDef {
 	if tmpl == nil {
 		return nil

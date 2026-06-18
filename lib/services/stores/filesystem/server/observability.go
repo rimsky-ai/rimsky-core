@@ -24,17 +24,9 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// ObservabilityServer is the filesystem store's ClaimProducerObservability
-// implementation. It declares two admin views (`pick_policies` and
-// `policy_items`) that the dashboard surfaces as tabs on the store
-// detail page. Per-claim history is not retained in-memory in v1; the
-// store's claim ledger lives transiently in pick_policies/in_progress
-// directories on disk and is exposed via the policy_items admin view.
 type ObservabilityServer struct {
 	genv1.UnimplementedClaimProducerObservabilityServer
 	store *fsstore.Store
-	// pickPolicies is indexed at construction time so the observability
-	// surface can iterate them without taking the store's mu.
 	pickPolicies      map[string]*fsstore.PickPolicy
 	root              string
 	httpBridgeURLOnce sync.Once
@@ -42,28 +34,18 @@ type ObservabilityServer struct {
 	idleTimeout       time.Duration
 }
 
-// NewObservabilityServer builds a server pinned to the given store
-// handle and the same pick-policy map the store was constructed with.
 func NewObservabilityServer(store *fsstore.Store, root string, pickPolicies map[string]*fsstore.PickPolicy) *ObservabilityServer {
 	return &ObservabilityServer{store: store, root: root, pickPolicies: pickPolicies, idleTimeout: defaultObsIdleTimeout}
 }
 
-// SetHTTPBridgeURL records the URL the store advertises in
-// ClaimProducerObservabilityCapabilities.http_bridge_url. Set-once at startup;
-// subsequent calls are ignored. Empty value disables.
 func (s *ObservabilityServer) SetHTTPBridgeURL(u string) {
 	s.httpBridgeURLOnce.Do(func() { s.httpBridgeURL = u })
 }
 
-// SetIdleTimeout overrides the default StreamClaim idle timeout.
 func (s *ObservabilityServer) SetIdleTimeout(d time.Duration) { s.idleTimeout = d }
 
-// defaultObsIdleTimeout mirrors the postgres store's default per spec §3.5.
 const defaultObsIdleTimeout = 5 * time.Minute
 
-// Capabilities reports the v1 filesystem observability surface:
-// admin views for pick_policies and policy_items, plus per-claim get /
-// stream / list backed by the in-memory ledger.
 func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.GetClaimProducerCapabilitiesRequest) (*genv1.ClaimProducerObservabilityCapabilities, error) {
 	return &genv1.ClaimProducerObservabilityCapabilities{
 		SupportsClaimGet:              true,
@@ -89,8 +71,6 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.GetClaimP
 	}, nil
 }
 
-// GetClaim returns the recorded claim history. Returns ClaimDetail{state:
-// UNKNOWN} when the ledger has evicted the record (per spec §3.6).
 func (s *ObservabilityServer) GetClaim(_ context.Context, req *genv1.GetClaimRequest) (*genv1.ClaimDetail, error) {
 	rec, ok := s.store.Ledger().Get(req.GetClaimId())
 	if !ok {
@@ -99,11 +79,6 @@ func (s *ObservabilityServer) GetClaim(_ context.Context, req *genv1.GetClaimReq
 	return claimRecordToDetail(rec), nil
 }
 
-// StreamClaim atomically replays the history then streams new events
-// until the claim hits a terminal (or the client disconnects, or the
-// idle timeout fires per spec §3.5). Mirrors the postgres store impl;
-// see stores/postgres/server/observability.go::StreamClaim.
-//
 //	@source: lib/services/stores/postgres/server/observability.go:StreamClaim
 func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream genv1.ClaimProducerObservability_StreamClaimServer) error {
 	history, rec, ch, unsub := s.store.Ledger().SubscribeWithSnapshot(req.GetClaimId())
@@ -163,7 +138,6 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 	}
 }
 
-// ListClaims returns a cursor-paginated view of the in-memory ledger.
 func (s *ObservabilityServer) ListClaims(_ context.Context, req *genv1.ListClaimsRequest) (*genv1.ClaimList, error) {
 	limit := int(req.GetLimit())
 	if limit <= 0 {
@@ -264,9 +238,6 @@ func severityFromString(s string) genv1.Severity {
 	}
 }
 
-// GetAdminView serves the two declared views. pick_policies aggregates
-// queue depth per configured policy; policy_items walks one policy's
-// available/ and in_progress/ directories.
 func (s *ObservabilityServer) GetAdminView(_ context.Context, req *genv1.GetAdminViewRequest) (*genv1.AdminView, error) {
 	switch req.GetViewName() {
 	case "pick_policies":
@@ -364,11 +335,6 @@ func countDir(path string) (int, error) {
 	return len(entries), nil
 }
 
-// trimAt strips a leading "@" from selectors so they match the
-// pickPolicy directory name on disk. Mirrors trimAtPrefix in
-// stores/filesystem/store/store.go (intentional duplication; the helper
-// is package-private there).
-//
 //	@source: lib/services/stores/filesystem/store/store.go:trimAtPrefix
 func trimAt(s string) string {
 	if len(s) > 0 && s[0] == '@' {
@@ -377,10 +343,6 @@ func trimAt(s string) string {
 	return s
 }
 
-// RegisterObservability registers this observability server alongside
-// the existing StoreService server. Returns the constructed
-// ObservabilityServer so callers can attach it to the HTTP+JSON bridge
-// (bridge.MountObservability) and wire SetHTTPBridgeURL.
 func (s *Server) RegisterObservability(grpcSrv *grpc.Server, root string, pickPolicies map[string]*fsstore.PickPolicy) *ObservabilityServer {
 	o := NewObservabilityServer(s.store, root, pickPolicies)
 	genv1.RegisterClaimProducerObservabilityServer(grpcSrv, o)

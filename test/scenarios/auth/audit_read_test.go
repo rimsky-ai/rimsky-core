@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// GET /audit read-surface scenarios per spec section "Audit read
-// surface" (spec 2026-05-29-console-upstream-auth-audit-and-fixes).
-// /audit reads the auth.* slice of the event log, gated by the
-// audit:read action (distinct from event:read). It is filterable by
-// actor (key_id / key_name), action (exact / prefix), target (the
-// audited request path), result (status), and mode. Exercises:
-//
-//   - An audit:read key can list and filter /audit; each filter narrows.
-//   - A key WITHOUT audit:read gets 403 (standard auth gate).
-//
 // @concept: event-log
 // @concept: permission
 
@@ -22,8 +12,6 @@ import (
 	"time"
 )
 
-// auditRows runs GET /audit with the given query string under key and
-// returns the decoded `audit` array (one map per row).
 func auditRows(t *testing.T, f *authFixture, key, query string) []map[string]any {
 	t.Helper()
 	code, body := f.request(t, "GET", "/v1/audit"+query, key, nil)
@@ -46,8 +34,6 @@ func TestAuditRead_FilterAndGate(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 
-	// @deliberate: Bootstrap an admin via anonymous mode. This emits one
-	// auth.access_attempted row (POST /auth/keys, mode:execute).
 	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
@@ -57,9 +43,6 @@ func TestAuditRead_FilterAndGate(t *testing.T) {
 		t.Fatalf("mint admin: %+v", adminBody)
 	}
 
-	// @deliberate: Mint a key that has audit:read (the reader under test) and an
-	// actor key that has only auth:read (it will generate filterable
-	// rows but cannot read /audit).
 	const readerName = "audit-reader"
 	code, readerBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        readerName,
@@ -80,9 +63,6 @@ func TestAuditRead_FilterAndGate(t *testing.T) {
 	}
 	actorKey, _ := actorBody["plaintext"].(string)
 
-	// @deliberate: Generate audit rows under the actor key:
-	//   - one execute-mode GET /auth/keys (status 200)
-	//   - one dry_run-mode GET /auth/keys (status 200, read no-op)
 	if st, _ := f.request(t, "GET", "/v1/auth/keys", actorKey, nil); st != 200 {
 		t.Fatalf("actor execute read: %d", st)
 	}
@@ -90,13 +70,10 @@ func TestAuditRead_FilterAndGate(t *testing.T) {
 		t.Fatalf("actor dry-run read: %d", st)
 	}
 
-	// @deliberate: A key WITHOUT audit:read is denied (403). The actor key has only
-	// auth:read.
 	if st, body := f.request(t, "GET", "/v1/audit", actorKey, nil); st != 403 {
 		t.Fatalf("actor without audit:read should be 403, got %d %+v", st, body)
 	}
 
-	// @deliberate: Filter by actor key_name: only the actor's rows.
 	got := auditRows(t, f, readerKey, "?key_name="+actorName)
 	if len(got) == 0 {
 		t.Fatalf("key_name filter returned no rows for actor %q", actorName)
@@ -128,7 +105,6 @@ func TestAuditRead_FilterAndGate(t *testing.T) {
 		}
 	}
 
-	// @deliberate: Filter by mode=dry_run: only the actor's dry-run read (mode:dry_run).
 	dryRows := auditRows(t, f, readerKey, "?key_name="+actorName+"&mode=dry_run")
 	if len(dryRows) != 1 {
 		t.Fatalf("mode=dry_run for actor = %d rows, want 1", len(dryRows))
@@ -147,9 +123,6 @@ func TestAuditRead_FilterAndGate(t *testing.T) {
 		}
 	}
 
-	// @deliberate: Filter by target (the audited request path). The actor's two reads
-	// hit GET /v1/auth/keys, so target=/v1/auth/keys narrows to exactly
-	// those.
 	targetRows := auditRows(t, f, readerKey, "?key_name="+actorName+"&target=/v1/auth/keys")
 	if len(targetRows) != 2 {
 		t.Fatalf("target=/v1/auth/keys for actor = %d rows, want 2", len(targetRows))
@@ -164,12 +137,6 @@ func TestAuditRead_FilterAndGate(t *testing.T) {
 	}
 }
 
-// TestAuditRead_RotationFoundByActorFilter pins the key-lifecycle actor
-// filter. A rotation row carries the new (surviving) key's
-// key_id/key_name — like every other auth row — so an operator auditing
-// a key by id surfaces the rotation that produced it. Before this, the
-// rotation payload carried only old_key_id/new_key_id, so ?key_id= and
-// ?key_name= silently dropped every rotation.
 func TestAuditRead_RotationFoundByActorFilter(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
@@ -200,8 +167,6 @@ func TestAuditRead_RotationFoundByActorFilter(t *testing.T) {
 		t.Fatalf("mint rotatee: %d %+v", code, body)
 	}
 
-	// @deliberate: Rotate it. The rotation emits an auth.key_rotated row stamped with
-	// key_id = new key / key_name = preserved name.
 	code, rotBody := f.request(t, "POST", "/v1/auth/keys/"+rotateeName+"/rotate", adminKey, map[string]any{})
 	if code != 200 {
 		t.Fatalf("rotate %q: %d %+v", rotateeName, code, rotBody)
@@ -211,8 +176,6 @@ func TestAuditRead_RotationFoundByActorFilter(t *testing.T) {
 		t.Fatalf("rotate response missing new_key_id: %+v", rotBody)
 	}
 
-	// @deliberate: findRotation pulls the key_rotated payload (if any) out of an
-	// /audit result, matching on its new_key_id descriptive field.
 	findRotation := func(rows []map[string]any) map[string]any {
 		for _, p := range rows {
 			if nk, _ := p["new_key_id"].(string); nk == newKeyID {
@@ -222,7 +185,6 @@ func TestAuditRead_RotationFoundByActorFilter(t *testing.T) {
 		return nil
 	}
 
-	// @constraint: ?key_id=<new> must surface the rotation row, stamped with the new key.
 	byID := findRotation(auditRows(t, f, readerKey, "?key_id="+newKeyID))
 	if byID == nil {
 		t.Fatalf("?key_id=%s did not surface the key_rotated row", newKeyID)
@@ -231,7 +193,6 @@ func TestAuditRead_RotationFoundByActorFilter(t *testing.T) {
 		t.Fatalf("rotation row key_id = %q, want new key id %q", kid, newKeyID)
 	}
 
-	// @constraint: ?key_name=<name> must surface it too (the name is preserved).
 	byName := findRotation(auditRows(t, f, readerKey, "?key_name="+rotateeName))
 	if byName == nil {
 		t.Fatalf("?key_name=%s did not surface the key_rotated row", rotateeName)
@@ -241,39 +202,12 @@ func TestAuditRead_RotationFoundByActorFilter(t *testing.T) {
 	}
 }
 
-// TestAuditRead_StoryAuditLogReadAcceptance is the executable proof for
-// STORY-audit-log-read. The spec's Acceptance is:
-//
-//	Through GET /audit (gated by audit:read), after an admin mints /
-//	revokes / rotates keys and a non-admin caller triggers an access
-//	denied, the audit log returns each event in timestamp order
-//	carrying actor identity, action name, outcome, and resource target.
-//
-// The spec's Falsifier is: a real access denied doesn't appear in the
-// audit, OR dry-run-mode attempts are absent, OR actor identity is
-// dropped from the record.
-//
-// This test drives the full mint / revoke / rotate / deny + dry-run
-// sequence through the real control-api and asserts every payload
-// surfaces actor identity / action name / outcome / resource target,
-// the access-denied row appears, the dry-run attempt appears, and the
-// audit feed is timestamp-ordered.
-//
-// Falsifier guards are inline; each property has a fatal assertion
-// pointing at the spec clause it protects.
 func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 
-	// @deliberate: Drive the audit-fixture clock forward by a millisecond between
-	// each emission so wire-decoded payloads (and the cross-kind
-	// timestamp order this test verifies) are not tied via wall-clock
-	// resolution. The ControllableClock backs the AuthState.Clock the
-	// emit helpers stamp duration_ms / occurred_at from.
 	tick := func() { f.clock.Advance(time.Millisecond) }
 
-	// @deliberate: Admin bootstrap (anonymous → authenticated). The POST itself
-	// emits one auth.access_attempted row (mode:execute, action:auth:create).
 	tick()
 	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
@@ -288,7 +222,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("admin id missing: %+v", adminBody)
 	}
 
-	// @deliberate: Audit reader: has audit:read so it can read /audit.
 	const readerName = "audit-reader"
 	tick()
 	code, readerBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
@@ -300,8 +233,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 	}
 	readerKey, _ := readerBody["plaintext"].(string)
 
-	// @deliberate: Mint a "subject" key the admin will revoke (forcing an
-	// auth.key_revoked row stamped with the subject's key_id/key_name).
 	const revokeeName = "subject-revokee"
 	tick()
 	code, revBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
@@ -316,9 +247,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("revokee id missing: %+v", revBody)
 	}
 
-	// @deliberate: Mint a "subject" key the admin will rotate (the rotation
-	// row's actor is the new (surviving) key id; the spec's audit
-	// reader filters on it).
 	const rotateeName = "subject-rotatee"
 	tick()
 	code, rotateeBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
@@ -329,9 +257,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("mint rotatee: %d %+v", code, rotateeBody)
 	}
 
-	// @deliberate: Mint a non-admin actor we'll use to trigger:
-	//       (a) a dry-run-mode read (mode:dry_run, executed:true)
-	//       (b) a denied write attempt (auth.access_denied row)
 	const actorName = "subject-actor"
 	tick()
 	code, actorBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
@@ -347,17 +272,11 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("actor id missing: %+v", actorBody)
 	}
 
-	// @deliberate: Trigger the dry-run-mode attempt under the actor. A read
-	// genuinely runs even under dry-run, so this lands an
-	// auth.access_attempted row stamped mode:dry_run, executed:true.
 	tick()
 	if st, _ := f.request(t, "GET", "/v1/auth/keys?dry_run=true", actorKey, nil); st != 200 {
 		t.Fatalf("actor dry-run read: %d", st)
 	}
 
-	// @deliberate: Trigger an access denied: the actor has no auth:create
-	// permission, so POST /v1/auth/keys lands an auth.access_denied row
-	// (denial_reason:permission_denied) with the actor's identity.
 	tick()
 	if st, body := f.request(t, "POST", "/v1/auth/keys", actorKey, map[string]any{
 		"name":        "should-not-exist",
@@ -366,16 +285,11 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("actor without auth:create should be 403, got %d %+v", st, body)
 	}
 
-	// @deliberate: Revoke the revokee. Emits auth.key_revoked with subject
-	// key_id/key_name + revoked_by_key_id = admin.
 	tick()
 	if st, body := f.request(t, "DELETE", "/v1/auth/keys/"+revokeeName, adminKey, nil); st != 204 && st != 200 {
 		t.Fatalf("revoke %q: %d %+v", revokeeName, st, body)
 	}
 
-	// @deliberate: Rotate the rotatee. Emits auth.key_rotated stamped with the
-	// new (surviving) key id under the uniform actor key_id/key_name
-	// fields.
 	tick()
 	code, rotBody := f.request(t, "POST", "/v1/auth/keys/"+rotateeName+"/rotate", adminKey, map[string]any{})
 	if code != 200 {
@@ -386,13 +300,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("rotate response missing new_key_id: %+v", rotBody)
 	}
 
-	// @constraint: Falsifier guard 1: actor identity must NOT be dropped from any
-	// auth row. Page through every kind and assert each carries a
-	// key_id (or, where the spec allows nullable identity — only on
-	// pre-action-resolution denial rows whose denial_reason is
-	// no_token / invalid_token / expired_token / revoked_token — both
-	// nil). For permission_denied and every other kind the identity is
-	// populated.
 	rows := auditRowsWithKind(t, f, readerKey, "")
 	if len(rows) == 0 {
 		t.Fatalf("audit feed empty — expected mint + revoke + rotate + access_denied + dry-run rows")
@@ -403,19 +310,11 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		kid, _ := payload["key_id"].(string)
 		switch kind {
 		case "auth.access_denied":
-			// @deliberate: permission_denied retains identity. Pre-action denials
-			// (no_token / invalid_token / expired_token / revoked_token)
-			// are allowed to drop it.
 			dr, _ := payload["denial_reason"].(string)
 			if dr == "permission_denied" && kid == "" {
 				t.Fatalf("permission_denied row dropped actor key_id: %+v", payload)
 			}
 		case "auth.access_attempted":
-			// @constraint: Anonymous-mode bootstrap (no Bearer) is the documented
-			// exception: identity_kind:anonymous with no key_id is the
-			// expected payload for the first-ever mint. Every
-			// authenticated attempt must carry key_id — that's the
-			// Falsifier this guard pins.
 			ik, _ := payload["identity_kind"].(string)
 			if ik == "anonymous" {
 				continue
@@ -430,12 +329,7 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		}
 	}
 
-	// @deliberate: Acceptance: actor identity / action name / outcome / resource target.
-	// For each emitted kind, pull the row and assert each clause's field.
 
-	// @deliberate: 1a. auth.key_created — find the row stamped with revokeeKeyID and
-	//     check actor identity + permissions (action grant set) +
-	//     created_by_key_id (admin).
 	created := findRowMatching(rows, "auth.key_created", func(p map[string]any) bool {
 		kid, _ := p["key_id"].(string)
 		return kid == revokeeKeyID
@@ -453,8 +347,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("auth.key_created row missing permissions (action-grant payload)")
 	}
 
-	// @deliberate: 1b. auth.key_revoked — find by key_id; check actor identity +
-	//     revoked_by_key_id (admin).
 	revoked := findRowMatching(rows, "auth.key_revoked", func(p map[string]any) bool {
 		kid, _ := p["key_id"].(string)
 		return kid == revokeeKeyID
@@ -472,8 +364,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("auth.key_revoked row missing reason")
 	}
 
-	// @deliberate: 1c. auth.key_rotated — find by new_key_id; check actor key_id is
-	//     the new surviving key + name carried through.
 	rotated := findRowMatching(rows, "auth.key_rotated", func(p map[string]any) bool {
 		nk, _ := p["new_key_id"].(string)
 		return nk == newRotateeKeyID
@@ -488,11 +378,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("auth.key_rotated row actor key_name dropped: got %q want %q", kn, rotateeName)
 	}
 
-	// @constraint: 1d. auth.access_denied — find the actor's denied POST. Check
-	//     identity + action name + outcome (response_status:403,
-	//     executed:false) + resource target (request_path).
-	//
-	// Falsifier guard: a real access denied must appear in the audit.
 	denied := findRowMatching(rows, "auth.access_denied", func(p map[string]any) bool {
 		kid, _ := p["key_id"].(string)
 		rp, _ := p["request_path"].(string)
@@ -517,8 +402,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("access_denied row resource target wrong (method): got %q want POST", rm)
 	}
 
-	// @constraint: 1e. dry-run-mode attempt — Falsifier guard: dry-run-mode attempts
-	//     must NOT be absent from the audit.
 	dryRun := findRowMatching(rows, "auth.access_attempted", func(p map[string]any) bool {
 		kid, _ := p["key_id"].(string)
 		mode, _ := p["mode"].(string)
@@ -538,23 +421,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		t.Fatalf("dry_run row resource target wrong (method): got %q want GET", rm)
 	}
 
-	// @deliberate: 1f. Acceptance: GET /v1/audit returns each event in timestamp
-	//     order. Page-default order is recent-first (descending
-	//     occurred_at) — the falsifier is rows interleaved out of time
-	//     (e.g., grouped by source kind). Drive the clock forward
-	//     between every emit above so occurred_at is strictly distinct
-	//     per row, then assert the feed is monotonically descending.
-	//     The mix of kinds in the feed (access_attempted +
-	//     access_denied + key_created + key_revoked + key_rotated)
-	//     means a source-grouped feed would fail this assertion: the
-	//     key_rotated row (last in time) would have to lead the feed,
-	//     not appear interleaved with other kinds by timestamp.
-	// Timestamps must be PARSED, not compared as strings: the wire
-	// shape is RFC3339Nano with trailing zeros trimmed, and trimmed
-	// fractions do not order lexically ("…0.12Z" > "…0.123Z" because
-	// 'Z' > '3', yet 0.12s < 0.123s) — a string comparison here flakes
-	// whenever two adjacent rows land on fractional seconds with
-	// different trimmed widths.
 	var prev time.Time
 	var prevRaw string
 	sawCrossKind := false
@@ -581,18 +447,11 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		prevRaw = raw
 		prevKind = k
 	}
-	// @deliberate: The Acceptance only holds nontrivially when distinct kinds
-	// interleave: the falsifier is a source-grouped feed, which would
-	// keep rows of the same kind contiguous. The above sequence emits
-	// at least five distinct kinds, so we expect a cross-kind step.
 	if !sawCrossKind {
 		t.Fatalf("audit feed never crossed kinds — cannot assert cross-kind chronological order: %d rows", len(rows))
 	}
 }
 
-// auditRowsWithKind is auditRows that surfaces the row envelope (kind
-// + occurred_at + payload), not just the payload, so callers can verify
-// timestamp ordering and kind-tagged behavior.
 func auditRowsWithKind(t *testing.T, f *authFixture, key, query string) []map[string]any {
 	t.Helper()
 	code, body := f.request(t, "GET", "/v1/audit"+query, key, nil)
@@ -609,8 +468,6 @@ func auditRowsWithKind(t *testing.T, f *authFixture, key, query string) []map[st
 	return out
 }
 
-// findRowMatching returns the payload of the first row whose `kind`
-// matches and whose payload satisfies the predicate, or nil if none.
 func findRowMatching(rows []map[string]any, kind string, match func(map[string]any) bool) map[string]any {
 	for _, e := range rows {
 		k, _ := e["kind"].(string)

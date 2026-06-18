@@ -14,28 +14,12 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 )
 
-// Handler implements executor.InProcessHandler for the loop_counter
-// utility node. Reads `count` from incoming attributes (carry-forward
-// yields prior, or 0 on first dispatch in scope), reads `max` (required
-// by schema), increments, and returns a Success outcome tagged
-// `loop` (while new_count < max) or `done` (at the cap), carrying
-// attributes_delta { count: new_count } so the supervisor persists
-// the new count for next-dispatch carry-forward.
-//
-// Per concept:terminal-tag the tag rides on the settling Success
-// outcome; there is no separate event emission.
-//
 // @concept: executor
 // @concept: terminal-tag
 type Handler struct{}
 
 func New() *Handler { return &Handler{} }
 
-// Execute drives one dispatch. The returned error surfaces through the
-// InProcessClient as a transport-level Execute failure; user-visible
-// schema failures (missing/invalid `max`) are reported as an Error
-// outcome so the supervisor's terminal-handling path
-// (concept:error-policy) routes them like any other executor error.
 func (h *Handler) Execute(ctx context.Context, req *genv1.ExecuteRequest, _ executor.HandlerContext) (*genv1.Outcome, error) {
 	attrs := map[string]any{}
 	if req.Attributes != nil {
@@ -56,11 +40,6 @@ func (h *Handler) Execute(ctx context.Context, req *genv1.ExecuteRequest, _ exec
 	if v, ok := attrs["count"]; ok {
 		n, err := asInt(v)
 		if err != nil {
-			// @constraint: a non-numeric incoming `count` violates the
-			// executor's declared schema (count: { type: integer }).
-			// Silently defaulting to 0 would erase the loop's
-			// accumulated state — surface the violation through the
-			// same error-class the missing-max branch uses.
 			return errorOutcome("attributes_schema_invalid", fmt.Sprintf("count: %v", err)), nil
 		}
 		count = n
@@ -96,11 +75,6 @@ func errorOutcome(errClass, msg string) *genv1.Outcome {
 	}
 }
 
-// asInt coerces the JSON-decoded `max` / `count` value (which arrives as
-// float64 through structpb.AsMap) back to int. The schema constrains
-// these to `type: integer`, so a non-numeric type is itself a
-// schema-validation failure — surfaced as an Error outcome by the
-// caller.
 func asInt(v any) (int, error) {
 	switch x := v.(type) {
 	case float64:

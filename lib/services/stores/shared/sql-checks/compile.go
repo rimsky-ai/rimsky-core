@@ -10,44 +10,16 @@ import (
 	"strings"
 )
 
-// identRegex bounds SQL identifiers we'll splice into the generated
-// query. Matches the convention used in stores/postgres/store
-// (`[a-z_][a-z0-9_]*`): lowercase letters, digits, underscores; not
-// starting with a digit. Validated at compile time so callers cannot
-// punch through with a tampered attribute payload.
 var identRegex = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
-// selectOnlyRegex is the belt-and-suspenders SELECT-only enforcement.
-// The kind compilers produce SELECT-only SQL by construction, but the
-// check pins the invariant for the test suite (and serves as the
-// rejection gate if a future compiler regression slips through). Per
-// spec §Item 6 — Side-effect discipline.
 var selectOnlyRegex = regexp.MustCompile(`(?i)^\s*SELECT\s`)
 
-// Compiled is one check ready to execute against a substrate.
 type Compiled struct {
-	// Kind is the check kind, echoed into the Result by Interpret.
 	Kind string
-	// SQL is the aggregate-only query for the check; the executor runs
-	// it via Conn.Query.
 	SQL string
-	// Interpret turns the scanned values into a Result. Each check
-	// kind has its own interpreter shape; see the per-kind compilers
-	// for the scan slot the interpreter expects.
 	Interpret func(scanned ...any) Result
 }
 
-// Compile takes a check spec plus the schema + table names the check
-// will run against, and returns a Compiled query and a per-kind result
-// interpreter. Schema and table names are validated as SQL identifiers
-// (lowercase letters, digits, underscores; not starting with a digit).
-//
-// Supported kinds (v1): no_nulls, row_count_absolute, row_count_ratio,
-// pk_unique.
-//
-// Per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// §Item 6 — Check vocabulary.
 func Compile(spec CheckSpec, schema, table string) (Compiled, error) {
 	if !identRegex.MatchString(schema) {
 		return Compiled{}, fmt.Errorf("invalid schema identifier %q", schema)
@@ -80,10 +52,6 @@ func Compile(spec CheckSpec, schema, table string) (Compiled, error) {
 	return out, nil
 }
 
-// compileNoNulls emits an aggregate-only NULL count over the named
-// columns and a fail-on-positive interpreter. The optional `threshold`
-// config (default 0) allows non-zero tolerance — the SQL-side
-// extension of the in-process shape's no_nulls.
 func compileNoNulls(cfg map[string]any, schema, table string) (Compiled, error) {
 	fields, err := fieldList(cfg)
 	if err != nil {
@@ -101,10 +69,6 @@ func compileNoNulls(cfg map[string]any, schema, table string) (Compiled, error) 
 	}
 	sql := fmt.Sprintf("SELECT %s FROM %s.%s", strings.Join(terms, " + "), schema, table)
 	thresholdLocal := threshold
-	// @constraint: Counts entries must be structpb-compatible because the
-	// executor relays Counts into Success/Error attributes_delta via
-	// structpb.NewStruct, which rejects []string. Materialise fields as
-	// []any here so the per-check Counts shape stays Struct-safe.
 	fieldsLocal := make([]any, len(fields))
 	for i, f := range fields {
 		fieldsLocal[i] = f
@@ -134,9 +98,6 @@ func compileNoNulls(cfg map[string]any, schema, table string) (Compiled, error) 
 	}, nil
 }
 
-// compileRowCountAbsolute emits `SELECT count(*) FROM s.t` and an
-// interpreter that fails when the count falls outside the configured
-// `[min, max?]` bounds.
 func compileRowCountAbsolute(cfg map[string]any, schema, table string) (Compiled, error) {
 	minVal, ok := numeric(cfg["min"])
 	if !ok {
@@ -184,15 +145,6 @@ func compileRowCountAbsolute(cfg map[string]any, schema, table string) (Compiled
 	}, nil
 }
 
-// compileRowCountRatio emits `SELECT count(*) FROM s.t` and an
-// interpreter that computes `ratio = row_count / baseline` and fails
-// when the ratio falls outside `[low, high]`. The SQL-side mirror of the
-// in-process shape's runRowCountRatio: same config vocabulary
-// (`baseline` required and > 0; `low` default 0.5; `high` default 2.0)
-// so an operator can move a check between the two substrates without
-// retranslating its config. The query is aggregate-only and
-// SELECT-prefixed — count(*) only, no row scan — to hold the
-// side-effect-free / SELECT-only discipline the compiler enforces.
 func compileRowCountRatio(cfg map[string]any, schema, table string) (Compiled, error) {
 	baselineRaw, hasBaseline := cfg["baseline"]
 	if !hasBaseline {
@@ -238,9 +190,6 @@ func compileRowCountRatio(cfg map[string]any, schema, table string) (Compiled, e
 	}, nil
 }
 
-// compilePKUnique emits a `SELECT c1,...,cN, count(*) FROM s.t GROUP BY
-// c1,...,cN HAVING count(*) > 1 LIMIT 1`; any returned row is a
-// uniqueness violation.
 func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error) {
 	fields, err := fieldList(cfg)
 	if err != nil {
@@ -256,10 +205,6 @@ func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error)
 		"SELECT %s, count(*) FROM %s.%s GROUP BY %s HAVING count(*) > 1 LIMIT 1",
 		colList, schema, table, colList,
 	)
-	// @constraint: Counts entries must be structpb-compatible (executor
-	// relays Counts into Success/Error attributes_delta via
-	// structpb.NewStruct, which rejects []string). Same fix as
-	// compileNoNulls above.
 	fieldsLocal := make([]any, len(fields))
 	for i, f := range fields {
 		fieldsLocal[i] = f
@@ -267,9 +212,6 @@ func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error)
 	return Compiled{
 		Kind: "pk_unique",
 		SQL:  sql,
-		// @agent-contract: Interpret receives a single bool slot fed by the
-		// runner from query.Next() — true → at least one duplicate row was
-		// scanned (fail); false or empty → no rows (pass).
 		Interpret: func(scanned ...any) Result {
 			res := Result{
 				Kind:   "pk_unique",
@@ -290,9 +232,6 @@ func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error)
 	}, nil
 }
 
-// fieldList parses a `field` (string) or `fields` ([]string) config
-// entry into a normalized slice. Mirrors the verifier-shape-checks
-// helper so the two vocabularies accept the same attribute shape.
 func fieldList(cfg map[string]any) ([]string, error) {
 	if v, ok := cfg["field"].(string); ok && v != "" {
 		return []string{v}, nil
@@ -314,8 +253,6 @@ func fieldList(cfg map[string]any) ([]string, error) {
 	return nil, fmt.Errorf("config: `field` (string) or `fields` ([]string) required")
 }
 
-// numeric mirrors the verifier-shape-checks helper: float64 for any
-// numeric JSON / Go scalar; second return false when not numeric.
 func numeric(v any) (float64, bool) {
 	switch x := v.(type) {
 	case float64:

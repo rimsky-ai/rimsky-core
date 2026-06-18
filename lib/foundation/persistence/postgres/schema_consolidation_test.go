@@ -18,9 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// expectedTables is the post-consolidation table set. Every rimsky_*
-// table the persistence layer reads or writes. If a future migration
-// adds or renames a table, this list MUST be updated alongside it.
 var expectedTables = []string{
 	"rimsky_api_keys",
 	"rimsky_blob_orphans",
@@ -47,27 +44,18 @@ var expectedTables = []string{
 	"rimsky_wait_set",
 }
 
-// expectedBreakpointColumns is the column set for rimsky_instance_breakpoints
-// per the spec §7.2 schema. Pinned here so a future schema change is
-// caught at test time.
 var expectedBreakpointColumns = []string{
 	"id", "instance_id", "matcher", "checkpoint", "signal_type", "mode",
 	"overflow_policy", "hit_ttl_seconds", "ttl_seconds", "dropped_count",
 	"created_by_key", "created_at", "expires_at",
 }
 
-// expectedHitColumns is the column set for rimsky_breakpoint_hits.
 var expectedHitColumns = []string{
 	"seq", "id", "breakpoint_id", "instance_id", "node_run_id", "frame_id",
 	"checkpoint", "mode", "snapshot", "hit_at", "resumed_at", "resumed_by_key",
 	"resume_overlay",
 }
 
-// TestSchemaConsolidation_FreshDBSchemaShape brings up a fresh database,
-// applies migrations, and asserts that the introspected schema matches
-// the expected post-consolidation shape: every expected table present,
-// the breakpoint tables carry their full column sets, and the
-// rimsky_instances.paused column exists.
 func TestSchemaConsolidation_FreshDBSchemaShape(t *testing.T) {
 	ctx := context.Background()
 	dsn, terminate := pgtest.StartFreshPostgresDSN(ctx, t)
@@ -96,12 +84,6 @@ func TestSchemaConsolidation_FreshDBSchemaShape(t *testing.T) {
 	assertColumnsPresent(t, ctx, pool, "rimsky_instances", []string{"paused"})
 }
 
-// TestSchemaConsolidation_StaleMigrationsRowsAreInert simulates the
-// "ephemeral CI environment with leftover rimsky_migrations state"
-// case from spec §10.5: pre-seed rimsky_migrations with the legacy
-// filenames, then run Migrate. The expected outcome is that
-// 001-schema.sql applies (because its filename is NOT in the pre-seed
-// set) and the resulting schema is identical to the fresh-DB case.
 func TestSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 	ctx := context.Background()
 	dsn, terminate := pgtest.StartFreshPostgresDSN(ctx, t)
@@ -121,11 +103,6 @@ func TestSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 		t.Fatalf("PoolFromDatabaseForTest: not a postgres driver")
 	}
 
-	// @constraint: pre-seed rimsky_migrations with legacy filenames so
-	// the migrator's QueryHas check sees the seeded LEGACY names as
-	// already-applied while the on-disk 001-schema.sql (unseeded) still
-	// runs. Bootstrapping the table here is safe because Migrate's
-	// Bootstrap runs the same CREATE TABLE IF NOT EXISTS and no-ops.
 	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS rimsky_migrations (
 		filename    TEXT PRIMARY KEY,
 		applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -156,8 +133,6 @@ func TestSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 		}
 	}
 
-	// @deliberate: 001-schema.sql is the only file in the embed FS and
-	// its filename is NOT in the pre-seed set, so Migrate must apply it.
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate with stale rows: %v", err)
 	}
@@ -166,8 +141,6 @@ func TestSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 	assertColumnsPresent(t, ctx, pool, "rimsky_instance_breakpoints", expectedBreakpointColumns)
 	assertColumnsPresent(t, ctx, pool, "rimsky_breakpoint_hits", expectedHitColumns)
 
-	// count rimsky_migrations carries BOTH the stale rows AND the
-	// new 001-schema.sql row.
 	var count int
 	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM rimsky_migrations WHERE filename = '001-schema.sql'`,
@@ -187,8 +160,6 @@ func TestSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 	}
 }
 
-// assertTablesPresent fatals if any expected table is missing from the
-// current schema.
 func assertTablesPresent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, want []string) {
 	t.Helper()
 	have := map[string]bool{}
@@ -215,8 +186,6 @@ func assertTablesPresent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 	}
 }
 
-// assertColumnsPresent fatals if any expected column is missing from
-// the given table.
 func assertColumnsPresent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, want []string) {
 	t.Helper()
 	have := map[string]bool{}

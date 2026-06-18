@@ -10,16 +10,6 @@ import (
 	"strings"
 )
 
-// ActionMatches returns true if entryAction matches requestAction per
-// the wildcard rules:
-//
-//   - "*" matches anything
-//   - "<noun>:*" matches any requestAction starting with "<noun>:"
-//   - "*:<verb>" matches any requestAction ending with ":<verb>"
-//   - otherwise requires exact-string match
-//
-// The colon is always part of the match boundary — "auth:*" does NOT
-// match "authority:create".
 func ActionMatches(entryAction, requestAction string) bool {
 	if entryAction == "*" {
 		return true
@@ -38,10 +28,6 @@ func ActionMatches(entryAction, requestAction string) bool {
 	return false
 }
 
-// ValidateActionString returns nil if entryAction is well-formed:
-// exact "<noun>:<verb>", "*", "<noun>:*", or "*:<verb>". Infix
-// wildcards ("foo:*:bar") and embedded asterisks ("foo*bar") are
-// rejected.
 func ValidateActionString(entryAction string) error {
 	if entryAction == "" {
 		return errors.New("action string is empty")

@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario 15 — blessed-invariant: NextState rejects running→running under
-// `ReasonDispatchClaimed`. Verified directly against the storage layer.
-//
-// Migrated to the stores-redesign template grammar (spec §11): the worker
-// node is built via scenario.MakeNode. Resources/version pointers are
-// unrelated to this invariant; the test drives the state machine directly
-// and asserts ErrIllegalTransition.
 package scenarios
 
 import (
@@ -43,8 +36,6 @@ func TestStateMachineSameStateRejected(t *testing.T) {
 			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
 	}))
 
-	// @deliberate: Attempt running→running under dispatch_claimed. Should fail with
-	// ErrIllegalTransition (blessed-invariant 17).
 	err := h.InTx(func(tx persistence.Tx) error {
 		return h.Persist.Nodes().UpdateState(h.Ctx, n.ID, h.GetMainRunScopeID(iid),
 			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)

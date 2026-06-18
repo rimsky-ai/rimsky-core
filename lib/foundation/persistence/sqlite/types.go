@@ -16,42 +16,16 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// timeLayoutFixedNanos is RFC3339 with a FIXED nine-digit fractional-
-// second field (".000000000" pads with zeros; RFC3339Nano's ".999999999"
-// trims them). SQLite compares the TEXT column lexicographically in
-// `ORDER BY` / `<= ?`, and trimmed fractions break that: "…00.5Z" sorts
-// before "…00Z" although it is chronologically later (`.` < `Z` in
-// ASCII). Fixed-width UTC strings make lexicographic order equal to
-// chronological order, which the SelectCandidates keyset cursor (and
-// every timestamp predicate pushed into SQL) depends on. parseTime
-// accepts both shapes, so rows written by older builds still read back.
 const timeLayoutFixedNanos = "2006-01-02T15:04:05.000000000Z07:00"
 
-// nowUTC returns time.Now().UTC() formatted with timeLayoutFixedNanos.
-// SQLite has no NOW() that gives sub-second precision; we pass the
-// formatted string as a parameter so timestamp comparisons (`< ?`)
-// round-trip cleanly.
 func nowUTC() string {
 	return time.Now().UTC().Format(timeLayoutFixedNanos)
 }
 
-// formatTime formats t with timeLayoutFixedNanos. Empty-zero times are
-// accepted; the caller decides whether to pass nil or formatTime via
-// nullableTime.
-//
-// NOTE: dev SQLite files predating the fixed-width format should be
-// recreated (delete the .db). Mixed old/new-format rows mis-order
-// within one second (trimmed fractions sort after fixed-width ones);
-// there is deliberately no compat code for old rows.
 func formatTime(t time.Time) string {
 	return t.UTC().Format(timeLayoutFixedNanos)
 }
 
-// parseTime parses a TEXT timestamp read back from SQLite: the
-// fixed-width timeLayoutFixedNanos we write (or any other RFC3339
-// variant — RFC3339Nano accepts everything RFC3339 does, including
-// trimmed or absent fractions), with a fallback for SQLite's own
-// `datetime('now')` default ("YYYY-MM-DD HH:MM:SS").
 func parseTime(s string) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
@@ -67,8 +41,6 @@ func parseTime(s string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// nullableJSONB returns nil for empty []byte; otherwise the bytes (which
-// are stored verbatim in the TEXT column). Mirrors postgres' nullableJSONB.
 func nullableJSONB(b json.RawMessage) any {
 	if len(b) == 0 {
 		return nil
@@ -76,7 +48,6 @@ func nullableJSONB(b json.RawMessage) any {
 	return []byte(b)
 }
 
-// nullableString returns nil for empty string; otherwise the string.
 func nullableString(s string) any {
 	if s == "" {
 		return nil
@@ -84,7 +55,6 @@ func nullableString(s string) any {
 	return s
 }
 
-// nullableInt returns nil for zero; otherwise the int.
 func nullableInt(i int) any {
 	if i == 0 {
 		return nil
@@ -92,7 +62,6 @@ func nullableInt(i int) any {
 	return i
 }
 
-// nullableUUID returns nil for nil pointer; otherwise the UUID's string form.
 func nullableUUID(p *shared.UUID) any {
 	if p == nil {
 		return nil
@@ -100,8 +69,6 @@ func nullableUUID(p *shared.UUID) any {
 	return p.String()
 }
 
-// instanceIDArg formats a *shared.UUID into a query arg (string or nil).
-// Naming mirrors postgres/events.go for parity.
 func instanceIDArg(p *shared.UUID) any {
 	if p == nil {
 		return nil
@@ -109,7 +76,6 @@ func instanceIDArg(p *shared.UUID) any {
 	return p.String()
 }
 
-// nodeIDArg formats a *shared.UUID into a query arg (string or nil).
 func nodeIDArg(p *shared.UUID) any {
 	if p == nil {
 		return nil
@@ -117,7 +83,6 @@ func nodeIDArg(p *shared.UUID) any {
 	return p.String()
 }
 
-// marshalStringArray serialises a []string as a JSON array.
 func marshalStringArray(s []string) string {
 	if len(s) == 0 {
 		return "[]"
@@ -126,7 +91,6 @@ func marshalStringArray(s []string) string {
 	return string(b)
 }
 
-// unmarshalStringArray parses a JSON-encoded string array back.
 func unmarshalStringArray(s string) ([]string, error) {
 	if s == "" || s == "[]" {
 		return []string{}, nil
@@ -141,8 +105,6 @@ func unmarshalStringArray(s string) ([]string, error) {
 	return out, nil
 }
 
-// scanNullableUUID converts a sql.NullString into a *shared.UUID. Returns nil for
-// invalid (null) input.
 func scanNullableUUID(ns sql.NullString) (*shared.UUID, error) {
 	if !ns.Valid || ns.String == "" {
 		return nil, nil
@@ -154,8 +116,6 @@ func scanNullableUUID(ns sql.NullString) (*shared.UUID, error) {
 	return &u, nil
 }
 
-// parseUUID parses a non-empty UUID string. Empty string returns the zero
-// shared.UUID.
 func parseUUID(s string) (shared.UUID, error) {
 	if s == "" {
 		return shared.UUID{}, nil
@@ -163,8 +123,6 @@ func parseUUID(s string) (shared.UUID, error) {
 	return uuid.Parse(s)
 }
 
-// isUniqueViolation returns true when the SQLite error message indicates a
-// UNIQUE / PRIMARY KEY constraint violation.
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
@@ -175,8 +133,6 @@ func isUniqueViolation(err error) bool {
 		strings.Contains(msg, "constraint failed: UNIQUE")
 }
 
-// isFKViolation returns true when the SQLite error indicates a foreign
-// key constraint violation.
 func isFKViolation(err error) bool {
 	if err == nil {
 		return false

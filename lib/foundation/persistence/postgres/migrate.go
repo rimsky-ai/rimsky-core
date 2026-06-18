@@ -14,8 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres/migrations"
 )
 
-// newMigrator returns the persistence.Migrator wired with Postgres
-// callbacks. The lock is acquired by Migrator.Run via the Coordinator.
 func newMigrator(pool *pgxpool.Pool) persistence.Migrator {
 	return persistence.Migrator{
 		FS: migrations.FS,
@@ -37,10 +35,6 @@ func newMigrator(pool *pgxpool.Pool) persistence.Migrator {
 			).Scan(&exists)
 			return exists, err
 		},
-		// @deliberate: run the migration SQL and the rimsky_migrations
-		// insert inside one pgx tx so each file applies atomically — a
-		// crash mid-file rolls both back, matching the pre-refactor
-		// per-file atomicity guarantee.
 		ApplyOne: func(ctx context.Context, sql string, filename string) error {
 			tx, err := pool.Begin(ctx)
 			if err != nil {

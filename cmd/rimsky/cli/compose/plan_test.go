@@ -21,12 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// specToMap round-trips a typed spec through json into the map shape
-// the fake server's storage API accepts. The fake's storage layer is
-// map-typed by design (it stores opaque specs); only the wire body
-// type is typed, so tests that pre-seed state via srv.State.RegisterTemplate
-// need this conversion when they reuse the spec returned by
-// compose.ResolveTemplate.
 func specToMap(t *testing.T, spec node.TemplateSpec) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(spec)
@@ -237,14 +231,6 @@ func TestComputePlan_NonTerminalOrphan(t *testing.T) {
 	}
 }
 
-// TestComputePlan_IdempotentReregister covers the load-bearing
-// "re-register with identical content + identical tag is a no-op
-// plan" property of compose up. The plan code must skip the register
-// step when the content-hash is already present in state, and skip
-// the tag-create when the tag already points at the same hash.
-//
-// Without this guarantee, every `compose up` against a converged
-// manifest would emit register+tag-create churn.
 func TestComputePlan_IdempotentReregister(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
@@ -285,10 +271,6 @@ instances:
 	}
 }
 
-// TestComputePlan_ParamsDriftWarning covers the cycle-2 fix that turned
-// params drift on a non-terminal compose-owned instance into a stderr
-// warning (instead of a buggy Step append+pop). Asserts: no step
-// scheduled for the drifted instance, warning printed exactly once.
 func TestComputePlan_ParamsDriftWarning(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
@@ -356,11 +338,6 @@ instances:
 	}
 }
 
-// TestAggregateOutcome_NonFreshIsFailure covers the cycle-2 fix that
-// swapped `n.State == "failed"` for `n.State != "fresh"`. Strands a
-// `running` node on a terminated instance with restart=on_failure and
-// asserts the plan schedules delete+create (failure path), not
-// delete-only (success path).
 func TestAggregateOutcome_NonFreshIsFailure(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
@@ -388,11 +365,6 @@ instances:
 	srv.State.SetTemplateState(hash, "deployed")
 	key := "compose:p:hello"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
-	// @deliberate: fixture constructs a non-fresh, non-failed node on a
-	// terminal instance — blessed-invariant 13 forbids this combination
-	// in production, but the CLI's classifier must defensively treat
-	// anything-not-fresh as failure, and only this state shape exercises
-	// the cycle-2 fix under test.
 	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "running"})
 	now := time.Now()
 	srv.State.SetInstanceTerminated(inst.ID, &now)

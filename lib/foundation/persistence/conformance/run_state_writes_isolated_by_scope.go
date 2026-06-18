@@ -4,26 +4,6 @@
 
 // @concept: run-scope
 
-// @constraint: conformance area conformance area.
-// conformance area.
-//
-// Replacement coverage for the cycle-2/3 fan-out disambiguator
-// conformance tests retired by spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-// (Task 32). The invariant under test: for each per-run-keyed state
-// write, mutating the row in RunScope A must leave the row in RunScope
-// B unchanged, when both scopes share a node_id.
-//
-// Methods covered:
-//   - Nodes().UpdateState
-//   - Nodes().UpdateHeartbeat
-//   - Nodes().ClearSettlingSignalType
-//   - Nodes().ResetFailedTerminalSettlingSignalType
-//   - Queue().RemoveForNodeInTx
-//   - Queue().GetParkedByNode
-//   - Queue().SetRetryNoProgressForNodeInTx
-//   - NodeAttributes().GetLatestByNode
-//
 // @concept: run-scope
 package conformance
 
@@ -40,9 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// twoScopeFixture builds two RunScopes (A=main, B=fanout_partition)
-// sharing the same node_id, each with an in-flight pending run row.
-// Returns the (scopeA, scopeB, runA, runB) tuple.
 type twoScopeFixture struct {
 	fix    fixtureSet
 	scopeA shared.UUID
@@ -59,8 +36,6 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 
 	scopeA := fix.MainRunScopeID
 
-	// @constraint: scope B is a fanout_partition, which requires non-nil
-	// parent_run_id; seed a parent run so the Create call below satisfies that.
 	parentRun := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	scopeB := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -114,9 +89,6 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 	return twoScopeFixture{fix: fix, scopeA: scopeA, scopeB: scopeB, runA: runA, runB: runB}
 }
 
-// runRowSnapshot reads the (state, settling_signal_type, phase, claimed_by)
-// tuple for a given run id via the RunTreeTable + Queue.GetByID. Used
-// by the per-method isolation assertions.
 type runRowSnapshot struct {
 	State              cascade.NodeState
 	SettlingSignalType string
@@ -160,8 +132,6 @@ func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runI
 	return out
 }
 
-// testRunStateWritesIsolated_UpdateState: write running on scope A;
-// assert scope B's run unchanged.
 func testRunStateWritesIsolated_UpdateState(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
@@ -180,8 +150,6 @@ func testRunStateWritesIsolated_UpdateState(t *testing.T, d persistence.Database
 	}
 }
 
-// testRunStateWritesIsolated_BumpLastProgressAt: claim both runs,
-// bump scope A's last_progress_at, assert scope B's is unchanged.
 func testRunStateWritesIsolated_BumpLastProgressAt(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
@@ -213,9 +181,6 @@ func testRunStateWritesIsolated_BumpLastProgressAt(t *testing.T, d persistence.D
 	}
 }
 
-// testRunStateWritesIsolated_ClearSettlingSignalType: first seed both
-// runs with a settling_signal_type, then clear scope A's; assert scope
-// B's untouched.
 func testRunStateWritesIsolated_ClearSettlingSignalType(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
@@ -243,7 +208,6 @@ func testRunStateWritesIsolated_ClearSettlingSignalType(t *testing.T, d persiste
 	}
 }
 
-// testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType.
 func testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
@@ -271,9 +235,6 @@ func testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t *testing
 	}
 }
 
-// testRunStateWritesIsolated_RemoveForNodeInTx: claim both runs to make
-// them eligible for RemoveForNodeInTx (which is claimant-guarded);
-// remove scope A's; assert scope B's still in-flight.
 func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
@@ -311,17 +272,12 @@ func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Da
 	}
 }
 
-// testRunStateWritesIsolated_GetParkedByNode: park scope B's run only;
-// query for scope A's parked row — must return nil; query scope B's —
-// must return the parked row.
 func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
 	store := d.Tables()
 	q := d.Queue()
 
-	// @constraint: ParkActiveInTx requires the row to be phase='active' with
-	// claimed_by=expected; seed scope B's row via ClaimDispatchRow before parking.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		ok, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
 		if err != nil {
@@ -357,7 +313,6 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 	}
 }
 
-// testRunStateWritesIsolated_SetRetryNoProgressForNodeInTx.
 func testRunStateWritesIsolated_SetRetryNoProgressForNodeInTx(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
@@ -370,8 +325,6 @@ func testRunStateWritesIsolated_SetRetryNoProgressForNodeInTx(t *testing.T, d pe
 		t.Fatalf("SetRetryNoProgress(A): %v", err)
 	}
 
-	// @constraint: GetRetryNoProgress is keyed by dispatch id (f.runB), so
-	// scope-A's SetRetryNoProgress above must leave B's counter at 0.
 	countB, _, err := q.GetRetryNoProgress(ctx, f.runB)
 	if err != nil {
 		t.Fatalf("GetRetryNoProgress(B): %v", err)
@@ -381,9 +334,6 @@ func testRunStateWritesIsolated_SetRetryNoProgressForNodeInTx(t *testing.T, d pe
 	}
 }
 
-// testRunStateWritesIsolated_NodeAttributesGetLatestByNode: insert
-// per-run attribute rows for both runA and runB; assert
-// GetLatestByNode keyed on scopeA returns runA's row, not runB's.
 func testRunStateWritesIsolated_NodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)

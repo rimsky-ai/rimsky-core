@@ -2,32 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// rimsky-host-agent-proxy is the rimsky-stack service that fronts a fleet
-// of dev-machine host-agent daemons. It is a transparent forwarder for
-// EVERY rimsky service protocol on the supervisor-facing side (Executor,
-// ClaimProducer, Publisher, Validation, DataProcessing — all forwarded by
-// one uniform resolve→spawn→tunnel mechanism; LifecycleSubscriber in
-// consumer role) and maintains long-lived bidi agent connections on the
-// dev-machine-facing side via the HostAgent.Connect stream. A dispatched
-// call from a supervisor is resolved to an owner's connected agent, which
-// lazily spawns the named local binary and tunnels the call to it. No
-// fronted protocol ships as a registered-but-Unimplemented stub.
-//
-// The proxy is a normal multi-protocol service from rimsky's
-// perspective: no tunnel-awareness leaks into the supervisor, the
-// dispatch path, the error vocabulary, or graph processing.
-//
 // @concept: host-agent-proxy
-//
-// Environment variables:
-//
-//	RIMSKY_PROXY_GRPC_PORT   optional; default 9090. Serves both the
-//	                         agent-facing HostAgent.Connect stream and the
-//	                         supervisor-facing rimsky protocols.
-//	RIMSKY_CONTROL_API_URL   optional; base URL for the GET /instances/{id}
-//	                         binding-cache-miss fallback.
-//	RIMSKY_CONTROL_API_TOKEN optional; bearer token for that fallback.
-//	RIMSKY_LOG_LEVEL         optional; debug|info|warn|error (default info).
 package main
 
 import (
@@ -61,11 +36,6 @@ func main() {
 	genv1.RegisterClaimProducerServer(grpcSrv, newClaimProducerHandler(state, cfg))
 	genv1.RegisterClaimProducerObservabilityServer(grpcSrv, newClaimProducerObsHandler())
 
-	// @constraint: the proxy fronts every rimsky service protocol by one
-	// uniform resolve→spawn→tunnel mechanism — none ships as an
-	// Unimplemented stub. LifecycleSubscriber / Publisher / Validation /
-	// DataProcessing each present exactly the fronted service's protocol
-	// and forward the dispatch to the spawned local binary.
 	genv1.RegisterLifecycleSubscriberServer(grpcSrv, newLifecycleHandler(state, cfg))
 
 	genv1.RegisterPublisherServer(grpcSrv, newPublisherHandler(state, cfg))
@@ -91,8 +61,6 @@ func main() {
 	grpcSrv.GracefulStop()
 }
 
-// parseLogLevel maps a textual level to slog.Level (mirrors the
-// supervisor entrypoint's helper of the same name).
 func parseLogLevel(s string) slog.Level {
 	switch s {
 	case "debug":

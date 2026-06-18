@@ -18,32 +18,12 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// httpClient implements the HTTP+JSON bridge for the unary executor
-// surface. Wire format:
-//
-//	POST <endpoint.URL>/v1/Execute
-//	  Content-Type: application/json
-//	  body: JSON form of ExecuteRequest
-//	Response: 200 OK
-//	  Content-Type: application/json
-//	  body: JSON form of Outcome (oneof Success / Error / Park /
-//	        AwaitAsyncCallback)
-//
-// Per concept:executor / TD-execute-rpc-unary the streaming + NDJSON
-// shape is gone; the bridge is a single request/response round trip.
 type httpClient struct {
 	client   *http.Client
 	endpoint string
 	tlsMode  string
 }
 
-// NewHTTPClient builds the HTTP-bridge client, honoring the entry's
-// validated `tls:` mode exactly like the gRPC path: "required" → the
-// endpoint URL must be https and the handshake verifies against system
-// roots (or the test-injected pool); "off" / empty → dial whatever the
-// scheme says. A `tls: required` entry with a plaintext http:// URL is
-// rejected loudly here — the mode is never accepted-and-ignored
-// (STORY-peer-tls-enforced falsifier).
 func NewHTTPClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "http" {
 		return nil, fmt.Errorf("executor.NewHTTPClient: transport=%q not http", endpoint.Transport)

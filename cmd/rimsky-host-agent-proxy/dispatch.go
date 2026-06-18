@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// dispatch.go — shared spawn-lifecycle machinery used by the
-// supervisor-facing Executor and ClaimProducer handlers. Both protocols
-// resolve a dispatch to (owner → agent connection → binding → spawn),
-// lazily spawning the named child on first use for a given
-// (scope, binding-name) and reusing it thereafter. The only difference
-// between the two protocols is which inner RPC is tunneled; everything
-// up to and including the spawn is shared here.
-//
 // @concept: host-agent-proxy
 
 package main
@@ -29,8 +21,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @constraint: error-class vocabulary surfaced by the proxy (slots into
-// the existing executor-Error / claim-producer-error class spaces).
 const (
 	errClassBindingNotFound       = "binding_not_found"
 	errClassHostAgentNotConnected = "host_agent_not_connected"
@@ -39,23 +29,11 @@ const (
 	errClassExecutorCrashed       = "executor_crashed"
 )
 
-// serviceNameHeader is the per-call gRPC metadata key the supervisor's
-// client-side interceptor stamps with the resolved-for service name.
 const serviceNameHeader = "x-rimsky-service-name"
 
-// anonymousRoutingIdentity is the well-known routing key the proxy resolves an
-// anonymous-owner instance against. An instance created in anonymous mode
-// persists with an empty owner api-key, so it cannot match an owner-keyed
-// agent; an agent running against an anonymous-mode deployment registers under
-// this same sentinel (see hostagent.AnonymousRoutingIdentity — the two MUST
-// stay in lockstep) so the dispatch still resolves to a connected agent rather
-// than dead-ending on host_agent_not_connected. @concept: host-agent-proxy
+// @concept: host-agent-proxy
 const anonymousRoutingIdentity = "anonymous"
 
-// resolveOwnerRoutingKey maps an instance's persisted owner api-key to the
-// routing key the proxy looks an agent up under. An empty owner (an instance
-// created in anonymous mode) routes to the anonymous sentinel; an authenticated
-// owner routes to itself, unchanged.
 func resolveOwnerRoutingKey(ownerAPIKeyID string) string {
 	if ownerAPIKeyID == "" {
 		return anonymousRoutingIdentity
@@ -63,8 +41,6 @@ func resolveOwnerRoutingKey(ownerAPIKeyID string) string {
 	return ownerAPIKeyID
 }
 
-// resolveError carries a proxy resolution/spawn failure and the
-// error_class the supervisor-facing handler should surface.
 type resolveError struct {
 	class string
 	msg   string
@@ -72,15 +48,12 @@ type resolveError struct {
 
 func (e *resolveError) Error() string { return fmt.Sprintf("%s: %s", e.class, e.msg) }
 
-// resolved is the outcome of resolving a dispatch to a live spawned
-// child: the owning agent connection and the spawn-id to dispatch into.
 type resolved struct {
 	agent   *agentConnection
 	spawnID string
 	scopeID string
 }
 
-// serviceNameFromContext extracts the x-rimsky-service-name header.
 func serviceNameFromContext(ctx context.Context) (string, bool) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
@@ -93,23 +66,8 @@ func serviceNameFromContext(ctx context.Context) (string, bool) {
 	return vals[0], true
 }
 
-// instanceFetcher fetches an instance's binding catalog from control-api
-// on a cache miss. Injected so tests can stub the HTTP fallback.
 type instanceFetcher func(ctx context.Context, instanceID string) (*instanceCacheEntry, bool, error)
 
-// resolveAndSpawn performs the shared dispatch-resolution flow:
-//  1. extract the service name from gRPC metadata,
-//  2. resolve the instance (cache → fetcher fallback),
-//  3. resolve the owner's agent connection,
-//  4. resolve the binding,
-//  5. dedup-or-lazily-spawn the child for (scope, binding-name).
-//
-// scopeID is the dispatch-observable spawn-isolation scope: the inbound
-// run_scope_id when present, so two concurrent run-scopes of one instance
-// get distinct late-bound children (one spawn per (run_scope, binding)).
-// It falls back to instanceID only when run_scope_id is empty — the
-// degenerate / pre-field caller, where the main run-scope is
-// one-per-instance and instance keying is the historical happy path.
 // @concept: host-agent-proxy
 func resolveAndSpawn(
 	ctx context.Context,
@@ -139,11 +97,6 @@ func resolveAndSpawn(
 		entry = fetched
 	}
 
-	// @constraint: an empty owner is an anonymous-mode instance — resolve
-	// the agent under the anonymous routing identity instead of
-	// short-circuiting. host_agent_not_connected is still returned, but
-	// only when no agent (owner-keyed OR anonymous) is connected — the
-	// guard discriminates "no anonymous agent" from "owner empty".
 	routingKey := resolveOwnerRoutingKey(entry.ownerAPIKeyID)
 	agent, ok := state.lookupAgent(routingKey)
 	if !ok {
@@ -163,7 +116,6 @@ func resolveAndSpawn(
 		return &resolved{agent: agent, spawnID: spawnID, scopeID: scopeID}, nil
 	}
 
-	// @deliberate: lazy spawn — no cached spawn matched the cache key.
 	spawnID, rerr := spawnChild(agent, binding, entry, name, scopeID, expectedProtocols, spawnTimeout)
 	if rerr != nil {
 		return nil, rerr
@@ -172,16 +124,6 @@ func resolveAndSpawn(
 	return &resolved{agent: agent, spawnID: spawnID, scopeID: scopeID}, nil
 }
 
-// resolveAndSpawnByService resolves a dispatch for one of the fronted
-// protocols whose request message may not carry an instance_id (publisher
-// carries it, but validation and data-processing do not). When instanceID
-// is non-empty it delegates to the instance-keyed resolveAndSpawn. When it
-// is empty it resolves the binding by service name: the
-// x-rimsky-service-name header names the late-bound service, and the single
-// cached instance carrying that binding supplies the owner + agent + path +
-// spawn scope. This keeps the proxy a transparent forwarder for every
-// protocol it fronts, including the instance-id-less ones.
-//
 // @concept: host-agent-proxy
 func resolveAndSpawnByService(
 	ctx context.Context,
@@ -204,9 +146,6 @@ func resolveAndSpawnByService(
 	if !ok {
 		return nil, &resolveError{class: errClassBindingNotFound, msg: fmt.Sprintf("no cached instance binds service %q", name)}
 	}
-	// @constraint: anonymous-mode instance (empty owner) resolves under
-	// the anonymous routing identity; host_agent_not_connected only when
-	// no agent is connected under the resolved key.
 	routingKey := resolveOwnerRoutingKey(entry.ownerAPIKeyID)
 	agent, ok := state.lookupAgent(routingKey)
 	if !ok {
@@ -232,7 +171,6 @@ func resolveAndSpawnByService(
 	return &resolved{agent: agent, spawnID: spawnID, scopeID: scopeID}, nil
 }
 
-// spawnChild issues a Spawn frame and awaits the SpawnAck.
 func spawnChild(
 	agent *agentConnection,
 	binding bindingSpec,
@@ -245,16 +183,8 @@ func spawnChild(
 	ackCh := agent.registerSpawnPending(spawnID)
 	defer agent.clearSpawnPending(spawnID)
 
-	// @constraint: per-binding cwd overrides the instance-level
-	// params.cwd only when set; otherwise the agent falls back to the
-	// instance-level cwd carried on the Spawn frame.
 	cwd, _ := entry.params["cwd"].(string)
 
-	// @constraint: a per-binding timeout bounds BOTH the agent's
-	// readiness wait (carried in ReadyTimeoutSeconds) and the proxy's
-	// own SpawnAck wait below — so a no-bind child fails inside the
-	// binding-specified budget rather than the proxy's larger configured
-	// default. Absent (<=0) → the proxy's configured spawn timeout governs.
 	effectiveTimeout := timeout
 	if binding.TimeoutSeconds > 0 {
 		effectiveTimeout = time.Duration(binding.TimeoutSeconds) * time.Second
@@ -293,14 +223,6 @@ func spawnChild(
 	}
 }
 
-// forwardProxyUnary tunnels a serialized unary request to the spawned child
-// over a fresh dispatch stream and awaits exactly one response frame, for
-// the publisher / validation / data-processing protocols. The rpc_method
-// names which child RPC the agent must invoke — it rides the wire because
-// these protocols expose multiple unary RPCs whose request messages are
-// distinct types, so the agent cannot infer the target RPC from the payload
-// shape (the generic analogue of claim_producer_verb).
-//
 // @concept: host-agent-proxy
 func forwardProxyUnary(ctx context.Context, agent *agentConnection, spawnID, protocol, rpcMethod string, payload []byte, timeout time.Duration) ([]byte, *resolveError) {
 	streamID := uuid.NewString()
@@ -336,19 +258,10 @@ func forwardProxyUnary(ctx context.Context, agent *agentConnection, spawnID, pro
 	}
 }
 
-// proxyStatus maps a resolveError to a gRPC status carrying the error_class
-// in a google.rpc.ErrorInfo detail (mirrors claimProducerStatus, the shape
-// the supervisor-facing clients decode). Missing-binding-style faults use
-// FailedPrecondition; all other proxy-side faults use Internal.
 func proxyStatus(rerr *resolveError) error {
 	return claimProducerStatus(rerr)
 }
 
-// rewriteCallbackURL replaces the host:port of original with the agent's
-// local-callback base URL, preserving the path/query. Returns original
-// unchanged when either URL is empty or unparsable (the rewrite is
-// best-effort: a malformed callback can't be tunneled, but the dispatch
-// should still proceed and surface whatever the child reports).
 func rewriteCallbackURL(original, agentBase string) string {
 	if original == "" || agentBase == "" {
 		return original
@@ -366,8 +279,6 @@ func rewriteCallbackURL(original, agentBase string) string {
 	return orig.String()
 }
 
-// newControlAPIFetcher returns an instanceFetcher backed by control-api's
-// GET /v1/instances/{id} endpoint. baseURL must have no trailing slash.
 func newControlAPIFetcher(client *http.Client, baseURL, token string) instanceFetcher {
 	return func(ctx context.Context, instanceID string) (*instanceCacheEntry, bool, error) {
 		if baseURL == "" {
@@ -400,7 +311,6 @@ func newControlAPIFetcher(client *http.Client, baseURL, token string) instanceFe
 	}
 }
 
-// instanceJSON is the subset of GET /v1/instances/{id} the proxy reads.
 type instanceJSON struct {
 	ServiceBindings map[string]bindingSpec `json:"service_bindings"`
 	CreatedByAPIKey string                 `json:"created_by_api_key_id"`
@@ -408,10 +318,6 @@ type instanceJSON struct {
 	Params          json.RawMessage        `json:"params"`
 }
 
-// parseInstanceResponse decodes a GET /v1/instances/{id} body into a cache
-// entry. Accepts either created_by_api_key_id or owner_api_key_id as the
-// owner field (control-api exposes the former; the lifecycle payload uses
-// the latter).
 func parseInstanceResponse(body []byte) (*instanceCacheEntry, bool, error) {
 	var ij instanceJSON
 	if err := json.Unmarshal(body, &ij); err != nil {
@@ -436,7 +342,6 @@ func parseInstanceResponse(body []byte) (*instanceCacheEntry, bool, error) {
 	}, true, nil
 }
 
-// parseServiceBindings decodes the opaque service_bindings JSONB blob.
 func parseServiceBindings(raw []byte) map[string]bindingSpec {
 	out := map[string]bindingSpec{}
 	if len(raw) == 0 {
@@ -446,7 +351,6 @@ func parseServiceBindings(raw []byte) map[string]bindingSpec {
 	return out
 }
 
-// parseParams decodes the opaque params JSONB blob.
 func parseParams(raw []byte) map[string]any {
 	out := map[string]any{}
 	if len(raw) == 0 {
@@ -456,5 +360,4 @@ func parseParams(raw []byte) map[string]any {
 	return out
 }
 
-// nowUnixMs is the current wall-clock time in unix milliseconds.
 func nowUnixMs() int64 { return time.Now().UnixMilli() }

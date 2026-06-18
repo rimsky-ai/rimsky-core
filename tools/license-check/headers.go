@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// headers.go — header text constants, header detection, and the
-// stamp/verify implementations.
-
 package main
 
 import (
@@ -16,11 +13,11 @@ import (
 )
 
 const (
-	markerLicensedUnder = "Licensed under"                                                              // @constraint: any "Licensed under …" line counts as a header
-	markerApache        = "Apache License"                                                              // @constraint: distinguishes full-text apache headers
-	markerDualAGPL      = "Dual-licensed under AGPL"                                                    // @constraint: distinguishes full-text agpl headers
-	markerSPDXApache    = "SPDX-License-Identifier: Apache-2.0"                                         // @constraint: distinguishes apache headers in SPDX short form
-	markerSPDXDualAGPL  = "SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial" // @constraint: distinguishes agpl headers in SPDX short form
+	markerLicensedUnder = "Licensed under"
+	markerApache        = "Apache License"
+	markerDualAGPL      = "Dual-licensed under AGPL"
+	markerSPDXApache    = "SPDX-License-Identifier: Apache-2.0"
+	markerSPDXDualAGPL  = "SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial"
 )
 
 const apacheHeaderGo = `// Copyright © 2026 Fall Guy Consulting.
@@ -62,13 +59,11 @@ const agplHeaderShell = `# Copyright © 2026 Fall Guy Consulting.
 # license. See LICENSE.agpl and COPYRIGHT at the repo root.
 `
 
-// violation records one header- or import-rule failure for end-of-run reporting.
 type violation struct {
 	path    string
 	message string
 }
 
-// verifyHeaders checks each file's first ~10 lines for the right marker.
 func verifyHeaders(files []fileEntry) []violation {
 	var out []violation
 	for _, f := range files {
@@ -106,8 +101,6 @@ func verifyHeaders(files []fileEntry) []violation {
 	return out
 }
 
-// detectHeader reads up to 10 lines and reports whether a license header
-// is present and which kind.
 func detectHeader(path string) (hasHeader, isApache, isAGPL bool, err error) {
 	fh, err := os.Open(path)
 	if err != nil {
@@ -127,9 +120,6 @@ func detectHeader(path string) (hasHeader, isApache, isAGPL bool, err error) {
 			isAGPL = true
 			hasHeader = true
 		}
-		// @deliberate: recognize both the multi-line "Licensed under …"
-		// boilerplate and the SPDX short-form one-liner — the bundled
-		// services use the SPDX form rather than the boilerplate.
 		if strings.Contains(line, markerSPDXApache) {
 			isApache = true
 			hasHeader = true
@@ -145,14 +135,6 @@ func detectHeader(path string) (hasHeader, isApache, isAGPL bool, err error) {
 	return hasHeader, isApache, isAGPL, nil
 }
 
-// stampHeaders reconciles each file's header with its classification: it
-// adds a header to files that lack one and REPLACES a header of the wrong
-// kind (e.g. an Apache header on a now-AGPL file after a relicense). Files
-// already carrying the correct header are left untouched, so repeated runs
-// are idempotent. A file that ends up with BOTH markers (e.g. an AGPL
-// boilerplate header followed by a stale `SPDX-License-Identifier: Apache-2.0`
-// line — what a prior buggy strip pass would leave behind) is also re-stamped
-// so the contradictory header is cleaned up.
 func stampHeaders(files []fileEntry) (int, error) {
 	stamped := 0
 	for _, f := range files {
@@ -177,9 +159,6 @@ func stampHeaders(files []fileEntry) (int, error) {
 	return stamped, nil
 }
 
-// stampOne writes the classification-appropriate header to f. When
-// replaceExisting is set, any current license header is stripped first so a
-// wrong-kind header is replaced rather than stacked on top.
 func stampOne(f fileEntry, replaceExisting bool) error {
 	body, err := os.ReadFile(f.absPath)
 	if err != nil {
@@ -193,10 +172,6 @@ func stampOne(f fileEntry, replaceExisting bool) error {
 	return os.WriteFile(f.absPath, newContents, 0o644)
 }
 
-// licenseHeaderMarkers identify a leading comment line as license-header
-// boilerplate (for stripping during a header replacement). A leading comment
-// line containing any of these is treated as part of the header; the first
-// comment line without one — the package doc, say — ends the header block.
 var licenseHeaderMarkers = []string{
 	"Copyright ©",
 	"Licensed under",
@@ -218,14 +193,6 @@ func commentPrefixFor(kind sourceKind) string {
 	}
 }
 
-// stripLeadingHeader removes an existing license-header block (plus the
-// single blank line separating it from the body) so stampOne can splice a
-// replacement. A leading "// Code generated" (Go) or shebang line is
-// preserved. A single blank line between header-marker lines is tolerated,
-// so a file that carries both a boilerplate block and a separate
-// SPDX-License-Identifier line (with a blank line between them) has all
-// of it stripped, not just the first group. If no header boilerplate is
-// found, body is returned unchanged.
 func stripLeadingHeader(body []byte, kind sourceKind) []byte {
 	prefix := commentPrefixFor(kind)
 	lines := strings.SplitAfter(string(body), "\n")
@@ -238,11 +205,6 @@ func stripLeadingHeader(body []byte, kind sourceKind) []byte {
 		}
 	}
 	preambleEnd := i
-	// @deliberate: walk forward across the contiguous header region — a
-	// header-marker line continues the block, and a single blank line
-	// followed by another header-marker line also continues the block
-	// (this covers the boilerplate-then-SPDX layout). The first non-blank,
-	// non-marker line ends the block.
 	lastHeaderIdx := -1
 	for i < len(lines) {
 		if isHeaderLine(lines[i], prefix) {
@@ -250,7 +212,6 @@ func stripLeadingHeader(body []byte, kind sourceKind) []byte {
 			i++
 			continue
 		}
-		// @deliberate: tolerate at most one blank line between marker runs.
 		if strings.TrimSpace(lines[i]) == "" && i+1 < len(lines) && isHeaderLine(lines[i+1], prefix) {
 			i++
 			continue
@@ -260,10 +221,6 @@ func stripLeadingHeader(body []byte, kind sourceKind) []byte {
 	if lastHeaderIdx < preambleEnd {
 		return body
 	}
-	// @constraint: position i at the first non-marker,
-	// non-tolerated-blank line, then drop one additional blank
-	// separator between header and body if present so the rewritten
-	// file does not accumulate blank lines on repeated stamps.
 	if i < len(lines) && strings.TrimSpace(lines[i]) == "" {
 		i++
 	}
@@ -297,7 +254,6 @@ func headerFor(f fileEntry) string {
 		}
 		return apacheHeaderGo
 	case kindTS:
-		// @constraint: all TS in this repo is Apache per the boundary map.
 		return apacheHeaderTS
 	case kindProto:
 		return apacheHeaderProto
@@ -315,14 +271,6 @@ func headerFor(f fileEntry) string {
 	return ""
 }
 
-// splice inserts the header in the right place per language convention:
-//   - Go: before the package declaration; preserve a leading
-//     "// Code generated …" line if present.
-//   - Proto: at the very top (proto3 accepts leading comments before
-//     `syntax`).
-//   - TS: at the top, but preserve a leading shebang line if present.
-//   - SQL: at the very top (no shebang convention).
-//   - Shell: at the top, but preserve a leading shebang line if present.
 func splice(body []byte, header string, kind sourceKind) []byte {
 	switch kind {
 	case kindGo:
@@ -358,14 +306,10 @@ func spliceTS(body []byte, header string) []byte {
 }
 
 func spliceProto(body []byte, header string) []byte {
-	// @constraint: proto3 accepts leading comments before `syntax`; put
-	// the header at the very top so the verify-scan window finds it
-	// without needing to skip multi-line documentation comments.
 	return concat([]byte(header), []byte("\n"), body)
 }
 
 func spliceSQL(body []byte, header string) []byte {
-	// @deliberate: SQL has no shebang convention; header goes at the very top.
 	return concat([]byte(header), []byte("\n"), body)
 }
 

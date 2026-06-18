@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario 6 — retry-then-give_up policy routes a persistently failing
-// node to state=failed after exhausting retries.
-//
-// Migrated to the stores-redesign template grammar (spec §11): the flaky
-// node is built via scenario.MakeNode. The node has no stores, locks, or
-// attributes wiring — the test exercises the policy chain (spec §11.6)
-// only; an erroring executor never produces an attributes_delta, so a
-// schema-less node is the right shape.
 package scenarios
 
 import (
@@ -28,7 +20,6 @@ func TestGiveUp(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// @constraint: Stub always errors with class "my_err".
 	h.Stub.WhenType("flaky").Error("my_err", map[string]any{"hint": "boom"})
 
 	tid := h.DeployTemplate(node.TemplateSpec{

@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package signal owns the canonical hierarchical type-path taxonomy,
-// payload schemas, CEL filter language, and audit-emit pathway for
-// node-run-transition signals.
-//
 //	@concept: signal
 //
 // A Signal is the unified emission shape for any transition that
@@ -30,57 +26,23 @@ package signal
 
 import "strings"
 
-// TypePath is the canonical, slash-delimited hierarchical path that
-// classifies a Signal. Examples:
-//
-//	"terminal/success"
-//	"terminal/error/http/timeout"
-//	"transient/retry/3/agent/rate_limited"
-//	"attribute/budget_cents/changed"
-//
-// Validated against the canonical taxonomy by ValidateTypePath. The
-// first slash-delimited segment is the TopLevelKind.
-//
-// Per TD-collapse-named-event-to-tags the historic `event/<name>`
-// kind is retired — non-terminal observable transitions now ride as
-// tags on the settling terminal verdict; see concept:terminal-tag.
 type TypePath string
 
-// Signal is the wire envelope for any node-run transition. Type
-// classifies the transition; Payload carries the per-type structured
-// data (its shape is the corresponding struct in payloads.go,
-// converted to a map at construction time).
 type Signal struct {
 	Type    TypePath
 	Payload map[string]any
 }
 
-// TopLevelKind names one of the four canonical top-level kinds in the
-// signal taxonomy. The TypePath's first slash-delimited segment must
-// be one of these values; anything else is rejected by
-// ValidateTypePath.
 type TopLevelKind string
 
 const (
-	// KindTerminal is emitted exactly once per run, at the moment the
-	// run settles. Leaves: success, error/*, park/snooze,
-	// park/await_callback, infra/*.
 	KindTerminal TopLevelKind = "terminal"
 
-	// KindTransient is emitted during the lifetime of a dispatch for
-	// transitions observers may want to react to but that don't
-	// finish the dispatch. Leaves: retry/<n>/<class>, await_async.
 	KindTransient TopLevelKind = "transient"
 
-	// KindAttribute is emitted when an upstream node writes an
-	// attribute. Leaf: <key>/changed.
 	KindAttribute TopLevelKind = "attribute"
 )
 
-// TopLevel returns the first slash-delimited segment of the TypePath
-// as a TopLevelKind. Returns the empty TopLevelKind if the leading
-// segment is not one of the four canonical values — callers can treat
-// empty as "not a recognized top-level kind."
 func (t TypePath) TopLevel() TopLevelKind {
 	s := string(t)
 	if s == "" {
@@ -97,16 +59,6 @@ func (t TypePath) TopLevel() TopLevelKind {
 	return ""
 }
 
-// HasPrefix reports whether the TypePath matches the given prefix
-// pattern. A prefix that ends with "*" matches if the TypePath starts
-// with the prefix's leading segments (the "*" is stripped before
-// comparison); a prefix without a trailing "*" matches only on exact
-// equality.
-//
-// The trailing-"*" form is the project's only wildcard syntax.
-// Positional wildcards (e.g., "terminal/*/foo") are not supported and
-// are rejected at subscription registration by
-// ValidateSubscriptionType.
 func (t TypePath) HasPrefix(prefix TypePath) bool {
 	p := string(prefix)
 	if strings.HasSuffix(p, "*") {

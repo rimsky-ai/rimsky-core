@@ -2,26 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// observability_check.go implements the spec §6 / Task F1
-// --check-observability probe run by `rimsky conformance executor`.
-// Substantive checks:
-//
-//   - Capabilities returns a usable shape.
-//   - GetTrace on a known-missing dispatch returns the evicted-shape
-//     envelope (Evicted=true, Complete=true, Events=[]). Spec §2.6.
-//   - StreamTrace on the same missing dispatch closes cleanly with the
-//     same evicted-shape marker.
-//   - Canned-dispatch round-trip (when stub-mode permits): drive an
-//     Execute via the gRPC Executor surface, then assert that
-//     GetTrace + StreamTrace eventually yield events for that
-//     dispatch_id with complete=true after the terminal arrives.
-//   - Retention probe: when RetentionTestSeconds is set, sleep
-//     past the configured retention and verify GetTrace returns
-//     evicted=true.
-//   - Standard-vocab attribute validation: if any returned events use
-//     the standard categories (step_started, step_completed,
-//     step_failed, tool_call, error), the probe verifies the spec §2.4
-//     required attribute keys are present.
 
 package conformance
 
@@ -39,21 +19,11 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// ObservabilityCheckOpts configures the observability probe.
 type ObservabilityCheckOpts struct {
-	// Endpoint to dial. Transport must be "grpc".
 	Endpoint Endpoint
-	// RetentionTestSeconds: when > 0 the probe drives a canned
-	// dispatch then sleeps this long and verifies GetTrace returns
-	// evicted=true (spec §6 retention check).
 	RetentionTestSeconds int
 }
 
-// RunObservabilityCheck implements the spec §6 / Task F1 probe. It
-// emits one line of human-readable progress per check via the
-// supplied logf callback; supply fmt.Printf when wired into a CLI
-// binary or a no-op when invoked from a Go test that wants only the
-// error result.
 func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, logf func(format string, args ...any)) error {
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -157,8 +127,6 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 	return nil
 }
 
-// runCannedDispatch fires a stub-mode Execute and verifies that
-// GetTrace + StreamTrace return events for the dispatch.
 func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.ExecutorObservabilityClient, dispatchID string, logf func(string, ...any)) error {
 	ud, err := structpb.NewStruct(map[string]any{"stub_probe": true})
 	if err != nil {
@@ -216,8 +184,6 @@ func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.Exe
 	return nil
 }
 
-// runRetentionProbe sleeps past the configured retention and verifies
-// GetTrace returns evicted=true.
 func runRetentionProbe(ctx context.Context, obs genv1.ExecutorObservabilityClient, dispatchID string, seconds int, logf func(string, ...any)) error {
 	wait := time.Duration(seconds+1) * time.Second
 	logf("observability: retention probe — sleeping %v before re-querying\n", wait)
@@ -237,8 +203,6 @@ func runRetentionProbe(ctx context.Context, obs genv1.ExecutorObservabilityClien
 	return nil
 }
 
-// validateStandardEvents enforces spec §2.4 attribute requirements for
-// any events whose category falls in the standard vocabulary.
 func validateStandardEvents(events []*genv1.TraceEvent) error {
 	for _, ev := range events {
 		attrs := ev.GetAttributes().AsMap()
@@ -280,7 +244,6 @@ func validateStandardEvents(events []*genv1.TraceEvent) error {
 	return nil
 }
 
-// looksLikeJSON returns true when the bytes parse as valid JSON.
 func looksLikeJSON(b []byte) bool {
 	var x any
 	return json.Unmarshal(b, &x) == nil

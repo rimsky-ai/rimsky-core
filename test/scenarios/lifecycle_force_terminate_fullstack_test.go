@@ -2,27 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Full-stack force-terminate of an await-async-stuck instance.
-//
-// An agent node returns AwaitAsyncCallback with an ack and stays running
-// because the callback never arrives. The operator force-terminates the
-// instance through the REAL running stack (scheduler + supervisor +
-// control-api over a testcontainers Postgres) and rescues it:
-//
-//   - the node's running run-row force-fails to state=failed with the
-//     canonical settling signal terminal/error/instance_killed,
-//   - the instance's terminated_at is set,
-//   - the instance's main run-scope closes, and
-//   - a subsequent DELETE succeeds (the terminal guard now passes).
-//
-// This is the full-stack proof the spec demands: the running run-row is
-// produced by the REAL dispatch path (the supervisor claims the node,
-// dispatches it to the stub executor, registers the async ack, and leaves
-// the node running awaiting a callback we deliberately never POST), NOT a
-// hand-INSERTed running row. It supersedes the handler-altitude unit proof
-// in lib/control/controlapi/instances_test.go that seeded the running row
-// via raw SQL.
-//
 // @concept: instance
 package scenarios
 
@@ -43,10 +22,6 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// @constraint: Script the agent node to return AwaitAsyncCallback with an ack and a
-	// 60s completion window. We NEVER POST the callback, so the node stays
-	// running (the completion window is long enough that nothing fires it
-	// before the test force-terminates).
 	h.Stub.WhenType("agent").AwaitAsyncCallback("ack-stuck", 60000)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -68,14 +43,9 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	n := h.FindNode(iid, "agent")
 	require.NotNil(t, n)
 
-	// @constraint: The node reaches running through the REAL dispatch path (supervisor
-	// claims it, dispatches to the stub, registers the async ack) and stays
-	// there — we never deliver the callback to h.Supervisor.CallbackAddr().
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateRunning, 15*time.Second),
 		"agent did not reach running (await-async-stuck precondition)")
 
-	// @deliberate: Force-terminate through the live control-api. Anonymous-mode gates
-	// pass (no api-key), per existing scenarios (cascade_invalidate_test.go).
 	resp, err := http.Post(h.ControlBase+"/v1/instances/"+iid.String()+"/terminate",
 		"application/json", nil)
 	require.NoError(t, err)
@@ -83,15 +53,9 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode,
 		"terminate must return 200 against the live control-api")
 
-	// @constraint: (a) The node's projected state is failed (the real persistence
-	// projection over its now-terminal run row).
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 15*time.Second),
 		"running node-run must be force-failed to failed by terminate")
 
-	// @deliberate: (b) The failed run-row carries the canonical settling signal
-	// terminal/error/instance_killed. Read it straight out of
-	// rimsky_node_runs for the node's failed run (single-dispatch scenario:
-	// exactly one failed run row exists for this node).
 	var settling string
 	h.QueryRowSQL(
 		`SELECT settling_signal_type FROM rimsky_node_runs
@@ -101,7 +65,6 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	require.Equal(t, "terminal/error/instance_killed", settling,
 		"force-failed run must carry the instance_killed settling signal")
 
-	// @deliberate: (c) terminated_at is set on the instance.
 	var terminatedAt *time.Time
 	h.QueryRowSQL(
 		`SELECT terminated_at FROM rimsky_instances WHERE id = $1`,
@@ -117,8 +80,6 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	require.NotNil(t, scopeClosedAt,
 		"terminate must close the instance's main run-scope")
 
-	// @deliberate: (e) A subsequent DELETE succeeds now that the terminal guard passes,
-	// returning 200 {"deleted":true}.
 	delReq, err := http.NewRequest(http.MethodDelete,
 		h.ControlBase+"/v1/instances/"+iid.String(), nil)
 	require.NoError(t, err)

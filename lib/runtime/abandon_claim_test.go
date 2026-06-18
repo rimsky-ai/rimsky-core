@@ -14,13 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-// abandonStub is a minimal locks.ClaimProducer test double that
-// records the most-recent Abandon call and returns a preset error.
-// ClaimProducer's wire protocol is 4 verbs (Open / Commit / Abandon /
-// Release) plus the Capabilities() startup handshake; the Go interface
-// additionally carries Name() as a rimsky-side identifier not
-// transported on the wire. The stub implements all six so it satisfies
-// the interface, but only Abandon is exercised.
 type abandonStub struct {
 	lastClaimID claimproducer.ClaimID
 	lastScope   []byte

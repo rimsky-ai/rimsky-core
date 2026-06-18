@@ -17,17 +17,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// pgTx is the persistence.Tx carrier for this driver. Embeds
-// persistence.TxMarker so it satisfies the interface; the persistence
-// package's Tx is the only Tx callers see.
 type pgTx struct {
 	persistence.TxMarker
 	tx pgx.Tx
 }
 
-// init wires unwrapTx (declared in coordinator.go) so coordinator and
-// every per-feature impl can extract the underlying pgx.Tx from a
-// persistence.Tx without making the symbol public.
 func init() {
 	unwrapTx = func(tx persistence.Tx) (pgx.Tx, error) {
 		if tx == nil {
@@ -41,17 +35,6 @@ func init() {
 	}
 }
 
-// tablesImpl is the persistence.Tables impl. The per-feature *Table methods
-// return the same impl pointer downcast to its narrow aspect type — each
-// per-feature file (nodes.go, instances.go, ...) defines methods on the
-// aspect type. The aspect-type pattern (`type templatesImpl tablesImpl`)
-// shares tablesImpl's layout so the helper q() works through the cast.
-//
-// blob/blobThreshold/blobRetention are the spill-config triple set by
-// database.SetBlobBackend at startup. When blob is non-nil and the
-// marshalled attribute bytes exceed blobThreshold, NodeAttributes.Upsert
-// spills to the configured backend instead of writing inline. Reads
-// transparently dereference the handle. See plan §D6/D7.
 type tablesImpl struct {
 	pool          *pgxpool.Pool
 	blob          persistence.BlobBackend
@@ -61,33 +44,18 @@ type tablesImpl struct {
 
 func newTables(pool *pgxpool.Pool) *tablesImpl { return &tablesImpl{pool: pool} }
 
-// SetBlobBackend installs (or clears) the spill-config triple on the
-// tablesImpl. Called by database.SetBlobBackend at startup; safe to call
-// multiple times during construction. Threshold ≤ 0 disables spill;
-// retention ≤ 0 falls back to 24h at orphan-insert time.
 func (s *tablesImpl) SetBlobBackend(bb persistence.BlobBackend, threshold int, retention time.Duration) {
 	s.blob = bb
 	s.blobThreshold = threshold
 	s.blobRetention = retention
 }
 
-// BlobBackend returns the configured backend (or nil when spill is
-// disabled). Used by integration code that already had args.Blob; this
-// accessor lets callers that only carry a *Tables also read the backend
-// without an extra argument.
 func (s *tablesImpl) BlobBackend() persistence.BlobBackend { return s.blob }
 
-// BlobSpillThreshold returns the spill threshold in bytes (0 when
-// disabled).
 func (s *tablesImpl) BlobSpillThreshold() int { return s.blobThreshold }
 
-// BlobRetention returns the orphan-retention window (0 when unset; the
-// orphan-insert site falls back to 24h).
 func (s *tablesImpl) BlobRetention() time.Duration { return s.blobRetention }
 
-// Transaction begins a tx, runs fn, and commits/rolls back. If fn returns
-// an error or panics, the tx rolls back. The tx passed to fn is a *pgTx
-// wrapped in persistence.Tx; unwrap via the package-private unwrapTx.
 func (s *tablesImpl) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	pgT, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -106,35 +74,23 @@ func (s *tablesImpl) Transaction(ctx context.Context, fn func(ctx context.Contex
 	return pgT.Commit(ctx)
 }
 
-// querier is the common surface shared by *pgxpool.Pool and pgx.Tx.
 type querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// q returns the tx-bound querier. Panics on nil tx — every Table
-// method must be invoked with an explicit tx (option C / no-nil-tx
-// contract; see foundation/persistence/sqlite/deadlock_guard_test.go).
-// Callers that do not already hold a tx must open one with
-// Tables.Transaction first; the previous nil-tx pool-driven
-// auto-commit code path is gone. The deadlock that motivated the
-// rule is SQLite-specific (MaxOpenConns=1), but the contract is
-// uniform across drivers so a successful postgres run can't mask a
-// SQLite-only regression.
 func (s *tablesImpl) q(tx persistence.Tx) querier {
 	if tx == nil {
 		panic("persistence: nil tx — every Table method requires an explicit tx; wrap with Tables.Transaction")
 	}
 	t, ok := tx.(*pgTx)
 	if !ok {
-		// @deliberate: cross-driver tx is programmer error; panic surfaces the misuse at the call site rather than degrading to a typed error a caller might swallow.
 		panic(fmt.Sprintf("postgres.q: persistence.Tx is not a postgres tx: %T", tx))
 	}
 	return t.tx
 }
 
-// @deliberate: per-feature aspect types are empty wrappers over tablesImpl so each Table interface gets a distinct method set; defined here so the per-feature files (nodes.go, instances.go, ...) can attach methods on the aspect type while sharing tablesImpl's layout for the q() downcast.
 type (
 	templatesImpl            tablesImpl
 	templateTagsImpl         tablesImpl
@@ -164,8 +120,6 @@ var (
 	_ persistence.FrameTable                = (*framesImpl)(nil)
 )
 
-// Templates accessor methods on *tablesImpl. Each downcasts to the
-// aspect type to expose the per-feature method set.
 func (s *tablesImpl) Templates() persistence.TemplateTable       { return (*templatesImpl)(s) }
 func (s *tablesImpl) TemplateTags() persistence.TemplateTagTable { return (*templateTagsImpl)(s) }
 func (s *tablesImpl) Instances() persistence.InstanceTable       { return (*instancesImpl)(s) }
@@ -181,7 +135,6 @@ func (s *tablesImpl) Supervisors() persistence.SupervisorTable       { return (*
 
 func (s *tablesImpl) Frames() persistence.FrameTable { return (*framesImpl)(s) }
 
-// q aspect-type query helpers: each forwards to (*tablesImpl).q.
 func (b *templatesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }
 func (b *templateTagsImpl) q(tx persistence.Tx) querier         { return (*tablesImpl)(b).q(tx) }
 func (b *instancesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }

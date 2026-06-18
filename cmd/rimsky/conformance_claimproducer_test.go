@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// conformance_claimproducer_test.go drives the ClaimProducer conformance
-// suite against a loopback stub producer-service started via
-// stores/stub/testfixture. Migrated from the former
-// cmd/rimsky-claim-producer-conformance/main_test.go; it now exercises the
-// importable lib/protocols/conformance/claimproducer.Run directly (the
-// runConformanceClaimProducer handler is a thin wrapper around it).
 package main
 
 import (
@@ -22,10 +16,6 @@ import (
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
-// TestClaimProducerConformance_StubStore confirms the ClaimProducer
-// conformance suite passes against a stock stub producer-service.
-// Capabilities returns a singleton [sync] envelope; Open returns
-// matching RealizedWriteSemantics; the uniformity invariant holds.
 func TestClaimProducerConformance_StubStore(t *testing.T) {
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
 		Capabilities: claimproducer.Capabilities{
@@ -47,9 +37,6 @@ func TestClaimProducerConformance_StubStore(t *testing.T) {
 			t.Errorf("%s: unexpected error: %v", r.Name, r.Err)
 		}
 	}
-	// @deliberate: stub-store advertises both partitioning capabilities
-	// (per M dispatch / O1 fixture), so SplitScope + ScopesConflict must
-	// run as full checks — NOT the Skipped variants.
 	wantNames := map[string]bool{"SplitScope": false, "ScopesConflict": false}
 	for _, r := range results {
 		if _, ok := wantNames[r.Name]; ok {
@@ -63,17 +50,10 @@ func TestClaimProducerConformance_StubStore(t *testing.T) {
 	}
 }
 
-// TestClaimProducerConformance_NoPartitioning probes the skip path:
-// a producer that does not advertise SupportsSplitScope or
-// SupportsScopesConflict still passes conformance; the optional
-// checks surface as SplitScopeSkipped / ScopesConflictSkipped.
 func TestClaimProducerConformance_NoPartitioning(t *testing.T) {
 	fake := storetest.NewFake("no-partitioning", claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
-	// @constraint: the default Fake.Open echoes the selector as scope/address
-	// but leaves RealizedWriteSemantics unset; tighten to the advertised sync
-	// semantics for the uniformity probe.
 	fake.OpenFunc = func(_ claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
 		bytes := []byte(`"` + spec.Selector + `"`)
 		return claimproducer.OpenOutcome{

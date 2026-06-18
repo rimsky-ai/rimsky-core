@@ -24,26 +24,18 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// breakpointsImpl is the SQLite-backed persistence.BreakpointTable —
-// runtime-installed pause/notify breakpoints per concept:breakpoint.
-// Aspect-type pattern; mirrors the postgres-side shape.
 type breakpointsImpl tablesImpl
 
 var _ persistence.BreakpointTable = (*breakpointsImpl)(nil)
 
-// Breakpoints returns the sqlite BreakpointTable impl.
 func (s *tablesImpl) Breakpoints() persistence.BreakpointTable { return (*breakpointsImpl)(s) }
 
 func (b *breakpointsImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
-// sqliteBreakpointCols mirrors the postgres-side column list.
 const sqliteBreakpointCols = `id, instance_id, matcher, checkpoint, signal_type, mode,
 	overflow_policy, hit_ttl_seconds, ttl_seconds, dropped_count,
 	created_by_key, created_at, expires_at`
 
-// Create inserts a new row. SQLite has no DB-side UUID default, so the
-// caller-supplied ID is required; if zero, we generate one here. Mirrors
-// the postgres impl's behavior of returning the row id.
 func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointRow, tx persistence.Tx) (shared.UUID, error) {
 	ex := b.q(tx)
 	id := bp.ID
@@ -66,8 +58,6 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	)
 	if bp.TTLSeconds != nil {
 		ttlArg = *bp.TTLSeconds
-		// @constraint: materialize expires_at at write time so SweepExpired's
-		// predicate is a simple `expires_at <= ?` comparison.
 		expiresArg = time.Now().UTC().
 			Add(time.Duration(*bp.TTLSeconds) * time.Second).
 			Format(timeLayoutFixedNanos)
@@ -91,7 +81,6 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	return id, nil
 }
 
-// Get returns the breakpoint by id; (nil, nil) on not-found.
 func (b *breakpointsImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.BreakpointRow, error) {
 	ex := b.q(tx)
 	row := ex.QueryRowContext(ctx,
@@ -108,7 +97,6 @@ func (b *breakpointsImpl) Get(ctx context.Context, id shared.UUID, tx persistenc
 	return &out, nil
 }
 
-// ListForInstance mirrors the postgres-side filter semantics.
 func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared.UUID, includeExpired bool, tx persistence.Tx) ([]persistence.BreakpointRow, error) {
 	ex := b.q(tx)
 	sqlStr := `SELECT ` + sqliteBreakpointCols + `
@@ -116,9 +104,6 @@ func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared
 		  WHERE instance_id = ?`
 	args := []any{instanceID.String()}
 	if !includeExpired {
-		// @constraint: SQLite stores expires_at as ISO-8601 text; lexicographic
-		// comparison agrees with chronological order for the fixed-width
-		// timeLayoutFixedNanos strings we write.
 		nowStr := time.Now().UTC().Format(timeLayoutFixedNanos)
 		sqlStr += ` AND (expires_at IS NULL OR expires_at > ?)`
 		args = append(args, nowStr)
@@ -143,7 +128,6 @@ func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared
 	return out, nil
 }
 
-// Delete cascades to rimsky_breakpoint_hits via FK ON DELETE CASCADE.
 func (b *breakpointsImpl) Delete(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
 	ex := b.q(tx)
 	if _, err := ex.ExecContext(ctx,
@@ -153,7 +137,6 @@ func (b *breakpointsImpl) Delete(ctx context.Context, id shared.UUID, tx persist
 	return nil
 }
 
-// IncrementDropped bumps dropped_count atomically.
 func (b *breakpointsImpl) IncrementDropped(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
 	ex := b.q(tx)
 	if _, err := ex.ExecContext(ctx,
@@ -165,7 +148,6 @@ func (b *breakpointsImpl) IncrementDropped(ctx context.Context, id shared.UUID, 
 	return nil
 }
 
-// SweepExpired deletes past-expiry rows. Returns rowcount.
 func (b *breakpointsImpl) SweepExpired(ctx context.Context, now time.Time, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	res, err := ex.ExecContext(ctx,

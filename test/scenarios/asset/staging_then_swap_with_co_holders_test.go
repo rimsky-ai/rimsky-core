@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N6 scenario — staging_then_swap_with_co_holders.
-//
-// Atomic-staging produces N candidates against a held claim; at
-// holding-subgraph completion the dataprocessing layer commits all
-// candidates and exposes them as a single version. Co-holders
-// observe the same address (claim_handle bytes) while their own
-// runs aggregate to terminal. The scenario pins the staging shape
-// using the dataprocessing fixture.
 package asset
 
 import (
@@ -27,8 +19,6 @@ func TestStagingThenSwapWithCoHolders(t *testing.T) {
 	ctx := context.Background()
 	const claim = "asset/staging-swap"
 
-	// @deliberate: Three concurrent staging candidates; each becomes a partition of
-	// the final commit set.
 	type stage struct {
 		idem  string
 		key   string
@@ -54,8 +44,6 @@ func TestStagingThenSwapWithCoHolders(t *testing.T) {
 	if s.CandidateCount() != len(stages) {
 		t.Errorf("CandidateCount: got %d want %d", s.CandidateCount(), len(stages))
 	}
-	// @deliberate: Commit all candidates: the "swap" semantically completes when
-	// every candidate has flipped onto the versions slice.
 	for key, handle := range candidates {
 		if _, err := s.CommitCandidate(ctx, &genv1.CommitCandidateRequest{
 			CandidateHandle: handle,

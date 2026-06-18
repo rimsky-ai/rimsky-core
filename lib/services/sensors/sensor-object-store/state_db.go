@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// state_db.go — sensor-object-store per-binary state persistence.
-//
-// When env RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN is set, publisher-
-// subscription rows + watermark cursors persist across restarts. The
-// watermark cursor is what allows object-store re-scans to skip
-// already-emitted objects after a restart.
-//
-// Driver constraint: the DSN MUST be a Postgres DSN (the schema uses
-// `now()` and `TIMESTAMPTZ`, which are Postgres-only). SQLite is not
-// supported; leave the env var empty for in-memory mode.
 package main
 
 import (
@@ -78,7 +68,6 @@ func (s *stateDB) Close() error {
 	return s.db.Close()
 }
 
-// UpsertSubscription persists a publisher-subscription row.
 func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 	if s == nil {
 		return nil
@@ -112,7 +101,6 @@ func (s *stateDB) DeleteSubscription(ctx context.Context, subscriptionID string)
 	return err
 }
 
-// UpdateWatermarkName advances the name-based watermark cursor.
 func (s *stateDB) UpdateWatermarkName(ctx context.Context, subscriptionID, name string) error {
 	if s == nil {
 		return nil
@@ -123,7 +111,6 @@ func (s *stateDB) UpdateWatermarkName(ctx context.Context, subscriptionID, name 
 	return err
 }
 
-// UpdateWatermarkTime advances the last_modified-based watermark cursor.
 func (s *stateDB) UpdateWatermarkTime(ctx context.Context, subscriptionID string, t time.Time) error {
 	if s == nil {
 		return nil
@@ -134,7 +121,6 @@ func (s *stateDB) UpdateWatermarkTime(ctx context.Context, subscriptionID string
 	return err
 }
 
-// SubscriptionState is the persisted shape returned by ListAll.
 type SubscriptionState struct {
 	SubscriptionID string
 	InstanceID     string
@@ -180,10 +166,6 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	return out, rows.Err()
 }
 
-// GetSubscription returns the persisted state for a single subscription,
-// or (nil, nil) if no row exists. Used by Subscribe to pre-populate the
-// in-memory Watch with the watermark cursor across restarts so that
-// already-emitted objects are not re-emitted.
 func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*SubscriptionState, error) {
 	if s == nil {
 		return nil, nil

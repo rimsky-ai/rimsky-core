@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N2 scenario — child_runs_per_partition_key.
-//
-// The dispatcher inserts one rimsky_node_runs child row per
-// SubScopeDescriptor with `child_key = <partition_key>`. The
-// (parent_run_id, child_key) pair is the idempotency key; re-creating
-// the same child returns the existing row id. Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Fan-out template DSL "Mechanics at dispatch" step 4.
-//
-// This scenario exercises the dispatcher-side projection's
-// per-child-key uniqueness contract by tracking the partition keys
-// `FanOutPartitions` produces and asserting that each partition
-// carries a distinct child_key matching a sub-claim.
 package fanout
 
 import (
@@ -47,8 +34,6 @@ func TestChildRunsPerPartitionKey_OneChildPerKey(t *testing.T) {
 	}
 }
 
-// @deliberate: PartitionKey ordering matches the producer's SubScope ordering — the
-// caller may sort to make assertions reproducible.
 func TestChildRunsPerPartitionKey_PreservesProducerOrdering(t *testing.T) {
 	t.Parallel()
 	subClaims := []runtime.SubClaim{

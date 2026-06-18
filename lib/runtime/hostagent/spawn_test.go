@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// spawn_test.go — host-agent spawn / dispatch / reap coverage. Each
-// test stands up a fakeProxy, runs the production hostagent.Run loop
-// against it, and exec()s the real testdata/stubchild binary — so the
-// path under test is the real exec → RIMSKY_AGENT_PORT → port-probe →
-// Capabilities handshake → child registration path, not a mock.
-//
-// Under TD-execute-rpc-unary, Executor.Execute is unary: the agent
-// receives a DispatchFrame carrying a marshaled ExecuteRequest and
-// answers with one DispatchFrame carrying a marshaled Outcome.
-
 package hostagent
 
 import (
@@ -28,8 +18,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// connectAgentToFakeProxy starts the agent against fp and returns once the
-// agent has registered. The local listener uses an ephemeral port.
 func connectAgentToFakeProxy(t *testing.T, fp *fakeProxy, cfg Config) {
 	t.Helper()
 	cfg.RimskyURL = fp.addr
@@ -40,7 +28,6 @@ func connectAgentToFakeProxy(t *testing.T, fp *fakeProxy, cfg Config) {
 	fp.waitConnected(t)
 }
 
-// spawnVia pushes a Spawn frame and returns the agent's SpawnAck.
 func spawnVia(t *testing.T, fp *fakeProxy, sp *genv1.Spawn) *genv1.SpawnAck {
 	t.Helper()
 	fp.sendToAgent(t, &genv1.ServerFrame{Body: &genv1.ServerFrame_Spawn{Spawn: sp}})
@@ -52,7 +39,6 @@ func spawnVia(t *testing.T, fp *fakeProxy, sp *genv1.Spawn) *genv1.SpawnAck {
 	return ack
 }
 
-// reapVia pushes a Reap and returns the Reaped reply.
 func reapVia(t *testing.T, fp *fakeProxy, spawnID string, graceSec int32) *genv1.Reaped {
 	t.Helper()
 	fp.sendToAgent(t, &genv1.ServerFrame{Body: &genv1.ServerFrame_Reap{Reap: &genv1.Reap{
@@ -67,8 +53,6 @@ func reapVia(t *testing.T, fp *fakeProxy, spawnID string, graceSec int32) *genv1
 	return reaped
 }
 
-// nextDispatch reads the next ClientFrame and asserts it is a DispatchFrame
-// for the given stream-id.
 func nextDispatch(t *testing.T, fp *fakeProxy, streamID string) *genv1.DispatchFrame {
 	t.Helper()
 	frame := fp.nextClientFrame(t)
@@ -82,8 +66,6 @@ func nextDispatch(t *testing.T, fp *fakeProxy, streamID string) *genv1.DispatchF
 	return df
 }
 
-// TestSpawnReadyCapabilitiesHandshake spawns the real stubchild and asserts a
-// READY ack carrying the per-protocol Capabilities responses.
 func TestSpawnReadyCapabilitiesHandshake(t *testing.T) {
 	bin := buildStubChild(t)
 	fp := startFakeProxy(t)
@@ -104,7 +86,6 @@ func TestSpawnReadyCapabilitiesHandshake(t *testing.T) {
 		t.Fatalf("spawn_id = %q, want %q", ack.GetSpawnId(), spawnID)
 	}
 
-	// @deliberate: Executor capabilities decode to the stubchild's declared tags.
 	execCaps := ack.GetCapabilities()[protocolExecutor]
 	if execCaps == nil {
 		t.Fatal("missing executor capabilities")
@@ -117,7 +98,6 @@ func TestSpawnReadyCapabilitiesHandshake(t *testing.T) {
 		t.Fatalf("declared tags = %v, want [stubchild.output]", obs.GetDeclaredTags())
 	}
 
-	// @deliberate: Claim-producer capabilities decode to the stubchild's write-semantics.
 	cpCaps := ack.GetCapabilities()[protocolClaimProducer]
 	if cpCaps == nil {
 		t.Fatal("missing claim_producer capabilities")
@@ -130,11 +110,9 @@ func TestSpawnReadyCapabilitiesHandshake(t *testing.T) {
 		t.Fatalf("write semantics = %v, want one entry", cp.GetWriteSemanticsAllowed())
 	}
 
-	// @deliberate: Reap it so the child doesn't outlive the test.
 	reapVia(t, fp, spawnID, 5)
 }
 
-// TestSpawnRejectedByAllowPaths asserts a non-matching path yields FAILED.
 func TestSpawnRejectedByAllowPaths(t *testing.T) {
 	bin := buildStubChild(t)
 	fp := startFakeProxy(t)
@@ -142,7 +120,7 @@ func TestSpawnRejectedByAllowPaths(t *testing.T) {
 
 	ack := spawnVia(t, fp, &genv1.Spawn{
 		SpawnId:             uuid.NewString(),
-		Binding:             &genv1.Binding{Path: bin}, // @deliberate: temp-dir path, not matched
+		Binding:             &genv1.Binding{Path: bin},
 		ExpectedProtocols:   []string{protocolExecutor},
 		ReadyTimeoutSeconds: 5,
 	})
@@ -154,8 +132,6 @@ func TestSpawnRejectedByAllowPaths(t *testing.T) {
 	}
 }
 
-// TestSpawnBinaryMissing asserts a binding that names a non-existent path
-// fails with a spawn_failed ack (exercises the exec.Start error branch).
 func TestSpawnBinaryMissing(t *testing.T) {
 	fp := startFakeProxy(t)
 	connectAgentToFakeProxy(t, fp, Config{})
@@ -175,11 +151,9 @@ func TestSpawnBinaryMissing(t *testing.T) {
 	}
 }
 
-// TestSpawnReadyTimeout asserts a child that never binds its port yields a
-// FAILED ack after the ready timeout.
 func TestSpawnReadyTimeout(t *testing.T) {
 	bin := buildStubChild(t)
-	t.Setenv("STUBCHILD_NO_BIND", "1") // @deliberate: inherited by the spawned child
+	t.Setenv("STUBCHILD_NO_BIND", "1")
 	fp := startFakeProxy(t)
 	connectAgentToFakeProxy(t, fp, Config{})
 
@@ -194,10 +168,6 @@ func TestSpawnReadyTimeout(t *testing.T) {
 	}
 }
 
-// TestDispatchExecutorReturnsUnaryOutcome spawns the echoing stubchild,
-// dispatches an ExecuteRequest, and asserts the agent answers with a
-// single DATA DispatchFrame carrying a serialized Outcome{Success}
-// — the unary RPC shape per TD-execute-rpc-unary.
 func TestDispatchExecutorReturnsUnaryOutcome(t *testing.T) {
 	bin := buildStubChild(t)
 	t.Setenv("STUBCHILD_EXECUTE_ECHO", "1")
@@ -237,9 +207,6 @@ func TestDispatchExecutorReturnsUnaryOutcome(t *testing.T) {
 	if success == nil {
 		t.Fatalf("expected Outcome{Success}, got %T", outcome.GetOutcome())
 	}
-	// @deliberate: STUBCHILD_EXECUTE_ECHO surfaces the node_id on
-	// attributes_delta + tags["stubchild.output"] per
-	// TD-collapse-named-event-to-tags.
 	if len(success.GetTags()) != 1 || success.GetTags()[0] != "stubchild.output" {
 		t.Fatalf("tags = %v, want [stubchild.output]", success.GetTags())
 	}
@@ -251,9 +218,6 @@ func TestDispatchExecutorReturnsUnaryOutcome(t *testing.T) {
 	reapVia(t, fp, spawnID, 5)
 }
 
-// TestDispatchClaimProducerUnary spawns the stubchild and dispatches a unary
-// claim-producer Open, asserting a single response DATA frame decoding to an
-// Acquired OpenResponse.
 func TestDispatchClaimProducerUnary(t *testing.T) {
 	bin := buildStubChild(t)
 	fp := startFakeProxy(t)
@@ -293,11 +257,6 @@ func TestDispatchClaimProducerUnary(t *testing.T) {
 	reapVia(t, fp, spawnID, 5)
 }
 
-// TestDispatchClaimProducerVerbFidelity proves the agent invokes the exact
-// ClaimProducer verb named on the DispatchFrame — not one inferred from the
-// payload shape. CommitRequest/AbandonRequest/ReleaseRequest are byte-
-// identical at claim_id, so an agent that guessed from the payload would
-// silently Commit an Abandon/Release (a state-integrity bug).
 func TestDispatchClaimProducerVerbFidelity(t *testing.T) {
 	verbLog := filepath.Join(t.TempDir(), "verbs.log")
 	t.Setenv("STUBCHILD_VERB_LOG", verbLog)
@@ -317,7 +276,6 @@ func TestDispatchClaimProducerVerbFidelity(t *testing.T) {
 		t.Fatalf("spawn failed: %v", ack.GetError())
 	}
 
-	// @deliberate: Abandon: the request is wire-identical to a Commit at claim_id.
 	abandonBytes, _ := proto.Marshal(&genv1.AbandonRequest{ClaimId: "claim-1"})
 	abandonStream := uuid.NewString()
 	fp.sendToAgent(t, &genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
@@ -333,7 +291,6 @@ func TestDispatchClaimProducerVerbFidelity(t *testing.T) {
 		t.Fatalf("abandon dispatch was cancelled (agent rejected the verb)")
 	}
 
-	// @deliberate: Release: also wire-identical to a Commit at claim_id.
 	releaseBytes, _ := proto.Marshal(&genv1.ReleaseRequest{ClaimId: "claim-1"})
 	releaseStream := uuid.NewString()
 	fp.sendToAgent(t, &genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
@@ -351,14 +308,12 @@ func TestDispatchClaimProducerVerbFidelity(t *testing.T) {
 
 	reapVia(t, fp, spawnID, 5)
 
-	// @deliberate: The child must have seen Abandon and Release — never Commit.
 	logged := readVerbLog(t, verbLog)
 	if got := strings.Join(logged, ","); got != "abandon,release" {
 		t.Fatalf("child saw verbs %q, want %q (a Commit here is the state-integrity bug)", got, "abandon,release")
 	}
 }
 
-// readVerbLog reads the STUBCHILD_VERB_LOG file's non-empty lines.
 func readVerbLog(t *testing.T, path string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -374,8 +329,6 @@ func readVerbLog(t *testing.T, path string) []string {
 	return out
 }
 
-// TestReapTerminatesChild spawns the stubchild then reaps it, asserting a
-// clean Reaped ack.
 func TestReapTerminatesChild(t *testing.T) {
 	bin := buildStubChild(t)
 	fp := startFakeProxy(t)
@@ -401,7 +354,6 @@ func TestReapTerminatesChild(t *testing.T) {
 	}
 }
 
-// TestConfigDefaults asserts withDefaults fills the documented defaults.
 func TestConfigDefaults(t *testing.T) {
 	c := Config{}.withDefaults()
 	if c.HeartbeatInterval != 10*time.Second {
@@ -414,7 +366,6 @@ func TestConfigDefaults(t *testing.T) {
 		t.Fatal("agent label should default to hostname-pid")
 	}
 	if _, err := strconv.Atoi(c.AgentLabel[len(c.AgentLabel)-1:]); err != nil {
-		// @deliberate: label ends with the pid digits; loose sanity check only.
 		_ = err
 	}
 }

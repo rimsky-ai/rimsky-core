@@ -28,14 +28,6 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// seedNode inserts a minimal rimsky_nodes row plus (when the requested
-// state is not 'fresh') a matching in-flight rimsky_node_runs row.
-// Post-stage-3 cutover: state lives on the run row; 'fresh' is the
-// no-run-row state.
-//
-// Bypasses NodeTable.Create+UpdateState because the test seeds
-// out-of-band states (e.g. failed) that the state machine would reject
-// when re-traversed.
 func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 	instanceID uuid.UUID, nodeID uuid.UUID, state string, frameID *uuid.UUID) {
 	t.Helper()
@@ -70,19 +62,6 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
     `, nodeID, phase, state, frameID, mainScopeID)
 }
 
-// seedFrameRow inserts a rimsky_frames row with explicit fields. Goes
-// through ExecForTest because some target states (completed/failed) and
-// queued_at offsets are not reachable through FrameTable.
-//
-// last_progress_at is set to startedAt (when non-nil) so the stuck-frame
-// warning sees a frame whose progress timestamp matches its perceived
-// stuck time — the per-test contract is that a "stuck-since-X" frame
-// has had no progress since X. Per the reactive-loops + lifecycle-handlers
-// spec §7, frame_timeout_ms compares against last_progress_at.
-//
-// triggeringMessageID must reference an existing rimsky_messages row
-// (the FK is ON DELETE RESTRICT). Callers usually pass the message id
-// returned by seedTemplateInstanceAndMessage.
 func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 	instanceID uuid.UUID, triggeringMessageID uuid.UUID, state string,
 	startedAt *time.Time, timeoutMs int64) uuid.UUID {
@@ -105,9 +84,6 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 	return id
 }
 
-// seedDispatch inserts a rimsky_node_runs row directly. Bypasses
-// Queue.Enqueue+ClaimDispatchRow because the test fixes a static id and
-// pre-claims the row in one shot.
 func seedDispatch(t *testing.T, ctx context.Context, d persistence.Database,
 	nodeID uuid.UUID, frameID uuid.UUID, claimedBy string) {
 	t.Helper()
@@ -180,8 +156,6 @@ func TestRunTick_AdvanceQueued_Oldest(t *testing.T) {
 	seedNode(t, ctx, d, instanceID, srcA, "fresh", nil)
 	seedNode(t, ctx, d, instanceID, srcB, "fresh", nil)
 
-	// @deliberate: two queued frames; spacing queued_at makes ordering
-	// deterministic.
 	id1 := seedFrameRow(t, ctx, d, instanceID, msgID, "queued", nil, 600000)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_frames SET queued_at = now() - interval '1 second' WHERE frame_id = $1`, id1)
@@ -198,10 +172,6 @@ func TestRunTick_AdvanceQueued_Oldest(t *testing.T) {
 	require.Equal(t, "queued", s2)
 }
 
-// TestRunTick_WarnStuckFrame asserts the stuck-frame path is purely
-// observational: the `frame.stuck.observed` slog warning fires, but the
-// frame stays running, the wedged node keeps its state, and the
-// instance is NOT terminated.
 func TestRunTick_WarnStuckFrame(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -213,7 +183,6 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 	stuckStart := time.Now().Add(-11 * time.Minute)
 	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &stuckStart, 600000)
 	seedNode(t, ctx, d, instanceID, src, "stale", &frameID)
-	// @deliberate: No claimed dispatches => stuck (predicate matches).
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -226,7 +195,6 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 	require.Contains(t, logged, frameID.String(),
 		"warning should mention frame_id %s; got %q", frameID.String(), logged)
 
-	// @deliberate: Frame stays running — no destructive action.
 	var fState, nState string
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &fState)
@@ -242,7 +210,6 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 	require.Equal(t, "stale", nState,
 		"wedged node must keep its state; warning does not fail nodes")
 
-	// @deliberate: Instance terminated_at must NOT be set as a side effect of the warning.
 	var terminatedAt *time.Time
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT terminated_at FROM rimsky_instances WHERE id = $1`, []any{instanceID}, &terminatedAt)
@@ -250,26 +217,18 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 		"stuck-frame warning must not terminate the instance")
 }
 
-// TestDurableByDefaultVsTerminateAfterRun pins the durable-by-default
-// instance lifecycle at the frame-engine level: at frame-end the engine
-// calls MarkInstanceTerminatedIfDone for every instance, but only an
-// instance created with terminate_after_run=true self-terminates. A
-// durable instance (the default) survives its own drain — terminated_at
-// stays NULL after its frame ends.
 func TestDurableByDefaultVsTerminateAfterRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	d := pgtest.OpenDriver(ctx, t)
 
-	// @deliberate: instance A — durable by default (no flag).
 	instanceA, msgA := seedTemplateInstanceAndMessage(t, ctx, d)
 	srcA := uuid.New()
 	nowA := time.Now()
 	frameA := seedFrameRow(t, ctx, d, instanceA, msgA, "running", &nowA, 600000)
 	seedNode(t, ctx, d, instanceA, srcA, "fresh", &frameA)
 
-	// @deliberate: instance B — opt-in terminate_after_run.
 	instanceB, msgB := seedTemplateInstanceAndMessage(t, ctx, d)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_instances SET terminate_after_run = true WHERE id = $1`, instanceB)
@@ -278,11 +237,8 @@ func TestDurableByDefaultVsTerminateAfterRun(t *testing.T) {
 	frameB := seedFrameRow(t, ctx, d, instanceB, msgB, "running", &nowB, 600000)
 	seedNode(t, ctx, d, instanceB, srcB, "fresh", &frameB)
 
-	// @deliberate: One tick: both frames end (all-fresh → completed) and
-	// each instance's terminal predicate is evaluated at frame-end.
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
-	// @deliberate: Both frames must have ended.
 	var stateA, stateB string
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameA}, &stateA)
@@ -313,7 +269,6 @@ func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 	src := uuid.New()
 	now := time.Now()
 	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "completed", &now, 600000)
-	// @deliberate: stamp ended_at — the 'completed' constraint requires it.
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_frames SET ended_at = now() WHERE frame_id = $1`, frameID)
 

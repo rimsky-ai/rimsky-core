@@ -20,9 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// messageIdempotenciesImpl is the SQLite-backed
-// persistence.MessageIdempotencyTable — universal dedup-tuple table
-// for POST /instances/{id}/messages.
 type messageIdempotenciesImpl tablesImpl
 
 var _ persistence.MessageIdempotencyTable = (*messageIdempotenciesImpl)(nil)
@@ -33,13 +30,6 @@ func (s *tablesImpl) MessageIdempotencies() persistence.MessageIdempotencyTable 
 
 func (b *messageIdempotenciesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
-// sqliteInsertMessageIdempotencySQL doesn't have postgres's xmax trick. We use two queries inside
-// the caller's tx: first try INSERT … ON CONFLICT DO NOTHING; if no row
-// was inserted, SELECT the existing row. The dedup tuple includes BOTH
-// sender_kind (structural source-of-claim: operator/publisher/anonymous)
-// and sender_subject (per-caller discriminator within operator) so
-// neither (a) two distinct api-keys nor (b) a publisher named "operator"
-// can cross-collide with another caller on the same Idempotency-Key.
 const sqliteInsertMessageIdempotencySQL = `
 INSERT INTO rimsky_message_idempotencies (
     instance_id, sender_kind, sender, sender_subject, idempotency_key, message_id, created_at

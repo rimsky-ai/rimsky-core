@@ -29,7 +29,6 @@ func (s *slogLogger) With(fields ...any) Logger {
 	return &slogLogger{l: s.l.With(fields...)}
 }
 
-// SilentLogger discards everything. Useful in tests.
 type SilentLogger struct{}
 
 func (SilentLogger) Debug(string, ...any)      {}
@@ -38,14 +37,12 @@ func (SilentLogger) Warn(string, ...any)       {}
 func (SilentLogger) Error(string, ...any)      {}
 func (SilentLogger) With(fields ...any) Logger { return SilentLogger{} }
 
-// Record is one captured log entry (for CapturingLogger).
 type Record struct {
 	Level  string
 	Msg    string
 	Fields map[string]any
 }
 
-// CapturingLogger stores all log calls in memory for test assertions.
 type CapturingLogger struct {
 	mu      sync.Mutex
 	records []Record
@@ -61,7 +58,6 @@ func (c *CapturingLogger) capture(level, msg string, fields []any) {
 	for k, v := range c.base {
 		merged[k] = v
 	}
-	// @constraint: fields follow slog's alternating key/value-pair contract.
 	for i := 0; i+1 < len(fields); i += 2 {
 		key, ok := fields[i].(string)
 		if !ok {
@@ -91,7 +87,6 @@ func (c *CapturingLogger) With(fields ...any) Logger {
 		}
 		merged[key] = fields[i+1]
 	}
-	// @deliberate: child logger shares the records slice with parent — not ideal; revisit if chained-child tests need isolation.
 	return &CapturingLogger{base: merged, records: c.records}
 }
 

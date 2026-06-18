@@ -15,9 +15,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// fakeHandler is a test-only InProcessHandler whose Execute body is
-// driven by a caller-provided closure. Per TD-execute-rpc-unary the
-// handler returns the settling Outcome directly.
 type fakeHandler struct {
 	fn func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error)
 }

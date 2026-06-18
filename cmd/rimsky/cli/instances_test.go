@@ -16,9 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/internal/clitest"
 )
 
-// captureStdout runs fn with os.Stdout redirected to a pipe and returns
-// everything fn wrote. The pipe is drained on a goroutine so writes larger
-// than the OS pipe buffer don't deadlock.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -92,7 +89,6 @@ func TestRunInstanceKill_RefusedWithoutForce(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	// @constraint: no --force / --yes → refused with exit 2; instance stays non-terminal.
 	if got := cli.RunInstanceKill(context.Background(), []string{inst.ID}); got != 2 {
 		t.Errorf("exit %d, want 2", got)
 	}
@@ -111,7 +107,6 @@ func TestRunInstanceKill_Force(t *testing.T) {
 	if !srv.State.IsTerminated(inst.ID) {
 		t.Error("instance not terminal after kill --force")
 	}
-	// @constraint: --yes is the alternative confirmation; idempotent on already-terminal.
 	if got := cli.RunInstanceKill(context.Background(), []string{"--yes", inst.ID}); got != 0 {
 		t.Errorf("exit %d (--yes), want 0", got)
 	}
@@ -168,17 +163,11 @@ func TestRunInstanceStatus_KeyResolution(t *testing.T) {
 	}
 }
 
-// TestRunWatch_ExitsOnTerminal asserts watch returns promptly with exit 0
-// when the instance is already terminal: the loop drains events + hits
-// once, sees terminated_at set, prints the terminal line, and returns
-// without sleeping the poll interval.
 func TestRunWatch_ExitsOnTerminal(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "work_started", Payload: map[string]any{}})
-	// @constraint: breakpoint.hit is on the unified /events stream now, not a separate
-	// pending-hits read; seed it as an event row.
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "breakpoint.hit", OccurredAt: "2026-06-07T00:00:01Z", Payload: map[string]any{"checkpoint": "pre_dispatch", "mode": "stop"}})
 	now := time.Now()
 	srv.State.SetInstanceTerminated(inst.ID, &now)
@@ -186,9 +175,6 @@ func TestRunWatch_ExitsOnTerminal(t *testing.T) {
 	done := make(chan int, 1)
 	exit := -1
 	out := captureStdout(t, func() {
-		// @deliberate: a long poll-interval would only matter if the loop slept; a
-		// terminal instance must exit on the first iteration, so this is
-		// deterministic regardless of the interval.
 		go func() {
 			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", inst.ID})
 		}()
@@ -212,18 +198,10 @@ func TestRunWatch_ExitsOnTerminal(t *testing.T) {
 	}
 }
 
-// TestRunWatch_DrainsAllEventsBeforeTerminal: a terminating instance with an
-// event backlog larger than one page (>100) must surface every event —
-// breakpoint.hit rows included, since they live on /events — before the
-// terminal line. watch drains all /events pages each cycle, so the tail (on
-// the last page) is not lost when the instance is already terminal.
 func TestRunWatch_DrainsAllEventsBeforeTerminal(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	// @deliberate: seed the tail marker FIRST so it is the OLDEST row: /events pages are
-	// drained newest-first, so the oldest row lands on the last page and is
-	// only printed if the loop drains past the first 100-row page.
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "breakpoint.hit", OccurredAt: "2026-06-07T00:00:01Z", Payload: map[string]any{"checkpoint": "tail_marker", "mode": "stop"}})
 	for i := 0; i < 100; i++ {
 		srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "filler", Payload: map[string]any{}})
@@ -246,8 +224,6 @@ func TestRunWatch_DrainsAllEventsBeforeTerminal(t *testing.T) {
 	if exit != 0 {
 		t.Errorf("exit %d, want 0", exit)
 	}
-	// @constraint: the tail marker lives on the last page; its presence proves the loop
-	// drained past the first 100-row page before exiting on terminal.
 	if !strings.Contains(out, "checkpoint=tail_marker") {
 		t.Errorf("watch dropped the event-backlog tail (no checkpoint=tail_marker); output:\n%s", out)
 	}
@@ -284,13 +260,6 @@ func TestRunInstanceEvents_KeyResolution(t *testing.T) {
 	}
 }
 
-// TestRunInstanceEvents_Follow_NoDuplicates regression-tests the
-// follow-mode loop's de-duplication. The fake server, like the live
-// control-api, returns next_cursor="" on partial pages — so a follow
-// loop that re-uses a stale empty cursor would re-fetch and re-print
-// the same events on every poll. The test drives multiple poll cycles
-// (both with and without new events appearing between cycles) and
-// asserts every event ID appears exactly once on stdout.
 func TestRunInstanceEvents_Follow_NoDuplicates(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
@@ -327,8 +296,6 @@ func TestRunInstanceEvents_Follow_NoDuplicates(t *testing.T) {
 	n, _ := rOut.Read(buf)
 	out := string(buf[:n])
 
-	// @constraint: each event ID must appear exactly once. Lines are tab-separated
-	// "occurred_at\tID\tkind".
 	wantIDs := []string{"\t1\tk1", "\t2\tk2", "\t3\tk3"}
 	for _, want := range wantIDs {
 		if c := strings.Count(out, want); c != 1 {

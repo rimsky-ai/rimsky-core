@@ -2,19 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant: callback-honored-iff — exercised here: callbacks
-// for runs whose phase is no longer {active, held} ack-but-noop.
-
-// Minimal coverage of the supervisor's CallbackRegistry under the
-// stores redesign.
-//
-// The pre-redesign callback_test.go drove the full callback HTTP
-// server against the old AcquireLock/OpenHandle/ReleaseLock surface.
-// The new
-// release flow runs through Open/Commit/Abandon and the auto-terminal
-// algorithm; coverage of the full callback pipeline belongs in the
-// scenario suite, not here. This file pins the in-memory registry's
-// register/pop semantics.
+// @blessed-invariant: callback-honored-iff
 
 package runtime_test
 

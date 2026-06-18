@@ -2,27 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Cross-stack proof for STORY-lifecycle-subscriber-author: a service
-// author's example Subscriber — implementing the seven lifecycle
-// callbacks (OnTemplateRegistered / OnTemplateDeployed /
-// OnTemplateUndeployed / OnTemplateDeregistered / OnInstanceCreated /
-// OnInstanceTerminated / OnRunScopeTerminal) — plugs into a running
-// rimsky stack end-to-end and receives each callback at the
-// corresponding lifecycle transition with documented context fields.
-//
-// The seven-callback walk is exhibited against the REAL assembled
-// product (rimsky-all-in-one in a testcontainer, Postgres state DB)
-// plus the REAL example Subscriber type (this directory's Subscriber,
-// run in-process behind a thin recording wrapper that captures each
-// call without modifying the example). An eighth leg drives a failing
-// callback and asserts rimsky honors the failure synchronously (the
-// triggering HTTP request returns 5xx and the row mutation does NOT
-// happen).
-//
-// Test files are exempt from the Apache→AGPL import-direction lint
-// (tools/license-check/imports.go::verifyImports), so this `_test.go`
-// file may import the lib/services testcontainers harness without
-// putting the example's published Apache surface at risk.
 package main
 
 import (
@@ -44,15 +23,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// TestE2E_ExampleLifecycleSubscriberAgainstRunningRimsky boots the
-// rimsky-all-in-one image with the example Subscriber registered as a
-// lifecycle-subscriber peer (mixed into an executor entry) plus a stub
-// executor, then walks the seven-callback lifecycle and exhibits each
-// context-field property STORY-lifecycle-subscriber-author's Acceptance
-// names.
-//
-// Build requirement: the rimsky-all-in-one image must be built locally
-// (`make core-images`).
 func TestE2E_ExampleLifecycleSubscriberAgainstRunningRimsky(t *testing.T) {
 	ctx := context.Background()
 
@@ -100,16 +70,11 @@ func TestE2E_ExampleLifecycleSubscriberAgainstRunningRimsky(t *testing.T) {
 	})
 }
 
-// lifecycleState carries the per-test-run IDs the legs share, plus a
-// shared "before terminate" baseline for legs 4 and 5.
 type lifecycleState struct {
 	templateHash      string
 	instanceID        string
 	preTerminateIndex int
-	// @deliberate: adminKey is the bootstrap admin plaintext minted in
-	// leg 3. Anonymous mode is open before this is set; afterwards,
-	// every request must carry the bearer.
-	adminKey string
+	adminKey          string
 }
 
 func exerciseOnTemplateRegisteredLeg(t *testing.T, ep harness.RimskyEndpoint, rec *recordingLifecycleSubscriber, state *lifecycleState) {
@@ -231,10 +196,6 @@ func exerciseOnTemplateDeregisteredLeg(t *testing.T, ep harness.RimskyEndpoint, 
 	}
 }
 
-// exerciseFailureHonoredSynchronouslyLeg flips the recording wrapper
-// to return a non-nil error on the next OnTemplateRegistered, then
-// POSTs a fresh template. The HTTP response MUST be 5xx — rimsky must
-// NOT swallow the error and proceed with the row insert.
 func exerciseFailureHonoredSynchronouslyLeg(t *testing.T, ep harness.RimskyEndpoint, rec *recordingLifecycleSubscriber, state *lifecycleState) {
 	rec.failNextOnTemplateRegistered(status.Error(codes.Internal, "subscriber rejected the callback"))
 	defer rec.clearFailures()
@@ -276,9 +237,6 @@ func exerciseFailureHonoredSynchronouslyLeg(t *testing.T, ep harness.RimskyEndpo
 	}
 }
 
-// capturedCall is one observed lifecycle callback. Fields are
-// populated per the callback's request shape; unused fields stay at
-// zero-value.
 type capturedCall struct {
 	Verb               string
 	TemplateHash       string
@@ -294,9 +252,6 @@ type capturedCall struct {
 	TerminalReason     string
 }
 
-// recordingLifecycleSubscriber wraps the example Subscriber, recording
-// every callback before delegating to it. Also implements the minimal
-// Executor / ExecutorObservability surface rimsky probes at startup.
 type recordingLifecycleSubscriber struct {
 	genv1.UnimplementedLifecycleSubscriberServer
 	genv1.UnimplementedExecutorServer
@@ -322,16 +277,12 @@ func (r *recordingLifecycleSubscriber) record(c capturedCall) {
 	r.calls = append(r.calls, c)
 }
 
-// snapshot returns the current call-list length. Callers use it as a
-// baseline for waitForCall so a leg only matches callbacks fired after
-// the leg's trigger.
 func (r *recordingLifecycleSubscriber) snapshot() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.calls)
 }
 
-// callsSince returns a copy of every call captured at index >= base.
 func (r *recordingLifecycleSubscriber) callsSince(base int) []capturedCall {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -343,23 +294,18 @@ func (r *recordingLifecycleSubscriber) callsSince(base int) []capturedCall {
 	return out
 }
 
-// failNextOnTemplateRegistered arms the NEXT OnTemplateRegistered call
-// to return the given error before recording.
 func (r *recordingLifecycleSubscriber) failNextOnTemplateRegistered(err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.failNext["OnTemplateRegistered"] = err
 }
 
-// clearFailures resets the per-verb failure switches so subsequent
-// callbacks proceed normally.
 func (r *recordingLifecycleSubscriber) clearFailures() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.failNext = map[string]error{}
 }
 
-// popFailure returns and clears any sticky failure for verb.
 func (r *recordingLifecycleSubscriber) popFailure(verb string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -370,7 +316,6 @@ func (r *recordingLifecycleSubscriber) popFailure(verb string) error {
 	return nil
 }
 
-// OnTemplateRegistered records the call then delegates.
 func (r *recordingLifecycleSubscriber) OnTemplateRegistered(ctx context.Context, req *genv1.OnTemplateRegisteredRequest) (*genv1.LifecycleAck, error) {
 	r.record(capturedCall{
 		Verb:         "OnTemplateRegistered",
@@ -383,7 +328,6 @@ func (r *recordingLifecycleSubscriber) OnTemplateRegistered(ctx context.Context,
 	return r.delegate.OnTemplateRegistered(ctx, req)
 }
 
-// OnTemplateDeployed records the call then delegates.
 func (r *recordingLifecycleSubscriber) OnTemplateDeployed(ctx context.Context, req *genv1.OnTemplateDeployedRequest) (*genv1.LifecycleAck, error) {
 	r.record(capturedCall{
 		Verb:         "OnTemplateDeployed",
@@ -396,7 +340,6 @@ func (r *recordingLifecycleSubscriber) OnTemplateDeployed(ctx context.Context, r
 	return r.delegate.OnTemplateDeployed(ctx, req)
 }
 
-// OnTemplateUndeployed records the call then delegates.
 func (r *recordingLifecycleSubscriber) OnTemplateUndeployed(ctx context.Context, req *genv1.OnTemplateUndeployedRequest) (*genv1.LifecycleAck, error) {
 	r.record(capturedCall{
 		Verb:         "OnTemplateUndeployed",
@@ -408,7 +351,6 @@ func (r *recordingLifecycleSubscriber) OnTemplateUndeployed(ctx context.Context,
 	return r.delegate.OnTemplateUndeployed(ctx, req)
 }
 
-// OnTemplateDeregistered records the call then delegates.
 func (r *recordingLifecycleSubscriber) OnTemplateDeregistered(ctx context.Context, req *genv1.OnTemplateDeregisteredRequest) (*genv1.LifecycleAck, error) {
 	r.record(capturedCall{
 		Verb:         "OnTemplateDeregistered",
@@ -420,7 +362,6 @@ func (r *recordingLifecycleSubscriber) OnTemplateDeregistered(ctx context.Contex
 	return r.delegate.OnTemplateDeregistered(ctx, req)
 }
 
-// OnInstanceCreated records the call then delegates.
 func (r *recordingLifecycleSubscriber) OnInstanceCreated(ctx context.Context, req *genv1.OnInstanceCreatedRequest) (*genv1.LifecycleAck, error) {
 	r.record(capturedCall{
 		Verb:            "OnInstanceCreated",
@@ -437,7 +378,6 @@ func (r *recordingLifecycleSubscriber) OnInstanceCreated(ctx context.Context, re
 	return r.delegate.OnInstanceCreated(ctx, req)
 }
 
-// OnInstanceTerminated records the call then delegates.
 func (r *recordingLifecycleSubscriber) OnInstanceTerminated(ctx context.Context, req *genv1.OnInstanceTerminatedRequest) (*genv1.LifecycleAck, error) {
 	r.record(capturedCall{
 		Verb:               "OnInstanceTerminated",
@@ -451,7 +391,6 @@ func (r *recordingLifecycleSubscriber) OnInstanceTerminated(ctx context.Context,
 	return r.delegate.OnInstanceTerminated(ctx, req)
 }
 
-// OnRunScopeTerminal records the call then delegates.
 func (r *recordingLifecycleSubscriber) OnRunScopeTerminal(ctx context.Context, req *genv1.OnRunScopeTerminalRequest) (*genv1.LifecycleAck, error) {
 	r.record(capturedCall{
 		Verb:           "OnRunScopeTerminal",
@@ -465,8 +404,6 @@ func (r *recordingLifecycleSubscriber) OnRunScopeTerminal(ctx context.Context, r
 	return r.delegate.OnRunScopeTerminal(ctx, req)
 }
 
-// Capabilities answers the rimsky startup ExecutorObservability probe
-// so the discovery cache records the peer as Reachable.
 func (r *recordingLifecycleSubscriber) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
 	return &genv1.ObservabilityCapabilities{
 		SupportsTraceGet:              false,
@@ -476,9 +413,6 @@ func (r *recordingLifecycleSubscriber) Capabilities(_ context.Context, _ *genv1.
 	}, nil
 }
 
-// startRecordingLifecycleSubscriber stands up the wrapper as an
-// in-process gRPC server on `port` and blocks until the listener is
-// accepting connections.
 func startRecordingLifecycleSubscriber(t *testing.T, port int) *recordingLifecycleSubscriber {
 	t.Helper()
 	lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
@@ -507,13 +441,10 @@ func startRecordingLifecycleSubscriber(t *testing.T, port int) *recordingLifecyc
 	return nil
 }
 
-// stubExecutorServer implements the post-coherence unary Executor
-// returning a settling Success Outcome (per TD-execute-rpc-unary).
 type stubExecutorServer struct {
 	genv1.UnimplementedExecutorServer
 }
 
-// Execute returns a single settling Success Outcome (no stream).
 func (stubExecutorServer) Execute(_ context.Context, _ *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
 		Changed:       false,
@@ -521,15 +452,10 @@ func (stubExecutorServer) Execute(_ context.Context, _ *genv1.ExecuteRequest) (*
 	}}}, nil
 }
 
-// stubObservabilityServer answers Capabilities with an open expected-
-// attributes schema so the registration-time and dispatch-time gates
-// accept the worker node unconditionally.
 type stubObservabilityServer struct {
 	genv1.UnimplementedExecutorObservabilityServer
 }
 
-// Capabilities returns an open schema, no-trace observability
-// contract.
 func (stubObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
 	return &genv1.ObservabilityCapabilities{
 		SupportsTraceGet:              false,
@@ -539,18 +465,14 @@ func (stubObservabilityServer) Capabilities(_ context.Context, _ *genv1.Executor
 	}, nil
 }
 
-// GetTrace returns Unimplemented (the stub retains no traces).
 func (stubObservabilityServer) GetTrace(_ context.Context, _ *genv1.GetTraceRequest) (*genv1.Trace, error) {
 	return nil, status.Error(codes.Unimplemented, "stub executor: GetTrace not supported")
 }
 
-// StreamTrace returns Unimplemented (the stub retains no traces).
 func (stubObservabilityServer) StreamTrace(_ *genv1.StreamTraceRequest, _ genv1.ExecutorObservability_StreamTraceServer) error {
 	return status.Error(codes.Unimplemented, "stub executor: StreamTrace not supported")
 }
 
-// startStubExecutor brings up the stub Executor on `port` and blocks
-// until the listener accepts.
 func startStubExecutor(t *testing.T, port int) {
 	t.Helper()
 	lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
@@ -576,7 +498,6 @@ func startStubExecutor(t *testing.T, port int) {
 	t.Fatalf("stub executor did not become dialable at %s within 10s", addr)
 }
 
-// freeHostPort grabs an OS-assigned TCP port and returns it.
 func freeHostPort(t *testing.T) int {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -590,9 +511,6 @@ func freeHostPort(t *testing.T) int {
 	return port
 }
 
-// waitForCall polls the recorder's per-verb call set until at least
-// one call captured at index >= base matches `verb`, or the deadline
-// elapses.
 func waitForCall(t *testing.T, rec *recordingLifecycleSubscriber, verb string, base int, deadline time.Duration, why string) capturedCall {
 	t.Helper()
 	end := time.Now().Add(deadline)
@@ -614,9 +532,6 @@ func waitForCall(t *testing.T, rec *recordingLifecycleSubscriber, verb string, b
 	return capturedCall{}
 }
 
-// registerLifecycleTemplate POSTs a template that references the
-// example subscriber as a store and the stub executor as the worker
-// node's executor. Returns the resulting template_hash.
 func registerLifecycleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	t.Helper()
 	body := map[string]any{
@@ -655,9 +570,6 @@ func registerLifecycleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	return resp.TemplateID
 }
 
-// deployLifecycleTemplate POSTs the deploy verb on `hash`. Leg 1
-// happens before bootstrap; from leg 2 onward `bearer` must be
-// non-empty.
 func deployLifecycleTemplate(t *testing.T, ep harness.RimskyEndpoint, bearer, hash string) {
 	t.Helper()
 	statusCode, raw := ep.PostJSONWithHeaders(t, "/v1/templates/"+hash+"/deploy", map[string]any{},
@@ -667,7 +579,6 @@ func deployLifecycleTemplate(t *testing.T, ep harness.RimskyEndpoint, bearer, ha
 	}
 }
 
-// undeployTemplate POSTs the undeploy verb on `hash`.
 func undeployTemplate(t *testing.T, ep harness.RimskyEndpoint, bearer, hash string) {
 	t.Helper()
 	statusCode, raw := ep.PostJSONWithHeaders(t, "/v1/templates/"+hash+"/undeploy", map[string]any{},
@@ -677,8 +588,6 @@ func undeployTemplate(t *testing.T, ep harness.RimskyEndpoint, bearer, hash stri
 	}
 }
 
-// deregisterTemplate DELETEs `hash`. Manual request construction
-// (PostJSONWithHeaders only supports POST).
 func deregisterTemplate(t *testing.T, ep harness.RimskyEndpoint, bearer, hash string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodDelete, ep.BaseURL+"/v1/templates/"+hash, nil)
@@ -698,8 +607,6 @@ func deregisterTemplate(t *testing.T, ep harness.RimskyEndpoint, bearer, hash st
 	}
 }
 
-// authHeader returns the Authorization header map for the bearer, or
-// nil for an empty bearer.
 func authHeader(bearer string) map[string]string {
 	if bearer == "" {
 		return nil
@@ -707,8 +614,6 @@ func authHeader(bearer string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + bearer}
 }
 
-// bootstrapAdminKey POSTs an admin key on the anonymous-mode
-// deployment (the same request `rimsky auth init` issues).
 func bootstrapAdminKey(t *testing.T, ep harness.RimskyEndpoint) string {
 	t.Helper()
 	statusCode, raw := ep.PostJSON(t, "/v1/auth/keys", map[string]any{
@@ -732,9 +637,6 @@ func bootstrapAdminKey(t *testing.T, ep harness.RimskyEndpoint) string {
 	return resp.Plaintext
 }
 
-// createLifecycleInstance POSTs an authenticated instance create
-// carrying a non-empty service_bindings bag and returns the resulting
-// instance_id.
 func createLifecycleInstance(t *testing.T, ep harness.RimskyEndpoint, bearer, templateHash string, serviceBindings map[string]any) string {
 	t.Helper()
 	body := map[string]any{
@@ -761,8 +663,6 @@ func createLifecycleInstance(t *testing.T, ep harness.RimskyEndpoint, bearer, te
 	return resp.InstanceID
 }
 
-// terminateInstance force-terminates an instance via
-// POST /v1/instances/{id}/terminate.
 func terminateInstance(t *testing.T, ep harness.RimskyEndpoint, bearer, instanceID, reason string) {
 	t.Helper()
 	statusCode, raw := ep.PostJSONWithHeaders(t, "/v1/instances/"+instanceID+"/terminate", map[string]any{
@@ -773,7 +673,6 @@ func terminateInstance(t *testing.T, ep harness.RimskyEndpoint, bearer, instance
 	}
 }
 
-// deleteInstance DELETEs the (already-terminated) instance row.
 func deleteInstance(t *testing.T, ep harness.RimskyEndpoint, bearer, instanceID string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodDelete, ep.BaseURL+"/v1/instances/"+instanceID, nil)

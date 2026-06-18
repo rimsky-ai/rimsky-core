@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Unit coverage for the load-bearing property of TD-three-dispatch-deadlines:
-// the §12.5 attributes writeback bumps col:rimsky_node_runs.last_progress_at
-// in the SAME tx as the merge/upsert, so the quiet-period sweep cannot
-// observe a partial state.
-
 package runtime
 
 import (
@@ -20,20 +15,12 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// writebackBumpTables is a persistence.Tables stub whose Transaction
-// returns a synthetic Tx pointer that BOTH the NodeAttributes call and
-// the BumpLastProgressAt call must receive — proving they are in the
-// same tx. The embedded NodeAttributes implementation captures the tx
-// it was called with; the embedded Queue does the same.
 type writebackBumpTables struct {
 	persistence.Tables
 	tx    persistence.Tx
 	attrs *writebackBumpAttrs
 }
 
-// txSentinel is a non-nil persistence.Tx sentinel the stub hands to the
-// closure. Identity comparison against this value verifies both calls
-// shared the same Transaction invocation.
 type txSentinel struct {
 	persistence.TxMarker
 }
@@ -47,9 +34,6 @@ func (w *writebackBumpTables) NodeAttributes() persistence.NodeAttributeTable {
 	return w.attrs
 }
 
-// writebackBumpAttrs is a NodeAttributeTable stub that records the tx
-// pointer it was called with so the test can compare it against the
-// pointer Queue.BumpLastProgressAt received.
 type writebackBumpAttrs struct {
 	persistence.NodeAttributeTable
 	mergedTx persistence.Tx
@@ -68,7 +52,6 @@ func (a *writebackBumpAttrs) Upsert(_ context.Context, _ shared.UUID, _ shared.U
 	return nil
 }
 
-// writebackBumpQueue captures the tx + runID handed to BumpLastProgressAt.
 type writebackBumpQueue struct {
 	persistence.Queue
 	bumpedTx    persistence.Tx
@@ -85,10 +68,6 @@ func (q *writebackBumpQueue) BumpLastProgressAt(_ context.Context, tx persistenc
 	return true, nil
 }
 
-// TestAttributesAdapter_MergeDelta_BumpsInSameTx exercises the
-// load-bearing property: a §12.5 MergeDelta and the
-// BumpLastProgressAt fire inside the SAME tx (same Tx pointer
-// reaches both interfaces).
 func TestAttributesAdapter_MergeDelta_BumpsInSameTx(t *testing.T) {
 	t.Parallel()
 	attrs := &writebackBumpAttrs{}
@@ -115,9 +94,6 @@ func TestAttributesAdapter_MergeDelta_BumpsInSameTx(t *testing.T) {
 	}
 }
 
-// TestAttributesAdapter_Upsert_BumpsInSameTx covers the same property
-// for the Upsert path (some callers go through Upsert instead of
-// MergeDelta).
 func TestAttributesAdapter_Upsert_BumpsInSameTx(t *testing.T) {
 	t.Parallel()
 	attrs := &writebackBumpAttrs{}
@@ -139,9 +115,6 @@ func TestAttributesAdapter_Upsert_BumpsInSameTx(t *testing.T) {
 	}
 }
 
-// TestAttributesAdapter_MergeDelta_NoBumpWhenQueueAbsent covers the
-// nil-Queue defensive path: the adapter still works in a configuration
-// where last_progress_at tracking is disabled.
 func TestAttributesAdapter_MergeDelta_NoBumpWhenQueueAbsent(t *testing.T) {
 	t.Parallel()
 	attrs := &writebackBumpAttrs{}

@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package observability declares the rimsky-side Prometheus metric set
-// and wires the /metrics endpoint into a chi router. The metric
-// instrumentation hooks are call-site wrappers (Inc / Observe / Set)
-// that production code in runtime, graph/scheduler, and
-// control/controlapi can call without importing prometheus directly —
-// keeps the operator-visible metric surface centralised.
 package observability
 
 import (
@@ -18,15 +12,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// MetricsRegistry is a per-process registry of rimsky's Prometheus
-// metric set. Created once at startup via NewMetricsRegistry and held
-// for the process lifetime; metric variables are exposed both as
-// fields (for instrumentation call sites) and through the registry
-// passed to promhttp.HandlerFor.
-//
-// Naming: every metric uses the `rimsky_` prefix and stdlib units
-// suffixes (`_seconds` for histograms, `_total` automatically appended
-// to counters by the prometheus library).
 type MetricsRegistry struct {
 	reg *prometheus.Registry
 
@@ -34,11 +19,6 @@ type MetricsRegistry struct {
 	TerminalVerdicts  *prometheus.CounterVec
 	Invalidates       *prometheus.CounterVec
 	ClaimAcquisitions *prometheus.CounterVec
-	// NamedLockAcquisitions is the named-lock sibling of
-	// ClaimAcquisitions: a separate counter family (rather than a kind
-	// label on the claim family) so the existing producer/intent label
-	// set stays stable while named locks remain distinguishable from
-	// producer claims at a glance.
 	NamedLockAcquisitions *prometheus.CounterVec
 
 	NodesByState    *prometheus.GaugeVec
@@ -52,9 +32,6 @@ type MetricsRegistry struct {
 	ParkedDurationOnResumeSeconds  prometheus.Histogram
 }
 
-// NewMetricsRegistry constructs and registers the rimsky metric set
-// against a fresh prometheus.Registry. Pass the returned Registry
-// pointer to MetricsHandler when wiring the /metrics endpoint.
 func NewMetricsRegistry() *MetricsRegistry {
 	reg := prometheus.NewRegistry()
 	m := &MetricsRegistry{
@@ -142,19 +119,12 @@ func NewMetricsRegistry() *MetricsRegistry {
 	return m
 }
 
-// Registry returns the underlying prometheus.Registry for tests that
-// scrape via the metrics-text format.
 func (m *MetricsRegistry) Registry() *prometheus.Registry { return m.reg }
 
-// MetricsHandler returns the http.Handler backing /metrics for the
-// supplied registry. Wire under chi's mux next to /healthz, etc.
 func MetricsHandler(m *MetricsRegistry) http.Handler {
 	return promhttp.HandlerFor(m.reg, promhttp.HandlerOpts{})
 }
 
-// MountMetrics wires GET /metrics on the supplied chi router. Call
-// from each rimsky cmd binary's startup once the registry is
-// constructed.
 func MountMetrics(r chi.Router, m *MetricsRegistry) {
 	r.Method(http.MethodGet, "/metrics", MetricsHandler(m))
 }

@@ -2,23 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — pins spec §10.2 "Orphan hit on breakpoint deletion":
-//
-//   1. Install a pause-mode breakpoint.
-//   2. The supervisor's dispatch hits the breakpoint and parks inside
-//      waitForResume.
-//   3. The operator deletes the breakpoint row — the FK ON DELETE
-//      CASCADE on rimsky_breakpoint_hits.breakpoint_id removes the
-//      parked hit row as well.
-//   4. The waitForResume poll sees `Get(hitID) == nil` and returns
-//      with no overlay; the dispatch proceeds (treated as auto-resume).
-//   5. The executor receives the dispatch and reaches terminal.
-//
-// The key correctness property is that the runner does NOT deadlock on
-// the deleted hit. Pre-Pass-5 the loop would have spun forever waiting
-// for a row that never returns. The Pass-5 wiring `if hit == nil { return
-// nil, nil }` is what this scenario exercises end-to-end.
-//
 // @concept: breakpoint
 
 package breakpoints
@@ -67,16 +50,11 @@ func TestOrphanHitOnBreakpointDeletion(t *testing.T) {
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not see the dispatch while paused at the breakpoint")
 
-	// @deliberate: Delete the breakpoint (cascade-deletes the hit). The
-	// waitForResume poll inside the parked runner will see the row
-	// vanish and return as if auto-resumed.
 	breakpointDelete(t, h, iid, bpID)
 
-	// @constraint: Hit row must be gone (FK CASCADE).
 	require.Nil(t, getHitRow(t, h, hit.ID),
 		"hit row should be cascade-deleted along with the parent breakpoint")
 
-	// @deliberate: The dispatch should proceed without an explicit resume call.
 	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
 		"executor should observe dispatch after the orphan-hit unblocks the runner")
 	n := h.FindNode(iid, "worker")

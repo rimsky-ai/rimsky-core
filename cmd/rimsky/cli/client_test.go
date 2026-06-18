@@ -16,9 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// helperServer stands up a one-shot httptest server that asserts the
-// inbound request matches expectMethod+expectPath, optionally checks the
-// JSON body, and returns the canned response.
 func helperServer(t *testing.T, expectMethod, expectPath string, expectBody map[string]any, status int, respBody any) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

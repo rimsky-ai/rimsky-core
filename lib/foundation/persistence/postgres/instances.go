@@ -19,16 +19,10 @@ import (
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// errInstanceIDRequired is returned by Create when in.ID is the zero UUID.
-// Callers must pass a pre-generated UUID (e.g. uuid.New()) so the row's
-// identity is established by the caller, not silently filled in by persistence.
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
 const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id`
 
-// Create inserts a new rimsky_instances row. The caller supplies a
-// pre-generated UUID. Returns ErrInstanceKeyConflict when (template_hash,
-// instance_key) already exists.
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	ex := s.q(tx)
 	if in.Params == nil {
@@ -56,11 +50,6 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
 	id := in.ID
-	// @constraint: empty json.RawMessage must encode as SQL NULL for the
-	// service_bindings JSONB column — pgx encodes a nil []byte as NULL
-	// (a non-nil empty slice would write JSONB 'null', which differs).
-	// created_by_api_key_id is passed as *shared.UUID; pgx encodes a nil
-	// pointer as NULL.
 	var serviceBindings []byte
 	if len(in.ServiceBindings) > 0 {
 		serviceBindings = in.ServiceBindings
@@ -97,10 +86,6 @@ func (s *instancesImpl) Get(ctx context.Context, id foundationshared.UUID, tx pe
 	return &out, nil
 }
 
-// FindAnyByInstanceKey resolves an instance by instance_key alone. The
-// (template_hash, instance_key) uniqueness constraint guarantees at
-// most one row, but in case of multi-template overlap the most-recent
-// row by created_at wins.
 func (s *instancesImpl) FindAnyByInstanceKey(ctx context.Context, instanceKey string, tx persistence.Tx) (*persistence.InstanceRow, error) {
 	ex := s.q(tx)
 	row := ex.QueryRow(ctx,
@@ -161,10 +146,6 @@ func (s *instancesImpl) List(
 		v := filter.TemplateHash
 		tmplHash = &v
 	}
-	// @constraint: filter.Active is tri-state — nil bypasses the filter,
-	// true selects terminated_at IS NULL, false selects terminated_at IS
-	// NOT NULL. Passing as `any` lets pgx encode nil → SQL NULL and the
-	// $2::boolean IS NULL branch in the WHERE clause matches.
 	var activeArg any
 	if filter.Active != nil {
 		activeArg = *filter.Active
@@ -230,8 +211,6 @@ func (s *instancesImpl) Delete(ctx context.Context, id foundationshared.UUID, tx
 	return nil
 }
 
-// MarkTerminated sets terminated_at = now() if currently NULL. Idempotent
-// — repeated calls do not move the timestamp.
 func (s *instancesImpl) MarkTerminated(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
@@ -245,8 +224,6 @@ func (s *instancesImpl) MarkTerminated(ctx context.Context, id foundationshared.
 	return nil
 }
 
-// CountActiveByTemplate returns the count of rimsky_instances rows
-// where template_hash = $1 AND terminated_at IS NULL.
 func (s *instancesImpl) CountActiveByTemplate(ctx context.Context, templateHash string, tx persistence.Tx) (int, error) {
 	ex := s.q(tx)
 	var n int
@@ -261,33 +238,6 @@ func (s *instancesImpl) CountActiveByTemplate(ctx context.Context, templateHash 
 	return n, nil
 }
 
-// IncrementAttributeOverrideMatchCounts aggregates per-index counts
-// from the input slice (duplicates count per-occurrence: e.g.
-// `[0, 0, 1]` adds 2 to index 0 and 1 to index 1), then issues ONE
-// jsonb_set UPDATE per unique index inside the caller-supplied tx.
-// Out-of-range indices are silently no-ops (jsonb_set with
-// create_missing=false leaves the array unchanged when the path
-// doesn't exist).
-//
-// The per-index aggregation step is required because PostgreSQL's
-// expression evaluator does NOT guarantee that two textually-distinct
-// `jsonb_set(col, '{N}', ...)` subexpressions referring to the SAME
-// path will compose left-to-right — duplicated paths in a chained
-// expression can collapse so only one increment lands. Aggregating
-// in Go and emitting one jsonb_set per unique index sidesteps the
-// issue without changing the per-occurrence semantic.
-//
-// Per-iteration UPDATEs (not a chained single-statement jsonb_set):
-// the textually-chained variant grows O(2^N) characters in the number
-// of unique indices because each iteration substitutes the prior
-// setExpr twice (target + value subexpression). For N≈20 in a single
-// dispatch that's ~1MB of SQL, which trips Postgres' max_stack_depth
-// and statement-size limits. The per-iteration form has O(1) SQL per
-// statement at the cost of N round-trips inside the same tx.
-//
-// tx must be non-nil — s.q(tx) panics on nil per the package's
-// universal convention. Callers wrap with args.Persist.Transaction.
-//
 // @concept: attribute (L5 matcher overlay)
 func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 	ctx context.Context,
@@ -298,15 +248,6 @@ func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 	if len(indices) == 0 {
 		return nil
 	}
-	// @constraint: aggregation preserves first-appearance order so the
-	// per-index UPDATE sequence is deterministic.
-	// @constraint: negative indices are pre-filtered because Postgres'
-	// jsonb_set with create_missing=false silently no-ops for out-of-range
-	// POSITIVE indices but treats NEGATIVE ones as offsets-from-end
-	// (`{-1}` modifies the last element). The runtime never produces
-	// negative indices (matched slice indexes into `entries`); this is
-	// defensive parity with the SQLite mirror's pre-filter so both drivers
-	// expose identical out-of-range semantics to callers.
 	deltas := map[int]int{}
 	order := make([]int, 0, len(indices))
 	for _, idx := range indices {
@@ -322,34 +263,7 @@ func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 		return nil
 	}
 	ex := s.q(tx)
-	// @deliberate: issue ONE jsonb_set UPDATE per unique index rather than
-	// chaining everything into one statement. Inlining the prior setExpr
-	// into the next setExpr's template grows the SQL string O(2^N) in
-	// the number of unique indices — each iteration substitutes the
-	// prior expression twice (once as jsonb_set target, once inside the
-	// value subexpression). For an instance with ~20 matched entries in
-	// a single dispatch that hits Postgres' max_stack_depth (default 2MB)
-	// and statement-size limits before the query reaches the planner.
-	// The per-iteration UPDATE has constant-size SQL and the same per-
-	// occurrence semantic; the tx is already open (caller wraps with
-	// args.Persist.Transaction) and per-row updates serialize on the
-	// same row lock, so concurrent callers don't see partial increments
-	// outside their own tx boundary.
-	// @constraint: jsonb_set's path arg is text[] (numeric strings index
-	// into arrays) but the `->>` read side requires an integer literal
-	// for array indexing (text args index by key name and return NULL
-	// for arrays); hence the asymmetric `ARRAY['%d']` write vs `->>%d`
-	// read. Both are integer-valued and locally produced (idx from the
-	// runtime's matched-indices slice, delta a count), so SQL injection
-	// is not a concern.
 	for _, idx := range order {
-		// @constraint: cast to `bigint` (not `int`) because the Go-side
-		// counter is `int64` (InstanceRow.AttributeOverridesMatchCounts);
-		// a long-lived instance with a matcher firing per dispatch on a
-		// busy producer could plausibly exceed PostgreSQL `int`'s ~2.1B
-		// (32-bit signed) ceiling. `bigint` (64-bit signed) matches the
-		// Go column range so the database arithmetic doesn't overflow
-		// before the Go decoder sees the value.
 		query := fmt.Sprintf(
 			`UPDATE rimsky_instances
 			   SET attribute_overrides_match_counts = jsonb_set(
@@ -368,22 +282,6 @@ func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 	return nil
 }
 
-// SetPaused toggles rimsky_instances.paused and returns the prior column
-// value. The SELECT acquires a row lock via FOR UPDATE before the
-// UPDATE runs, so two concurrent SetPaused(true) calls serialize and
-// the second observes prior=true (driving the caller's 409 path).
-// Returns foundationshared.ErrInstanceNotFound when no row matches.
-// Per concept:breakpoint — the control-API handler distinguishes
-// "no-op, already at requested state" (409) from "toggled" (200) by
-// comparing priorValue to the requested value.
-//
-// Earlier revision used a single-statement CTE (`WITH prev AS (SELECT
-// ...), upd AS (UPDATE ...) SELECT prev.paused FROM prev, upd`) which
-// bound `prev` to the statement-level snapshot — both racers saw the
-// pre-update value and both reported prior=false, hiding the 409.
-// The two-step SELECT FOR UPDATE + UPDATE under the caller's tx is
-// the standard pattern for "read the row, decide based on it, write".
-//
 // @concept: breakpoint
 func (s *instancesImpl) SetPaused(ctx context.Context, instanceID foundationshared.UUID, paused bool, tx persistence.Tx) (bool, error) {
 	ex := s.q(tx)
@@ -397,11 +295,6 @@ func (s *instancesImpl) SetPaused(ctx context.Context, instanceID foundationshar
 		}
 		return false, fmt.Errorf("instances.setPaused.select: %w", err)
 	}
-	// @deliberate: skip the UPDATE when the row is already at the requested
-	// value. The caller-facing semantic is "report the prior value so the
-	// handler can translate no-op toggles to 409"; writing the same value
-	// back would acquire the row write lock and produce WAL traffic for no
-	// behavioral change.
 	if prior == paused {
 		return prior, nil
 	}
@@ -414,7 +307,6 @@ func (s *instancesImpl) SetPaused(ctx context.Context, instanceID foundationshar
 	return prior, nil
 }
 
-// CountByActive returns (active, terminated) instance counts.
 func (s *instancesImpl) CountByActive(ctx context.Context, tx persistence.Tx) (int, int, error) {
 	ex := s.q(tx)
 	var active, terminated int
@@ -430,9 +322,6 @@ func (s *instancesImpl) CountByActive(ctx context.Context, tx persistence.Tx) (i
 	return active, terminated, nil
 }
 
-// ListTerminatedWithLifecycleRows returns up to limit instances with
-// terminated_at IS NOT NULL that still have at least one matching
-// rimsky_lifecycle_idempotencies row at scope_kind='instance'.
 func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, limit int, tx persistence.Tx) ([]persistence.InstanceRow, error) {
 	ex := s.q(tx)
 	if limit <= 0 {
@@ -466,7 +355,6 @@ func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, lim
 	return out, rows.Err()
 }
 
-// scannable is implemented by both pgx.Row and pgx.Rows.
 type scannable interface {
 	Scan(dst ...any) error
 }
@@ -533,7 +421,6 @@ func scanInstanceRows(rows pgx.Rows) (persistence.InstanceRow, error) {
 	return scanInstance(rows)
 }
 
-// isUniqueViolation checks pgconn.PgError SQLSTATE 23505.
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -542,7 +429,6 @@ func isUniqueViolation(err error) bool {
 	return false
 }
 
-// isFKViolation checks pgconn.PgError SQLSTATE 23503.
 func isFKViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {

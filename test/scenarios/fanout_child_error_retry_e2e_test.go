@@ -2,30 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// F2 must-pass scenario — fanout_child_error_retry_e2e.
-//
-// End-to-end coverage of fan-out child retry semantics under the
-// RunScope-first reshape per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-// §"Test coverage matrix / F2":
-//
-//   - Fan-out children all return Error on first dispatch.
-//   - Retry policy fires for each child.
-//   - Re-dispatch stays within the same partition RunScope (no scope
-//     reassignment between retries).
-//   - The retried dispatch's ExecuteRequest carries prior_dispatch_id +
-//     prior_dispatch_disposition = PRIOR_RETRY_AFTER_ERROR per
-//     `concept:run-scope` §"Recovery-aware executor protocol".
-//
-// Pins two load-bearing properties of the reshape:
-//
-//  1. Retry path threads RunScope correctly — the partition RunScope id
-//     of the original child equals the partition RunScope id of the
-//     retried child (verified by SQL aggregate on rimsky_node_runs).
-//  2. The recovery-aware fields populate on the wire — observed via the
-//     stub's ObservedRequest.PriorDispatchID +
-//     PriorDispatchDisposition surfaces (per ExecuteRequest fields
-//     wired up in Task 44).
 package scenarios
 
 import (
@@ -62,9 +38,6 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 			},
 		},
 	})
-	// @constraint: Children always error with `flaky` class. The retry policy fires
-	// 2 times (Count: 2) before the cap stops the loop. We only need to
-	// observe ONE retry to pin the recovery-aware fields.
 	h.Stub.WhenType("fan-parent").Error("flaky", map[string]any{"why": "nondeterministic"})
 
 	openAttrs := scenario.WithAttributes(map[string]any{
@@ -83,13 +56,9 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 					Executor: "stub",
 					FanOut: &tmplspec.FanOutSpec{
 						Claim:            "data",
-						PartitionRequest: `{"partition_keys":["a"]}`, // @deliberate: single partition simplifies assertion
+						PartitionRequest: `{"partition_keys":["a"]}`,
 						ErrorPolicy:      tmplspec.AggregationPolicy{Kind: tmplspec.AggregationKindBestEffort},
 					},
-					// @deliberate: Retry once per `flaky` error before the runtime
-					// gives up. The stub keeps returning error so the
-					// node eventually fails; F2 only needs the first
-					// retry-after-error dispatch to assert against.
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"stub/flaky": {Policy: []node.PolicyAction{{Action: "retry", Count: 2}}},
 					},
@@ -104,9 +73,6 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 	parentNode := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parentNode, "fan-parent node missing")
 
-	// @deliberate: Wait for at least two dispatches for the same child (original +
-	// retry). The retry dispatch is the witness for the recovery-aware
-	// fields.
 	var retryObs *scenarioStubObservedRetry
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
@@ -115,8 +81,6 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 			if o.NodeType == "fan-parent" {
 				dispatches++
 			}
-			// @deliberate: The retry dispatch carries prior_dispatch_id populated by
-			// the runtime's retry path.
 			if o.PriorDispatchID != "" && o.PriorDispatchDisposition == genv1.PriorDispatchDisposition_PRIOR_RETRY_AFTER_ERROR {
 				retryObs = &scenarioStubObservedRetry{
 					DispatchID:  o.DispatchID,
@@ -136,10 +100,6 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 	require.NotEqual(t, retryObs.DispatchID, retryObs.PriorID,
 		"retry dispatch id must differ from prior dispatch id")
 
-	// @deliberate: The retry stays within the same partition RunScope: assert by
-	// counting distinct run_scope_id values across all rimsky_node_runs
-	// rows for the fan-parent node. Even with retries the original +
-	// successor rows live in the SAME partition RunScope.
 	var distinctScopes int
 	h.QueryRowSQL(`
 		SELECT COUNT(DISTINCT r.run_scope_id)
@@ -151,7 +111,6 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 	require.Equal(t, 1, distinctScopes,
 		"retry dispatches must stay within the same partition RunScope")
 
-	// @deliberate: Multiple dispatches for the partition child via retry.
 	var totalRuns int
 	h.QueryRowSQL(`
 		SELECT COUNT(*)
@@ -164,9 +123,6 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 		"retry should produce at least two rimsky_node_runs rows for the partition child")
 }
 
-// scenarioStubObservedRetry captures the per-retry-dispatch fields for
-// the F2 retry-after-error assertion. Local helper struct so the
-// scenarios package doesn't leak a runtime-internal type.
 type scenarioStubObservedRetry struct {
 	DispatchID  string
 	PriorID     string

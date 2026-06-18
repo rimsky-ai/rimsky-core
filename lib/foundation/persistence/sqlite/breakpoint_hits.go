@@ -24,14 +24,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// breakpointHitsImpl is the SQLite-backed persistence.BreakpointHitTable
-// — append-only ledger of breakpoint matches per concept:breakpoint.
-// Aspect-type pattern; mirrors the postgres-side shape.
 type breakpointHitsImpl tablesImpl
 
 var _ persistence.BreakpointHitTable = (*breakpointHitsImpl)(nil)
 
-// BreakpointHits returns the sqlite BreakpointHitTable impl.
 func (s *tablesImpl) BreakpointHits() persistence.BreakpointHitTable {
 	return (*breakpointHitsImpl)(s)
 }
@@ -41,8 +37,6 @@ func (b *breakpointHitsImpl) q(tx persistence.Tx) querier { return (*tablesImpl)
 const sqliteBreakpointHitCols = `seq, id, breakpoint_id, instance_id, node_run_id, frame_id,
 	checkpoint, mode, snapshot, hit_at, resumed_at, resumed_by_key, resume_overlay`
 
-// Create inserts a hit row. Returns (id, seq) per the interface contract.
-// SQLite supports RETURNING (modernc.org/sqlite ships SQLite 3.35+).
 func (b *breakpointHitsImpl) Create(ctx context.Context, hit persistence.BreakpointHitRow, tx persistence.Tx) (shared.UUID, int64, error) {
 	ex := b.q(tx)
 	id := hit.ID
@@ -89,7 +83,6 @@ func (b *breakpointHitsImpl) Create(ctx context.Context, hit persistence.Breakpo
 	return outID, seq, nil
 }
 
-// Get returns the hit by id; (nil, nil) on not-found.
 func (b *breakpointHitsImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.BreakpointHitRow, error) {
 	ex := b.q(tx)
 	row := ex.QueryRowContext(ctx,
@@ -106,7 +99,6 @@ func (b *breakpointHitsImpl) Get(ctx context.Context, id shared.UUID, tx persist
 	return &out, nil
 }
 
-// ListSinceForInstance pages forward through every hit (resumed or not).
 func (b *breakpointHitsImpl) ListSinceForInstance(ctx context.Context, instanceID shared.UUID, sinceSeq int64, limit int, tx persistence.Tx) ([]persistence.BreakpointHitRow, error) {
 	ex := b.q(tx)
 	if limit <= 0 {
@@ -125,7 +117,6 @@ func (b *breakpointHitsImpl) ListSinceForInstance(ctx context.Context, instanceI
 	return scanSqliteBreakpointHits(rows)
 }
 
-// ListSinceForBreakpoint pages forward through every hit for the breakpoint.
 func (b *breakpointHitsImpl) ListSinceForBreakpoint(ctx context.Context, bpID shared.UUID, sinceSeq int64, limit int, tx persistence.Tx) ([]persistence.BreakpointHitRow, error) {
 	ex := b.q(tx)
 	if limit <= 0 {
@@ -144,7 +135,6 @@ func (b *breakpointHitsImpl) ListSinceForBreakpoint(ctx context.Context, bpID sh
 	return scanSqliteBreakpointHits(rows)
 }
 
-// ListUnresumedForBreakpoint returns oldest-first unresumed hits.
 func (b *breakpointHitsImpl) ListUnresumedForBreakpoint(ctx context.Context, bpID shared.UUID, tx persistence.Tx) ([]persistence.BreakpointHitRow, error) {
 	ex := b.q(tx)
 	rows, err := ex.QueryContext(ctx,
@@ -159,8 +149,6 @@ func (b *breakpointHitsImpl) ListUnresumedForBreakpoint(ctx context.Context, bpI
 	return scanSqliteBreakpointHits(rows)
 }
 
-// Resume sets resumed_at/by_key/overlay (idempotently — replay returns
-// nil; missing row returns shared.ErrBreakpointHitNotFound).
 func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey string, overlay map[string]any, tx persistence.Tx) error {
 	ex := b.q(tx)
 	var overlayArg any
@@ -187,8 +175,6 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 	if n == 1 {
 		return nil
 	}
-	// @deliberate: zero rows could mean missing or already-resumed; probe to
-	// distinguish ErrBreakpointHitNotFound from idempotent replay.
 	var resumedAt sql.NullString
 	err = ex.QueryRowContext(ctx,
 		`SELECT resumed_at FROM rimsky_breakpoint_hits WHERE id = ?`, id.String()).Scan(&resumedAt)
@@ -198,23 +184,12 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 		}
 		return fmt.Errorf("sqlite.breakpointHits.resume.probe: %w", err)
 	}
-	// @deliberate: row exists with resumed_at set — idempotent replay returns nil.
 	return nil
 }
 
-// AutoResumeStale resumes every unresumed hit whose breakpoint has
-// overflow_policy='auto_resume_after_ttl' and whose ttl has elapsed.
-// SQLite's UPDATE…FROM is supported as of 3.33; modernc.org/sqlite ships
-// a current SQLite, so the postgres-style join is portable.
 func (b *breakpointHitsImpl) AutoResumeStale(ctx context.Context, now time.Time, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	nowStr := now.UTC().Format(timeLayoutFixedNanos)
-	// @constraint: BOTH sides of `<=` must pass through datetime(). datetime()
-	// emits space-separated "YYYY-MM-DD HH:MM:SS"; comparing it as TEXT against
-	// the fixed-width 'T'-separated parameter reads as expired for same-day
-	// expiries (' ' < 'T' in ASCII), collapsing any TTL under ~24h to zero.
-	// @deliberate: sub-select on seq (PRIMARY KEY) rather than UPDATE…FROM, for
-	// portability across modernc.org/sqlite versions.
 	res, err := ex.ExecContext(ctx,
 		`UPDATE rimsky_breakpoint_hits
 		    SET resumed_at = ?, resumed_by_key = 'sweeper'
@@ -239,7 +214,6 @@ func (b *breakpointHitsImpl) AutoResumeStale(ctx context.Context, now time.Time,
 	return int(n), nil
 }
 
-// DropOldest deletes the oldest unresumed rows beyond keepCount.
 func (b *breakpointHitsImpl) DropOldest(ctx context.Context, bpID shared.UUID, keepCount int, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	if keepCount < 0 {
@@ -267,10 +241,6 @@ func (b *breakpointHitsImpl) DropOldest(ctx context.Context, bpID shared.UUID, k
 	return int(n), nil
 }
 
-// SweepOrphanedUnresumed deletes unresumed hits older than `cutoff`
-// whose parent breakpoint's overflow_policy is NOT
-// `auto_resume_after_ttl`. Mirror of the postgres impl — see
-// foundation/persistence/postgres/breakpoint_hits.go for the rationale.
 func (b *breakpointHitsImpl) SweepOrphanedUnresumed(ctx context.Context, cutoff time.Time, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	cutoffStr := cutoff.UTC().Format(timeLayoutFixedNanos)
@@ -296,7 +266,6 @@ func (b *breakpointHitsImpl) SweepOrphanedUnresumed(ctx context.Context, cutoff 
 	return int(n), nil
 }
 
-// UnresumedCount returns the number of unresumed hits.
 func (b *breakpointHitsImpl) UnresumedCount(ctx context.Context, bpID shared.UUID, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	var n int
@@ -308,25 +277,6 @@ func (b *breakpointHitsImpl) UnresumedCount(ctx context.Context, bpID shared.UUI
 	return n, nil
 }
 
-// HasUnresumedPauseHitForInstance reports whether the instance has at
-// least one pause-mode breakpoint hit that is currently BLOCKING a
-// runner — i.e. an unresumed hit whose `node_run_id` points at a
-// node-run row still in a non-terminal phase
-// (pending/active/held/parked). Drives the debug-channel gate; runs
-// inside the request tx so the gate-check and the override mutation
-// share one snapshot.
-//
-// The phase-non-terminal join is what makes the predicate match the
-// `concept:breakpoint` and STORY-debug-channel language ("blocking a
-// runner"). A stale hit row whose runner died and whose node-run
-// transitioned to phase=completed or phase=failed before heartbeat
-// reclamation cleaned the hit up is NOT a blocker — admitting it
-// would let the override fire while there is no actual debugger
-// session to overlay onto. A hit with node_run_id IS NULL (defensive;
-// the supervisor populates it when the hit fires) is similarly
-// excluded — without a target node-run we cannot establish that a
-// runner is parked.
-//
 // @concept: breakpoint
 func (b *breakpointHitsImpl) HasUnresumedPauseHitForInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (bool, error) {
 	ex := b.q(tx)

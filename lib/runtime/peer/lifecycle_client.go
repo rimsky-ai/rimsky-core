@@ -14,20 +14,14 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// LifecycleClient is a remote-gRPC implementation of the rimsky-side
-// LifecycleSubscriber interface. One LifecycleClient per peer that
-// declares the lifecycle_subscriber protocol in rimsky.yml.
 type LifecycleClient struct {
 	name string
 	conn *grpc.ClientConn
 	rpc  genv1.LifecycleSubscriberClient
 }
 
-// @deliberate: compile-time interface check — fails compilation when
-// *LifecycleClient no longer satisfies locks.LifecycleSubscriber.
 var _ locks.LifecycleSubscriber = (*LifecycleClient)(nil)
 
-// Name returns the operator-configured peer name.
 func (c *LifecycleClient) Name() string { return c.name }
 
 func (c *LifecycleClient) OnTemplateRegistered(ctx context.Context, req locks.OnTemplateRegisteredRequest) error {
@@ -111,7 +105,6 @@ func (c *LifecycleClient) OnRunScopeTerminal(ctx context.Context, req locks.OnRu
 	return nil
 }
 
-// Close releases the gRPC connection.
 func (c *LifecycleClient) Close() {
 	if c.conn != nil {
 		_ = c.conn.Close()

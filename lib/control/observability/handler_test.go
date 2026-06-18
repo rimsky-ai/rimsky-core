@@ -22,8 +22,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// newSQLiteDriver builds an in-memory-ish sqlite driver with migrations
-// applied; ready to seed.
 func newSQLiteDriver(t *testing.T) persistence.Database {
 	t.Helper()
 	dir := t.TempDir()
@@ -41,7 +39,6 @@ func newSQLiteDriver(t *testing.T) persistence.Database {
 	return d
 }
 
-// newRouter wires the observability handlers under /v1/observability.
 func newRouter(t *testing.T, deps observability.Deps) http.Handler {
 	t.Helper()
 	r := chi.NewRouter()
@@ -237,8 +234,6 @@ func TestHandler_SystemSummary_DispatchCounts(t *testing.T) {
 	}
 }
 
-// nopProber returns an unreachable response for every probe — fits the
-// handler tests that don't need a real peer.
 type nopProber struct{}
 
 func (*nopProber) ProbeExecutor(_ context.Context, _, _, _ string) (*observability.ObservabilityCapabilities, error) {

@@ -2,29 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package scopesconflict is the full-stack proof for
-// S-claimproducer-scopesconflict-wired: a producer advertising a
-// NON-TRIVIAL ScopesConflict predicate (prefix-containment) must be
-// consulted by rimsky during claim acquisition so two writers whose
-// scopes overlap — but are NOT byte-equal — cannot both hold the claim,
-// both on the top-level acquisition path and the fan-out sub-claim path.
-//
-// RED CONTRACT (this pass): rimsky's `evaluateClaimScopeConflict` compares
-// scopes byte-equal only and never calls the producer's ScopesConflict,
-// and `AcquireSubClaims` runs no conflict check at all. So today BOTH
-// overlapping (non-byte-equal) writers acquire, and BOTH overlapping
-// sub-claim rows commit — the single-acquirer / single-sub-claim
-// assertions below FAIL. A later pass wires the producer's ScopesConflict
-// into both paths (invariant 4b) and turns this test green.
-//
-// The overlap producer (test/overlapproducer) runs as a CONTAINER on the
-// shared docker network, reached from rimsky by a stable in-network alias
-// that is up BEFORE rimsky boots — so rimsky's eager startup Capabilities
-// handshake reaches it deterministically (an in-process producer behind
-// the host-port tunnel races rimsky's startup dial and flakes). The
-// rimsky stack is a real all-in-one container on real Postgres
-// (testcontainers); run `make core-images` + `make service-images`
-// first.
 package scopesconflict
 
 import (
@@ -39,24 +16,14 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// overlapProducerName is the claim-producer name both sub-cases declare
-// in their templates and register the overlap producer container under.
 const overlapProducerName = "overlap"
 
-// terminalStates are node states the scheduler considers terminal for the
-// success path. A held subgraph that commits leaves its members at
-// "fresh"; an errored node settles "failed".
 var terminalStates = map[string]bool{"fresh": true, "failed": true}
 
 func TestScopesConflict_OverlapHeldOff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// @constraint: producer and executor stub must come up on the shared
-	// network BEFORE rimsky — rimsky eager-dials its declared producers for
-	// a Capabilities handshake at startup and exits non-zero if any is
-	// unreachable. One overlap producer + one rimsky stack back BOTH
-	// sub-cases.
 	netName := harness.NewNetwork(ctx, t)
 	producerEndpoint := harness.StartOverlapClaimProducerOnNetwork(ctx, t, netName, "overlap-producer")
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
@@ -80,17 +47,6 @@ func TestScopesConflict_OverlapHeldOff(t *testing.T) {
 	})
 }
 
-// runTopLevelOverlapCase drives an instance where an acquirer durably
-// holds a claim on the parent prefix `tenant/a` (held subgraph → Commit →
-// committed+durable row lingering in the conflict set) and a contender
-// then acquires the CHILD scope `tenant/a/x`. The two scopes overlap by
-// the producer's prefix predicate but are NOT byte-equal.
-//
-// Assertion: exactly ONE acquired claim_scope row for the overlap
-// producer exists on this instance — the contender was held off because
-// rimsky consulted the producer's ScopesConflict. Today (RED) the
-// contender ALSO acquires (byte-equal-only check misses the overlap), so
-// the count is 2 and this assertion fails.
 func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEndpoint, pool *pgxpool.Pool) {
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
@@ -98,7 +54,6 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 			"version":          "1",
 			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
-				// @deliberate: acquirer durably holds the PARENT-prefix scope `tenant/a`.
 				{
 					"type":     "acquirer",
 					"executor": "stub",
@@ -112,9 +67,6 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 						},
 					},
 				},
-				// @deliberate: verifier co-holds `held`, succeeds → auto-terminal
-				// Commit promotes the acquirer's durable row to
-				// committed+durable, which lingers in the conflict set.
 				{
 					"type":     "verifier",
 					"executor": "stub",
@@ -125,10 +77,6 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 						{"node": "acquirer", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false},
 					},
 				},
-				// @deliberate: contender acquires the CHILD scope `tenant/a/x`
-				// AFTER the held subgraph commits (subscribes to the
-				// verifier's terminal). `tenant/a` ⊏ `tenant/a/x` overlap by
-				// the producer's prefix predicate, NOT byte-equal.
 				{
 					"type":     "contender",
 					"executor": "stub",
@@ -149,23 +97,9 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 
 	instanceID := createInstance(t, ep, templateID, "ck-scopes-conflict-top-level")
 
-	// @constraint: the held subgraph must settle first (acquirer + verifier
-	// fresh) so the durable claim row is committed and occupying `tenant/a`
-	// in the conflict set before the contender attempts.
 	waitForNodeTerminal(t, ep, instanceID, "acquirer", 120*time.Second)
 	waitForNodeTerminal(t, ep, instanceID, "verifier", 120*time.Second)
 
-	// @deliberate: poll for the two-writer violation across a window rather
-	// than reading once — the contender's own committed claim is
-	// subgraph-lifetime and could be reaped, so a single late read could
-	// miss it. The moment two acquired rows coexist is the violation. If
-	// the window elapses without ever seeing two, the steady state is the
-	// single durable holder — assert exactly one. Today (RED) the
-	// contender's `tenant/a/x` is not byte-equal to the durable `tenant/a`,
-	// so it acquires its OWN claim row alongside — TWO acquired rows. The
-	// wired behavior (later pass) consults the producer's ScopesConflict
-	// (`tenant/a` ⊏ `tenant/a/x`), bails the contender BEFORE its row is
-	// INSERTed, and leaves only the durable acquirer's row.
 	deadline := time.Now().Add(30 * time.Second)
 	got := 1
 	for time.Now().Before(deadline) {
@@ -183,15 +117,6 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 	}
 }
 
-// runFanOutOverlapCase drives an instance whose fan-out parent splits into
-// two OVERLAPPING sub-scopes (`tenant/a` and `tenant/a/x`, prefix-
-// overlapping, NOT byte-equal). The acquisition tx must NOT commit both
-// overlapping sub-claim rows — the conflicting one is rejected.
-//
-// Assertion: at most ONE sub-claim row (parent_claim_handle_id NOT NULL)
-// for the overlap producer exists on this instance. Today (RED)
-// AcquireSubClaims runs no conflict check, so BOTH overlapping sub-claim
-// rows commit (count 2) and this assertion fails.
 func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEndpoint, pool *pgxpool.Pool) {
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
@@ -210,9 +135,6 @@ func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEn
 							"alias":    "data",
 						},
 					},
-					// @deliberate: SplitScope keys `a` and `a/x` → sub-scopes
-					// `tenant/a` and `tenant/a/x`, which overlap by the prefix
-					// predicate.
 					"fan_out": map[string]any{
 						"claim":             "data",
 						"partition_request": `{"partition_keys":["a","a/x"]}`,
@@ -225,19 +147,6 @@ func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEn
 
 	instanceID := createInstance(t, ep, templateID, "ck-scopes-conflict-fanout")
 
-	// @deliberate: poll until the fan-out has been driven (either committed
-	// sub-claims appear — the RED path — or a bounded settle window elapses
-	// during which the wired path would have aborted), then assert fewer
-	// than both committed. The observable is the COMMITTED sub-claim rows
-	// the acquisition tx leaves; the spec's literal contract is that the
-	// acquisition tx must NOT commit BOTH overlapping sub-claim rows, so we
-	// fail when both are present. In RED the two rows appear within a few
-	// ticks and fail this gate (AcquireSubClaims conflict-checks NOTHING,
-	// so it INSERTs BOTH overlapping sub-scopes and the tx commits both);
-	// in the wired path the window elapses with zero rows and the gate
-	// passes (the acquisition tx aborts when the second overlapping
-	// sub-scope conflicts, so NEITHER sibling sub-claim row commits per
-	// invariant 10 atomicity).
 	deadline := time.Now().Add(45 * time.Second)
 	got := 0
 	for time.Now().Before(deadline) {
@@ -255,11 +164,6 @@ func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEn
 	}
 }
 
-// countAcquiredClaimScopeRows counts the acquired top-level claim_scope
-// rows (NOT sub-claims) for the overlap producer on the given instance —
-// rows that have a bound address (Open succeeded) and no parent (not a
-// fan-out sub-claim). claim_handles link to an instance via
-// holder_node_id → rimsky_nodes.instance_id.
 func countAcquiredClaimScopeRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, instanceID string) int {
 	t.Helper()
 	var n int
@@ -279,8 +183,6 @@ func countAcquiredClaimScopeRows(ctx context.Context, t *testing.T, pool *pgxpoo
 	return n
 }
 
-// countSubClaimRows counts the fan-out sub-claim rows (parent_claim_handle_id
-// NOT NULL) for the overlap producer on the given instance.
 func countSubClaimRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, instanceID string) int {
 	t.Helper()
 	var n int
@@ -299,8 +201,6 @@ func countSubClaimRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, in
 	return n
 }
 
-// deployTemplate POSTs body to /templates then deploys it; returns the
-// template id.
 func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/templates", body)
@@ -323,10 +223,6 @@ func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any
 	return resp.TemplateID
 }
 
-// createInstance POSTs a new instance and returns its instance_id.
-// Instance creation is idle post-spec; the helper follows up with an empty
-// message so the structural roots wake.
-//
 // @decision: test-harness-create-instance-wakes-roots-after-create
 func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
@@ -351,8 +247,6 @@ func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanc
 	return resp.InstanceID
 }
 
-// waitForNodeTerminal polls the node-state observability route until the
-// node reaches a terminal state; fails hard on deadline.
 func waitForNodeTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)

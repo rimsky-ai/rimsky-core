@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — pins spec §10.2 "Concurrent-frame correctness":
-//
-//   - Node `worker_a` dispatch hits a pause-mode breakpoint (matcher
-//     filters on node_type=worker_a) and is parked at the checkpoint.
-//   - Node `worker_b`, dispatched in the same instance with no matcher
-//     against it, proceeds normally and reaches terminal/success.
-//   - Once `worker_a`'s breakpoint hit is resumed, `worker_a` also
-//     reaches terminal.
-//
-// The intent is to verify breakpoint blocking is per-dispatch, not
-// per-instance — a paused dispatch does not stall sibling dispatches.
-// The supervisor's concurrency in the scenario harness is 4, so both
-// runners can hold rows simultaneously.
-//
 // @concept: breakpoint
 
 package breakpoints
@@ -49,11 +35,6 @@ func TestConcurrentFrameCorrectness(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "bp-concurrent-frame", Version: "1",
-		// @deliberate: Coalesce so both root nodes (worker_a and worker_b) live in
-		// the SAME frame — that's the only mode in which both root
-		// dispatches can be in-flight concurrently. Under serial_queue
-		// each root gets its own frame and frames are dispatched one at
-		// a time, which would serialize worker_a (paused) and worker_b.
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker_a", Executor: "stub"},
@@ -67,7 +48,6 @@ func TestConcurrentFrameCorrectness(t *testing.T) {
 	})
 
 	iid := createInstanceWithPause(t, h, tid, "ck-concurrent-frame", map[string]any{})
-	// @deliberate: Breakpoint only matches worker_a; worker_b should be unaffected.
 	bpID := breakpointCreate(t, h, iid, map[string]any{
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": "worker_a"},
@@ -75,18 +55,11 @@ func TestConcurrentFrameCorrectness(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	// @deliberate: Wait for worker_a's hit to land. This proves the breakpoint
-	// caught its dispatch.
 	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
 
-	// @deliberate: While worker_a is paused, worker_b should still reach Fresh —
-	// the breakpoint does not match worker_b.
 	nb := h.FindNode(iid, "worker_b")
 	require.NotNil(t, nb)
 	if !h.WaitForNodeState(nb.ID, cascade.NodeStateFresh, 15*time.Second) {
-		// @deliberate: Diagnostic: dump the run rows + their current phase/state for
-		// the instance so a regression here surfaces what's blocking
-		// worker_b's progress.
 		h.QuerySQL(`
 			SELECT r.id::text, n.node_type, r.phase::text, r.state::text, r.claimed_by
 			  FROM rimsky_node_runs r

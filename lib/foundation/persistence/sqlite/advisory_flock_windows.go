@@ -14,10 +14,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// flockTry opens (creating if absent) the lock file at path and attempts
-// a non-blocking exclusive LockFileEx on the fresh handle. Returns
-// (nil, false, nil) when another holder — in this process or any other —
-// already holds the lock.
 func flockTry(path string) (*os.File, bool, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
@@ -37,7 +33,6 @@ func flockTry(path string) (*os.File, bool, error) {
 	return f, true, nil
 }
 
-// flockRelease unlocks and closes a file returned by flockTry.
 func flockRelease(f *os.File) error {
 	ol := new(windows.Overlapped)
 	unlockErr := windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, ol)

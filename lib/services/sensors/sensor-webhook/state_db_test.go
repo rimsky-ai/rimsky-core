@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// state_db_test.go — pgtest-backed coverage for sensor-webhook's state
-// persistence. Confirms that publisher-subscription rows + last-
-// idempotency-key survive a stateDB reopen.
-
 package main
 
 import (
@@ -15,11 +11,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// TestSubscribe_RestartReplay_PreloadsLastIdempotency drives the path
-// issue #2 of the 2026-05-17 review flagged: Subscribe must look up
-// the persisted last-idempotency-key via GetSubscription before
-// publishing the Watch into the in-memory map, otherwise dedup
-// against webhook-provider retries breaks across sensor restarts.
 func TestSubscribe_RestartReplay_PreloadsLastIdempotency(t *testing.T) {
 	ctx := context.Background()
 	dsn := harness.StartFreshPostgres(ctx, t)

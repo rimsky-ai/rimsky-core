@@ -13,10 +13,6 @@ import (
 	"os"
 )
 
-// RunAuthStatus implements `rimsky auth status`. Tolerates a missing
-// API key: in anonymous mode the server admits unauthenticated
-// requests (synthetic admin); in authenticated mode the call returns
-// 401 and the CLI surfaces that.
 func RunAuthStatus(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth status", flag.ContinueOnError)
 	var endpointFlag, keyFlag string

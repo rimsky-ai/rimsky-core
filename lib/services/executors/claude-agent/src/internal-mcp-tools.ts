@@ -9,42 +9,11 @@ import {
   AttributesSetInput,
 } from "./attributes-tools.js";
 
-/**
- * Input schemas + descriptors for the MCP tools exposed to agentic
- * subprocesses on the internal callback endpoint.
- *
- * Spec: docs/specs/2026-04-25-stores-redesign-design.md §12, §16.1.
- *
- * Tool surface:
- *   - `report_complete` — terminal success. Optional `attributes_delta`
- *     for the terminal-final writeback pattern (empty for the
- *     incremental-via-callback pattern). The legacy `result` field has
- *     been retired.
- *   - `report_blocked` — settles the dispatch with an `Outcome{Error}`
- *     carrying `error_class: "agent/blocked"` (post-E.2 the pre-rename
- *     Blocked variant collapsed into Error with the reserved
- *     `agent/blocked` class; 2026-05-23 the class moved under the
- *     hierarchical `agent/*` prefix per the signal-taxonomy spec).
- *   - `report_error`   — settles the dispatch with an `Outcome{Error}`
- *     carrying the supplied `error_class`.
- *   - `attributes_read` / `attributes_set` — per spec §12.5; defined in
- *     `attributes-tools.ts` and re-exported here.
- */
 export const ReportCompleteInput = z.object({
   token: z.string(),
-  /**
-   * Optional terminal-final writeback. When omitted, the executor used
-   * the incremental-via-callback pattern (one or more `attributes_set`
-   * calls during the run).
-   */
   attributes_delta: z.record(z.unknown()).optional(),
   changed: z.boolean(),
   change_summary: z.string().nullable().optional(),
-  /**
-   * Base64-encoded Ed25519 sign-off signatures, supplied when the node
-   * requires sign-offs (`cli.required_signoffs`). A flat bag — the
-   * executor matches each required `(public_key, path)` against it.
-   */
   signoffs: z.array(z.string()).optional(),
 });
 
@@ -60,11 +29,6 @@ export const ReportErrorInput = z.object({
   payload: z.unknown().optional(),
 });
 
-/**
- * Allowed snake_case ParkReason values: the closed two-value set
- * per spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
- * §ParkReason collapse. Mirrors proto:executor.proto::ParkReason.
- */
 export const PARK_REASONS = [
   "await_callback",
   "snooze",

@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N7 scenario — claim_terminal_record_creation.
-//
-// At every ClaimProducer terminal (Commit / Abandon / force-cancelled),
-// the supervisor's terminal-decision engine calls
-// runtime.WriteClaimTerminalLineage with the per-claim payload bytes
-// plus the per-row `outcome` column populated from the
-// LineageOutcome* constants.
 package lineage
 
 import (
@@ -66,7 +59,6 @@ func TestClaimTerminalRecordCreation(t *testing.T) {
 
 func TestClaimTerminalRecordCreation_HashBytesIsStable(t *testing.T) {
 	t.Parallel()
-	// @deliberate: Pin the hash convention so downstream consumers can rely on it.
 	got1 := runtime.HashBytes([]byte(`{"k":"v"}`))
 	got2 := runtime.HashBytes([]byte(`{"k":"v"}`))
 	if got1 != got2 {

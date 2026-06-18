@@ -2,16 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// lineage.go — F6. Lineage query surface.
-//
-//   - GET /lineage/runs/{run_id}
-//   - GET /lineage/runs/{run_id}/ancestors?depth=N
-//   - GET /lineage/runs/{run_id}/descendants?depth=N
-//   - GET /lineage/claims/{claim_handle_id}
-//   - GET /lineage/claims/{claim_handle_id}/ancestors?depth=N
-//   - GET /lineage/by-source/{source_type}/{source_id}
-//   - GET /lineage/by-producer/{executor_name}?version=...
-//
 // @concept: lineage-record
 //
 // The lineage projection is rebuildable from `rimsky_events` +
@@ -35,18 +25,8 @@ import (
 )
 
 const (
-	// @constraint: lineageWalkDefaultDepth is the depth used when the caller omits
-	// the `?depth=` query param. Modest by design; deep walks are
-	// expensive and operator-friendly defaults beat surprise timeouts.
 	lineageWalkDefaultDepth = 3
-	// @constraint: lineageWalkMaxDepth caps the depth a single request can request.
-	// Per spec §Content lineage / Query surface, walks bounded at 50.
 	lineageWalkMaxDepth = 50
-	// @constraint: lineageWalkPerFrontierLimit caps the per-frontier-id descendant
-	// query so a single hot frontier id can't blow the projection
-	// scan. 1000 covers realistic fan-out widths; truly oversized
-	// fan-outs should use the OpenLineage emitter (canonical bulk
-	// walker) instead of this operator-facing endpoint.
 	lineageWalkPerFrontierLimit = 1000
 )
 
@@ -61,22 +41,10 @@ func registerLineageRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/admin/lineage/prune", gate(deps, "lineage:prune", handleLineagePrune(deps)))
 }
 
-// pruneLineageRequest is the body of POST /admin/lineage/prune.
 type pruneLineageRequest struct {
-	// Before is an RFC3339 timestamp. Records with observed_at strictly
-	// older than this are deleted.
 	Before string `json:"before"`
 }
 
-// handleLineagePrune deletes lineage rows older than `before`. Wraps
-// LineageTable.DeleteOlderThan so operators can prune the projection
-// from the CLI (G4) without reaching for SQL. Returns `{deleted: N,
-// before: <timestamp>}` on success.
-//
-// Under `?dry_run=true` it elides the delete and instead returns the
-// would-prune count via LineageTable.CountOlderThan — the identical
-// predicate — so operators get a true preview:
-// `{dry_run: true, would_have_pruned: {before, count}}`.
 func handleLineagePrune(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var body pruneLineageRequest
@@ -93,13 +61,6 @@ func handleLineagePrune(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "before must be RFC3339 timestamp: "+err.Error())
 			return
 		}
-		// @constraint: dry-run: return the real would-prune count by running the same
-		// "older than cutoff AND run/claim_handle no longer present"
-		// predicate as the live delete — CountOlderThan is a true
-		// preview, not an approximation. We resolve the mode explicitly
-		// (rather than via WriteDryRunResponse's internal check) so the
-		// count query only runs in dry-run mode, then write the synthetic
-		// envelope via WriteDryRunResponseForced.
 		if ModeFromContext(req.Context()) == authModeDryRun {
 			n, err := deps.Persist.Lineage().CountOlderThan(req.Context(), cutoff)
 			if err != nil {
@@ -124,10 +85,6 @@ func handleLineagePrune(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// lineageRecordItem is the JSON projection of persistence.LineageRow.
-// `record` is forwarded as-is — the per-kind shape is documented in
-// spec §Content lineage and the consumer (CLI, OpenLineage emitter)
-// decodes it.
 type lineageRecordItem struct {
 	ID         string          `json:"id"`
 	RecordKind string          `json:"record_kind"`
@@ -148,7 +105,6 @@ func toLineageItem(r persistence.LineageRow) lineageRecordItem {
 	}
 }
 
-// parseDepth returns the requested walk depth, defaulted and capped.
 func parseDepth(req *http.Request) int {
 	s := req.URL.Query().Get("depth")
 	if s == "" {
@@ -164,8 +120,6 @@ func parseDepth(req *http.Request) int {
 	return n
 }
 
-// handleLineageRun returns the most recent leaf_run record for run_id.
-// Spec §Query surface / GET /lineage/runs/{run_id}.
 func handleLineageRun(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		runID, err := uuid.Parse(chi.URLParam(req, "run_id"))
@@ -182,18 +136,10 @@ func handleLineageRun(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, "lineage record not found")
 			return
 		}
-		// @constraint: GetByRunID is observed_at ASC; the caller wants the most
-		// recent terminal record for the run.
 		writeJSON(w, http.StatusOK, toLineageItem(rows[len(rows)-1]))
 	}
 }
 
-// handleLineageRunAncestors walks backward from `run_id` resolving via
-// substitution refs and held-claim writers. For V1 the walk is
-// approximated by listing all leaf_run rows whose `record->>'run_id'`
-// matches refs in the seed run — bounded by `depth`. Full graph
-// traversal is the OpenLineage subscriber's domain; this endpoint is a
-// thin operator surface.
 func handleLineageRunAncestors(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		runID, err := uuid.Parse(chi.URLParam(req, "run_id"))
@@ -242,7 +188,6 @@ func handleLineageRunDescendants(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// lineageWalkDirection selects the BFS walk direction.
 type lineageWalkDirection int
 
 const (
@@ -250,28 +195,6 @@ const (
 	lineageWalkDirectionDescendants
 )
 
-// walkLineageRuns performs a BFS over leaf_run records up to `depth`,
-// resolving links via the leaf_run record's `substitution_refs` field
-// for ancestor walks and via the `parent_run_id` JSONB path for
-// descendant walks.
-//
-// Both directions emit ONLY relatives of the seed — never the seed's
-// own row. `GET /lineage/runs/{run_id}` is the surface for "the run
-// itself"; `/ancestors` and `/descendants` return strictly the
-// neighborhood.
-//
-// Ancestor direction: for each frontier id, look up the row, extract
-// its `substitution_refs` (upstream run ids), and emit the ancestor's
-// own lineage row plus enqueue the ancestor id for the next BFS level.
-//
-// Descendant direction: for each frontier id, query lineage rows whose
-// `record->>'parent_run_id'` matches that id directly. The query is
-// implemented as a JSONB key lookup (postgres) / `json_extract` filter
-// (sqlite) on `persistence.LineageTable.QueryByParentRunID`, which
-// scales with the fan-out under each frontier id rather than the size
-// of the entire per-instance projection. The pre-2026-05-17 code
-// paged the per-instance projection at LIMIT 200 and filtered in Go,
-// silently truncating deeper trees.
 func walkLineageRuns(
 	ctx context.Context, deps AppDeps,
 	seed shared.UUID, depth int, dir lineageWalkDirection,
@@ -284,10 +207,6 @@ func walkLineageRuns(
 		for _, id := range frontier {
 			switch dir {
 			case lineageWalkDirectionAncestors:
-				// @constraint: ancestor direction emits ONLY upstream runs, never the
-				// frontier id's own row. The seed must not appear in its
-				// own ancestors set; each ancestor shows up exactly once
-				// (the descendant that pulled it in via substitution_refs).
 				frontierRecords, err := deps.Persist.Lineage().GetByRunID(ctx, id)
 				if err != nil {
 					return nil, err
@@ -302,8 +221,6 @@ func walkLineageRuns(
 						if err != nil {
 							return nil, err
 						}
-						// @constraint: append the most recent terminal record for the
-						// ancestor run; GetByRunID is observed_at ASC.
 						if len(ancestorRows) > 0 {
 							out = append(out, ancestorRows[len(ancestorRows)-1])
 						}
@@ -311,10 +228,6 @@ func walkLineageRuns(
 					}
 				}
 			case lineageWalkDirectionDescendants:
-				// @constraint: descendant direction emits ONLY children, never the
-				// frontier id's own row. The seed must not appear in its
-				// own descendants set; each child shows up exactly once
-				// (the parent that pulled it in).
 				children, err := deps.Persist.Lineage().QueryByParentRunID(ctx, id, lineageWalkPerFrontierLimit)
 				if err != nil {
 					return nil, err
@@ -338,14 +251,6 @@ func walkLineageRuns(
 	return out, nil
 }
 
-// extractSubstitutionRefRunIDs reads the `substitution_refs` slice of
-// a leaf_run record and returns the upstream run ids referenced. The
-// walker matches by `source_version_or_id` (per spec §F6 ancestors
-// step 2). Only entries whose `source_version_or_id` is a parseable
-// UUID participate in the run-ancestor walk; directive-shape entries
-// (kind=`attribute` / `event`, whose version_or_id is the attribute /
-// event name) are silently skipped — they're informational rather
-// than lineage-link material.
 func extractSubstitutionRefRunIDs(record json.RawMessage) []shared.UUID {
 	if len(record) == 0 {
 		return nil
@@ -384,8 +289,6 @@ func extractRunIDFromRecord(record json.RawMessage) shared.UUID {
 	return shared.UUID{}
 }
 
-// handleLineageClaim returns the most recent claim_terminal record for
-// the given claim_handle_id.
 func handleLineageClaim(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		claimID, err := uuid.Parse(chi.URLParam(req, "claim_handle_id"))
@@ -406,8 +309,6 @@ func handleLineageClaim(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleLineageClaimAncestors walks the claim-tree backward via the
-// `sub_claim_handle_ids` chain in the claim_terminal record.
 func handleLineageClaimAncestors(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		claimID, err := uuid.Parse(chi.URLParam(req, "claim_handle_id"))
@@ -461,12 +362,6 @@ func handleLineageClaimAncestors(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleLineageBySource implements the reverse lookup. Operators ask
-// "which leaf-run records cite this (source_kind, source_version_or_id)
-// as a substitution ref?". V1 implementation queries the lineage
-// projection and filters in Go — the postgres GIN-index acceleration
-// noted in the plan is a follow-up under K (OpenLineage subscriber)
-// where bulk traversals are the primary workload.
 func handleLineageBySource(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		sourceKind := chi.URLParam(req, "source_type")
@@ -515,8 +410,6 @@ func recordMentionsSource(record json.RawMessage, kind, id string) bool {
 	return false
 }
 
-// handleLineageByProducer returns claim_terminal records emitted by the
-// named producer. Optional `?version=` narrows to a specific version_id.
 func handleLineageByProducer(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		producer := chi.URLParam(req, "executor_name")

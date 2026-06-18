@@ -2,10 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Package sweep reaps leaked staging directories — entries in the
-// store's side-table whose claim_id is no longer live in rimsky's
-// rimsky_claim_handles table AND whose CreatedAt is older than the
-// configured TTL.
 package sweep
 
 import (
@@ -15,14 +11,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/examples/atomic-staging-fs-producer/store"
 )
 
-// HandleSet is the abstraction over rimsky's live-claim-handle set.
-// Production wiring queries rimsky_claim_handles via Postgres; the
-// unit test fakes this with an in-memory set.
 type HandleSet interface {
 	Contains(claimID string) bool
 }
 
-// Sweeper drops leaked staging on a periodic tick.
 type Sweeper struct {
 	Store    *store.Store
 	Live     HandleSet
@@ -31,7 +23,6 @@ type Sweeper struct {
 	Logger   func(format string, args ...any)
 }
 
-// Run blocks until ctx is cancelled, sweeping every Interval.
 func (s *Sweeper) Run(ctx context.Context) error {
 	if s.Interval <= 0 {
 		s.Interval = 5 * time.Minute
@@ -56,8 +47,6 @@ func (s *Sweeper) Run(ctx context.Context) error {
 	}
 }
 
-// Tick performs one sweep pass against the current clock.
-// Public so the unit test can drive deterministic time.
 func (s *Sweeper) Tick(now time.Time) error {
 	entries, err := s.Store.Entries()
 	if err != nil {
@@ -67,10 +56,6 @@ func (s *Sweeper) Tick(now time.Time) error {
 		if s.Live.Contains(e.ClaimID) {
 			continue
 		}
-		// @deliberate: a young leak gets a TTL grace period before
-		// sweep — recently-created entries may still be mid-Open in
-		// another process; sweeping them eagerly would race the
-		// in-flight producer.
 		if now.Sub(e.CreatedAt) < s.TTL {
 			continue
 		}

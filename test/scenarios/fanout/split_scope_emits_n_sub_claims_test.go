@@ -2,24 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N2 scenario — split_scope_emits_n_sub_claims.
-//
-// At fan-out acquisition the supervisor calls ClaimProducer.SplitScope
-// and INSERTs one rimsky_claim_handles row per returned sub-scope
-// descriptor (with parent_claim_handle_id pointing at the parent).
-// Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Fan-out template DSL "Mechanics at dispatch" steps 2-3.
-//
-// This scenario validates the `FanOutPartitions` projection plus the
-// fan-out shape of the unified-dispatch input — the dispatcher builds
-// one `ChildExecutionInput` whose partitions map one-to-one onto the
-// producer's sub-claims and whose single child-run spec carries the
-// leaf executor + required stores. The unit-level coverage in
-// runtime/fanout_dispatch_test.go pins the projection rules; this
-// scenario exercises the additional contract that the per-partition
-// descriptor carries the sub-claim handle id + partition_key
-// one-to-one and the input addresses the parent run / node / frame.
 package fanout
 
 import (
@@ -45,9 +27,6 @@ func TestSplitScopeEmitsNSubClaims_InputProjectsOnePartitionPerSubScope(t *testi
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "ap-south-1", Address: json.RawMessage(`{"path":"d"}`)},
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "sa-east-1", Address: json.RawMessage(`{"path":"e"}`)},
 	}
-	// @deliberate: Build the input the same way the fan-out dispatch wrapper does:
-	// N partitions from the sub-claims, one child-run spec re-using the
-	// parent's node + the leaf executor + required stores.
 	in := runtime.ChildExecutionInput{
 		ParentRunID: parentRun,
 		FrameID:     frameID,

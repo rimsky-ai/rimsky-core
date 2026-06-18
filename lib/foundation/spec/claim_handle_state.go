@@ -6,20 +6,6 @@ package spec
 
 import "errors"
 
-// ClaimHandleState is the rimsky_claim_handles.state enum.
-//
-// active: currently held by a supervisor; liveness is observed via the
-// supervisor's outgoing dispatch RPC (sync) or the dispatch row's
-// last_progress_at (async).
-// committed: producer Commit fired; row preserved past terminal.
-// abandoned: producer Abandon fired (natural or force-cancel); row preserved.
-//
-// State transitions are claimant-guarded; revival transitions are not
-// permitted at the Go layer. See @blessed-invariant 4 (post-refactor
-// text) for the two guard shapes (active-row mutations carry the per-row
-// holder_supervisor_id guard; non-active-row deletions are guarded by
-// absence + the scheduler-tick advisory lock).
-//
 // @concept: claim-handle
 type ClaimHandleState string
 
@@ -29,9 +15,4 @@ const (
 	ClaimHandleStateAbandoned ClaimHandleState = "abandoned"
 )
 
-// ErrIllegalClaimHandleTransition is returned by ClaimHandleTable.Promote
-// when the affected-rows count is 0 — the row was not in the expected
-// active state or was held by a different supervisor.
-//
-// Mirror of cascade.ErrIllegalTransition for node-runs.
 var ErrIllegalClaimHandleTransition = errors.New("rimsky: illegal claim-handle state transition")

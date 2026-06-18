@@ -2,27 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// store-filesystem is the standard direct-mode filesystem store-service.
-// Per spec docs/history/2026-04-27-stores-redesign-v3-design.md §8.1.
-//
-// Loads its YAML config from STORE_FILESYSTEM_CONFIG, opens listeners
-// on configured gRPC + HTTP ports, and calls server.Run.
-//
-// YAML shape (see config-example.yml):
-//
-//	root: /var/lib/rimsky-store/content
-//	grpc_port: 9100
-//	http_port: 9110
-//	admin_port: 9120            # required when pick_policies is non-empty
-//	sweep_interval_seconds: 60  # default 60
-//	pick_policies:
-//	  "@docs-ring":
-//	    root: documents
-//	    folder_pattern: "^[a-z][a-z0-9-]*$"
-//	    on_commit: recycle
-//	    on_give_up: recycle
-//	    visibility_timeout_seconds: 1800
-//	    sync_strategy: on_open
 package main
 
 import (

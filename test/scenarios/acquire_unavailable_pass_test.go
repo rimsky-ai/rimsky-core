@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Task 26 — error_types: { "acquire/unavailable": { policy: [pass] } }.
-// A node whose claim-producer returns Unavailable on its required claim
-// transitions stale → fresh and records settling_signal_type =
-// terminal/error/acquire/unavailable (pass-color per Resolution.Color);
-// the executor is not invoked; no cascade-on-commit fires.
 package scenarios
 
 import (
@@ -26,12 +21,6 @@ import (
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
-// TestAcquireUnavailablePass starts a stub claim-producer with an empty
-// pick-policy queue (selector "@queue"), so the producer's Open returns
-// Unavailable. The node declares error_types: { "acquire/unavailable":
-// { policy: [pass] } } — the supervisor must transition the node to
-// fresh (with settling_signal_type = terminal/error/acquire/unavailable)
-// without invoking the executor.
 func TestAcquireUnavailablePass(t *testing.T) {
 	t.Parallel()
 
@@ -41,7 +30,6 @@ func TestAcquireUnavailablePass(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// @deliberate: No InitialItems — the queue is drained from the start.
 			},
 		},
 	})
@@ -57,7 +45,6 @@ func TestAcquireUnavailablePass(t *testing.T) {
 			},
 		},
 	})
-	// @constraint: Script the executor — but we expect it to never be called.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "should-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -94,8 +81,6 @@ func TestAcquireUnavailablePass(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, wRow.State,
 		"worker should be fresh after resolve=pass")
 
-	// @deliberate: The stub producer must have seen at least one Open (the one that
-	// returned Unavailable). The executor must not have been invoked.
 	var sawOpen bool
 	for _, c := range sub.Calls() {
 		if c.Verb == "open" {
@@ -105,7 +90,6 @@ func TestAcquireUnavailablePass(t *testing.T) {
 	}
 	require.True(t, sawOpen, "stub producer should have received at least one Open")
 
-	// @constraint: Stub executor's observed-request log should be empty.
 	require.Empty(t, h.Stub.Observed(),
 		"executor must not be invoked when error_types: { acquire/unavailable: [pass] } fires")
 }

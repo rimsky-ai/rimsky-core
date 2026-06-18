@@ -2,24 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// rimsky-host-agent is the long-running dev-machine daemon that dials the
-// rimsky-host-agent-proxy outbound, receives Spawn/Dispatch/Reap frames,
-// exec()s local binaries as rimsky services, tunnels their gRPC streams and
-// local HTTP callbacks back through the bidi stream, and reaps them on
-// signal. It is bundled into the `rimsky` CLI as `rimsky agent start`; this
-// standalone binary calls the same hostagent.Run main loop.
-//
 // @concept: host-agent
-//
-// Environment variables (see runtime/hostagent.LoadConfigFromEnv):
-//
-//	RIMSKY_URL                  required; proxy agent-facing endpoint (host:port).
-//	RIMSKY_API_KEY              required; api-key presented in Register.
-//	RIMSKY_AGENT_LISTEN         optional; local HTTP listener addr.
-//	RIMSKY_AGENT_LABEL          optional; defaults to "<hostname>-<pid>".
-//	RIMSKY_LOG_LEVEL            optional; debug|info|warn|error (default info).
-//	RIMSKY_AGENT_HEARTBEAT_SEC  optional; heartbeat cadence seconds (default 10).
-//	RIMSKY_AGENT_REAP_GRACE_SEC optional; reap grace seconds (default 30).
 package main
 
 import (
@@ -47,8 +30,6 @@ func main() {
 	}
 }
 
-// parseLogLevel maps a textual level to slog.Level (mirrors the other
-// entrypoints' helper of the same name).
 func parseLogLevel(s string) slog.Level {
 	switch s {
 	case "debug":

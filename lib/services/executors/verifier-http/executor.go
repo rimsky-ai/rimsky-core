@@ -2,23 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package main — verifier-http bundled verifier executor. POSTs a
-// caller-supplied payload to a configured URL; verifies the response
-// status matches the operator's expected set.
-//
-// @deliberate: implements the verifier-executor pattern (a regular
-// executor that co-holds the upstream claim, runs checks, and returns
-// success or error) — documentation-only pattern, no successor concept
-// per the concepts catalog.
-//
-// Attribute schema:
-//
-//	{
-//	  "url": "https://verifier.example.com/check",
-//	  "body": {"...": "..."},                  // sent as the POST body
-//	  "expected_status": [200, 204],            // default [200]
-//	  "timeout_ms": 30000
-//	}
 package main
 
 import (
@@ -37,8 +20,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// Server implements genv1.ExecutorServer.
-//
 // @concept: executor
 type Server struct {
 	genv1.UnimplementedExecutorServer
@@ -46,7 +27,6 @@ type Server struct {
 	client   *http.Client
 }
 
-// NewServer constructs a Server with a per-instance http client.
 func NewServer(stubMode bool) *Server {
 	return &Server{
 		stubMode: stubMode,
@@ -54,9 +34,6 @@ func NewServer(stubMode bool) *Server {
 	}
 }
 
-// Execute is the gRPC unary entrypoint. Per TD-execute-rpc-unary the
-// RPC returns exactly one settling Outcome — no stream, no per-event
-// chunking.
 func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	ud := req.GetAttributes().AsMap()
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
@@ -110,10 +87,6 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
 	if !statusInSet(resp.StatusCode, expected) {
-		// @constraint: surface the upstream's typed class on the error
-		// class so concept:signal policy/subscriber matching keys on
-		// the upstream's taxonomy rather than collapsing to the generic
-		// verifier/check_failed leaf.
 		classField := defaultClassField
 		if cf, ok := ud["class_field"].(string); ok && cf != "" {
 			classField = cf
@@ -129,9 +102,6 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 			"body_preview":    truncate(string(respBody), 512),
 		}
 		if upstreamClass != "" {
-			// @deliberate: echo the typed class on the payload too so
-			// downstream readers can inspect it without parsing
-			// body_preview.
 			payloadMap["upstream_class"] = upstreamClass
 		}
 		payload, _ := structpb.NewStruct(payloadMap)
@@ -141,9 +111,6 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 		}}}, nil
 	}
 
-	// @deliberate: successful verify reports Changed:false (no state
-	// change) but still emits a small attributes delta carrying the
-	// response status so downstream reads can inspect it.
 	delta, _ := structpb.NewStruct(map[string]any{
 		"verifier_pass":   true,
 		"verifier_status": float64(resp.StatusCode),
@@ -155,14 +122,8 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	}}}, nil
 }
 
-// defaultClassField is the JSON field the executor reads from a
-// 4xx/5xx upstream body to derive the `verifier/check_failed/<class>`
-// leaf when the per-node `attributes.class_field` is not set.
 const defaultClassField = "class"
 
-// extractClassField parses `body` as a JSON object and returns the
-// string value at `field`. Returns "" when the body is empty, not a
-// JSON object, or the field is missing/non-string.
 func extractClassField(body []byte, field string) string {
 	if len(body) == 0 || field == "" {
 		return ""
@@ -175,7 +136,6 @@ func extractClassField(body []byte, field string) string {
 	return cls
 }
 
-// statusInSet reports whether `n` is in the configured expected set.
 func statusInSet(n int, set []int) bool {
 	for _, e := range set {
 		if e == n {
@@ -185,8 +145,6 @@ func statusInSet(n int, set []int) bool {
 	return false
 }
 
-// toFloatSet converts []int → []any of float64 for Struct
-// serialization.
 func toFloatSet(in []int) []any {
 	out := make([]any, len(in))
 	for i, n := range in {
@@ -195,7 +153,6 @@ func toFloatSet(in []int) []any {
 	return out
 }
 
-// numeric is a small JSON-friendly numeric coercion helper.
 func numeric(v any) (float64, bool) {
 	switch x := v.(type) {
 	case float64:
@@ -210,7 +167,6 @@ func numeric(v any) (float64, bool) {
 	return 0, false
 }
 
-// truncate clips a string to len bytes with a trailing ellipsis.
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
@@ -218,14 +174,9 @@ func truncate(s string, max int) string {
 	return s[:max-1] + "…"
 }
 
-// classifyTransportErr maps a transport-layer error to a hierarchical
-// error class per concept:signal.
-//
 //	@source: lib/services/executors/http-node/server.go::classifyTransportErr
 //	@diverged: true
 //	@reason: verifier-http uses the `verifier/` prefix in line with
-//	concept:signal's executor-scoped error-class taxonomy; http-node
-//	uses `http/`.
 func classifyTransportErr(err error) string {
 	if err == nil {
 		return "verifier/network_error"
@@ -240,7 +191,6 @@ func classifyTransportErr(err error) string {
 	return "verifier/network_error"
 }
 
-// erroredOutcome wraps a class + message into an Outcome{Error}.
 func erroredOutcome(class, msg string) *genv1.Outcome {
 	payload, _ := structpb.NewStruct(map[string]any{"message": msg})
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
@@ -248,8 +198,6 @@ func erroredOutcome(class, msg string) *genv1.Outcome {
 	}}}
 }
 
-// stubSuccess returns the canonical stub-mode Outcome{Success}
-// carrying `{stub: true}` as the attributes_delta.
 func stubSuccess() *genv1.Outcome {
 	delta, _ := structpb.NewStruct(map[string]any{"stub": true})
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{

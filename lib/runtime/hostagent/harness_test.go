@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// harness_test.go — in-process test scaffolding for the host-agent. Stands up
-// a fakeProxy: a real HostAgent.Connect gRPC server on 127.0.0.1:0 that
-// captures the connected agent's stream so a test can push Spawn / Dispatch /
-// Reap ServerFrames and read back the agent's ClientFrame replies. The
-// host-agent under test is the production hostagent.connectOnce/agent path
-// dialing this fake. Spawn/dispatch tests build the testdata/stubchild
-// fixture once (buildStubChild) and exec it for real.
-
 package hostagent
 
 import (
@@ -27,7 +19,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// fakeProxy is a HostAgent server that captures one connected agent's stream.
 type fakeProxy struct {
 	genv1.UnimplementedHostAgentServer
 
@@ -37,12 +28,10 @@ type fakeProxy struct {
 	stream        genv1.HostAgent_ConnectServer
 	register      *genv1.Register
 	connected     chan struct{}
-	connectedOnce sync.Once               // @deliberate: guards the single close of connected across reconnects
-	clientFrame   chan *genv1.ClientFrame // every non-Register frame the agent sent
+	connectedOnce sync.Once
+	clientFrame   chan *genv1.ClientFrame
 }
 
-// startFakeProxy binds a real gRPC server on 127.0.0.1:0 and returns the proxy
-// plus its dial address. The server is stopped on test cleanup.
 func startFakeProxy(t *testing.T) *fakeProxy {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -61,8 +50,6 @@ func startFakeProxy(t *testing.T) *fakeProxy {
 	return fp
 }
 
-// Connect captures the agent stream, acks Register, and relays every
-// subsequent ClientFrame to clientFrame for assertions.
 func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 	first, err := stream.Recv()
 	if err != nil {
@@ -77,8 +64,6 @@ func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 	fp.stream = stream
 	fp.register = reg
 	fp.mu.Unlock()
-	// @deliberate: Connect may run more than once (the host agent reconnects after a
-	// backoff); close the signal channel exactly once.
 	fp.connectedOnce.Do(func() { close(fp.connected) })
 
 	if err := stream.Send(&genv1.ServerFrame{Body: &genv1.ServerFrame_RegisterAck{RegisterAck: &genv1.RegisterAck{
@@ -92,7 +77,6 @@ func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 		if recvErr != nil {
 			return recvErr
 		}
-		// @deliberate: Skip heartbeats so assertions aren't drowned by liveness frames.
 		if _, isHB := frame.GetBody().(*genv1.ClientFrame_Heartbeat); isHB {
 			continue
 		}
@@ -103,7 +87,6 @@ func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 	}
 }
 
-// waitConnected blocks until the agent has registered (or the test deadline).
 func (fp *fakeProxy) waitConnected(t *testing.T) *genv1.Register {
 	t.Helper()
 	select {
@@ -117,7 +100,6 @@ func (fp *fakeProxy) waitConnected(t *testing.T) *genv1.Register {
 	}
 }
 
-// sendToAgent pushes a ServerFrame down the captured stream.
 func (fp *fakeProxy) sendToAgent(t *testing.T, frame *genv1.ServerFrame) {
 	t.Helper()
 	fp.mu.Lock()
@@ -131,7 +113,6 @@ func (fp *fakeProxy) sendToAgent(t *testing.T, frame *genv1.ServerFrame) {
 	}
 }
 
-// nextClientFrame reads the next non-heartbeat ClientFrame the agent sent.
 func (fp *fakeProxy) nextClientFrame(t *testing.T) *genv1.ClientFrame {
 	t.Helper()
 	select {
@@ -143,8 +124,6 @@ func (fp *fakeProxy) nextClientFrame(t *testing.T) *genv1.ClientFrame {
 	}
 }
 
-// runAgentInBackground starts hostagent.Run with the fake proxy as RIMSKY_URL
-// and returns a cancel func. Run exits when the returned context is cancelled.
 func runAgentInBackground(t *testing.T, cfg Config) context.CancelFunc {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -164,8 +143,6 @@ func runAgentInBackground(t *testing.T, cfg Config) context.CancelFunc {
 	return cancel
 }
 
-// buildStubChild compiles testdata/stubchild into a temp dir once per test and
-// returns the binary path. The binary honors RIMSKY_AGENT_PORT.
 func buildStubChild(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

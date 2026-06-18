@@ -16,13 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// seedFrameParkedFixture creates template → main run scope → instance via
-// the public accessors, then raw-inserts a frame (in the given state), a
-// node, and a single parked node_run (phase='parked', state='parked').
-// Returns (instanceID, frameID). The parked run is the only run for the
-// frame — there are no stale/running runs. The instance carries
-// terminate_after_run = true so the durable-by-default gate is satisfied
-// and the instance-terminated assertions hinge solely on the parked guard.
 func seedFrameParkedFixture(
 	t *testing.T, ctx context.Context, d persistence.Database, frameState string,
 ) (shared.UUID, shared.UUID) {
@@ -65,11 +58,6 @@ func seedFrameParkedFixture(
 		t.Fatalf("seedFrameParkedFixture: %v", err)
 	}
 
-	// @constraint: raw-insert frame/node/parked-run through the test escape hatch
-	// because the persistence interface does not surface a "force a parked run"
-	// seed path; rimsky_frames.triggering_message_id is NOT NULL so a typed
-	// envelope must be seeded first; a terminal frame requires ended_at, a
-	// running frame requires started_at.
 	endedClause := "NULL"
 	startedClause := "now()"
 	if frameState == "completed" || frameState == "failed" {
@@ -102,9 +90,6 @@ func seedFrameParkedFixture(
 	return shared.UUID(instanceID), shared.UUID(frameID)
 }
 
-// TestPGParkedNodeRunHoldsFrameOpen: a running frame whose only node_run
-// is parked must NOT appear in ListRunningFramesNoPendingNodes (a parked
-// run is unresolved work and holds the frame open).
 func TestPGParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -127,10 +112,6 @@ func TestPGParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	}
 }
 
-// TestPGMarkInstanceTerminatedIfDoneHoldsForParkedRun: with the owning
-// frame already terminal (so the frames-in-flight guard does not block
-// termination), a parked node_run must still prevent the instance from
-// being marked terminated.
 func TestPGMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -160,11 +141,6 @@ func TestPGMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	}
 }
 
-// seedResolvedFrameInstancePG creates an instance (terminate_after_run set
-// per the flag) with one terminal (completed) frame and a single fresh node
-// — all work resolved, no parked/in-flight run. This is the shape
-// transitionFrameEnd sees at a real frame-end; the only thing deciding the
-// terminal predicate is the terminate_after_run gate.
 func seedResolvedFrameInstancePG(
 	t *testing.T, ctx context.Context, d persistence.Database, terminateAfterRun bool,
 ) shared.UUID {
@@ -206,8 +182,6 @@ func seedResolvedFrameInstancePG(
 		t.Fatalf("seedResolvedFrameInstancePG: %v", err)
 	}
 
-	// @deliberate: terminal frame + fresh node (no run row) means all work resolved;
-	// rimsky_frames.triggering_message_id is NOT NULL so a typed envelope is seeded first.
 	messageID := uuid.New()
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
@@ -253,10 +227,6 @@ func markTerminatedAndGetPG(
 	return row
 }
 
-// TestPGMarkInstanceTerminatedIfDoneFiresForTerminateAfterRun is the
-// positive companion to the parked-hold test: a terminate_after_run
-// instance whose frame has fully resolved (no parked/in-flight run) IS
-// marked terminated, proving the parked-hold test is meaningful.
 func TestPGMarkInstanceTerminatedIfDoneFiresForTerminateAfterRun(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -268,9 +238,6 @@ func TestPGMarkInstanceTerminatedIfDoneFiresForTerminateAfterRun(t *testing.T) {
 	}
 }
 
-// TestPGMarkInstanceTerminatedIfDoneSkipsDurableDefault pins durable-by-
-// default at the predicate level: an instance created without the flag is
-// never self-terminated even when all its work has resolved.
 func TestPGMarkInstanceTerminatedIfDoneSkipsDurableDefault(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)

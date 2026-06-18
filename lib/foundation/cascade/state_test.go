@@ -11,11 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// allReasons enumerates every TransitionReason the state machine knows about.
-// The table-driven test uses this to check every (from, reason) pair.
-//
-// ReasonPolicyInvalidate retired 2026-05-23 alongside the `invalidate`
-// ErrorPolicy action; not in this list anymore.
 var allReasons = []TransitionReason{
 	ReasonInvalidateReceived,
 	ReasonDispatchClaimed,
@@ -46,8 +41,6 @@ var allStates = []NodeState{
 	NodeStateParked,
 }
 
-// TestTransitionTable exhaustively checks every (from, reason) pair against
-// the spec §4.1 table (plus the Go-port `pure_cascade` addition).
 func TestTransitionTable(t *testing.T) {
 	valid := map[NodeState]map[string]NodeState{
 		NodeStateFresh: {
@@ -59,9 +52,6 @@ func TestTransitionTable(t *testing.T) {
 			"pure_cascade":        NodeStateFresh,
 			"dispatch_impossible": NodeStateFailed,
 			"acquire_pass":        NodeStateFresh,
-			// @constraint: policy_give_up from stale supports
-			// on_acquire_unavailable: { resolve: error } with
-			// error_types[X].policy ending in give_up.
 			"policy_give_up": NodeStateFailed,
 		},
 		NodeStateRunning: {
@@ -102,9 +92,6 @@ func TestTransitionTable(t *testing.T) {
 	}
 }
 
-// TestRunningToRunningUnderDispatchClaimedIsRejected is the blessed invariant:
-// the state machine MUST NOT short-circuit same-state transitions. A
-// `dispatch_claimed` from running must fail so double-execute is impossible.
 func TestRunningToRunningUnderDispatchClaimedIsRejected(t *testing.T) {
 	got, err := NextState(NodeStateRunning, ReasonDispatchClaimed)
 	require.Error(t, err)
@@ -127,8 +114,6 @@ func TestDispatchImpossibleRejectedFromNonStale(t *testing.T) {
 	}
 }
 
-// TestPureCascadeOnlyValidFromStale confirms the Go-port addition: a pure
-// cascade propagates stale → fresh without dispatch, and is illegal elsewhere.
 func TestPureCascadeOnlyValidFromStale(t *testing.T) {
 	got, err := NextState(NodeStateStale, ReasonPureCascade)
 	require.NoError(t, err)
@@ -148,8 +133,6 @@ func TestPureCascadeOnlyValidFromStale(t *testing.T) {
 	}
 }
 
-// TestNextState_AcquirePass confirms stale → fresh under ReasonAcquirePass,
-// illegal from other states.
 func TestNextState_AcquirePass(t *testing.T) {
 	got, err := NextState(NodeStateStale, ReasonAcquirePass)
 	require.NoError(t, err)
@@ -169,8 +152,6 @@ func TestNextState_AcquirePass(t *testing.T) {
 	}
 }
 
-// TestNextState_HandlerComplete confirms running → fresh under
-// ReasonHandlerComplete, illegal from other states.
 func TestNextState_HandlerComplete(t *testing.T) {
 	got, err := NextState(NodeStateRunning, ReasonHandlerComplete)
 	require.NoError(t, err)
@@ -190,8 +171,6 @@ func TestNextState_HandlerComplete(t *testing.T) {
 	}
 }
 
-// TestNextState_HandlerPass confirms running → fresh under ReasonHandlerPass,
-// illegal from other states.
 func TestNextState_HandlerPass(t *testing.T) {
 	got, err := NextState(NodeStateRunning, ReasonHandlerPass)
 	require.NoError(t, err)
@@ -211,8 +190,6 @@ func TestNextState_HandlerPass(t *testing.T) {
 	}
 }
 
-// TestNextState_HandlerErrorIsAuditOnly confirms ReasonHandlerError is not
-// a direct NextState input from any state — it's an audit-log marker only.
 func TestNextState_HandlerErrorIsAuditOnly(t *testing.T) {
 	for _, from := range allStates {
 		from := from
@@ -224,8 +201,6 @@ func TestNextState_HandlerErrorIsAuditOnly(t *testing.T) {
 	}
 }
 
-// TestNextState_HandlerPark confirms running → parked under
-// ReasonHandlerPark, illegal from other states.
 func TestNextState_HandlerPark(t *testing.T) {
 	got, err := NextState(NodeStateRunning, ReasonHandlerPark)
 	require.NoError(t, err)
@@ -246,8 +221,6 @@ func TestNextState_HandlerPark(t *testing.T) {
 	}
 }
 
-// TestNextState_HandlerResume confirms parked → stale under
-// ReasonHandlerResume, illegal from other states.
 func TestNextState_HandlerResume(t *testing.T) {
 	got, err := NextState(NodeStateParked, ReasonHandlerResume)
 	require.NoError(t, err)
@@ -268,8 +241,6 @@ func TestNextState_HandlerResume(t *testing.T) {
 	}
 }
 
-// TestNextState_ParkTimeout confirms parked → failed under
-// ReasonParkTimeout, illegal from other states.
 func TestNextState_ParkTimeout(t *testing.T) {
 	got, err := NextState(NodeStateParked, ReasonParkTimeout)
 	require.NoError(t, err)
@@ -290,9 +261,6 @@ func TestNextState_ParkTimeout(t *testing.T) {
 	}
 }
 
-// TestParkedToParkedRejected confirms the blessed-invariant-1 property
-// (no same-state short-circuit) holds for parked under every transition
-// reason — in particular parked → parked under any reason is illegal.
 func TestParkedToParkedRejected(t *testing.T) {
 	for _, reason := range allReasons {
 		reason := reason
@@ -301,10 +269,6 @@ func TestParkedToParkedRejected(t *testing.T) {
 			if got == NodeStateParked {
 				t.Fatalf("parked → parked under reason %q must be rejected, got success", reason.Kind)
 			}
-			// @deliberate: handler_resume → stale, park_timeout →
-			// failed, and instance_killed → failed are the only legal
-			// exits from parked; everything else must surface
-			// ErrIllegalTransition.
 			if reason.Kind != "handler_resume" && reason.Kind != "park_timeout" && reason.Kind != "instance_killed" {
 				require.Error(t, err, "reason=%s", reason.Kind)
 				require.True(t, errors.Is(err, ErrIllegalTransition))
@@ -313,10 +277,6 @@ func TestParkedToParkedRejected(t *testing.T) {
 	}
 }
 
-// TestNextStateParent_SubGraphInternalCascadeFired_RunningOnly confirms
-// the subgraph_internal_cascade_fired reason is only legal from
-// running. Per spec §State machine — sub-graph parents stay running
-// while internal cascade fires.
 func TestNextStateParent_SubGraphInternalCascadeFired_RunningOnly(t *testing.T) {
 	t.Parallel()
 	got, err := NextStateParent(NodeStateRunning, ReasonSubGraphInternalCascadeFired)
@@ -333,9 +293,6 @@ func TestNextStateParent_SubGraphInternalCascadeFired_RunningOnly(t *testing.T) 
 	}
 }
 
-// TestNextStateParent_ChildTransitioned_AggregateOK confirms the
-// aggregation-OK sentinel is returned for every source state.
-// Callers (state-propagation engine) compute the target state.
 func TestNextStateParent_ChildTransitioned_AggregateOK(t *testing.T) {
 	t.Parallel()
 	for _, from := range allStates {
@@ -349,10 +306,6 @@ func TestNextStateParent_ChildTransitioned_AggregateOK(t *testing.T) {
 	}
 }
 
-// TestNextStateParent_LeafReasonsStillRouteToNextState confirms
-// non-parent-specific reasons (e.g., handler_complete, handler_park)
-// continue to flow through the leaf transition table when called via
-// NextStateParent.
 func TestNextStateParent_LeafReasonsStillRouteToNextState(t *testing.T) {
 	t.Parallel()
 	got, err := NextStateParent(NodeStateRunning, ReasonHandlerComplete)
@@ -368,9 +321,6 @@ func TestNextStateParent_LeafReasonsStillRouteToNextState(t *testing.T) {
 	require.True(t, errors.Is(err, ErrIllegalTransition))
 }
 
-// TestNextState_ChildTransitionedIsIllegalForLeafRuns confirms the
-// new reason does NOT leak into NextState (leaf rows) — it's
-// parent-only.
 func TestNextState_ChildTransitionedIsIllegalForLeafRuns(t *testing.T) {
 	t.Parallel()
 	for _, from := range allStates {

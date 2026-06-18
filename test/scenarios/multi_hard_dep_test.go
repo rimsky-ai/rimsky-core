@@ -2,35 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Multi-upstream-refresh rendezvous — the two-`force_upstream_refresh:true`
-// shape.
-//
-// Receiver `c` declares TWO `subscribes:` entries naming distinct
-// upstreams (`a` and `b`) with `force_upstream_refresh: true`. Those
-// upstreams settle independently in one frame. The suspected livelock:
-// when the later upstream settles, its cascade walk reaches `c` and
-// the upstream-refresh pull re-affirms the EARLIER upstream (which
-// already settled this frame and so has no in-flight run row) —
-// creating a fresh pending run for it. That re-run settles, walks back
-// to `c`, and re-affirms the OTHER settled upstream: mutual re-seeding.
-// Each re-seed also inserts a new wait-set blocker on `c`, so the
-// receiver never becomes dispatch-eligible and the frame never
-// terminates.
-//
-// Written BEFORE any fix (test-first); kept as the regression pin in
-// either outcome.
-//
-// Phase 1 (instance boot) asserts the boot frames terminate: the
-// receiver settles fresh with both upstream values and the dispatch
-// counts stabilize. Boot may legally drive the same node in more than
-// one serialized frame (every node is a boot source), so phase 1 pins
-// termination, not exact counts.
-//
-// Phase 2 (one invalidation-driven frame — the story's acceptance
-// frame) asserts the exact-once rendezvous: invalidating the trigger
-// opens ONE frame whose cascade seeds both upstream-refresh upstreams; each
-// upstream runs exactly once, the receiver runs exactly once, after
-// both, and the frame terminates within the deadline.
 package scenarios
 
 import (
@@ -53,10 +24,6 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("trigger").Success(map[string]any{"t_value": "t-1"}, true, "ok")
 	h.Stub.WhenType("a").Success(map[string]any{"a_value": "from-a-1"}, true, "ok")
-	// @deliberate: Delay b so the two upstreams settle at deterministically distinct
-	// instants within the frame: a settles first, b later. The later
-	// settler's cascade walk is the one that observes the earlier
-	// upstream already settled — the exact re-seeding site under test.
 	h.Stub.WhenType("b").Success(map[string]any{"b_value": "from-b-1"}, true, "ok").Delay(300 * time.Millisecond)
 	h.Stub.WhenType("c").Success(map[string]any{}, true, "ok")
 
@@ -105,12 +72,7 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 				node.TemplateNodeDef{Type: "c", Executor: "stub"},
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{Node: "trigger", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					// @deliberate: Migrated from attribute-field hard_dep: true on a_val
-					// (sender a). Carries force_upstream_refresh: true so the
-					// receiver's invalidation drags a into the same frame.
 					node.SubscriptionEntry{Node: "a", Type: "attribute/a_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
-					// @deliberate: Migrated from attribute-field hard_dep: true on b_val
-					// (sender b). Same rationale as a above.
 					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
 				),
 				scenario.WithAttributes(map[string]any{
@@ -139,25 +101,14 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	require.NotNil(t, aN)
 	require.NotNil(t, bN)
 	require.NotNil(t, cN)
-	// @constraint: trigger was previously a structural root; the
-	// subscribes: entry added for the typed-message wake demoted it
-	// from root, so the harness's empty-wake doesn't fire it. Emit
-	// the typed message here to drive the initial cascade the test
-	// assertions expect.
 	h.PostInstanceMessage(iid, "test/wake/trigger", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
-	// @constraint: Phase 1 (boot): the boot frames must terminate — a never-
-	// fresh c means the walk is livelocked on mutual upstream
-	// re-seeding (pre-guard signature: upstream counts in the dozens
-	// within the 30s window, receiver count zero).
 	frameDone := h.WaitForNodeState(cN.ID, cascade.NodeStateFresh, 30*time.Second)
 	require.True(t, frameDone,
 		"boot must terminate: c should reach fresh after both force_upstream_refresh upstreams settle "+
 			"(a never-fresh c means the frame is livelocked on mutual upstream re-seeding); "+
 			"per-type dispatch counts at timeout: %v", dispatchCountsByType(h))
 
-	// @constraint: With c settled, the dispatch counts must stop growing — a growing
-	// count here is the re-seeding tail.
 	bootCounts := awaitStableDispatchCounts(t, h)
 	require.GreaterOrEqual(t, bootCounts["c"], 1, "boot: c must have dispatched")
 
@@ -166,10 +117,6 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	require.Equal(t, "from-a-1", cRow.Data["a_val"], "c should see a's first-fire value")
 	require.Equal(t, "from-b-1", cRow.Data["b_val"], "c should see b's first-fire value")
 
-	// @deliberate: Phase 2: ONE invalidation-driven frame — the story's
-	// acceptance frame. Invalidate the trigger; its cascade affirms c,
-	// whose upstream-refresh pull seeds BOTH upstreams into the same frame;
-	// they settle independently (b delayed past a).
 	h.Stub.WhenType("trigger").Success(map[string]any{"t_value": "t-2"}, true, "ok")
 	h.Stub.WhenType("a").Success(map[string]any{"a_value": "from-a-2"}, true, "ok")
 	h.Stub.WhenType("b").Success(map[string]any{"b_value": "from-b-2"}, true, "ok").Delay(300 * time.Millisecond)
@@ -191,9 +138,6 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	require.Equal(t, "from-b-2", cRow.Data["b_val"],
 		"frame 2 must terminate with c seeing b's second-fire value")
 
-	// @deliberate: Exact-once rendezvous: relative to the boot baseline, the
-	// acceptance frame dispatched each node exactly once. Anything
-	// above one is a settled upstream re-affirmed into a fresh run.
 	frame2Counts := awaitStableDispatchCounts(t, h)
 	for _, typ := range []string{"trigger", "a", "b", "c"} {
 		require.Equal(t, bootCounts[typ]+1, frame2Counts[typ],
@@ -201,9 +145,6 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 				"a settled force_upstream_refresh upstream must not be re-affirmed (mutual re-seeding)", typ)
 	}
 
-	// @deliberate: Rendezvous ordering: the receiver's acceptance-frame dispatch
-	// (its last) came after both upstreams' acceptance-frame dispatches
-	// (their lasts).
 	aIdx := lastDispatchIndex(h, "a")
 	bIdx := lastDispatchIndex(h, "b")
 	cIdx := lastDispatchIndex(h, "c")
@@ -211,9 +152,6 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	require.Greater(t, cIdx, bIdx, "receiver c must dispatch after upstream b settles")
 }
 
-// dispatchCountsByType tallies the stub's observed dispatches per node
-// type — the livelock signature at timeout is upstream counts far above
-// one while the receiver's stays zero/one.
 func dispatchCountsByType(h *scenario.Harness) map[string]int {
 	got := map[string]int{}
 	for _, o := range h.Stub.Observed() {
@@ -222,10 +160,6 @@ func dispatchCountsByType(h *scenario.Harness) map[string]int {
 	return got
 }
 
-// awaitStableDispatchCounts waits until the stub's observed dispatch
-// count holds still for a full quiesce window, then returns the
-// per-type tallies. A count that keeps growing past the deadline is
-// the re-seeding tail — fail rather than hang.
 func awaitStableDispatchCounts(t *testing.T, h *scenario.Harness) map[string]int {
 	t.Helper()
 	const quiesce = 2 * time.Second
@@ -250,8 +184,6 @@ func awaitStableDispatchCounts(t *testing.T, h *scenario.Harness) map[string]int
 	return nil
 }
 
-// lastDispatchIndex returns the index (in the stub's Execute append
-// order) of the last observed dispatch for the given node type, or -1.
 func lastDispatchIndex(h *scenario.Harness, typ string) int {
 	idx := -1
 	for i, o := range h.Stub.Observed() {
@@ -262,7 +194,6 @@ func lastDispatchIndex(h *scenario.Harness, typ string) int {
 	return idx
 }
 
-// @deliberate: latestAttrRow reads the latest main-scope attribute row for a node.
 func latestAttrRowMultiHardDep(t *testing.T, h *scenario.Harness, instanceID, nodeID shared.UUID) *persistence.NodeAttributesRow {
 	t.Helper()
 	var row *persistence.NodeAttributesRow

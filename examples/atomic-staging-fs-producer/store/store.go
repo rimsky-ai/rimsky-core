@@ -2,10 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Package store implements the four-verb atomic-staging logic against a
-// POSIX filesystem substrate. The co-located README.md explains the
-// per-substrate semantics; this implementation uses two-rename atomic
-// swap on Commit.
 package store
 
 import (
@@ -18,9 +14,6 @@ import (
 	"time"
 )
 
-// Store owns the staging area on a POSIX filesystem. Concurrency-safe
-// via a single coarse mutex — the workload is filesystem-rename-bound,
-// not CPU-bound, and the mutex avoids torn writes to the side-table.
 type Store struct {
 	root  string
 	state stateFile
@@ -28,17 +21,10 @@ type Store struct {
 	mu sync.Mutex
 }
 
-// stateFile records per-claim staging metadata so the sweep loop can
-// reap leaked staging directories. Stored as JSON next to the staging
-// area for simplicity; production deployments should prefer SQLite or
-// similar.
 type stateFile struct {
 	Path string
 }
 
-// Entry is one row in the side-table: a (claim_id → staging path)
-// mapping plus the canonical target so Commit knows where to rename
-// into.
 type Entry struct {
 	ClaimID       string    `json:"claim_id"`
 	Scope         string    `json:"scope"`
@@ -47,14 +33,6 @@ type Entry struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
-// New constructs a Store rooted at the given filesystem directory.
-// Creates `<root>/staging/` and `<root>/canonical/` if absent. Also
-// validates that `staging/` and `canonical/` live on the SAME
-// filesystem — the two-rename atomic swap on Commit relies on
-// `rename(2)` being atomic, which the kernel only guarantees within
-// one mount. An operator who points the two roots at different mount
-// points would silently lose atomicity; we fail loudly at startup
-// instead.
 func New(root string) (*Store, error) {
 	if root == "" {
 		return nil, errors.New("atomic-staging: root must be non-empty")
@@ -76,10 +54,6 @@ func New(root string) (*Store, error) {
 	}, nil
 }
 
-// Open creates the staging area for (claim_id, scope) and records the
-// entry in the side-table. Returns the staging path so the executor
-// can write its work product there. The scope is byte-equal-compared
-// by rimsky; selectors that should conflict produce byte-equal scope.
 func (s *Store) Open(claimID, scope string) (Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -101,18 +75,6 @@ func (s *Store) Open(claimID, scope string) (Entry, error) {
 	return entry, nil
 }
 
-// Commit fires the two-rename atomic swap: the canonical path is moved
-// aside (if present), the staging path is renamed into place, and the
-// aside copy is deleted. The window between the two renames is brief;
-// readers that hit it see either the wholly-old or the wholly-new state.
-//
-// Atomicity / no-data-loss property (the load-bearing guarantee of the
-// atomic-staging pattern): no partial state is ever visible at the
-// canonical path. The swap is a real os.Rename (move, not copy), so the
-// canonical view flips between two whole states. If the install rename
-// fails after the canonical view was moved aside, the aside copy is
-// restored before returning the error, so a failed Commit leaves the
-// previously-committed canonical view intact rather than destroyed.
 func (s *Store) Commit(claimID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -132,21 +94,6 @@ func (s *Store) Commit(claimID string) error {
 	return nil
 }
 
-// swapIntoCanonical performs the atomic move of the staging directory
-// into the canonical view. The sequence is:
-//
-//  1. ensure the canonical parent exists (the scope dir lives under it),
-//  2. move any existing canonical view aside to a sibling `.aside` path,
-//  3. os.Rename(staging → canonical) — the atomic install,
-//  4. delete the aside copy.
-//
-// Both the aside-move (2) and the install (3) are os.Rename calls; the
-// kernel guarantees rename(2) atomicity within one filesystem (asserted
-// at New() via assertSameFilesystem). Step 3 is the only window during
-// which a reader could observe the canonical path absent; it sees the
-// wholly-old view before and the wholly-new view after, never a partial
-// one. If step 3 fails, the aside copy is restored (no-data-loss on the
-// previously-committed view) before the error propagates.
 func (s *Store) swapIntoCanonical(entry Entry) error {
 	canonical := entry.CanonicalPath
 	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
@@ -160,8 +107,6 @@ func (s *Store) swapIntoCanonical(entry Entry) error {
 	}
 
 	if err := os.Rename(entry.StagingPath, canonical); err != nil {
-		// @constraint: install-failure must restore the previously-committed
-		// view — a failed Commit never destroys what was already there.
 		if hadExisting {
 			_ = os.Rename(aside, canonical)
 		}
@@ -176,9 +121,6 @@ func (s *Store) swapIntoCanonical(entry Entry) error {
 	return nil
 }
 
-// movedAside renames `from` to `aside` when `from` exists, reporting
-// whether anything was moved. A missing `from` (the common first-commit
-// case, where no canonical view exists yet) is not an error.
 func movedAside(from, aside string) (bool, error) {
 	if _, err := os.Stat(from); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -192,15 +134,12 @@ func movedAside(from, aside string) (bool, error) {
 	return true, nil
 }
 
-// Abandon drops the staging area without firing the swap.
 func (s *Store) Abandon(claimID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.abandonLocked(claimID)
 }
 
-// Release is no-op for `r`; equivalent to Abandon for `rw` that never
-// committed. The caller distinguishes by intent.
 func (s *Store) Release(claimID, intent string) error {
 	if intent == "r" {
 		return nil
@@ -208,16 +147,12 @@ func (s *Store) Release(claimID, intent string) error {
 	return s.Abandon(claimID)
 }
 
-// Entries returns the side-table snapshot (used by the sweep loop).
 func (s *Store) Entries() ([]Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.readAll()
 }
 
-// AbandonByClaimID is the sweep-loop entry point: drops staging for a
-// leaked claim_id without race-checking the caller's view of the
-// live-handle set (the sweep already filtered).
 func (s *Store) AbandonByClaimID(claimID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -230,7 +165,7 @@ func (s *Store) abandonLocked(claimID string) error {
 		return err
 	}
 	if !ok {
-		return nil // @constraint: idempotent — already gone
+		return nil
 	}
 	if err := os.RemoveAll(entry.StagingPath); err != nil {
 		return fmt.Errorf("atomic-staging.Abandon: %w", err)
@@ -238,10 +173,6 @@ func (s *Store) abandonLocked(claimID string) error {
 	return s.removeEntry(claimID)
 }
 
-// appendEntry persists e to the JSONL entries file under s.dir,
-// creating the file if absent. One of the side-table primitives
-// (appendEntry / removeEntry / readAll / writeAll) that back the
-// per-store entries.jsonl file.
 func (s *Store) appendEntry(e Entry) error {
 	all, err := s.readAll()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

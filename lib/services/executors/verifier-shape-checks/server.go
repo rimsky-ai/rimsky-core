@@ -2,29 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package main — verifier-shape-checks bundled verifier executor.
-// Implements the rimsky Executor protocol; runs N shape-check
-// primitives (no_nulls, pk_unique, etc.) over an in-memory `rows`
-// payload and returns a Success or Error terminal based on aggregate
-// pass/fail.
-//
-// @deliberate: implements the verifier-executor pattern
-// (documentation-only, no successor concept).
-//
-// Attribute schema (passed at Execute time via ExecuteRequest.attributes):
-//
-//	{
-//	  "checks": [
-//	    {"kind": "no_nulls", "config": {"field": "id"}},
-//	    {"kind": "pk_unique", "config": {"field": "id"}},
-//	    ...
-//	  ],
-//	  "rows": [{...}, {...}]      // tabular payload to verify
-//	}
-//
-// The `rows` field is provided by the caller (substitution layer pulls
-// it from the upstream claim's address via `{{...}}` resolution in the
-// template). The executor never reads the upstream claim itself.
 package main
 
 import (
@@ -39,25 +16,17 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-shape-checks/checks"
 )
 
-// Server implements genv1.ExecutorServer. Stateless; no per-server
-// configuration besides the stub-mode flag (consumed by the
-// conformance probe).
 type Server struct {
 	genv1.UnimplementedExecutorServer
 	stubMode bool
 }
 
-// NewServer constructs a Server with the optional stub-mode flag.
 func NewServer(stubMode bool) *Server { return &Server{stubMode: stubMode} }
 
-// Execute is the gRPC entrypoint. Per TD-execute-rpc-unary the RPC
-// returns the settling Outcome directly.
 func (s *Server) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	return s.executeCore(req), nil
 }
 
-// executeCore parses the attribute bag, runs the configured checks
-// against the rows payload, and returns a single settling Outcome.
 func (s *Server) executeCore(req *genv1.ExecuteRequest) *genv1.Outcome {
 	ud := req.GetAttributes().AsMap()
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
@@ -71,10 +40,6 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest) *genv1.Outcome {
 	if err != nil {
 		return erroredOutcome("verifier/attribute_invalid", err.Error())
 	}
-	// @deliberate: pair each Result with its declared Severity so the
-	// aggregator can partition failures — only error-severity failures
-	// block the commit; warning-severity failures are non-blocking soft
-	// findings.
 	results := make([]scoredResult, 0, len(specs))
 	blockingFailures := 0
 	firstBlockingKind := ""
@@ -106,8 +71,6 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest) *genv1.Outcome {
 	}}}
 }
 
-// parseChecks reads `attributes.checks` and validates each entry into a
-// CheckSpec. Missing / wrong-type → InvalidAttribute.
 func parseChecks(ud map[string]any) ([]checks.CheckSpec, error) {
 	raw, ok := ud["checks"].([]any)
 	if !ok || len(raw) == 0 {
@@ -133,12 +96,6 @@ func parseChecks(ud map[string]any) ([]checks.CheckSpec, error) {
 	return out, nil
 }
 
-// parseSeverity reads a `checks[i].severity` value into the services-local
-// checks.Severity. An absent / empty value defaults to checks.SeverityError
-// (a failing check blocks unless the author explicitly downgrades it). An
-// unknown string is rejected with an attribute error rather than silently
-// coerced — protecting against a typo'd "warn"/"err" quietly flipping a
-// check's blocking behavior the operator did not intend.
 func parseSeverity(raw any, i int) (checks.Severity, error) {
 	s, _ := raw.(string)
 	switch checks.Severity(s) {
@@ -153,9 +110,6 @@ func parseSeverity(raw any, i int) (checks.Severity, error) {
 		i, s, checks.SeverityError, checks.SeverityWarning)
 }
 
-// parseRows reads `attributes.rows` and normalizes each entry into a
-// `checks.Row`. Missing rows is acceptable (some checks like
-// row_count_absolute fire on empty input as a pass/fail signal).
 func parseRows(ud map[string]any) ([]checks.Row, error) {
 	raw, ok := ud["rows"].([]any)
 	if !ok {
@@ -172,18 +126,11 @@ func parseRows(ud map[string]any) ([]checks.Row, error) {
 	return out, nil
 }
 
-// scoredResult pairs a check Result with the declared Severity that
-// governs whether its failure blocks the commit. The aggregation,
-// payload-building, and delta-building paths all read severity off this
-// pair so a warning-severity failure is never miscounted as blocking.
 type scoredResult struct {
 	checks.Result
 	Severity checks.Severity
 }
 
-// failureEntry renders one failed check (blocking or warning) into the
-// Struct-shaped finding surfaced in both the error payload and the
-// success-delta warnings list.
 func failureEntry(sr scoredResult) map[string]any {
 	return map[string]any{
 		"kind":     sr.Kind,
@@ -194,11 +141,6 @@ func failureEntry(sr scoredResult) map[string]any {
 	}
 }
 
-// buildErrorPayload turns failed results into the
-// `Error.payload` Struct surfaced upstream. Blocking (error-severity)
-// failures populate `failures`; warning-severity failures are split into
-// `warnings` so the consumer can tell the soft findings from the blocking
-// ones even on the error path.
 func buildErrorPayload(results []scoredResult) *structpb.Struct {
 	failures := make([]any, 0, len(results))
 	warnings := make([]any, 0)
@@ -220,10 +162,6 @@ func buildErrorPayload(results []scoredResult) *structpb.Struct {
 	return st
 }
 
-// buildSuccessDelta builds the Success attributes_delta. When no blocking
-// failure occurred but one or more warning-severity checks failed, those
-// soft findings are surfaced under `verifier_warnings` (with a count) so
-// the non-blocking signal is observable to the operator.
 func buildSuccessDelta(results []scoredResult, rowsLen int) *structpb.Struct {
 	warnings := make([]any, 0)
 	for _, sr := range results {
@@ -257,7 +195,6 @@ func summarize(results []scoredResult) string {
 	return strings.Join(parts, ", ")
 }
 
-// erroredOutcome builds a one-shot Error outcome.
 func erroredOutcome(class, msg string) *genv1.Outcome {
 	payload, _ := structpb.NewStruct(map[string]any{"message": msg})
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
@@ -265,7 +202,6 @@ func erroredOutcome(class, msg string) *genv1.Outcome {
 	}}}
 }
 
-// stubSuccess returns a fixed Success outcome for the conformance probe.
 func stubSuccess() *genv1.Outcome {
 	delta, _ := structpb.NewStruct(map[string]any{"stub": true})
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
@@ -275,6 +211,4 @@ func stubSuccess() *genv1.Outcome {
 	}}}
 }
 
-// @deliberate: retains references that linters might otherwise
-// classify as unused.
 var _ = json.Marshal

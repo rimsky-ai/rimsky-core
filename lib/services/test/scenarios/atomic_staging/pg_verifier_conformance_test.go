@@ -2,29 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Dual-role conformance for the fused `pkg:stores/postgres/` binary.
-//
-// The fused store registers both `concept:claim-producer` and
-// `concept:executor` on the same gRPC endpoint per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// §Item 6.
-//
-// This test invokes the SDK's conformance suites — the same code
-// exercised by `cmd/rimsky-claim-producer-conformance` and
-// `cmd/rimsky-executor-conformance` against a live deployment — as
-// callable Go packages. The probes dial the in-process fused server's
-// gRPC endpoint and exercise the protocol contracts end-to-end.
-//
-// Per spec §Item 6 — Operator registration: "the standard suites pass
-// against the fused store."
-//
-// Pre-2026-05-24-repo-reorganization the test imported
-// `pkg:conformance` (in-rimsky) and `pkg:runtime/remote` for the
-// gRPC client. Both are now rimsky-internal and unreachable from
-// lib/services. The rewrite uses
-// `pkg:protocols/conformance/{claimproducer,executor}` and the
-// `test/harness.DialClaimProducer` adapter (a tracked-duplicate of
-// `pkg:runtime/peer.Dial`).
 package atomicstaging
 
 import (
@@ -35,17 +12,10 @@ import (
 
 	cpconf "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/claimproducer"
 	executorconf "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
-	_ "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor/scenarios" // @constraint: blank import drives init()-time scenario registration into the executor conformance runner
+	_ "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor/scenarios"
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// TestPGFusedStore_ClaimProducerConformance dials the fused store via
-// the SDK's harness-internal adapter and asserts every standard
-// claim-producer conformance check passes. Pins the Capabilities
-// handshake, the write-semantics envelope, the uniformity invariant,
-// the terminal verbs (Commit / Abandon / Release) driven against real
-// claims the suite Open'd, and the retried-terminal idempotency probe
-// against the live wire endpoint.
 func TestPGFusedStore_ClaimProducerConformance(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -89,10 +59,6 @@ func TestPGFusedStore_ClaimProducerConformance(t *testing.T) {
 	}
 }
 
-// assertResultPassing fails the test unless the named conformance row is
-// present in results with a nil Err. A missing row is as much a failure
-// as a failing one: the suite is contracted to REPORT each terminal verb,
-// not silently skip it.
 func assertResultPassing(t *testing.T, results []cpconf.CheckResult, name string) {
 	t.Helper()
 	for _, r := range results {
@@ -108,7 +74,6 @@ func assertResultPassing(t *testing.T, results []cpconf.CheckResult, name string
 		name, resultRowNames(results))
 }
 
-// resultRowNames condenses the result row names for diagnostic output.
 func resultRowNames(results []cpconf.CheckResult) string {
 	out := make([]string, 0, len(results))
 	for _, r := range results {
@@ -117,11 +82,6 @@ func resultRowNames(results []cpconf.CheckResult) string {
 	return "[" + strings.Join(out, ", ") + "]"
 }
 
-// TestPGFusedStore_ExecutorConformance dials the fused store's
-// Executor service via the SDK's executor-conformance runner and
-// asserts every non-stub-mode scenario passes. Stub-mode scenarios
-// are skipped automatically because the fused executor is a verifier,
-// not a stub.
 func TestPGFusedStore_ExecutorConformance(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -161,16 +121,6 @@ func TestPGFusedStore_ExecutorConformance(t *testing.T) {
 	if passed == 0 {
 		t.Fatalf("executor conformance: 0 scenarios passed (skipped=%d)", skipped)
 	}
-	// @constraint: The non-stub baseline pair (`cancel`,
-	// `unknown_ack_id`) are not stub-gated, so a real (non-stub)
-	// executor MUST land them in the passing set; a missing or failing
-	// row here means the runner silently skipped one half of the
-	// non-stub conformance surface. Stub-gated scenarios that the pg
-	// verifier legitimately skips (every Execute-driving scenario,
-	// since a verifier has no stub mode) are NOT in this list — the
-	// `passed > 0` floor above plus an explicit per-scenario assertion
-	// would conflate "executor skipped because it can't stub" with
-	// "executor failed silently."
 	for _, want := range []string{"cancel", "unknown_ack_id"} {
 		found := false
 		for _, r := range results {
@@ -185,7 +135,6 @@ func TestPGFusedStore_ExecutorConformance(t *testing.T) {
 	}
 }
 
-// scenarioNames condenses results for diagnostic output.
 func scenarioNames(rs []executorconf.Result) string {
 	out := make([]string, 0, len(rs))
 	for _, r := range rs {

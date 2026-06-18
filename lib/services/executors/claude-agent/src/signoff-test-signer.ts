@@ -2,11 +2,6 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// @deliberate: test-only helper: real Ed25519 crypto, reused by signoff.test.ts and the
-// acceptance e2e test. Named without a `.test.ts` suffix because it is imported
-// by multiple test files; no runtime code imports it. It is excluded from the
-// build via tsconfig.json's `exclude` so it never lands in dist/.
-
 import { generateKeyPairSync, sign as edSign } from "node:crypto";
 import { buildSignoffMessage } from "./signoff.js";
 

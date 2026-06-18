@@ -82,12 +82,6 @@ func TestValidateHolds_Ok(t *testing.T) {
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-// TestValidateHolds_ClaimReadFromHeldAliasOk — a node that co-holds a
-// claim via holds: may read it through a {{claim.<alias>...}} attribute
-// source. The modern co-holdership directive (concept:claim-co-holdership)
-// must support claim reads the same way the legacy inherits: form does.
-// Regression for the validator omitting holds: aliases from the
-// recognized-alias set.
 func TestValidateHolds_ClaimReadFromHeldAliasOk(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
@@ -124,9 +118,6 @@ func TestValidateHolds_ClaimReadFromHeldAliasOk(t *testing.T) {
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-// TestValidateAttributes_ClaimReadUndeclaredAliasRejected {{claim.<alias>}}` for an alias that is neither acquired
-// (stores:), inherited (inherits:), nor co-held (holds:) is still
-// rejected — the holds: fix must not blanket-accept any claim alias.
 func TestValidateAttributes_ClaimReadUndeclaredAliasRejected(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
@@ -227,12 +218,6 @@ func TestValidateFanOut_RejectsCancelSiblingsOutsideStrict(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.cancel_siblings")
 }
 
-// TestValidateFanOut_RejectsCarryVerbatimPolicy — carry_verbatim is the
-// delegation settlement shape and requires exactly one child by
-// construction (TD-carry-verbatim-requires-one). `fan_out:` declares N
-// children, so declaring `error_policy.kind: carry_verbatim` on a
-// fan-out is rejected at canonicalization with
-// `carry_verbatim_requires_single_child`, naming the node.
 func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
@@ -257,8 +242,6 @@ func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.kind")
-	// @deliberate: the rejection must carry the named class AND name the
-	// node.
 	found := false
 	for _, e := range res.Errors {
 		if strings.HasPrefix(e.Msg, "carry_verbatim_requires_single_child:") {
@@ -269,13 +252,6 @@ func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
 	require.True(t, found, "expected carry_verbatim_requires_single_child rejection, got %+v", res.Errors)
 }
 
-// TestValidateFanOut_RejectsDelegateCombo — a calling node
-// (`delegate:`) cannot itself declare `fan_out:`. The canonicalizer
-// absorbs the sub-graph entry's executor onto the calling node, but it
-// does NOT scope fan-out into the absorbed sub-graph — every fan-out
-// child would re-fire the internal cascade as a separate parent at
-// dispatch. Reject at registration so the combination can't reach the
-// runtime.
 func TestValidateFanOut_RejectsDelegateCombo(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
@@ -395,9 +371,6 @@ func TestValidateExecutor_DelegateOk(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-	// @deliberate: A delegate-only node (no executor) is currently legal at the
-	// validator level — the canonicalizer absorbs the entry's executor
-	// at registration, so the validator should not block this.
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 

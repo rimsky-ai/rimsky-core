@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// HTTP-level round-trip coverage for the per-instance terminate_after_run
-// flag on POST /instances. Mirrors the existing paused flag coverage: the
-// create request decodes the flag, persistence stores it, and the GET/list
-// projection surfaces it. No termination-behavior assertion here — that
-// lands in a later pass; this pass only proves the flag threads
-// create-request → persistence column → projection end to end.
-//
-// Exercised against the pgtest harness (real Postgres via testcontainers).
-//
 // @concept: instance
 
 package controlapi
@@ -26,10 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// TestTerminateAfterRunRoundTrip proves the terminate_after_run flag threads
-// create-request → persistence column → GET projection: an instance created
-// with "terminate_after_run": true reports it true on GET; an instance
-// created without the field reports it false (the column default).
 func TestTerminateAfterRunRoundTrip(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -42,7 +29,6 @@ func TestTerminateAfterRunRoundTrip(t *testing.T) {
 	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	// @constraint: instance A: created WITH terminate_after_run: true.
 	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        "ck-tar-true-" + uuid.NewString(),
@@ -56,7 +42,6 @@ func TestTerminateAfterRunRoundTrip(t *testing.T) {
 	require.Equal(t, true, out["terminate_after_run"],
 		"GET projection must surface terminate_after_run=true")
 
-	// @constraint: row inspection confirms persistence.
 	uTrue, err := uuid.Parse(idTrue)
 	require.NoError(t, err)
 	var instTrue *persistence.InstanceRow
@@ -69,7 +54,6 @@ func TestTerminateAfterRunRoundTrip(t *testing.T) {
 	require.True(t, instTrue.TerminateAfterRun,
 		"persisted row must carry terminate_after_run=true")
 
-	// @constraint: instance B: created WITHOUT the field → defaults to false.
 	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-tar-false-" + uuid.NewString(),
@@ -95,14 +79,6 @@ func TestTerminateAfterRunRoundTrip(t *testing.T) {
 		"persisted row must default terminate_after_run to false")
 }
 
-// TestTerminateAfterRunIdempotentRecreateIgnoresFlag pins the spec §1
-// idempotency rule: a re-create with the same (template_hash, instance_key)
-// returns the EXISTING row (200 OK, same instance_id) and ignores the
-// terminate_after_run flag on the re-create request — exactly as `paused`
-// behaves. The first create sets the flag true; the same-key re-create sends
-// a conflicting false and must NOT flip the stored value. Without this guard
-// the property is only structurally implied by the shared create path; this
-// makes it an explicit gate.
 func TestTerminateAfterRunIdempotentRecreateIgnoresFlag(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -117,7 +93,6 @@ func TestTerminateAfterRunIdempotentRecreateIgnoresFlag(t *testing.T) {
 
 	key := "ck-tar-idem-" + uuid.NewString()
 
-	// @constraint: first create: terminate_after_run = true → 201 Created.
 	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        key,
@@ -127,8 +102,6 @@ func TestTerminateAfterRunIdempotentRecreateIgnoresFlag(t *testing.T) {
 	firstID, _ := out["instance_id"].(string)
 	require.NotEmpty(t, firstID)
 
-	// @constraint: idempotent re-create: SAME key, CONFLICTING flag (false). Spec §1 — the
-	// re-create resolves to the existing row (200 OK) and ignores the flag.
 	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        key,
@@ -139,13 +112,11 @@ func TestTerminateAfterRunIdempotentRecreateIgnoresFlag(t *testing.T) {
 	require.Equal(t, firstID, secondID,
 		"idempotent re-create must return the existing instance, not a new one")
 
-	// @constraint: GET projection still reports true — the re-create's false was ignored.
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+firstID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["terminate_after_run"],
 		"idempotent re-create must ignore the flag; stored terminate_after_run=true must be unchanged")
 
-	// @constraint: persisted row confirms the stored value survived the conflicting re-create.
 	uID, err := uuid.Parse(firstID)
 	require.NoError(t, err)
 	var inst *persistence.InstanceRow

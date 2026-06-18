@@ -15,58 +15,16 @@ import (
 	"github.com/google/cel-go/common/types"
 )
 
-// CompiledPredicate is an opaque wrapper over a compiled CEL program
-// for a subscription when: expression. Construct via CompileWhen;
-// evaluate against a Signal via Eval. A nil CompiledPredicate is the
-// "no predicate, always match" sentinel and Eval handles it.
-//
-// The `subscriptionType` and `whenSrc` fields are captured at compile
-// time and threaded into the Eval-error slog line so an operator
-// triaging "which receiver's when: is broken?" can disambiguate when
-// multiple subscriptions on the same signal-type fire.
 type CompiledPredicate struct {
 	program          cel.Program
 	subscriptionType TypePath
 	whenSrc          string
 }
 
-// CompileWhen compiles a CEL when: expression for the given
-// subscription typeSpec. typeSpec is the subscription's `type:` field
-// — either an exact emit-shape path (parse-checked against the
-// resolved payload schema) or a trailing-"*" prefix (no field-name
-// check, payload bound as dyn map).
-//
-// Empty when returns (nil, nil) — the canonical "always match"
-// sentinel. Eval handles nil receivers.
-//
-// Returns wrapped errors on:
-//   - CEL syntax error;
-//   - field reference not in the resolved payload schema (exact-type
-//     only).
 func CompileWhen(typeSpec TypePath, when string) (*CompiledPredicate, error) {
 	return CompileWhenWithBodyFields(typeSpec, when, nil)
 }
 
-// CompileWhenWithBodyFields is the extended form of CompileWhen that
-// additionally cross-checks chained `payload.attributes_delta.<field>`
-// references against a caller-supplied body-field allowlist. Used by
-// the template validator on message-virtual-node subscriptions
-// (`node: <message-type>, type: terminal/success`): the message-type's
-// `body_schema` properties are the legal `<field>` set, and a typo
-// silently evaluates as no-match at runtime — the same falsifier the
-// `{{messages.T.field}}` substitution validator catches at
-// registration. Cross-checking here matches the substitution side's
-// rigor.
-//
-// `bodyFields` is nil when no cross-check is wanted (the bare
-// CompileWhen surface above). An empty (non-nil) set means "the
-// message-type declares no body fields", which rejects any
-// `payload.attributes_delta.<field>` reference.
-//
-// Returns the same wrapped errors as CompileWhen, plus:
-//   - `payload.attributes_delta.<field>` references an unknown field
-//     when `bodyFields` is non-nil.
-//
 // @concept: message-schema
 func CompileWhenWithBodyFields(typeSpec TypePath, when string, bodyFields map[string]struct{}) (*CompiledPredicate, error) {
 	if when == "" {
@@ -84,9 +42,6 @@ func CompileWhenWithBodyFields(typeSpec TypePath, when string, bodyFields map[st
 	if issues != nil && issues.Err() != nil {
 		return nil, fmt.Errorf("invalid CEL expression %q: %w", when, issues.Err())
 	}
-	// @deliberate: only exact-type subscriptions get the payload field-name
-	// check; prefix-type subscriptions bind payload as a dyn map and skip
-	// compile-time field validation.
 	if !strings.HasSuffix(string(typeSpec), "*") {
 		if schemaType, ok := PayloadSchemaForType(typeSpec); ok {
 			if err := checkPayloadFields(checked, schemaType); err != nil {
@@ -94,17 +49,6 @@ func CompileWhenWithBodyFields(typeSpec TypePath, when string, bodyFields map[st
 			}
 		}
 	}
-	// @constraint: message-virtual-node body-field cross-check. The
-	// receiver subscribes via `node: <message-type>, type:
-	// terminal/success`; `payload.attributes_delta` is the bridge field
-	// (populated by `runtime/message_delivery.go::
-	// messageVirtualNodeSettleSignal` from the message body), so a
-	// `payload.attributes_delta.<field>` reference is really a
-	// body-field read. Without this check, the substitution side
-	// ({{messages.T.field}}) rejects typos at registration but the CEL
-	// side admits them silently — asymmetric coverage the typed-message
-	// substitution falsifier rules out. Only meaningful when bodyFields
-	// is supplied (the template validator on message-virtual-node subs).
 	// @story: typed-message-substitution
 	if bodyFields != nil {
 		if err := checkAttributesDeltaFields(checked, bodyFields); err != nil {
@@ -122,18 +66,6 @@ func CompileWhenWithBodyFields(typeSpec TypePath, when string, bodyFields map[st
 	}, nil
 }
 
-// checkAttributesDeltaFields walks the compiled AST and rejects any
-// `payload.attributes_delta.<field>` chained reference whose `<field>`
-// is not in the allowed set. Mirrors `checkPayloadFields`'s shape but
-// matches a two-step chain instead of one (the operand of the outer
-// select is itself a select on `payload.attributes_delta`).
-//
-// Deeper chains (`payload.attributes_delta.foo.bar`) only check `foo`
-// — the same one-segment-deep policy `checkPayloadFields` uses for the
-// outer `payload.<field>` slot. Author-declared body fields can
-// themselves carry nested shape; rimsky doesn't introspect that
-// nested shape at template-registration time.
-//
 // @concept: message-schema
 func checkAttributesDeltaFields(checked *cel.Ast, allowed map[string]struct{}) error {
 	nav := ast.NavigateAST(checked.NativeRep())
@@ -174,18 +106,6 @@ func checkAttributesDeltaFields(checked *cel.Ast, allowed map[string]struct{}) e
 		strings.Join(missing, ", "))
 }
 
-// Eval evaluates the predicate against a Signal. A nil receiver
-// returns (true, nil) — the always-match sentinel. The activation
-// binds `type` to the signal's TypePath as a string and `payload` to
-// the signal's payload as a map.
-//
-// CEL eval errors (e.g. a field reference that doesn't resolve on
-// the actual payload, type mismatch on a comparator, overflow,
-// panic-recovered runtime errors) are surfaced as the spec's
-// safe-navigation default: (false, nil). The eval error is logged
-// via the package-level slog default with the signal type-path for
-// triage — visible without breaking the cascade walker on an
-// expected missing-key.
 func (p *CompiledPredicate) Eval(s Signal) (bool, error) {
 	if p == nil {
 		return true, nil
@@ -199,14 +119,6 @@ func (p *CompiledPredicate) Eval(s Signal) (bool, error) {
 	}
 	out, _, err := p.program.Eval(in)
 	if err != nil {
-		// @deliberate: field references that don't resolve on the
-		// actual payload evaluate to a "no such key" error at runtime;
-		// surface as a false match rather than bubbling up. Genuine
-		// evaluation errors (type mismatch on a comparator) also
-		// short-circuit to false. Log so operator-side mistakes (typo
-		// in a `when:` field reference, mismatched types) surface in
-		// observability without breaking the cascade walk on every
-		// emission.
 		slog.Default().Warn("signal.CompiledPredicate.Eval: CEL eval error; treating as no-match",
 			"signal_type", string(s.Type),
 			"subscription_type", string(p.subscriptionType),
@@ -216,19 +128,11 @@ func (p *CompiledPredicate) Eval(s Signal) (bool, error) {
 	}
 	b, ok := out.(types.Bool)
 	if !ok {
-		// @deliberate: defensive non-match for non-boolean predicate
-		// output; env.Check should have rejected non-boolean predicates
-		// upstream, but evaluate this defensively rather than panic.
 		return false, nil
 	}
 	return bool(b), nil
 }
 
-// buildEnv constructs the shared CEL env used for all subscription
-// predicates. type is bound as string; payload is bound as
-// map<string, dyn> (the dyn map handles both exact-type and
-// prefix-type subscriptions at evaluation time; field-name
-// constraint for exact-type happens via AST walk at compile time).
 func buildEnv() (*cel.Env, error) {
 	return cel.NewEnv(
 		cel.Variable("type", cel.StringType),
@@ -236,15 +140,6 @@ func buildEnv() (*cel.Env, error) {
 	)
 }
 
-// checkPayloadFields walks the compiled AST and rejects any
-// `payload.<field>` reference whose field is not in the resolved
-// payload schema. Only direct `payload.X` selects are checked;
-// chained selects like `payload.foo.bar` only check `foo`.
-//
-// Field names are matched against the struct's JSON tag (when
-// present) or the lowercased Go field name (mirroring the encoding/
-// json default). This matches what the runtime sees when the payload
-// struct is marshalled to a map for emission.
 func checkPayloadFields(checked *cel.Ast, schemaType reflect.Type) error {
 	if schemaType == nil {
 		return nil
@@ -283,10 +178,6 @@ func checkPayloadFields(checked *cel.Ast, schemaType reflect.Type) error {
 		schemaType.Name(), strings.Join(missing, ", "))
 }
 
-// schemaFieldSet returns the set of valid CEL field names for the
-// given struct type. Names come from the json struct tag (first
-// comma-separated segment) when present, else the lowercased Go
-// field name.
 func schemaFieldSet(t reflect.Type) map[string]struct{} {
 	out := make(map[string]struct{})
 	if t.Kind() != reflect.Struct {

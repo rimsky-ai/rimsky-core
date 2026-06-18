@@ -13,37 +13,16 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Logger is the minimum logging surface RunTick needs. Both
-// *log/slog.Logger and shared.Logger (the scheduler's structured-log
-// wrapper) satisfy this; keeping it tiny lets graph/frame avoid
-// importing graph/shared without losing the scheduler's pre-bound
-// fields when the scheduler wires its logger through.
 type Logger interface {
 	Debug(msg string, args ...any)
 	Info(msg string, args ...any)
 	Warn(msg string, args ...any)
 }
 
-// MetricsHook is the minimum metrics surface frame.RunTick needs.
-// Foundation/integration's MetricsHook structurally satisfies this so
-// the scheduler can pass through its registry adapter without forcing
-// graph/frame to import runtime.
 type MetricsHook interface {
 	ObserveFrameDuration(seconds float64)
 }
 
-// RunTick performs one frame-engine iteration. The caller must hold the
-// scheduler-tick advisory lock (blessed-invariant 7).
-//
-// Steps per §4.1 of the spec:
-//  1. Detect frame-end (transition running → completed|failed).
-//  2. Advance queued — promote oldest queued to running.
-//  3. Warn on stuck frames (timeout exceeded with no claimed dispatches) — observation only, not destructive.
-//  4. Reap orphan dispatches (frame in terminal state but dispatch still claimed).
-//
-// Each step opens its own short tx so partial failures don't poison the
-// whole tick. The advisory lock guarantees serialization across replicas;
-// within one process this is just a sequential loop.
 func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger, metrics ...MetricsHook) error {
 	var m MetricsHook
 	if len(metrics) > 0 {
@@ -65,8 +44,6 @@ func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Qu
 }
 
 func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger Logger, metrics MetricsHook) error {
-	// @deliberate: Step 1: collect pendings outside any subsequent transition tx so a
-	// single bad frame doesn't poison the whole tick.
 	var pendings []persistence.FramePending
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ps, err := store.Frames().ListRunningFramesNoPendingNodes(ctx, tx)
@@ -79,8 +56,6 @@ func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger 
 		return err
 	}
 
-	// @deliberate: per-frame transition tx so a single frame's failure
-	// leaves the rest unaffected.
 	for _, p := range pendings {
 		if err := transitionFrameEnd(ctx, store, p.FrameID, p.InstanceID, logger, metrics); err != nil {
 			logger.Warn("frame.end.transition_failed",
@@ -93,11 +68,6 @@ func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger 
 	return nil
 }
 
-// transitionFrameEnd applies one frame's running → completed|failed
-// transition in its own short tx. After the frame transitions to
-// terminal, the same tx evaluates the instance's terminal predicate
-// and sets rimsky_instances.terminated_at if satisfied
-// (control-plane spec §2.4: idempotent, set-once).
 func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, instanceID shared.UUID, logger Logger, metrics MetricsHook) error {
 	var transitioned bool
 	var finalState persistence.FrameState
@@ -111,9 +81,6 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 		if anyFailed {
 			finalState = persistence.FrameStateFailed
 		}
-		// @deliberate: Snapshot started_at before MarkRunningFrameTerminal stamps
-		// MarkRunningFrameTerminal stamps ended_at = now() so the metric
-		// observes the running window without a second roundtrip.
 		row, gerr := store.Frames().GetForObservability(ctx, frameID, tx)
 		if gerr != nil {
 			return gerr
@@ -125,9 +92,6 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 		transitioned = moved
 		if moved && row != nil {
 			startedAt = row.StartedAt
-			// @deliberate: use clock-now for ended_at; the SQL stamps
-			// now() in the same tx so this is equivalent to the persisted
-			// value.
 			now := time.Now()
 			endedAt = &now
 		}
@@ -147,13 +111,6 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 	return nil
 }
 
-// runAdvanceQueued promotes every queued-and-ready frame to running.
-// Receivers wake exclusively via the subscriber-side cascade in
-// `runtime.cascadeMessageVirtualNodeSettleInTx`: the triggering
-// message's type is the virtual-node sender key; subscribers declared
-// via `subscribes: [{node: <type>, type: terminal/success}]` (including
-// the runtime-injected structural-root edges keyed by sender="") stale-
-// mark through the standard edge map.
 func runAdvanceQueued(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger) error {
 	_ = queue
 	var advances []persistence.FrameQueuedReady
@@ -175,7 +132,6 @@ func runAdvanceQueued(ctx context.Context, store persistence.Tables, queue persi
 			if perr != nil {
 				return perr
 			}
-			// @deliberate: !moved → another replica won; nothing to do.
 			promoted = moved
 			return nil
 		})
@@ -196,14 +152,6 @@ func runAdvanceQueued(ctx context.Context, store persistence.Tables, queue persi
 	return nil
 }
 
-// runWarnStuckFrames observes frames that have made no progress within
-// their `frame_timeout_ms` window and emits a single `frame.stuck.observed`
-// slog warning per such frame. It does NOT take destructive action:
-// the frame stays `running`, no nodes are failed, the instance is not
-// terminated. Operators are expected to investigate via the dashboard /
-// event log and decide whether to issue an operator invalidate, mark a
-// node failed manually, or wait. (Pre-v1 design choice: no blanket
-// "frame too old; kill it" policy.)
 func runWarnStuckFrames(ctx context.Context, store persistence.Tables, logger Logger) error {
 	var stuckFrames []persistence.FrameStuck
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -226,11 +174,6 @@ func runWarnStuckFrames(ctx context.Context, store persistence.Tables, logger Lo
 	return nil
 }
 
-// runReapOrphanFrameDispatches releases dispatch claims whose frame has
-// already reached a terminal state. Per blessed-invariant 4 (claimant-
-// guarded release), the per-row UPDATE filters by `claimed_by =
-// supervisor_id` so a fresh supervisor that re-claimed the row keeps
-// its live claim.
 func runReapOrphanFrameDispatches(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger) error {
 	var orphans []persistence.OrphanFrameDispatch
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -245,8 +188,6 @@ func runReapOrphanFrameDispatches(ctx context.Context, store persistence.Tables,
 	}
 
 	for _, o := range orphans {
-		// @deliberate: Queue.ReleaseClaim auto-commits its own tx;
-		// claimant-guarded by expectedClaimedBy.
 		if err := queue.ReleaseClaim(ctx, o.DispatchID, o.ClaimedBy); err != nil {
 			logger.Warn("frame.orphan_dispatch.release_failed",
 				"dispatch_id", o.DispatchID,

@@ -2,20 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N6 scenario — durable_lifetime_e2e.
-//
-// Drives the full durable-claim lifecycle against a real Postgres:
-//
-//  1. A `lifetime: durable` claim handle is acquired and its holding
-//     subgraph completes.
-//  2. `CheckAndFireResolution` fires the producer Commit and promotes
-//     the row to state='committed' — the row survives the auto-terminal
 //     Delete (held-durable Promote contract per @blessed-invariant 22).
-//  3. `ListByInstanceAndState(committed, durable)` surfaces the row for
-//     the instance.
-//  4. `ReleaseHeldDurableClaims` fires `producer.Release` and drops
-//     the row at instance termination.
-//
 // @concept: claim-lifetime
 // @concept: auto-terminal
 // @concept: claim-handle
@@ -113,8 +100,6 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		}, tx)
 	}))
 
-	// @deliberate: Drive the holder to 'completed' so auto-terminal sees a complete
-	// holding subgraph.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHolders().CompleteByClaimHandleAndRun(
 			ctx, claimHandleID, acqRunID, persistence.ClaimHolderStateCompleted, tx,
@@ -132,8 +117,6 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		return runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
 	}))
 
-	// @deliberate: Row MUST survive — durable promotion flipped state to 'committed'
-	// and skipped the Delete (held-durable Promote contract per
 	// @blessed-invariant 22).
 	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -142,15 +125,11 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		return err
 	}))
 	require.NotNil(t, row, "durable claim must survive auto-terminal")
-	// @constraint: Post-refactor: durable-Commit promotes the row to state='committed'
-	// (Promote-not-delete). The durable property comes from
-	// `lifetime='durable'` on the row.
 	require.Equal(t, spec.ClaimHandleStateCommitted, row.State,
 		"durable claim must be promoted to state=committed at auto-terminal")
 	require.Equal(t, spec.ClaimLifetimeDurable, row.Lifetime,
 		"durable claim must carry lifetime=durable")
 
-	// @constraint: ListByInstanceAndState(committed, durable) surfaces the row.
 	var durables []persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		rows, err := backend.ClaimHandles().ListByInstanceAndState(
@@ -162,8 +141,6 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	require.Len(t, durables, 1)
 	require.Equal(t, claimHandleID, durables[0].ID)
 
-	// @deliberate: Instance termination cleanup fires producer.Release on every
-	// durable row + deletes the row.
 	var report runtime.HeldDurableReleaseReport
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := runtime.ReleaseHeldDurableClaims(ctx, args, tx, inst.ID, shared.SilentLogger{})
@@ -174,7 +151,6 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	require.Equal(t, 1, report.Succeeded)
 	require.Empty(t, report.Failures)
 
-	// @constraint: Row MUST be gone.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, claimHandleID, tx)
 		row = r
@@ -182,7 +158,6 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	}))
 	require.Nil(t, row, "ReleaseHeldDurableClaims must drop the row")
 
-	// @constraint: Producer.Release MUST have fired.
 	releaseSeen := false
 	for _, c := range stubStore.Calls() {
 		if c.Verb == "release" {
@@ -192,10 +167,6 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	require.True(t, releaseSeen, "producer.Release must fire during instance termination cleanup")
 }
 
-// insertDeployedTemplateAsset inserts a template row in 'deployed' state
-// with a deterministic content hash. Duplicated from the auto_terminal
-// fixture so the scenario package stays self-contained.
-//
 // @source: lib/runtime/auto_terminal_test.go::insertDeployedTemplate
 // @diverged: false
 func insertDeployedTemplateAsset(ctx context.Context, t *testing.T, sb persistence.Tables, tmplSpec node.TemplateSpec) persistence.TemplateRow {
@@ -220,8 +191,6 @@ func insertDeployedTemplateAsset(ctx context.Context, t *testing.T, sb persisten
 	return *row
 }
 
-// seedFrameAsset creates a 'running' frame for the instance.
-//
 // @source: lib/runtime/auto_terminal_test.go::seedFrame
 // @diverged: false
 func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
@@ -252,9 +221,6 @@ func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, in
 	return frameID
 }
 
-// seedRunForNodeAsset enqueues a fresh rimsky_node_runs row for the
-// given node and returns the run id.
-//
 // @source: lib/runtime/auto_terminal_test.go::seedRunForNode
 // @diverged: false
 func seedRunForNodeAsset(

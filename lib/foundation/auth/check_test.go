@@ -34,9 +34,6 @@ func TestCheckGrantVerbSuffix(t *testing.T) {
 	}
 }
 
-// TestCheckGrantSetMembership_AnyMatchAllows: evaluation is set
-// membership — any entry whose action matches allows; order is not
-// significant. A non-matching action is denied regardless of position.
 func TestCheckGrantSetMembership_AnyMatchAllows(t *testing.T) {
 	g := Grant{
 		{Action: "instance:create"},
@@ -53,8 +50,6 @@ func TestCheckGrantSetMembership_AnyMatchAllows(t *testing.T) {
 	}
 }
 
-// TestCheckGrantSetMembership_OrderIrrelevant: the same grant in either
-// order yields the same allow/deny decision (no first-match-wins).
 func TestCheckGrantSetMembership_OrderIrrelevant(t *testing.T) {
 	specificFirst := Grant{{Action: "instance:create"}, {Action: "*"}}
 	wildcardFirst := Grant{{Action: "*"}, {Action: "instance:create"}}

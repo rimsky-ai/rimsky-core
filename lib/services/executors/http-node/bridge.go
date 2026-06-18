@@ -13,10 +13,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// mountBridge adds the HTTP+JSON bridge under /v1/Execute on the
-// provided http.ServeMux. Per TD-execute-rpc-unary the bridge is a
-// single request/response round-trip: it accepts a protojson-encoded
-// ExecuteRequest body and returns a protojson-encoded Outcome.
 func mountBridge(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/v1/Execute", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

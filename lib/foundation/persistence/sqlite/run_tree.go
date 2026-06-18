@@ -23,11 +23,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// runTreeImpl is the SQLite-backed persistence.RunTreeTable — CRUD +
-// locking on the run-tree extension of rimsky_node_runs. Mirrors the
-// postgres-side shape; under RunScope-first the tree shape lives on
-// rimsky_run_scopes and this table projects per-run aggregation_policy
-// + state columns.
 type runTreeImpl tablesImpl
 
 var _ persistence.RunTreeTable = (*runTreeImpl)(nil)
@@ -95,7 +90,6 @@ func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in 
 	if len(policy) > 0 {
 		policyArg = string(policy)
 	}
-	// @deliberate: idempotent insert — NOT EXISTS keyed on (node_id, run_scope_id) so repeated CreateChildRun calls for the same scope don't double-insert.
 	_, err = b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id,
@@ -129,11 +123,6 @@ func (b *runTreeImpl) GetByID(ctx context.Context, tx persistence.Tx, runID shar
 	return row, nil
 }
 
-// LockTreeForUpdate is a best-effort emulation under SQLite. SQLite does
-// not support row-level `SELECT ... FOR UPDATE`; the per-connection
-// write-lock that the open transaction holds is what guarantees
-// atomic update. Concurrent readers see snapshot data per WAL mode.
-// Multi-host deployments must use postgres.
 func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
 	if tx == nil {
 		return nil, errors.New("sqlite.run_tree.LockTreeForUpdate: tx required")
@@ -141,8 +130,6 @@ func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, 
 	return b.GetByID(ctx, tx, runID)
 }
 
-// ListChildren returns all in-flight runs in RunScopes whose
-// parent_run_id equals parentRunID. Walks via rimsky_run_scopes JOIN.
 func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
 		`SELECT nr.id, nr.node_id, nr.frame_id, nr.run_scope_id, nr.phase,
@@ -211,8 +198,6 @@ func (b *runTreeImpl) UpdateAggregationPolicy(
 	return nil
 }
 
-// scanSqliteRunTreeRow handles both *sql.Row and *sql.Rows via the
-// shared `scannable` interface (defined in backend.go).
 func scanSqliteRunTreeRow(s scannable) (*persistence.RunTreeRow, error) {
 	var (
 		idStr, nodeIDStr, frameIDStr, runScopeIDStr string

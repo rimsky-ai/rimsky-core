@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — pins spec §10.2 "Resume-with-invalid-overlay":
-//
-//   1. Install a pause-mode breakpoint on a node whose attributes schema
-//      forbids a particular value shape (here, `tag` must be a string).
-//   2. Resume with an overlay that injects `tag: 42` (number, not string).
-//   3. The control-api's ValidateAndPersistResume should return
-//      400 ErrResumeOverlayInvalid; the hit row must remain unresumed.
-//   4. A second resume with a valid overlay then succeeds, and the
-//      dispatch proceeds to terminal with the valid overlay applied.
-//
-// This pins both halves of the spec §4.7 validation discipline: the
-// pre-merge schema check rejects bad overlays, and rejection is
-// truly non-destructive (the hit stays in place for a retry).
-//
 // @concept: breakpoint
 
 package breakpoints
@@ -70,8 +56,6 @@ func TestResumeInvalidOverlay(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, badStatus,
 		"invalid overlay should yield 400 ErrResumeOverlayInvalid; got body=%v", badOut)
 
-	// @constraint: The hit row must NOT carry resumed_at — the rejection is
-	// non-destructive so the operator can retry with a valid overlay.
 	row := getHitRow(t, h, hit.ID)
 	require.NotNil(t, row)
 	require.Nil(t, row.ResumedAt,

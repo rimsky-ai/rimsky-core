@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — pins spec §10.2 "Signal-type filter on after_terminal":
-//
-//   - Install an after_terminal breakpoint with signal_type =
-//     "terminal/error/*" (trailing-wildcard prefix match).
-//   - Run a successful dispatch — terminal/success is the emitted
-//     signal; the breakpoint must NOT fire (no hit row for that
-//     terminal).
-//   - Run a failing dispatch — terminal/error/stub/<class> is emitted;
-//     the breakpoint MUST fire (one hit row).
-//
-// Pins the spec §4.5 prefix-match filter at the supervisor's
-// after_terminal checkpoint. notify_only keeps the dispatch from
-// blocking on the hit so terminal-state observation stays clean.
-//
 // @concept: breakpoint
 
 package breakpoints
@@ -56,9 +42,6 @@ func TestSignalTypeFilter(t *testing.T) {
 					Type:     "err_worker",
 					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
-						// @deliberate: give_up immediately so the terminal signal is a
-						// single terminal/error/stub/boom (no retry/transient
-						// noise to dilute the match assertion).
 						"stub/boom": {Policy: []node.PolicyAction{{Action: "give_up"}}},
 					},
 				},
@@ -67,8 +50,6 @@ func TestSignalTypeFilter(t *testing.T) {
 	})
 
 	iid := createInstanceWithPause(t, h, tid, "ck-signal-type-filter", map[string]any{})
-	// @deliberate: Filter: after_terminal + signal_type=terminal/error/* + notify_only +
-	// empty matcher (fires on every dispatch's terminal regardless of node).
 	signalType := "terminal/error/*"
 	bpID := breakpointCreate(t, h, iid, map[string]any{
 		"checkpoint":  "after_terminal",
@@ -88,8 +69,6 @@ func TestSignalTypeFilter(t *testing.T) {
 	require.True(t, h.WaitForNodeState(errN.ID, cascade.NodeStateFailed, 15*time.Second),
 		"err_worker should reach Failed after give_up")
 
-	// @deliberate: The after_terminal checkpoint fires after the terminal-handler tx
-	// commits — give the eval+write a brief window.
 	time.Sleep(500 * time.Millisecond)
 
 	hits := waitForHitCount(t, h, bpID, 1, 5*time.Second)

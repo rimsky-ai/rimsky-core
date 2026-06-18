@@ -2,21 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N3 scenario — entry_absorption.
-//
-// The canonicalizer absorbs the sub-graph's entry node into the
-// calling node: the calling node carries IsSubgraphEntryAbsorbed=true,
-// and the runtime supervisor's terminal handler consults this marker
-// to route through the sub-graph internal-cascade fire instead of the
-// standard run-tree aggregation. Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Sub-graphs / Identity and absorption.
-//
-// The scenario validates the canonicalizer + runtime predicate
-// alignment without booting the full stack: it constructs a
-// template-with-graphs, runs ValidateTemplate to canonicalize, then
-// asserts both the marker on the calling node AND the matching
-// `IsSubgraphCaller` runtime predicate.
 package subgraph
 
 import (
@@ -75,7 +60,6 @@ func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {
 		t.Errorf("outer-caller must be recognized by IsSubgraphCaller (Delegate=%q)", caller.Delegate)
 	}
 
-	// @constraint: A non-delegating node must NOT carry the marker.
 	plain := byType["plain-node"]
 	if plain == nil {
 		t.Fatalf("plain-node missing")
@@ -88,10 +72,6 @@ func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {
 	}
 }
 
-// @deliberate: IsSubgraphExit is consulted by the supervisor's terminal handler to
-// route exit-node terminals through the SettleChildren carry-rule.
-// Verify the predicate aligns with the canonicalized template's
-// declared exit.
 func TestEntryAbsorption_ExitNodeIdentified(t *testing.T) {
 	t.Parallel()
 	tmpl := &node.TemplateSpec{
@@ -128,9 +108,6 @@ func TestEntryAbsorption_ExitNodeIdentified(t *testing.T) {
 	if runtime.IsSubgraphExit(tmpl, "outer-caller") {
 		t.Errorf("outer-caller is the calling node in main; not an exit")
 	}
-	// @constraint: The canonicalizer must also stamp IsSubgraphExit on the exit
-	// node so the runtime terminal handler routes through the
-	// carry-rule via acq.NodeDef alone (no template DB lookup).
 	byType := make(map[string]*node.TemplateNodeDef, len(tmpl.Nodes))
 	for i := range tmpl.Nodes {
 		byType[tmpl.Nodes[i].Type] = &tmpl.Nodes[i]

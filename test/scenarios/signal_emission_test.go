@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// End-to-end signal-emission scenario tests for Pass 1 of spec
-// 2026-05-23-signal-taxonomy-and-policy-decoupling-design. These
-// tests exercise the signal-write side of the unified signal
-// pathway: every signal-bearing transition lands one row in
-// rimsky_events with the canonical type-path in kind. Subscribers
-// are unaffected here — Pass 2 reshapes the consumer side.
 
 package scenarios
 
@@ -25,9 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// TestSignalEmission_TerminalSuccess asserts that a successful run
-// writes one rimsky_events row with kind=terminal/success and the
-// expected payload shape.
 func TestSignalEmission_TerminalSuccess(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -65,10 +56,6 @@ func TestSignalEmission_TerminalSuccess(t *testing.T) {
 	}
 }
 
-// TestSignalEmission_TerminalErrorWithRetryThenGiveUp asserts the
-// signal-emit sequence for a node whose error_types chain is
-// [retry x1, give_up]: one transient/retry/1/foo, then one
-// terminal/error/foo.
 func TestSignalEmission_TerminalErrorWithRetryThenGiveUp(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -103,15 +90,10 @@ func TestSignalEmission_TerminalErrorWithRetryThenGiveUp(t *testing.T) {
 		"expected one transient/retry/1/stub/foo row; got kinds=%v", kinds)
 	require.GreaterOrEqual(t, terminalIdx, 0,
 		"expected one terminal/error/stub/foo row; got kinds=%v", kinds)
-	// @deliberate: List returns events ordered by occurred_at DESC, id DESC — so
-	// the LATER event has the smaller index. The retry happened
-	// before the give_up; therefore retryIdx > terminalIdx.
 	require.Greater(t, retryIdx, terminalIdx,
 		"transient/retry should precede terminal/error in time (DESC order: retryIdx > terminalIdx); kinds=%v", kinds)
 }
 
-// TestSignalEmission_ParkSnooze asserts a snooze-park run writes
-// kind=terminal/park/snooze with the resume_at payload field populated.
 func TestSignalEmission_ParkSnooze(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -141,9 +123,6 @@ func TestSignalEmission_ParkSnooze(t *testing.T) {
 		if e.KindRaw != "terminal/park/snooze" {
 			continue
 		}
-		// @deliberate: resume_at is round-tripped through JSON; the payload value
-		// may be a time.Time, a string, or — when JSON-loaded — a
-		// time-shaped string. Just assert presence + non-empty.
 		require.NotNil(t, e.Payload["resume_at"], "park payload should carry resume_at")
 		switch v := e.Payload["resume_at"].(type) {
 		case string:
@@ -155,9 +134,6 @@ func TestSignalEmission_ParkSnooze(t *testing.T) {
 	}
 }
 
-// readEventsForNode loads every rimsky_events row for the given
-// node. Used to assert the signal-emit set without depending on a
-// specific order or kind filter.
 func readEventsForNode(t *testing.T, h *scenario.Harness, nodeID shared.UUID) []persistence.EventRow {
 	t.Helper()
 	nid := nodeID

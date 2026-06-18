@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// down.go — `compose down`. Reverses the application-state portion of
-// the manifest: instance deletes → undeploys → tag deletes → best-effort
-// template deletes. Purely application-layer: it touches only the
-// compose-owned control-api resources and invokes no infra command (the
-// removed `--infra`/`dev` teardown half is not part of compose).
 package compose
 
 import (
@@ -20,9 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 )
 
-// ComputeDownPlan produces the §3.7 sequence: instance deletes → template
-// undeploys → tag deletes → best-effort template deletes. Refuses with
-// *ErrComposePlan if any non-terminal compose-owned instances exist.
 func ComputeDownPlan(ctx context.Context, c *cli.Client, m *Manifest, state *ComposeState) (*Plan, error) {
 	plan := &Plan{Project: m.Project, Context: m.Context}
 
@@ -100,7 +92,6 @@ func ComputeDownPlan(ctx context.Context, c *cli.Client, m *Manifest, state *Com
 	return plan, nil
 }
 
-// composeDownFlags collects parsed flags for `compose down`.
 type composeDownFlags struct {
 	manifestPath string
 	common       cli.CommonFlags
@@ -122,8 +113,6 @@ func parseComposeDownFlags(args []string) (*composeDownFlags, int) {
 	return out, 0
 }
 
-// RunComposeDown implements `compose down`. Loads the manifest, resolves
-// the client, and delegates to runComposeDownWithManifest.
 func RunComposeDown(ctx context.Context, args []string) int {
 	flags, code := parseComposeDownFlags(args)
 	if code != 0 {
@@ -141,15 +130,10 @@ func RunComposeDown(ctx context.Context, args []string) int {
 		return 2
 	}
 	c := cli.NewClient(endpoint)
-	// @constraint: compose owns the reserved `compose:` prefix; stamp the
-	// trusted compose-origin marker so the control-api's server-side guard
-	// admits compose-originated tag/instance writes (CLICTRL-4).
 	c.SetComposeOrigin(true)
 	return runComposeDownWithManifest(ctx, m, c, flags)
 }
 
-// runComposeDownWithManifest is the shared body of `compose down`.
-// RunComposeDown loads the manifest once and threads it through.
 func runComposeDownWithManifest(ctx context.Context, m *Manifest, c *cli.Client, flags *composeDownFlags) int {
 	state, err := QueryState(ctx, c, m.Project)
 	if err != nil {

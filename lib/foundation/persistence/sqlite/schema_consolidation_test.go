@@ -17,10 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// expectedSqliteTables is the post-consolidation table set on SQLite.
-// The list mirrors the postgres-side expectedTables in the sibling
-// schema_consolidation_test.go (the rimsky_* table set is the same on
-// both backends).
 var expectedSqliteTables = []string{
 	"rimsky_api_keys",
 	"rimsky_blob_orphans",
@@ -59,9 +55,6 @@ var expectedSqliteHitColumns = []string{
 	"resume_overlay",
 }
 
-// TestSqliteSchemaConsolidation_FreshDB asserts that after Migrate, the
-// expected tables exist and the breakpoint tables carry their full
-// column sets.
 func TestSqliteSchemaConsolidation_FreshDB(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -84,11 +77,6 @@ func TestSqliteSchemaConsolidation_FreshDB(t *testing.T) {
 	assertSqliteColumnsPresent(t, ctx, db, "rimsky_instances", []string{"paused"})
 }
 
-// TestSqliteSchemaConsolidation_StaleMigrationsRowsAreInert mirrors the
-// postgres test: pre-seed rimsky_migrations with the legacy filenames,
-// then Migrate. The new 001-schema.sql is not in the seed set so it
-// applies; the legacy rows are ignored because their filenames are not
-// in the embed.FS.
 func TestSqliteSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -141,8 +129,6 @@ func TestSqliteSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 	assertSqliteColumnsPresent(t, ctx, db, "rimsky_instance_breakpoints", expectedSqliteBreakpointColumns)
 	assertSqliteColumnsPresent(t, ctx, db, "rimsky_breakpoint_hits", expectedSqliteHitColumns)
 
-	// n should carry BOTH the legacy row AND the new
-	// 001-schema.sql row.
 	var n int
 	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM rimsky_migrations WHERE filename = '001-schema.sql'`,
@@ -188,8 +174,6 @@ func assertSqliteTablesPresent(t *testing.T, ctx context.Context, db *sql.DB, wa
 func assertSqliteColumnsPresent(t *testing.T, ctx context.Context, db *sql.DB, table string, want []string) {
 	t.Helper()
 	have := map[string]bool{}
-	// @deliberate: PRAGMA can't be parameterized — concatenate the table name. The
-	// `table` value comes from the test's static lists, not user input.
 	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {
 		t.Fatalf("pragma table_info(%s): %v", table, err)

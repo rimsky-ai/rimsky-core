@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// run.go — ergonomic top-level verbs.
-//
-// `run`, `register`, `deploy`, `undeploy`, `instantiate`, `rm-instance`,
-// `ls`, `logs` — all aliases or thin compositions over the literal
-// subgroup verbs in templates.go / instances.go / nodes.go.
 package cli
 
 import (
@@ -21,8 +16,6 @@ import (
 	"time"
 )
 
-// RepeatedFlag collects a string flag that may be passed multiple times,
-// preserving declaration order. Used by `run`'s --param and --service.
 type RepeatedFlag []string
 
 func (r *RepeatedFlag) String() string { return strings.Join(*r, ",") }
@@ -31,22 +24,16 @@ func (r *RepeatedFlag) Set(v string) error {
 	return nil
 }
 
-// RunRegister aliases `template register`.
 func RunRegister(ctx context.Context, args []string) int { return RunTemplateRegister(ctx, args) }
 
-// RunDeploy aliases `template deploy`.
 func RunDeploy(ctx context.Context, args []string) int { return RunTemplateDeploy(ctx, args) }
 
-// RunUndeploy aliases `template undeploy`.
 func RunUndeploy(ctx context.Context, args []string) int { return RunTemplateUndeploy(ctx, args) }
 
-// RunInstantiate aliases `instance create`.
 func RunInstantiate(ctx context.Context, args []string) int { return RunInstanceCreate(ctx, args) }
 
-// RunRmInstance aliases `instance delete`.
 func RunRmInstance(ctx context.Context, args []string) int { return RunInstanceDelete(ctx, args) }
 
-// RunLs implements the polymorphic `ls [templates|instances|tags]`.
 func RunLs(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		return RunInstanceList(ctx, nil)
@@ -62,24 +49,10 @@ func RunLs(ctx context.Context, args []string) int {
 	return RunInstanceList(ctx, args)
 }
 
-// RunLogs aliases `instance events --follow`.
 func RunLogs(ctx context.Context, args []string) int {
 	return RunInstanceEvents(ctx, append([]string{"--follow"}, args...))
 }
 
-// RunRun is the composed `run` verb: register + deploy + create. With
-// --no-keep, polls until terminal then cleans up.
-//
-// Additive flags (per spec 2026-05-24-host-agent-and-proxy-design.md):
-//   - --template <name>: name an already-registered template instead of
-//     passing a positional spec <file>. Mutually exclusive with <file>.
-//   - --param k=v (repeatable): merged into the params map; merged with
-//     --params JSON with later-wins precedence (--params is applied first,
-//     then each --param k=v in declaration order).
-//   - --service <name>=<path> | <name> (repeatable): per-instance late-bound
-//     service binding. A bare name resolves via the alias files; supplying
-//     any --service auto-starts the local host-agent if it is not already
-//     running (PID-existence check on ~/.rimsky/agent.pid).
 func RunRun(ctx context.Context, args []string) int {
 	var (
 		params            string
@@ -123,13 +96,6 @@ func RunRun(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: rimsky run {<file>|--template <name>} [--params ...] [--param k=v ...] [--service <name>=<path> ...] [--instance-key ...] [--tag ...] [--no-keep]")
 		return 2
 	}
-	// @constraint: "Don't keep the instance" can be expressed two equivalent ways —
-	// `--no-keep` (sets noKeep=true) or `--keep=false` (clears keep).
-	// Both must drive the same waitAndCleanup path AND both must imply
-	// terminate-after-run, otherwise the polling loop in waitAndCleanup
-	// hangs forever waiting on a terminated_at flip that durable-by-
-	// default semantics never produce. Coalesce here so the rest of the
-	// flow keys off the single `keep` boolean.
 	if noKeep || !keep {
 		keep = false
 		terminateAfterRun = true
@@ -206,32 +172,6 @@ func RunRun(ctx context.Context, args []string) int {
 		fmt.Fprintf(os.Stdout, "instance_id=%s\n", inst.UUID())
 	}
 
-	// @constraint: instance creation is idle post-spec
-	// (story:instance-create-is-idle). Emit an empty message to the
-	// newly created instance so the structural roots wake and the
-	// wait-and-cleanup loop has work to observe. The Idempotency-Key
-	// is shaped `run-wake-<instance_id>`: keying on the instance UUID
-	// (not a fresh nonce) makes the cross-invocation wake-replay safe.
-	// `rimsky run --instance-key=<k>` invoked twice against the same
-	// template hits the server's idempotent (template_hash, instance_key)
-	// resolve (`code:lib/control/controlapi/instances.go::CreateInstance`)
-	// and returns the same instance UUID, so the second invocation's
-	// wake POST carries the same Idempotency-Key as the first; the
-	// universal Idempotency-Key dedup on
-	// `route:POST /v1/instances/{id}/messages` then collapses it to a
-	// no-op replay (200 OK with the original message_id) rather than
-	// queueing a duplicate frame. Shape mirrors the compose driver's
-	// `compose-wake-<instance_key>` pattern for uniformity.
-	//
-	// @deliberate: skip the wake when the template has no structural
-	// root — an empty-message wake against a rootless template queues
-	// a frame nobody consumes; the wait-and-cleanup loop would then
-	// hang waiting for a terminal that never arrives. Operators of
-	// rootless templates drive their work via typed messages, not via
-	// `rimsky run`. The introspection mirrors `Harness.CreateInstance`
-	// and `runComposeRunCore`: a `GET /v1/templates/{hash}` resolves
-	// the spec; absence of any structural root (every node carries
-	// `subscribes:`) means the empty wake fires nothing.
 	// @decision: compose-driver-emits-empty-message-after-create
 	hasRoot, rerr := TemplateHasStructuralRoot(ctx, c, hash)
 	if rerr != nil {
@@ -250,9 +190,6 @@ func RunRun(ctx context.Context, args []string) int {
 	return waitAndCleanup(ctx, c, inst.UUID(), hash, pollInterval, timeout)
 }
 
-// mergeParams builds the params map from the --params JSON blob (applied
-// first) then overlays each --param k=v in declaration order (later wins).
-// Returns nil when neither source contributes anything.
 func mergeParams(paramsJSON string, kvs RepeatedFlag) (map[string]any, error) {
 	base, err := parseParams(paramsJSON)
 	if err != nil {
@@ -275,10 +212,6 @@ func mergeParams(paramsJSON string, kvs RepeatedFlag) (map[string]any, error) {
 	return out, nil
 }
 
-// coerceParamValue interprets a --param value string as a bool, integer, or
-// float when it parses cleanly, otherwise leaving it as a string. This keeps
-// `--param count=3` an integer and `--param enabled=true` a bool without
-// requiring the user to write JSON; ambiguous values stay strings.
 func coerceParamValue(v string) any {
 	switch v {
 	case "true":
@@ -295,9 +228,6 @@ func coerceParamValue(v string) any {
 	return v
 }
 
-// resolveServiceBindings turns each --service flag value into a binding.
-// `name=path` is explicit; a bare `name` resolves via the alias files
-// (Task 53). Returns nil when no --service flags were supplied.
 func resolveServiceBindings(values RepeatedFlag) (map[string]bindingSpec, error) {
 	if len(values) == 0 {
 		return nil, nil
@@ -328,13 +258,6 @@ func resolveServiceBindings(values RepeatedFlag) (map[string]bindingSpec, error)
 	return out, nil
 }
 
-// ensureAgentRunning starts the local host-agent daemon when no live agent
-// is recorded. v1 connection-state contract is PID-existence only: read
-// ~/.rimsky/agent.pid and send signal 0 to confirm the process is alive. A
-// live PID is assumed connected to the proxy (the proxy surfaces
-// host_agent_not_connected on dispatch if it isn't, which the operator
-// policy retries). When no live agent is recorded, daemonize one inline
-// before submitting.
 func ensureAgentRunning() error {
 	if pid, ok, err := readAgentPID(); err == nil && ok && processAlive(pid) {
 		return nil
@@ -345,10 +268,6 @@ func ensureAgentRunning() error {
 	return nil
 }
 
-// waitAndCleanup polls GetInstance until terminal, then deletes the
-// instance and undeploy + delete the template. 409s on undeploy / delete-
-// template are degraded to warnings rather than hard failures (per spec
-// §1.3).
 func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pollInterval, timeout time.Duration) int {
 	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()

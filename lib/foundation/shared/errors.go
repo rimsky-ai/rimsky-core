@@ -32,7 +32,6 @@ var (
 	ErrInstanceAlreadyPaused = errors.New("instance already paused")
 )
 
-// RimskyError wraps a sentinel with context fields for structured logging.
 type RimskyError struct {
 	Err     error
 	Message string

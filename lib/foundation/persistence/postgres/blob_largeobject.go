@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// blob_largeobject.go is the persistence.BlobBackend implementation backed
-// by Postgres LARGE OBJECTs (the libpq "lo_*" family / pgx LargeObjects
-// API). Suitable for multi-process deployments because the bytes live in
-// the same Postgres instance every rimsky process already talks to.
-//
-// Handles are formatted as "pglo:<oid>" so they are self-describing
-// across mixed-backend deployments. Each LO operation runs inside a
-// pgx transaction (Postgres LO API is tx-bound).
-//
-// @blessed-invariant 21: Blob content is inert in Rimsky. The bytes are
-// returned to callers verbatim; this file does not log them, format them
-// with %v, transform them, or attach them to traces or errors.
 package postgres
 
 import (
@@ -31,28 +19,18 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// PgLargeObjectBackend stores blobs in the Postgres pg_largeobject
-// catalog table via the LO API. The backend uses the same connection
-// pool the persistence Driver uses for everything else.
 type PgLargeObjectBackend struct {
 	pool *pgxpool.Pool
 }
 
 var _ persistence.BlobBackend = (*PgLargeObjectBackend)(nil)
 
-// NewPgLargeObjectBackend constructs a backend bound to pool. The pool
-// must point at the same database that holds the rimsky tables (LO oids
-// are database-scoped).
 func NewPgLargeObjectBackend(pool *pgxpool.Pool) *PgLargeObjectBackend {
 	return &PgLargeObjectBackend{pool: pool}
 }
 
-// Name returns "pg-largeobject".
 func (b *PgLargeObjectBackend) Name() string { return "pg-largeobject" }
 
-// Write creates a new LO, writes bytes, and returns "pglo:<oid>".
-// The LO is committed before Write returns; callers do not need to
-// participate in any larger tx.
 func (b *PgLargeObjectBackend) Write(ctx context.Context, _ persistence.BlobKey, bytes []byte) (persistence.Handle, error) {
 	tx, err := b.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -87,7 +65,6 @@ func (b *PgLargeObjectBackend) Write(ctx context.Context, _ persistence.BlobKey,
 	return persistence.Handle(fmt.Sprintf("pglo:%d", oid)), nil
 }
 
-// Read fetches the LO by oid and returns the full byte stream.
 func (b *PgLargeObjectBackend) Read(ctx context.Context, handle persistence.Handle) ([]byte, error) {
 	oid, err := parsePgloHandle(handle)
 	if err != nil {
@@ -114,7 +91,6 @@ func (b *PgLargeObjectBackend) Read(ctx context.Context, handle persistence.Hand
 	return out, nil
 }
 
-// ReadRange fetches a byte range from the LO using LO seek + read.
 func (b *PgLargeObjectBackend) ReadRange(ctx context.Context, handle persistence.Handle, offset, length int64) ([]byte, error) {
 	if offset < 0 || length < 0 {
 		return nil, fmt.Errorf("blob pglo: ReadRange: negative offset=%d length=%d", offset, length)
@@ -151,7 +127,6 @@ func (b *PgLargeObjectBackend) ReadRange(ctx context.Context, handle persistence
 	return out[:n], nil
 }
 
-// Delete unlinks the LO. Idempotent: missing oid returns nil.
 func (b *PgLargeObjectBackend) Delete(ctx context.Context, handle persistence.Handle) error {
 	oid, err := parsePgloHandle(handle)
 	if err != nil {
@@ -171,8 +146,6 @@ func (b *PgLargeObjectBackend) Delete(ctx context.Context, handle persistence.Ha
 	if err := los.Unlink(ctx, oid); err != nil {
 		if isMissingLOError(err) {
 			_ = tx.Rollback(ctx)
-			// @deliberate: set committed=true after the manual Rollback so the deferred
-			// rollback in the parent func is suppressed (no double-rollback).
 			committed = true
 			return nil
 		}
@@ -185,7 +158,6 @@ func (b *PgLargeObjectBackend) Delete(ctx context.Context, handle persistence.Ha
 	return nil
 }
 
-// parsePgloHandle parses "pglo:<oid>" → oid, rejecting any other shape.
 func parsePgloHandle(h persistence.Handle) (uint32, error) {
 	s := string(h)
 	if !strings.HasPrefix(s, "pglo:") {
@@ -199,9 +171,6 @@ func parsePgloHandle(h persistence.Handle) (uint32, error) {
 	return uint32(n), nil
 }
 
-// isMissingLOError detects "large object NNNN does not exist" errors.
-// pgx returns these as *pgconn.PgError with code 42704 (undefined_object)
-// or via the explicit pgx ErrNoRows path on some operations.
 func isMissingLOError(err error) bool {
 	if err == nil {
 		return false
@@ -211,15 +180,10 @@ func isMissingLOError(err error) bool {
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		// @constraint: SQLSTATE 42704 (undefined_object) is the modern Postgres code for
-		// a missing LO; 22023 (invalid_parameter_value) is what older Postgres returns
-		// for a missing oid on lo_open. Both map to "not found" semantically.
 		if pgErr.Code == "42704" || pgErr.Code == "22023" {
 			return true
 		}
 	}
-	// @deliberate: some pgx versions surface the missing-LO error as a plain error
-	// (not a *pgconn.PgError), so a string-match fallback is the only available signal.
 	msg := err.Error()
 	if strings.Contains(msg, "large object") && strings.Contains(msg, "does not exist") {
 		return true

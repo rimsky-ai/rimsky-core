@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// sensor-http — bundled HTTP-poll sensor reference implementation.
-//
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Sensors as a service kind.
-//
 //	@concept: sensor
 package main
 

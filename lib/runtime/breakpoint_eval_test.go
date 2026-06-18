@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// breakpoint_eval_test.go — exercises runtime.EvaluateBreakpoints
-// against a SQLite-backed in-memory persistence. Covers matcher
-// mismatch, signal_type filtering on after_terminal, pause-mode
-// blocking + overlay merge, notify_only non-blocking, queue-cap
-// overflow under drop_oldest + block_dispatch, and the
-// cascade-deleted-during-wait race.
-//
-// Reuses openInMemoryTables from breakpoint_resume_test.go (same
-// package); a local seedBreakpointEvalFixture replaces the
-// resume-test fixture because the latter pre-seeds a pause-mode
-// breakpoint that would interfere with these tests' control over
-// which breakpoints are present on the instance.
-//
 // @concept: breakpoint
 
 package runtime_test
@@ -36,11 +23,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// seedBreakpointEvalFixture is a stripped-down variant of
-// seedBreakpointResumeFixture (in breakpoint_resume_test.go) that
-// creates a template + main run scope + instance but does NOT
-// pre-seed a breakpoint — the eval-tests want full control over
-// which breakpoints exist on the instance.
 func seedBreakpointEvalFixture(t *testing.T, ctx context.Context, tables persistence.Tables) shared.UUID {
 	t.Helper()
 	templateHash := "sha256-" + uuid.NewString()
@@ -86,9 +68,6 @@ func seedBreakpointEvalFixture(t *testing.T, ctx context.Context, tables persist
 	return instanceID
 }
 
-// newCheckpointContext returns a CheckpointContext seeded with the
-// fixture's instance id and synthetic UUIDs for DispatchID / FrameID.
-// Tests override the per-case fields directly.
 func newCheckpointContext(instanceID shared.UUID) runtime.CheckpointContext {
 	return runtime.CheckpointContext{
 		InstanceID:       instanceID,
@@ -103,7 +82,6 @@ func newCheckpointContext(instanceID shared.UUID) runtime.CheckpointContext {
 	}
 }
 
-// createBreakpointForEval inserts a breakpoint and returns its id.
 func createBreakpointForEval(t *testing.T, ctx context.Context, tables persistence.Tables, bp persistence.BreakpointRow) shared.UUID {
 	t.Helper()
 	var id shared.UUID
@@ -117,7 +95,6 @@ func createBreakpointForEval(t *testing.T, ctx context.Context, tables persisten
 	return id
 }
 
-// listHitsForBreakpoint returns every hit row currently on a breakpoint.
 func listHitsForBreakpoint(t *testing.T, ctx context.Context, tables persistence.Tables, bpID shared.UUID) []persistence.BreakpointHitRow {
 	t.Helper()
 	var out []persistence.BreakpointHitRow
@@ -131,9 +108,6 @@ func listHitsForBreakpoint(t *testing.T, ctx context.Context, tables persistence
 	return out
 }
 
-// resumeHit calls BreakpointHits.Resume directly, bypassing the
-// validation discipline in ValidateAndPersistResume — these tests
-// drive the evaluator, not the resume path.
 func resumeHit(t *testing.T, ctx context.Context, tables persistence.Tables, hitID shared.UUID, overlay map[string]any) {
 	t.Helper()
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -143,8 +117,6 @@ func resumeHit(t *testing.T, ctx context.Context, tables persistence.Tables, hit
 	}
 }
 
-// TestEvaluateBreakpoints_MatcherMismatchNoHit confirms that a
-// matcher that doesn't fire produces no hit row.
 func TestEvaluateBreakpoints_MatcherMismatchNoHit(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -170,16 +142,10 @@ func TestEvaluateBreakpoints_MatcherMismatchNoHit(t *testing.T) {
 	}
 }
 
-// TestEvaluateBreakpoints_SignalTypePrefixMatchAndMiss covers the
-// after_terminal-only signal_type prefix filter (spec §4.5). Two
-// breakpoints in the same checkpoint: one with prefix matching the
-// terminal signal (fires), one with a prefix that doesn't (skipped).
 func TestEvaluateBreakpoints_SignalTypePrefixMatchAndMiss(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
 	instanceID := seedBreakpointEvalFixture(t, ctx, tables)
-	// @deliberate: Trailing-`*` is the project's wildcard syntax per signal/types.go;
-	// without it HasPrefix does exact-equality only.
 	matchPrefix := "terminal/error/*"
 	missPrefix := "terminal/success"
 	bpMatch := createBreakpointForEval(t, ctx, tables, persistence.BreakpointRow{
@@ -220,8 +186,6 @@ func TestEvaluateBreakpoints_SignalTypePrefixMatchAndMiss(t *testing.T) {
 	}
 }
 
-// TestEvaluateBreakpoints_NotifyOnlyDoesNotBlock confirms notify_only
-// breakpoints write a hit row and return immediately.
 func TestEvaluateBreakpoints_NotifyOnlyDoesNotBlock(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -256,10 +220,6 @@ func TestEvaluateBreakpoints_NotifyOnlyDoesNotBlock(t *testing.T) {
 	}
 }
 
-// TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay confirms
-// pause-mode breakpoints block until the hit is resumed, and that any
-// resume_overlay is deep-merged into the returned MergedAttributes
-// bag.
 func TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -288,8 +248,6 @@ func TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay(t *testing.T) {
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	// @deliberate: Wait for the hit row to appear (proves the goroutine is blocked
-	// inside waitForResume).
 	waitForHit := func() shared.UUID {
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
@@ -304,14 +262,12 @@ func TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay(t *testing.T) {
 	}
 	hitID := waitForHit()
 
-	// @deliberate: Confirm the goroutine is still blocked.
 	select {
 	case <-resultCh:
 		t.Fatalf("EvaluateBreakpoints returned before resume")
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	// @deliberate: Resume with an overlay that adds a key and overrides `base`.
 	resumeHit(t, ctx, tables, hitID, map[string]any{"base": "y", "added": 1})
 
 	select {
@@ -322,8 +278,6 @@ func TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay(t *testing.T) {
 		if got := res.merged["base"]; got != "y" {
 			t.Errorf("base after merge: got %v want y", got)
 		}
-		// @deliberate: Overlay value 1 (Go int at write site) round-trips through
-		// JSON as float64; compare with that in mind.
 		got := res.merged["added"]
 		if gotF, ok := got.(float64); !ok || gotF != 1 {
 			t.Errorf("added after merge: got %v (%T) want 1 (numeric)", got, got)
@@ -333,10 +287,6 @@ func TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay(t *testing.T) {
 	}
 }
 
-// TestEvaluateBreakpoints_CascadeDeletedHitTreatedAsAutoResume covers
-// the race where the hit row is cascade-deleted (via parent breakpoint
-// delete) while waitForResume is polling. The poll returns nil hit and
-// EvaluateBreakpoints continues with the original attribute bag.
 func TestEvaluateBreakpoints_CascadeDeletedHitTreatedAsAutoResume(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -365,8 +315,6 @@ func TestEvaluateBreakpoints_CascadeDeletedHitTreatedAsAutoResume(t *testing.T) 
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	// @deliberate: Wait for the hit row, then delete the parent breakpoint to
-	// trigger ON DELETE CASCADE.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		hits := listHitsForBreakpoint(t, ctx, tables, bpID)
@@ -397,15 +345,6 @@ func TestEvaluateBreakpoints_CascadeDeletedHitTreatedAsAutoResume(t *testing.T) 
 	}
 }
 
-// TestEvaluateBreakpoints_OverflowDropOldestEvictsAndIncrementsCounter
-// confirms the drop_oldest overflow policy: once the per-breakpoint
-// unresumed-hit queue reaches the cap, the oldest unresumed hit is
-// deleted and the breakpoint's dropped_count increments.
-//
-// To keep the test fast, the in-test cap is the production constant
-// (breakpointQueueCap = 100); we pre-seed 100 unresumed rows directly
-// via the persistence layer (bypassing EvaluateBreakpoints), then
-// invoke EvaluateBreakpoints once and observe the eviction.
 func TestEvaluateBreakpoints_OverflowDropOldestEvictsAndIncrementsCounter(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -419,7 +358,6 @@ func TestEvaluateBreakpoints_OverflowDropOldestEvictsAndIncrementsCounter(t *tes
 		HitTTLSeconds:  300,
 		CreatedByKey:   "test",
 	})
-	// @deliberate: Seed 100 unresumed hits directly (queue cap = 100).
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		for i := 0; i < 100; i++ {
 			if _, _, err := tables.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
@@ -444,12 +382,10 @@ func TestEvaluateBreakpoints_OverflowDropOldestEvictsAndIncrementsCounter(t *tes
 		t.Fatalf("EvaluateBreakpoints: %v", err)
 	}
 
-	// @deliberate: Cap stays at 100 (one evicted, one written).
 	hits := listHitsForBreakpoint(t, ctx, tables, bpID)
 	if len(hits) != 100 {
 		t.Errorf("expected 100 hit rows after drop_oldest + write, got %d", len(hits))
 	}
-	// @deliberate: dropped_count incremented.
 	var bp *persistence.BreakpointRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -463,10 +399,6 @@ func TestEvaluateBreakpoints_OverflowDropOldestEvictsAndIncrementsCounter(t *tes
 	}
 }
 
-// TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained
-// confirms that under block_dispatch the evaluator blocks the
-// hit-write while the queue is full, then proceeds once a hit is
-// resumed (draining the queue).
 func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -480,7 +412,6 @@ func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.
 		HitTTLSeconds:  300,
 		CreatedByKey:   "test",
 	})
-	// @deliberate: Seed 100 unresumed hits to hit the cap.
 	hitIDs := make([]shared.UUID, 0, 100)
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		for i := 0; i < 100; i++ {
@@ -516,28 +447,18 @@ func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	// @deliberate: Confirm the evaluator is blocked in handleOverflow (no new hit
-	// row written while the queue is at cap).
 	select {
 	case <-resultCh:
 		t.Fatalf("EvaluateBreakpoints returned while queue at cap")
 	case <-time.After(400 * time.Millisecond):
 	}
 
-	// @deliberate: Resume one of the seeded hits to drop the unresumed count below
-	// the cap.
 	resumeHit(t, ctx, tables, hitIDs[0], nil)
 
-	// @deliberate: Now the evaluator should write its own hit row. Since this is a
-	// pause-mode breakpoint, after writing it will block in
-	// waitForResume — find the new hit and resume it.
 	deadline := time.Now().Add(2 * time.Second)
 	var newHitID shared.UUID
 	for time.Now().Before(deadline) {
 		hits := listHitsForBreakpoint(t, ctx, tables, bpID)
-		// @deliberate: 100 original seeded - 1 resumed + 1 new = 100; but we need
-		// the unresumed-and-new row. Find the one whose snapshot lacks
-		// our seed marker.
 		for _, h := range hits {
 			if h.ResumedAt != nil {
 				continue
@@ -567,11 +488,6 @@ func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.
 	}
 }
 
-// TestBuildSnapshot_IncludesEffectiveSchema confirms that the snapshot
-// payload buildSnapshot writes carries the effective_schema field so
-// runtime/breakpoint_resume.go::lookupEffectiveSchemaForHit engages on
-// resume-time overlay validation (the load-bearing Pass 5 plumbing
-// noted in runtime/breakpoint_resume.go's package comment).
 func TestBuildSnapshot_IncludesEffectiveSchema(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -611,14 +527,6 @@ func TestBuildSnapshot_IncludesEffectiveSchema(t *testing.T) {
 	}
 }
 
-// TestEvaluateBreakpoints_CtxCancelDuringOverflowBlock pins the cycle 2
-// wrapping at runtime/breakpoint_eval.go::handleOverflow. The
-// block_dispatch overflow loop must surface ctx-cancellation as
-// *BreakpointInfraError{Phase: "ctx_cancelled"} so the
-// runner_dispatch.go errors.As(*BreakpointInfraError) type-switch routes
-// it through the debugger-infra path. Returning a bare ctx.Err() would
-// skip the type-switch and surface as `template_resolution_failed` to
-// operators (the wrong diagnostic class for a supervisor shutdown).
 func TestEvaluateBreakpoints_CtxCancelDuringOverflowBlock(t *testing.T) {
 	parent := context.Background()
 	tables := openInMemoryTables(t)
@@ -632,8 +540,6 @@ func TestEvaluateBreakpoints_CtxCancelDuringOverflowBlock(t *testing.T) {
 		HitTTLSeconds:  300,
 		CreatedByKey:   "test",
 	})
-	// @deliberate: Seed 100 unresumed hits so the queue is at cap; handleOverflow
-	// will spin in the block-dispatch loop until ctx cancels.
 	if err := tables.Transaction(parent, func(ctx context.Context, tx persistence.Tx) error {
 		for i := 0; i < 100; i++ {
 			if _, _, err := tables.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
@@ -665,8 +571,6 @@ func TestEvaluateBreakpoints_CtxCancelDuringOverflowBlock(t *testing.T) {
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	// @deliberate: Give the goroutine time to enter the overflow-block spin (one
-	// poll-interval is enough; we add slack to avoid flake under load).
 	time.Sleep(400 * time.Millisecond)
 	select {
 	case <-resultCh:
@@ -690,11 +594,6 @@ func TestEvaluateBreakpoints_CtxCancelDuringOverflowBlock(t *testing.T) {
 	}
 }
 
-// TestEvaluateBreakpoints_CtxCancelDuringWaitForResume pins the cycle 2
-// wrapping at runtime/breakpoint_eval.go::waitForResume. A ctx-cancel
-// while the pause-mode hit is unresumed must surface as
-// *BreakpointInfraError{Phase: "ctx_cancelled"}, for the same
-// type-switch reason as the overflow case above.
 func TestEvaluateBreakpoints_CtxCancelDuringWaitForResume(t *testing.T) {
 	parent := context.Background()
 	tables := openInMemoryTables(t)
@@ -723,8 +622,6 @@ func TestEvaluateBreakpoints_CtxCancelDuringWaitForResume(t *testing.T) {
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	// @deliberate: Wait for the hit row to appear — proves the goroutine has
-	// reached waitForResume and is polling.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		hits := listHitsForBreakpoint(t, parent, tables, bpID)
@@ -753,12 +650,6 @@ func TestEvaluateBreakpoints_CtxCancelDuringWaitForResume(t *testing.T) {
 	}
 }
 
-// TestEvaluateBreakpoints_DropOldestPhaseLabel pins the cycle 2
-// rename: a tx-failure during the drop_oldest path must surface as
-// *BreakpointInfraError{Phase: "drop_oldest"}, distinct from the
-// "overflow_check" label used by the UnresumedCount check above it.
-// The two labels disambiguate which step of the overflow handler
-// failed in error logs.
 func TestEvaluateBreakpoints_DropOldestPhaseLabel(t *testing.T) {
 	ctx := context.Background()
 	inner := openInMemoryTables(t)
@@ -772,8 +663,6 @@ func TestEvaluateBreakpoints_DropOldestPhaseLabel(t *testing.T) {
 		HitTTLSeconds:  300,
 		CreatedByKey:   "test",
 	})
-	// @deliberate: Seed 100 unresumed hits so handleOverflow takes the drop_oldest
-	// branch on the next call.
 	if err := inner.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		for i := 0; i < 100; i++ {
 			if _, _, err := inner.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
@@ -808,10 +697,6 @@ func TestEvaluateBreakpoints_DropOldestPhaseLabel(t *testing.T) {
 	}
 }
 
-// TestEvaluateBreakpoints_OverflowCheckPhaseLabel pins the second of
-// the two distinct labels: a tx-failure during the UnresumedCount
-// pre-check inside handleOverflow must surface as
-// *BreakpointInfraError{Phase: "overflow_check"}.
 func TestEvaluateBreakpoints_OverflowCheckPhaseLabel(t *testing.T) {
 	ctx := context.Background()
 	inner := openInMemoryTables(t)
@@ -843,10 +728,6 @@ func TestEvaluateBreakpoints_OverflowCheckPhaseLabel(t *testing.T) {
 	}
 }
 
-// failingHitsTables is a minimal persistence.Tables decorator that
-// substitutes the BreakpointHits() accessor with a failure-injecting
-// shim. Used by the Phase-label tests above to exercise the two
-// distinct labels inside handleOverflow.
 type failingHitsTables struct {
 	persistence.Tables
 	hits *failingHits
@@ -856,11 +737,6 @@ func (f *failingHitsTables) BreakpointHits() persistence.BreakpointHitTable {
 	return f.hits
 }
 
-// failingHits wraps a persistence.BreakpointHitTable and optionally
-// injects errors into DropOldest / UnresumedCount, which are the two
-// hit-table calls handleOverflow makes (UnresumedCount on entry to the
-// loop, DropOldest under the drop_oldest branch). All other methods
-// delegate to the embedded inner table.
 type failingHits struct {
 	persistence.BreakpointHitTable
 	failDropOldest     error

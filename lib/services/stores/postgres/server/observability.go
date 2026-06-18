@@ -24,54 +24,28 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// itemsTableIdentRe is the shared strict SQL-identifier regex
-// (pgsstore.ItemsTableIdentRegex). Defense-in-depth: even though
-// Store.New validates the same shape at config load, the store is
-// constructed via NewForTest without validation in unit tests and a
-// future loader change could regress — this guard ensures we never
-// build a query against a name that could carry SQL.
 var itemsTableIdentRe = pgsstore.ItemsTableIdentRegex
 
-// ObservabilityServer is the postgres store's ClaimProducerObservability
-// implementation. Exposes two admin views: `pick_policies` (declared
-// policies + their default actions) and `items_queue` (per-policy
-// queued vs in-progress count).
 type ObservabilityServer struct {
 	genv1.UnimplementedClaimProducerObservabilityServer
 	store *pgsstore.Store
-	// @deliberate: httpBridgeURL is set once at startup before the gRPC server
-	// accepts traffic; sync.Once-style write means later reads can be
-	// lock-free. sync.Once is used explicitly to make the contract loud
-	// at the call site.
 	httpBridgeURLOnce sync.Once
 	httpBridgeURL     string
 	idleTimeout       time.Duration
 }
 
-// NewObservabilityServer pins the observability surface to a live
-// postgres store handle.
 func NewObservabilityServer(store *pgsstore.Store) *ObservabilityServer {
 	return &ObservabilityServer{store: store, idleTimeout: defaultObsIdleTimeout}
 }
 
-// SetHTTPBridgeURL records the URL the store advertises in
-// ClaimProducerObservabilityCapabilities.http_bridge_url. Set-once at startup;
-// subsequent calls are ignored. Empty value disables.
 func (s *ObservabilityServer) SetHTTPBridgeURL(u string) {
 	s.httpBridgeURLOnce.Do(func() { s.httpBridgeURL = u })
 }
 
-// SetIdleTimeout overrides the default StreamClaim idle timeout. Pass
-// zero for never-timeout behaviour. Must be set before any stream
-// starts (set-once-at-startup).
 func (s *ObservabilityServer) SetIdleTimeout(d time.Duration) { s.idleTimeout = d }
 
-// defaultObsIdleTimeout is the spec §2.5 / §3.5 default close-idle
-// timeout for live observability streams.
 const defaultObsIdleTimeout = 5 * time.Minute
 
-// Capabilities reports the v1 surface: admin views plus per-claim
-// get/stream/list backed by an in-memory ledger.
 func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.GetClaimProducerCapabilitiesRequest) (*genv1.ClaimProducerObservabilityCapabilities, error) {
 	return &genv1.ClaimProducerObservabilityCapabilities{
 		SupportsClaimGet:              true,
@@ -86,8 +60,6 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.GetClaimP
 	}, nil
 }
 
-// GetClaim returns the recorded claim history. Returns ClaimDetail{state:
-// UNKNOWN} when the ledger has evicted the record.
 func (s *ObservabilityServer) GetClaim(_ context.Context, req *genv1.GetClaimRequest) (*genv1.ClaimDetail, error) {
 	rec, ok := s.store.Ledger().Get(req.GetClaimId())
 	if !ok {
@@ -96,11 +68,6 @@ func (s *ObservabilityServer) GetClaim(_ context.Context, req *genv1.GetClaimReq
 	return claimRecordToDetail(rec), nil
 }
 
-// StreamClaim atomically replays the history then streams new events
-// until the claim hits a terminal (or the client disconnects, or the
-// idle timeout fires per spec §3.5). Subscribers register under the
-// ledger's lock so events appended between snapshot and subscribe are
-// not lost.
 func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream genv1.ClaimProducerObservability_StreamClaimServer) error {
 	history, rec, ch, unsub := s.store.Ledger().SubscribeWithSnapshot(req.GetClaimId())
 	defer unsub()
@@ -137,8 +104,6 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 		case <-stream.Context().Done():
 			return nil
 		case <-idleC:
-			// @constraint: spec §2.5/§3.5 — close idle streams with a final
-			// marker, not an error.
 			return stream.Send(&genv1.ClaimEvent{
 				EventId:   "idle_timeout",
 				Timestamp: timestamppb.Now(),
@@ -161,7 +126,6 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 	}
 }
 
-// ListClaims returns a cursor-paginated view of the in-memory ledger.
 func (s *ObservabilityServer) ListClaims(_ context.Context, req *genv1.ListClaimsRequest) (*genv1.ClaimList, error) {
 	limit := int(req.GetLimit())
 	if limit <= 0 {
@@ -185,10 +149,6 @@ func (s *ObservabilityServer) ListClaims(_ context.Context, req *genv1.ListClaim
 	return &genv1.ClaimList{Claims: out, NextCursor: next}, nil
 }
 
-// claimRecordToDetail converts a postgres-store ledger record into
-// the wire ClaimDetail. Mirrors the filesystem store's helper of the
-// same name; intentional duplication tracked via @source.
-//
 //	@source: lib/services/stores/filesystem/server/observability.go:claimRecordToDetail
 func claimRecordToDetail(rec *pgsstore.ClaimRecord) *genv1.ClaimDetail {
 	d := &genv1.ClaimDetail{
@@ -223,9 +183,6 @@ func claimRecordToDetail(rec *pgsstore.ClaimRecord) *genv1.ClaimDetail {
 	return d
 }
 
-// claimEventToProto mirrors the filesystem store's helper of the same
-// name; intentional duplication tracked via @source.
-//
 //	@source: lib/services/stores/filesystem/server/observability.go:claimEventToProto
 func claimEventToProto(ev pgsstore.ClaimEvent) *genv1.ClaimEvent {
 	out := &genv1.ClaimEvent{
@@ -243,8 +200,6 @@ func claimEventToProto(ev pgsstore.ClaimEvent) *genv1.ClaimEvent {
 	return out
 }
 
-// claimStateToProto mirrors the filesystem store's helper of the same name.
-//
 //	@source: lib/services/stores/filesystem/server/observability.go:claimStateToProto
 func claimStateToProto(st pgsstore.ClaimState) genv1.ClaimState {
 	switch st {
@@ -261,8 +216,6 @@ func claimStateToProto(st pgsstore.ClaimState) genv1.ClaimState {
 	}
 }
 
-// severityFromString mirrors the filesystem store's helper.
-//
 //	@source: lib/services/stores/filesystem/server/observability.go:severityFromString
 func severityFromString(s string) genv1.Severity {
 	switch s {
@@ -277,7 +230,6 @@ func severityFromString(s string) genv1.Severity {
 	}
 }
 
-// GetAdminView dispatches by name.
 func (s *ObservabilityServer) GetAdminView(ctx context.Context, req *genv1.GetAdminViewRequest) (*genv1.AdminView, error) {
 	switch req.GetViewName() {
 	case "pick_policies":
@@ -335,11 +287,6 @@ func (s *ObservabilityServer) itemsQueueView(ctx context.Context) (*genv1.AdminV
 	rows := make([]any, 0, len(selectors))
 	for _, sel := range selectors {
 		pp := pps[sel]
-		// @constraint: defense-in-depth — reject any items_table name that
-		// isn't a strict SQL identifier before interpolating it into the
-		// COUNT(*) query. Store.New already enforces this at config load;
-		// if it ever fails to, returning an error beats opening a SQL
-		// injection.
 		if !itemsTableIdentRe.MatchString(pp.ItemsTable) {
 			return nil, status.Errorf(codes.FailedPrecondition,
 				"postgres store: pick_policies[%q]: items_table %q is not a valid SQL identifier",
@@ -382,10 +329,6 @@ func (s *ObservabilityServer) itemsQueueView(ctx context.Context) (*genv1.AdminV
 	}, nil
 }
 
-// RegisterObservability registers the observability server alongside
-// the existing StoreService server. Returns the constructed
-// ObservabilityServer so callers can mount the HTTP+JSON bridge and
-// wire SetHTTPBridgeURL.
 func (s *Server) RegisterObservability(grpcSrv *grpc.Server) *ObservabilityServer {
 	o := NewObservabilityServer(s.store)
 	genv1.RegisterClaimProducerObservabilityServer(grpcSrv, o)

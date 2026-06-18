@@ -13,16 +13,6 @@ import (
 	"syscall"
 )
 
-// assertSameFilesystem verifies that `a` and `b` live on the same
-// filesystem by comparing their `st_dev` device IDs. rename(2)'s
-// atomicity guarantee is bounded to a single filesystem; if the two
-// paths span filesystems, the Commit swap loses atomicity and a crash
-// mid-Commit can leave either path in a torn state.
-//
-// Unix-only build constraint: the device-id check uses
-// `syscall.Stat_t.Dev`, which is POSIX. The reference producer
-// targets Unix substrates (POSIX rename, hard-link, owner semantics
-// are all assumed in the pattern doc).
 func assertSameFilesystem(a, b string) error {
 	devA, err := deviceID(a)
 	if err != nil {

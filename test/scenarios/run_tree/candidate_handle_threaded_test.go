@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N1 scenario — candidate_handle_threaded.
-//
-// At fan-out dispatch, the supervisor calls
-// proto:data_processing.proto::DataProcessing.BeginCandidate per
-// sub-claim and persists the producer-returned candidate_handle on
-// col:rimsky_claim_handles.producer_candidate_handle. At leaf
-// success the supervisor reads the candidate_handle back from the
-// row and calls CommitCandidate with matching bytes.
-//
-// The N1 contract this scenario pins is the threading shape: the
-// per-sub-claim candidate_handle is unique per partition_key, is
-// stable across the dispatch → terminal boundary (an idempotent
-// re-call returns the same handle), and survives a round-trip
-// through the dataprocessing fixture.
 package runtree
 
 import (
@@ -28,9 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/stores/stub/dataprocessing"
 )
 
-// TestCandidateHandleThreaded_PerPartitionKeyUnique asserts each
-// fan-out leaf gets a distinct candidate_handle (the producer must
-// not return the same handle for distinct partition_keys).
 func TestCandidateHandleThreaded_PerPartitionKeyUnique(t *testing.T) {
 	t.Parallel()
 	s := dataprocessing.New()
@@ -57,10 +40,6 @@ func TestCandidateHandleThreaded_PerPartitionKeyUnique(t *testing.T) {
 	}
 }
 
-// TestCandidateHandleThreaded_IdempotentReBegin asserts a retried
-// BeginCandidate with the same idempotency_key returns the same
-// candidate_handle. The supervisor relies on this for at-least-once
-// dispatch retries.
 func TestCandidateHandleThreaded_IdempotentReBegin(t *testing.T) {
 	t.Parallel()
 	s := dataprocessing.New()
@@ -83,11 +62,6 @@ func TestCandidateHandleThreaded_IdempotentReBegin(t *testing.T) {
 	}
 }
 
-// TestCandidateHandleThreaded_CommitMetadataPropagates asserts the
-// candidate_metadata returned by CommitCandidate is non-empty —
-// production producers thread row counts / partition stats through
-// here so the parent's writeback can surface them per the N1 spec
-// pin.
 func TestCandidateHandleThreaded_CommitMetadataPropagates(t *testing.T) {
 	t.Parallel()
 	s := dataprocessing.New()

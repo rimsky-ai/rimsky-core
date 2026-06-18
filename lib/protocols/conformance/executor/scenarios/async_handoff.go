@@ -14,17 +14,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @deliberate: async_handoff exercises the AwaitAsyncCallback path:
-// the unary Execute returns AwaitAsyncCallback immediately with a
-// non-empty async_ack_id, the conformance receiver registers the id,
-// the executor POSTs the settling outcome to
-// `${callback_url}/v1/callback/{ackId}`, and the receiver delivers
-// the outcome to the awaiter. Per
-// TD-persist-async-callback-registry the supervisor-side registry is
-// persistent; this conformance scenario asserts the protocol round
-// trip without exercising the persistence guarantee (the
-// async_callback_survives_restart scenario asserts that).
-//
 // @concept: async-callback-persistence
 // @concept: executor
 func init() {

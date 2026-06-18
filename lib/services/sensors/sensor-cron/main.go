@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// sensor-cron — bundled cron sensor reference implementation.
-// Replaces the retired internal `rimsky-scheduler` cron-fire path.
-//
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Sensors as a service kind.
-//
 //	@concept: sensor
 package main
 
@@ -26,7 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 )
 
-// slogAdapter bridges stdlib slog to the SensorService logger interface.
 type slogAdapter struct{ l *slog.Logger }
 
 func (a slogAdapter) Info(msg string, args ...any)  { a.l.Info(msg, args...) }
@@ -48,7 +41,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// @deliberate: empty state-DB env → in-memory mode (no persistence required).
 	state, err := openStateDB(ctx)
 	if err != nil {
 		slog.Error("open state db", "error", err.Error())

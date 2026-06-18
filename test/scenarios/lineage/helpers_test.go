@@ -2,11 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Shared helpers for the forensics lineage scenarios.
-//
 // @source: lib/runtime/auto_terminal_test.go (seedRunForNode, seedFrame,
-// insertDeployedTemplate, countCallsOnID). Tracked duplication: the
-// scenario package cannot import the runtime_test package directly.
 
 package lineage
 
@@ -25,9 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// seedDeployedTemplate inserts a template row in 'deployed' state with a
-// deterministic content hash derived from the supplied tag.
-//
 // @source: lib/runtime/auto_terminal_test.go::insertDeployedTemplate
 func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence.Tables, tag string) persistence.TemplateRow {
 	t.Helper()
@@ -55,16 +48,12 @@ func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence
 	return *row
 }
 
-// seedFrameRow enqueues a running frame for the instance + source node.
-//
 // @source: lib/runtime/auto_terminal_test.go::seedFrame
 func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
 	_ = sourceNodeID
 	var frameID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// @constraint: synthetic envelope satisfies the
-		// rimsky_frames.triggering_message_id NOT NULL FK.
 		msgID := shared.UUID(uuid.New())
 		if err := backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
@@ -88,14 +77,9 @@ func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables,
 	return frameID
 }
 
-// seedRunRow creates a fresh `rimsky_node_runs` row for the given node
-// and returns its id. Uses RunTreeTable.CreateRootRun so the row is
-// stale-marked by default (matching the dispatch path's enqueue).
 func seedRunRow(ctx context.Context, t *testing.T, backend persistence.Tables, nodeID, frameID shared.UUID) shared.UUID {
 	t.Helper()
 	runID := shared.UUID(uuid.New())
-	// @deliberate: Resolve the node's instance + main RunScope so the run row
-	// satisfies the run_scope_id NOT NULL constraint.
 	var scopeID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		nd, err := backend.Nodes().Get(ctx, nodeID, tx)
@@ -127,8 +111,6 @@ func seedRunRow(ctx context.Context, t *testing.T, backend persistence.Tables, n
 	return runID
 }
 
-// countCallsOnID counts producer-side verbs against a specific claim_id.
-//
 // @source: lib/runtime/auto_terminal_test.go::countCallsOnID
 func countCallsOnID(calls []storetest.FakeCall, claimID, verb string) int {
 	n := 0

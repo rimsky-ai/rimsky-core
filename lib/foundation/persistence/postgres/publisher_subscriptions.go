@@ -14,14 +14,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// publisherSubscriptionsImpl is the Postgres-backed
-// persistence.PublisherSubscriptionsTable — publisher-subscription
-// lifecycle state per spec §Publisher protocol unification.
 type publisherSubscriptionsImpl tablesImpl
 
 var _ persistence.PublisherSubscriptionsTable = (*publisherSubscriptionsImpl)(nil)
 
-// PublisherSubscriptions returns the postgres PublisherSubscriptionsTable impl.
 func (s *tablesImpl) PublisherSubscriptions() persistence.PublisherSubscriptionsTable {
 	return (*publisherSubscriptionsImpl)(s)
 }
@@ -113,9 +109,6 @@ func (b *publisherSubscriptionsImpl) Get(ctx context.Context, tx persistence.Tx,
 	return &out[0], nil
 }
 
-// casPublisherSubscriptionStateSQL flips state from→to only when the row is still in
-// `from` (guarded single-statement UPDATE; see the interface contract in
-// persistence.PublisherSubscriptionsTable for the race it defends).
 const casPublisherSubscriptionStateSQL = `
 UPDATE rimsky_publisher_subscriptions
    SET state = $1, failure_reason = NULLIF($2, '')

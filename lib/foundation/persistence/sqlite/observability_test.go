@@ -18,12 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// openSQLite opens an in-process SQLite driver, runs migrations, and
-// registers cleanup. The observability extensions (Queue.ListLive /
-// CountLive, EventListFilter.KindIn, InstanceTable.CountByActive,
-// FrameTable.{ListForObservability, GetForObservability}) all run
-// against this driver per persistence-conformance, but they're new
-// surface area so we exercise them here directly.
 func openSQLite(t *testing.T) persistence.Database {
 	t.Helper()
 	dir := t.TempDir()

@@ -19,21 +19,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 )
 
-// drainedPathFor is the absolute path to the per-policy drained sentinel.
 func drainedPathFor(root, selector string) string {
 	return filepath.Join(policyStateDir(root, selector), "drained")
 }
 
-// TestOnDrain_SinglePass — `pop + on_drain` drains exactly N items
-// per pass before returning Unavailable. After the first Unavailable
-// consumes the drained sentinel, the next Open re-runs sync and
-// picks up the corpus again (folders still on disk under pop).
-//
-// Per spec §5.7: each drain pass produces N Acquired + 1 Unavailable.
-// The pop action keeps folders in place, so the corpus repopulates
-// itself across passes. Operators mutate the corpus externally
-// between passes to actually progress (e.g. delete the folder after
-// processing it through the executor).
 func TestOnDrain_SinglePass(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -70,14 +59,6 @@ func TestOnDrain_SinglePass(t *testing.T) {
 		t.Errorf("pass 1: drained should be consumed; stat err = %v", err)
 	}
 
-	// @deliberate: under `pop`, folders stay on disk; runSync re-discovers
-	// them on the next pass. Operators using `pop` + `on_drain` MUST
-	// mutate the corpus externally between passes (e.g. delete the
-	// folder after processing it through the executor) to actually
-	// drain. For an in-store one-shot drain, use `pop_and_delete`
-	// (or `pop_and_move`) instead. Pass 3 below demonstrates this:
-	// removing a folder externally is what makes the next drain pass
-	// produce fewer picks.
 	for i := 0; i < 3; i++ {
 		o, err := st.Open(context.Background(), fmt.Sprintf("p2-c%d", i), "@r")
 		must(t, err)
@@ -111,9 +92,6 @@ func TestOnDrain_SinglePass(t *testing.T) {
 	}
 }
 
-// TestOnDrain_EmptyCorpus — 0 folders + pop + on_drain. The drained
-// sentinel oscillates: each Open either writes drained (and returns
-// Unavailable) or consumes drained (and returns Unavailable).
 func TestOnDrain_EmptyCorpus(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -137,17 +115,6 @@ func TestOnDrain_EmptyCorpus(t *testing.T) {
 	}
 }
 
-// TestOnDrain_SweepClearsDrained — after the queue drains and the
-// drained sentinel is written, a sweep that reclaims an in-progress
-// sentinel must clear drained so the next Open re-picks the
-// reclaimed work.
-//
-// Setup: single-folder corpus. Open #1 claims alpha, writes drained
-// (lastItem=true). Don't commit. Sweep would normally just reclaim
-// the stale in-progress sentinel — but with drained present, the
-// sweep also clears drained so the next Open can pick the reclaimed
-// item up directly (without first burning a Unavailable to consume
-// the stale drained sentinel).
 func TestOnDrain_SweepClearsDrained(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -177,9 +144,6 @@ func TestOnDrain_SweepClearsDrained(t *testing.T) {
 		t.Errorf("drained should be cleared by sweep reclaim; stat err = %v", err)
 	}
 
-	// @deliberate: next Open must see the reclaimed sentinel directly —
-	// available is non-empty, so the on_drain check skips the
-	// empty-branch entirely.
 	o2, err := st.Open(context.Background(), "c-y", "@r")
 	must(t, err)
 	if !o2.Available {
@@ -187,27 +151,6 @@ func TestOnDrain_SweepClearsDrained(t *testing.T) {
 	}
 }
 
-// TestOnDrain_RaceUnderConcurrentOpens — M concurrent Opens against a
-// corpus of N folders under `pop + on_drain`. With pop the folders
-// stay on disk, so the corpus may repopulate across drain passes
-// during the storm — Acquired count can exceed N. The bound assertions
-// are:
-//
-//   - Available + Unavailable == M (every goroutine produced one outcome)
-//   - At most one drained sentinel exists in the policy state
-//     directory at the end (it's a sentinel — never duplicated)
-//   - At least one Acquired (the corpus is non-empty)
-//   - After the storm, a follow-up serialized Open observes a
-//     consistent sentinel state: either drained is present (next
-//     Open consumes it and returns Unavailable) or drained is absent
-//     (next Open finds available items and returns Available). Spec
-//     §5.3: drained is the load-bearing pass-boundary signal — its
-//     presence/absence after the storm must remain semantically
-//     consistent with the queue state.
-//
-// The race coverage is in the file-creation O_EXCL invariant on
-// drained writes: under -race + many concurrent Opens, no goroutine
-// should panic or trip the data-race detector.
 func TestOnDrain_RaceUnderConcurrentOpens(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -269,13 +212,6 @@ func TestOnDrain_RaceUnderConcurrentOpens(t *testing.T) {
 		t.Errorf("expected at most 1 drained sentinel; got %d", drainedCount)
 	}
 
-	// @constraint: per spec §5.3, drained is the load-bearing
-	// pass-boundary signal — under `pop + on_drain` every drain pass
-	// must terminate in exactly one Unavailable that consumes (or
-	// writes-and-then-the-next-Open-consumes) the sentinel. With `pop`
-	// folders stay on disk, so sync re-discovers them; the Unavailable
-	// must come within a bounded number of iterations (<= 2N + 1: one
-	// full repopulate + drain + the trailing Unavailable).
 	const maxIters = 2*N + 5
 	sawUnavailable := false
 	drainedFlipped := false

@@ -98,9 +98,6 @@ func (s *lifecycleIdempotencyImpl) ListByScope(ctx context.Context, scopeKind pe
 	return out, rows.Err()
 }
 
-// ListByStore returns every lifecycle row for a given store
-// registration name, regardless of scope. Used by the observability
-// per-store detail endpoint.
 func (s *lifecycleIdempotencyImpl) ListByStore(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.LifecycleIdempotencyRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+storeLifecycleCols+`

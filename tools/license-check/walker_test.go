@@ -10,7 +10,6 @@ import (
 	"testing"
 )
 
-// mkfile writes a file under root, creating parent dirs as needed.
 func mkfile(t *testing.T, root, rel, body string) {
 	t.Helper()
 	p := filepath.Join(root, filepath.FromSlash(rel))
@@ -22,7 +21,6 @@ func mkfile(t *testing.T, root, rel, body string) {
 	}
 }
 
-// containsRel reports whether the result set has a given repo-relative path.
 func containsRel(files []fileEntry, rel string) bool {
 	for _, f := range files {
 		if f.relPath == rel {
@@ -89,15 +87,9 @@ exempt:
 }
 
 func TestWalkerNoHardcodedNodeModulesSkip(t *testing.T) {
-	// @constraint: node_modules is not in the hardcoded skipDirs set —
-	// it must appear in licensing.yml's exempt list to be skipped.
-	// Without an entry, the walker surfaces .go files there as
-	// classUnknown.
 	root := t.TempDir()
 	mkfile(t, root, "licensing.yml", "apache:\n  - cmd/\nagpl: []\nexempt: []\n")
 	mkfile(t, root, "cmd/main.go", "package main\n")
-	// @deliberate: create node_modules WITHOUT an exempt entry to
-	// exercise the surface-as-classUnknown path.
 	mkfile(t, root, "stuff/node_modules/dep/x.go", "package x\n")
 
 	cfg, err := loadLicensingYAML(root)
@@ -108,9 +100,6 @@ func TestWalkerNoHardcodedNodeModulesSkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// @constraint: the node_modules .go file must NOT be silently
-	// skipped — it should surface as classUnknown so the operator
-	// notices the missing entry.
 	found := false
 	for _, f := range files {
 		if f.relPath == "stuff/node_modules/dep/x.go" && f.classification == classUnknown {
@@ -123,8 +112,6 @@ func TestWalkerNoHardcodedNodeModulesSkip(t *testing.T) {
 }
 
 func TestWalkerNodeModulesSkipsWhenExempt(t *testing.T) {
-	// @deliberate: with node_modules in the exempt list (as
-	// licensing.yml does), the walker descends but classifies-and-skips.
 	root := t.TempDir()
 	mkfile(t, root, "licensing.yml", `apache:
   - cmd/
@@ -171,8 +158,6 @@ func TestSourceKindFor(t *testing.T) {
 	}
 }
 
-// hasPrefix is a tiny stdlib-free string-prefix check; avoids importing
-// strings just for this test.
 func hasPrefix(s, p string) bool {
 	return len(s) >= len(p) && s[:len(p)] == p
 }

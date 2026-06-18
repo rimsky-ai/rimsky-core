@@ -15,11 +15,6 @@ import (
 	"time"
 )
 
-// writeFixtureBinary creates a small shell-script "binary" in dir under
-// name. The script runs the supplied body and exits with the supplied
-// code on completion. Used to stand in for rimsky-migrate / rimsky-*
-// during entrypoint tests so we don't need real binaries built into the
-// fixture.
 func writeFixtureBinary(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -29,7 +24,6 @@ func writeFixtureBinary(t *testing.T, dir, name, body string) string {
 	return path
 }
 
-// TestNameOf checks the structured-log discriminator stripping.
 func TestNameOf(t *testing.T) {
 	for _, tc := range []struct {
 		in, want string
@@ -45,8 +39,6 @@ func TestNameOf(t *testing.T) {
 	}
 }
 
-// TestStartOnce_Success exercises startOnce against a fixture migrate
-// binary that exits 0: the exit channel reports a nil error.
 func TestStartOnce_Success(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fixtures unavailable on windows")
@@ -65,9 +57,6 @@ func TestStartOnce_Success(t *testing.T) {
 	}
 }
 
-// TestStartOnce_FailurePropagates exercises the migrate-failure path —
-// the exit channel carries the exec error so runMigrateIfOwned can
-// os.Exit(1).
 func TestStartOnce_FailurePropagates(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fixtures unavailable on windows")
@@ -93,29 +82,16 @@ func TestStartOnce_FailurePropagates(t *testing.T) {
 	}
 }
 
-// TestRunMigrateIfOwned_SignalInterrupts proves the migrate phase is
-// signal-interruptible (a `docker stop` during a long migrate must not
-// hang until SIGKILL): a queued SIGTERM on the entrypoint-wide signal
-// channel makes runMigrateIfOwned shut the migrate child down and exit
-// 0 promptly. runMigrateIfOwned calls os.Exit, so the assertion runs in
-// a re-exec'd subprocess (the standard os.Exit test pattern).
 func TestRunMigrateIfOwned_SignalInterrupts(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fixtures unavailable on windows")
 	}
 	if os.Getenv("ENTRYPOINT_TEST_MIGRATE_SIGNAL") == "1" {
-		// @deliberate: subprocess body — a migrate fixture that traps
-		// TERM and exits 0, but otherwise sleeps far longer than the test
-		// budget. The signal is pre-queued on the channel — the select
-		// must take the signal arm and os.Exit(0) long before the sleep
-		// finishes.
 		dir := os.Getenv("ENTRYPOINT_TEST_FIXTURE_DIR")
 		binaryDir = dir
 		sigCh := make(chan os.Signal, 1)
 		sigCh <- syscall.SIGTERM
 		runMigrateIfOwned([]string{"rimsky-control-api"}, sigCh)
-		// @deliberate: unreachable — the signal arm calls os.Exit(0); a
-		// non-zero exit here signals the test failed before the os.Exit.
 		os.Exit(99)
 	}
 
@@ -145,8 +121,6 @@ func TestRunMigrateIfOwned_SignalInterrupts(t *testing.T) {
 	}
 }
 
-// TestExitCode covers the helper's mapping of nil / *exec.ExitError /
-// other-error → process exit code.
 func TestExitCode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fixtures unavailable on windows")
@@ -164,13 +138,6 @@ func TestExitCode(t *testing.T) {
 	}
 }
 
-// TestEntrypointRoleSelection covers the os.Args[1:] → role-list mapping:
-// no args selects all three roles (run in-process by runUnified), a single
-// known role arg selects only that role (spawned as a child), and an unknown
-// role arg is rejected with a clear error. The pure selectRoles mapping is
-// asserted directly, then the single-role spawn is exercised against fixture
-// binaries that drop a marker file when they run — proving the OTHER roles
-// are never spawned, not merely that the returned slice is short.
 func TestEntrypointRoleSelection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fixtures unavailable on windows")
@@ -212,18 +179,10 @@ func TestEntrypointRoleSelection(t *testing.T) {
 		}
 	})
 
-	// @deliberate: spawn-level proof — each fixture role binary touches a
-	// marker file when it runs. The single-role case must leave the other
-	// two markers ABSENT.
 	t.Run("single role spawns only that role", func(t *testing.T) {
 		dir := t.TempDir()
 		markerDir := t.TempDir()
 		for _, n := range allThree {
-			// @constraint: touch a per-role marker, then exec into sleep
-			// so SIGTERM terminates the process directly (no backgrounded
-			// grandchild that would otherwise keep the inherited
-			// stdout/stderr pipe open after the shell dies and hang
-			// `go test`).
 			writeFixtureBinary(t, dir, n,
 				`touch "`+filepath.Join(markerDir, n)+`"; exec sleep 60`)
 		}
@@ -245,17 +204,9 @@ func TestEntrypointRoleSelection(t *testing.T) {
 		}
 	})
 
-	// @constraint: falsifier-shaped check — RIMSKY_PROCESS_ROLE=unified
-	// marks ONLY the genuine single-process mode (the no-command
-	// in-process path). A spawned single-role child is a per-role process
-	// — the memory-blob gate must see the marker absent there, or a
-	// per-role container would accept an in-process blob map it cannot
-	// actually share.
 	t.Run("single role child does not get RIMSKY_PROCESS_ROLE=unified", func(t *testing.T) {
 		dir := t.TempDir()
 		envFile := filepath.Join(t.TempDir(), "env-dump")
-		// @constraint: write the dump to a temp name and mv it into
-		// place so waitForFile never observes a partially-written file.
 		writeFixtureBinary(t, dir, "rimsky-scheduler",
 			`env > "`+envFile+`.tmp" && mv "`+envFile+`.tmp" "`+envFile+`"; exec sleep 60`)
 		t.Cleanup(func() { binaryDir = "/usr/local/bin" })
@@ -281,11 +232,6 @@ func TestEntrypointRoleSelection(t *testing.T) {
 	})
 }
 
-// terminateAndReap SIGTERMs the spawned fixture and drains exitCh (one
-// message, sent by spawnRole's wait goroutine) so the test's inherited
-// stdout/stderr pipes are released before the test process tears down.
-// Draining the channel — rather than calling Wait directly — avoids
-// racing the wait goroutine already reaping the process.
 func terminateAndReap(cmd *exec.Cmd, exitCh chan childExit) {
 	if cmd.Process == nil {
 		return
@@ -294,7 +240,6 @@ func terminateAndReap(cmd *exec.Cmd, exitCh chan childExit) {
 	<-exitCh
 }
 
-// equalStrings reports whether two string slices are element-wise equal.
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -307,9 +252,6 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// waitForFile polls for path to appear, failing the test if it does not
-// within a short budget. Used to observe that a fixture role binary actually
-// ran (touched its marker).
 func waitForFile(t *testing.T, path string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -322,15 +264,6 @@ func waitForFile(t *testing.T, path string) {
 	t.Fatalf("expected file %q to appear", path)
 }
 
-// TestShouldMigrate asserts the migrate-once-per-deployment discipline
-// directly against shouldMigrate. The spec's Acceptance and Falsifier
-// both name this property: the no-arg all-in-one always migrates; a
-// three-container split migrates exactly once (only the control-api
-// container owns it, never the scheduler and never the supervisor);
-// RIMSKY_ENTRYPOINT_MIGRATE=1 forces migrate, =0 skips it. This is the
-// proof that a three-container deploy can't race three migrations and
-// can't silently skip migrations — without it the existing test file
-// would prove only the role-selection leg of the story.
 func TestShouldMigrate(t *testing.T) {
 	allThree := []string{"rimsky-scheduler", "rimsky-supervisor", "rimsky-control-api"}
 
@@ -342,13 +275,7 @@ func TestShouldMigrate(t *testing.T) {
 			selected []string
 			want     bool
 		}{
-			// @constraint: all-in-one path — one process owns the whole store, migrate runs.
 			{"all-in-one (no args path) migrates", allThree, true},
-			// @constraint: three-container split — exactly one role owns
-			// migrate, the other two do NOT. This is the load-bearing leg
-			// of the falsifier — three simultaneous rimsky-entrypoint
-			// processes must NOT all migrate (race), and must NOT all skip
-			// (no migration at all).
 			{"single rimsky-control-api migrates", []string{"rimsky-control-api"}, true},
 			{"single rimsky-scheduler does NOT migrate", []string{"rimsky-scheduler"}, false},
 			{"single rimsky-supervisor does NOT migrate", []string{"rimsky-supervisor"}, false},
@@ -401,11 +328,6 @@ func TestShouldMigrate(t *testing.T) {
 		}
 	})
 
-	// @constraint: a non-empty override other than "1"/"0" must be an
-	// error, never a silent fall-through to the default heuristic:
-	// "true", "yes", or a typo would otherwise be ignored against the
-	// operator's intent. The entrypoint turns this error into a non-zero
-	// exit before touching the store (see runMigrateIfOwned).
 	t.Run("unrecognized RIMSKY_ENTRYPOINT_MIGRATE values error", func(t *testing.T) {
 		for _, v := range []string{"true", "false", "yes", "no", "2", " 1", "on"} {
 			t.Setenv("RIMSKY_ENTRYPOINT_MIGRATE", v)
@@ -422,13 +344,6 @@ func TestShouldMigrate(t *testing.T) {
 		}
 	})
 
-	// @constraint: falsifier-shaped check — simulate the three-container
-	// split as three independent shouldMigrate calls (one per
-	// rimsky-entrypoint process) and assert exactly one of them returns
-	// true. This is the proof against "migrations race when three
-	// processes fire simultaneously" and "three-container split never
-	// migrates" — both legs of the spec's Falsifier collapse to this
-	// count == 1 assertion.
 	t.Run("three-container split migrates exactly once", func(t *testing.T) {
 		t.Setenv("RIMSKY_ENTRYPOINT_MIGRATE", "")
 		count := 0
@@ -447,11 +362,6 @@ func TestShouldMigrate(t *testing.T) {
 	})
 }
 
-// TestRunMigrateIfOwned_InvalidOverrideExitsNonZero proves the entrypoint
-// exits non-zero (without spawning the migrate child) when
-// RIMSKY_ENTRYPOINT_MIGRATE carries an unrecognized value.
-// runMigrateIfOwned calls os.Exit, so the assertion runs in a re-exec'd
-// subprocess (the standard os.Exit test pattern).
 func TestRunMigrateIfOwned_InvalidOverrideExitsNonZero(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fixtures unavailable on windows")
@@ -460,7 +370,6 @@ func TestRunMigrateIfOwned_InvalidOverrideExitsNonZero(t *testing.T) {
 		binaryDir = os.Getenv("ENTRYPOINT_TEST_FIXTURE_DIR")
 		sigCh := make(chan os.Signal, 1)
 		runMigrateIfOwned([]string{"rimsky-control-api"}, sigCh)
-		// @deliberate: unreachable — the invalid override must os.Exit non-zero.
 		os.Exit(0)
 	}
 
@@ -478,9 +387,6 @@ func TestRunMigrateIfOwned_InvalidOverrideExitsNonZero(t *testing.T) {
 	if err == nil {
 		t.Fatalf("invalid RIMSKY_ENTRYPOINT_MIGRATE should exit non-zero; output:\n%s", out)
 	}
-	// @constraint: the default slog text handler escapes the inner
-	// quotes, so match the variable name and the offending value
-	// separately.
 	if !strings.Contains(string(out), "RIMSKY_ENTRYPOINT_MIGRATE") || !strings.Contains(string(out), "yes") {
 		t.Fatalf("error output should name the variable and the offending value %q; output:\n%s", "yes", out)
 	}
@@ -489,20 +395,11 @@ func TestRunMigrateIfOwned_InvalidOverrideExitsNonZero(t *testing.T) {
 	}
 }
 
-// TestShutdownChild exercises the single-role path's signal-driven
-// shutdown directly: spawn a fixture role that exits 0 on SIGTERM,
-// drive shutdownChild, and assert it returns promptly (well inside the
-// SIGKILL deadline) with the child reaped. The in-process all-in-one
-// path needs a real config + persistence and is covered by the
-// services integration harness, which boots the actual image.
 func TestShutdownChild(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fixtures unavailable on windows")
 	}
 	dir := t.TempDir()
-	// @constraint: the trap kills the backgrounded sleep before
-	// exiting — a leaked sleep would inherit the test's stdout/stderr
-	// pipe and stall `go test` for the full 60s after the tests pass.
 	writeFixtureBinary(t, dir, "rimsky-scheduler", `trap 'kill $! 2>/dev/null; exit 0' TERM INT; sleep 60 & wait`)
 	t.Cleanup(func() { binaryDir = "/usr/local/bin" })
 	binaryDir = dir
@@ -514,9 +411,6 @@ func TestShutdownChild(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		// @constraint: give the fixture shell a moment to install its
-		// trap before SIGTERM arrives, or the default disposition kills
-		// it (which still reaps, but stops proving the graceful path).
 		time.Sleep(200 * time.Millisecond)
 		shutdownChild(cmd, exitCh)
 		close(done)

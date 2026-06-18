@@ -81,9 +81,6 @@ func TestDeepMergeJSON(t *testing.T) {
 			want: map[string]any{"items": []any{9.0}},
 		},
 		{
-			// @deliberate: operators can realistically swap shapes (list ↔ object);
-			// cover both directions to verify the documented over-wins behavior
-			// holds symmetrically.
 			name: "shape mismatch — array base, map override → map wins",
 			base: map[string]any{"k": []any{1.0, 2.0}},
 			over: map[string]any{"k": map[string]any{"x": 1.0}},
@@ -150,10 +147,6 @@ func TestDeepMergeJSON(t *testing.T) {
 	}
 }
 
-// TestDeepMergeJSON_DoesNotMutateInputs guards against the easy bug
-// where the merge writes through to a shared map node. Userdata
-// overrides are read from persistence per dispatch; if merge mutated
-// either layer, a second dispatch would see a polluted base.
 func TestDeepMergeJSON_DoesNotMutateInputs(t *testing.T) {
 	base := map[string]any{
 		"cli": map[string]any{"k": "from-base"},
@@ -174,9 +167,6 @@ func TestDeepMergeJSON_DoesNotMutateInputs(t *testing.T) {
 	}
 }
 
-// TestDeepMergeJSON_ArrayElementsAreCloned guards against returning a
-// result that shares slice headers with the inputs. Mutating the
-// returned slice must not affect the input.
 func TestDeepMergeJSON_ArrayElementsAreCloned(t *testing.T) {
 	base := map[string]any{"k": []any{"a", "b"}}
 	got := DeepMergeJSON(base, map[string]any{}).(map[string]any)

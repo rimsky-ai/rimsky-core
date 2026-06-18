@@ -32,32 +32,15 @@
 
 set -euo pipefail
 
-# @deliberate: resolve the script's own directory so the template path
-# works whether the operator runs the script from the repo root or via
-# an absolute path. The shipped template sits next to this script.
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 TEMPLATE_PATH="${SCRIPT_DIR}/onboarding-template.yaml"
 
-# @deliberate: the endpoint defaults to the all-in-one image's mapped
-# local port (`docker run -p 8080:8080 rimsky-all-in-one:latest`); the
-# test harness overrides it to point at the testcontainers-mapped port.
 RIMSKY_ENDPOINT="${RIMSKY_ENDPOINT:-http://127.0.0.1:8080}"
 
-# @deliberate: allow the test harness to inject an explicit `rimsky`
-# binary path (the in-process test compiles a temp binary). When unset,
-# the script falls back to the binary on $PATH — the bare-metal path.
 RIMSKY_BIN="${RIMSKY_BIN:-rimsky}"
 
 echo "onboarding-demo: registering + deploying + instantiating ${TEMPLATE_PATH} against ${RIMSKY_ENDPOINT}"
 
-# @deliberate: Step 1 — run the headline dev-loop verb. `rimsky run
-# <file>` performs register + deploy + instantiate in one shot. With
-# --keep (the default) it prints `instance_id=<uuid>` to stdout and
-# exits 0; the `instance_key` keeps repeated demo runs disjoint.
-# `--terminate-after-run` opts the instance into self-termination once
-# its nodes settle. Without it, durable-by-default keeps the instance
-# alive past node-terminal — the subsequent `rimsky watch` polls for
-# `terminated_at` and would never see it flip.
 RUN_STDOUT="$( "${RIMSKY_BIN}" run \
     --endpoint "${RIMSKY_ENDPOINT}" \
     --instance-key "onboarding-demo-$( date +%s )-$$" \
@@ -65,9 +48,6 @@ RUN_STDOUT="$( "${RIMSKY_BIN}" run \
     "${TEMPLATE_PATH}" )"
 echo "${RUN_STDOUT}"
 
-# @constraint: extract the instance ID from the `instance_id=<uuid>`
-# line. Anything else (no line, non-UUID) is a real defect — the
-# README's documented dev loop must print the line every time.
 INSTANCE_ID="$( printf '%s\n' "${RUN_STDOUT}" \
     | sed -n 's/^instance_id=\([0-9a-fA-F-]\{36\}\)[[:space:]]*$/\1/p' \
     | head -n1 )"
@@ -80,11 +60,6 @@ fi
 
 echo "onboarding-demo: instance_id=${INSTANCE_ID} — watching to terminal"
 
-# @deliberate: Step 2 — tail the instance's event stream through the
-# real CLI verb. RunWatch polls the unified event log + the instance
-# terminal flag and exits 0 once the instance terminates. The 250ms
-# poll keeps the demo snappy; the timeout-on-the-test-side is the
-# failure surface if the instance never settles.
 "${RIMSKY_BIN}" watch \
     --endpoint "${RIMSKY_ENDPOINT}" \
     --poll-interval 250ms \

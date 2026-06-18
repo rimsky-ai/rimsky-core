@@ -13,17 +13,6 @@ import (
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
 )
 
-// @deliberate: unknown_ack_id asserts that the conformance receiver's
-// callback handler tolerates a POST carrying an `async_ack_id` that
-// nobody Registered: the receiver records it for any later awaiter
-// rather than failing the HTTP request. This is the executor-side
-// shape — symmetric with the supervisor's persistent-registry
-// behavior under TD-persist-async-callback-registry, where an
-// unknown ackID returns 404. The supervisor-side 404 contract is
-// exercised by the runtime's callback handler tests; this scenario
-// pins the receiver-side shape so a conformance run can demonstrate
-// the round-trip without coupling to a specific supervisor build.
-//
 // @concept: async-callback-persistence
 func init() {
 	conformance.Register(conformance.Scenario{

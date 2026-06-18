@@ -44,8 +44,6 @@ step() {
 
 REPO="$(repo_root)"
 WORK="$(mktemp -d -t rimsky-one-shot-demo-XXXXXX)"
-# @deliberate: stage tempdir cleanup with a trap so a mid-script exit
-# still scrubs.
 trap 'rm -rf "$WORK"' EXIT
 
 step "stage: $WORK"
@@ -63,9 +61,6 @@ step "build stub executor"
 (cd "$REPO" && go build -o "$STUB_BIN" ./cmd/rimsky/cli/compose/testdata/stub-executor) \
   || die "go build stub-executor failed"
 
-# @constraint: copy the sample manifest into the working dir so
-# .rimsky/ lands in the tempdir; the verb's artifact-root discovery
-# walks up from cwd.
 cp -R "$REPO/cmd/rimsky/cli/compose/testdata/sample-manifest"/* "$WORK"/
 cd "$WORK" || die "cd $WORK"
 
@@ -81,23 +76,14 @@ echo "----- stderr (tail) -----"
 tail -n 20 "$LOG"
 echo "-------------------------"
 
-# @constraint: falsifier #1 — rc must be 1; one instance terminal-
-# success and one terminal-failure classify as ReasonAnyFailure per
-# @decision: exit-codes, so the verb returns exit 1.
 [[ "$rc" == "1" ]] || die "FAIL: expected exit code 1 (any-failure for mixed outcome); got $rc"
 
-# @constraint: falsifier #2 — per-instance summary lines must appear
-# by name AND carry the outcome class. A count-only output is the
-# failure mode the story rules out.
 project="sample-pipeline"
 grep -qE "instance ${project}/ok: success" "$LOG" \
   || die "FAIL: missing 'instance ${project}/ok: success' summary line"
 grep -qE "instance ${project}/oops: failure" "$LOG" \
   || die "FAIL: missing 'instance ${project}/oops: failure' summary line"
 
-# @constraint: falsifier #3 — aggregate summary must name the any-
-# failure reason, proving the exit-class classification was driven by
-# observed outcomes.
 grep -qE "compose run: any-failure \(2 instances\)" "$LOG" \
   || die "FAIL: missing 'compose run: any-failure (2 instances)' aggregate summary"
 

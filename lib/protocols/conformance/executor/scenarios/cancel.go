@@ -15,17 +15,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @deliberate: cancel asserts that a caller-cancelled context
-// surfaces through the unary Execute RPC as the RPC's own error. Per
-// TD-execute-rpc-unary the cancel surface is the standard gRPC unary
-// context cancel — no separate cancel verb, no stream half-close
-// dance. The scenario passes a very short deadline and expects the
-// dial to surface as `context.DeadlineExceeded`-shaped at the
-// underlying client; executors that finish before the deadline still
-// pass (they returned a settled outcome rather than racing the
-// deadline) — what we forbid is silently ignoring the cancelled
-// context and returning a clean Success.
-//
 // @concept: executor
 func init() {
 	conformance.Register(conformance.Scenario{

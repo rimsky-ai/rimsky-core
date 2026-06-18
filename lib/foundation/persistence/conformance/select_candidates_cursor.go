@@ -2,24 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: conformance area conformance area.
-// parity. CursorEnqueuedAfter / CursorAfterDispatchID page the
-// selection ordering (enqueued_at, id); the runner uses the cursor to
-// hop past a head-of-line batch whose candidates were all skipped in Go
-// (e.g. the upstream in-flight gate). The two drivers implement the
-// cursor by different mechanisms — postgres pushes a SQL tuple
-// predicate (`enqueued_at > $6 OR (enqueued_at = $6 AND id > $7)`),
-// sqlite compares in Go on the string-round-tripped timestamp — so
-// the suite pins them to identical semantics:
-//
-//   - rows with EQUAL enqueued_at and distinct ids page by (enqueued_at,
-//     id): the strict suffix after the cursor, no duplicates, no skips;
-//   - a cursor beyond several rows (a fully-skipped batch) resumes at
-//     the correct row;
-//   - the zero-value cursor returns from the beginning;
-//   - sub-second enqueued_at ordering is chronological (this pins the
-//     sqlite driver's RFC3339 fixed-width formatting: a trailing-zero-
-//     trimmed string would sort "…00.5Z" before "…00Z" lexicographically).
 package conformance
 
 import (
@@ -41,19 +23,8 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 	q := d.Queue()
 	fix := seedFixtureSet(ctx, t, d)
 
-	// @deliberate: whole-second base time so the sub-second case below
-	// is deterministic (t0 formats with no fractional digits under a
-	// trailing-zero-trimming formatter — the shape that breaks
-	// lexicographic ordering). One minute in the past keeps every row
-	// inside the `enqueued_at <= now` dispatch window.
 	t0 := time.Now().UTC().Add(-1 * time.Minute).Truncate(time.Second)
 
-	// @deliberate: five rows — three with EQUAL enqueued_at (distinct
-	// dispatch ids — the tie the cursor must break by id), one 500ms
-	// later (sub-second ordering), one 2s later. The in-flight uniqueness
-	// constraint is per (node, run_scope), so each row gets its own node
-	// under the fixture instance; all share the fixture frame + main
-	// RunScope.
 	enqueueTimes := []time.Time{t0, t0, t0, t0.Add(500 * time.Millisecond), t0.Add(2 * time.Second)}
 	for _, at := range enqueueTimes {
 		nodeID := shared.UUID(uuid.New())
@@ -79,9 +50,6 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// @deliberate: selectPage runs SelectCandidates inside a rolled-back
-	// tx so the FOR UPDATE locks release and the rows stay
-	// pending+unclaimed across pages.
 	probeErr := errors.New("rollback probe")
 	selectPage := func(limit int, curAt time.Time, curID shared.UUID) []persistence.Candidate {
 		t.Helper()
@@ -106,8 +74,6 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 		return out
 	}
 
-	// @constraint: zero-value cursor returns from the beginning, in
-	// (enqueued_at, id) order.
 	full := selectPage(100, time.Time{}, shared.UUID{})
 	if len(full) != len(enqueueTimes) {
 		t.Fatalf("zero-cursor select: got %d candidates, want %d", len(full), len(enqueueTimes))
@@ -124,8 +90,6 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 				i, cur.DispatchID, prev.DispatchID)
 		}
 	}
-	// @constraint: three t0 rows lead, then t0+500ms, then t0+2s — pins
-	// chronological (not string-lexicographic) sub-second ordering.
 	for i := 0; i < 3; i++ {
 		if !full[i].EnqueuedAt.Equal(t0) {
 			t.Fatalf("row %d: enqueued_at=%v, want the equal-timestamp batch at %v", i, full[i].EnqueuedAt, t0)
@@ -154,16 +118,11 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// @constraint: cursor inside the equal-timestamp batch yields the
-	// strict suffix by id — no duplicates, no skips.
 	for i := range full {
 		got := selectPage(100, full[i].EnqueuedAt, full[i].DispatchID)
 		assertSuffix(got, full[i+1:], "suffix after row "+full[i].DispatchID.String())
 	}
 
-	// @constraint: limit-2 paging walks the whole set exactly once — the
-	// equal-timestamp batch spans the first page boundary, so the id
-	// tiebreak is what prevents both duplicates and skips.
 	var paged []persistence.Candidate
 	curAt, curID := time.Time{}, shared.UUID{}
 	for {
@@ -183,12 +142,9 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 	}
 	assertSuffix(paged, full, "limit-2 paging")
 
-	// @constraint: cursor beyond a fully-skipped batch (the last
-	// equal-timestamp row) resumes at the first later row.
 	got := selectPage(100, full[2].EnqueuedAt, full[2].DispatchID)
 	assertSuffix(got, full[3:], "skip equal-timestamp batch")
 
-	// @constraint: cursor at the final row returns nothing.
 	if got := selectPage(100, full[4].EnqueuedAt, full[4].DispatchID); len(got) != 0 {
 		t.Fatalf("cursor past the last row returned %d candidates, want 0", len(got))
 	}

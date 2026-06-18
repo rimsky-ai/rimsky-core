@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// executor_handler_test.go — supervisor-facing Executor handler tests
-// under the unary RPC shape (TD-execute-rpc-unary). The handler resolves
-// the binding from the cache, dispatches to the agent over the
-// HostAgent.Connect stream, awaits a single DispatchFrame carrying a
-// marshaled Outcome, and returns it. Proxy-side failures surface as
-// Outcome{Error{error_class}}.
-
 package main
 
 import (
@@ -21,16 +14,10 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// cacheReadyInstance survives from the pre-rewrite executor_handler
-// test harness so the sibling protocol-handler tests
-// (claim_producer_handler_test.go / lifecycle_handler_test.go) can
-// still seed the instance cache.
 func cacheReadyInstance(ts *proxyTestServer, instanceID, owner string, bindings map[string]bindingSpec) {
 	ts.state.cacheInstance(instanceID, bindings, owner, map[string]any{"cwd": "."})
 }
 
-// executorScript returns a dispatchHandler that answers each relayed
-// ExecuteRequest with a single serialized Outcome{Success}.
 func executorScript(t *testing.T) dispatchHandler {
 	t.Helper()
 	return func(protocol string, payload []byte) [][]byte {
@@ -45,8 +32,6 @@ func executorScript(t *testing.T) dispatchHandler {
 	}
 }
 
-// collectExecute drives a unary Execute against the proxy and returns
-// the settling Outcome.
 func collectExecute(t *testing.T, client genv1.ExecutorClient, ctx context.Context, req *genv1.ExecuteRequest) *genv1.Outcome {
 	t.Helper()
 	outcome, err := client.Execute(ctx, req)
@@ -56,7 +41,6 @@ func collectExecute(t *testing.T, client genv1.ExecutorClient, ctx context.Conte
 	return outcome
 }
 
-// terminalErrorClass returns the error_class on a settling Outcome, or "".
 func terminalErrorClass(outcome *genv1.Outcome) string {
 	if e := outcome.GetError(); e != nil {
 		return e.GetErrorClass()
@@ -84,7 +68,6 @@ func TestExecuteHappyPath(t *testing.T) {
 		t.Fatalf("expected Changed=true on Success")
 	}
 
-	// @constraint: a spawn was recorded with the original callback URL.
 	spawnID, ok := ts.state.lookupSpawnByRunScopeBinding("inst-1", "codegen")
 	if !ok {
 		t.Fatalf("expected a recorded spawn")
@@ -122,9 +105,6 @@ func TestExecuteCallbackRewrite(t *testing.T) {
 	}
 }
 
-// TestExecuteErrorPreserved verifies that an Outcome{Error} returned by
-// the child is relayed end-to-end (proxy doesn't mask it as a
-// proxy-synthesized error_class).
 func TestExecuteErrorPreserved(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	handler := func(protocol string, payload []byte) [][]byte {
@@ -153,7 +133,6 @@ func TestExecuteMissingServiceName(t *testing.T) {
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// @constraint: no service-name metadata header → binding_not_found.
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	if got := terminalErrorClass(outcome); got != errClassBindingNotFound {
 		t.Fatalf("expected %s, got %q", errClassBindingNotFound, got)
@@ -218,7 +197,7 @@ func TestExecuteSpawnFailed(t *testing.T) {
 func TestExecuteSpawnTimeout(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	fa := connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
-	fa.setSpawnDelay(3 * time.Second) // @constraint: exceeds the 2s spawnTimeout configured in the harness
+	fa.setSpawnDelay(3 * time.Second)
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
@@ -245,25 +224,21 @@ func TestExecuteDisconnectMidDispatch(t *testing.T) {
 	}
 }
 
-// TestExecuteSupervisorCancelSendsCancelFrame asserts the proxy relays a
-// supervisor-side cancellation to the agent as a CANCEL DispatchFrame.
 func TestExecuteSupervisorCancelSendsCancelFrame(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	fa := connectFakeAgent(t, ts, "owner-1", "", nil)
-	fa.setStallData(true) // @deliberate: agent never answers the DATA frame
+	fa.setStallData(true)
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithCancel(callCtx("codegen"))
 
-	// @deliberate: kick off Execute in background; it will return when ctx is cancelled.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		_, _ = client.Execute(ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	}()
 
-	// @deliberate: Let the spawn + dispatch reach the stalling agent, then cancel.
 	time.Sleep(300 * time.Millisecond)
 	cancel()
 

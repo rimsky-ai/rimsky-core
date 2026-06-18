@@ -2,16 +2,5 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Stores scenario suite under the stores redesign.
-//
-// Pre-redesign tests in this directory used scenario.RegionRef and
-// node.NodeStoreRef.{Write, Read} — both removed. Under v3 scope
-// conflict is byte-equal (the legacy Store-side region-comparison
-// helpers were retired per spec §11.1, §7.7); coexistence is governed
-// by locks.ModeCoexists, the ClaimProducer's WriteSemantics, and the
-// claim's intent. Tests that recreate the prior coverage (overlapping
-// write blocks, disjoint scopes concurrent, read+write concurrent only
-// on staged_async) drive the loopback gRPC fixture (see
-// regional_claim_test.go for the scaffolding).
 
 package stores

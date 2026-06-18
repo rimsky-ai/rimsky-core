@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Tests for ProcessPureCascade. Uses the real persistence.Database via
-// pgtest (same pattern as invalidate_test.go) and a lightweight fake
-// persistence.Queue so assertions can inspect exactly what propagated.
 package scheduler
 
 import (
@@ -24,8 +21,6 @@ import (
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
-
-// fakeQueue Fake persistence.Queue (pure-cascade-local; invalidate_test.go has its own)
 
 type fakeQueue struct {
 	mu       sync.Mutex
@@ -87,9 +82,6 @@ func (f *fakeQueue) ListInFlightRunPhases(context.Context, persistence.Tx, []sha
 	return map[shared.UUID][]string{}, nil
 }
 
-// ParkActiveInTx helpers for the 2026-05-08 platform-extensions plan.
-// fakeQueue is a fixture used by pure-cascade tests that don't park
-// nodes; the helpers are no-ops returning the conventional zero values.
 func (f *fakeQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ persistence.ParkActiveInput) error {
 	return nil
 }
@@ -199,19 +191,12 @@ func pcCreateInstance(ctx context.Context, t *testing.T, b persistence.Tables, t
 	return inst
 }
 
-// pcCreateNode creates a node and forces it to 'stale'. Under the frame
-// model Create() defaults to 'fresh'; pure-cascade tests need an
-// in-flight stale source to exercise ProcessPureCascade.
 func pcCreateNode(ctx context.Context, t *testing.T, f *pcFixture, instanceID shared.UUID, executor string, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
-	// @deliberate: deps unused — dependency-edge resolution is now via
-	// the subscription-edge map.
 	_ = deps
 	return pcCreateNodeWithType(ctx, t, f, instanceID, "t", executor)
 }
 
-// pcCreateNodeWithType is the post-2026-05-14 helper: NodeType is
-// explicit so the test's template can declare matching subscribers.
 func pcCreateNodeWithType(ctx context.Context, t *testing.T, f *pcFixture, instanceID shared.UUID, nodeType, executor string) persistence.NodeRow {
 	t.Helper()
 	var n persistence.NodeRow
@@ -231,23 +216,14 @@ func pcCreateNodeWithType(ctx context.Context, t *testing.T, f *pcFixture, insta
 	return n
 }
 
-// forceState bypasses the state machine and seeds a node's state via a
-// directly-inserted in-flight rimsky_node_runs row (post-stage-3
-// cutover: state lives on rimsky_node_runs).
-//
-// Reuses an existing running frame for the instance if one exists;
-// otherwise inserts a fresh one (so callers don't have to pre-seed).
 func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID, state string) {
 	t.Helper()
 	if state == "fresh" {
-		// @deliberate: 'fresh' is the no-run-row state — delete any
-		// in-flight rows.
 		pgtest.ExecForTest(ctx, t, f.driver,
 			`DELETE FROM rimsky_node_runs WHERE node_id = $1
 			    AND phase IN ('pending','active','held','parked')`, id)
 		return
 	}
-	// @deliberate: Resolve the node's executor + instance_id + frame_id.
 	var (
 		executorN  sql.NullString
 		instanceID shared.UUID
@@ -257,8 +233,6 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 		`SELECT executor, instance_id::text, frame_id::text FROM rimsky_nodes WHERE id = $1`,
 		[]any{id}, &executorN, &instanceID, &frameN)
 	if !frameN.Valid {
-		// @deliberate: Look for an existing running frame for the instance first; if
-		// missing, seed a new one.
 		var count int
 		pgtest.QueryRowForTest(ctx, t, f.driver,
 			`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
@@ -290,12 +264,6 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 		id, executorN.String, runPhase, state, frameN.String, mainScopeID)
 }
 
-// pcSeedFrame inserts a running rimsky_frames row for the given instance
-// (or reuses the existing running frame; only one is allowed per
-// instance), assigns the frame_id to the given node, and returns the
-// frame id. Used to satisfy blessed-invariant 19 (no NULL frame_id on
-// in-flight dispatch enqueue) for tests that drive ProcessPureCascade
-// against pre-existing stale nodes.
 func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, nodeID shared.UUID) shared.UUID {
 	t.Helper()
 	var count int
@@ -304,8 +272,6 @@ func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, no
 		[]any{instanceID}, &count)
 	var frameID shared.UUID
 	if count == 0 {
-		// @deliberate: Seed a synthetic typed-message envelope so the
-		// frame's triggering_message_id FK is satisfied.
 		msgID := uuid.New()
 		pgtest.ExecForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_messages
@@ -357,8 +323,6 @@ func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testi
 
 	tpl := pcDeployTemplate(ctx, t, f.persist, "alpha")
 	inst := pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-1")
-	// @deliberate: pure-cascade node with no deps → starts stale,
-	// trivially ready.
 	pure := pcCreateNode(ctx, t, f, inst.ID, "")
 
 	q := &fakeQueue{}
@@ -366,7 +330,6 @@ func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	// @deliberate: State transitioned to fresh.
 	var got *persistence.NodeRow
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Nodes().Get(ctx, pure.ID, tx)
@@ -376,7 +339,6 @@ func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testi
 	require.NotNil(t, got)
 	assert.Equal(t, cascade.NodeStateFresh, got.State)
 
-	// @deliberate: terminal/success signal logged with correct node + instance (per Pass 5).
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
@@ -391,7 +353,6 @@ func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testi
 	require.NotNil(t, evs.Events[0].InstanceID)
 	assert.Equal(t, inst.ID, *evs.Events[0].InstanceID)
 
-	// @deliberate: Pure-cascade nodes never enqueue — no dispatch rows.
 	assert.Empty(t, q.snapshot())
 }
 
@@ -402,8 +363,6 @@ func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 
 	tpl := pcDeployTemplate(ctx, t, f.persist, "alpha")
 	inst := pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-1")
-	// @deliberate: Executor-having node: stale, deps trivially fresh, but has an executor
-	// but has an executor → ListPureCascadeReady must not pick it up.
 	execNode := pcCreateNode(ctx, t, f, inst.ID, "worker")
 
 	q := &fakeQueue{}
@@ -429,24 +388,14 @@ func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 	})
 	assert.Empty(t, evs.Events)
 
-	// @deliberate: nobody else transitioned or enqueued.
 	assert.Empty(t, q.snapshot())
 }
 
-// TestProcessPureCascade_NativeClaimOnly_Enqueues pins the §7.3 step 4b
-// branch: an empty-executor node whose template node-def declares at
-// least one store with claim=true is treated as native claim-only — the
-// scheduler enqueues it onto the dispatch queue with the template's
-// RequiredStores, leaves the node stale, and does NOT log
-// terminal/success signal. The supervisor's omnibus runner takes it from
-// there.
 func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newPureCascadeFixture(t)
 
-	// @deliberate: template has one node def whose Stores include a
-	// claim-true entry.
 	sum := insertDeployedTemplate(ctx, t, f.persist, nodepkg.TemplateSpec{
 		Name: "claim-only", Version: "v1", Description: "test",
 		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
@@ -461,8 +410,6 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	})
 	inst := pcCreateInstance(ctx, t, f.persist, sum.ID, "ck-claim")
 	claimNode := pcCreateNode(ctx, t, f, inst.ID, "")
-	// @deliberate: Seed a running frame and assign claimNode.frame_id so the dispatch
-	// so the dispatch enqueue path can satisfy blessed-invariant 19.
 	pcSeedFrame(ctx, t, f, inst.ID, claimNode.ID)
 
 	q := &fakeQueue{}
@@ -470,7 +417,6 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	// @deliberate: Node stays stale — supervisor's omnibus runner will drive it.
 	var got *persistence.NodeRow
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Nodes().Get(ctx, claimNode.ID, tx)
@@ -479,15 +425,12 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	})
 	assert.Equal(t, cascade.NodeStateStale, got.State)
 
-	// @deliberate: one enqueue with empty ExecutorName and the
-	// template's RequiredStores.
 	enq := q.snapshot()
 	require.Len(t, enq, 1)
 	assert.Equal(t, claimNode.ID, enq[0].NodeID)
 	assert.Equal(t, "", enq[0].ExecutorName)
 	assert.ElementsMatch(t, []string{"alpha", "beta"}, enq[0].RequiredStores)
 
-	// @deliberate: No terminal/success signal for native claim-only nodes (they enqueue, not transition fresh in the sweep).
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
@@ -504,10 +447,6 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	ctx := context.Background()
 	f := newPureCascadeFixture(t)
 
-	// @deliberate: Template carries two declared node-types: pure-cascade `pure-a`
-	// pure-cascade `pure-a` and executor-backed `worker-b`. `worker-b`
-	// subscribes to `pure-a` via subscription-edge inference; the
-	// pure-cascade sweep computes receivers from that inverse map.
 	tpl := insertDeployedTemplate(ctx, t, f.persist, nodepkg.TemplateSpec{
 		Name: "alpha-cascade", Version: "v1",
 		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
@@ -519,15 +458,8 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	})
 	inst := pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-1")
 
-	// @deliberate: A is pure cascade with no deps; B is executor
-	// "worker" subscribing to A. Before sweep: A=stale, B=stale (gated
-	// by A). Sweep flips A → fresh, then emits recalculate to B; B's
-	// wait-set is empty (no wait-set rows seeded) so the recalculate
-	// enqueues B onto the dispatch queue.
 	pureA := pcCreateNodeWithType(ctx, t, f, inst.ID, "pure-a", "")
 	execB := pcCreateNodeWithType(ctx, t, f, inst.ID, "worker-b", "worker")
-	// @deliberate: seed a frame for both (B is the one that gets
-	// enqueued).
 	pcSeedFrame(ctx, t, f, inst.ID, execB.ID)
 
 	q := &fakeQueue{}
@@ -543,13 +475,11 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	})
 	assert.Equal(t, cascade.NodeStateFresh, gotA.State)
 
-	// @deliberate: B was enqueued by the recalculate path.
 	enq := q.snapshot()
 	require.Len(t, enq, 1)
 	assert.Equal(t, execB.ID, enq[0].NodeID)
 	assert.Equal(t, "worker", enq[0].ExecutorName)
 
-	// @deliberate: terminal/success logged for A only (B was enqueued, not transitioned).
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{

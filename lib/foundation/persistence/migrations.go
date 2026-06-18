@@ -16,28 +16,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Migrator runs *.sql files in filename-sorted order under the
-// coordinator's migration lock. Each driver supplies its own filesystem,
-// exec function, has-applied query, and record-applied mutator.
-//
-// The lock is held for the full pass via AdvisoryLocker.AcquireMigrationLock
-// (Postgres: session-level pg_advisory_lock on a dedicated conn; SQLite:
-// exclusive flock on a lock file beside the database file — cross-process
-// on one host). The release fn must run even if ctx is cancelled — both
-// driver impls honor this.
-//
-// @blessed-invariant 8: session advisory lock on migrations. Held for the
-// duration of the batch; released at session close.
 type Migrator struct {
 	FS        embed.FS
 	QueryHas  func(ctx context.Context, filename string) (bool, error)
 	Bootstrap func(ctx context.Context) error
-	// ApplyOne runs the migration SQL and records it in rimsky_migrations
-	// inside a single driver-internal transaction. Per-file atomicity is
-	// load-bearing — a partially-applied migration with no
-	// rimsky_migrations row would re-run on the next pass and likely
-	// crash on duplicate-table errors. Each driver implements this
-	// with its own tx primitive (Postgres: pool.Begin; SQLite: db.BeginTx).
 	ApplyOne func(ctx context.Context, sql string, filename string) error
 }
 
@@ -48,9 +30,6 @@ func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Lo
 	}
 	defer func() {
 		if err := release(); err != nil {
-			// @deliberate: log-not-bubble — Run has already returned by the
-			// time defer fires, so the unlock error has nowhere to go;
-			// Warn-level keeps it visible.
 			slog.Default().Warn("persistence.Migrator: release migration lock", "err", err)
 		}
 	}()

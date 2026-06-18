@@ -12,30 +12,16 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// messageIdempotenciesImpl is the Postgres-backed
-// persistence.MessageIdempotencyTable — universal dedup-tuple table for
-// POST /instances/{id}/messages.
 type messageIdempotenciesImpl tablesImpl
 
 var _ persistence.MessageIdempotencyTable = (*messageIdempotenciesImpl)(nil)
 
-// MessageIdempotencies returns the postgres MessageIdempotencyTable impl.
 func (s *tablesImpl) MessageIdempotencies() persistence.MessageIdempotencyTable {
 	return (*messageIdempotenciesImpl)(s)
 }
 
 func (b *messageIdempotenciesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
-// upsertMessageIdempotencySQL atomically inserts the tuple or, on
-// unique-key conflict, returns the previously-recorded message_id +
-// created_at and inserted=false. The `xmax = 0` predicate is the
-// postgres-idiomatic way to distinguish "fresh insert" from
-// "conflict-replay" from a single RETURNING clause. The dedup tuple
-// includes BOTH sender_kind (structural source-of-claim:
-// operator/publisher/anonymous) and sender_subject (per-caller
-// discriminator within operator) so neither (a) two distinct api-keys
-// nor (b) a publisher named "operator" can cross-collide with another
-// caller on the same Idempotency-Key.
 const upsertMessageIdempotencySQL = `
 INSERT INTO rimsky_message_idempotencies (
     instance_id, sender_kind, sender, sender_subject, idempotency_key, message_id, created_at

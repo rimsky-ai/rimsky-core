@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scope-envelope coverage — verifies the `template_id` and
-// `instance_id` fields populated on the supervisor-side OpenRequest
-// reach the store at dispatch time. Pin per spec §13.4 (the wire
-// envelope) and §4.2 (rimsky-inert envelope).
-//
-// Uses the in-process storetest.Fake so the recorded FakeCall
-// observably carries TemplateID / InstanceID — the gRPC bridge
-// passes them through but the existing stub Store discards them
-// in its `Open` shim. The relevant rimsky-side property — that
-// the supervisor populates the envelope before dispatching — is
-// already exercised at this seam.
 package stores
 
 import (
@@ -34,17 +23,9 @@ import (
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
-// TestOpenScopeEnvelopeReachesStore deploys a one-node template,
-// creates an instance, drives the worker through dispatch with a
-// runner-local Fake registry, and asserts the recorded Open call
-// carries non-empty TemplateID (the canonical spec hash) and
-// non-empty InstanceID (the rimsky-generated UUID).
 func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 	t.Parallel()
 
-	// @deliberate: Loopback stub for control-api template validation. The runner
-	// below substitutes its own in-process Fake registry so we can
-	// observe TemplateID/InstanceID directly on the recorded call.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
 		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
@@ -106,9 +87,6 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, out.Ran, "runner should have dispatched the node")
 
-	// @constraint: Find the Open call on the Fake. The supervisor must have
-	// populated the envelope from the dispatch row's instance →
-	// template lookup before issuing Open.
 	calls := fake.Calls()
 	var openCall *storetest.FakeCall
 	for i := range calls {

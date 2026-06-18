@@ -2,45 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// F4 must-pass scenario — fanout_callback_determinism_e2e.
-//
-// End-to-end coverage of the callback determinism rule under the
-// RunScope-first reshape per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-// §"Test coverage matrix / F4" + §"Callback determinism":
-//
-//   - A fan-out parent dispatches a partition child into a
-//     fanout_partition RunScope.
-//   - The partition child's executor returns AwaitAsyncCallback.
-//   - First callback arrives → driveTerminal's phase-check tx accepts;
-//     run transitions out of {active, held}.
-//   - A SECOND callback for the SAME partition-child dispatch_id arrives
-//     after the first was applied. Per the determinism rule it MUST be
-//     rejected with ack_status = "rejected_run_terminal".
-//
-// Wire-level assertion: both callbacks return HTTP 200 (per
-// code:runtime/callback.go::handleCallback's ack-but-noop discipline),
-// the first carries ack_status = "accepted", the second carries
-// ack_status = "rejected_run_terminal".
-//
-// The second callback uses a freshly-registered ack_id pointing at the
-// SAME partition-child dispatch_id (necessary because the registry is
-// single-shot per ack_id — the first POST Pops the original ack_id; the
-// second callback could not reach driveTerminal at all without a
-// separate ack_id resolving to the same dispatch).
-//
-// Pins the load-bearing property:
-//
-//   - driveTerminal's phase-check tx rejects a callback that arrives
-//     when run.phase ∉ {active, held}, returning ack_status =
 //     rejected_run_terminal per the @blessed-invariant: Callback
-//     determinism annotation on
-//     code:runtime/callback.go::driveTerminal.
-//   - The rejected dispatch lives in a fanout_partition RunScope (not
-//     the main scope), so the determinism rule's RunScopeID resolution
-//     must correctly resolve from the partition scope's run row — a
-//     broken partition-RunScope branch would prevent the second
-//     callback from being correctly identified as a duplicate.
 package scenarios
 
 import (
@@ -69,11 +31,6 @@ import (
 func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	t.Parallel()
 
-	// @deliberate: Single-partition fan-out keeps the test deterministic: the
-	// fan-parent emits exactly one partition child, and that child's
-	// dispatch is the one subjected to the two-callback determinism
-	// check. Multi-partition would have all children sharing one stub
-	// script (and one ack id), which collides.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
 		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
@@ -90,9 +47,6 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 		},
 	})
 
-	// @deliberate: Partition-child stub script: returns AwaitAsync with ack-1. The
-	// fan-parent runs the same script — there's only one partition so
-	// only one dispatch fires.
 	h.Stub.WhenType("fan-parent").AwaitAsyncCallback("ack-1", 5000)
 
 	openAttrs := scenario.WithAttributes(map[string]any{
@@ -134,8 +88,6 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond,
 		"single partition RunScope should be created by AcquireSubClaims")
 
-	// @deliberate: Resolve the partition RunScope id + the partition-child's
-	// dispatch id (in-flight, phase ∈ {active, held}).
 	var partitionScopeID shared.UUID
 	h.QueryRowSQL(`
 		SELECT id FROM rimsky_run_scopes
@@ -154,9 +106,6 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond,
 		"partition-child dispatch row should reach phase ∈ {active, held}")
 
-	// @deliberate: Pin: the dispatch lives in the PARTITION scope, not the main scope.
-	// If the determinism rule were silently resolving via the main scope
-	// instead of the partition scope, this assertion would catch it.
 	mainScopeID := h.GetMainRunScopeID(iid)
 	require.NotEqual(t, mainScopeID, partitionScopeID,
 		"partition RunScope id must differ from main scope id — "+
@@ -179,8 +128,6 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	require.Equal(t, "accepted", firstAck.AckStatus,
 		"first callback should be accepted; got %q", firstAck.AckStatus)
 
-	// @deliberate: Wait for the partition-child run row to leave {active, held} so
-	// the determinism check on the second callback is meaningful.
 	require.Eventually(t, func() bool {
 		var phase string
 		err := h.Pool.QueryRow(h.Ctx, `
@@ -193,12 +140,6 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond,
 		"partition-child dispatch row should leave {active, held} after first callback")
 
-	// @deliberate: SECOND CALLBACK: same dispatch_id (via a freshly registered
-	// ack_id). The Registry's single-shot Pop means the second
-	// callback CANNOT reuse ack-1; instead we manually register a new
-	// AsyncContext under ack-2 pointing at the now-terminal dispatch.
-	// driveTerminal's phase-check tx finds the run in phase ∉
-	// {active, held} and rejects with "rejected_run_terminal".
 	reg := h.Supervisor.CallbackRegistry()
 	require.NotNil(t, reg, "supervisor.CallbackRegistry() must not be nil")
 	var instanceRow *persistence.InstanceRow
@@ -235,19 +176,11 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 		secondAck.AckStatus)
 }
 
-// callbackAckBody mirrors the structured response body the supervisor
-// writes per spec §"HTTP callback ack body: structured response". Kept
-// local so the scenarios package doesn't import the runtime-internal
-// struct.
 type callbackAckBody struct {
 	AckStatus         string  `json:"ack_status"`
 	CurrentDispatchID *string `json:"current_dispatch_id,omitempty"`
 }
 
-// postCallbackBody POSTs body to url, polling briefly until the
-// supervisor's registry has the ack_id registered (the supervisor's
-// dispatch goroutine may race the test's callback POST). Returns the
-// final HTTP status + body bytes.
 func postCallbackBody(t *testing.T, url string, body []byte, timeout time.Duration) (int, []byte) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

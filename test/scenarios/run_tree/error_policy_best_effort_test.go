@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N1 scenario — error_policy_best_effort.
-//
-// `best_effort` aggregation: parent always settles success once all
-// children settle (failures are tolerated). The aggregated outcome
-// is computed from the non-failed children.
 package runtree
 
 import (
@@ -44,9 +39,6 @@ func TestErrorPolicyBestEffort_AllFailedStillSucceeds(t *testing.T) {
 	if !res.IsSettled {
 		t.Fatal("best_effort should always settle when all children terminal")
 	}
-	// @deliberate: best_effort defaults to fresh_unchanged when no successful child
-	// is available; the engine's exact outcome is implementation-
-	// defined as long as state == fresh.
 	if res.ParentState != cascade.NodeStateFresh {
 		t.Errorf("best_effort all-failed: parent state %s (want fresh)", res.ParentState)
 	}

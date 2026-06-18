@@ -21,11 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// seedDispatchInstance creates a template + instance + run-scope + frame
-// + node, then inserts a single in-flight async dispatch row carrying
-// the post-coherence columns (async_ack_id, last_progress_at). Returns
-// the dispatch row id and the run-scope id so callers can drive the
-// keepalive / sweep paths against a realistic row shape.
 func seedDispatchInstance(t *testing.T, ctx context.Context, d persistence.Database) (shared.UUID, shared.UUID) {
 	t.Helper()
 	rawDB := sqlitedrv.DBFromDatabase(d)
@@ -99,14 +94,6 @@ func seedDispatchInstance(t *testing.T, ctx context.Context, d persistence.Datab
 	return runID, scopeID
 }
 
-// TestQueue_BumpLastProgressAt_NoDeadlockUnderContention drives the
-// keepalive bump path concurrently from many goroutines. The post-
-// coherence keepalive endpoint hits BumpLastProgressAt on every POST;
-// under the widened pool (sqliteMaxOpenConns=8) and BEGIN IMMEDIATE
-// the writers serialize without deadlocking. The matrix runs the bump
-// N times per goroutine across M goroutines so the WAL writer slot is
-// genuinely contended.
-//
 // @concept: executor
 func TestQueue_BumpLastProgressAt_NoDeadlockUnderContention(t *testing.T) {
 	for _, tc := range []struct {
@@ -161,13 +148,6 @@ func TestQueue_BumpLastProgressAt_NoDeadlockUnderContention(t *testing.T) {
 	}
 }
 
-// TestQueue_BumpAndSweepConcurrent_NoDeadlock pins that the writer-
-// serialization slot does not deadlock when the orphan-reaper's
-// quiet-period sweep (ListOrphanedClaims) runs concurrently with
-// executor BumpLastProgressAt traffic. Pre-coherence the heartbeat-
-// loss sweep was the analogous path; per
-// TD-orphan-reaper-no-heartbeat the sweep keys on last_progress_at.
-//
 // @concept: orphan-reaper
 func TestQueue_BumpAndSweepConcurrent_NoDeadlock(t *testing.T) {
 	ctx := context.Background()
@@ -239,14 +219,6 @@ func TestQueue_BumpAndSweepConcurrent_NoDeadlock(t *testing.T) {
 	}
 }
 
-// TestQueue_PoolWidthDoesNotStarveLockFreeRead pins the wide-pool
-// guarantee for the keepalive workload: a held writer transaction
-// (such as the supervisor's settle tx) must NOT block parallel lock-
-// free reads (such as the observability endpoint's ListLive) from
-// making progress on a different connection. Pre-fix (MaxOpenConns=1)
-// the read would queue behind the writer and the 1.5s context fires
-// first; the wider pool (sqliteMaxOpenConns=8) lets the read get its
-// own connection and run lock-free under WAL.
 func TestQueue_PoolWidthDoesNotStarveLockFreeRead(t *testing.T) {
 	ctx := context.Background()
 	d := openSQLite(t)
@@ -281,12 +253,6 @@ func TestQueue_PoolWidthDoesNotStarveLockFreeRead(t *testing.T) {
 	}
 }
 
-// TestQueue_RegisterAsyncAckAndLookupRoundTrip pins the persistent
-// async-callback registry contract: RegisterAsyncAck writes the ack id
-// on the dispatch row, LookupRunByAsyncAckID locates the same row.
-// This is the per TD-persist-async-callback-registry replacement for
-// the in-memory CallbackRegistry the streaming protocol used.
-//
 // @concept: async-callback-persistence
 func TestQueue_RegisterAsyncAckAndLookupRoundTrip(t *testing.T) {
 	ctx := context.Background()

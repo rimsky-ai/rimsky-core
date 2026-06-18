@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: SortOrderCoordination conformance area.
-// Inv 3, inv 10: when multiple goroutines take the same set of locks in
-// sorted order, no deadlock occurs.
 package conformance
 
 import (

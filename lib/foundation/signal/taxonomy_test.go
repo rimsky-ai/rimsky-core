@@ -87,13 +87,6 @@ func TestValidateSubscriptionType_RejectsPositionalWildcard(t *testing.T) {
 	}
 }
 
-// TestValidateSubscriptionType_RejectsMessageTypePath pins the
-// 2026-06-14 message-schema-layer retirement of the `message/*`
-// top-level kind. Message arrival is now a virtual-node settle —
-// receivers subscribe with `node: <message-type>, type: terminal/success`,
-// NOT with `type: message/...`. A subscription that names `message/...`
-// as the signal type-path must fail through the canonical-taxonomy
-// validator.
 func TestValidateSubscriptionType_RejectsMessageTypePath(t *testing.T) {
 	cases := []TypePath{
 		"message/*",

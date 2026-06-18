@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package lifecycle implements the LifecycleSubscriber gRPC service for
-// the filesystem store-service. The standard filesystem store maintains
-// no template or instance metadata; every method returns success
-// without side effects. Operators that need filesystem-side reactions
-// (e.g. preallocating a per-template directory) can fork this package.
 package lifecycle
 
 import (
@@ -15,12 +10,10 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// Server is the LifecycleSubscriber implementation.
 type Server struct {
 	genv1.UnimplementedLifecycleSubscriberServer
 }
 
-// NewServer returns a fresh Server.
 func NewServer() *Server { return &Server{} }
 
 func (*Server) OnTemplateRegistered(_ context.Context, _ *genv1.OnTemplateRegisteredRequest) (*genv1.LifecycleAck, error) {

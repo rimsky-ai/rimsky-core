@@ -14,16 +14,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @deliberate: attributes_serialization asserts the outgoing
-// `attributes` Struct (set by rimsky at dispatch) deserializes
-// correctly on the executor side and the Success outcome's
-// `attributes_delta` is reachable through the wire decoder. Per
-// TD-attributes-delta-on-all-settling-terminals the writeback channel
-// on every settling terminal is `attributes_delta`; this scenario
-// pins the Success-side round trip via the stub probe. The
-// Error/Park `attributes_delta` shape is checked separately by
-// `attributes_delta_on_error_park`.
-//
 // @concept: attribute
 func init() {
 	conformance.Register(conformance.Scenario{

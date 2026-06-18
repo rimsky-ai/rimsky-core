@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N1 scenario — strict_cancel_siblings.
-//
-// `strict.cancel_siblings: true` requests AggregateActionCancelSiblings
-// on any failure; the supervisor's terminal handler then walks running
-// siblings and transitions them to failed in the same transaction.
 package runtree
 
 import (

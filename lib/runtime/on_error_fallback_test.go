@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// on_error_fallback_test.go pins the acquire/* prefix fallback at
-// policy lookup (TD-acquire-prefix-fallback): a template that declares
-// ONLY the generic `error_types: { "acquire/unavailable": retry }`
-// policy still routes a producer-classified acquisition failure (e.g.
-// "pg/claim_unavailable") to retry. Without the fallback, the exact-key
-// miss would hit node.Evaluate's nil-policy default —
-// give_up("unknown_error_class") — and the operator would silently
-// lose coverage the moment a producer starts naming classes.
-//
-// Seeding shape mirrors on_error_tx_atomicity_test.go (sqlite-backed
-// Tables + Queue, template → run-scope → instance → node → frame →
-// claimed dispatch row).
-
 package runtime
 
 import (
@@ -31,23 +18,15 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// seedFallbackNode seeds one running node whose template declares only
-// the generic acquire/unavailable retry policy, with a claimed dispatch
-// row so OnError's retry branch has a row to rotate.
 func seedFallbackNode(t *testing.T, ctx context.Context, suffix string) (persistence.Tables, persistence.Queue, shared.UUID, shared.UUID, shared.UUID) {
 	t.Helper()
 	return seedFallbackNodeWithErrorTypes(t, ctx, suffix, map[string]spec.ErrorTypePolicy{
-		// @deliberate: only the generic family policy — no entry for the
-		// producer-declared "pg/claim_unavailable" class.
 		"acquire/unavailable": {
 			Policy: []spec.PolicyAction{{Action: "retry", Count: 3}},
 		},
 	})
 }
 
-// seedFallbackNodeWithErrorTypes is seedFallbackNode with the
-// template's error_types: block parameterized, so the exact-vs-fallback
-// precedence test can declare BOTH keys.
 func seedFallbackNodeWithErrorTypes(
 	t *testing.T, ctx context.Context, suffix string,
 	errorTypes map[string]spec.ErrorTypePolicy,
@@ -118,8 +97,6 @@ func seedFallbackNodeWithErrorTypes(
 		}, tx); err != nil {
 			return err
 		}
-		// @constraint: seed a synthetic typed-message envelope so the
-		// rimsky_frames.triggering_message_id FK is satisfied.
 		msgID := shared.UUID(uuid.New())
 		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
@@ -172,7 +149,6 @@ func seedFallbackNodeWithErrorTypes(
 	return store, q, nodeID, instanceID, mainRunScopeID
 }
 
-// nodeState reads the node's current state.
 func nodeState(t *testing.T, ctx context.Context, store persistence.Tables, nodeID shared.UUID) cascade.NodeState {
 	t.Helper()
 	var st cascade.NodeState
@@ -189,10 +165,6 @@ func nodeState(t *testing.T, ctx context.Context, store persistence.Tables, node
 	return st
 }
 
-// TestOnError_AcquireFallback_ProducerClassRoutesToGenericRetry: the
-// producer-classified failure routes to the generic family's retry
-// policy via PolicyFallbackClass — the route handleAcquireUnavailable
-// threads for every acquisition failure.
 func TestOnError_AcquireFallback_ProducerClassRoutesToGenericRetry(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -220,12 +192,6 @@ func TestOnError_AcquireFallback_ProducerClassRoutesToGenericRetry(t *testing.T)
 	}
 }
 
-// TestOnError_NoFallback_ProducerClassGivesUp pins the pre-fallback
-// contrast: the same producer-classified failure WITHOUT a
-// PolicyFallbackClass misses the exact key, hits node.Evaluate's
-// nil-policy default, and gives up. This is the coverage loss the
-// fallback exists to prevent — and proves the fallback (not some other
-// route) produced the retry above.
 func TestOnError_NoFallback_ProducerClassGivesUp(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -252,12 +218,6 @@ func TestOnError_NoFallback_ProducerClassGivesUp(t *testing.T) {
 	}
 }
 
-// TestOnError_ExactKeyWinsOverFallback pins the documented precedence
-// (on_error.go::lookupPolicy): when a template declares BOTH the exact
-// producer class and the generic acquire/* family, the exact-key policy
-// fires. The exact key declares give_up while the fallback declares
-// retry, so the outcomes diverge observably: failed proves the exact
-// policy won; stale would mean the fallback shadowed it.
 func TestOnError_ExactKeyWinsOverFallback(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

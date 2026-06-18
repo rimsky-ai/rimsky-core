@@ -61,10 +61,6 @@ func TestPGEvents_TypedKindRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPGEvents_AppendRefusesZeroKind pins the write-side defense:
-// passing the zero events.Kind value is a caller bug; the persistence
-// driver refuses the insert rather than persisting an empty string
-// the read path can't disambiguate from a corrupt row.
 func TestPGEvents_AppendRefusesZeroKind(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -77,11 +73,6 @@ func TestPGEvents_AppendRefusesZeroKind(t *testing.T) {
 	}
 }
 
-// TestPGEvents_UnmarshalRejectsCorruptKind exercises the
-// defensive-read posture: a deliberately-corrupted kind value (one
-// that does not match any canonical operational name and is not
-// shaped like a signal type-path) inserted via raw SQL is surfaced
-// as an error by the read path, never silently coerced.
 func TestPGEvents_UnmarshalRejectsCorruptKind(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)

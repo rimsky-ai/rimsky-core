@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// auth.go — `rimsky auth` dispatcher. Subcommands implement the CLI
-// surface defined by spec
-// .ok-planner/history/specs/2026-05-15-control-plane-mcp-and-auth-design.md
-// "CLI / New subcommands".
 package cli
 
 import (
@@ -14,7 +10,6 @@ import (
 	"os"
 )
 
-// RunAuth dispatches `rimsky auth <subcommand> ...`.
 func RunAuth(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: rimsky auth {init|login|create-key|list|show|revoke|rotate|status}")

@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies spec §3.1: under serial_queue, while frame N is running,
-// frame N+1 stays queued. After frame N completes, the engine
-// advances frame N+1 to running on a subsequent scheduler tick.
 package frame_resolution
 
 import (
@@ -35,10 +32,8 @@ func TestFrameInFlightBlocksNextSerialQueue(t *testing.T) {
 	require.True(t, waitForFramesByState(t, h, iid, "running", 1, 5*time.Second),
 		"first frame did not enter running")
 
-	// @constraint: Fire second invalidate; it should queue, not run.
 	postInvalidateMessage(t, h, iid)
 
-	// @constraint: While first is running, second must stay queued.
 	require.True(t, waitForFramesByState(t, h, iid, "queued", 1, 2*time.Second),
 		"second frame did not appear in queued state")
 	require.Equal(t, 1, countFramesByState(t, h, iid, "running"),

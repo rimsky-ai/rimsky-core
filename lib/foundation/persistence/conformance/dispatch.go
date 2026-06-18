@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: DispatchClaimRelease conformance area.
-// Inv 4 (claimant-guarded release), inv 6 (orphan cutoff), inv 2
-// (dispatch-claim brackets running window).
 package conformance
 
 import (
@@ -36,9 +33,6 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		t.Fatalf("enqueue: %v", err)
 	}
 
-	// @constraint: two concurrent supervisors racing the same dispatch row
-	// must produce exactly one successful ClaimDispatchRow; the other
-	// observes a false return.
 	supA := "supervisor-A"
 	supB := "supervisor-B"
 
@@ -95,11 +89,6 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		t.Fatalf("expected exactly 1 winning claim, got wins=%d losses=%d", wins, losses)
 	}
 
-	// @deliberate: find the dispatch row via the live-listing surface —
-	// the async-orphan sweep no longer surfaces sync-mode dispatch rows,
-	// so it cannot serve as a "find by node_id" backstop the way the
-	// pre-rewrite test used it. ListLive walks every in-flight dispatch
-	// row independent of the async-ack registry.
 	live, err := q.ListLive(ctx, persistence.DispatchListFilter{}, persistence.ListPagination{Limit: 50})
 	if err != nil {
 		t.Fatalf("ListLive: %v", err)
@@ -126,9 +115,6 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		loser = supB
 	}
 
-	// @constraint: ReleaseClaim called with a non-claimant supervisor must
-	// be a no-op — the claimant-guarded release predicate rejects it
-	// silently, leaving the original winner as ClaimedBy.
 	if err := q.ReleaseClaim(ctx, dispatchID, loser); err != nil {
 		t.Fatalf("releaseClaim wrong sup: %v", err)
 	}
@@ -141,13 +127,6 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 			owner.Kind, owner.SupervisorID, winner)
 	}
 
-	// @constraint: ListOrphanedClaims filters by async_ack_id IS NOT
-	// NULL. The per-row per-deadline matrix evaluates in Go in
-	// code:SweepExecutorDeadlines (using the denormalized
-	// effective_max_quiet_period_seconds and effective_max_runtime_seconds
-	// columns). A sync-mode dispatch never carries an async_ack_id, so
-	// the orphan-sweep view never surfaces it. The async-mode round-trip
-	// is exercised by the ParkResume/RegisterAsyncAckRoundTrip bucket.
 	rowsSync, err := q.ListOrphanedClaims(ctx)
 	if err != nil {
 		t.Fatalf("ListOrphanedClaims: %v", err)

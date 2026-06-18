@@ -48,9 +48,6 @@ func main() {
 		}
 	}()
 
-	// @deliberate: one HTTP listener hosts both the dispatch `/v1/Execute`
-	// endpoint and the observability `/observability/v1/*` endpoints —
-	// different path prefixes share a single port per spec §2.1.
 	httpBridgeURL := cfg.HTTPBridgeURL
 	mux := http.NewServeMux()
 	mountBridge(mux, s)
@@ -65,8 +62,6 @@ func main() {
 		}
 	}()
 
-	// @constraint: SweepEvicted must run periodically to bound observability
-	// memory growth as the retention TTL passes for terminal-ed dispatches.
 	sweepCtx, cancelSweep := context.WithCancel(context.Background())
 	defer cancelSweep()
 	go func() {

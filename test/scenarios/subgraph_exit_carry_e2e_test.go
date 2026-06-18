@@ -2,22 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// S2 must-pass scenario — subgraph_exit_carry_e2e.
-//
-// End-to-end coverage of the sub-graph exit writeback carry-rule under
-// the RunScope-first reshape per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-// §"Test coverage matrix / S2":
-//
-//   - A sub-graph runs end-to-end: caller → internal cascade → exit.
-//   - At exit's terminal, the carry-rule fires per
-//     code:runtime/child_execution.go::SettleChildren — exit's
-//     attributes_delta is copied to the calling node's attributes row.
-//   - The sub-graph RunScope is closed at the same tx (closed_at IS
-//     NOT NULL).
-//
-// Pins the sub-graph RunScope closure semantics + writeback-carry
-// load-bearing property of the reshape.
 package scenarios
 
 import (
@@ -38,9 +22,6 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// @deliberate: Stub: caller (entry-absorbed) succeeds. Exit returns a Success
-	// with attributes_delta = {result: "subgraph-done"} — the carry-
-	// rule copies this onto the calling node's attribute row.
 	h.Stub.WhenType("caller").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("inner-exit").Success(map[string]any{"result": "subgraph-done"}, true, "exit-out")
 
@@ -90,16 +71,10 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 	exitNode := h.FindNode(iid, "inner-exit")
 	require.NotNil(t, exitNode, "inner-exit node missing")
 
-	// @deliberate: Wait for the sub-graph exit to reach fresh — its terminal is the
-	// trigger for the carry-rule. The calling node's leaf-run stays in
-	// `running` state until the carry-rule's parent-state transition
-	// fires; that aggregation is the witness for the carry-rule.
 	require.True(t,
 		h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh, 30*time.Second),
 		"inner-exit must reach fresh")
 
-	// @deliberate: Sub-graph RunScope is closed in the same tx as exit's terminal
-	// (carry-rule's closure semantics per Task 36).
 	require.Eventually(t, func() bool {
 		var closed int
 		h.QueryRowSQL(`
@@ -112,10 +87,6 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond,
 		"sub-graph RunScope (graph_name='worker') must close after exit terminates")
 
-	// @deliberate: Carry-rule witness: the calling node's attributes row carries
-	// the exit's attributes_delta. Verified via the node-attributes
-	// accessor (scoped on the main RunScope since the caller lives
-	// there).
 	mainScopeID := h.GetMainRunScopeID(iid)
 	require.Eventually(t, func() bool {
 		var row *persistence.NodeAttributesRow

@@ -17,9 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
-// main serves the publisher over gRPC. Subscription management is this RPC
-// surface; emitting messages into an instance is a separate REST call
-// (POST /instances/{id}/messages).
 func main() {
 	pub := newPublisher()
 

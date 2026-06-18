@@ -17,15 +17,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestBeginThenCommitCandidate_RoundTrips starts the example DataProcessing
-// service in-process over gRPC and asserts the candidate lifecycle round-trips:
-//
-//   - Capabilities advertises a non-empty capability set;
-//   - BeginCandidate returns a non-empty candidate_handle;
-//   - CommitCandidate on that handle succeeds and returns non-empty metadata.
-//
-// This exercises the real fan-out leaf lifecycle a copied producer must
-// implement (BeginCandidate at dispatch, CommitCandidate at leaf success).
 func TestBeginThenCommitCandidate_RoundTrips(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

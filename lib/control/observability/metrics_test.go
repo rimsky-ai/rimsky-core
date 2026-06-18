@@ -14,17 +14,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// TestMetricsHandler_Smoke confirms every metric is registered and
-// scrapable via the standard Prometheus HTTP handler. Increments each
-// counter / histograms / gauges once and asserts the metric name shows
-// up in the scrape body.
 func TestMetricsHandler_Smoke(t *testing.T) {
 	t.Parallel()
 	m := NewMetricsRegistry()
 
-	// @constraint: touch each metric so the scrape returns at least one sample per
-	// series. Counters and histograms emit metadata even at zero,
-	// but populating ensures the per-label series shows up.
 	m.Dispatches.WithLabelValues("worker", "complete").Inc()
 	m.TerminalVerdicts.WithLabelValues("complete", "").Inc()
 	m.Invalidates.WithLabelValues("admin").Inc()

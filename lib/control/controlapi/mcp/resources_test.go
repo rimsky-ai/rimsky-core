@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// resources_test.go — JSON-RPC dispatch tests for the resources/list
-// and resources/read methods added in Pass 6 per spec
-// The dispatcher (mcp.Server.ServeHTTP) lives in this package; the
-// breakpoint-hits URI scheme + persistence reads live in
-// controlapi/mcp_resources.go. Tests here focus on the dispatch +
-// shape contract (capability advertising at initialize, list returns
-// {"resources":[...]}, read returns {"contents":[...]}, polling-cursor
-// pagination flows through unmodified). Permission-gated catalog
-// behavior (filtering per identity) is exercised against a fakeResources
-// stub that mirrors what the controlapi breakpointResourceCatalog does.
-
 package mcp_test
 
 import (
@@ -24,8 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi/mcp"
 )
 
-// fakeResources is a stub ResourceCatalog that lets tests assert
-// dispatch + shape without standing up persistence.
 type fakeResources struct {
 	listFn func(r *http.Request) ([]mcp.Resource, error)
 	readFn func(r *http.Request, uri string) (*mcp.ResourceContents, *mcp.Error)
@@ -52,8 +39,6 @@ func (f *fakeResources) Read(r *http.Request, uri string) (*mcp.ResourceContents
 	return nil, nil
 }
 
-// TestMCPInitializeAdvertisesResources verifies the resources
-// capability is advertised at initialize per spec §6.1.
 func TestMCPInitializeAdvertisesResources(t *testing.T) {
 	server := &mcp.Server{Tools: &fakeCatalog{}, Resources: &fakeResources{}}
 	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
@@ -74,8 +59,6 @@ func TestMCPInitializeAdvertisesResources(t *testing.T) {
 	}
 }
 
-// TestMCPResourcesList_ShapesResponse verifies the dispatcher
-// envelopes the catalog's []Resource into {"resources": [...]}.
 func TestMCPResourcesList_ShapesResponse(t *testing.T) {
 	fr := &fakeResources{
 		listFn: func(r *http.Request) ([]mcp.Resource, error) {
@@ -107,15 +90,9 @@ func TestMCPResourcesList_ShapesResponse(t *testing.T) {
 	}
 }
 
-// TestMCPResourcesList_PermissionGatedReturnsEmpty verifies that a
-// catalog that returns no resources (the permission-denied case) is
-// surfaced as `{"resources":[]}` rather than an error or null. This
-// matches the controlapi breakpointResourceCatalog.List behavior when
-// the identity has no breakpoint:read grant.
 func TestMCPResourcesList_PermissionGatedReturnsEmpty(t *testing.T) {
 	fr := &fakeResources{
 		listFn: func(r *http.Request) ([]mcp.Resource, error) {
-			// @constraint: mirror the production catalog: no `breakpoint:read` → empty.
 			return []mcp.Resource{}, nil
 		},
 	}
@@ -134,8 +111,6 @@ func TestMCPResourcesList_PermissionGatedReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestMCPResourcesRead_ShapesResponse verifies the dispatcher wraps a
-// single ResourceContents in `{"contents":[{...}]}`.
 func TestMCPResourcesRead_ShapesResponse(t *testing.T) {
 	fr := &fakeResources{
 		readFn: func(r *http.Request, uri string) (*mcp.ResourceContents, *mcp.Error) {
@@ -171,11 +146,6 @@ func TestMCPResourcesRead_ShapesResponse(t *testing.T) {
 	}
 }
 
-// TestMCPResourcesRead_PassesCursorQueryParamsToCatalog confirms the
-// dispatcher forwards the raw URI (with ?since=…&limit=…) unchanged to
-// the catalog. Cursor parsing lives in the catalog implementation
-// (controlapi/mcp_resources.go::parseBreakpointHitsURI); this test
-// guards the wire-level contract.
 func TestMCPResourcesRead_PassesCursorQueryParamsToCatalog(t *testing.T) {
 	var capturedURI string
 	fr := &fakeResources{
@@ -201,8 +171,6 @@ func TestMCPResourcesRead_PassesCursorQueryParamsToCatalog(t *testing.T) {
 	}
 }
 
-// TestMCPResourcesRead_RejectsMissingURI verifies the dispatcher
-// returns CodeInvalidParams when the params object lacks `uri`.
 func TestMCPResourcesRead_RejectsMissingURI(t *testing.T) {
 	server := &mcp.Server{Tools: &fakeCatalog{}, Resources: &fakeResources{}}
 	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":6,"method":"resources/read","params":{}}`)
@@ -211,10 +179,6 @@ func TestMCPResourcesRead_RejectsMissingURI(t *testing.T) {
 	}
 }
 
-// TestMCPResourcesRead_NoCatalogReturnsMethodNotFound covers the
-// tools-only deployment fallback: a Server without a Resources field
-// surfaces resources/read as method-not-found rather than a misleading
-// success.
 func TestMCPResourcesRead_NoCatalogReturnsMethodNotFound(t *testing.T) {
 	server := &mcp.Server{Tools: &fakeCatalog{}}
 	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"rimsky://instances/x/breakpoint-hits"}}`)
@@ -223,10 +187,6 @@ func TestMCPResourcesRead_NoCatalogReturnsMethodNotFound(t *testing.T) {
 	}
 }
 
-// TestMCPResourcesList_NoCatalogReturnsEmpty covers the tools-only
-// deployment fallback for the list variant — a Server without a
-// Resources field returns an empty `{"resources":[]}` so a client
-// probing the capability sees a clean answer rather than an error.
 func TestMCPResourcesList_NoCatalogReturnsEmpty(t *testing.T) {
 	server := &mcp.Server{Tools: &fakeCatalog{}}
 	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":8,"method":"resources/list"}`)
@@ -240,16 +200,7 @@ func TestMCPResourcesList_NoCatalogReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestMCPResourcesRead_PollingCursorPagination simulates a polling
-// agent draining a queue: read returns truncated=true with a next
-// cursor, the next read with that cursor returns the next page, and
-// the final read returns an empty page with truncated=false. The
-// catalog stub holds the entire dataset; this test is the wire-level
-// version of the "agent records next_since and re-polls" loop from
-// spec §6.4.
 func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
-	// @constraint: synthetic data: 5 hits with seq 1..5. Limit 2 per page → 3 pages
-	// (2+2+1, with the last page un-truncated since len < limit).
 	allHits := []map[string]any{
 		{"seq": 1, "hit_id": "h1"},
 		{"seq": 2, "hit_id": "h2"},
@@ -259,9 +210,6 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 	}
 	fr := &fakeResources{
 		readFn: func(r *http.Request, uri string) (*mcp.ResourceContents, *mcp.Error) {
-			// @constraint: parse since= and limit= out of the URI the same way the
-			// production catalog does — minimal stdlib parse so the
-			// test doesn't depend on the controlapi package.
 			since, limit := parseFakeCursor(uri, t)
 			page := []map[string]any{}
 			for _, h := range allHits {
@@ -290,7 +238,6 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 	}
 	server := &mcp.Server{Tools: &fakeCatalog{}, Resources: fr}
 
-	// @constraint: Drain via repeated reads. Start at since=0 (no cursor).
 	cursor := int64(0)
 	collected := []int64{}
 	for i := 0; i < 10; i++ {
@@ -337,9 +284,6 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 		}
 	}
 
-	// @constraint: one more poll past the end returns an empty page with
-	// truncated=false — confirming the cursor advances and the polling
-	// agent can wait safely.
 	uri := buildCursorURI(cursor, 2)
 	body, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
@@ -368,9 +312,6 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 	}
 }
 
-// parseFakeCursor extracts ?since= and ?limit= from a URI string.
-// Test-internal mirror of the production parser; kept here so the mcp
-// package's tests don't have to import controlapi.
 func parseFakeCursor(uri string, t *testing.T) (int64, int) {
 	t.Helper()
 	qIdx := strings.Index(uri, "?")
@@ -409,14 +350,11 @@ func parseFakeCursor(uri string, t *testing.T) (int64, int) {
 	return since, limit
 }
 
-// buildCursorURI is the test-side complement to parseFakeCursor.
 func buildCursorURI(since int64, limit int) string {
 	return "rimsky://instances/00000000-0000-0000-0000-000000000001/breakpoint-hits?since=" +
 		itoa(since) + "&limit=" + itoa(int64(limit))
 }
 
-// itoa is a tiny dependency-free integer formatter so this test file
-// doesn't pull strconv just for two cursors.
 func itoa(n int64) string {
 	if n == 0 {
 		return "0"

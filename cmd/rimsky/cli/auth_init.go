@@ -12,9 +12,6 @@ import (
 	"os"
 )
 
-// RunAuthInit bootstraps the deployment: mints an admin key by POSTing
-// to /auth/keys against an anonymous-mode control-api. Refuses if any
-// active key already exists.
 func RunAuthInit(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth init", flag.ContinueOnError)
 	var endpointFlag, keyFlag string
@@ -29,10 +26,6 @@ func RunAuthInit(ctx context.Context, args []string) int {
 		return 2
 	}
 
-	// @deliberate: CLI-side pre-check refuses if the deployment is already
-	// authenticated; the authoritative gate is the server's anonymous-mode
-	// predicate, this is a friendly nicety so the operator gets a clear
-	// message instead of an opaque server 403.
 	if status, ok := fetchAuthStatus(ctx, endpoint, key); ok && status.Mode == "authenticated" {
 		fmt.Fprintln(os.Stderr, "rimsky auth init: deployment is already authenticated (use 'rimsky auth create-key' instead)")
 		return 1

@@ -15,9 +15,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestCapabilities pins the stub's advertised capability set: one
-// data shape, full materialization, attribute_value partitioning,
-// union aggregator.
 func TestCapabilities(t *testing.T) {
 	s := New()
 	caps, err := s.Capabilities(context.Background(), &emptypb.Empty{})
@@ -38,9 +35,6 @@ func TestCapabilities(t *testing.T) {
 	}
 }
 
-// TestBeginCommitRoundTrip drives a single candidate through
-// Begin → Commit and asserts the version is observable via
-// ListVersions / ListPartitions / GetVersionSchema.
 func TestBeginCommitRoundTrip(t *testing.T) {
 	fixedAt := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 	s := New().WithClock(func() time.Time { return fixedAt })
@@ -110,9 +104,6 @@ func TestBeginCommitRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBeginCandidateIdempotent re-issues BeginCandidate with the
-// same (claim_handle_id, idempotency_key) and asserts the same
-// candidate_handle is returned.
 func TestBeginCandidateIdempotent(t *testing.T) {
 	s := New()
 	ctx := context.Background()
@@ -137,9 +128,6 @@ func TestBeginCandidateIdempotent(t *testing.T) {
 	}
 }
 
-// TestAbandonCandidate covers the abandon path: the candidate is
-// removed without flipping onto versions; subsequent commit is a
-// no-op.
 func TestAbandonCandidate(t *testing.T) {
 	s := New()
 	ctx := context.Background()
@@ -172,9 +160,6 @@ func TestAbandonCandidate(t *testing.T) {
 	}
 }
 
-// TestSplitScopeDefaultDecoder asserts the default decoder produces
-// one SubScopeDescriptor per partition_key, each carrying
-// scope_data = {"partition_key": "<key>"}.
 func TestSplitScopeDefaultDecoder(t *testing.T) {
 	s := New()
 	req := &genv1.SplitScopeRequest{
@@ -205,8 +190,6 @@ func TestSplitScopeDefaultDecoder(t *testing.T) {
 	}
 }
 
-// TestSplitScopeRejectsEmpty covers the partition_request validation
-// gate.
 func TestSplitScopeRejectsEmpty(t *testing.T) {
 	s := New()
 	_, err := s.SplitScope(context.Background(), &genv1.SplitScopeRequest{
@@ -217,7 +200,6 @@ func TestSplitScopeRejectsEmpty(t *testing.T) {
 	}
 }
 
-// TestSplitScopeCustomFunc overrides the decoder via WithSplitScope.
 func TestSplitScopeCustomFunc(t *testing.T) {
 	s := New().WithSplitScope(func(req *genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error) {
 		return &genv1.SplitScopeResponse{
@@ -235,8 +217,6 @@ func TestSplitScopeCustomFunc(t *testing.T) {
 	}
 }
 
-// TestMultipleCommitsPreserveOrder pushes three candidates through
-// the loop and asserts ListVersions returns them in commit order.
 func TestMultipleCommitsPreserveOrder(t *testing.T) {
 	s := New()
 	ctx := context.Background()
@@ -271,7 +251,6 @@ func TestMultipleCommitsPreserveOrder(t *testing.T) {
 	}
 }
 
-// TestGetVersionSchemaMissingVersionID rejects an unknown version_id.
 func TestGetVersionSchemaMissingVersionID(t *testing.T) {
 	s := New()
 	ctx := context.Background()
@@ -295,7 +274,6 @@ func TestGetVersionSchemaMissingVersionID(t *testing.T) {
 	}
 }
 
-// TestRequiredFields covers the per-RPC required-field gates.
 func TestRequiredFields(t *testing.T) {
 	s := New()
 	ctx := context.Background()

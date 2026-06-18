@@ -19,28 +19,18 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// breakpointsImpl is the Postgres-backed persistence.BreakpointTable —
-// runtime-installed pause/notify breakpoints per concept:breakpoint.
-// Aspect-type pattern: per-row-type slice of *tablesImpl exposing the
-// BreakpointTable method set.
 type breakpointsImpl tablesImpl
 
 var _ persistence.BreakpointTable = (*breakpointsImpl)(nil)
 
-// Breakpoints returns the postgres BreakpointTable impl.
 func (s *tablesImpl) Breakpoints() persistence.BreakpointTable { return (*breakpointsImpl)(s) }
 
 func (b *breakpointsImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
-// breakpointCols is the canonical column list used by SELECT + RETURNING.
 const breakpointCols = `id, instance_id, matcher, checkpoint, signal_type, mode,
 	overflow_policy, hit_ttl_seconds, ttl_seconds, dropped_count,
 	created_by_key, created_at, expires_at`
 
-// Create inserts a new rimsky_instance_breakpoints row, materializing
-// `expires_at = NOW() + ttl_seconds::interval` when TTLSeconds is set.
-// Returns the row id (DB-default when bp.ID is zero, otherwise the
-// caller-supplied UUID). Marshals the matcher map → JSONB.
 func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointRow, tx persistence.Tx) (shared.UUID, error) {
 	ex := b.q(tx)
 	matcher := bp.Matcher
@@ -63,9 +53,6 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	if bp.SignalType != nil {
 		sigArg = *bp.SignalType
 	}
-	// @deliberate: materialize expires_at at insert time so SweepExpired
-	// can use a simple `expires_at <= now()` predicate without
-	// re-evaluating ttl_seconds per row.
 	var id shared.UUID
 	err = ex.QueryRow(ctx,
 		`INSERT INTO rimsky_instance_breakpoints
@@ -92,8 +79,6 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	return id, nil
 }
 
-// Get returns the breakpoint by id. Returns (nil, nil) when no row
-// matches — the codebase-wide "not found" pattern (see instancesImpl.Get).
 func (b *breakpointsImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.BreakpointRow, error) {
 	ex := b.q(tx)
 	row := ex.QueryRow(ctx,
@@ -110,9 +95,6 @@ func (b *breakpointsImpl) Get(ctx context.Context, id shared.UUID, tx persistenc
 	return &out, nil
 }
 
-// ListForInstance returns all breakpoints for the instance. When
-// includeExpired is false, the (expires_at IS NULL OR expires_at > NOW())
-// filter is applied — see the partial-index docstring in the schema.
 func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared.UUID, includeExpired bool, tx persistence.Tx) ([]persistence.BreakpointRow, error) {
 	ex := b.q(tx)
 	sql := `SELECT ` + breakpointCols + `
@@ -141,8 +123,6 @@ func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared
 	return out, nil
 }
 
-// Delete removes the breakpoint. Cascades to rimsky_breakpoint_hits
-// via the FK ON DELETE CASCADE (no manual cleanup needed).
 func (b *breakpointsImpl) Delete(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
 	ex := b.q(tx)
 	if _, err := ex.Exec(ctx,
@@ -152,7 +132,6 @@ func (b *breakpointsImpl) Delete(ctx context.Context, id shared.UUID, tx persist
 	return nil
 }
 
-// IncrementDropped bumps the dropped_count counter atomically.
 func (b *breakpointsImpl) IncrementDropped(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
 	ex := b.q(tx)
 	if _, err := ex.Exec(ctx,
@@ -164,9 +143,6 @@ func (b *breakpointsImpl) IncrementDropped(ctx context.Context, id shared.UUID, 
 	return nil
 }
 
-// SweepExpired deletes every breakpoint whose expires_at has passed.
-// Returns the number of deleted rows. Cascades to rimsky_breakpoint_hits
-// via FK ON DELETE CASCADE.
 func (b *breakpointsImpl) SweepExpired(ctx context.Context, now time.Time, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	tag, err := ex.Exec(ctx,
@@ -178,7 +154,6 @@ func (b *breakpointsImpl) SweepExpired(ctx context.Context, now time.Time, tx pe
 	return int(tag.RowsAffected()), nil
 }
 
-// scanBreakpoint unmarshals one row of rimsky_instance_breakpoints.
 func scanBreakpoint(sc scannable) (persistence.BreakpointRow, error) {
 	var (
 		id             shared.UUID

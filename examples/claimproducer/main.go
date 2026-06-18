@@ -17,12 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
-// main stands up the producer as a gRPC server. For non-Go callers, serverkit
-// exposes an HTTP+JSON bridge for this protocol — mount it on a second listener:
-//
-//	mux := http.NewServeMux()
-//	serverkit.Mount(mux, prod)
-//	go http.ListenAndServe("0.0.0.0:9401", mux)
 func main() {
 	prod := newProducer()
 

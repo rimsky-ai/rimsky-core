@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Pure-Go unit tests for the small helpers in terminal_decision.go that
-// don't require a real Postgres harness. The heavy paths (the full
-// ResolveClaimHandleTerminal flow + the cancel walkers) are exercised
-// by the scenario tests in test/scenarios/lineage/ and test/scenarios/
-// forensics/ + the in-process tests in auto_terminal_test.go.
-
 package runtime
 
 import (
@@ -16,11 +10,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// TestTerminalOutcomeKey_CommitAlwaysCommitted pins that Commit
-// resolutions ignore the Cause field and always produce
-// `outcome: committed`. A force-cancelled Commit makes no sense (the
-// cancel walkers only fire Abandon), but the helper must still default
-// safely.
 func TestTerminalOutcomeKey_CommitAlwaysCommitted(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -45,10 +34,6 @@ func TestTerminalOutcomeKey_CommitAlwaysCommitted(t *testing.T) {
 	}
 }
 
-// TestTerminalOutcomeKey_AbandonDiscriminatesCause pins the
-// natural-vs-force-cancelled discrimination. The sibling- and
-// descendant-cancel causes both promote to `force_cancelled`; natural
-// (or empty) stays `abandoned`.
 func TestTerminalOutcomeKey_AbandonDiscriminatesCause(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -73,10 +58,6 @@ func TestTerminalOutcomeKey_AbandonDiscriminatesCause(t *testing.T) {
 	}
 }
 
-// TestPreferVersionID_VerbWinsOverHint pins the version-ID preference:
-// a freshly-returned candidate version always wins over the previously-
-// hinted one. Falls back to the hint when the verb didn't produce a
-// version (e.g. on a non-DataProcessing producer).
 func TestPreferVersionID_VerbWinsOverHint(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

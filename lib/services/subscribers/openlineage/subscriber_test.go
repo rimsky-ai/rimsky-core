@@ -2,29 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// subscriber_test.go — end-to-end coverage for the openlineage
-// subscriber. The subscriber is driven against a live rimsky/all
-// stack brought up by `test/harness.BringUpRimsky`: a real template
-// is registered, a real instance is created, the cascade naturally
-// populates `table:rimsky_lineage`, and the subscriber polls that DB
-// and emits OpenLineage 1.x JSON events to a fake Marquez backend
-// (an `httptest.Server` that records arrivals).
-//
-// Per spec `2026-05-24-repo-reorganization-design` phase P1.2 — the
-// pre-rewrite version of this file (post-Pass-5 / post-divergence-#1)
-// asserted against a minimal subscriber-contract DDL applied to a
-// vanilla Postgres. That shape did not exercise the rimsky-side
-// `table:rimsky_lineage` writer at all; the rewrite restores the
-// end-to-end coverage the pre-reorganization version had, driving
-// rimsky via its public API.
-//
-// The pure wire-contract decode + reflection tests
-// (`TestLeafRunRecord_WireContract`, `TestClaimTerminalRecord_WireContract`,
-// `TestLeafRunRecord_TagDisciplineAndOrder`,
-// `TestClaimTerminalRecord_TagDisciplineAndOrder`) have no DB
-// dependency and are preserved verbatim — they pin the writer →
-// subscriber JSON contract regardless of how the rows arrive.
-
 package main
 
 import (
@@ -46,11 +23,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// TestSubscriber_EndToEnd_PollsAndEmits drives a full cascade through
-// rimsky/all so the rimsky-side lineage writer naturally populates
-// `table:rimsky_lineage`, then runs the subscriber against rimsky's
-// DSN and asserts the recorded OpenLineage events match the documented
-// wire shape.
 func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -76,8 +48,6 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// @deliberate: template exercises both lineage record kinds — leaf_run
-	// (every executor terminal) and claim_terminal (every store commit/abandon).
 	tplBody := map[string]any{
 		"spec": map[string]any{
 			"name":             "openlineage-e2e",
@@ -98,9 +68,6 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 	instanceID := postInstance(t, ep, templateID, "openlineage-e2e-1")
 
 	waitNodeTerminal(t, ep, instanceID, "acquire-and-execute", 60*time.Second)
-	// @deliberate: lineage rows are written by `runtime/lineage_writer.go`
-	// after the cascade ticks; poll for the flush before constructing the
-	// subscriber so the first tick has rows to emit.
 	waitForLineageRows(t, ep, 1, 30*time.Second)
 
 	var (
@@ -133,10 +100,6 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 	}
 	defer sub.Close()
 
-	// @deliberate: assert >= 1 (not == N). A real cascade settles to at
-	// least one leaf_run row; the claim-producer's commit semantics on a
-	// pick-policy claim depend on the configured on_commit action, so a
-	// claim_terminal row may or may not be present.
 	if err := sub.tick(ctx); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
@@ -147,8 +110,6 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 		t.Fatalf("received %d events; want >= 1", got)
 	}
 
-	// @deliberate: idempotency check. Once the cursor has advanced past
-	// a row, a subsequent tick with no new rows must not re-emit it.
 	if err := sub.tick(ctx); err != nil {
 		t.Fatalf("tick (idempotent): %v", err)
 	}
@@ -159,9 +120,6 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 		t.Errorf("second tick added rows; received %d (want stays at %d)", gotAfter, got)
 	}
 
-	// @deliberate: top-level envelope check only. The wire-contract decode
-	// tests below pin the per-kind payload shapes; this loop pins the
-	// envelope fields every event must carry regardless of record kind.
 	mu.Lock()
 	defer mu.Unlock()
 	for i, ev := range received {
@@ -183,9 +141,6 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 	}
 }
 
-// TestSubscriber_EmitFailureHaltsBatch boots a fake Marquez that
-// always returns 500 and asserts the subscriber halts (does not
-// advance its cursor) so the next tick retries from the same point.
 func TestSubscriber_EmitFailureHaltsBatch(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -250,17 +205,11 @@ func TestSubscriber_EmitFailureHaltsBatch(t *testing.T) {
 	defer sub.Close()
 
 	_ = sub.tick(ctx)
-	// @deliberate: cursor must remain at epoch zero — the very first emit
-	// failed, so the cursor never advanced. If no lineage rows were
-	// written at all, the cursor also stays at epoch zero; either way the
-	// assertion pins the load-bearing property "emit failure does not
-	// advance the cursor".
 	if !sub.cursorAt.Equal(time.Unix(0, 0)) {
 		t.Errorf("cursor advanced despite emit failure: %v", sub.cursorAt)
 	}
 }
 
-// postTemplate POSTs a template body and returns the template hash.
 func postTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/templates", body)
@@ -281,10 +230,6 @@ func postTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) 
 	return resp.TemplateID
 }
 
-// postInstance POSTs a new instance and returns the instance_id.
-// Instance creation is idle post-spec; the helper follows up with an empty
-// message so the structural roots wake.
-//
 // @decision: test-harness-create-instance-wakes-roots-after-create
 func postInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, key string) string {
 	t.Helper()
@@ -309,11 +254,6 @@ func postInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, key strin
 	return resp.InstanceID
 }
 
-// waitForLineageRows polls `rimsky_lineage` until at least `want`
-// rows are visible. Uses a direct pgxpool against rimsky's host DSN
-// — the test is exercising the subscriber's read path, so reading
-// the same table via SQL for the wait barrier is consistent with
-// the subscriber's own access pattern.
 func waitForLineageRows(t *testing.T, ep harness.RimskyEndpoint, want int, deadline time.Duration) {
 	t.Helper()
 	ctx := context.Background()
@@ -337,8 +277,6 @@ func waitForLineageRows(t *testing.T, ep harness.RimskyEndpoint, want int, deadl
 	t.Fatalf("rimsky_lineage: want >= %d rows within %v, got %d", want, deadline, n)
 }
 
-// waitNodeTerminal polls the observability API until the node reaches
-// a terminal state.
 func waitNodeTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
@@ -365,14 +303,6 @@ func waitNodeTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeT
 		nodeType, instanceID, deadline, lastState)
 }
 
-// TestLeafRunRecord_WireContract pins the writer→subscriber JSON
-// contract for `record_kind = 'leaf_run'`. The writer-side
-// `runtime/lineage_writer.go::LeafRunRecord` is the canonical shape;
-// every json field it emits must round-trip through the subscriber's
-// `LeafRunRecord` decode without loss. The JSON below is the exact
-// emit shape of the writer-side struct as of cycle 5; if the writer
-// adds a field, mirror it on the subscriber side and update this
-// payload accordingly.
 func TestLeafRunRecord_WireContract(t *testing.T) {
 	t.Parallel()
 	const writerJSON = `{
@@ -444,11 +374,6 @@ func TestLeafRunRecord_WireContract(t *testing.T) {
 	}
 }
 
-// TestClaimTerminalRecord_WireContract pins the writer→subscriber
-// JSON contract for `record_kind = 'claim_terminal'`. Every field the
-// writer-side `runtime/lineage_writer.go::ClaimTerminalRecord` emits
-// must round-trip AND must surface in the emitted OpenLineage event's
-// `rimsky` facet.
 func TestClaimTerminalRecord_WireContract(t *testing.T) {
 	t.Parallel()
 	const writerJSON = `{
@@ -515,12 +440,6 @@ func TestClaimTerminalRecord_WireContract(t *testing.T) {
 	}
 }
 
-// TestLeafRunRecord_TagDisciplineAndOrder pins the JSON-tag discipline
-// (required vs `omitempty`) AND the field-declaration order on the
-// subscriber's LeafRunRecord. The writer-side
-// `runtime/lineage_writer.go::LeafRunRecord` is canonical; this test
-// captures the agreed shape so a unilateral subscriber edit cannot
-// drift the wire contract without breaking here.
 func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 	t.Parallel()
 	want := []struct {
@@ -555,8 +474,6 @@ func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 	assertStructJSONShape(t, LeafRunRecord{}, want)
 }
 
-// TestClaimTerminalRecord_TagDisciplineAndOrder pins the JSON-tag
-// discipline and field-declaration order on ClaimTerminalRecord.
 func TestClaimTerminalRecord_TagDisciplineAndOrder(t *testing.T) {
 	t.Parallel()
 	want := []struct {
@@ -582,9 +499,6 @@ func TestClaimTerminalRecord_TagDisciplineAndOrder(t *testing.T) {
 	assertStructJSONShape(t, ClaimTerminalRecord{}, want)
 }
 
-// assertStructJSONShape verifies that v's exported struct fields
-// match the expected list in declaration order, json-tag name, and
-// `omitempty` discipline.
 func assertStructJSONShape(t *testing.T, v any, want []struct {
 	field     string
 	jsonTag   string
@@ -614,8 +528,6 @@ func assertStructJSONShape(t *testing.T, v any, want []struct {
 	}
 }
 
-// parseJSONTag splits a `json:"field,omitempty"` tag value into
-// (name, omitempty). Returns (tag, false) when no comma is present.
 func parseJSONTag(tag string) (name string, omitempty bool) {
 	parts := strings.Split(tag, ",")
 	if len(parts) == 0 {
@@ -630,5 +542,4 @@ func parseJSONTag(tag string) (name string, omitempty bool) {
 	return name, omitempty
 }
 
-// @deliberate: keeps fmt imported in case future debug logging needs it.
 var _ = fmt.Sprintf

@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies spec §4.4: when a parent node commits with changed=false,
-// downstream cascade message-passes are skipped. The downstream nodes
-// remain fresh and never enter stale; the frame ends without them.
-// Pruning audit trail: rimsky_node_runs has no rows for the pruned
-// nodes for this frame_id.
 package frame_resolution
 
 import (
@@ -52,14 +47,9 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 	require.True(t, h.WaitForNodeState(middle.ID, cascade.NodeStateFresh, 15*time.Second),
 		"middle did not finish")
 
-	// @constraint: Wait for the frame to end (leaf is pruned, so frame-end fires once
-	// source+middle both fresh, even though leaf was never invoked).
 	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 10*time.Second),
 		"frame did not end despite leaf pruning")
 
-	// @deliberate: Leaf should never have entered stale (it stays fresh). Post-
-	// stage-3 cutover: state comes from the in-flight run row; fresh
-	// = no in-flight row exists for this node.
 	var leafState string
 	err := h.Pool.QueryRow(context.Background(),
 		`SELECT COALESCE(r.state, 'fresh')
@@ -72,11 +62,6 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 	require.Equal(t, "fresh", leafState,
 		"pruned leaf should remain fresh")
 
-	// @deliberate: No in-flight dispatch rows for the pruned leaf in this frame.
-	// Post-stage-1 lifecycle flip: terminal rows survive past active
-	// terminal so frame-end / retention / run-tree aggregation can read
-	// the terminal state. The "pruned leaf has no dispatch rows" check
-	// preserves its intent by filtering on the in-flight phase predicate.
 	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 1)
 	var leafDispatchCount int

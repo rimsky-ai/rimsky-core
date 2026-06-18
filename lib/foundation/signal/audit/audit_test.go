@@ -17,11 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 )
 
-// fakeEvents is an in-memory persistence.EventTable used to assert
-// what EmitSignal hands to the persistence layer. The signal package
-// can't import foundation/persistence/sqlite (that would invert the
-// dependency direction), so we exercise the helper against a
-// stand-in that only implements the methods EmitSignal touches.
 type fakeEvents struct {
 	rows []persistence.EventAppendInput
 }

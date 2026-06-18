@@ -17,11 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// testInstancesAttributeOverridesRoundTrip verifies that
-// rimsky_instances.attribute_overrides round-trips through Create + Get
-// on every driver. The shape is opaque to rimsky, so the test asserts
-// byte-equivalence (after JSON unmarshal canonicalisation) of the
-// nested-map payload.
 func testInstancesAttributeOverridesRoundTrip(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
@@ -91,19 +86,6 @@ func testInstancesAttributeOverridesRoundTrip(t *testing.T, d persistence.Databa
 	}
 }
 
-// testInstancesAttributeOverridesMigrationBackfill verifies that
-// rimsky_instances rows inserted WITHOUT specifying the
-// attribute_overrides column receive the column's DEFAULT '{}' (mirrors
-// the case where a pre-existing row was retroactively backfilled by
-// the migration that ALTERed the table to add the column NOT NULL
-// DEFAULT '{}'). Both drivers exercise.
-//
-// Uses a raw INSERT that omits the column rather than going through
-// `Instances().Create` (which always supplies `{}` if the input is
-// nil) so the test exercises the column DEFAULT, not the application-
-// layer default. The raw INSERT is dispatched to a driver-specific
-// helper provided by the test harness (drivers do not expose raw SQL
-// via the persistence.Database interface).
 func testInstancesAttributeOverridesMigrationBackfill(
 	t *testing.T,
 	d persistence.Database,
@@ -134,9 +116,6 @@ func testInstancesAttributeOverridesMigrationBackfill(
 		t.Fatalf("template insert: %v", err)
 	}
 
-	// @constraint: paired (run_scope, instance) rows MUST seed in a single tx
-	// so the mutual NOT NULL FKs (rimsky_instances.main_run_scope_id ↔
-	// rimsky_run_scopes.instance_id) are satisfied at DEFERRED commit time.
 	mainScopeID := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -146,11 +125,6 @@ func testInstancesAttributeOverridesMigrationBackfill(
 		}); err != nil {
 			return err
 		}
-		// @deliberate: persistence-layer Create with empty AttributeOverrides
-		// is used instead of raw INSERT — placeholder substitution + tx-binding
-		// is driver-specific. This defeats exercising the column DEFAULT but
-		// keeps the FK invariants satisfied; the backfill behaviour is covered
-		// by the migration tests directly.
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:             id,
 			TemplateHash:   tmpl,
@@ -160,8 +134,6 @@ func testInstancesAttributeOverridesMigrationBackfill(
 	}); err != nil {
 		t.Fatalf("seed instance + run_scope: %v", err)
 	}
-	// @deliberate: rawExec parameter retained on the signature for future
-	// driver-specific seeds that bypass the persistence layer.
 	_ = rawExec
 
 	var got *persistence.InstanceRow
@@ -183,9 +155,6 @@ func testInstancesAttributeOverridesMigrationBackfill(
 	}
 }
 
-// testInstancesAttributeOverridesDefaultsEmpty verifies that omitting
-// AttributeOverrides on Create persists as an empty map (not nil), so
-// dispatch-time reads can deep-merge unconditionally.
 func testInstancesAttributeOverridesDefaultsEmpty(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
@@ -216,8 +185,6 @@ func testInstancesAttributeOverridesDefaultsEmpty(t *testing.T, d persistence.Da
 			TemplateHash:   tmpl,
 			Params:         map[string]any{},
 			MainRunScopeID: mainScopeID,
-			// @deliberate: AttributeOverrides omitted to exercise the
-			// application-layer default (persisted as empty map, not nil).
 		}, tx)
 		return err
 	}); err != nil {
@@ -243,9 +210,6 @@ func testInstancesAttributeOverridesDefaultsEmpty(t *testing.T, d persistence.Da
 	}
 }
 
-// testInstancesAttributeOverridesMatchCountsRoundTrip verifies that
-// the AttributeOverridesMatchCounts field survives Create + Get
-// round-trip with an explicit non-zero-length array.
 func testInstancesAttributeOverridesMatchCountsRoundTrip(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
@@ -301,12 +265,6 @@ func testInstancesAttributeOverridesMatchCountsRoundTrip(t *testing.T, d persist
 	}
 }
 
-// testInstancesIncrementAttributeOverrideMatchCounts verifies the basic
-// increment path: starting from [0, 0, 0], incrementing indices [0, 2]
-// yields [1, 0, 1]; a follow-up call incrementing [0, 0, 1] yields
-// [3, 1, 1] (duplicate index in one call counts per occurrence — each
-// chained jsonb_set/json_set step reads the prior step's output and
-// increments by 1).
 func testInstancesIncrementAttributeOverrideMatchCounts(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
@@ -381,7 +339,6 @@ func testInstancesIncrementAttributeOverrideMatchCounts(t *testing.T, d persiste
 		t.Fatalf("after increment [0, 0, 1]: got %#v want %#v", got.AttributeOverridesMatchCounts, want)
 	}
 
-	// @deliberate: empty indices is a no-op; exercises the early-return path.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.Instances().IncrementAttributeOverrideMatchCounts(ctx, id, nil, tx)
 	}); err != nil {
@@ -389,10 +346,6 @@ func testInstancesIncrementAttributeOverrideMatchCounts(t *testing.T, d persiste
 	}
 }
 
-// testInstancesIncrementAttributeOverrideMatchCountsConcurrent verifies
-// that concurrent IncrementAttributeOverrideMatchCounts calls (each
-// wrapped in its own short tx via Tables.Transaction) yield monotonic
-// counters with no lost updates.
 func testInstancesIncrementAttributeOverrideMatchCountsConcurrent(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
@@ -431,10 +384,6 @@ func testInstancesIncrementAttributeOverrideMatchCountsConcurrent(t *testing.T, 
 	}
 
 	const n = 20
-	// @deliberate: ALL goroutines (n per index, across two indices) share one
-	// WaitGroup so increments against DIFFERENT indices race concurrently —
-	// the spec's "different indices: both land" case would otherwise only be
-	// exercised sequentially.
 	var wg sync.WaitGroup
 	wg.Add(2 * n)
 	for _, idx := range []int{0, 2} {

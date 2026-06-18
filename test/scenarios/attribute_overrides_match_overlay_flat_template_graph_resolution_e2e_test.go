@@ -2,23 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — pins the flat-template graph-resolution seam for the
-// L5 `graph:` matcher key.
-//
-// Coverage scope. Pre-v1 templates may declare the legacy flat
-// `nodes:` list (no `graphs:` block); the canonicalizer's flat-shape
-// fallback maps every such node to the reserved `main` graph. This
-// scenario pins that fallback end-to-end: a flat-Nodes template
-// resolves to `graph: "main"`, so a matcher targeting
-// `graph: "main"` fires — proving the supervisor derives the
-// dispatch-time graph from the template's Graphs list (or the
-// legacy-flat fallback) before evaluating L5 matchers.
-//
-// The sub-graph routing complement (a matcher targeting a named
-// sub-graph fires only on that sub-graph's internal dispatches; the
-// entry-absorbed calling node reports `graph: "main"` per
-// concept:delegation) is pinned end-to-end by
-// `attribute_overrides_match_overlay_subgraph_e2e_test.go`.
 package scenarios
 
 import (
@@ -91,7 +74,6 @@ func TestAttributeOverridesMatchOverlayFlatTemplateGraphResolution_ResolvesToMai
 	require.Equal(t, "outer", cli["where"],
 		"matcher graph=main MUST fire for flat-Nodes template")
 
-	// @deliberate: Counter increment landed.
 	var inst *persistence.InstanceRow
 	require.Eventually(t, func() bool {
 		err := h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {

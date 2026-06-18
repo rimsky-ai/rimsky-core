@@ -17,7 +17,6 @@ func TestCompileWhen_NilOnEmpty(t *testing.T) {
 	if got != nil {
 		t.Fatalf("CompileWhen empty: expected nil predicate, got %+v", got)
 	}
-	// @deliberate: nil receiver evaluates true unconditionally (always-match sentinel).
 	ok, err := got.Eval(Signal{Type: "terminal/success"})
 	if err != nil {
 		t.Fatalf("Eval nil: %v", err)
@@ -85,7 +84,6 @@ func TestCompileWhen_RejectsInvalidSyntax(t *testing.T) {
 }
 
 func TestCompileWhen_RejectsUnknownFieldExact(t *testing.T) {
-	// @constraint: exact-subscription compile enforces payload-field whitelist; terminal/success has no error_class.
 	_, err := CompileWhen("terminal/success", "payload.error_class == 'x'")
 	if err == nil {
 		t.Fatalf("CompileWhen: expected unknown-field error")
@@ -96,7 +94,6 @@ func TestCompileWhen_RejectsUnknownFieldExact(t *testing.T) {
 }
 
 func TestCompileWhen_PrefixBindsDyn(t *testing.T) {
-	// @deliberate: prefix subscriptions bind payload as dyn — compile skips field check, runtime missing-key returns false via safe-navigation.
 	p, err := CompileWhen("terminal/*", "payload.error_class == 'x'")
 	if err != nil {
 		t.Fatalf("CompileWhen prefix dyn: %v", err)

@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// assets.go — F5. Asset endpoints.
-//
-//   - GET    /instances/{id}/assets                                  — list
-//   - GET    /instances/{id}/assets/{alias}                          — single
-//   - GET    /instances/{id}/assets/{alias}/versions                 — proxies DataProcessing.ListVersions
-//   - GET    /instances/{id}/assets/{alias}/materialization-history  — lineage join
-//   - DELETE /instances/{id}/assets/{alias}                          — operator release + row delete
-//
 // @concept: asset
 //
 // "Asset" is a documented compound, not a primitive: it's a claim
@@ -51,7 +43,6 @@ func registerAssetsRoutes(r chi.Router, deps AppDeps) {
 	r.Delete("/instances/{id}/assets/{alias}", gate(deps, "asset:delete", handleDeleteAsset(deps)))
 }
 
-// assetItem is the per-asset projection. Address bytes are
 // intentionally omitted per `@blessed-invariant 20` — operators read
 // `scope`, `producer_name`, `version_id`; never the wire address.
 type assetItem struct {
@@ -60,13 +51,6 @@ type assetItem struct {
 	ProducerName string          `json:"producer_name"`
 	Scope        json.RawMessage `json:"scope,omitempty"`
 	VersionID    string          `json:"version_id,omitempty"`
-	// State + Lifetime replace the pre-Stage-4 `held_durable` bool.
-	// For asset queries (post-Stage-2 row discovery is
-	// `ListByInstanceAndState(committed, durable)`), every surfaced row
-	// has State == "committed" and Lifetime == "durable" by
-	// construction. The fields are still surfaced for forward
-	// compatibility with operator tooling that wants to filter by
-	// state explicitly.
 	State        string    `json:"state"`
 	Lifetime     string    `json:"lifetime"`
 	ClaimedAt    time.Time `json:"claimed_at"`
@@ -74,9 +58,6 @@ type assetItem struct {
 	NodeType     string    `json:"node_type,omitempty"`
 }
 
-// handleListAssets returns claim_handles rows for the instance filtered
-// to state=committed AND lifetime=durable AND producer advertises
-// data_processing.
 func handleListAssets(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
@@ -141,10 +122,6 @@ func handleListAssets(deps AppDeps) http.HandlerFunc {
 				continue
 			}
 			node := nodeByID[r.HolderNodeID]
-			// @constraint: precise alias resolution: the template node carries one or
-			// more `stores:` entries; the producer_name on the claim
-			// handle pinpoints which entry. The (alias, producer) pair
-			// is unique per node so the first match is canonical.
 			claimAlias := lookupClaimAliasForProducer(tplSp, node.NodeType, *r.ProducerName)
 			items = append(items, toAssetItem(r, node, claimAlias))
 		}
@@ -154,10 +131,6 @@ func handleListAssets(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// lookupClaimAliasForProducer returns the `claim_alias` (the per-node
-// alias declared in `stores:`) for a given producer_name on a node.
-// Returns empty when no match — callers fall back to the producer-name
-// approximation rather than emitting a half-formed alias.
 func lookupClaimAliasForProducer(s spec.TemplateSpec, nodeType, producerName string) string {
 	if nodeType == "" || producerName == "" {
 		return ""
@@ -175,14 +148,6 @@ func lookupClaimAliasForProducer(s spec.TemplateSpec, nodeType, producerName str
 	return ""
 }
 
-// toAssetItem projects a claim_handle row + its holder node + the
-// resolved claim alias (from the template's `stores:` declaration) into
-// the user-facing assetItem shape. Per spec/plan F5 the alias is the
-// dotted `{node_type}.{claim_alias}` form; the caller is responsible
-// for resolving claim_alias precisely via `lookupClaimAliasForProducer`.
-// When the alias resolution fails (template gone, producer mismatch,
-// caller passes empty), the Alias field is left empty so consumers
-// don't see a half-formed identifier.
 func toAssetItem(r persistence.ClaimHandleRow, node persistence.NodeRow, claimAlias string) assetItem {
 	out := assetItem{
 		ClaimID:      r.ID.String(),
@@ -203,11 +168,6 @@ func toAssetItem(r persistence.ClaimHandleRow, node persistence.NodeRow, claimAl
 	return out
 }
 
-// buildDataProcessingPredicate returns a function reporting whether a
-// producer advertises the `data_processing` mix-in protocol. Sources
-// the cached capabilities from the registry; falls back to "yes" when
-// the registry has no entry (the row exists, so the producer is
-// known; we conservatively include it rather than silently dropping).
 func buildDataProcessingPredicate(deps AppDeps) func(string) bool {
 	if deps.Stores == nil {
 		return func(string) bool { return true }
@@ -225,9 +185,6 @@ func buildDataProcessingPredicate(deps AppDeps) func(string) bool {
 	}
 }
 
-// parseAssetAlias splits `{node_type}.{claim_alias}` into its two
-// components. Returns an error if the input is missing the dot or has
-// empty halves.
 func parseAssetAlias(s string) (nodeType, claimAlias string, err error) {
 	idx := strings.LastIndex(s, ".")
 	if idx <= 0 || idx == len(s)-1 {
@@ -236,10 +193,6 @@ func parseAssetAlias(s string) (nodeType, claimAlias string, err error) {
 	return s[:idx], s[idx+1:], nil
 }
 
-// resolveAsset finds the claim_handle row for (instance_id, node_type,
-// claim_alias). Returns (nil, nil) when no row matches. The lookup
-// joins ListByInstanceAndState (state='committed', lifetime='durable')
-// + a template walk to map alias → producer_name.
 func resolveAsset(
 	ctx context.Context, deps AppDeps, tx persistence.Tx,
 	instance persistence.InstanceRow, nodeType, claimAlias string,
@@ -286,10 +239,6 @@ func resolveAsset(
 	return nil, node, nil
 }
 
-// lookupProducerForAlias walks the template's nodes for nodeType, then
-// matches a `stores:` entry whose alias (or name) equals claimAlias.
-// Returns the producer's `name` (the `producer_name` column on
-// rimsky_claim_handles), or empty when not found.
 func lookupProducerForAlias(s spec.TemplateSpec, nodeType, claimAlias string) string {
 	if len(s.Nodes) == 0 {
 		return ""
@@ -348,14 +297,10 @@ func handleGetAsset(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, "asset not found")
 			return
 		}
-		// @constraint: the path parameter is the user-supplied alias; pass it through
-		// verbatim. resolveAsset already validated that the (node_type,
-		// claim_alias) pair matches a stores entry on the template.
 		writeJSON(w, http.StatusOK, toAssetItem(*row, ifNode(node), claimAlias))
 	}
 }
 
-// ifNode returns *node when non-nil, else a zero-value NodeRow.
 func ifNode(node *persistence.NodeRow) persistence.NodeRow {
 	if node == nil {
 		return persistence.NodeRow{}
@@ -363,11 +308,6 @@ func ifNode(node *persistence.NodeRow) persistence.NodeRow {
 	return *node
 }
 
-// handleAssetVersions resolves the asset to its claim_handle, looks up
-// the DataProcessing client for the producer, and forwards to
-// `ListVersions`. Returns 503 when no DataProcessing registry is wired
-// (no producer advertised the protocol at startup) or 404 when the
-// asset's producer does not advertise data_processing. Per spec
 func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
@@ -425,9 +365,6 @@ func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 			ClaimHandleID: row.ID.String(),
 		})
 		if err != nil {
-			// @constraint: A remote producer returns *peer.ProducerCallError; writeError
-			// surfaces the producer's error class + message under 502/422
-			// instead of discarding them into a generic body.
 			writeError(w, err)
 			return
 		}
@@ -448,9 +385,6 @@ func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleAssetMaterializationHistory returns claim_terminal lineage rows
-// for the asset's claim_handle joined with their parent runs and
-// frames.
 func handleAssetMaterializationHistory(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
@@ -505,9 +439,6 @@ func handleAssetMaterializationHistory(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleDeleteAsset implements the operator-driven asset delete per
-// F5 step 6: refuse if any in-flight run holds the claim; otherwise
-// call ClaimProducer.Release; DELETE the claim_handle row; audit.
 func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
@@ -550,19 +481,12 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 					active = append(active, h)
 				}
 			}
-			// @constraint: dry-run gate: instance + asset resolved successfully.
-			// Defer the in-flight-holder check to outside the tx (a real
-			// call surfaces it as 409 after the tx commits) — both real
-			// and dry-run paths share the same downstream check.
 			if isDryRun {
 				return errDryRunOK
 			}
 			return nil
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
-			// @constraint: in-flight-holder check matches the real-call's post-tx
-			// behaviour: a dry-run against an asset with active holders
-			// surfaces the same 409 a real call would.
 			if len(active) > 0 {
 				writeJSON(w, http.StatusConflict, map[string]any{
 					"error":        "asset has in-flight holder runs; refuse delete",
@@ -596,29 +520,14 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// @constraint: Producer.Release — the producer registry holds the concrete
-		// ClaimProducer. Skip when no producer name is recorded (defensive).
 		if deps.Stores != nil && row.ProducerName != nil {
 			if producer, ok := deps.Stores.Get(*row.ProducerName); ok {
 				if err := producer.Release(req.Context(), claimproducer.ClaimID(row.ID.String()), row.ClaimScopeData, row.Address); err != nil {
-					// @constraint: A remote producer returns *peer.ProducerCallError;
-					// writeError surfaces the producer's error class +
-					// message under 502/422 ("your producer rejected this")
-					// instead of the bare 500 that used to mask them as a
-					// rimsky-internal failure. The claim_handle row is
-					// intentionally left in place — the delete did not
-					// happen; the operator can fix the producer and retry.
 					writeError(w, err)
 					return
 				}
 			}
 		}
-		// @constraint: delete the row via the absence-guarded DeleteResolved path —
-		// the row is state='committed' / lifetime='durable' with
-		// holder_supervisor_id IS NULL by construction post-Promote
-		// (Stage 4 of the claim-handle state-column refactor: the CHECK
-		// constraint nulls holder_supervisor_id whenever state exits
-		// 'active').
 		// @blessed-invariant 4 (post-refactor): non-active-row deletions
 		// are guarded by absence + the row-discovery query filter.
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -637,6 +546,4 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// errAssetNotFound is the sentinel surfaced inside a tx for the
-// asset-not-found path. The handler maps it to 404 outside the tx.
 var errAssetNotFound = errors.New("asset not found")

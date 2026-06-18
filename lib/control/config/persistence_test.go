@@ -11,8 +11,6 @@ import (
 	"testing"
 )
 
-// TestLoadRimskyConfig_Persistence covers the four shapes from spec §8.2:
-// postgres-only, sqlite-only, missing driver, and conflicting blocks.
 func TestLoadRimskyConfig_Persistence(t *testing.T) {
 	cases := []struct {
 		name     string

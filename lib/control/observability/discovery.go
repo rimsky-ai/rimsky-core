@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package observability is the read-only observability surface mounted
-// on rimsky-control-api at /v1/observability/*. Exposes a curated view
-// over rimsky_* tables plus a handshake-driven discovery cache for the
-// per-peer observability endpoints declared in rimsky.yml.
-//
-// Per docs/specs/2026-05-02-dashboard-and-observability-design.md.
-//
-// Import rules: this package may import foundation/persistence/, foundation/locks/
-// for shared types. It MUST NOT import control/config/, foundation/persistence/
-// postgres/, foundation/persistence/sqlite/, graph/scheduler/, runtime/,
-// or control/controlapi/. (Avoids a cycle through config.StartControlAPI,
-// which composes RunHandshake + Routes itself.)
 package observability
 
 import (
@@ -21,7 +9,6 @@ import (
 	"time"
 )
 
-// Reachability is the result of probing a peer's observability endpoint.
 type Reachability string
 
 const (
@@ -30,18 +17,12 @@ const (
 	ReachabilityDegraded    Reachability = "degraded"
 )
 
-// CustomUI mirrors the proto message of the same name. The proto
-// reuses one `dispatch_url_template` field name across both peer kinds
-// (executors substitute against {dispatch_id, instance_id, node_type};
-// stores substitute against {claim_id, producer_name}), so there's no
-// separate claim_url_template — see spec §2.2 / §3.2.
 type CustomUI struct {
 	URL                 string `json:"ui_url"`
 	EmbedMode           string `json:"embed_mode"`
 	DispatchURLTemplate string `json:"dispatch_url_template,omitempty"`
 }
 
-// AdminViewParam mirrors the proto AdminViewParam.
 type AdminViewParam struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
@@ -49,7 +30,6 @@ type AdminViewParam struct {
 	Required    bool   `json:"required"`
 }
 
-// AdminViewDecl mirrors the proto AdminViewDecl.
 type AdminViewDecl struct {
 	Name        string           `json:"name"`
 	Title       string           `json:"title"`
@@ -57,9 +37,6 @@ type AdminViewDecl struct {
 	Params      []AdminViewParam `json:"params,omitempty"`
 }
 
-// ObservabilityCapabilities mirrors the union of executor and store
-// capability messages — every field is optional and rendered as
-// "supported" / "not supported" by the dashboard.
 type ObservabilityCapabilities struct {
 	SupportsTraceGet              bool            `json:"supports_trace_get,omitempty"`
 	SupportsTraceStream           bool            `json:"supports_trace_stream,omitempty"`
@@ -69,69 +46,28 @@ type ObservabilityCapabilities struct {
 	RetentionAfterTerminalSeconds uint64          `json:"retention_after_terminal_seconds"`
 	CustomUI                      *CustomUI       `json:"custom_ui,omitempty"`
 	AdminViews                    []AdminViewDecl `json:"admin_views,omitempty"`
-	// HTTPBridgeURL is the absolute base URL of the peer's HTTP+JSON
-	// observability bridge. When non-empty, the dashboard uses this
-	// (instead of falling back to the dispatch endpoint) for browser-
-	// friendly fetch/SSE access. When empty, the peer exposes only
-	// the gRPC surface and the dashboard's HTTP proxy is unavailable.
 	HTTPBridgeURL string `json:"http_bridge_url,omitempty"`
 
-	// ExpectedAttributesSchema, when non-empty, is a JSON Schema (RFC 8259 +
-	// draft 2020-12) advertised by an executor to describe its expected
-	// attribute schema. Rimsky validates incoming template attributes against
-	// this schema at template registration and at dispatch (post-merge,
-	// post-substitution). Empty means "no schema; accept any attributes."
-	// Plumbed from ObservabilityCapabilities.expected_attributes_schema (proto v1).
 	ExpectedAttributesSchema []byte `json:"expected_attributes_schema,omitempty"`
 
-	// DeclaredTags is the set of tag names this executor may attach on
-	// a settling outcome (concept:terminal-tag). Rimsky validates that
-	// any tag referenced in a subscriber's CEL `payload.tags` filter
-	// against this executor is declared here. Empty means "executor
-	// emits no tags." Plumbed from
-	// proto:executor_observability.proto::ObservabilityCapabilities.declared_tags.
 	DeclaredTags []string `json:"declared_tags,omitempty"`
 
-	// DeclaredErrorClasses is the set of error-class paths this peer
-	// may emit. For executor entries: classes emitted on
-	// Error.error_class, plumbed from
-	// ObservabilityCapabilities.declared_error_classes. For store
-	// entries: classes the producer may name on acquisition-failure
-	// responses, plumbed from the ClaimProducer.Capabilities
-	// handshake's declared_error_classes (claim_producer.proto).
-	// Patterns ending in `*` indicate prefix-pattern leaves (e.g.,
-	// `http/server_error/*`); exact strings indicate fixed leaves.
-	// Empty/absent means "peer does not declare"; the validator then
-	// surfaces unattributable `error_types:` keys as advisory
-	// warnings rather than rejecting them.
-	//
 	//	@concept: signal
 	DeclaredErrorClasses []string `json:"declared_error_classes,omitempty"`
 }
 
-// PeerEntry is the cached result of one observability handshake.
 type PeerEntry struct {
 	Name                  string `json:"name"`
 	Endpoint              string `json:"endpoint"`
 	ObservabilityEndpoint string `json:"observability_endpoint"`
-	// HTTPBridgeURL is the dashboard-visible HTTP base URL for the
-	// peer's observability bridge. Promoted out of Capabilities so the
-	// dashboard's discovery cache can read it without inspecting the
-	// optional Capabilities sub-tree.
 	HTTPBridgeURL string                     `json:"http_bridge_url,omitempty"`
 	Reachability  Reachability               `json:"reachability_status"`
 	Capabilities  *ObservabilityCapabilities `json:"observability_capabilities,omitempty"`
 	LastProbedAt  time.Time                  `json:"last_probed_at"`
 	LastError     string                     `json:"last_error,omitempty"`
-	// TLS is the peer's validated `tls:` dial mode ("off" / "required";
-	// empty → off), carried so RefreshLoop re-probes dial with the same
-	// mode the startup handshake used.
 	TLS string `json:"tls,omitempty"`
 }
 
-// Discovery is a thread-safe cache mapping peer name → observability
-// capabilities + reachability, populated by the startup handshake and
-// kept fresh by RefreshLoop.
 type Discovery struct {
 	mu        sync.RWMutex
 	executors map[string]PeerEntry
@@ -139,9 +75,6 @@ type Discovery struct {
 	prober    Prober
 }
 
-// NewDiscovery constructs an empty Discovery using prober for probes.
-// Pass NewGRPCProber() for the real implementation; tests may inject a
-// fake.
 func NewDiscovery(prober Prober) *Discovery {
 	return &Discovery{
 		executors: map[string]PeerEntry{},
@@ -150,21 +83,18 @@ func NewDiscovery(prober Prober) *Discovery {
 	}
 }
 
-// SetExecutor stores or updates one executor's probe result.
 func (d *Discovery) SetExecutor(entry PeerEntry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.executors[entry.Name] = entry
 }
 
-// SetStore stores or updates one store's probe result.
 func (d *Discovery) SetStore(entry PeerEntry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.stores[entry.Name] = entry
 }
 
-// GetExecutor returns the cached entry for an executor, if any.
 func (d *Discovery) GetExecutor(name string) (PeerEntry, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -172,7 +102,6 @@ func (d *Discovery) GetExecutor(name string) (PeerEntry, bool) {
 	return e, ok
 }
 
-// GetStore returns the cached entry for a store, if any.
 func (d *Discovery) GetStore(name string) (PeerEntry, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -180,7 +109,6 @@ func (d *Discovery) GetStore(name string) (PeerEntry, bool) {
 	return e, ok
 }
 
-// ListExecutors returns a snapshot of all cached executor entries.
 func (d *Discovery) ListExecutors() []PeerEntry {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -191,7 +119,6 @@ func (d *Discovery) ListExecutors() []PeerEntry {
 	return out
 }
 
-// ListStores returns a snapshot of all cached store entries.
 func (d *Discovery) ListStores() []PeerEntry {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

@@ -2,27 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// store-postgres is the standard direct-mode postgres store-service
-// with store-side pick-policy support. Per spec §8.2.
-//
-// Loads its YAML config from STORE_POSTGRES_CONFIG, opens listeners
-// on configured gRPC + HTTP + admin ports, and calls server.Run.
-//
-// YAML shape (see config-example.yml):
-//
-//	connection: "postgres://..."
-//	write_semantics: direct
-//	pick_policies:
-//	  "@queue":
-//	    items_table: items_inbound
-//	    on_commit: pop
-//	    on_give_up: recycle
-//	    visibility_timeout_seconds: 300
-//	host: 0.0.0.0
-//	grpc_port: 9101
-//	http_port: 9111
-//	admin_port: 9121
-//	sweep_interval_seconds: 30
 package main
 
 import (
@@ -44,13 +23,6 @@ import (
 	pgsstore "github.com/rimsky-ai/rimsky-core/lib/services/stores/postgres/store"
 )
 
-// itemsTableIdentRe is the shared strict SQL identifier shape (see
-// pgsstore.ItemsTableIdentRegex). All three layers — this startup
-// check, server/observability.go, and Store.New — apply the same
-// regex so an items_table value that passes one layer passes all
-// three. Lowercase only: postgres folds unquoted identifiers to
-// lowercase, so a mixed-case match would silently mismatch
-// verifyItemsTable at runtime.
 var itemsTableIdentRe = pgsstore.ItemsTableIdentRegex
 
 const defaultConfigEnv = "STORE_POSTGRES_CONFIG"
@@ -66,11 +38,6 @@ type yamlConfig struct {
 	AdminPort            int                       `yaml:"admin_port"`
 	SweepIntervalSeconds int                       `yaml:"sweep_interval_seconds"`
 	EnableLifecycle      bool                      `yaml:"enable_lifecycle"`
-	// EnableExecutor registers the Executor protocol alongside the
-	// store's ClaimProducer so the same binary plays both roles for
-	// the atomic-staging-with-verifier pattern. Per spec
-	// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-	// §Item 6.
 	EnableExecutor bool `yaml:"enable_executor"`
 }
 

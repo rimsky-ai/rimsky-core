@@ -2,32 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// E4 end-to-end — `candidate_handle` reaches the fan-out leaf. A
-// DataProcessing fan-out leaf's `ExecuteRequest.StoreHandle` must carry
-// its OWN sub-claim's `producer_candidate_handle` (the bytes the producer
-// returned from `BeginCandidate` for that partition).
-//
-// Pins the wire-threading for proto:executor.proto::StoreHandle.candidate_handle
-// (per spec .ok-planner/specs/2026-06-02-rimsky-core-remediation-design.md
-// §E4): the supervisor mints a candidate per sub-claim at fan-out
-// acquisition (`runtime/runner_subclaim.go::AcquireSubClaims` →
-// `DataProcessing.BeginCandidate`), persists it on
-// col:rimsky_claim_handles.producer_candidate_handle, and at leaf dispatch
-// reads it back onto the leaf's `ExecuteRequest.StoreHandle.candidate_handle`.
-//
-// Reference pattern: `fanout_success_cascade_e2e_test.go` (remote
-// stub-store fan-out wiring) and `child_partition_key_e2e_test.go`
-// (per-child capture via `h.Stub.Observed()`). The store entry here
-// declares the `data_processing` protocol so the supervisor dials the
-// stub store's DataProcessing surface (`test/support/stores/stub/server`
-// runs with `EnableDataProcessing: true`), which mints one candidate per
-// `BeginCandidate`.
-//
-// RED-then-GREEN: before the leaf-dispatch threading lands, the leaf's
-// `ExecuteRequest.StoreHandle` carries an empty `candidate_handle` (the
-// dispatch builder never reads the sub-claim row), so the convergence
-// loop below times out. With the threading in place each leaf dispatches
-// with a non-empty, per-partition-unique candidate handle.
 package scenarios
 
 import (
@@ -47,11 +21,6 @@ import (
 func TestLeafCarriesCandidateHandle(t *testing.T) {
 	t.Parallel()
 
-	// @deliberate: Remote stub store. The fixture's ClaimProducer surface advertises
-	// SupportsSplitScope=true and decodes {"partition_keys":[...]} into one
-	// SubScopeDescriptor per key; the same fixture's DataProcessing surface
-	// (EnableDataProcessing in test/support/stores/stub/testfixture) mints a
-	// candidate per BeginCandidate.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
 		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
@@ -62,10 +31,6 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"fanout-store": {
 					Endpoint: "grpc://" + endpoint,
-					// @deliberate: Declare data_processing so the supervisor dials the
-					// store's DataProcessing surface — without it the sub-
-					// claim acquisition skips BeginCandidate and no candidate
-					// handle is ever minted.
 					Protocols:    []string{config.ProtocolClaimProducer, claimproducer.ProtocolDataProcessing},
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 				},
@@ -73,10 +38,6 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 		},
 	})
 
-	// @deliberate: Per-child stub script: Success with a no-op attributes_delta so the
-	// commit gate accepts the bag. best_effort tolerates any per-child
-	// outcome — this scenario asserts the dispatch-time candidate handle,
-	// not aggregation policy semantics.
 	h.Stub.WhenType("fan-child").Success(map[string]any{"ok": true}, true, "ok")
 
 	openAttrs := scenario.WithAttributes(map[string]any{
@@ -107,12 +68,6 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 
 	iid := h.CreateInstance(tid, "ck-leaf-candidate-handle", map[string]any{})
 
-	// @constraint: Each of the three children dispatches under the parent's node row with
-	// NodeType="fan-child"; the stub's Observed log records each dispatch's
-	// per-store candidate handle. The threading claim: each leaf carries a
-	// non-empty candidate handle under the `data` store alias, and the three
-	// handles are distinct (one per partition — the producer must not return
-	// the same handle for distinct sub-claims).
 	converged := false
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
@@ -127,9 +82,6 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 				empties++
 				continue
 			}
-			// @deliberate: The stub DataProcessing fixture mints a candidate handle of
-			// the form "cand:<sub_claim_id>:<idempotency_key>"; assert the
-			// shape so a stray byte-blob can't masquerade as a candidate.
 			if !strings.HasPrefix(string(ch), "cand:") {
 				continue
 			}

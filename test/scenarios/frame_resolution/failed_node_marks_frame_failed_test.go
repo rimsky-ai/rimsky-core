@@ -2,18 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies spec §8 ("Quality-rule failures and frame outcomes") and
-// spec §6.2 ("On terminal failure: frame_id is preserved"): a node
-// failing during a frame causes the frame to end with state='failed';
-// the failed node's rimsky_nodes.frame_id is preserved; subsequent
-// queued frames advance.
-//
-// Mechanism: stub returns Errored("test_failure") which, with no
-// matching policy entry, resolves to give_up (default for unknown
-// error class per graph/node/policy.go::Evaluate). The runner takes
-// the give-up path; node state ends 'failed'; frame ends 'failed'.
-// We then re-script the stub to Complete and fire a second invalidate
-// to verify the next frame proceeds.
 package frame_resolution
 
 import (
@@ -61,7 +49,6 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 		"frame should end failed when its expected node ended failed")
 	require.NotNil(t, first.EndedAt, "failed frame must have ended_at set")
 
-	// @deliberate: frame_id on the failed node is preserved (per §6.2).
 	var nodeFrameID *uuid.UUID
 	err := h.Pool.QueryRow(context.Background(),
 		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&nodeFrameID)
@@ -71,7 +58,6 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 	require.Equal(t, first.FrameID, *nodeFrameID,
 		"failed node frame_id should match the failed frame")
 
-	// @deliberate: Fire a second invalidate after re-scripting the stub to succeed.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok")
 	postInvalidateMessage(t, h, iid)
 

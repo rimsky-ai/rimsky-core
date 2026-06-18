@@ -2,21 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Package bridge mounts the HTTP+JSON bridge handlers per spec §5.2 onto
-// an http.ServeMux. Every claim-producer-service exposes the same five
-// runtime routes (`/v1/capabilities`, `/v1/open`, `/v1/commit`,
-// `/v1/abandon`, `/v1/release`); rather than duplicating ~95% identical
-// handlers across stores/{filesystem,postgres,stub}/server, each
-// claim-producer-service calls Mount with its own
-// genv1.ClaimProducerServer implementation.
-//
-// LifecycleSubscriber is exposed via a separate optional Mount call
-// (MountLifecycle) when the binary opts into the lifecycle protocol.
-//
-// Per spec §15 (out of scope): the bridge currently surfaces every
-// store error as HTTP 500 / gRPC Internal. Finer-grained
-// status.Code mapping (NotFound, AlreadyExists, ResourceExhausted,
-// FailedPrecondition, …) is deferred to a follow-up cycle.
 package serverkit
 
 import (
@@ -34,16 +19,10 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// errBadRequest tags decode errors so the handler can map them to 400
-// while keeping all store errors at 500 (per the spec §15 deferral
-// noted on the package comment).
 var errBadRequest = errors.New("bridge: bad request")
 
-// errUnknownVerb tags an unrecognised verb path; mapped to 404.
 var errUnknownVerb = errors.New("bridge: unknown verb")
 
-// Mount registers the ClaimProducer bridge routes on mux: the five
-// runtime-verb routes (capabilities/open/commit/abandon/release).
 func Mount(mux *http.ServeMux, srv genv1.ClaimProducerServer) {
 	mux.HandleFunc("/v1/capabilities", producerHandler(srv, "capabilities"))
 	mux.HandleFunc("/v1/open", producerHandler(srv, "open"))
@@ -52,9 +31,6 @@ func Mount(mux *http.ServeMux, srv genv1.ClaimProducerServer) {
 	mux.HandleFunc("/v1/release", producerHandler(srv, "release"))
 }
 
-// MountLifecycle registers the LifecycleSubscriber bridge routes on mux.
-// Optional: a binary that doesn't implement lifecycle simply doesn't
-// call this function.
 func MountLifecycle(mux *http.ServeMux, srv genv1.LifecycleSubscriberServer) {
 	mux.HandleFunc("/v1/on_template_registered", lifecycleHandler(srv, "on_template_registered"))
 	mux.HandleFunc("/v1/on_template_deployed", lifecycleHandler(srv, "on_template_deployed"))
@@ -111,8 +87,6 @@ func writeOrError(w http.ResponseWriter, respObj proto.Message, callErr error) {
 	writeJSON(w, respObj)
 }
 
-// dispatchProducer reads the request body, decodes the verb-specific
-// JSON payload, and forwards to the ClaimProducerServer.
 func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb string, body []byte) (proto.Message, error) {
 	switch verb {
 	case "capabilities":
@@ -122,10 +96,6 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 		if err := decodeOptional(body, &req); err != nil {
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
-		// @constraint: the proto types `intent` as a bare string but the
-		// wire schema permits only "r" or "rw" — validate at the server-side
-		// bridge so a malformed client cannot reach a producer-service's
-		// Open implementation with an unrecognized value.
 		if req.Intent != "r" && req.Intent != "rw" {
 			return nil, fmt.Errorf("%w: intent must be \"r\" or \"rw\", got %q", errBadRequest, req.Intent)
 		}
@@ -166,7 +136,6 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 	return nil, errUnknownVerb
 }
 
-// dispatchLifecycle handles the six lifecycle event endpoints.
 func dispatchLifecycle(ctx context.Context, srv genv1.LifecycleSubscriberServer, verb string, body []byte) (proto.Message, error) {
 	switch verb {
 	case "on_template_registered":
@@ -224,7 +193,6 @@ func dispatchLifecycle(ctx context.Context, srv genv1.LifecycleSubscriberServer,
 	return nil, errUnknownVerb
 }
 
-// openBody is the JSON shape decoded from POST /v1/open.
 type openBody struct {
 	ClaimID      string `json:"claim_id"`
 	ProducerName string `json:"producer_name"`
@@ -235,36 +203,26 @@ type openBody struct {
 	InstanceID   string `json:"instance_id"`
 }
 
-// actionBody is the JSON shape decoded from POST /v1/{commit,abandon,
-// release}. Same fields for all three.
 type actionBody struct {
 	ClaimID string `json:"claim_id"`
 	Scope   []byte `json:"scope"`
 	Address []byte `json:"address"`
 }
 
-// templateScopeBody is the JSON shape decoded from the four template-
-// scope lifecycle event endpoints. Optional Spec / Tags fields carry
-// the per-event payload that the proto-side requests use; absent
-// fields decode to zero values, which is treated as "no payload".
 type templateScopeBody struct {
 	TemplateHash string   `json:"template_hash"`
-	Spec         []byte   `json:"spec,omitempty"` // @constraint: populated for on_template_registered
-	Tags         []string `json:"tags,omitempty"` // @constraint: populated for on_template_deployed
+	Spec         []byte   `json:"spec,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
 }
 
-// instanceScopeBody is the JSON shape decoded from the two instance-
-// scope lifecycle event endpoints. Optional InstanceKey / Params /
-// TerminatedAtUnixMs carry the per-event payload.
 type instanceScopeBody struct {
 	TemplateHash       string `json:"template_hash"`
 	InstanceID         string `json:"instance_id"`
-	InstanceKey        string `json:"instance_key,omitempty"`          // @constraint: populated for on_instance_created
-	Params             []byte `json:"params,omitempty"`                // @constraint: populated for on_instance_created
-	TerminatedAtUnixMs int64  `json:"terminated_at_unix_ms,omitempty"` // @constraint: populated for on_instance_terminated
+	InstanceKey        string `json:"instance_key,omitempty"`
+	Params             []byte `json:"params,omitempty"`
+	TerminatedAtUnixMs int64  `json:"terminated_at_unix_ms,omitempty"`
 }
 
-// decodeOptional accepts either an empty body or a JSON object.
 func decodeOptional(body []byte, v any) error {
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return nil
@@ -275,10 +233,6 @@ func decodeOptional(body []byte, v any) error {
 	return nil
 }
 
-// writeJSON serializes the response with protojson, the canonical
-// proto3-JSON encoder. Required because OpenResponse uses a oneof that
-// encoding/json does not produce in the proto3-JSON discriminator
-// shape (`{"acquired": {...}}` / `{"unavailable": {}}`).
 func writeJSON(w http.ResponseWriter, v proto.Message) {
 	w.Header().Set("Content-Type", "application/json")
 	data, err := protojson.Marshal(v)
@@ -289,12 +243,6 @@ func writeJSON(w http.ResponseWriter, v proto.Message) {
 	_, _ = w.Write(data)
 }
 
-// WriteSemanticsToProto maps the foundation-locks string constant to
-// the proto enum value. Used by store servers to construct
-// CapabilitiesResponse and Open's Acquired.realized_write_semantics.
-// Returns WRITE_SEMANTICS_UNKNOWN for empty / unrecognized values; the
-// caller is responsible for refusing to populate that field with the
-// zero value.
 func WriteSemanticsToProto(s string) genv1.WriteSemantics {
 	switch s {
 	case "sync":
@@ -310,8 +258,6 @@ func WriteSemanticsToProto(s string) genv1.WriteSemantics {
 	}
 }
 
-// WriteSemanticsFromProto reverses WriteSemanticsToProto. Returns the
-// empty string for the proto-default zero value.
 func WriteSemanticsFromProto(ws genv1.WriteSemantics) string {
 	switch ws {
 	case genv1.WriteSemantics_WRITE_SEMANTICS_SYNC:

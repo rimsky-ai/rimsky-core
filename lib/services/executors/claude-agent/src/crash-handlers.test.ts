@@ -6,15 +6,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Logger } from "pino";
 import { registerCrashHandlers } from "./crash-handlers.js";
 
-/**
- * Bug 3 regression coverage: prior versions of main.ts registered only
- * SIGINT and SIGTERM handlers. An `'error'` event with no listener on
- * the gRPC server's underlying HTTP/2 transport became an uncaught
- * exception that killed the executor process silently — the container
- * died, but supervisor-side polling continued to think the executor was
- * alive until the next health check.
- */
-
 interface CapturedLogEntry {
   level: "fatal";
   obj: object;
@@ -31,10 +22,6 @@ function makeStubLogger(captured: CapturedLogEntry[]): Logger {
 }
 
 describe("registerCrashHandlers", () => {
-  // @deliberate: capture and restore Node's listener state so the test runner isn't
-  // poisoned by handlers we register here. We can't use the deprecated
-  // NodeJS.UncaughtExceptionListener / UnhandledRejectionListener types,
-  // so we type via process.listeners() which infers correctly.
   let savedException: ReturnType<typeof process.listeners<"uncaughtException">>;
   let savedRejection: ReturnType<typeof process.listeners<"unhandledRejection">>;
 
@@ -77,9 +64,6 @@ describe("registerCrashHandlers", () => {
     });
 
     const err = new Error("rejected promise");
-    // @deliberate: construct a placeholder Promise that's already settled so emitting
-    // a synthetic unhandledRejection event doesn't leave a real pending
-    // rejection lying around in the test process.
     const placeholderPromise = Promise.resolve();
     process.emit("unhandledRejection", err, placeholderPromise);
 

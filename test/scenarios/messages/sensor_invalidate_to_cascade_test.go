@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N4 scenario — sensor_invalidate_to_cascade.
-//
-// A publisher (bundled sensor) POSTs a message envelope to the generic
-// `POST /instances/{instance_id}/messages` endpoint with
-// `sender_kind: "publisher"` + a `publisher_subscription_id` capability
-// token. At frame boundary the scheduler delivers it. The scenario
-// pins enqueue → deliver shape with sender_kind="publisher".
 package messages
 
 import (

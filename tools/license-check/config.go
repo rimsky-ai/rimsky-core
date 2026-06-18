@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// config.go — parse licensing.yml and provide longest-prefix-match
-// classification of repo paths into apache / agpl / exempt buckets.
-
 package main
 
 import (
@@ -38,8 +35,6 @@ func (c classification) String() string {
 	return "unknown"
 }
 
-// licensingConfig is the parsed shape of licensing.yml. Each list is a set
-// of path prefixes (or full paths) used for longest-prefix-match.
 type licensingConfig struct {
 	apachePrefixes []string
 	agplPrefixes   []string
@@ -67,22 +62,15 @@ func loadLicensingYAML(root string) (*licensingConfig, error) {
 	}, nil
 }
 
-// normalizePrefixes strips trailing slashes for comparison (we always
-// match against forward-slash repo-relative paths).
 func normalizePrefixes(in []string) []string {
 	out := make([]string, len(in))
 	for i, p := range in {
 		out[i] = strings.TrimSuffix(p, "/")
 	}
-	// @constraint: sort longest-first so the longest match wins on lookup.
 	sort.SliceStable(out, func(i, j int) bool { return len(out[i]) > len(out[j]) })
 	return out
 }
 
-// classify returns the classification of a repo-relative path. Longest
-// prefix match wins. A path that matches no prefix returns classUnknown
-// (which the walker treats as "default to apache" for top-level files
-// per the design doc, and "skip" for unrecognized deep paths).
 func (c *licensingConfig) classify(relPath string) classification {
 	relPath = strings.TrimPrefix(relPath, "./")
 	exempt, exemptLen := matchPrefix(c.exemptEntries, relPath)
@@ -96,13 +84,11 @@ func (c *licensingConfig) classify(relPath string) classification {
 		winner, winLen = classApache, apacheLen
 	}
 	if agpl && agplLen > winLen {
-		winner, winLen = classAGPL, agplLen //nolint:ineffassign,wastedassign,staticcheck // symmetric update; future classifications below would silently lose to AGPL otherwise.
+		winner, winLen = classAGPL, agplLen //nolint:ineffassign,wastedassign,staticcheck
 	}
 	return winner
 }
 
-// matchPrefix reports whether path is at-or-under any prefix in the list,
-// returning the longest matched prefix's length.
 func matchPrefix(prefixes []string, path string) (bool, int) {
 	for _, p := range prefixes {
 		if p == "" {

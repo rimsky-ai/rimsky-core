@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N4 scenario — publisher delivery smoke.
-//
-// A publisher-sourced message enqueued via runtime.EnqueueMessage
-// is surfaced by runtime.DeliverPendingMessages at the next frame
-// boundary. The scenario pins the no-subscribers live path: the
-// row is enqueued, delivery returns it, and the publisher sender
-// kind round-trips on the projected row.
 package messages
 
 import (

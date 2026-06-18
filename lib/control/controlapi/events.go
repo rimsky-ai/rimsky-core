@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// events.go — GET /events. Paginated read of the append-only event log.
-// Filterable by instance_id, node_id, kind, since, until.
 package controlapi
 
 import (
@@ -29,7 +27,6 @@ type eventResponseItem struct {
 	OccurredAt time.Time      `json:"occurred_at"`
 }
 
-// registerEventsRoutes wires the /events group.
 func registerEventsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/events", gate(deps, "event:read", handleListEvents(deps)))
 }
@@ -37,12 +34,6 @@ func registerEventsRoutes(r chi.Router, deps AppDeps) {
 func handleListEvents(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query()
-		// @constraint: validate ?kind= against the typed catalog at the
-		// request boundary (per decision:event-log-kind-enum).
-		// Empty = no filter (accept). Non-empty = MUST parse to
-		// a known operational kind OR a signal-shaped type-path;
-		// anything else returns 400 with the offending value
-		// surfaced.
 		kindParam := q.Get("kind")
 		if kindParam != "" {
 			if _, err := events.ParseKindString(kindParam); err != nil {

@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// lifecycle_start_stop_test pins the Publisher service-protocol
-// lifecycle: Subscribe creates an in-memory publisher-subscription,
-// ListSubscriptions enumerates active subscriptions, Unsubscribe
-// removes one. Publishers are required to be idempotent on retries.
-// The scenario pins the contract using a minimal in-process publisher.
 package sensor
 
 import (
@@ -21,9 +16,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// fixturePublisher is a minimal Publisher impl used to exercise the
-// lifecycle contract. Mirrors the bundled sensor binaries' shape at
-// helper level (per-kind firing is out of scope).
 type fixturePublisher struct {
 	genv1.UnimplementedPublisherServer
 	mu   sync.Mutex

@@ -15,10 +15,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// newLedgerOnlyServer builds an ObservabilityServer whose underlying
-// store has a nil pool — sufficient for exercising every RPC except
-// the pool-backed admin views (items_queue). The capabilities and
-// per-claim RPCs operate exclusively against the in-memory ledger.
 func newLedgerOnlyServer() *ObservabilityServer {
 	return &ObservabilityServer{store: pgsstore.NewForTest()}
 }
@@ -81,7 +77,6 @@ func TestObservability_ListClaims_Postgres(t *testing.T) {
 	}
 }
 
-// fakeStreamServer adapts to the StreamClaim server interface for tests.
 type fakeStreamServer struct {
 	genv1.ClaimProducerObservability_StreamClaimServer
 	ctx    context.Context

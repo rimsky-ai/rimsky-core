@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Tests for the publisher-subscription mounting lifecycle
-// (concept:publisher-subscription): instance-create persists desired-state
-// rows in `mounting` with no inline Subscribe RPC, the reconciliation
-// worker drives the handshake with no attempt cap, and StartControlAPI
-// wires the worker at startup.
-
 package config
 
 import (
@@ -27,9 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// seedInstanceForSubscriptions creates template + run scope + instance so
-// publisher-subscription rows can FK against the instance.
-//
 // @source: lib/control/config/publisher_resync_test.go:TestPublisherResyncOnStartup
 func seedInstanceForSubscriptions(t *testing.T, store persistence.Tables) shared.UUID {
 	t.Helper()
@@ -81,9 +72,6 @@ func getSubscriptionRow(t *testing.T, store persistence.Tables, id shared.UUID) 
 	return row
 }
 
-// flakyPublisherClient fails the first failFirstN Subscribe calls, then
-// succeeds — so a test can prove the reconciler keeps retrying past any
-// bounded budget instead of flipping the row to failed.
 type flakyPublisherClient struct {
 	fakePublisherClient
 	mu2        sync.Mutex
@@ -121,10 +109,6 @@ func (r *flakyPublisherRegistry) All() []runtime.PublisherClient {
 	return []runtime.PublisherClient{r.client}
 }
 
-// TestStartPublisherSubscriptions_InsertsMountingNoInlineRPC proves the
-// load-bearing instance-create property: rows are persisted in `mounting`
-// and NO Subscribe RPC happens inline — instance creation cannot block
-// on, or fail because of, publisher reachability.
 func TestStartPublisherSubscriptions_InsertsMountingNoInlineRPC(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -166,10 +150,6 @@ func TestStartPublisherSubscriptions_InsertsMountingNoInlineRPC(t *testing.T) {
 	}
 }
 
-// TestStartPublisherSubscriptions_UnknownPublisherFailsWithReason — an
-// unregistered publisher name is the one non-retryable failure class in
-// the create path: the row flips to failed and carries a reason the
-// instance surface can show.
 func TestStartPublisherSubscriptions_UnknownPublisherFailsWithReason(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -207,12 +187,6 @@ func TestStartPublisherSubscriptions_UnknownPublisherFailsWithReason(t *testing.
 	}
 }
 
-// TestPublisherSubscriptionReconciler_RetriesPastBudgetThenActivates — a
-// slow / contended publisher keeps the row in observable `mounting`
-// (never `failed`) while the reconciler retries without an attempt cap,
-// and the row flips to `active` once the publisher recovers. The fake
-// fails the first 4 attempts — past the old 3-attempt budget — so a
-// reintroduced bounded budget fails this test.
 func TestPublisherSubscriptionReconciler_RetriesPastBudgetThenActivates(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -267,10 +241,6 @@ func TestPublisherSubscriptionReconciler_RetriesPastBudgetThenActivates(t *testi
 		flaky.attemptCount(), getSubscriptionRow(t, store, subID).State)
 }
 
-// TestStartControlAPI_StartsSubscriptionReconciler asserts the wiring:
-// StartControlAPI launches the reconciliation worker at startup with the
-// publisher registry + persistence handles, bound to the shutdown
-// context.
 func TestStartControlAPI_StartsSubscriptionReconciler(t *testing.T) {
 	db := openMigratedSQLite(t)
 

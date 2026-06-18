@@ -4,18 +4,6 @@
 
 // @concept: run-scope
 
-// @constraint: RecoveryAwareDispatch conformance area.
-// Covers the persistence-layer round-trip of the recovery-aware fields
-// (PriorDispatchID + PriorDispatchDisposition) introduced in spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-// §"Recovery-aware executor protocol".
-//
-// The wire-level proto field surfacing is exercised by the runtime's
-// callback / dispatch code paths and the TS executor's recovery_aware
-// test. This conformance test focuses on what persistence guarantees:
-// EnqueueInTx persists the two fields, and SelectCandidates returns
-// them on the corresponding Candidate.
-//
 // @concept: run-scope
 package conformance
 
@@ -32,10 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// testRecoveryAwareDispatch seeds a fan-out parent + one partition,
-// enqueues a recovery-aware child dispatch that carries
-// PriorDispatchID + PriorDispatchDisposition = "stale_recovery",
-// then asserts both fields round-trip through SelectCandidates.
 func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -57,8 +41,6 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 		t.Fatalf("Create partition scope: %v", err)
 	}
 
-	// @deliberate: use a fresh child node so the in-flight run does not
-	// collide with the fixture node already occupying the parent scope.
 	childNodeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		_, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -107,19 +89,9 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 		t.Fatalf("SelectCandidates (original): %v", err)
 	}
 
-	// @deliberate: write scratch onto the original dispatch row before
-	// retiring it. The recovery enqueue below loads this scratch and
-	// copies it onto the new dispatch row so the executor's in-flight
-	// state survives stale-recovery — the opaque-executor-scratch
-	// round-trip this conformance test pins.
 	scratchFixture := []byte("scratch-bytes-fixture")
 
-	// @deliberate: simulate stale-recovery — claim the original row,
-	// stamp its scratch, then remove via the claimant-guarded path so a
-	// successor enqueue can name the original as its prior.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		// @constraint: RemoveForNodeInTx's claimant guard requires the
-		// caller to hold the claim, so claim the row first.
 		ok, err := q.ClaimDispatchRow(ctx, tx, originalDispatchID, "sup-stale")
 		if err != nil {
 			return err
@@ -135,13 +107,6 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 		t.Fatalf("Remove original: %v", err)
 	}
 
-	// @deliberate: recovery enqueue — load prior scratch, then enqueue
-	// with the carry-forward triple populated. The recovery production
-	// sites (conductor.go::SweepExecutorDeadlines, cascade_recalculate.go,
-	// on_error.go, runner_error_policy.go::applyResolvedAction) follow
-	// this same load → enqueue shape. EnqueuedAt is set slightly in the
-	// past so the SelectCandidates time filter (enqueued_at <= now)
-	// surfaces the recovery row in the same wall-clock instant.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		scratchInline, scratchHandle, scratchBackend, lerr := q.LoadScratchInTx(ctx, tx, originalDispatchID)
 		if lerr != nil {
@@ -199,10 +164,6 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 		t.Fatalf("Candidate.PriorDispatchDisposition = %q; want stale_recovery", got.PriorDispatchDisposition)
 	}
 
-	// @constraint: scratch round-trip — the recovery row's scratch must
-	// match the bytes written to the original. Without this the
-	// executor's in-flight state silently vanishes on stale-recovery;
-	// the opaque-executor-scratch contract this conformance test pins.
 	var gotInline []byte
 	var gotHandle, gotBackend string
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -223,26 +184,6 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	}
 }
 
-// testScratchMissingRowContract pins the deliberate asymmetry between
-// LoadScratchInTx and WriteScratchInTx for a dispatch_id that addresses
-// no row:
-//
-//   - LoadScratchInTx degrades to (nil, "", "", nil) so recovery-enqueue
-//     load sites (conductor.go::SweepExecutorDeadlines,
-//     cascade_recalculate.go, on_error.go, runner_error_policy.go) treat
-//     a retired prior row as "no carry-forward state" and the successor
-//     dispatch begins with empty scratch.
-//   - WriteScratchInTx surfaces persistence.ErrRunRowMissing so the
-//     executor's mid-dispatch checkpoint contract
-//     (STORY-opaque-executor-scratch) is preserved: the HTTP scratch
-//     callback handler maps the sentinel to 410 Gone and in-process
-//     callers see it directly.
-//
-// Regression pin: a future refactor that "normalizes" either side would
-// either bite recovery-enqueue paths (write side made tolerant) or
-// silently swallow the executor's checkpoint loss (load side made
-// strict). Both function-level comments call out the asymmetry; this
-// test holds it down at the persistence layer.
 func testScratchMissingRowContract(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	store := d.Tables()
@@ -250,8 +191,6 @@ func testScratchMissingRowContract(t *testing.T, d persistence.Database) {
 
 	missingID := shared.UUID(uuid.New())
 
-	// @constraint: load against a missing row degrades to empty scratch
-	// + no error (asymmetric with write).
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		inline, handle, backend, lerr := q.LoadScratchInTx(ctx, tx, missingID)
 		if lerr != nil {
@@ -271,8 +210,6 @@ func testScratchMissingRowContract(t *testing.T, d persistence.Database) {
 		t.Fatalf("LoadScratchInTx (missing): tx failure %v", err)
 	}
 
-	// @constraint: write against a missing row surfaces
-	// ErrRunRowMissing (asymmetric with load).
 	werr := inTx(ctx, store, func(tx persistence.Tx) error {
 		return q.WriteScratchInTx(ctx, tx, missingID, []byte("bytes"), "", "")
 	})

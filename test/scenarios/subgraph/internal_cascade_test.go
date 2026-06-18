@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N3 scenario — internal_cascade.
-//
-// At entry-success terminal, the supervisor must stay in `running` on
-// the calling node and stale-mark the non-entry internal nodes as
-// children of the calling-node parent run. The state-machine accepts
-// the `running → running` self-transition under the
-// `subgraph_internal_cascade_fired` reason. Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Sub-graphs / Invocation semantics step 4 (success).
-//
-// This scenario exercises the runtime helper
-// `SubgraphParentSuccessCascade` against a canonicalized template,
-// verifying the internal-node set and the cascade reason match the
-// spec's contract.
 package subgraph
 
 import (
@@ -61,9 +47,6 @@ func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SubgraphParentSuccessCascade: %v", err)
 	}
-	// @constraint: The entry (validate) is absorbed into the calling node — it must
-	// NOT appear in the internal-cascade set. transform and promote
-	// (exit) remain.
 	if len(internals) != 2 {
 		t.Fatalf("internals: %d (want 2)", len(internals))
 	}
@@ -84,8 +67,6 @@ func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 		t.Errorf("transition reason: %s (want subgraph_internal_cascade_fired)", reason.Kind)
 	}
 
-	// @constraint: And the canonicalizer must have flagged the entry-referencing
-	// subscription edge for runtime resolution to the calling node.
 	byType := make(map[string]*node.TemplateNodeDef, len(tmpl.Nodes))
 	for i := range tmpl.Nodes {
 		byType[tmpl.Nodes[i].Type] = &tmpl.Nodes[i]
@@ -94,8 +75,6 @@ func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 	if transform == nil || len(transform.Subscribes) != 1 || !transform.Subscribes[0].ResolvesViaCallingNode {
 		t.Errorf("transform's subscription to entry alias must carry ResolvesViaCallingNode marker: %+v", transform)
 	}
-	// @deliberate: promote subscribes to transform (an interior internal) — not the
-	// entry alias — so the marker should be unset.
 	promote := byType["promote"]
 	if promote == nil || len(promote.Subscribes) != 1 || promote.Subscribes[0].ResolvesViaCallingNode {
 		t.Errorf("promote's subscription to transform should not carry ResolvesViaCallingNode: %+v", promote)

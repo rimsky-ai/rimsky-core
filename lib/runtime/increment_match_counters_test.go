@@ -16,17 +16,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// fakeMatchCounterPersist is a tiny test double for the
-// matchCounterPersist surface used by incrementMatchCountersAfterMerge.
-// Captures the (instanceID, indices) arguments and the number of
-// Transaction / Increment calls so the test can assert on the
-// integration's behaviour without spinning up a real persistence
-// backend.
 type fakeMatchCounterPersist struct {
 	txCount        int
 	incrementCalls []fakeIncrementCall
-	// incrementErr forces IncrementAttributeOverrideMatchCounts to
-	// return this error on every call (left nil for happy-path tests).
 	incrementErr error
 }
 
@@ -39,9 +31,6 @@ func (f *fakeMatchCounterPersist) Transaction(
 	ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error,
 ) error {
 	f.txCount++
-	// @deliberate: The IncrementAttributeOverrideMatchCounts implementation here is
-	// the fakeInstancesTable below — it does not dereference the tx
-	// handle, so passing nil is safe for this seam test.
 	return fn(ctx, nil)
 }
 
@@ -49,10 +38,6 @@ func (f *fakeMatchCounterPersist) Instances() persistence.InstanceTable {
 	return &fakeInstancesTable{owner: f}
 }
 
-// fakeInstancesTable implements persistence.InstanceTable for the
-// single method incrementMatchCountersAfterMerge exercises. Every
-// other method panics — the test fails loudly if the helper grows a
-// new persistence dependency that's not asserted on here.
 type fakeInstancesTable struct {
 	owner *fakeMatchCounterPersist
 }
@@ -60,16 +45,12 @@ type fakeInstancesTable struct {
 func (f *fakeInstancesTable) IncrementAttributeOverrideMatchCounts(
 	_ context.Context, instanceID shared.UUID, indices []int, _ persistence.Tx,
 ) error {
-	// @deliberate: Copy indices to detach from any caller-side slice reuse.
 	cp := append([]int(nil), indices...)
 	f.owner.incrementCalls = append(f.owner.incrementCalls,
 		fakeIncrementCall{InstanceID: instanceID, Indices: cp})
 	return f.owner.incrementErr
 }
 
-// Create other persistence.InstanceTable method panics. The helper
-// must never call them; if it does, the panic surfaces the
-// regression immediately.
 func (f *fakeInstancesTable) Create(context.Context, persistence.InstanceCreateInput, persistence.Tx) (persistence.InstanceRow, error) {
 	panic("fakeInstancesTable.Create: unexpected call")
 }
@@ -104,20 +85,6 @@ func (f *fakeInstancesTable) SetPaused(context.Context, shared.UUID, bool, persi
 	panic("fakeInstancesTable.SetPaused: unexpected call")
 }
 
-// TestIncrementMatchCountersAfterMerge pins the supervisor →
-// IncrementAttributeOverrideMatchCounts integration in isolation.
-// The scenario tests cover the happy path end-to-end against real
-// persistence; this unit test pins the contract for the three cases
-// scenarios do NOT exercise:
-//
-//   - nil / empty matched slice → no Transaction call, no
-//     persistence touch (the steady-state happy path for dispatches
-//     without matcher hits — would otherwise pay for an empty tx
-//     against every dispatch).
-//   - non-empty matched → exactly ONE Transaction call wrapping
-//     IncrementAttributeOverrideMatchCounts(instanceID, matched).
-//   - Increment errors → swallowed via Warn (counter loss is
-//     observability degradation, not dispatch failure).
 func TestIncrementMatchCountersAfterMerge(t *testing.T) {
 	ctx := context.Background()
 	instanceID := uuid.New()
@@ -169,9 +136,6 @@ func TestIncrementMatchCountersAfterMerge(t *testing.T) {
 		}
 		capLog := shared.NewCapturingLogger()
 		matched := []int{1}
-		// @deliberate: MUST NOT panic and MUST NOT propagate the error (helper
-		// returns void by design — observability degradation, not
-		// dispatch failure per spec §"Error handling").
 		incrementMatchCountersAfterMerge(ctx, fake, capLog, instanceID, matched)
 		if fake.txCount != 1 {
 			t.Fatalf("expected exactly one Transaction call; txCount=%d", fake.txCount)
@@ -192,8 +156,6 @@ func TestIncrementMatchCountersAfterMerge(t *testing.T) {
 		fake := &fakeMatchCounterPersist{
 			incrementErr: errors.New("boom"),
 		}
-		// @deliberate: nil logger must not panic even when the increment errors —
-		// the helper degrades to silent swallow.
 		incrementMatchCountersAfterMerge(ctx, fake, nil, instanceID, []int{0})
 		if fake.txCount != 1 {
 			t.Fatalf("expected exactly one Transaction call; txCount=%d", fake.txCount)

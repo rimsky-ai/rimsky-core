@@ -2,27 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// runner_subclaim.go — E4 atomic-acquisition extension for fan-out
-// nodes. Spec: .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Fan-out template DSL + §Recursive claim-tree resolution.
-//
 // @concept: claim-tree
 // @concept: fan-out
-//
-// When a template node declares `fan_out:`, the acquisition transaction
-// grows to call `ClaimProducer.SplitScope` on the parent claim handle
-// (already Open'd via the standard acquireClaim path). The producer
-// returns a list of `SubClaimScopeDescriptor`s; rimsky INSERTs one
-// rimsky_claim_handles row per sub-claim-scope with `parent_claim_handle_id`
-// pointing at the parent. Each sub-claim is Open'd against the producer
-// in the same transaction so atomicity discipline holds
-// (`@blessed-invariant 10`).
-//
-// Producer-side `data_processing` capability advertisement is consulted
-// per sub-claim: when advertised, rimsky stores the
-// `producer_candidate_handle` returned by `BeginCandidate` so the
-// leaf-dispatch path can populate `ExecuteRequest.StoreHandle.candidate_handle`
-// (spec §A5; runtime/runner_dispatch.go).
 
 package runtime
 
@@ -41,8 +22,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-// AcquireSubClaimsInput bundles the parent-claim row + the canonicalized
-// fan-out spec the caller wants to split across.
 type AcquireSubClaimsInput struct {
 	ParentClaimHandleID shared.UUID
 	ParentClaimScope    json.RawMessage
@@ -50,45 +29,16 @@ type AcquireSubClaimsInput struct {
 	NodeRunID           shared.UUID
 	HolderNodeID        shared.UUID
 	HolderSupervisorID  string
-	// InstanceID is sourced from the parent NodeRunRow's InstanceID,
-	// threaded through tryAcquire → acquireFanOutIfDeclared. Used by
-	// Registry.GetWithContext for late-bound claim-producer resolution.
 	InstanceID       shared.UUID
 	FrameID          *shared.UUID
 	LivenessInterval time.Duration
-	// PartitionRequest is the producer-interpreted bytes that drive
-	// SplitScope. Caller is responsible for substitution; rimsky passes
-	// the bytes verbatim per `@blessed-invariant 20` (claim content is
-	// inert).
 	PartitionRequest []byte
-	// Lifetime carries the parent claim's lifetime hint; sub-claims
-	// inherit "subgraph" unless the parent declared "durable".
-	//
 	// @concept: claim-lifetime
 	Lifetime spec.ClaimLifetime
-	// ParentIsHeld carries the parent claim_handle's `is_held` value.
-	// Sub-claims inherit it so the row persists past the fan-out leaf's
-	// own active-terminal until the parent's recursive resolution
-	// (`child_execution.go::SettleChildren`) walks
-	// `ListChildClaimHandles` and finds them. Without inheritance the
-	// non-held sub-claim row drops at active-terminal of the leaf run
-	// and the parent's aggregation sees an empty children set,
-	// Committing prematurely. Spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Recursive claim-tree resolution.
 	ParentIsHeld bool
-	// AggregationPolicy is the fan-out parent's error policy snapshotted
-	// from the template-node spec. Persisted on the parent claim_handle
-	// row at the first sub-claim acquisition so the recursive walker
-	// (`runtime/child_execution.go::SettleChildren`) can compute a
-	// true aggregate Commit/Abandon decision over ALL children's
-	// outcomes — not just the just-resolved seedOutcome (cycle 4 issue C).
-	// Empty policy → recursive walker defaults to `strict` semantics.
 	AggregationPolicy spec.AggregationPolicy
 }
 
-// SubClaim is one acquired sub-claim row. The caller wires these into
-// per-leaf dispatch (parent run's children).
 type SubClaim struct {
 	ClaimHandleID           shared.UUID
 	PartitionKey            string
@@ -97,52 +47,13 @@ type SubClaim struct {
 	ProducerCandidateHandle []byte
 }
 
-// AcquireSubClaims is the E4 hot path. Given an already-acquired parent
-// claim handle, call SplitScope on the producer, then for each
-// sub-scope returned: INSERT a sub-claim row with
-// `parent_claim_handle_id = parent` and the producer-canonicalized
-// `claim_scope_data`. When the producer advertises `data_processing`, also
-// call `BeginCandidate` and persist the returned `candidate_handle`;
-// otherwise the candidate handle slot stays empty (the leaf executor
-// can still operate against the parent's address + the sub-claim's
-// claim_scope_data).
-//
-// Per-sub-claim Open is NOT issued: the SplitScope response IS the
-// per-sub-claim acquisition (the producer already partitioned the
-// parent's scope), and the proto's `OpenRequest.selector` field is a
-// `string` that cannot losslessly carry arbitrary `claim_scope_data` bytes.
-// Re-issuing Open with `string(desc.ClaimScopeData)` as the selector
-// double-encoded the canonicalized scope into a substitution-time
-// selector form the producer's parser does not expect (the
-// scope-data canonical form is producer-internal; the selector is the
-// operator-supplied template form). Sub-claim disposition flows
-// through CommitCandidate / AbandonCandidate on the DataProcessing
-// surface and through the parent's auto-terminal verb selection on the
-// standard ClaimProducer surface.
-//
-// Returns one SubClaim per descriptor. The slice ordering matches the
-// producer's SubClaimScopes ordering — caller may sort by `partition_key` if
-// the dispatcher needs deterministic ordering for child-run idempotency.
-//
-// Atomicity per `@blessed-invariant 10`: every sub-claim INSERT + every
-// per-sub-claim BeginCandidate happens inside the caller's tx. Failure
-// on any sub-claim aborts the tx, rolling back the entire fan-out
-// acquisition.
 func AcquireSubClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in AcquireSubClaimsInput,
 ) ([]SubClaim, error) {
-	// @constraint: late-bind-aware resolution — a per-instance service binding
-	// routes to the configured proxy; falls through to bare Get when no
-	// instance context / no late-bind config (zero UUID → identical to Get).
 	producer, ok := args.StoreRegistry.GetWithContext(ctx, in.ProducerName, in.InstanceID.String())
 	if !ok {
 		return nil, fmt.Errorf("AcquireSubClaims: unknown producer %q", in.ProducerName)
 	}
-	// @constraint: SplitScope is optional — caller should gate on the producer's
-	// advertised capability. The RPC client returns
-	// claimproducer.ErrSplitScopeUnsupported when the producer doesn't
-	// advertise. Surface as a typed error so callers can route to the
-	// validation pipeline (D4).
 	resp, err := producer.SplitScope(ctx, claimproducer.SplitClaimScopeRequest{
 		ClaimHandleID:    in.ParentClaimHandleID.String(),
 		PartitionRequest: in.PartitionRequest,
@@ -150,18 +61,12 @@ func AcquireSubClaims(
 	if err != nil {
 		return nil, fmt.Errorf("AcquireSubClaims: SplitScope(%s): %w", in.ProducerName, err)
 	}
-	// @deliberate: absence of a DataProcessing client is fine — the
-	// candidate handle slot stays empty and the leaf executor falls
-	// back to claim_scope_data + parent address alone.
 	var dpClient DataProcessingClient
 	if args.DataProcessors != nil {
 		if c, ok := args.DataProcessors.Get(in.ProducerName); ok {
 			dpClient = c
 		}
 	}
-	// @deliberate: resolve the producer's conflict capability ONCE per fan-out
-	// wave so the per-sub-claim overlap check (below) does not re-fetch
-	// capabilities per descriptor (@blessed-invariant 4b).
 	caps, err := producer.Capabilities(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("AcquireSubClaims: Capabilities(%s): %w", in.ProducerName, err)
@@ -172,23 +77,7 @@ func AcquireSubClaims(
 	if lifetime == "" {
 		lifetime = spec.ClaimLifetimeSubgraph
 	}
-	// @constraint: acceptedScopes accumulates the canonical claim_scope_data of
-	// every sub-claim already accepted in THIS wave. Each new sub-scope is
-	// conflict-checked against these siblings before its row is INSERTed —
-	// @blessed-invariant 4b at the sub-claim level. A SplitScope that
-	// emits two overlapping sub-scopes (byte-equal, or producer-defined
-	// overlap when advertised) must not commit both rows: the conflicting
-	// sub-claim aborts the whole acquisition tx (@blessed-invariant 10),
-	// so NO sibling sub-claim row commits.
 	acceptedScopes := make([][]byte, 0, len(resp.SubClaimScopes))
-	// @constraint: persist the parent's aggregation policy snapshot ONCE per
-	// fan-out acquisition. The recursive walker reads it at parent
-	// resolution time to compute the true aggregate outcome over all
-	// children (cycle 4 issue C). Empty policy → leave column NULL; the
-	// walker defaults to strict semantics. Claimant-guarded via parent's
-	// supervisor id (which equals the caller's HolderSupervisorID by
-	// construction — the same supervisor is acquiring the sub-claims
-	// against the parent it already holds).
 	if in.AggregationPolicy.Kind != "" {
 		policyBytes, mErr := persistence.MarshalAggregationPolicy(in.AggregationPolicy)
 		if mErr != nil {
@@ -201,27 +90,11 @@ func AcquireSubClaims(
 		}
 	}
 	for _, desc := range resp.SubClaimScopes {
-		// @constraint: an empty partition_key is a load-bearing discriminator —
-		// the delegation (sub-graph) shape reserves it, and the settlement
-		// walk (`child_execution.go::settleClaimChainAggregate`) skips
-		// closing empty-key child scopes — a producer-returned empty key
-		// would silently leak its partition RunScope open and dodge the
-		// per-partition uniqueness index
-		// (`uq_run_scopes_fanout_partition_open` is partial — it covers
-		// only non-empty keys). Reject it loudly; the whole acquisition
-		// tx aborts per @blessed-invariant 10.
 		if desc.PartitionKey == "" {
 			return nil, fmt.Errorf("AcquireSubClaims: producer %q returned a sub-claim scope with an empty partition_key; "+
 				"every SplitScope descriptor must carry a non-empty partition_key (the empty key is reserved for the delegation shape)",
 				in.ProducerName)
 		}
-		// @constraint: invariant-4b at the sub-claim level, conflict-check this
-		// sub-scope against every sibling already accepted in this wave
-		// BEFORE any producer-side side effect (BeginCandidate) or row
-		// INSERT, so a conflicting descriptor short-circuits cleanly and
-		// aborts the whole acquisition tx (@blessed-invariant 10). The
-		// predicate is producer-aware — byte-equal by default, the
-		// producer's own ScopesConflict when advertised.
 		subScope := json.RawMessage(desc.ClaimScopeData)
 		for _, prior := range acceptedScopes {
 			conflicts, cErr := scopesConflict(ctx, producer, caps, subScope, prior)
@@ -235,12 +108,6 @@ func AcquireSubClaims(
 			}
 		}
 		subID := shared.UUID(uuid.New())
-		// @constraint: BeginCandidate runs BEFORE the row INSERT so the
-		// `producer_candidate_handle` column carries the producer's
-		// handle bytes from the start. The verb is claim-id-keyed for
-		// idempotency per spec §Protocol surfaces / DataProcessing.
-		// Failure aborts the sub-claim acquisition; the parent tx
-		// rollback removes any sibling sub-claim rows already INSERTed.
 		var candidateHandle []byte
 		if dpClient != nil {
 			beginOut, beginErr := dpClient.BeginCandidate(ctx, BeginCandidateInput{
@@ -253,20 +120,8 @@ func AcquireSubClaims(
 				return nil, fmt.Errorf("AcquireSubClaims: BeginCandidate(%s): %w", in.ProducerName, beginErr)
 			}
 			candidateHandle = beginOut.CandidateHandle
-			// @constraint: emit `subclaim.begin_candidate` per accepted
-			// candidate. Payload carries rimsky-side identifiers + the
-			// candidate-handle SIZE (not the bytes — @blessed-invariant
-			// 20 keeps candidate content inert in rimsky). Best-effort:
-			// a logging failure is logged, not propagated, so the
-			// acquisition tx still commits the sub-claim row.
 			emitSubclaimBeginCandidate(ctx, args, tx, parentID, subID, in.ProducerName, len(candidateHandle))
 		}
-		// @constraint: persist the sub-claim row. The canonical claim_scope_data
-		// flows verbatim onto the row (inert per @blessed-invariant 20). No
-		// per-sub-claim Open RPC fires — SplitScope's response IS the
-		// per-sub-claim acquisition; address bytes default to empty and
-		// the leaf executor reads claim_scope_data + candidate_handle when
-		// dispatching.
 		intent := "rw"
 		insert := persistence.ClaimHandleInsertInput{
 			ID:                  subID,
@@ -281,25 +136,15 @@ func AcquireSubClaims(
 			FrameID:             in.FrameID,
 			ParentClaimHandleID: &parentID,
 			Lifetime:            lifetime,
-			// @constraint: sub-claims inherit the parent's is_held value so the
-			// row persists past the fan-out leaf's active terminal until
-			// `SettleChildren` walks the children at parent resolution
-			// time. See `AcquireSubClaimsInput.ParentIsHeld`.
 			IsHeld:                  in.ParentIsHeld,
 			ProducerCandidateHandle: candidateHandle,
 		}
 		if err := args.ClaimHandles.Insert(ctx, insert, tx); err != nil {
 			return nil, fmt.Errorf("AcquireSubClaims: Insert sub-claim: %w", err)
 		}
-		// @constraint: bump the parent's expected_children_count so the
-		// recursive walker can detect "all children resolved" via
-		// committed+abandoned == expected (cycle 4 issue C). Claimant-
-		// guarded on the same supervisor that holds the parent.
 		if err := args.ClaimHandles.BumpExpectedChildrenCount(ctx, parentID, in.HolderSupervisorID, 1, tx); err != nil {
 			return nil, fmt.Errorf("AcquireSubClaims: BumpExpectedChildrenCount on parent: %w", err)
 		}
-		// @constraint: record the accepted sub-scope so subsequent descriptors
-		// in this wave conflict-check against it (@blessed-invariant 4b).
 		acceptedScopes = append(acceptedScopes, desc.ClaimScopeData)
 		out = append(out, SubClaim{
 			ClaimHandleID:           subID,
@@ -309,21 +154,10 @@ func AcquireSubClaims(
 			ProducerCandidateHandle: candidateHandle,
 		})
 	}
-	// @constraint: emit a single `subclaim.acquired` event summarizing the
-	// full split. Captures the count rather than the per-sub-claim
-	// scope-data bytes so the event log stays inert per @blessed-
-	// invariant 20.
 	emitSubclaimAcquired(ctx, args, tx, parentID, in.HolderNodeID, in.ProducerName, len(out))
 	return out, nil
 }
 
-// emitSubclaimBeginCandidate writes one rimsky_events row per accepted
-// candidate. Best-effort: a logging failure is logged via args.Logger
-// and not propagated, so the acquisition tx still commits the row.
-//
-// Honors @blessed-invariant 20 (claim content inert): only the
-// candidate-handle SIZE is recorded; the bytes themselves are inert in
-// rimsky.
 func emitSubclaimBeginCandidate(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	parentID, subID shared.UUID, producerName string, candidateHandleSize int,
@@ -347,10 +181,6 @@ func emitSubclaimBeginCandidate(
 	}
 }
 
-// emitSubclaimAcquired writes the per-acquisition summary event after
-// every sub-claim row has been INSERTed. The descriptor count is the
-// fan-out width; the producer_name lets observability filter to a
-// specific store. Same best-effort posture as emitSubclaimBeginCandidate.
 func emitSubclaimAcquired(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	parentID, holderNodeID shared.UUID, producerName string, subScopeCount int,

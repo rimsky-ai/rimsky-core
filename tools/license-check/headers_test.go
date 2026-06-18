@@ -24,10 +24,6 @@ func TestSpliceGoBeforePackage(t *testing.T) {
 func TestSpliceGoPackageDocImmediatelyBeforePackage(t *testing.T) {
 	body := []byte("// Package foo does X.\npackage foo\n")
 	out := splice(body, apacheHeaderGo, kindGo)
-	// @constraint: header must come before the package-doc comment so
-	// go/parser still associates the doc with `package foo`. Because the
-	// splice puts header first then a blank line, the package doc remains
-	// contiguous with `package`.
 	lines := strings.Split(string(out), "\n")
 	pkgIdx := -1
 	for i, ln := range lines {
@@ -67,9 +63,6 @@ func TestSpliceTSPreservesShebang(t *testing.T) {
 }
 
 func TestSpliceProtoOnTop(t *testing.T) {
-	// @constraint: stamper must put the header above `syntax`, not
-	// after it. detectHeader's 10-line window should still find the
-	// marker.
 	body := []byte(`syntax = "proto3";
 
 package x;
@@ -128,11 +121,6 @@ func TestSpliceShellWithoutShebang(t *testing.T) {
 }
 
 func TestSpliceIdempotency(t *testing.T) {
-	// @deliberate: running stamp twice produces the same output —
-	// stampHeaders leaves files that already carry the correct header
-	// untouched (detectHeader returns true if the marker is present).
-	// Verified by checking that detectHeader reports hasHeader=true after
-	// one splice.
 	dir := t.TempDir()
 	cases := []struct {
 		name   string
@@ -245,12 +233,6 @@ func TestStampReplacePreservesGeneratedMarker(t *testing.T) {
 	}
 }
 
-// TestVerifyHeadersFlagsContradictoryMarkers covers the
-// `verifyHeaders` branch added by the 2026-05-27 mixed-marker fix-
-// forward (headers.go:94-97): a file carrying BOTH an AGPL
-// boilerplate block AND a stale `SPDX-License-Identifier: Apache-2.0`
-// line must be reported as contradictory rather than silently passing
-// the AGPL classification check.
 func TestVerifyHeadersFlagsContradictoryMarkers(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/mixed.go"
@@ -270,12 +252,6 @@ func TestVerifyHeadersFlagsContradictoryMarkers(t *testing.T) {
 	}
 }
 
-// TestStampOneStripsMixedMarkersAndEmitsSingleHeader covers the
-// mixed-marker re-stamp path in `stampHeaders` (headers.go:170-172)
-// and the blank-line-tolerant strip path in `stripLeadingHeader`
-// (headers.go:245-263). The stamp must remove BOTH header runs (the
-// boilerplate block AND the trailing SPDX line) and emit exactly one
-// header of the correct kind.
 func TestStampOneStripsMixedMarkersAndEmitsSingleHeader(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/mixed.go"
@@ -306,9 +282,6 @@ func TestStampOneStripsMixedMarkersAndEmitsSingleHeader(t *testing.T) {
 	}
 }
 
-// TestStampHeadersIdempotentOnMixedMarkerRecovery confirms that after
-// the mixed-marker re-stamp, a second pass through `stampHeaders` is
-// a no-op (stamped count == 0) and the file content is unchanged.
 func TestStampHeadersIdempotentOnMixedMarkerRecovery(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/mixed.go"
@@ -341,11 +314,6 @@ func TestStampHeadersIdempotentOnMixedMarkerRecovery(t *testing.T) {
 	}
 }
 
-// TestDetectHeaderRecognizesSPDXShortForm confirms detectHeader
-// treats both Apache and AGPL SPDX one-liners as headers (headers.go:
-// 137-144). The SPDX line is the bundled-services convention; before
-// the fix-forward the verifier rejected SPDX-only files as missing a
-// header.
 func TestDetectHeaderRecognizesSPDXShortForm(t *testing.T) {
 	dir := t.TempDir()
 	{
@@ -378,10 +346,6 @@ func TestDetectHeaderRecognizesSPDXShortForm(t *testing.T) {
 	}
 }
 
-// TestStripLeadingHeaderTolerantOfBlankBetweenMarkerRuns directly
-// exercises `stripLeadingHeader`'s blank-line tolerance: two
-// header-marker runs separated by a single blank line are both
-// stripped, not just the first.
 func TestStripLeadingHeaderTolerantOfBlankBetweenMarkerRuns(t *testing.T) {
 	body := []byte(agplHeaderGo +
 		"\n// SPDX-License-Identifier: Apache-2.0\n" +
@@ -399,7 +363,6 @@ func TestStripLeadingHeaderTolerantOfBlankBetweenMarkerRuns(t *testing.T) {
 	}
 }
 
-// writeTestFile is a small test helper.
 func writeTestFile(path string, body []byte) error {
 	return os.WriteFile(path, body, 0o644)
 }

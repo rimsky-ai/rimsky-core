@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// hostPortOf parses the port of an `http://host:port` URL. Fatals on
-// malformed input.
 func hostPortOf(t *testing.T, rawURL string) int {
 	t.Helper()
 	u, err := url.Parse(rawURL)

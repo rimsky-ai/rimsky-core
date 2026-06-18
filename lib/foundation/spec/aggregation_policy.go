@@ -6,23 +6,9 @@ package spec
 
 import "fmt"
 
-// AggregationPolicy is the per-fan-out / per-sub-graph error-policy
-// snapshot persisted on col:rimsky_node_runs.aggregation_policy. The
-// state-propagation engine in runtime/ consults it when computing the
-// parent run's aggregated state from its children.
-//
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Fan-out template DSL and §Aggregation for sub-graphs.
 type AggregationPolicy struct {
-	// Kind is one of "strict", "threshold", "best_effort", "first".
 	Kind string `yaml:"kind" json:"kind"`
-	// CancelSiblings is meaningful only when Kind == "strict". When
-	// true, the first child failure triggers Abandon of all sibling
-	// claims and transitions siblings to failed{error_class: "sibling_failed"}.
 	CancelSiblings bool `yaml:"cancel_siblings,omitempty" json:"cancel_siblings,omitempty"`
-	// MaxFailures is meaningful only when Kind == "threshold". The
-	// parent transitions to failed when the count of failed children
-	// exceeds this value.
 	MaxFailures int `yaml:"max_failures,omitempty" json:"max_failures,omitempty"`
 }
 
@@ -31,17 +17,9 @@ const (
 	AggregationKindThreshold  = "threshold"
 	AggregationKindBestEffort = "best_effort"
 	AggregationKindFirst      = "first"
-	// @deliberate: carry-verbatim is the delegation (sub-graph) settlement
-	// shape: the single settlement child's outcome is copied verbatim to
-	// the parent. Carry-verbatim requires exactly one child by
-	// construction — enforced at template canonicalization (rejection
-	// class carry_verbatim_requires_single_child), so it is never legal
-	// on `fan_out:` (which declares N children).
 	AggregationKindCarryVerbatim = "carry_verbatim"
 )
 
-// Validate returns an error if p is not a well-formed policy. Used at
-// template registration.
 func (p AggregationPolicy) Validate() error {
 	switch p.Kind {
 	case AggregationKindStrict:

@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package roles embeds the bundled role JSONs the CLI expands into
-// permission grants at `rimsky auth create-key` time. Server-side
-// rimsky has no concept of roles; this surface is CLI-only.
-//
 // @concept: role-template
 package roles
 
@@ -17,8 +13,6 @@ import (
 //go:embed *.json
 var FS embed.FS
 
-// Load returns the bundled role JSON by name (without ".json").
-// Returns ("", false) if not found.
 func Load(name string) ([]byte, bool) {
 	data, err := FS.ReadFile(name + ".json")
 	if err != nil {
@@ -27,7 +21,6 @@ func Load(name string) ([]byte, bool) {
 	return data, true
 }
 
-// AllNames returns the bundled role names sorted.
 func AllNames() []string {
 	entries, err := FS.ReadDir(".")
 	if err != nil {

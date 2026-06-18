@@ -12,19 +12,6 @@ import (
 	"strings"
 )
 
-// AdminHandler returns an http.Handler for the store's admin
-// surface. Per spec §13: each store-service that supports pick
-// policies owns its own admin endpoint for items insertion. Operators
-// configure their seeding tooling to talk to the store-service
-// directly, never through rimsky.
-//
-// Route: POST /admin/items/{selector}
-//
-//	body: {"items": [{"payload": {...}}, ...]}
-//	response: {"inserted": N}
-//
-// Selector path-param accepts the raw `@policy-name` form or the
-// percent-encoded `%40policy-name` form.
 func (s *Store) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/admin/items/", func(w http.ResponseWriter, r *http.Request) {

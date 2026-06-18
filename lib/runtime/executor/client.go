@@ -15,15 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// Client wraps a generated gRPC ExecutorClient for rimsky's supervisor.
-// One Client per (transport, TLS mode, endpoint). Cached inside the
-// supervisor so connections are reused across dispatches.
-//
-// Per concept:executor / TD-execute-rpc-unary the Execute RPC is
-// unary: a single call returns the settling Outcome (Success / Error /
-// Park) or AwaitAsyncCallback. The HTTP-bridge client wraps the same
-// shape over an HTTP POST.
-//
 // @concept: executor
 type Client interface {
 	Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error)
@@ -35,22 +26,12 @@ type grpcClient struct {
 	api  genv1.ExecutorClient
 }
 
-// NewGRPCClient dials the endpoint, honoring the entry's validated
-// `tls:` mode: "required" → verified TLS (system roots); "off" / empty
-// → plaintext. Under required, Execute-channel failures name the peer
-// (by endpoint URL — the pool may share one client across executor
-// names) and the mode.
 func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("executor.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
 	}
 	conn, err := grpc.NewClient(endpoint.URL,
 		grpc.WithTransportCredentials(peer.TransportCredentials(endpoint.TLS)),
-		// @deliberate: stamp x-rimsky-service-name from the per-call
-		// context so a host-agent-proxy fronting the executor protocol can
-		// route by service name (no-op when the dispatch site set no
-		// name); the TLSMode interceptors annotate RPC errors with the
-		// peer + mode under tls: required (no-op otherwise).
 		grpc.WithChainUnaryInterceptor(peer.ServiceNameUnaryInterceptor, peer.TLSModeUnaryInterceptor(endpoint.URL, endpoint.TLS)),
 	)
 	if err != nil {
@@ -64,15 +45,6 @@ func (c *grpcClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*g
 }
 func (c *grpcClient) Close() error { return c.conn.Close() }
 
-// ClientPool caches Clients by (transport, TLS mode, URL). Thread-safe.
-// The TLS mode is part of the key so two entries sharing a URL with
-// different `tls:` modes never silently share one client — a
-// `tls: required` entry must never ride a plaintext connection created
-// for a `tls: off` twin (STORY-peer-tls-enforced falsifier).
-//
-// The optional inproc registry + newHctx hook are populated via
-// NewClientPoolWithInProcess; out-of-process-only callers (tests of
-// http/grpc paths, the conformance pool) continue to use NewClientPool.
 type ClientPool struct {
 	mu       sync.Mutex
 	clients  map[string]Client
@@ -82,9 +54,6 @@ type ClientPool struct {
 
 func NewClientPool() *ClientPool { return &ClientPool{clients: map[string]Client{}} }
 
-// NewClientPoolWithInProcess returns a pool with the inproc registry
-// wired. Production startup uses this; tests using only out-of-process
-// executors keep NewClientPool().
 func NewClientPoolWithInProcess(registry *InProcessRegistry, newHctx HandlerContextFactory) *ClientPool {
 	return &ClientPool{
 		clients:  map[string]Client{},
@@ -94,11 +63,6 @@ func NewClientPoolWithInProcess(registry *InProcessRegistry, newHctx HandlerCont
 }
 
 func (p *ClientPool) GetOrCreate(ep Endpoint) (Client, error) {
-	// @deliberate: normalize the empty mode to "off" — the two dial
-	// identically (plaintext), so keying them separately would mint a
-	// redundant second connection to the same endpoint; unreachable via
-	// config (parseTLSMode normalizes), but ad-hoc Endpoint literals
-	// reach this pool directly.
 	tlsMode := ep.TLS
 	if tlsMode == "" {
 		tlsMode = "off"

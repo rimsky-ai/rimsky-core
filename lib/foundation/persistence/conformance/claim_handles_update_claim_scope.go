@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: conformance area conformance area.
-// conformance area.
-//
-// Covers ClaimHandleTable.UpdateClaimScope: writes the new claim_scope_data
-// inside a tx, then verifies (a) the new bytes round-trip via Get, and (b) the
-// claimant guard turns a mismatched supervisorID into a no-op.
 package conformance
 
 import (
@@ -69,8 +63,6 @@ func testClaimHandlesUpdateClaimScope(t *testing.T, d persistence.Database) {
 			string(got.ClaimScopeData), string(scopeB))
 	}
 
-	// @constraint: Inv 4 (claimant-guarded release) — UpdateClaimScope under a
-	// mismatched supervisor must be a no-op (bytes unchanged).
 	otherSup := "different-supervisor"
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().UpdateClaimScope(ctx, lockHolderID, otherSup, scopeA, tx)

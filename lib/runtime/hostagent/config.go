@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Package hostagent implements the rimsky-host-agent daemon: a long-lived
-// process on a dev machine that dials the rimsky-host-agent-proxy outbound,
-// receives Spawn/Dispatch/Reap frames, exec()s local binaries, tunnels
-// their gRPC streams + local HTTP callbacks back through the bidi stream,
-// and reaps the children on signal. It is the agent end of the
-// HostAgent.Connect protocol whose proxy end lives in
-// cmd/rimsky-host-agent-proxy.
-//
 // @concept: host-agent
 package hostagent
 
@@ -20,64 +12,19 @@ import (
 	"time"
 )
 
-// Config is the host-agent's startup configuration. Configuration-as-
-// visible-object per the cold-read conventions: every env read lives in
-// LoadConfigFromEnv, not scattered through the daemon.
 type Config struct {
-	// RimskyURL is the proxy's agent-facing gRPC endpoint the daemon dials
-	// outbound (host:port). The daemon dials with insecure transport in v1.
 	RimskyURL string
-	// APIKey authenticates the agent to the proxy in the Register frame.
 	APIKey string
-	// ListenAddr is the local HTTP listener address. Empty → an OS-assigned
-	// ephemeral port on 127.0.0.1. The bound address is reported to the
-	// proxy as the Register.local_callback_base_url so the proxy can rewrite
-	// callback URLs onto this listener.
 	ListenAddr string
-	// AllowPaths is a set of filepath.Match globs. When non-empty, a Spawn
-	// whose binding.path matches none of them is rejected. Empty → permissive
-	// (the default trust posture: holding the api-key authorizes any spawn).
 	AllowPaths []string
-	// AgentLabel disambiguates multiple agents for the same api-key. Default
-	// is "<hostname>-<pid>".
 	AgentLabel string
-	// LogLevel is debug|info|warn|error (default info).
 	LogLevel string
-	// HeartbeatInterval is the cadence of HostAgentHeartbeat frames on the
-	// stream. Default 10s.
 	HeartbeatInterval time.Duration
-	// ReapGracePeriod bounds how long orphaned children are given to exit
-	// after a stream close before they are SIGKILLed. Default 30s.
 	ReapGracePeriod time.Duration
-	// StatusFile is the path the daemon writes its connection state to so an
-	// external supervisor (the `rimsky agent start` parent, `rimsky agent
-	// status`, a probe script) can observe whether the bidi stream is up
-	// without an extra IPC channel. The daemon writes
-	// `{"connected":true,"proxy":"<url>","since":"<rfc3339>"}` on each
-	// successful RegisterAck and DELETES the file when the stream tears
-	// down — so a stale file from a previous run that crashed without
-	// removing it is overwritten by the next successful connect, and
-	// `connected` truly tracks the live stream. Empty → no status file is
-	// written (the standalone cmd/rimsky-host-agent binary leaves this
-	// empty; the `rimsky agent start` CLI wrapper sets it).
-	//
 	// @story: host-agent-control-plane — the falsifier "status reports
-	// `connected` when the bidi stream is actually down" hinges on this
-	// file tracking the LIVE stream, not just the daemon's pid.
 	StatusFile string
 }
 
-// LoadConfigFromEnv reads the host-agent configuration from the environment.
-//
-//	RIMSKY_URL                 proxy agent-facing endpoint (host:port).
-//	RIMSKY_API_KEY             api-key presented in Register.
-//	RIMSKY_AGENT_LISTEN        optional; local HTTP listener addr.
-//	RIMSKY_AGENT_LABEL         optional; defaults to "<hostname>-<pid>".
-//	RIMSKY_LOG_LEVEL           optional; debug|info|warn|error (default info).
-//	RIMSKY_AGENT_HEARTBEAT_SEC optional; heartbeat cadence seconds (default 10).
-//	RIMSKY_AGENT_REAP_GRACE_SEC optional; reap grace seconds (default 30).
-//	RIMSKY_AGENT_STATUS_FILE   optional; path the daemon writes connection
-//	                           state to (consumed by `rimsky agent status`).
 func LoadConfigFromEnv() Config {
 	return Config{
 		RimskyURL:         os.Getenv("RIMSKY_URL"),
@@ -91,9 +38,6 @@ func LoadConfigFromEnv() Config {
 	}
 }
 
-// withDefaults fills in zero-valued fields with their documented defaults so
-// callers that build a Config by hand (the CLI subcommand, tests) get the
-// same behavior as LoadConfigFromEnv.
 func (c Config) withDefaults() Config {
 	if c.AgentLabel == "" {
 		c.AgentLabel = defaultAgentLabel()
@@ -110,7 +54,6 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// defaultAgentLabel is "<hostname>-<pid>"; hostname falls back to "unknown".
 func defaultAgentLabel() string {
 	host, err := os.Hostname()
 	if err != nil || host == "" {

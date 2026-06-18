@@ -2,22 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// watch.go — `watch <id>`, a top-level live-tail verb.
-//
-// watch is a streaming client-side tail of one instance's event log. The
-// log is a single chronological stream: breakpoint hits land on it as
-// `breakpoint.hit` rows, co-transactional with the hit (per
-// S-observability-breakpoint-hit-event), so draining `/events` alone yields
-// the whole timestamp-ordered feed — frame starts, state transitions, node
-// terminations, and breakpoint hits all interleaved by their own
-// `Event.OccurredAt` (RFC3339). The loop polls the event log (high-watermark
-// cursor, the same pattern `instance events --follow` uses) plus the instance
-// terminal flag, and exits when the instance terminates.
-//
-// It deliberately does NOT read the pending-breakpoint-hits route: that route
-// is a point-in-time status surface (`instance status`, the MCP hits
-// resource), not part of the chronological feed. Reading it here would print
-// every hit twice — once as its `/events` row, once as the pending-state row.
 package cli
 
 import (
@@ -30,13 +14,6 @@ import (
 	"time"
 )
 
-// RunWatch implements the top-level `watch <id>` verb: poll the instance's
-// event log (breakpoint hits included as `breakpoint.hit` rows) + terminal
-// flag, printing the chronological feed until the instance terminates (or
-// the user interrupts).
-//
-// The events high-watermark (lastSeenID) and full-page-drain logic mirror
-// RunInstanceEvents' follow loop.
 func RunWatch(ctx context.Context, args []string) int {
 	var pollInterval time.Duration
 	fs, common, endpoint, code := runWithCommon("watch", args, func(fs *flag.FlagSet) {
@@ -67,25 +44,8 @@ func RunWatch(ctx context.Context, args []string) int {
 
 	var lastSeenID int64
 	for {
-		// @deliberate: accumulate this cycle's event-log rows into one slice
-		// and stable-sort by timestamp before rendering. The event log is a
-		// single stream (breakpoint hits included as `breakpoint.hit` rows),
-		// so one drain is the whole chronological feed. lastSeenID does
-		// cross-cycle dedup; the sort is within-cycle because pages arrive
-		// newest-first and the sort restores chronological print order.
 		var batch []watchLine
 
-		// @constraint: NextCursor is an OPAQUE base64 keyset token from the
-		// control-api's newest-first ((occurred_at, id) DESC) read — pass
-		// that exact token back to walk the backlog, never a fabricated
-		// numeric seq (which 500s with "events.list: bad cursor", issue #1).
-		// NextCursor is set only on a full page; "" signals the backlog is
-		// drained.
-		// @deliberate: lastSeenID is a purely-local dedup high-watermark,
-		// never sent as a cursor. Pages arrive newest-first, so the skip
-		// test compares against a per-poll snapshot (prevSeen): advancing
-		// the watermark mid-drain would suppress every older event on the
-		// following pages.
 		prevSeen := lastSeenID
 		nextCursor := ""
 		for {
@@ -115,9 +75,6 @@ func RunWatch(ctx context.Context, args []string) int {
 			nextCursor = page.NextCursor
 		}
 
-		// @deliberate: SliceStable (not Slice) keeps equal-timestamp rows in
-		// drain order; pages arrive newest-first, so the sort restores
-		// chronological print order within the cycle.
 		sort.SliceStable(batch, func(i, j int) bool {
 			return batch[i].ts.Before(batch[j].ts)
 		})
@@ -145,21 +102,11 @@ func RunWatch(ctx context.Context, args []string) int {
 	}
 }
 
-// watchLine is one accumulated row in a poll cycle's merged feed: its parsed
-// timestamp drives the within-cycle chronological sort, and render emits the
-// row (event or hit) once its sorted position is reached. Carrying a closure
-// (rather than a tagged union of Event/hit) keeps the source-specific
-// rendering — printWatchEvent vs printWatchHit, JSON vs text — local to the
-// drain loops that built the row.
 type watchLine struct {
 	ts     time.Time
 	render func()
 }
 
-// parseWatchTime parses a watch row's timestamp (RFC3339, the layout the
-// server emits for both Event.OccurredAt and hit hit_at). An unparseable or
-// empty value yields the zero time, sorting the row to the front of the cycle
-// — a deterministic placement that never drops the row from the feed.
 func parseWatchTime(s string) time.Time {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
@@ -168,12 +115,6 @@ func parseWatchTime(s string) time.Time {
 	return t
 }
 
-// printWatchEvent renders one event-log row in the watch feed. The event's
-// own Kind labels the line (frame starts, state transitions, node
-// terminations, etc. all surface here under their native kind). A
-// `breakpoint.hit` row — the unified-stream form of a breakpoint hit — also
-// surfaces its checkpoint/mode from the payload, so the feed shows where the
-// run paused without a separate pending-hits read.
 func printWatchEvent(format Format, e Event) {
 	if format == FormatJSON {
 		_ = EmitJSON(os.Stdout, map[string]any{"source": "event", "event": e})
@@ -187,8 +128,6 @@ func printWatchEvent(format Format, e Event) {
 	fmt.Fprintf(os.Stdout, "%s\tevent\t%s\t%s\n", e.OccurredAt, e.Kind, watchEventDetail(e))
 }
 
-// watchEventDetail extracts a terse node/frame identifier from an event for
-// the human feed, falling back to empty when the payload carries neither.
 func watchEventDetail(e Event) string {
 	if e.NodeID != "" {
 		return "node=" + e.NodeID
@@ -196,7 +135,6 @@ func watchEventDetail(e Event) string {
 	return ""
 }
 
-// printWatchTerminal renders the final terminal line and ends the feed.
 func printWatchTerminal(format Format, inst *Instance) {
 	if format == FormatJSON {
 		_ = EmitJSON(os.Stdout, map[string]any{"source": "terminal", "instance": inst})

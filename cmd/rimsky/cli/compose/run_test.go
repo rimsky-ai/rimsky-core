@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// run_test.go — table-driven coverage for the `compose run` flag
-// parser (@decision: cli-verb / timeout-flag / progress-flags /
-// service-spawn-flag / artifact-root-discovery) and unit coverage for
-// the spawn-step alias-resolution gate (@decision: service-spawn-flag,
-// the bare `--service <name>` form). Package-internal so the
-// unexported flags struct and spawnServices helper are reachable.
 package compose
 
 import (
@@ -142,17 +136,10 @@ func TestRunComposeRun_FlagParse_UnknownFlag(t *testing.T) {
 	}
 }
 
-// quietLogger returns a slog.Logger that discards output. Used in
-// spawnServices tests so the spawn-info log line doesn't clutter
-// `go test -v`.
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-// chdirT chdirs into dir for the duration of the test and restores
-// the prior cwd on cleanup. Mirrors cli.chdir from run_flags_test.go;
-// duplicated here because that helper is in the cli_test package and
-// is unexported.
 func chdirT(t *testing.T, dir string) {
 	t.Helper()
 	prev, err := os.Getwd()
@@ -165,8 +152,6 @@ func chdirT(t *testing.T, dir string) {
 	t.Cleanup(func() { _ = os.Chdir(prev) })
 }
 
-// writeAliasFileT writes an aliases.yml file at path, creating parent
-// dirs. Mirrors cli.writeAliasFile from run_flags_test.go.
 func writeAliasFileT(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -177,15 +162,8 @@ func writeAliasFileT(t *testing.T, path, content string) {
 	}
 }
 
-// TestSpawnServices_BareNameNoAlias asserts that a bare `--service
-// <name>` with no alias file returns the same diagnostic shape as
-// cli.resolveServiceBindings: a "no alias defined" error naming the
-// service and pointing the operator at the explicit form. The verb
-// must not silently swallow the missing alias or reach SpawnService.
-//
 // @decision: service-spawn-flag
 func TestSpawnServices_BareNameNoAlias(t *testing.T) {
-	// @deliberate: empty HOME + empty CWD ensure neither the global nor the project-local alias file resolves the bare name.
 	t.Setenv("HOME", t.TempDir())
 	chdirT(t, t.TempDir())
 
@@ -202,15 +180,6 @@ func TestSpawnServices_BareNameNoAlias(t *testing.T) {
 	}
 }
 
-// TestSpawnServices_BareNameAliasResolvesPastGate asserts that a bare
-// `--service <name>` with an alias defined gets past the resolution
-// gate. We confirm this by supplying an alias path to a binary that
-// does not exist on disk and observing that the resulting error is
-// the spawn-stage error (the binary couldn't be exec'd), NOT the
-// resolution-stage "no alias defined" / "bare-name aliases
-// unsupported" / "path is empty" error. The contrast proves the
-// alias-loader integration works end-to-end.
-//
 // @decision: service-spawn-flag
 func TestSpawnServices_BareNameAliasResolvesPastGate(t *testing.T) {
 	home := t.TempDir()
@@ -227,7 +196,6 @@ func TestSpawnServices_BareNameAliasResolvesPastGate(t *testing.T) {
 		t.Fatal("spawnServices: expected spawn-stage error for non-existent binary, got nil")
 	}
 	msg := err.Error()
-	// @deliberate: absence of resolution-stage diagnostics is the proof that the alias loader resolved the bare name and the helper progressed to the spawn stage.
 	for _, blocked := range []string{
 		"no alias defined",
 		"bare-name aliases unsupported",
@@ -240,8 +208,6 @@ func TestSpawnServices_BareNameAliasResolvesPastGate(t *testing.T) {
 	}
 }
 
-// TestSpawnServices_ProjectLocalAliasOverlaysGlobal asserts the layer
-// ordering — project-local `./.rimsky/aliases.yml` overlays the
 // global `~/.rimsky/aliases.yml` — matches cli.LoadServiceAliases.
 // Observed via the spawn-stage error referencing the project-local
 // path rather than the global path.
@@ -276,17 +242,10 @@ func TestSpawnServices_ProjectLocalAliasOverlaysGlobal(t *testing.T) {
 	}
 }
 
-// TestSpawnServices_ExplicitEmptyPath asserts the cosmetic distinction
-// between `--service foo=` (operator typed `=` but supplied no path)
-// and bare `--service foo` (no `=`, alias-resolution form). The
-// explicit-with-empty-path form is always an error regardless of
-// aliases — matches cli.resolveServiceBindings.
-//
 // @decision: service-spawn-flag
 func TestSpawnServices_ExplicitEmptyPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// @deliberate: define a foo alias so the assertion proves the explicit `foo=` form errors even when bare-name resolution would have succeeded.
 	writeAliasFileT(t,
 		filepath.Join(home, ".rimsky", "aliases.yml"),
 		"aliases:\n  foo: /some/path\n",
@@ -302,9 +261,6 @@ func TestSpawnServices_ExplicitEmptyPath(t *testing.T) {
 	}
 }
 
-// TestSpawnServices_EmptyNameBareForm asserts that an empty raw
-// value (no name, no `=`) is caught before any alias work.
-//
 // @decision: service-spawn-flag
 func TestSpawnServices_EmptyNameBareForm(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: Inv 6 (OrphanCutoffTime) — orphan-claim cutoff (5× heartbeat). Here we validate that
-// ClaimHandleTable.ListExpired returns rows with expires_at < now() and
-// not those with future expires_at.
 package conformance
 
 import (

@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-// authStringSliceFlag is a repeatable `--flag=value` accumulator used
-// by the auth subcommands (--add / --remove).
 type authStringSliceFlag []string
 
 func (s *authStringSliceFlag) String() string { return strings.Join(*s, ",") }
@@ -24,7 +22,6 @@ func (s *authStringSliceFlag) Set(v string) error {
 	return nil
 }
 
-// RunAuthCreateKey implements `rimsky auth create-key`.
 func RunAuthCreateKey(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth create-key", flag.ContinueOnError)
 	var (

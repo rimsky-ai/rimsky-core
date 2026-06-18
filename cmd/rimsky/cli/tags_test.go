@@ -19,10 +19,6 @@ func TestRunTagCreate_OK(t *testing.T) {
 	}
 }
 
-// TestRunTagCreate_FlagAfterPositional regresses the interspersed-flag
-// bug: the documented usage is `tag create <tag> --template <ref>`
-// (positional first), which stdlib flag.Parse would drop. Both the
-// space-separated and `=` forms must now work.
 func TestRunTagCreate_FlagAfterPositional(t *testing.T) {
 	srv := setupClitest(t)
 	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "", "")

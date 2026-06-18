@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// app_producer_error_test.go — unit coverage for writeError's
-// producer-error leg: a *peer.ProducerCallError (the typed translation
-// every remote-producer client returns) must cross the HTTP boundary
-// carrying the producer's transmitted error class and message, under a
-// status distinguishing producer failure (502) / producer rejection of
-// operator input (422) from rimsky-internal errors (500). Pure
-// unit tests — no Postgres container.
 package controlapi
 
 import (
@@ -27,9 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// classedGRPCError builds the wire shape a real store transmits: a gRPC
-// status with a google.rpc.ErrorInfo detail whose Reason is the rimsky
-// error_class.
 func classedGRPCError(t *testing.T, code codes.Code, class, msg string) error {
 	t.Helper()
 	st := status.New(code, msg)
@@ -86,10 +76,6 @@ func TestWriteErrorProducerRejectionIs422(t *testing.T) {
 	}
 }
 
-// TestWriteErrorProducerUnclassedFailure — a producer fault transmitted
-// with NO ErrorInfo class still gets the 502 + producer_name + message
-// treatment; error_class is "" (the producer named no class — nothing
-// was discarded).
 func TestWriteErrorProducerUnclassedFailure(t *testing.T) {
 	t.Parallel()
 	grpcErr := status.Error(codes.Unavailable, "connection refused")
@@ -105,9 +91,6 @@ func TestWriteErrorProducerUnclassedFailure(t *testing.T) {
 	require.Equal(t, "connection refused", body["message"])
 }
 
-// TestWriteErrorRecognizesWrappedProducerError — a wrapped
-// ProducerCallError (handlers often add context via %w) is still
-// recognized through errors.As.
 func TestWriteErrorRecognizesWrappedProducerError(t *testing.T) {
 	t.Parallel()
 	grpcErr := classedGRPCError(t, codes.Internal, "fs/root_unavailable", "root gone")
@@ -123,10 +106,6 @@ func TestWriteErrorRecognizesWrappedProducerError(t *testing.T) {
 	require.Equal(t, "fs/root_unavailable", body["error_class"])
 }
 
-// TestWriteErrorInternalErrorsUnchanged — internal errors keep the
-// pre-existing classification: a plain error stays a bare 500 with the
-// {"error": ...} envelope and no producer fields. Producer-error
-// handling must not reclassify them.
 func TestWriteErrorInternalErrorsUnchanged(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()

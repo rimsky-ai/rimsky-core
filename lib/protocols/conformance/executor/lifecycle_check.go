@@ -2,16 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// lifecycle_check.go drives the six lifecycle RPCs against a peer that
-// implements LifecycleSubscriber. The probe is shape-only: it sends one
-// of each event with synthetic IDs and asserts the call returns success.
-// Implementations that don't react to a given event return success
-// immediately, which is the published contract.
-//
-// Lives under the executor conformance package because
-// `rimsky conformance executor` hosts the `--check-lifecycle`
-// flag — the lifecycle protocol has no dedicated conformance subcommand
-// per `concept:conformance`.
 
 package conformance
 
@@ -26,20 +16,11 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @deliberate: synthetic IDs used by every check — the 64-char-`a`
-// template hash is shape-valid (sha256-<64-hex>) but not registered
-// anywhere, so peers that ignore lifecycle events accept it as opaque
-// text.
 const (
 	syntheticTemplateID = "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	syntheticInstanceID = "00000000-0000-0000-0000-000000000001"
 )
 
-// RunLifecycleCheck dials the lifecycle peer at endpoint and runs the
-// six-RPC probe. tlsMode follows Endpoint.TLS semantics ("required" →
-// verified TLS against system roots; else plaintext). Returns nil when
-// every RPC returns success; otherwise a wrapped error naming the
-// offending verb.
 func RunLifecycleCheck(parent context.Context, endpoint, tlsMode string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
@@ -96,8 +77,6 @@ func RunLifecycleCheck(parent context.Context, endpoint, tlsMode string, timeout
 	return nil
 }
 
-// stripScheme removes the grpc://, http://, https:// prefixes from a
-// peer endpoint so it can be passed to grpc.NewClient.
 func stripScheme(s string) string {
 	for _, prefix := range []string{"grpc://", "http://", "https://"} {
 		if strings.HasPrefix(s, prefix) {

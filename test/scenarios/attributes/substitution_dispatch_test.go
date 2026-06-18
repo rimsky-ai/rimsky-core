@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Substantive scenario coverage for attributes substitution at
-// dispatch under the stores redesign: a `{{params.key}}` directive in
-// the attributes schema's `source:` is resolved at dispatch and lands
-// in the attributes payload that the supervisor persists alongside
-// any executor-supplied delta.
-//
-// Targets blessed invariant 12 (attributes validate twice) and the
-// structural-inertness discipline on attribute values
-// (concept:inertness).
 package attributes
 
 import (
@@ -25,10 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// TestParamsSubstitutionAtDispatch verifies the supervisor substitutes
-// {{params.foo}} into the attributes object before invoking the
-// executor. Post-terminal, rimsky_node_attributes.data must carry the
-// resolved value alongside any executor-supplied fields.
 func TestParamsSubstitutionAtDispatch(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -67,10 +54,6 @@ func TestParamsSubstitutionAtDispatch(t *testing.T) {
 	require.Equal(t, "from-executor", row.Data["executor_field"], "executor delta should merge into final attributes")
 }
 
-// TestRequiredFieldMissingParamFailsTemplateResolution verifies that a
-// required source-driven attribute whose param is absent fires the
-// template_resolution_failed policy chain — exercises the
-// attributes.PhaseDispatch validation gate at the supervisor.
 func TestRequiredFieldMissingParamFailsTemplateResolution(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -98,8 +81,6 @@ func TestRequiredFieldMissingParamFailsTemplateResolution(t *testing.T) {
 			),
 		},
 	})
-	// @deliberate: No params supplied — the required source-driven directive will
-	// raise ErrMissingSource at the dispatch substitution pass.
 	iid := h.CreateInstance(tid, "ck-missing-param", map[string]any{})
 
 	n := h.FindNode(iid, "needs-param")

@@ -25,9 +25,6 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// TestAcquireSubClaims_UnsupportedSplitErrors confirms a producer that
-// doesn't advertise SupportsSplitScope returns the typed sentinel and
-// the wrapping fmt.Errorf preserves the message context.
 func TestAcquireSubClaims_UnsupportedSplitErrors(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -35,8 +32,6 @@ func TestAcquireSubClaims_UnsupportedSplitErrors(t *testing.T) {
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("ds-store", claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
-		// @deliberate: SupportsSplitScope unset → fake's SplitScope returns
-		// ErrSplitScopeUnsupported by default.
 	})
 	reg.Add("ds-store", store)
 
@@ -57,8 +52,6 @@ func TestAcquireSubClaims_UnsupportedSplitErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestAcquireSubClaims_UnknownProducerErrors confirms an unregistered
-// producer name surfaces a typed error early.
 func TestAcquireSubClaims_UnknownProducerErrors(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -81,12 +74,6 @@ func TestAcquireSubClaims_UnknownProducerErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestAcquireSubClaims_EmptyPartitionKeyRejected confirms a producer
-// SplitScope descriptor carrying an empty partition_key aborts the
-// whole acquisition: the empty key is the delegation discriminator
-// (the settlement walk skips closing empty-key scopes, and the
-// per-partition uniqueness index exempts them), so a producer-returned
-// empty key would silently leak its partition RunScope open.
 func TestAcquireSubClaims_EmptyPartitionKeyRejected(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -122,7 +109,6 @@ func TestAcquireSubClaims_EmptyPartitionKeyRejected(t *testing.T) {
 	require.ErrorContains(t, err, "empty partition_key")
 }
 
-// tickClock is a minimal Clock fixture for the sub-claim tests.
 type tickClock struct{ t time.Time }
 
 func newTickClock(start time.Time) *tickClock { return &tickClock{t: start} }
@@ -132,18 +118,10 @@ func (c *tickClock) Sleep(ctx context.Context, d time.Duration) error {
 	return nil
 }
 
-// fakeDataProcessingClient records BeginCandidate / CommitCandidate /
-// AbandonCandidate calls so the integration test below can assert the
-// runtime dispatched the right verbs with the right `candidate_handle`
-// bytes. Each verb returns canned bytes so the runtime's downstream
-// persistence writes (VersionID, candidate_handle round-tripping) get
-// exercised end-to-end.
 type fakeDataProcessingClient struct {
 	mu     sync.Mutex
 	name   string
 	begins []runtime.BeginCandidateInput
-	// beginHandleFunc returns the candidate_handle bytes BeginCandidate
-	// should hand back per call. Indexed by call number (0-based).
 	beginHandleFunc func(callIdx int, in runtime.BeginCandidateInput) []byte
 
 	commits   []runtime.CommitCandidateInput
@@ -188,8 +166,6 @@ func (f *fakeDataProcessingClient) AbandonCandidate(_ context.Context, in runtim
 	return nil
 }
 
-// ListVersions non-fan-out enumeration verbs aren't exercised by this test;
-// return empty results to keep the interface satisfied.
 func (f *fakeDataProcessingClient) ListVersions(_ context.Context, _ runtime.ListVersionsInput) (runtime.ListVersionsOutput, error) {
 	return runtime.ListVersionsOutput{}, nil
 }
@@ -222,7 +198,6 @@ func (f *fakeDataProcessingClient) Abandons() []runtime.AbandonCandidateInput {
 	return out
 }
 
-// fakeDataProcessingRegistry is a single-entry registry over a fake client.
 type fakeDataProcessingRegistry struct {
 	clients map[string]runtime.DataProcessingClient
 }
@@ -235,13 +210,6 @@ func (r *fakeDataProcessingRegistry) Get(name string) (runtime.DataProcessingCli
 	return c, ok
 }
 
-// TestSubClaim_BeginThenCommitFlowsThroughRuntime drives the rimsky
-// runtime dispatch all the way through `AcquireSubClaims` (which fires
-// `BeginCandidate` per sub-scope) and `ResolveClaimHandleTerminal`
-// (which fires `CommitCandidate` per sub-claim's terminal). The fake
-// DataProcessingRegistry records every call so the assertions can pin
-// that the registry-lookup + argument-threading at both call sites is
-// load-bearing.
 func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -249,15 +217,12 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	backend := d.Tables()
 
 	const storeName = "fan-out-store"
-	// @deliberate: Producer fake — advertises SplitScope so AcquireSubClaims can call
-	// it; SplitClaimScopeFunc returns two sub-claim-scopes.
 	reg := locks.NewRegistry()
 	store := storetest.NewFake(storeName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
 	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
-		// @deliberate: Two sub-scopes; bytes are inert in rimsky.
 		return claimproducer.SplitClaimScopeResponse{
 			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
 				{PartitionKey: "alpha", ClaimScopeData: []byte(`{"p":"alpha"}`)},
@@ -267,7 +232,6 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	}
 	reg.Add(storeName, store)
 
-	// @deliberate: Fake DataProcessingClient + Registry that records every call.
 	dpClient := newFakeDataProcessingClient(storeName)
 	dpReg := newFakeDataProcessingRegistry(dpClient)
 
@@ -282,11 +246,6 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		SupervisorID:   "sup-FAN",
 	}
 
-	// @deliberate: Insert a minimal template / instance / node row chain so the
-	// sub-claim INSERTs have a valid FK chain. The fan-out node-row is
-	// enough for the AcquireSubClaims path; the per-leaf run rows
-	// aren't needed for this test (we drive ResolveClaimHandleTerminal
-	// directly with the sub-claim ids).
 	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "fanout-runtime-dispatch", Version: "1",
 	})
@@ -306,13 +265,9 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		return nil
 	}))
 
-	// @deliberate: Seed a frame + parent run row so the parent claim handle's
-	// `node_run_id` FK chain resolves. The sub-claim INSERTs in
-	// AcquireSubClaims also key on this run id.
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
-	// @deliberate: Seed a parent claim handle (the fan-out root).
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope"`)
 	parentAddr := json.RawMessage(`"parent-addr"`)
@@ -333,9 +288,6 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		}, tx)
 	}))
 
-	// @deliberate: Drive AcquireSubClaims — registry-lookup + per-sub-claim
-	// BeginCandidate threading is now exercised against a real
-	// persistence.Tx and the fake DataProcessingClient.
 	var subClaims []runtime.SubClaim
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
@@ -354,30 +306,21 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	}))
 	require.Len(t, subClaims, 2, "two sub-scopes → two sub-claims")
 
-	// @deliberate: BeginCandidate must have fired twice with the per-sub-claim id +
-	// the per-partition descriptor bytes.
 	begins := dpClient.Begins()
 	require.Len(t, begins, 2, "BeginCandidate must fire per sub-scope")
 	require.Equal(t, storeName, begins[0].ProducerName)
 	require.Equal(t, storeName, begins[1].ProducerName)
-	// @deliberate: Sub-claim handle ids must match the persisted sub-claim ids.
 	beginIDs := map[string]bool{begins[0].ClaimHandleID: true, begins[1].ClaimHandleID: true}
 	require.True(t, beginIDs[subClaims[0].ClaimHandleID.String()],
 		"BeginCandidate.ClaimHandleID must match the sub-claim row id")
 	require.True(t, beginIDs[subClaims[1].ClaimHandleID.String()],
 		"BeginCandidate.ClaimHandleID must match the sub-claim row id")
 
-	// @deliberate: Each returned SubClaim must carry the producer's candidate_handle
-	// bytes — the runtime persists them on the row's
-	// `producer_candidate_handle` column.
 	for i, sc := range subClaims {
 		require.NotEmpty(t, sc.ProducerCandidateHandle,
 			"sub-claim[%d] must carry producer_candidate_handle bytes", i)
 	}
 
-	// @deliberate: Drive ResolveClaimHandleTerminal on sub-claim[0] with
-	// AggregateCommit — the runtime must dispatch CommitCandidate first,
-	// then the standard ClaimProducer.Commit verb.
 	candidateHandle0 := subClaims[0].ProducerCandidateHandle
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
@@ -395,8 +338,6 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		})
 	}))
 
-	// @deliberate: Drive ResolveClaimHandleTerminal on sub-claim[1] with
-	// AggregateAbandon — the runtime must dispatch AbandonCandidate.
 	candidateHandle1 := subClaims[1].ProducerCandidateHandle
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
@@ -414,8 +355,6 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		})
 	}))
 
-	// @deliberate: CommitCandidate must have fired exactly once with sub-claim[0]'s
-	// id + candidate_handle.
 	commits := dpClient.Commits()
 	require.Len(t, commits, 1, "CommitCandidate must fire on AggregateCommit")
 	require.Equal(t, subClaims[0].ClaimHandleID.String(), commits[0].ClaimHandleID,
@@ -423,8 +362,6 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	require.Equal(t, candidateHandle0, commits[0].CandidateHandle,
 		"CommitCandidate.CandidateHandle must round-trip the bytes BeginCandidate handed back")
 
-	// @deliberate: AbandonCandidate must have fired exactly once with sub-claim[1]'s
-	// id + candidate_handle.
 	abandons := dpClient.Abandons()
 	require.Len(t, abandons, 1, "AbandonCandidate must fire on AggregateAbandon")
 	require.Equal(t, subClaims[1].ClaimHandleID.String(), abandons[0].ClaimHandleID,
@@ -432,14 +369,6 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	require.Equal(t, candidateHandle1, abandons[0].CandidateHandle,
 		"AbandonCandidate.CandidateHandle must round-trip the bytes BeginCandidate handed back")
 
-	// @deliberate: Recursive claim-tree resolution assertion (fix 8 from cycle 3): once
-	// the last sub-claim resolves, `ResolveClaimHandleTerminal`'s non-durable
-	// Delete branch walks `SettleChildren`, which fires the parent's
-	// terminal verb against the standard `ClaimProducer` surface. Because
-	// the last-resolved sub-claim seeded `AggregateAbandon`, the parent
-	// inherits that seed and Abandon must fire on the parent ClaimID. A
-	// regression reverting fix 8 (the recursive walk in `auto_terminal.go`)
-	// would leave no parent-id call in the storetest fake's Calls() slice.
 	parentClaimIDStr := parentClaimID.String()
 	var parentAbandonSeen, parentCommitSeen bool
 	for _, c := range store.Calls() {
@@ -458,9 +387,6 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	require.False(t, parentCommitSeen,
 		"parent must NOT Commit when the last-resolved sub-claim seeded AggregateAbandon")
 
-	// @deliberate: And the parent claim_handle row must be promoted to state=abandoned
-	// by the recursive resolution walk (Promote-not-delete; preserved
-	// past terminal for forensics / retention).
 	var parentRow *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, parentClaimID, tx)
@@ -473,18 +399,6 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		"parent claim_handle row must be promoted to state=abandoned by the recursive resolution walk")
 }
 
-// TestSubClaim_CrossSupervisorSettlementResolvesParent pins the
-// ≥2-supervisor fan-out settlement: the parent claim handle is acquired
-// (and held) by supervisor ONE, the leaf runs are claimed by supervisor
-// TWO (whose acquisition restamps the sub-claim rows onto itself — here
-// simulated via the same `ReassignHolderSupervisor` CAS the acquisition
-// path calls), and both leaves resolve under TWO. The chain must NOT
-// stall: each child row promotes under TWO, the per-outcome counter
-// bumps land on the parent under its ACTUAL holder, and the last
-// child's settlement takes over the parent handle and fires the
-// parent's aggregate Commit — instead of the pre-fix shape where the
-// producer saw the children's Commits while the parent stayed active
-// until the orphan reaper recorded a spurious Abandon.
 func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -543,7 +457,6 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
-	// @deliberate: Parent claim handle held by supervisor ONE.
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope"`)
 	intent := "rw"
@@ -563,9 +476,6 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 		}, tx)
 	}))
 
-	// @deliberate: AcquireSubClaims under supervisor ONE — the rows are stamped with
-	// ONE's holder id, exactly the shape the leaf acquisition later
-	// finds.
 	var subClaims []runtime.SubClaim
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, argsOne, tx, runtime.AcquireSubClaimsInput{
@@ -583,10 +493,6 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 	}))
 	require.Len(t, subClaims, 2)
 
-	// @deliberate: Supervisor TWO claims the leaves: the acquisition path's restamp
-	// (runner_acquire.go::restampLinkedSubClaimHolders) CAS-moves each
-	// sub-claim's holder ONE → TWO. Exercised here through the same
-	// persistence primitive the acquisition calls.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		for _, sc := range subClaims {
 			if err := backend.ClaimHandles().ReassignHolderSupervisor(ctx, sc.ClaimHandleID, supOne, supTwo, tx); err != nil {
@@ -596,7 +502,6 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 		return nil
 	}))
 
-	// @deliberate: Both leaves resolve with Commit under supervisor TWO.
 	for _, sc := range subClaims {
 		sc := sc
 		require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -615,8 +520,6 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 		}))
 	}
 
-	// @deliberate: Every child row promoted to committed (no silent claimant-guard
-	// no-op leaving an active child behind).
 	for _, sc := range subClaims {
 		var row *persistence.ClaimHandleRow
 		require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -629,10 +532,6 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 			"sub-claim %s must promote under the supervisor that drives the leaf", sc.ClaimHandleID)
 	}
 
-	// @deliberate: The parent settled: counters reflect BOTH children (the bump is
-	// guarded on the parent's actual holder, not the child's
-	// supervisor), the settlement takeover moved the handle, and the
-	// aggregate Commit fired the producer verb on the parent ClaimID.
 	var parentRow *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, parentClaimID, tx)

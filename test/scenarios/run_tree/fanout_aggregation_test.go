@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N1 scenario — fanout_aggregation.
-//
-// Drives runtime.Aggregate against a fan-out parent's snapshot
-// AggregationPolicy across the policy table. Mirrors the fanout/
-// scenarios in spirit but lives under run_tree/ to keep the per-
-// scenario directory layout the N1 brief requests.
 package runtree
 
 import (
@@ -19,9 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// TestFanoutAggregation_PolicyTable iterates every declared policy
-// kind and pins the parent's aggregated state for a representative
-// child-outcome slice.
 func TestFanoutAggregation_PolicyTable(t *testing.T) {
 	t.Parallel()
 	allFresh := []runtime.ChildState{
@@ -61,9 +52,6 @@ func TestFanoutAggregation_PolicyTable(t *testing.T) {
 	}
 }
 
-// TestFanoutAggregation_EmptyChildrenStaysRunning pins the "no
-// children yet" case: the engine returns IsSettled=false so the
-// parent stays in its current state (typically running).
 func TestFanoutAggregation_EmptyChildrenStaysRunning(t *testing.T) {
 	t.Parallel()
 	res := runtime.Aggregate(nil, tmplspec.AggregationPolicy{Kind: "strict"})
@@ -72,8 +60,6 @@ func TestFanoutAggregation_EmptyChildrenStaysRunning(t *testing.T) {
 	}
 }
 
-// TestFanoutAggregation_UnknownPolicyFallsBackToStrict pins the
-// safety default: unrecognized policy kinds fall back to strict.
 func TestFanoutAggregation_UnknownPolicyFallsBackToStrict(t *testing.T) {
 	t.Parallel()
 	mixed := []runtime.ChildState{

@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// validation_mixin_uniform_test.go — executable acceptance proof for
-// STORY-validation-mixin-uniform: a conformance-style test that stands
-// up one real gRPC stub peer per kind (claim producer, executor,
-// publisher), each advertising the validation mix-in with the same
-// supported roles on its own capability surface, runs the real
-// registry dial (DialPublisherAndValidationRegistries), and asserts
-// the handshake-learned role sets are identical and non-empty across
-// all three kinds. The falsifier this argues against: an executor or
-// publisher advertising the mix-in whose supported-roles list is still
-// treated as empty — dialed but never used.
-
 package config
 
 import (
@@ -29,14 +18,8 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// mixinRoles is the shared validation_supported_roles list every stub
-// peer advertises. Two entries so an accidental truncation to a
-// single-element list is also caught.
 var mixinRoles = []string{"claim_producer", "executor"}
 
-// stubValidationService answers Validate on every stub peer so each
-// stub genuinely serves the validation mix-in, not just its
-// capability surface.
 type stubValidationService struct {
 	genv1.UnimplementedValidationServer
 }
@@ -45,10 +28,6 @@ func (stubValidationService) Validate(context.Context, *genv1.ValidateRequest) (
 	return &genv1.ValidateResponse{}, nil
 }
 
-// stubClaimProducerService implements the ClaimProducer Capabilities
-// handshake the store-kind dial path runs (peer.Dial), advertising the
-// validation mix-in with mixinRoles. WriteSemanticsAllowed must be
-// non-empty and known or the handshake itself rejects the peer.
 type stubClaimProducerService struct {
 	genv1.UnimplementedClaimProducerServer
 }
@@ -61,9 +40,6 @@ func (stubClaimProducerService) Capabilities(context.Context, *genv1.Capabilitie
 	}, nil
 }
 
-// stubExecutorObservabilityService implements the
-// ExecutorObservability Capabilities handshake the executor-kind dial
-// path runs, advertising the validation mix-in with mixinRoles.
 type stubExecutorObservabilityService struct {
 	genv1.UnimplementedExecutorObservabilityServer
 }
@@ -74,9 +50,6 @@ func (stubExecutorObservabilityService) Capabilities(context.Context, *genv1.Exe
 	}, nil
 }
 
-// stubPublisherService implements the Publisher Capabilities handshake
-// the publisher-kind dial path runs, advertising the validation mix-in
-// with mixinRoles.
 type stubPublisherService struct {
 	genv1.UnimplementedPublisherServer
 }
@@ -88,9 +61,6 @@ func (stubPublisherService) Capabilities(context.Context, *emptypb.Empty) (*genv
 	}, nil
 }
 
-// startStubPeer serves the given register functions on a loopback
-// listener and returns the dialable endpoint. The server stops at test
-// cleanup.
 func startStubPeer(t *testing.T, register func(*grpc.Server)) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -104,8 +74,6 @@ func startStubPeer(t *testing.T, register func(*grpc.Server)) string {
 	return lis.Addr().String()
 }
 
-// TestValidationMixinUniformAcrossPeerKinds is the executable proof
-// for STORY-validation-mixin-uniform.
 func TestValidationMixinUniformAcrossPeerKinds(t *testing.T) {
 	cpEndpoint := startStubPeer(t, func(s *grpc.Server) {
 		genv1.RegisterClaimProducerServer(s, stubClaimProducerService{})

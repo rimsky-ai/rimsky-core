@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @constraint: Inv 13 (HeldClaimAutoTerminalSerialization) — held-claim resolution is auto-terminal, single, and aggregate-
-// outcome-driven. Two concurrent Transactions calling
-// ClaimHandles.LockForUpdate(ctx, id, tx) must serialise — the second
-// blocks until the first commits.
 package conformance
 
 import (
@@ -42,10 +38,6 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 		t.Fatalf("seed lock-holder: %v", err)
 	}
 
-	// @constraint: Inv 13 — two concurrent transactions both call LockForUpdate;
-	// the first holds the row lock (Postgres FOR UPDATE; SQLite BEGIN IMMEDIATE
-	// writer slot) for ~200ms before committing, and the second's start
-	// timestamp must be after the first's commit timestamp.
 	var (
 		firstHoldStart    int64
 		firstCommitDone   int64
@@ -75,7 +67,6 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 		}
 	}()
 
-	// @deliberate: head-start delay ensures goroutine 1 grabs the row lock before goroutine 2 attempts it.
 	time.Sleep(50 * time.Millisecond)
 
 	go func() {

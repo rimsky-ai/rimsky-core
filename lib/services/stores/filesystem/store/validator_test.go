@@ -39,7 +39,6 @@ func validatorTestRoot(t *testing.T) (string, string) {
 func TestValidator_RejectsOldNames(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
-	// @deliberate: assign the legacy kind directly to bypass UnmarshalYAML's name-translation layer, exercising the post-decode validator on a payload only an in-process producer could synthesize.
 	pp.OnCommit = action.Action{Kind: action.Kind("release_to_back")}
 	res := validatePickPolicy(root, "@r", pp)
 	if res.OK() {
@@ -111,7 +110,6 @@ func TestValidator_RejectsUnknownAction(t *testing.T) {
 func TestValidator_RejectsMalformedParameterizedAction(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
-	// @deliberate: synthesize a pop_and_move with no MoveTarget directly so the validator's "non-empty target" check is exercised; UnmarshalYAML would otherwise reject this shape before validation.
 	pp.OnCommit = action.Action{Kind: action.PopAndMove}
 	res := validatePickPolicy(root, "@r", pp)
 	if res.OK() {
@@ -149,7 +147,6 @@ func TestValidator_AcceptsMatchingFilesystemTarget(t *testing.T) {
 func TestValidator_RejectsInvalidSyncStrategy(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
-	// @constraint: "on_sweep" was a previously-supported sync_strategy value; the validator must now reject it so stale operator configs surface a clear error rather than running with a silently-ignored setting.
 	pp.SyncStrategy = "on_sweep"
 	res := validatePickPolicy(root, "@r", pp)
 	if res.OK() {
@@ -174,12 +171,6 @@ func TestValidator_DefaultsEmptySyncStrategyToOnOpen(t *testing.T) {
 	}
 }
 
-// TestValidator_AcceptsEmptyPolicyRoot — an empty pp.Root means the
-// policy operates at the store root itself, useful for single-entry
-// policies whose FolderPattern matches one specific top-level folder
-// (e.g. a "consolidate-on-the-corpus-root" pick policy).
-// filepath.Clean("") == ".", so the canonicalization checks treat empty
-// and "." identically.
 func TestValidator_AcceptsEmptyPolicyRoot(t *testing.T) {
 	root, _ := validatorTestRoot(t)
 	pp := newValidPolicy(root, "")
@@ -189,18 +180,6 @@ func TestValidator_AcceptsEmptyPolicyRoot(t *testing.T) {
 	}
 }
 
-// TestValidator_RejectsCrossFilesystemTarget exercises the load-bearing
-// same-fs guard in validateMoveTargetSameFS. os.Rename across
-// filesystems is not atomic — admitting a cross-fs target would let
-// every commit run a non-atomic rename that could leave the corpus in
-// a half-moved state on power loss.
-//
-// The test scans common Linux mount points for a directory whose
-// underlying device differs from the temp-dir device. If no such
-// directory is found (typical on macOS, or a container with /tmp on
-// the same fs as everything else), the test skips. Spec §10.3 / plan
-// task 17 mandate this test exists; portability of "two distinct
-// filesystems" is best-effort.
 func TestValidator_RejectsCrossFilesystemTarget(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires two distinct filesystems; reliable only on linux")
@@ -243,7 +222,6 @@ func TestValidator_RejectsCrossFilesystemTarget(t *testing.T) {
 		t.Skip("no cross-filesystem directory available in this environment")
 	}
 
-	// @deliberate: feed the validator a *relative* MoveTarget (filepath.Rel from store root to the cross-fs probe dir), matching the typical operator config shape rather than the absolute-path shape that the absolute-target guard would short-circuit first; skip if Rel cannot bridge the two roots.
 	rel, err := filepath.Rel(root, altDir)
 	if err != nil {
 		t.Skip("cannot construct relative path between root and cross-fs dir")
@@ -257,19 +235,12 @@ func TestValidator_RejectsCrossFilesystemTarget(t *testing.T) {
 		t.Fatal("expected validation error for cross-filesystem target")
 	}
 	joined := errsString(res.Errors)
-	// @deliberate: accept either "different filesystem" or "escapes the store root" — when the cross-fs probe dir resolves to a relative path that climbs above the store root, the containment guard fires before the same-fs guard; either rejection satisfies the spec's "refuse unsafe pop_and_move target" contract.
 	if !strings.Contains(joined, "different filesystem") &&
 		!strings.Contains(joined, "escapes the store root") {
 		t.Errorf("expected 'different filesystem' or 'escapes the store root' error; got %q", joined)
 	}
 }
 
-// TestValidator_RejectsTraversalTarget guards the path-containment
-// check on `pop_and_move`'s MoveTarget. An operator config of
-// `pop_and_move: ../../etc/triage` would otherwise let every commit
-// run os.Rename(<store-root>/policy.root/folder,
-// <store-root>/../../etc/triage/folder), exfiltrating directories
-// outside the store root. Symmetric with openScoped's traversal guard.
 func TestValidator_RejectsTraversalTarget(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
@@ -285,10 +256,6 @@ func TestValidator_RejectsTraversalTarget(t *testing.T) {
 	}
 }
 
-// TestValidator_RejectsAbsoluteTarget pins that an absolute MoveTarget
-// is rejected — even one that happens to be on the same filesystem.
-// Without this check an operator config like `pop_and_move: /tmp/triage`
-// would load and run renames outside the store root.
 func TestValidator_RejectsAbsoluteTarget(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
@@ -304,11 +271,6 @@ func TestValidator_RejectsAbsoluteTarget(t *testing.T) {
 	}
 }
 
-// TestValidator_RejectsTargetEqualsPolicyRoot pins the issue-7 fix:
-// a `pop_and_move` whose target resolves to the policy root itself
-// is a silent no-op at runtime (POSIX rename of a directory to itself
-// returns nil). The validator must reject it so the operator gets a
-// clear error instead of behavioral drift.
 func TestValidator_RejectsTargetEqualsPolicyRoot(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
@@ -324,10 +286,6 @@ func TestValidator_RejectsTargetEqualsPolicyRoot(t *testing.T) {
 	}
 }
 
-// TestValidator_RejectsNullCommit pins the issue-11 path: a YAML null
-// (or missing field) reaching the struct as the zero Action must
-// surface a "required (got null or missing)" error, not the opaque
-// `unknown action ""` we used to emit.
 func TestValidator_RejectsNullCommit(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
@@ -342,7 +300,6 @@ func TestValidator_RejectsNullCommit(t *testing.T) {
 	}
 }
 
-// errsString joins error messages into a single string for substring assertions.
 func errsString(errs []error) string {
 	parts := make([]string, len(errs))
 	for i, e := range errs {

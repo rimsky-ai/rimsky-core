@@ -4,17 +4,6 @@
 
 // @concept: message
 
-// @constraint: conformance area conformance area.
-// MessageListFilter.FrameID predicate against both drivers (postgres +
-// sqlite) so the per-driver `frame_id = ?` clause is honored by the real
-// engine, not just the application layer.
-//
-// The FrameID filter backs fan-out acquisition's recovery of a frame's
-// trigger message: at acquisition time the runtime fetches the delivered
-// message bound to the frame so the node's partition_request can be
-// substituted from the override the message carries (see
-// runtime/runner_acquire_helpers.go::acquireFanOutIfDeclared).
-//
 //	@concept: message
 package conformance
 
@@ -30,11 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// testMessagesListByFrameID seeds three messages on one instance —
-// two delivered into two distinct frames, one left pending (no frame) —
-// and pins that MessageListFilter.FrameID returns exactly the message(s)
-// delivered into the named frame and never a row from a different frame
-// nor the still-pending row. A nil FrameID is a no-op (returns all).
 func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
@@ -42,18 +26,6 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// @constraint: frameA is the fixture's running frame; frameB is a
-	// second distinct frame id so a FrameID filter has a genuine
-	// cross-frame negative to exclude. The message-schema-layer change
-	// put a real FK on rimsky_messages.frame_id → rimsky_frames(frame_id)
-	// on both backends (postgres + sqlite), so frameB must be a real row
-	// to satisfy the FK at MarkDelivered time. The instance can hold at
-	// most ONE running frame (uq on (instance_id) WHERE state =
-	// 'running'), so we seed frameB in 'queued' state with its own
-	// triggering message; that satisfies the FK without colliding with
-	// the existing running frame. The filter under test still reads
-	// rimsky_messages.frame_id directly, not via a join through
-	// rimsky_frames.
 	frameA := fix.FrameID
 	frameBMsgID := shared.UUID(uuid.New())
 	var frameB shared.UUID
@@ -116,8 +88,6 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 
 	msgA := enqueueAndDeliver(t, frameA, map[string]any{"partition_request_override": map[string]any{"a": 1}})
 	msgB := enqueueAndDeliver(t, frameB, map[string]any{"partition_request_override": map[string]any{"b": 2}})
-	// @constraint: a still-pending message (no frame) must never match a
-	// FrameID filter — seeded as a negative the predicate must exclude.
 	_ = enqueueAndDeliver(t, shared.UUID{}, map[string]any{"partition_request_override": map[string]any{"c": 3}})
 
 	list := func(f persistence.MessageListFilter) []persistence.MessageRow {
@@ -129,9 +99,6 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 		return res.Rows
 	}
 
-	// @constraint: nil FrameID is a no-op — every message for the instance,
-	// including the fixture-seeded triggering message AND the frameB-seeding
-	// message (so the count is 1 fixture + 1 frameB-seed + 3 test = 5).
 	if got := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID}); len(got) != 5 {
 		t.Fatalf("no FrameID filter = %d rows, want 5", len(got))
 	}
@@ -147,8 +114,6 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 		t.Fatalf("FrameID(A) row frame_id mismatch: %v", gotA[0].FrameID)
 	}
 
-	// @constraint: FrameID(B) must return exactly msgB — proves the
-	// predicate excludes rows from a different frame, not just filters in.
 	gotB := list(persistence.MessageListFilter{FrameID: &frameB})
 	if len(gotB) != 1 {
 		t.Fatalf("FrameID(B) = %d rows, want 1", len(gotB))
@@ -157,19 +122,11 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 		t.Fatalf("FrameID(B) returned %s, want %s", gotB[0].ID, msgB)
 	}
 
-	// @constraint: a FrameID for which no message was delivered must
-	// return zero rows — guards against a predicate that degenerates to
-	// always-match.
 	unknownFrame := shared.UUID(uuid.New())
 	if got := list(persistence.MessageListFilter{FrameID: &unknownFrame}); len(got) != 0 {
 		t.Fatalf("FrameID(unknown) = %d rows, want 0", len(got))
 	}
 
-	// @constraint: ListDeliveredForFrame is the tx-aware sibling fan-out
-	// acquisition calls from inside the open acquisition tx — the tx-less
-	// List would deadlock the single-conn SQLite driver there. It must
-	// return the same single message for frameA, run cleanly inside a tx,
-	// and never pick up the still-pending row.
 	var deliveredA []persistence.MessageRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.Messages().ListDeliveredForFrame(ctx, tx, frameA)

@@ -5,12 +5,6 @@
 // @concept: lineage
 // @concept: lineage-record
 
-// @constraint: conformance area conformance area.
-// content-lineage projection against both drivers (postgres + sqlite)
-// so the per-driver JSON-path predicate (`record->>'parent_run_id'`
-// for postgres / `json_extract(record, '$.parent_run_id')` for sqlite)
-// is honored by the real engine — not just the in-memory test fakes.
-//
 //	@concept: lineage
 //	@concept: lineage-record
 package conformance
@@ -27,13 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// testLineageQueryByParentRunID round-trips a leaf_run row with a
-// non-empty parent_run_id and pins that QueryByParentRunID returns it.
-// Without this conformance check the per-driver predicate
-// (`record->>'parent_run_id' = $1` postgres / `json_extract(...)`
-// sqlite) is only exercised by the in-memory fake in
-// `runtime/lineage_writer_test.go::queryableFakeLineageTable`, which
-// re-parses JSON in-process and can't catch a typo in the SQL.
 func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -76,10 +63,6 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 	}
 
 	base := time.Now().UTC()
-	// @constraint: insert one child of parentRunID (MUST be returned
-	// by QueryByParentRunID), one child of a different parent (MUST
-	// NOT be returned), and a root with no parent (MUST NOT be
-	// returned — the predicate is `=`, not IS NULL).
 	insertLeaf(t, childRunID, parentRunID, base)
 	insertLeaf(t, unrelatedChild, unrelatedParent, base.Add(1*time.Second))
 	insertLeaf(t, shared.UUID(uuid.New()), shared.UUID{}, base.Add(2*time.Second))
@@ -105,9 +88,6 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 		t.Fatalf("returned row parent_run_id=%q want %q", decoded.ParentRunID, parentRunID.String())
 	}
 
-	// @constraint: QueryByParentRunID on an unknown parent must return
-	// no rows (negative case — guards against a buggy predicate that
-	// always matches).
 	rows, err = store.Lineage().QueryByParentRunID(ctx, shared.UUID(uuid.New()), 10)
 	if err != nil {
 		t.Fatalf("QueryByParentRunID(unknown): %v", err)
@@ -117,21 +97,6 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 	}
 }
 
-// testLineageCountOlderThanMatchesDelete pins that CountOlderThan (the
-// prune dry-run preview) returns exactly what DeleteOlderThan would
-// delete for the same cutoff. Both must share the identical predicate
-// ("observed_at < cutoff AND the run/claim_handle no longer present"),
-// so the dry-run count is a true preview of the live delete rather than
-// an approximation. The test seeds three classes of row:
-//
-//   - prunable: old observed_at, run_id with no matching node_run row.
-//   - too-recent: observed_at after the cutoff (must NOT prune).
-//   - present-run: old observed_at, but its run_id references a live
-//     rimsky_node_runs row (the EXISTS guard must spare it).
-//
-// It asserts CountOlderThan == the live delete count, then re-checks
-// CountOlderThan is 0 (nothing left to prune) — proving Count was a
-// true preview, not a stale or always-zero stub.
 func testLineageCountOlderThanMatchesDelete(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -163,30 +128,18 @@ func testLineageCountOlderThanMatchesDelete(t *testing.T, d persistence.Database
 		}
 	}
 
-	// @constraint: a live rimsky_node_runs row whose id the present-run
-	// lineage row will cite — the NOT EXISTS(run) half of the predicate
-	// must spare it even though it's old.
 	liveRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
 	now := time.Now().UTC()
 	cutoff := now.Add(-1 * time.Hour)
 
-	// @constraint: two prunable rows: old, and their run_id has no live
-	// node_run.
 	insertLeaf(t, shared.UUID(uuid.New()), now.Add(-3*time.Hour))
 	insertLeaf(t, shared.UUID(uuid.New()), now.Add(-2*time.Hour))
-	// @constraint: too-recent: observed_at is after cutoff, so the
-	// `observed_at < cutoff` half of the predicate excludes it.
 	insertLeaf(t, shared.UUID(uuid.New()), now.Add(-1*time.Minute))
-	// @constraint: a present-run leaf is old enough to prune, but the
-	// run_id references a live node_run — the NOT EXISTS guard MUST
-	// spare it.
 	insertLeaf(t, liveRunID, now.Add(-4*time.Hour))
 
 	wantPrunable := 2
 
-	// @constraint: CountOlderThan is the dry-run preview and MUST
-	// equal the eventual delete count.
 	gotCount, err := store.Lineage().CountOlderThan(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("CountOlderThan: %v", err)
@@ -195,8 +148,6 @@ func testLineageCountOlderThanMatchesDelete(t *testing.T, d persistence.Database
 		t.Fatalf("CountOlderThan: got %d want %d (2 old rows with no live run)", gotCount, wantPrunable)
 	}
 
-	// @constraint: live delete with the SAME cutoff must remove exactly
-	// what Count previewed.
 	gotDeleted, err := store.Lineage().DeleteOlderThan(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("DeleteOlderThan: %v", err)
@@ -205,9 +156,6 @@ func testLineageCountOlderThanMatchesDelete(t *testing.T, d persistence.Database
 		t.Fatalf("DeleteOlderThan deleted %d but CountOlderThan previewed %d — predicates diverged", gotDeleted, gotCount)
 	}
 
-	// @constraint: nothing left to prune: Count is now 0, proving it
-	// reflects the post-delete state (not an always-N or always-zero
-	// stub).
 	afterCount, err := store.Lineage().CountOlderThan(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("CountOlderThan (after delete): %v", err)

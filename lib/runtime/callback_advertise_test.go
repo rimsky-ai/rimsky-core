@@ -10,11 +10,6 @@ import (
 	"testing"
 )
 
-// TestEffectiveCallbackHostPort is the single source of truth for both the
-// callback_url handed to executors and the host:port persisted to
-// rimsky_supervisors. These cases pin the preference order and guard the
-// invariant that the persisted row carries a dialable address (never the
-// 0.0.0.0 bind host) when an advertise host is configured.
 func TestEffectiveCallbackHostPort(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -64,9 +59,6 @@ func TestEffectiveCallbackHostPort(t *testing.T) {
 	}
 }
 
-// TestAdvertisedURLMatchesPersistedHostPort URL handed to executors and the host:port written to the supervisor
-// row must agree — they are derived from the same helper, so a peer reading
-// the row reconstructs the exact callback base URL.
 func TestAdvertisedURLMatchesPersistedHostPort(t *testing.T) {
 	const (
 		listenerAddr  = "0.0.0.0:9100"

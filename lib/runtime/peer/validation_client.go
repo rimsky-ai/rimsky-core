@@ -15,9 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/clientiface"
 )
 
-// ValidationClient is a remote-gRPC implementation of the rimsky-side
-// clientiface.ValidationClient interface. One client per peer that
-// advertises the `validation` protocol in rimsky.yml.
 type ValidationClient struct {
 	name           string
 	conn           *grpc.ClientConn
@@ -25,21 +22,12 @@ type ValidationClient struct {
 	supportedRoles []string
 }
 
-// @deliberate: compile-time interface check — fails compilation when
-// *ValidationClient no longer satisfies clientiface.ValidationClient.
 var _ clientiface.ValidationClient = (*ValidationClient)(nil)
 
-// Name returns the operator-configured peer name.
 func (c *ValidationClient) Name() string { return c.name }
 
-// SupportedRoles returns the cached `validation_supported_roles` list
-// populated at Dial time from the peer's Capabilities (via the
-// ClaimProducer or Executor handshake — the Validation service itself
-// has no Capabilities verb; the supported roles ride on the host's
-// capability surface).
 func (c *ValidationClient) SupportedRoles() []string { return c.supportedRoles }
 
-// ValidateExecutor runs the executor-role check.
 func (c *ValidationClient) ValidateExecutor(ctx context.Context, in clientiface.ValidateExecutorInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
 	resp, err := c.rpc.Validate(ctx, &genv1.ValidateRequest{
 		Role: "executor",
@@ -59,7 +47,6 @@ func (c *ValidationClient) ValidateExecutor(ctx context.Context, in clientiface.
 		nil
 }
 
-// ValidateClaimProducer runs the claim_producer-role check.
 func (c *ValidationClient) ValidateClaimProducer(ctx context.Context, in clientiface.ValidateClaimProducerInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
 	claims := make([]*genv1.ClaimBinding, 0, len(in.Claims))
 	for _, b := range in.Claims {
@@ -90,7 +77,6 @@ func (c *ValidationClient) ValidateClaimProducer(ctx context.Context, in clienti
 		nil
 }
 
-// ValidateSensor runs the sensor-role check.
 func (c *ValidationClient) ValidateSensor(ctx context.Context, in clientiface.ValidateSensorInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
 	resp, err := c.rpc.Validate(ctx, &genv1.ValidateRequest{
 		Role: "sensor",
@@ -110,7 +96,6 @@ func (c *ValidationClient) ValidateSensor(ctx context.Context, in clientiface.Va
 		nil
 }
 
-// ValidateLifecycleSubscriber runs the lifecycle_subscriber-role check.
 func (c *ValidationClient) ValidateLifecycleSubscriber(ctx context.Context, in clientiface.ValidateLifecycleSubscriberInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
 	resp, err := c.rpc.Validate(ctx, &genv1.ValidateRequest{
 		Role: "lifecycle_subscriber",
@@ -129,19 +114,12 @@ func (c *ValidationClient) ValidateLifecycleSubscriber(ctx context.Context, in c
 		nil
 }
 
-// Close releases the gRPC connection.
 func (c *ValidationClient) Close() {
 	if c.conn != nil {
 		_ = c.conn.Close()
 	}
 }
 
-// DialValidation connects to a peer that implements the Validation
-// service. `supportedRoles` mirrors the `validation_supported_roles`
-// the peer advertised through its host Capabilities handshake (e.g.
-// the matching ClaimProducer or Executor Capabilities response).
-// tlsMode is the peer entry's validated `tls:` mode (TLSModeOff /
-// TLSModeRequired; empty → off).
 func DialValidation(_ context.Context, name, endpoint, tlsMode string, supportedRoles []string) (*ValidationClient, error) {
 	target, err := stripScheme(name, endpoint)
 	if err != nil {
@@ -163,15 +141,6 @@ func DialValidation(_ context.Context, name, endpoint, tlsMode string, supported
 	}, nil
 }
 
-// FetchExecutorValidationRoles dials an executor peer's
-// ExecutorObservability service and returns the
-// validation_supported_roles list from its Capabilities response.
-// The Validation service has no Capabilities verb, so an executor
-// advertising the validation mix-in carries its supported roles on
-// the observability capability surface
-// (executor_observability.proto::ObservabilityCapabilities). The
-// connection is opened and closed within this call; the RPC is bounded
-// by ctx. tlsMode is the peer entry's validated `tls:` mode.
 func FetchExecutorValidationRoles(ctx context.Context, name, endpoint, tlsMode string) ([]string, error) {
 	target, err := stripScheme(name, endpoint)
 	if err != nil {
@@ -189,15 +158,9 @@ func FetchExecutorValidationRoles(ctx context.Context, name, endpoint, tlsMode s
 	if err != nil {
 		return nil, fmt.Errorf("remote executor %q: ExecutorObservability.Capabilities handshake: %w", name, err)
 	}
-	// @deliberate: defensive copy — the caller caches the slice past the proto's lifetime.
 	return append([]string(nil), resp.GetValidationSupportedRoles()...), nil
 }
 
-// FetchPublisherValidationRoles dials a publisher peer's Publisher
-// service and returns the validation_supported_roles list from its
-// Capabilities response (publisher.proto::PublisherCapabilities). The
-// connection is opened and closed within this call; the RPC is bounded
-// by ctx. tlsMode is the peer entry's validated `tls:` mode.
 func FetchPublisherValidationRoles(ctx context.Context, name, endpoint, tlsMode string) ([]string, error) {
 	target, err := stripScheme(name, endpoint)
 	if err != nil {
@@ -215,12 +178,9 @@ func FetchPublisherValidationRoles(ctx context.Context, name, endpoint, tlsMode 
 	if err != nil {
 		return nil, fmt.Errorf("remote publisher %q: Publisher.Capabilities handshake: %w", name, err)
 	}
-	// @deliberate: defensive copy — the caller caches the slice past the proto's lifetime.
 	return append([]string(nil), resp.GetValidationSupportedRoles()...), nil
 }
 
-// projectFindings maps proto ValidationFinding entries to the
-// runtime-side ValidationFinding shape.
 func projectFindings(serviceName, role, nodeAlias string, src []*genv1.ValidationFinding) []clientiface.ValidationFinding {
 	if len(src) == 0 {
 		return nil

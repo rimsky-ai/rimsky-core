@@ -3,12 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @blessed-invariant: spawn-child-reaped-on-exit — the
-// TestDrain_SIGTERMThenSIGKILLChildren_BoundedTime case below spawns
-// a child binary that ignores SIGTERM, runs the coordinator's Drain,
-// and asserts the child is dead within the SIGTERM-then-SIGKILL
-// grace window. Without the SIGKILL escalation OR the post-kill
-// wait, the test fails on either the process-still-alive check or
-// the duration bound — both falsifier surfaces named in the spec.
 package compose_test
 
 import (
@@ -26,10 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
-// buildSigtermIgnorer compiles a tiny Go program that traps SIGTERM
-// and continues running for 10 minutes, so the only path off the
-// process is SIGKILL (or natural timeout, which a passing test never
-// reaches). Returns the absolute path of the built binary.
 func buildSigtermIgnorer(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -50,11 +40,6 @@ func buildSigtermIgnorer(t *testing.T) string {
 	return bin
 }
 
-// sigtermIgnorerSource is the real source that buildSigtermIgnorer
-// compiles. The child binds RIMSKY_AGENT_PORT (so SpawnService's
-// readiness probe succeeds) and installs a handler that absorbs
-// SIGTERM. The only way to terminate the process from outside is
-// SIGKILL — exactly the path the coordinator's drain must take.
 const sigtermIgnorerSource = `package main
 
 import (
@@ -97,13 +82,6 @@ func main() {
 }
 `
 
-// TestDrain_SIGTERMThenSIGKILLChildren_BoundedTime is the load-bearing
-// test for @blessed-invariant: spawn-child-reaped-on-exit. The child
-// ignores SIGTERM so cooperation alone cannot drain it; the
-// coordinator must escalate to SIGKILL within the grace window and
-// observe the child exited before Drain returns. The duration bound
-// pins the upper edge — without it, a 60-second drain would still
-// satisfy the "child gone" check.
 func TestDrain_SIGTERMThenSIGKILLChildren_BoundedTime(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGTERM semantics differ on Windows; drain path is exercised on Unix-only CI")
@@ -131,18 +109,10 @@ func TestDrain_SIGTERMThenSIGKILLChildren_BoundedTime(t *testing.T) {
 	code := coord.Drain(context.Background(), compose.ReasonAllSuccess)
 	elapsed := time.Since(start)
 
-	// @constraint: Drain must escalate SIGTERM -> SIGKILL within the
-	// 5s grace window plus signal-delivery slack; the 8s bound
-	// tolerates scheduler jitter on a loaded CI host while still
-	// failing if the coordinator does not escalate at all.
 	if elapsed > 8*time.Second {
 		t.Fatalf("drain took %v, want <= 8s (grace window + slack)", elapsed)
 	}
 
-	// @constraint: signal 0 against a dead pid returns ESRCH (no such
-	// process); some POSIX implementations return EPERM after reap if
-	// pid recycling has not yet happened. Both outcomes are accepted
-	// as "no longer a live signal target".
 	if processStillAlive(pid) {
 		t.Fatalf("pid %d still alive after Drain (elapsed %v)", pid, elapsed)
 	}
@@ -152,9 +122,6 @@ func TestDrain_SIGTERMThenSIGKILLChildren_BoundedTime(t *testing.T) {
 	}
 }
 
-// processStillAlive sends signal 0 to pid and reports whether the
-// kernel says the process is still a valid signal target. On a
-// reaped process this returns false.
 func processStillAlive(pid int) bool {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
@@ -166,10 +133,6 @@ func processStillAlive(pid int) bool {
 	return true
 }
 
-// TestDrain_AllSuccessReturnsZero exercises the @decision: exit-codes
-// table for the happy path: no spawns, no failures, reason all-
-// success → exit 0. Empty Services slice exercises the no-op branch
-// of reapSpawnedChildren so the drain returns immediately.
 func TestDrain_AllSuccessReturnsZero(t *testing.T) {
 	coord := &compose.ShutdownCoordinator{
 		Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
@@ -179,9 +142,6 @@ func TestDrain_AllSuccessReturnsZero(t *testing.T) {
 	}
 }
 
-// TestDrain_AnyFailureReturnsOne maps the failure reason to exit 1
-// per the spec's exit-code table. The script-friendly-outcome story
-// (STORY-script-friendly-outcome) depends on this distinct code.
 func TestDrain_AnyFailureReturnsOne(t *testing.T) {
 	coord := &compose.ShutdownCoordinator{
 		Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
@@ -191,7 +151,6 @@ func TestDrain_AnyFailureReturnsOne(t *testing.T) {
 	}
 }
 
-// TestDrain_TimeoutReturnsTwo maps the timeout reason to exit 2.
 func TestDrain_TimeoutReturnsTwo(t *testing.T) {
 	coord := &compose.ShutdownCoordinator{
 		Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
@@ -201,12 +160,6 @@ func TestDrain_TimeoutReturnsTwo(t *testing.T) {
 	}
 }
 
-// TestDrain_SignalReturnsOneThirty maps the signal reason to exit
-// 130 (the conventional SIGINT exit). The verb's signal-handling
-// path classifies a SIGINT/SIGTERM during the wait as
-// ReasonSignal; Drain returns 130 so a parent shell sees the same
-// exit code it would have observed if the verb had not installed
-// its own signal handler.
 func TestDrain_SignalReturnsOneThirty(t *testing.T) {
 	coord := &compose.ShutdownCoordinator{
 		Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
@@ -216,12 +169,6 @@ func TestDrain_SignalReturnsOneThirty(t *testing.T) {
 	}
 }
 
-// TestDrain_Idempotent confirms the once-guard: a second Drain call
-// returns the cached exit code without re-running the drain. The
-// second-SIGINT escalator and the natural-completion drain may both
-// fire on a fast shutdown; the guard prevents a double-reap that
-// would re-send signals to children whose pids may have been
-// recycled by the kernel.
 func TestDrain_Idempotent(t *testing.T) {
 	coord := &compose.ShutdownCoordinator{
 		Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),

@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// resolver.go — read a template spec file from disk, apply
-// frame-resolution defaults, and compute its content hash via the
-// shared canonical hasher (matching the control-api's hash exactly).
 package compose
 
 import (
@@ -17,17 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/template/canonical"
 )
 
-// ResolveTemplate reads a template spec file from disk, runs
-// frame-resolution default-fill on the typed view, and returns:
-//
-//   - the canonical hash (computed from the typed TemplateSpec, matching
-//     the control-api exactly), and
-//   - the typed TemplateSpec to ship verbatim to POST /templates.
-//
-// After the 2026-05-02 json-tags cleanup the typed view marshals to
-// the same lowercase-snake-case JSON keys the control-api decodes
-// (`name`, `version`, `frame_resolution`, `nodes`, …), so no wire
-// shaping or YAML→generic-map round-trip is needed.
 func ResolveTemplate(path string) (hash string, spec node.TemplateSpec, err error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

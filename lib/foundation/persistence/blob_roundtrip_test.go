@@ -14,22 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// TestBlobRoundtripBackends covers the cross-backend round-trip
-// scenarios required by plan §D9:
-//   - Write 1 KB and read back via Read.
-//   - Write a payload above a configurable threshold and read back.
-//   - Range read returns the requested slice.
-//   - Delete removes the bytes (post-delete Read returns ErrBlobNotFound).
-//   - Idempotent delete (delete twice; second is a no-op).
-//
-// Inline backend is excluded — its Write returns an error by design
-// (the spill-decision sites never reach inline.Write per
-// ShouldSpillBlob).
-//
-// pg-largeobject is exercised in
-// foundation/persistence/postgres/blob_largeobject_test.go (testcontainers).
-// This test runs against the in-process backends (memory + filesystem)
-// so it stays fast and Docker-free.
 func TestBlobRoundtripBackends(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -115,8 +99,6 @@ func TestBlobRoundtripBackends(t *testing.T) {
 				t.Fatalf("Delete large: %v", err)
 			}
 
-			// @constraint: each backend prefixes handles with a short
-			// backend identifier (per blob.go Handle godoc).
 			if !strings.HasPrefix(string(hSmall), tc.handlePrefix) || !strings.HasPrefix(string(hLarge), tc.handlePrefix) {
 				t.Fatalf("handles missing %q prefix: small=%q large=%q", tc.handlePrefix, hSmall, hLarge)
 			}
@@ -124,10 +106,6 @@ func TestBlobRoundtripBackends(t *testing.T) {
 	}
 }
 
-// TestShouldSpillBlobDecision sanity-checks the threshold gate that
-// drives D6: ShouldSpillBlob returns false for inline / nil / below-
-// threshold payloads and true only when the configured backend can
-// actually hold the bytes.
 func TestShouldSpillBlobDecision(t *testing.T) {
 	t.Parallel()
 	mem := persistence.NewMemoryBackend()

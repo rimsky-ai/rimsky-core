@@ -60,11 +60,6 @@ func TestRunTemplateRegister_RejectComposePrefix(t *testing.T) {
 	}
 }
 
-// TestRunTemplateRegister_WarningsAsErrors_QueryParam — --warnings-as-errors
-// forwards `?warnings_as_errors=true` to the control-API. We verify both
-// directions: the flag-not-set path leaves the query empty, and the
-// flag-set path sets it. The fake server captures r.URL.RawQuery and
-// surfaces it back for assertion.
 func TestRunTemplateRegister_WarningsAsErrors_QueryParam(t *testing.T) {
 	var seenQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,10 +89,6 @@ func TestRunTemplateRegister_WarningsAsErrors_QueryParam(t *testing.T) {
 	}
 }
 
-// TestRunTemplateRegister_WarningsAsErrors_Rejected — when the server
-// rejects with validation_warnings, the CLI exits non-zero and the
-// body's warnings/errors are surfaced. We assert the exit code is 1
-// (control-api error) and the registration was refused.
 func TestRunTemplateRegister_WarningsAsErrors_Rejected(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("warnings_as_errors") != "true" {
@@ -123,8 +114,6 @@ func TestRunTemplateRegister_WarningsAsErrors_Rejected(t *testing.T) {
 	}
 }
 
-// driftSpec references the clitest fake's sentinel "drift-executor"
-// so the validate route returns ok:false with a finding.
 const driftSpec = `name: x
 version: "1.0"
 nodes:
@@ -141,8 +130,6 @@ func writeSpecContent(t *testing.T, name, content string) string {
 	return path
 }
 
-// TestRunTemplateLint_Clean: a spec with no drift lints clean and the
-// verb exits 0 (linter convention: zero == no findings).
 func TestRunTemplateLint_Clean(t *testing.T) {
 	_ = setupClitest(t)
 	specPath := writeSpec(t)
@@ -151,8 +138,6 @@ func TestRunTemplateLint_Clean(t *testing.T) {
 	}
 }
 
-// TestRunTemplateLint_Findings: a spec with drift lints not-ok and the
-// verb exits 1 (linter convention: non-zero == findings).
 func TestRunTemplateLint_Findings(t *testing.T) {
 	_ = setupClitest(t)
 	specPath := writeSpecContent(t, "drift.yml", driftSpec)
@@ -161,8 +146,6 @@ func TestRunTemplateLint_Findings(t *testing.T) {
 	}
 }
 
-// warnSpec references the clitest fake's sentinel "warn-executor" so the
-// validate route returns a warning (and no errors).
 const warnSpec = `name: x
 version: "1.0"
 nodes:
@@ -170,9 +153,6 @@ nodes:
     executor: warn-executor
 `
 
-// TestRunTemplateLint_WarningsAsErrors: a warning-only spec lints clean
-// by default (warnings are non-fatal → exit 0), but exits 1 under
-// --warnings-as-errors, which folds warnings into the ok verdict.
 func TestRunTemplateLint_WarningsAsErrors(t *testing.T) {
 	_ = setupClitest(t)
 	specPath := writeSpecContent(t, "warn.yml", warnSpec)
@@ -185,8 +165,6 @@ func TestRunTemplateLint_WarningsAsErrors(t *testing.T) {
 	}
 }
 
-// TestRunTemplateLint_RequiresOneFile: zero or extra positionals are a
-// usage error (exit 2).
 func TestRunTemplateLint_RequiresOneFile(t *testing.T) {
 	_ = setupClitest(t)
 	if got := cli.RunTemplateLint(context.Background(), nil); got != 2 {
@@ -194,10 +172,6 @@ func TestRunTemplateLint_RequiresOneFile(t *testing.T) {
 	}
 }
 
-// TestRunTemplateLint_SourceFileResolution: a spec whose attribute
-// value is a `{source_file: <rel>}` reference resolves the file inline
-// before validation and still lints clean (exit 0). Confirms the lint
-// verb shares readSpecFile's source_file: resolution with register.
 func TestRunTemplateLint_SourceFileResolution(t *testing.T) {
 	_ = setupClitest(t)
 	dir := t.TempDir()

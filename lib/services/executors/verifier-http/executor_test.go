@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// executor_test.go — verifier-http executor coverage under the unary
-// RPC shape (TD-execute-rpc-unary). Each test calls Execute(req)
-// directly against an httptest.NewServer upstream and asserts on the
-// settling Outcome — Success on a matching status, Error{verifier/*}
-// on attribute violations or a non-matching status.
-
 package main
 
 import (
@@ -92,10 +86,6 @@ func TestExecute_StatusMismatch(t *testing.T) {
 	}
 }
 
-// TestExecute_StatusMismatchWithUpstreamClass asserts that when the
-// upstream body carries a typed class field, the executor surfaces it
-// on the hierarchical error_class so subscribers can pattern-match
-// `verifier/check_failed/*`.
 func TestExecute_StatusMismatchWithUpstreamClass(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -121,9 +111,6 @@ func TestExecute_StatusMismatchWithUpstreamClass(t *testing.T) {
 	}
 }
 
-// TestExecute_TimeoutClassifiesAsTimeout drives a slow upstream past
-// the configured timeout and asserts the hierarchical verifier/timeout
-// class.
 func TestExecute_TimeoutClassifiesAsTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(200 * time.Millisecond)
@@ -148,10 +135,8 @@ func TestExecute_TimeoutClassifiesAsTimeout(t *testing.T) {
 	}
 }
 
-// TestExecute_NetworkError covers the unreachable-upstream branch.
 func TestExecute_NetworkError(t *testing.T) {
 	executor := NewServer(false)
-	// @deliberate: port 1 is reserved and unbound, so the dial fails synchronously.
 	req := buildReq(t, map[string]any{"url": "http://127.0.0.1:1/nope"})
 	outcome, _ := executor.Execute(context.Background(), req)
 	errOut := outcome.GetError()
@@ -176,8 +161,6 @@ func TestExecute_MissingURL(t *testing.T) {
 	}
 }
 
-// TestExecute_StubMode short-circuits before the upstream call so an
-// unreachable URL still settles to Success.
 func TestExecute_StubMode(t *testing.T) {
 	executor := NewServer(true)
 	req := buildReq(t, map[string]any{"url": "http://unreachable.invalid/"})
@@ -194,13 +177,10 @@ func TestExecute_StubMode(t *testing.T) {
 	}
 }
 
-// TestExecute_CustomClassField configures the executor to read the
-// upstream typed-class field from a non-default key.
 func TestExecute_CustomClassField(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		// @deliberate: typed class lives in `code`, not `class`, so the default reader misses it.
 		_, _ = w.Write([]byte(`{"code":"rate_limited"}`))
 	}))
 	defer srv.Close()
@@ -219,8 +199,6 @@ func TestExecute_CustomClassField(t *testing.T) {
 	}
 }
 
-// TestCapabilities_AdvertisesHierarchicalErrorClasses confirms the
-// observability surface advertises the canonical verifier/* leaves.
 func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
 	obs := NewObservabilityServer()
 	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})

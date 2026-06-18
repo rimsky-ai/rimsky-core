@@ -14,9 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// TestSQLiteMigrationApplies verifies that the embedded init.sql applies
-// cleanly against a fresh SQLite database and that re-running Migrate
-// is a no-op (idempotent).
 func TestSQLiteMigrationApplies(t *testing.T) {
 	dir := t.TempDir()
 	d, err := persistence.Open(context.Background(), persistence.Config{
@@ -36,17 +33,6 @@ func TestSQLiteMigrationApplies(t *testing.T) {
 	}
 }
 
-// TestSQLiteMigration002Tags pins migration 002's contract per spec
-// 2026-05-19-multi-instance-template-ergonomics-design.md §Item 4:
-//
-//   - Column `tags` exists on `rimsky_nodes` as `TEXT NOT NULL` with
-//     default `'[]'` (sibling JSON-encoded-array convention).
-//   - A row inserted WITHOUT setting `tags` materializes the default
-//     `'[]'` (matching the sibling `accepted_stores` / `required_stores`
-//     pattern).
-//
-// SQLite has no GIN equivalent, so the postgres-side GIN index check
-// has no sqlite analog.
 func TestSQLiteMigration002Tags(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -64,9 +50,6 @@ func TestSQLiteMigration002Tags(t *testing.T) {
 
 	db := sqlitepersist.DBFromDatabase(d)
 
-	// @constraint: migration-002 pins the `tags` column on `rimsky_nodes` to
-	// TEXT NOT NULL with default '[]'; SQLite's table_info pragma is the
-	// per-column metadata source for verifying that contract.
 	rows, err := db.QueryContext(ctx, `PRAGMA table_info(rimsky_nodes)`)
 	if err != nil {
 		t.Fatalf("pragma table_info: %v", err)
@@ -117,17 +100,11 @@ func TestSQLiteMigration002Tags(t *testing.T) {
 		t.Errorf("tags column default: got %q want %q", got, "'[]'")
 	}
 
-	// @constraint: a row inserted without setting `tags` must materialize the
-	// default `'[]'`, matching the sibling `accepted_stores` /
-	// `required_stores` JSON-encoded-array convention.
 	if _, err := db.ExecContext(ctx,
 		`INSERT INTO rimsky_templates (id, spec, state)
 		 VALUES ('tpl-1', '{}', 'deployed')`); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// @constraint: post-RunScope-first, `rimsky_instances` and
-	// `rimsky_run_scopes` mutually FK each other (DEFERRABLE INITIALLY
-	// DEFERRED), so both rows must be seeded inside a single tx.
 	stx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin: %v", err)

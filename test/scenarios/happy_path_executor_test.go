@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario 1 — happy path: one executor-backed node runs to completion.
-//
-// Migrated to the stores-redesign template grammar (spec §11): nodes are
-// built via scenario.MakeNode + the fluent option helpers. The redesign
-// replaces the legacy "this resource has version N" assertion with
-// "this node's rimsky_node_attributes.data contains field X"; this
-// scenario keeps the original state-based assertion plus an attributes
-// readback to demonstrate the new shape.
 package scenarios
 
 import (
@@ -27,8 +19,6 @@ import (
 func TestHappyPathExecutor(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// @deliberate: Stub returns an attributes_delta containing {"ok": true}; the
-	// supervisor merges it into the node's resolved attributes.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "initial")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -52,11 +42,6 @@ func TestHappyPathExecutor(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
-	// @deliberate: Verify a terminal/success signal event was appended. Per Pass 5
-	// the canonical audit row for a settled-fresh terminal is the
-	// signal type-path. (The operational `work_completed` event also
-	// lands at terminal, pairing `work_started`; its dedicated
-	// assertions live in work_completed_test.go.)
 	nid := n.ID
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -74,9 +59,6 @@ func TestHappyPathExecutor(t *testing.T) {
 	}
 	require.True(t, sawCompleted, "expected terminal/success signal event")
 
-	// @deliberate: Verify the executor's attributes_delta landed in
-	// rimsky_node_attributes.data — the redesign's replacement for
-	// "resource has version N" assertions.
 	var row *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, n.ID, h.GetMainRunScopeID(iid), tx)

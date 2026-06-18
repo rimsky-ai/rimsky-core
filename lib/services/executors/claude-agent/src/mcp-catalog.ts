@@ -2,29 +2,6 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// @deliberate: startup MCP-server catalog + `allow_inline` policy for the
-// claude-agent executor. The operator wires a
-// catalog of named MCP servers at startup (env `RIMSKY_EXECUTOR_MCP_CATALOG`
-// → a YAML/JSON file) and an `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE` policy
-// (default false). A node's `cli.mcp_servers` then references a catalog
-// entry by `{ ref: <name> }` rather than declaring an inline
-// `{ name, url, headers }` server; inline servers are permitted only when
-// the policy allows them. Each catalog entry declares a `transport`:
-// `http` is a remote streamable-HTTP MCP server (url + headers); `stdio`
-// is a local MCP server spawned as a subprocess (command + args), wired
-// into `--mcp-config` as a `type: "stdio"` leaf; `module` is an in-tree
-// MCP module the executor `import()`s at dispatch and fronts on a
-// per-dispatch loopback HTTP listener (the Claude CLI only speaks MCP
-// over a wire transport, never an in-process object); `http-loopback`
-// shares the module-loading shape — the name distinguishes operator
-// intent (a server explicitly fronted on a loopback HTTP listener) but
-// the stand-up mechanism is identical. The catalog + policy are parsed
-// ONCE at startup and threaded into every dispatch via `AgentRunOptions`
-// (the carrier for `cliConfig`). Resolution of a `{ ref: }` against the
-// catalog — and the per-dispatch stand-up of a module / http-loopback
-// listener — happens at the single `hostServers` build site in
-// `agent-run.ts`.
-
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -39,15 +16,8 @@ import type { Logger } from "pino";
 import { CliConfigError } from "./cli-config-error.js";
 import type { CliToolConfig } from "./cli-runner.js";
 
-/** Directory this module lives in — the base for resolving relative
- *  module specifiers in `module` / `http-loopback` catalog entries. A
- *  catalog written by an operator may name a module relative to the
- *  executor's own source tree (the in-tree fixture path the tests use);
- *  resolving against this directory keeps that stable regardless of the
- *  process cwd. Absolute specifiers and `file://` URLs are used verbatim. */
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 
-/** A remote streamable-HTTP MCP server reached over the network. */
 export interface HttpCatalogEntry {
   transport: "http";
   url: string;
@@ -55,7 +25,6 @@ export interface HttpCatalogEntry {
   allowedTools?: string[];
 }
 
-/** A local MCP server spawned as a subprocess and wired as a stdio leaf. */
 export interface StdioCatalogEntry {
   transport: "stdio";
   command: string;
@@ -64,13 +33,6 @@ export interface StdioCatalogEntry {
   allowedTools?: string[];
 }
 
-/**
- * An in-tree MCP module the executor loads at dispatch. `module` mounts it
- * on a per-dispatch loopback HTTP listener; `http-loopback` does the same
- * (the distinction is operator-facing intent, not a different mechanism —
- * the Claude CLI only speaks MCP over a wire transport, so a `module`
- * entry must also be fronted on a loopback listener to be reachable).
- */
 export interface ModuleCatalogEntry {
   transport: "module" | "http-loopback";
   module: string;
@@ -82,20 +44,8 @@ export type McpCatalogEntry =
   | StdioCatalogEntry
   | ModuleCatalogEntry;
 
-/** The parsed startup catalog, keyed by server name. */
 export type McpCatalog = Record<string, McpCatalogEntry>;
 
-/**
- * Parses the startup catalog file referenced by
- * `RIMSKY_EXECUTOR_MCP_CATALOG`. YAML is a superset of JSON, so one parser
- * handles both `.yml`/`.yaml` and `.json`. Returns an empty catalog when
- * the path is empty/unset.
- *
- * A present-but-malformed catalog throws — a misconfigured catalog must
- * fail the executor LOUDLY at startup rather than silently dropping a
- * server a node will later reference by `{ ref: }` (which would surface as
- * an opaque mid-dispatch resolution error).
- */
 export function loadCatalogFromEnv(path: string | undefined): McpCatalog {
   if (!path || path.length === 0) return {};
   let raw: string;
@@ -108,12 +58,6 @@ export function loadCatalogFromEnv(path: string | undefined): McpCatalog {
   return parseCatalog(parsed);
 }
 
-/**
- * Validates a parsed catalog object into the typed `McpCatalog`. Each entry
- * must declare a known `transport` plus that transport's required fields.
- * Throws on any malformed entry (fail-loud — a dropped catalog server is a
- * silently-unwired reference).
- */
 export function parseCatalog(v: unknown): McpCatalog {
   if (v === undefined || v === null) return {};
   if (typeof v !== "object" || Array.isArray(v)) {
@@ -175,42 +119,18 @@ function parseCatalogEntry(
   );
 }
 
-/**
- * Parses the `allow_inline` policy from `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE`.
- * Default false: a deployment with a catalog wants its catalog to be the
- * authoritative server source, so inline `{name,url}` servers are rejected
- * unless the operator explicitly opts in (`=1` / `=true`).
- */
 export function parsePolicy(v: string | undefined): boolean {
   if (v === undefined) return false;
   const normalized = v.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
-/**
- * A per-dispatch resolution of a catalog `{ ref: }` into a concrete
- * `CliToolConfig` leaf plus an optional teardown for any transport the
- * resolution stood up (a module / http-loopback loopback listener). The
- * resolver returns the leaf for the spawn `tools` list and a `teardown`
- * the dispatch wires into its per-dispatch cleanup.
- */
 export interface ResolvedCatalogServer {
   tool: CliToolConfig;
-  /** Explicit per-server allowed tools (catalog `allowed_tools`), or
-   *  undefined to auto-allow ALL of the server's tools. */
   allowedTools?: string[];
-  /** Tears down any per-dispatch resource the stand-up created (loopback
-   *  HTTP listener for module / http-loopback). No-op for http / stdio. */
   teardown: () => Promise<void>;
 }
 
-/**
- * Resolves a single catalog entry (named `name`) into a concrete spawn leaf,
- * standing up any per-dispatch transport it needs. Pure for http / stdio
- * (no resource); for module / http-loopback this `import()`s the module and
- * fronts it on a fresh loopback HTTP MCP listener, returning the listener's
- * URL as an `mcp-http` leaf so the Claude CLI can dial it.
- */
 export async function resolveCatalogServer(
   name: string,
   entry: McpCatalogEntry,
@@ -236,8 +156,6 @@ export async function resolveCatalogServer(
       teardown: async () => {},
     };
   }
-  // @deliberate: module | http-loopback: load the module and front it on a per-dispatch
-  // loopback HTTP MCP listener.
   const listener = await standUpModuleLoopback(name, entry.module, logger);
   return {
     tool: { kind: "mcp-http", name, url: listener.url },
@@ -251,18 +169,6 @@ interface LoopbackListener {
   close: () => Promise<void>;
 }
 
-/**
- * Imports a catalog module (its `createMcpServer()` factory) and fronts it
- * on a loopback HTTP MCP listener bound to an ephemeral 127.0.0.1 port. The
- * listener is per-dispatch: each request with no `mcp-session-id` mints a
- * fresh streamable-HTTP session backed by its own `McpServer` instance, so
- * the Claude CLI's initialize handshake lands cleanly. Returns the URL the
- * CLI dials and a `close` that tears down every session + the HTTP server.
- *
- * @source src/internal-mcp-server.ts (session-per-transport HTTP loop) —
- * the same streamable-HTTP multiplexing the internal callback server uses,
- * narrowed to a catalog-supplied module's tools.
- */
 async function standUpModuleLoopback(
   name: string,
   moduleSpecifier: string,
@@ -325,10 +231,6 @@ async function standUpModuleLoopback(
       }
     }
   });
-  // @deliberate: a loopback MCP server holds its SSE GET stream open for
-  // the whole dispatch; disable Node's idle-socket caps so the held stream
-  // is never reaped mid-dispatch (same property the internal callback
-  // server pins).
   httpServer.timeout = 0;
   httpServer.requestTimeout = 0;
   httpServer.keepAliveTimeout = 24 * 60 * 60 * 1000;
@@ -337,7 +239,6 @@ async function standUpModuleLoopback(
     try {
       socket.destroy();
     } catch {
-      /* @deliberate: already gone */
     }
   });
 
@@ -368,13 +269,6 @@ async function standUpModuleLoopback(
 
 type McpServerFactory = () => McpServer;
 
-/**
- * Dynamically imports a catalog module and returns its `createMcpServer()`
- * factory. The contract (documented on the in-tree fixture): the module
- * exports a named `createMcpServer()` (or a default export) returning a
- * registered `McpServer`. A relative specifier is resolved against this
- * module's directory; an absolute path / `file://` URL is used verbatim.
- */
 async function loadModuleFactory(
   name: string,
   specifier: string,
@@ -401,8 +295,6 @@ async function loadModuleFactory(
 function toImportUrl(specifier: string): string {
   if (specifier.startsWith("file://")) return specifier;
   if (isAbsolute(specifier)) return pathToFileURL(specifier).href;
-  // @deliberate: relative specifiers resolve against this module's directory so a
-  // catalog can name an in-tree module path independent of process cwd.
   return pathToFileURL(resolvePath(MODULE_DIR, specifier)).href;
 }
 

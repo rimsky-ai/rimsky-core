@@ -2,24 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario 9 — agentic-style async handoff. Executor returns
-// AwaitAsyncCallback with an ack; node stays running. The test then
-// POSTs a Success body to the supervisor's callback endpoint with the
-// same ack; the node reaches fresh.
-//
 // @blessed-invariant: persistent-registry-survives-restart — exercises
-// the persisted `col:rimsky_node_runs.async_ack_id` lookup path on
-// the callback handler. The harness drives the callback POST through
-// the same chi route the production path uses, so the lookup-by-ack
-// branch (fired when the in-memory cache is cold — the canonical
-// case after supervisor restart) is the one this test settles
-// against.
-//
-// Migrated to the stores-redesign template grammar (spec §11): the agent
-// node is built via scenario.MakeNode + scenario.WithAttributes. The
-// executor's terminal Success carries an attributes_delta the supervisor
-// merges into the node's resolved attributes; the per-node attribute
-// schema declares the field that delta lands in.
 package scenarios
 
 import (
@@ -62,16 +45,10 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	n := h.FindNode(iid, "agent")
 	require.NotNil(t, n)
 
-	// @deliberate: Wait for node to enter running (supervisor holds pending claim).
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateRunning, 15*time.Second),
 		"agent did not reach running")
 
-	// @deliberate: POST callback with matching ackID. Retry briefly so we don't race the
-	// supervisor's registerAsync that runs after state→running.
 	cbURL := "http://" + h.Supervisor.CallbackAddr() + "/v1/callback/ack-1"
-	// @deliberate: Callback body uses the AsyncCallbackBody outcome-oneof shape
-	// (success / error / park) rather than the legacy {type: ...}
-	// discriminator.
 	body, _ := json.Marshal(map[string]any{
 		"success": map[string]any{
 			"attributes_delta": map[string]any{"done": true},
@@ -96,9 +73,6 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"agent did not reach fresh after async callback")
 
-	// @deliberate: Verify the callback's attributes_delta landed in
-	// rimsky_node_attributes.data — the redesign's replacement for
-	// "resource has version N" assertions.
 	var row *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, n.ID, h.GetMainRunScopeID(iid), tx)

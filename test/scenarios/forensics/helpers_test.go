@@ -2,10 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Shared helpers for the post-mortem forensics scenarios.
-//
 // @source: test/scenarios/lineage/helpers_test.go. Tracked duplication —
-// the two scenario packages cannot import each other's test-only types.
 
 package forensics
 
@@ -23,8 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// seedDeployedTemplate inserts a template row in 'deployed' state with a
-// deterministic content hash derived from the supplied tag.
 func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence.Tables, tag string) persistence.TemplateRow {
 	t.Helper()
 	sum := sha256.Sum256([]byte("forensics:" + tag))
@@ -51,9 +46,6 @@ func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence
 	return *row
 }
 
-// seedFrameRow enqueues a running frame for the instance, seeding a
-// synthetic typed-message envelope first so the
-// rimsky_frames.triggering_message_id FK is satisfied.
 func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
 	_ = sourceNodeID
@@ -82,7 +74,6 @@ func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables,
 	return frameID
 }
 
-// seedRunRow creates a fresh `rimsky_node_runs` row for the given node.
 func seedRunRow(ctx context.Context, t *testing.T, backend persistence.Tables, nodeID, frameID shared.UUID) shared.UUID {
 	t.Helper()
 	runID := shared.UUID(uuid.New())

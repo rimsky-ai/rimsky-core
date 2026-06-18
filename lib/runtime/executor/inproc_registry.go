@@ -10,11 +10,6 @@ import (
 	"sync"
 )
 
-// InProcessRegistry maps inproc executor identity (the URL string,
-// conventionally `inproc://<name>`) to the registered InProcessHandler.
-// Constructed explicitly at supervisor startup (no init-time
-// self-registration globals); passed into the ClientPool factory.
-//
 // @concept: executor
 type InProcessRegistry struct {
 	mu       sync.RWMutex

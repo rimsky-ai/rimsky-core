@@ -13,10 +13,6 @@ import (
 	"syscall"
 )
 
-// flockTry opens (creating if absent) the lock file at path and attempts
-// a non-blocking exclusive flock on the fresh fd. Returns
-// (nil, false, nil) when another holder — in this process or any other —
-// already holds the lock.
 func flockTry(path string) (*os.File, bool, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
@@ -32,9 +28,6 @@ func flockTry(path string) (*os.File, bool, error) {
 	return f, true, nil
 }
 
-// flockRelease unlocks and closes a file returned by flockTry. Closing
-// the fd alone releases the flock; the explicit unlock makes the
-// release immediate even if a duplicated fd lingers.
 func flockRelease(f *os.File) error {
 	unlockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	closeErr := f.Close()
