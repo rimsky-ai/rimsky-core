@@ -16,23 +16,19 @@ Actionable conventions for this codebase under the Plumbline methodology. The fu
 - Forbidden: DI containers, reflection-driven dispatch, convention-based registration, behavior-modifying decorators, base classes / "Manager" abstractions
 - Shared code carries a fast contract suite runnable in isolation; multiple implementations of one interface share a conformance suite
 - Check speed is a placement criterion: prefer placements covered by fast isolated tests; "only testable end-to-end" is a design smell
-- `@source:` copies allowed ONLY for semantically independent code where divergence is expected (e.g. parallel driver implementations of one contract); mark divergence `@diverged: true` + `@reason:`
 
 ## Mechanical Checks
 
-- Every written constraint needs a check that fails on violation: layering → dependency lint, invariant → `@blessed-invariant` + test, wire contract → conformance suite, boundary shape → type
+- Every written constraint needs a check that fails on violation: layering → dependency lint, invariant → assertion + test, wire contract → conformance suite, boundary shape → type
 - Lint config is authoritative: if prose and lint disagree, lint wins
-- A `@blessed-invariant` annotation without an exercising test is unfinished
 
 ## Comments
 
-- Every comment begins with a structured tag: `@constraint:`, `@deliberate:`, `@agent-contract`, `@blessed-invariant:`, `@source:`/`@diverged:`/`@reason:`
-- Projects may extend the vocabulary with their own structured tags (e.g. design-model citations); plain prose is never allowed
-- Machine directives exempt (build tags, generate directives, lint suppressions, license headers including Copyright/SPDX/Licensed-under lines)
-- For Go, GoDoc-style comments (comment's first word names the declaration on the next non-comment line, or the program-name doc preceding `package main`) are exempt
-- For TypeScript/JavaScript, block comments that open with a capitalized word and immediately precede a declaration are recognized as JSDoc-style and exempt
-- All other prose comments are generation residue — clean up after writing, delete on sight
-- `@agent-contract` = guarantees + what it does NOT handle; no usage tutorials
+- Code should be self-explanatory. The rule is: **no comments in source files**, with three narrow exemptions.
+- **Machine directives** are allowed: license headers (`SPDX-License-Identifier:`, `Copyright`, `Licensed under`, `Dual-licensed`), lint suppressions (`eslint-disable`, `ts-ignore` / `ts-expect-error` / `ts-nocheck`, `noqa`, `pylint:`, `nolint`, `biome-`, `prettier-`, `tslint:`, `deno-`), build tags (`go:`), generated-file markers, C-pragmas, shebangs.
+- **Configured citation tags** are allowed: tags declared in `.plumbline.json`'s `citations` array, where each entry pairs a tag with a structural resolution rule. A citation comment is allowed only if its slug resolves per the rule (file exists at a templated path, or slug appears in a globbed set of files). Plumbline ships zero default citation tags — projects declare them.
+- **Documentation comments** are allowed only in files carrying the opt-in marker `// @plumbline:allow-docstrings` (or `# @plumbline:allow-docstrings`). With the marker, JSDoc-style block comments on TS/JS declarations and GoDoc-style line comments on Go declarations are exempt. Without the marker, they are not.
+- Everything else is residue. The default action for any other comment is **delete**. Load-bearing information — a constraint, an invariant, an intentional choice — belongs in a name, a type, an assertion with a message, or a test. Comments are the wrong layer for any of it.
 
 ## Uniformity
 
@@ -61,8 +57,8 @@ Actionable conventions for this codebase under the Plumbline methodology. The fu
 
 The Plumbline plugin ships:
 
-- `plumbline <path>` — the lint binary; checks comment hygiene, `@source:` validity, and `@blessed-invariant:` test coverage. Exit 0 clean, 2 violations, 1 internal error.
+- `plumbline <path>` — the lint binary; runs two checks: `comment-hygiene` (the rule above) and `citation-resolution` (every configured citation's slug must resolve). Exit 0 clean, 2 violations, 1 internal error.
 - `/plumbline:affirm` — install or refresh `.claude/rules/plumbline-cheatsheet.md` from the plugin's canonical version.
 - `/plumbline:audit` — run the lint over the whole project and group findings into a remediation plan.
 - A `PostToolUse` hook auto-runs the lint on every Edit/Write; violations block (exit 2) so the agent sees them and fixes in the same turn.
-- Project config lives in `.plumbline.json` at the repo root (optional); `tags_extend` adds project-specific tags (e.g. `@concept:`), `ignore` adds paths to skip.
+- Project config lives in `.plumbline.json` at the repo root (optional). The `citations` array adds project-specific structured-tag exemptions (each pairs a tag with a resolution rule); `ignore` adds paths to skip.
