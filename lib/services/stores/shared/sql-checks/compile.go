@@ -15,8 +15,8 @@ var identRegex = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 var selectOnlyRegex = regexp.MustCompile(`(?i)^\s*SELECT\s`)
 
 type Compiled struct {
-	Kind string
-	SQL string
+	Kind      string
+	SQL       string
 	Interpret func(scanned ...any) Result
 }
 

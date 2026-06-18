@@ -8,9 +8,6 @@ import "fmt"
 
 const RootUnavailableClass = "fs/root_unavailable"
 
-// @source: lib/services/stores/postgres/store/staging.go:ClassedError
-// @diverged: true
-// @reason: adds Unwrap so errors.As/Is can reach the wrapped cause;
 type ClassedError struct {
 	Class string
 	Err   error

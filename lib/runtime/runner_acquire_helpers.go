@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @source: lib/runtime/runner_acquire.go
-
 package runtime
 
 import (
@@ -75,8 +73,8 @@ func acquireFanOutIfDeclared(
 		LivenessInterval:    livenessInterval,
 		PartitionRequest:    partitionRequest,
 		// @concept: claim-lifetime
-		Lifetime: spec.ClaimLifetime(parentClaimSpec.Lifetime),
-		ParentIsHeld: parent.IsHeld,
+		Lifetime:          spec.ClaimLifetime(parentClaimSpec.Lifetime),
+		ParentIsHeld:      parent.IsHeld,
 		AggregationPolicy: nodeDef.FanOut.ErrorPolicy,
 	})
 	if err != nil {
@@ -96,8 +94,8 @@ func substituteFanOutPartitionRequest(
 	frameID shared.UUID, out *acquisition, partitionRequest string,
 ) ([]byte, error) {
 	resolveCtx := attributes.ResolveContext{
-		Params: instanceParamsRaw(out),
-		Claim:  out.HeldClaims,
+		Params:                instanceParamsRaw(out),
+		Claim:                 out.HeldClaims,
 		RegistryDeclaredTypes: declaredMessageTypesForTemplate(ctx, args, out.TemplateHash, tx),
 	}
 	payload, mtype := triggerMessageForFrame(ctx, args, tx, frameID)

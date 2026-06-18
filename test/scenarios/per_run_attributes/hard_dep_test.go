@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-//	@story: upstream-pull-on-invalidate
+// @story: upstream-pull-on-invalidate
 func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -127,8 +127,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 		"c should see b's second-fire value (upstream-refresh cascade re-fired b)")
 }
 
-
-//	@story: upstream-pull-on-invalidate
+// @story: upstream-pull-on-invalidate
 func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})

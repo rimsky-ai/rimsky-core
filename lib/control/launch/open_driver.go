@@ -14,12 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// @blessed-invariant: one-driver-per-process — every Run* runner in
-// one process shares the SAME persistence.Database instance, so the
-// sqlite per-driver writer slot is not contended across roles in
-// unified mode. A caller that opens additional drivers against the
-// same file re-introduces the contention this helper exists to
-// prevent.
 func OpenDriverFromEnv(ctx context.Context, logger *slog.Logger) (persistence.Database, *config.RimskyConfig, error) {
 	configPath := os.Getenv("RIMSKY_CONFIG")
 	if configPath == "" {

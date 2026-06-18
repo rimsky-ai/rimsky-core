@@ -21,7 +21,7 @@ type ScratchWriter struct {
 	SpillThreshold int
 	DispatchID     shared.UUID
 	NodeID         shared.UUID
-	Logger Logger
+	Logger         Logger
 }
 
 func (w *ScratchWriter) Write(ctx context.Context, bytes []byte) error {

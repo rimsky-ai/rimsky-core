@@ -20,21 +20,21 @@ import (
 )
 
 type nodeResponse struct {
-	ID         string `json:"id"`
-	InstanceID string `json:"instance_id"`
-	NodeType   string `json:"node_type"`
-	Executor   string `json:"executor,omitempty"`
-	State      string `json:"state"`
-	SettlingSignalType   string `json:"settling_signal_type,omitempty"`
-	CurrentErrorClass    string `json:"current_error_class,omitempty"`
-	RetryCounter         int    `json:"retry_counter"`
-	ActionIndex          int    `json:"action_index"`
-	AssignedSupervisorID string `json:"assigned_supervisor_id,omitempty"`
-	FrameID              string `json:"frame_id,omitempty"`
-	Tags      []string  `json:"tags"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	LatestAttributes map[string]any `json:"latest_attributes,omitempty"`
+	ID                   string         `json:"id"`
+	InstanceID           string         `json:"instance_id"`
+	NodeType             string         `json:"node_type"`
+	Executor             string         `json:"executor,omitempty"`
+	State                string         `json:"state"`
+	SettlingSignalType   string         `json:"settling_signal_type,omitempty"`
+	CurrentErrorClass    string         `json:"current_error_class,omitempty"`
+	RetryCounter         int            `json:"retry_counter"`
+	ActionIndex          int            `json:"action_index"`
+	AssignedSupervisorID string         `json:"assigned_supervisor_id,omitempty"`
+	FrameID              string         `json:"frame_id,omitempty"`
+	Tags                 []string       `json:"tags"`
+	CreatedAt            time.Time      `json:"created_at"`
+	UpdatedAt            time.Time      `json:"updated_at"`
+	LatestAttributes     map[string]any `json:"latest_attributes,omitempty"`
 }
 
 func toNodeResponse(n persistence.NodeRow) nodeResponse {

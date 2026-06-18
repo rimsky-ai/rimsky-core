@@ -17,14 +17,14 @@ import (
 )
 
 type RunTreeRow struct {
-	RunID      shared.UUID `json:"run_id"`
-	NodeID     shared.UUID `json:"node_id"`
-	FrameID    shared.UUID `json:"frame_id"`
-	RunScopeID shared.UUID `json:"run_scope_id"`
-	Phase string            `json:"phase,omitempty"`
-	State cascade.NodeState `json:"state"`
-	SettlingSignalType *string `json:"settling_signal_type,omitempty"`
-	AggregationPolicy spec.AggregationPolicy `json:"aggregation_policy,omitempty"`
+	RunID              shared.UUID            `json:"run_id"`
+	NodeID             shared.UUID            `json:"node_id"`
+	FrameID            shared.UUID            `json:"frame_id"`
+	RunScopeID         shared.UUID            `json:"run_scope_id"`
+	Phase              string                 `json:"phase,omitempty"`
+	State              cascade.NodeState      `json:"state"`
+	SettlingSignalType *string                `json:"settling_signal_type,omitempty"`
+	AggregationPolicy  spec.AggregationPolicy `json:"aggregation_policy,omitempty"`
 }
 
 type CreateRootRunInput struct {
@@ -33,17 +33,17 @@ type CreateRootRunInput struct {
 	FrameID           shared.UUID
 	RunScopeID        shared.UUID
 	AggregationPolicy spec.AggregationPolicy
-	ExecutorName   string
-	RequiredStores []string
+	ExecutorName      string
+	RequiredStores    []string
 }
 
 type CreateChildRunInput struct {
-	RunID          shared.UUID
-	NodeID         shared.UUID
-	FrameID        shared.UUID
-	RunScopeID     shared.UUID
-	ExecutorName   string
-	RequiredStores []string
+	RunID             shared.UUID
+	NodeID            shared.UUID
+	FrameID           shared.UUID
+	RunScopeID        shared.UUID
+	ExecutorName      string
+	RequiredStores    []string
 	AggregationPolicy spec.AggregationPolicy
 }
 

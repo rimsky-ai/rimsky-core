@@ -151,7 +151,7 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 	return persistence.PaginatedListResult[persistence.NodeRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
-//	@concept: wait-set
+// @concept: wait-set
 func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
@@ -173,7 +173,7 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 	return collectNodes(rows)
 }
 
-//	@concept: wait-set
+// @concept: wait-set
 func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
@@ -472,10 +472,6 @@ func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundations
 	return err
 }
 
-// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
-// tx-atomic. Caller resolves the run id (affirm-then-read) within the
-// same tx.
-//
 // @concept: cascade
 func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
@@ -502,7 +498,6 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationsha
 	return nil
 }
 
-// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 // @concept: run-scope
 func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshared.UUID, runScopeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
@@ -565,7 +560,7 @@ func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshare
 	return nil
 }
 
-//	@concept: signal
+// @concept: signal
 func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) (bool, error) {
 	ex := s.q(tx)
 	var exists bool
@@ -581,7 +576,6 @@ func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundations
 	return exists, nil
 }
 
-// @blessed-invariant: callback-determinism — Callback determinism.
 func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	ex := s.q(tx)
 	var (

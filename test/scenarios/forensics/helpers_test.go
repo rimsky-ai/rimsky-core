@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @source: test/scenarios/lineage/helpers_test.go. Tracked duplication —
-
 package forensics
 
 import (

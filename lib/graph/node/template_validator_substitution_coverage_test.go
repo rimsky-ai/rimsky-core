@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-//	@story: uncovered-substitution-rejected
+// @story: uncovered-substitution-rejected
 func TestSubstitutionCoverage_PerFieldAttributeRefUncovered(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
@@ -48,7 +48,7 @@ func TestSubstitutionCoverage_PerFieldAttributeRefUncovered(t *testing.T) {
 		"attribute_property must name the schema path the ref appeared in")
 }
 
-//	@story: uncovered-substitution-rejected
+// @story: uncovered-substitution-rejected
 func TestSubstitutionCoverage_WholePullRefUncovered(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
@@ -89,7 +89,7 @@ func TestSubstitutionCoverage_WholePullRefUncovered(t *testing.T) {
 		"attribute_property must name the schema path the whole-pull appeared in")
 }
 
-//	@story: uncovered-substitution-rejected
+// @story: uncovered-substitution-rejected
 func TestSubstitutionCoverage_EventRefRetired(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",

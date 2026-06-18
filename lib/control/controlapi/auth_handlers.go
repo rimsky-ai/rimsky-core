@@ -53,8 +53,6 @@ func rowToDTO(row persistence.APIKey) keyDTO {
 	}
 }
 
-// @concept: dry-run). In anonymous-mode (zero active keys) the
-// envelope notes that committing the first key exits anonymous mode.
 func handleCreateKey(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		type req struct {
@@ -91,7 +89,6 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		// exits anonymous mode. @concept: dry-run.
 		if ModeFromContext(r.Context()) == auth.ModeDryRun {
 			details := map[string]any{
 				"key_id":      "dry-run-not-persisted",
@@ -226,7 +223,6 @@ func handleRevokeKey(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// change (the dry-run never-mutates property; @concept: dry-run).
 		if WriteDryRunResponse(w, r, "would_have_revoked_key", map[string]any{
 			"key_id": row.ID.String(),
 		}) {
@@ -297,7 +293,6 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "cannot rotate a revoked key"})
 			return
 		}
-		// dry-run never-mutates property; @concept: dry-run).
 		if WriteDryRunResponse(w, r, "would_have_rotated_key", map[string]any{
 			"key_id": oldRow.ID.String(),
 		}) {

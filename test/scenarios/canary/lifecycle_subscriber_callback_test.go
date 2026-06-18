@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-
 package canary
 
 import (
@@ -174,7 +173,6 @@ func (f *fakeLifecycleServer) countFor(verb string) int {
 	return n
 }
 
-
 func (f *fakeLifecycleServer) OnTemplateRegistered(_ context.Context, req *genv1.OnTemplateRegisteredRequest) (*genv1.LifecycleAck, error) {
 	f.record(lifecycleEvent{verb: "OnTemplateRegistered", templateHash: req.GetTemplateHash()})
 	return &genv1.LifecycleAck{}, nil
@@ -213,14 +211,12 @@ func (f *fakeLifecycleServer) OnInstanceTerminated(_ context.Context, req *genv1
 	return &genv1.LifecycleAck{}, nil
 }
 
-
 func (f *fakeLifecycleServer) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	return &genv1.CapabilitiesResponse{
 		WriteSemanticsAllowed: []genv1.WriteSemantics{genv1.WriteSemantics_WRITE_SEMANTICS_SYNC},
 		Protocols:             []string{"claim_producer", "lifecycle_subscriber"},
 	}, nil
 }
-
 
 func postAndExpectOK(t *testing.T, h *scenario.Harness, path string) {
 	t.Helper()

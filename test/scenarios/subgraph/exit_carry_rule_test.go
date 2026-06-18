@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant 20 the primitive does not mangle bytes — it
 package subgraph
 
 import (
@@ -194,7 +193,6 @@ func TestSettleChildren_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 		t.Fatalf("SettleChildren (carry-verbatim): %v", err)
 	}
 
-	// (@blessed-invariant: exit-node-writeback-to-parent — exit-node-writeback flows to parent run
 	attrs := readParentAttrs(t, fx)
 	if attrs == nil {
 		t.Fatalf("parent run has no attribute row after carry")

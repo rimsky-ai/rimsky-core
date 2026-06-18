@@ -12,10 +12,10 @@ type TemplateSpec struct {
 	Description    string            `yaml:"description,omitempty" json:"description,omitempty"`
 	FrameTimeoutMs int64             `yaml:"frame_timeout_ms,omitempty" json:"frame_timeout_ms,omitempty"`
 	Nodes          []TemplateNodeDef `yaml:"nodes,omitempty" json:"nodes,omitempty"`
-	Graphs []GraphSpec `yaml:"graphs,omitempty" json:"graphs,omitempty"`
-	Publishers []PublisherSpec `yaml:"publishers,omitempty" json:"publishers,omitempty"`
-	ParamsSchema map[string]any `yaml:"params_schema,omitempty" json:"params_schema,omitempty"`
-	ParamsRedact []string       `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
+	Graphs         []GraphSpec       `yaml:"graphs,omitempty" json:"graphs,omitempty"`
+	Publishers     []PublisherSpec   `yaml:"publishers,omitempty" json:"publishers,omitempty"`
+	ParamsSchema   map[string]any    `yaml:"params_schema,omitempty" json:"params_schema,omitempty"`
+	ParamsRedact   []string          `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
 
 	LateBindServices []string `yaml:"late_bind_services,omitempty" json:"late_bind_services,omitempty"`
 
@@ -48,7 +48,7 @@ type TemplateAttributeDefaults struct {
 // shape (one message per frame).
 const (
 	FrameTimeoutDefaultMs = int64(600000)
-	FrameTimeoutMinMs = int64(60000)
+	FrameTimeoutMinMs     = int64(60000)
 )
 
 type TemplateNodeDef struct {
@@ -56,7 +56,7 @@ type TemplateNodeDef struct {
 	// @concept: node
 	Kind        string `yaml:"kind,omitempty" json:"kind,omitempty"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	Executor string `yaml:"executor,omitempty" json:"executor,omitempty"`
+	Executor    string `yaml:"executor,omitempty" json:"executor,omitempty"`
 
 	// @concept: node
 	Tags []string `yaml:"tags,omitempty" json:"tags,omitempty"`
@@ -69,7 +69,6 @@ type TemplateNodeDef struct {
 	//	@concept: node-subscription
 	//	@concept: cascade
 	Subscribes []SubscriptionEntry `yaml:"subscribes,omitempty" json:"subscribes,omitempty"`
-
 
 	MaxParkDuration string `yaml:"max_park_duration,omitempty" json:"max_park_duration,omitempty"`
 
@@ -104,10 +103,10 @@ const (
 
 // @concept: claim
 type NodeStoreRef struct {
-	Name     string `yaml:"name" json:"name"`
-	Selector string `yaml:"selector" json:"selector"`
-	Intent string `yaml:"intent" json:"intent"`
-	Alias  string `yaml:"alias,omitempty" json:"alias,omitempty"`
+	Name     string          `yaml:"name" json:"name"`
+	Selector string          `yaml:"selector" json:"selector"`
+	Intent   string          `yaml:"intent" json:"intent"`
+	Alias    string          `yaml:"alias,omitempty" json:"alias,omitempty"`
 	Lifetime string          `yaml:"lifetime,omitempty" json:"lifetime,omitempty"`
 	Data     json.RawMessage `yaml:"data,omitempty" json:"data,omitempty"`
 }

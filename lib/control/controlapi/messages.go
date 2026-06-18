@@ -69,8 +69,6 @@ type postMessageResponse struct {
 	MessageID string `json:"message_id"`
 }
 
-// is forwarded as-is per @blessed-invariant 21 — the bytes flow from
-// row to JSON without inspection.
 type messageItem struct {
 	ID          string          `json:"id"`
 	InstanceID  string          `json:"instance_id"`
@@ -352,19 +350,6 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// @blessed-invariant: message-inertness — messages are inert in rimsky.
-// The persistence-layer fetch here is one of a small fixed set of
-// sanctioned read sites for message payload bytes — the others are the
-// substitution-leaf walks in
-// `code:lib/graph/attribute/substitution.go` (`resolveTriggerValue` and
-// `resolveMessagesValue`) and the cascade walker's `messagePayloadAsMap`
-// decode used to populate the message-virtual-node settle signal's
-// `attributes_delta` so subscriber CEL `when:` predicates can match
-// against body fields
-// (`code:lib/runtime/message_delivery.go::messagePayloadAsMap`). Rimsky
-// never logs, formats with `%v`, validates beyond schema gates,
-// transforms, or includes payload bytes in error messages. Same opacity
-// discipline as
 func handleGetMessage(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		idStr := chi.URLParam(req, "id")

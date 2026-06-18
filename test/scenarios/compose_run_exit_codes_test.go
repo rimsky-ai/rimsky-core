@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// The three subtests cover the spec's @decision: exit-codes table
 // @story: script-friendly-outcome
 package scenarios
 
@@ -28,7 +27,6 @@ func TestComposeRunExitCodes_ThreeClasses(t *testing.T) {
 	stubBin := filepath.Join(binDir, "stub-executor")
 	buildRimskyCLIBinary(t, rimskyBin)
 	buildComposeStubExecutorBinary(t, stubBin)
-
 
 	t.Run("success_exit_0", func(t *testing.T) {
 		work := t.TempDir()

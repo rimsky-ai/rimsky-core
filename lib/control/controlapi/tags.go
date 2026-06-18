@@ -30,7 +30,7 @@ func validTag(s string) bool {
 }
 
 type createTagRequest struct {
-	Tag string `json:"tag"`
+	Tag      string `json:"tag"`
 	Template string `json:"template"`
 }
 

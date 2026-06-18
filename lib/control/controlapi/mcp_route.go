@@ -33,10 +33,10 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 	rr := &routerRef{}
 	deps.AuthState.mcpRouterRef = rr
 	catalog := &mcp.Catalog{
-		Registry:    actionRegistryAdapter{deps.AuthState.Registry},
-		Router:      rr,
-		Description: descriptionForTool,
-		Schemas:     builtinSchemas(),
+		Registry:         actionRegistryAdapter{deps.AuthState.Registry},
+		Router:           rr,
+		Description:      descriptionForTool,
+		Schemas:          builtinSchemas(),
 		ResolveIdentity:  IdentityFromContextOK,
 		WithProtocolSkin: WithProtocolSkin,
 	}

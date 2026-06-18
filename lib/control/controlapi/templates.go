@@ -40,8 +40,8 @@ type templateRegisterRequest struct {
 }
 
 type templateRegisterResponse struct {
-	TemplateID string   `json:"template_id"`
-	Tags       []string `json:"tags,omitempty"`
+	TemplateID         string                      `json:"template_id"`
+	Tags               []string                    `json:"tags,omitempty"`
 	ValidationWarnings []runtime.ValidationFinding `json:"validation_warnings,omitempty"`
 }
 
@@ -83,7 +83,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 	}
 	hooks := node.RegistryHooks{
 		RefValidationMode: deps.RefValidationMode,
-		KindAliases: deps.KindAliases,
+		KindAliases:       deps.KindAliases,
 	}
 	if deps.Stores != nil {
 		hooks.StoreDeclared = func(name string) bool {

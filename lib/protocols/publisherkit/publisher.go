@@ -19,8 +19,8 @@ type Logger interface {
 }
 
 type Result struct {
-	Status int
-	Err error
+	Status   int
+	Err      error
 	Rejected bool
 	Attempts int
 }
@@ -28,10 +28,10 @@ type Result struct {
 type Sleeper func(d time.Duration)
 
 type Request struct {
-	URL string
-	Envelope []byte
+	URL            string
+	Envelope       []byte
 	IdempotencyKey string
-	SensorName string
+	SensorName     string
 	SubscriptionID string
 }
 

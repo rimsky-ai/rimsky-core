@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant: cascade-emit
 // @concept: message-emitter-node
 // @concept: message
 
@@ -59,9 +58,9 @@ func emitCascadeMessageInTx(
 	candidateID := shared.UUID(uuid.New())
 
 	dedupRow, inserted, err := tables.MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
-		InstanceID: instanceID,
-		SenderKind: senderKind,
-		Sender:     sender,
+		InstanceID:     instanceID,
+		SenderKind:     senderKind,
+		Sender:         sender,
 		SenderSubject:  "",
 		IdempotencyKey: idempotencyKey,
 		MessageID:      candidateID,

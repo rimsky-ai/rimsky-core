@@ -125,8 +125,8 @@ func CheckAndFireResolution(
 	return nil
 }
 
-//	@concept: error-policy
-//	@concept: signal
+// @concept: error-policy
+// @concept: signal
 func routeHeldClaimVerbError(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	row *persistence.ClaimHandleRow, td TerminalDecision, errorClass string,

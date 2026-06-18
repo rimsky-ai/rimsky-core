@@ -4,7 +4,7 @@
 
 // @concept: message
 
-//	@concept: message
+// @concept: message
 package conformance
 
 import (

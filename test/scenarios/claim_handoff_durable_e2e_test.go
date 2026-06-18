@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	    lifetime=durable. Pins the @blessed-invariant 22 carve-out for
 package scenarios
 
 import (
@@ -43,7 +42,6 @@ func TestClaimHandoff_Durable(t *testing.T) {
 	t.Run("E_InstanceTerminationRelease", testClaimHandoffDurable_InstanceTerminationRelease)
 }
 
-// state=committed with lifetime=durable — that's the @blessed-invariant
 func testClaimHandoffDurable_CrossDispatchPersistence(t *testing.T) {
 
 	h, acquirer, _ := startDurableHarness(t, durableOpts{
@@ -54,7 +52,6 @@ func testClaimHandoffDurable_CrossDispatchPersistence(t *testing.T) {
 	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
 		"acquirer should settle fresh in D1")
 
-	// committed (Promote-not-Delete on durable per @blessed-invariant
 	requireDurableCommittedHandle(t, h, acquirer.ID)
 
 	cfg := runtime.RetentionConfig{ClaimHandlesTrailing: 30 * 24 * time.Hour}

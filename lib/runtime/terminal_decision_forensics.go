@@ -49,8 +49,8 @@ func emitTerminalForensics(
 		}
 	}
 	rec := ClaimTerminalRecord{
-		ClaimHandleID: td.ClaimHandleID,
-		RunID:         td.LineageHint.RunID,
+		ClaimHandleID:       td.ClaimHandleID,
+		RunID:               td.LineageHint.RunID,
 		OpenLineageRunRef:   td.LineageHint.RunID.String(),
 		NodeID:              td.LineageHint.NodeID,
 		FrameID:             td.LineageHint.FrameID,

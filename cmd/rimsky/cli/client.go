@@ -363,7 +363,6 @@ type CreateInstanceRequest struct {
 	TerminateAfterRun bool                   `json:"terminate_after_run,omitempty"`
 }
 
-// @source: cmd/rimsky-host-agent-proxy/state.go::bindingSpec
 type bindingSpec struct {
 	Path string `json:"path"`
 }

@@ -67,14 +67,14 @@ type terminalEvent struct {
 	Changed       bool
 	ChangeSummary string
 	// @concept: attribute
-	AttributesDel map[string]any
-	Tags       []string
-	ErrorClass string
-	Payload    map[string]any
-	ParkReason     genv1.ParkReason
-	ParkReasonNote string
+	AttributesDel   map[string]any
+	Tags            []string
+	ErrorClass      string
+	Payload         map[string]any
+	ParkReason      genv1.ParkReason
+	ParkReasonNote  string
 	ParkReasonLabel string
-	ParkResumeAt time.Time
+	ParkResumeAt    time.Time
 	// @concept: executor
 	Scratch []byte
 }
@@ -184,8 +184,6 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	if asyncAck != "" {
 		registerAsyncIfSet(dctx, asyncAck)
 		// @concept: signal
-		// @concept: async-callback-persistence
-		// @concept: dispatch-deadlines
 		if dctx.Args.Persist != nil && dctx.Args.Queue != nil {
 			maxQuietSec, maxRuntimeSec := computeEffectiveDeadlineSecs(acq.NodeDef, dctx.Args.MaxQuietPeriodDefault, dctx.Args.MaxRuntimeDefault)
 			awaitSig := signalpkg.Signal{
@@ -603,7 +601,6 @@ func computeEffectiveAttributeSchema(args RunArgs, acq *acquisition) (map[string
 	return node.MergeAttributeDefaults(execSchema, acq.TemplateAttributeDefaults, nodeSchema), execSchema, execSchemaVisible
 }
 
-// @source: lib/graph/node/template_validator.go
 func extractReadOnlyPropsLocal(schema map[string]any) map[string]bool {
 	out := map[string]bool{}
 	if schema == nil {
@@ -791,8 +788,8 @@ func fieldNames(m map[string]any) []string {
 	return out
 }
 
-//	@concept: node-subscription
-//	@concept: attribute
+// @concept: node-subscription
+// @concept: attribute
 func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]json.RawMessage {
 	var out map[string]json.RawMessage
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

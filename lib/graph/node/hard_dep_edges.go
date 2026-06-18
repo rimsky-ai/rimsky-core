@@ -2,9 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@concept: attribute
-//	@concept: cascade
-//	@concept: node-subscription
+// @concept: attribute
+// @concept: cascade
+// @concept: node-subscription
 package node
 
 import (
@@ -49,8 +49,8 @@ func BuildHardDepEdges(tmpl spec.TemplateSpec) (HardDepEdgeMap, error) {
 	return out, nil
 }
 
-//	@concept: cascade
-//	@concept: node-subscription
+// @concept: cascade
+// @concept: node-subscription
 func hardDepSendersOf(n TemplateNodeDef) []string {
 	if len(n.Subscribes) == 0 {
 		return nil

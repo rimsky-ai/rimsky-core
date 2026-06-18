@@ -17,10 +17,10 @@ import (
 
 type Matcher struct {
 	InstanceID *shared.UUID
-	NodeID *shared.UUID
-	Kind string
+	NodeID     *shared.UUID
+	Kind       string
 	KindPrefix string
-	MinCount int
+	MinCount   int
 }
 
 func (m Matcher) String() string {

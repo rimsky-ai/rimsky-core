@@ -35,20 +35,20 @@ import (
 )
 
 type Harness struct {
-	T   testing.TB
-	Ctx context.Context
+	T                  testing.TB
+	Ctx                context.Context
 	LastDeployWarnings []string
-	Pool       *pgxpool.Pool
-	Driver     persistence.Database
-	Persist    persistence.Tables
-	Queue      persistence.Queue
-	Stub       *stubexec.Stub
-	StubAddr   string
-	Scheduler  config.SchedulerHandle
-	Supervisor config.SupervisorHandle
-	ControlAPI config.ControlAPIHandle
-	ControlBase string
-	Clock shared.Clock
+	Pool               *pgxpool.Pool
+	Driver             persistence.Database
+	Persist            persistence.Tables
+	Queue              persistence.Queue
+	Stub               *stubexec.Stub
+	StubAddr           string
+	Scheduler          config.SchedulerHandle
+	Supervisor         config.SupervisorHandle
+	ControlAPI         config.ControlAPIHandle
+	ControlBase        string
+	Clock              shared.Clock
 }
 
 type HarnessOpts struct {
@@ -165,7 +165,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			MaxQuietPeriodDefault: maxQuietPeriod,
 			Stores:                opts.Stores,
 			NamedLocks:            opts.NamedLocks,
-			SupervisorID: "scenario-scheduler",
+			SupervisorID:          "scenario-scheduler",
 		})
 		if err != nil {
 			t.Fatalf("scenario: start scheduler: %v", err)
@@ -255,7 +255,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		NamedLocks:             opts.NamedLocks,
 		Executors:              executorsCfg,
 		LateBindServiceProxies: opts.LateBindServiceProxies,
-		RefValidationMode: opts.RefValidationMode,
+		RefValidationMode:      opts.RefValidationMode,
 	})
 	if err != nil {
 		t.Fatalf("scenario: start controlapi: %v", err)
@@ -562,16 +562,6 @@ func (h *Harness) MintAdminKey(name string) (plaintext, keyID string) {
 	return out.Plaintext, out.ID
 }
 
-// @source: cmd/rimsky/cli/structural_root.go::TemplateHasStructuralRoot
-// @diverged: true
-// @reason: scenario tests read the template spec straight from
-//
-//	persistence.Templates.GetByHash inside a harness Tx rather
-//	than dialing the control-api's GET /v1/templates/{hash}
-//	route, so the harness can run before the control-api is
-//	even mounted. The CLI helper has no in-process persistence
-//	handle and is the right tool for the deployed-API caller.
-//
 // @decision: structural-root-edge-injection-at-registration
 // @decision: test-harness-create-instance-wakes-roots-after-create
 func (h *Harness) templateHasStructuralRoot(templateHash string) bool {

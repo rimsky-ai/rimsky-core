@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant: spawn-no-leak-on-readiness-timeout
-
 package hostagent
 
 import (
@@ -88,7 +86,6 @@ func TestSpawnService_HappyPath(t *testing.T) {
 	}
 }
 
-// @blessed-invariant: spawn-no-leak-on-readiness-timeout
 func TestSpawnService_ReadyTimeoutReapsChild(t *testing.T) {
 	bin := buildFixture(t, "stub-no-bind")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

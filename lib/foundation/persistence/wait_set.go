@@ -12,18 +12,18 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-//	@concept: wait-set
+// @concept: wait-set
 type WaitSetRow struct {
-	FrameID       shared.UUID
-	ReceiverRunID shared.UUID
-	SenderRunID   shared.UUID
-	TopicKind string
+	FrameID           shared.UUID
+	ReceiverRunID     shared.UUID
+	SenderRunID       shared.UUID
+	TopicKind         string
 	SubscriptionScope string
-	TopicFilter json.RawMessage
-	DrainedAt *time.Time
+	TopicFilter       json.RawMessage
+	DrainedAt         *time.Time
 }
 
-//	@concept: wait-set
+// @concept: wait-set
 type WaitSetTable interface {
 	Insert(ctx context.Context, row WaitSetRow, tx Tx) error
 

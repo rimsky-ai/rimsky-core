@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant: spawn-child-reaped-on-exit — every spawned
 package compose
 
 import (
@@ -143,7 +142,6 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 				)
 				_ = s.Cmd.Process.Kill()
 			}
-			// @blessed-invariant: spawn-child-reaped-on-exit — wait
 			for _, s := range remaining {
 				if s.Exited != nil {
 					<-s.Exited
@@ -154,7 +152,6 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 	}
 }
 
-// @blessed-invariant: spawn-child-reaped-on-exit (safety-valve
 func InstallSecondSignalEscalator(sigCh <-chan os.Signal, done <-chan struct{}, services []*hostagent.SpawnedService, logger *slog.Logger) {
 	go func() {
 		select {

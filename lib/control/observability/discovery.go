@@ -46,7 +46,7 @@ type ObservabilityCapabilities struct {
 	RetentionAfterTerminalSeconds uint64          `json:"retention_after_terminal_seconds"`
 	CustomUI                      *CustomUI       `json:"custom_ui,omitempty"`
 	AdminViews                    []AdminViewDecl `json:"admin_views,omitempty"`
-	HTTPBridgeURL string `json:"http_bridge_url,omitempty"`
+	HTTPBridgeURL                 string          `json:"http_bridge_url,omitempty"`
 
 	ExpectedAttributesSchema []byte `json:"expected_attributes_schema,omitempty"`
 
@@ -57,15 +57,15 @@ type ObservabilityCapabilities struct {
 }
 
 type PeerEntry struct {
-	Name                  string `json:"name"`
-	Endpoint              string `json:"endpoint"`
-	ObservabilityEndpoint string `json:"observability_endpoint"`
-	HTTPBridgeURL string                     `json:"http_bridge_url,omitempty"`
-	Reachability  Reachability               `json:"reachability_status"`
-	Capabilities  *ObservabilityCapabilities `json:"observability_capabilities,omitempty"`
-	LastProbedAt  time.Time                  `json:"last_probed_at"`
-	LastError     string                     `json:"last_error,omitempty"`
-	TLS string `json:"tls,omitempty"`
+	Name                  string                     `json:"name"`
+	Endpoint              string                     `json:"endpoint"`
+	ObservabilityEndpoint string                     `json:"observability_endpoint"`
+	HTTPBridgeURL         string                     `json:"http_bridge_url,omitempty"`
+	Reachability          Reachability               `json:"reachability_status"`
+	Capabilities          *ObservabilityCapabilities `json:"observability_capabilities,omitempty"`
+	LastProbedAt          time.Time                  `json:"last_probed_at"`
+	LastError             string                     `json:"last_error,omitempty"`
+	TLS                   string                     `json:"tls,omitempty"`
 }
 
 type Discovery struct {

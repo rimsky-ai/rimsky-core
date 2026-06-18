@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@concept: sensor
+// @concept: sensor
 package main
 
 import (
@@ -31,22 +31,22 @@ type Watch struct {
 	TargetNode        string
 	MessageType       string
 
-	mu        sync.Mutex
-	StartedAt time.Time
+	mu              sync.Mutex
+	StartedAt       time.Time
 	LastIdempotency string
 }
 
 type SensorService struct {
 	genv1.UnimplementedPublisherServer
-	mu      sync.Mutex
-	watches map[string]*Watch
+	mu             sync.Mutex
+	watches        map[string]*Watch
 	pathToWatch    map[string]*Watch
 	router         *chi.Mux
 	rimskyEndpoint string
 	httpClient     *http.Client
 	clock          func() time.Time
 	logger         logger
-	state *stateDB
+	state          *stateDB
 }
 
 func (s *SensorService) AttachStateDB(state *stateDB) {

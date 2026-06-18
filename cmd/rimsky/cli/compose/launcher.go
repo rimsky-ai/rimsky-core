@@ -27,7 +27,6 @@ type RoleStack struct {
 
 type RoleFailure = launch.RoleFailure
 
-// @blessed-invariant: migrations-run-before-runners — split out into
 func MigratePersistence(ctx context.Context, logger *slog.Logger, configPath string) (persistence.Database, config.RimskyConfig, error) {
 	cfg, err := config.LoadRimskyConfigYAML(configPath)
 	if err != nil {
@@ -46,7 +45,6 @@ func MigratePersistence(ctx context.Context, logger *slog.Logger, configPath str
 
 var startRoleStackFn = launch.StartUnifiedStack
 
-// @blessed-invariant: migrations-run-before-runners — the persistence
 func StartRoleStack(ctx context.Context, logger *slog.Logger, configPath string, endpoint string) (*RoleStack, error) {
 	driver, cfg, err := MigratePersistence(ctx, logger, configPath)
 	if err != nil {

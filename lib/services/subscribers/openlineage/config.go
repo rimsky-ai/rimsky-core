@@ -12,12 +12,12 @@ import (
 )
 
 type Config struct {
-	RimskyDSN string
-	StateDSN string
-	BackendURL string
-	Namespace string
+	RimskyDSN    string
+	StateDSN     string
+	BackendURL   string
+	Namespace    string
 	PollInterval time.Duration
-	BatchSize int
+	BatchSize    int
 }
 
 func LoadConfig() (Config, error) {

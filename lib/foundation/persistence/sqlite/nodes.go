@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @source: lib/foundation/persistence/postgres/nodes.go
-// @diverged: true
-// @reason: parallel driver — SQLite dialect (positional ? params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
-
 package sqlite
 
 import (
@@ -159,7 +155,7 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 	return persistence.PaginatedListResult[persistence.NodeRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
-//	@concept: wait-set
+// @concept: wait-set
 func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+nodeCols+` `+nodeSelect+`
@@ -476,8 +472,6 @@ func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundations
 	return err
 }
 
-// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
-// tx-atomic.
 // @concept: cascade
 func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
 	res, err := s.q(tx).ExecContext(ctx,
@@ -507,7 +501,6 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationsha
 	return nil
 }
 
-// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 // @concept: run-scope
 func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshared.UUID, runScopeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
 	// @story: cascade-emit
@@ -580,7 +573,7 @@ func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshare
 	return nil
 }
 
-//	@concept: signal
+// @concept: signal
 func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) (bool, error) {
 	var n int
 	err := s.q(tx).QueryRowContext(ctx,
@@ -593,7 +586,6 @@ func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundations
 	return n > 0, nil
 }
 
-// @blessed-invariant: callback-determinism — Callback determinism.
 func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	var (
 		r          persistence.NodeRunForCallback

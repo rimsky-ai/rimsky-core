@@ -57,11 +57,11 @@ type acquisition struct {
 	// @concept: run-scope
 	PriorDispatchDisposition string
 
-	FrameID        shared.UUID
-	Locks          []AcquiredLock
-	NodeDef        *node.TemplateNodeDef
-	HeldSubgraphs  []node.HoldingSubgraph
-	InstanceParams map[string]any
+	FrameID                    shared.UUID
+	Locks                      []AcquiredLock
+	NodeDef                    *node.TemplateNodeDef
+	HeldSubgraphs              []node.HoldingSubgraph
+	InstanceParams             map[string]any
 	InstanceAttributeOverrides map[string]any
 
 	// @concept: attribute
@@ -69,10 +69,10 @@ type acquisition struct {
 
 	PartialLocks []AcquiredLock
 
-	UnavailableSpec claimproducer.ClaimSpec
+	UnavailableSpec  claimproducer.ClaimSpec
 	UnavailableClass string
 
-	ErroredSpec claimproducer.ClaimSpec
+	ErroredSpec        claimproducer.ClaimSpec
 	ProducerErrorClass string
 
 	SubClaims []SubClaim

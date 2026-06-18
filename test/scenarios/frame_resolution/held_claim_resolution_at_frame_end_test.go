@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// per-member terminal state (auto-terminal: `@blessed-invariant 13`).
 package frame_resolution
 
 import (

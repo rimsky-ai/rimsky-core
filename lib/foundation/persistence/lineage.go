@@ -34,7 +34,7 @@ type LineageRow struct {
 	FrameID    shared.UUID
 	ObservedAt time.Time
 	Record     json.RawMessage
-	Outcome string
+	Outcome    string
 }
 
 type LineageQuery struct {

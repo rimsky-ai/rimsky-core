@@ -63,7 +63,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 					FanOut: &tmplspec.FanOutSpec{
 						Claim:            "data",
 						PartitionRequest: `{"partition_keys":["a","b","c"]}`,
-						ErrorPolicy: tmplspec.AggregationPolicy{Kind: tmplspec.AggregationKindStrict},
+						ErrorPolicy:      tmplspec.AggregationPolicy{Kind: tmplspec.AggregationKindStrict},
 					},
 				},
 				openAttrs,

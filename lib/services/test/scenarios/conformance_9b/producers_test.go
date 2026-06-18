@@ -69,7 +69,7 @@ func (p *honestProducer) Release(_ context.Context, _ *genv1.ReleaseRequest) (*g
 type dishonestProducer struct {
 	genv1.UnimplementedClaimProducerServer
 
-	mu sync.Mutex
+	mu    sync.Mutex
 	gates map[string]*writerGate
 }
 

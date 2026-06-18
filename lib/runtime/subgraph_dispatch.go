@@ -23,11 +23,11 @@ import (
 )
 
 type SubgraphInternalCascadeArgs struct {
-	CallingNodeRunID shared.UUID
-	CallingNodeID shared.UUID
-	InstanceID shared.UUID
-	FrameID shared.UUID
-	Template *node.TemplateSpec
+	CallingNodeRunID  shared.UUID
+	CallingNodeID     shared.UUID
+	InstanceID        shared.UUID
+	FrameID           shared.UUID
+	Template          *node.TemplateSpec
 	DelegateGraphName string
 }
 
@@ -94,8 +94,8 @@ func IsSubgraphExit(tmpl *node.TemplateSpec, nodeType string) bool {
 	return false
 }
 
-//	@concept: sub-graph
-//	@concept: run-scope
+// @concept: sub-graph
+// @concept: run-scope
 func applyTerminalCompleteSubgraphCaller(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	merged map[string]any, t terminalEvent, tx persistence.Tx,
@@ -254,9 +254,9 @@ func applyTerminalCompleteSubgraphCaller(
 	return post, nil
 }
 
-//	@concept: sub-graph
-//	@concept: delegation
-//	@concept: run-scope
+// @concept: sub-graph
+// @concept: delegation
+// @concept: run-scope
 func applyTerminalCompleteSubgraphExit(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	merged map[string]any, tx persistence.Tx,

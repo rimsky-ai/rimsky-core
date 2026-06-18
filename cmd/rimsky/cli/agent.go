@@ -283,7 +283,6 @@ func readAgentPIDFrom(dir string) (int, bool, error) {
 	return pid, true, nil
 }
 
-// @source: lib/runtime/hostagent/run.go::statusSnapshot
 type statusSnapshot struct {
 	Connected bool   `json:"connected"`
 	Proxy     string `json:"proxy"`

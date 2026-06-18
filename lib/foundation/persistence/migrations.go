@@ -20,7 +20,7 @@ type Migrator struct {
 	FS        embed.FS
 	QueryHas  func(ctx context.Context, filename string) (bool, error)
 	Bootstrap func(ctx context.Context) error
-	ApplyOne func(ctx context.Context, sql string, filename string) error
+	ApplyOne  func(ctx context.Context, sql string, filename string) error
 }
 
 func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Logger) error {

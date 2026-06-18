@@ -9,7 +9,7 @@ import "sort"
 type HoldingSubgraph struct {
 	AcquirerType string
 	Alias        string
-	Members []string
+	Members      []string
 }
 
 func (h HoldingSubgraph) IsHeld() bool { return len(h.Members) > 1 }

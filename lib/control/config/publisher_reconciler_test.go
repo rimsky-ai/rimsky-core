@@ -21,7 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// @source: lib/control/config/publisher_resync_test.go:TestPublisherResyncOnStartup
 func seedInstanceForSubscriptions(t *testing.T, store persistence.Tables) shared.UUID {
 	t.Helper()
 	ctx := context.Background()

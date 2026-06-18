@@ -205,16 +205,6 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "permission denied"})
 			return
 		}
-		// first-class @concept: permission `mode` field — defaulted to
-		// ModeExecute when the entry pins no mode) and the per-request
-		// `?dry_run=true` flag. Dry-run is sticky downward: once either
-		// source says dry_run the request can never be lifted back to
-		// execute, so an attempt-only key (grant pinned to ModeDryRun)
-		// previews-but-never-commits regardless of the flag, and a flag
-		// of true forces dry-run on an otherwise-execute grant. Net rule:
-		// mode == ModeDryRun iff res.Mode == ModeDryRun || flag == true.
-		// @concept: dry-run
-		// @concept: permission
 		mode := auth.ModeExecute
 		if res.Mode == auth.ModeDryRun || r.URL.Query().Get("dry_run") == "true" {
 			mode = auth.ModeDryRun

@@ -25,7 +25,7 @@ import (
 )
 
 type PartitionDescriptor struct {
-	PartitionKey string
+	PartitionKey     string
 	SubClaimHandleID shared.UUID
 }
 
@@ -36,15 +36,15 @@ type ChildRunSpec struct {
 }
 
 type ChildExecutionInput struct {
-	ParentRunID shared.UUID
-	ParentRunScopeID shared.UUID
-	InstanceID       shared.UUID
-	FrameID          shared.UUID
-	ChildGraphName string
+	ParentRunID       shared.UUID
+	ParentRunScopeID  shared.UUID
+	InstanceID        shared.UUID
+	FrameID           shared.UUID
+	ChildGraphName    string
 	AggregationPolicy spec.AggregationPolicy
-	EntryAbsorbed bool
-	Partitions    []PartitionDescriptor
-	Children      []ChildRunSpec
+	EntryAbsorbed     bool
+	Partitions        []PartitionDescriptor
+	Children          []ChildRunSpec
 }
 
 type DispatchedChild struct {
@@ -54,8 +54,8 @@ type DispatchedChild struct {
 	PartitionKey string
 }
 
-//	@concept: child-execution
-//	@concept: run-scope
+// @concept: child-execution
+// @concept: run-scope
 func DispatchChildren(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in ChildExecutionInput,
 ) ([]DispatchedChild, error) {
@@ -136,21 +136,21 @@ func DispatchChildren(
 type ChildSettlementInput struct {
 	Policy spec.AggregationPolicy
 
-	ExitRunID shared.UUID
+	ExitRunID     shared.UUID
 	ExitNodeID    shared.UUID
 	ExitNodeAlias string
 	InstanceID    shared.UUID
-	Writeback json.RawMessage
+	Writeback     json.RawMessage
 
-	ParentClaimHandleID shared.UUID
-	ChildClaimHandleID shared.UUID
-	ChildOutcome AggregateOutcome
+	ParentClaimHandleID   shared.UUID
+	ChildClaimHandleID    shared.UUID
+	ChildOutcome          AggregateOutcome
 	ChildProducerMetadata []byte
 }
 
-//	@concept: child-execution
-//	@concept: run-scope
-//	@concept: claim-tree
+// @concept: child-execution
+// @concept: run-scope
+// @concept: claim-tree
 func SettleChildren(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in ChildSettlementInput,
 ) error {
@@ -160,7 +160,6 @@ func SettleChildren(
 	return settleClaimChainAggregate(ctx, args, tx, in)
 }
 
-// @blessed-invariant: exit-node-writeback-to-parent
 func settleCarryVerbatim(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in ChildSettlementInput,
 ) error {

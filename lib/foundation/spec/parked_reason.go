@@ -8,9 +8,9 @@ package spec
 type ParkReason string
 
 const (
-	ParkReasonUnspecified ParkReason = ""
+	ParkReasonUnspecified   ParkReason = ""
 	ParkReasonAwaitCallback ParkReason = "await_callback"
-	ParkReasonSnooze ParkReason = "snooze"
+	ParkReasonSnooze        ParkReason = "snooze"
 )
 
 func (r ParkReason) IsValid() bool {

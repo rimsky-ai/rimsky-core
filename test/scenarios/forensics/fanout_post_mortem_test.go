@@ -165,7 +165,6 @@ func seedForensicsScenario(
 	return inst.ID, frameID, runID, nodeRow.ID
 }
 
-// @source: test/scenarios/lineage/force_cancelled_lineage_test.go::seedFanOutTree
 func seedFanOutTree(
 	ctx context.Context, t *testing.T, backend persistence.Tables,
 	parentRunID, parentNodeID, frameID shared.UUID,

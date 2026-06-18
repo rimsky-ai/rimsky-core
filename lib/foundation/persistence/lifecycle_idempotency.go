@@ -20,10 +20,10 @@ const (
 type LifecycleIdempotencyState string
 
 const (
-	LifecycleIdempotencyStateRegistered LifecycleIdempotencyState = "registered"
-	LifecycleIdempotencyStateDeployed   LifecycleIdempotencyState = "deployed"
-	LifecycleIdempotencyStateUndeployed LifecycleIdempotencyState = "undeployed"
-	LifecycleIdempotencyStateCreated    LifecycleIdempotencyState = "created"
+	LifecycleIdempotencyStateRegistered       LifecycleIdempotencyState = "registered"
+	LifecycleIdempotencyStateDeployed         LifecycleIdempotencyState = "deployed"
+	LifecycleIdempotencyStateUndeployed       LifecycleIdempotencyState = "undeployed"
+	LifecycleIdempotencyStateCreated          LifecycleIdempotencyState = "created"
 	LifecycleIdempotencyStateRunScopeTerminal LifecycleIdempotencyState = "run_scope_terminal"
 )
 

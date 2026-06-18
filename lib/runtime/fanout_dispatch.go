@@ -109,20 +109,20 @@ func FanOutAggregationPolicy(def *node.TemplateNodeDef) spec.AggregationPolicy {
 	return def.FanOut.ErrorPolicy
 }
 
-//	@concept: fan-out
-//	@concept: run-scope
-//	@concept: claim-tree
+// @concept: fan-out
+// @concept: run-scope
+// @concept: claim-tree
 func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition) error {
 	if acq == nil || acq.NodeDef == nil || acq.NodeDef.FanOut == nil {
 		return fmt.Errorf("dispatchFanOutChildren: not a fan-out node")
 	}
 	policy := FanOutAggregationPolicy(acq.NodeDef)
 	in := ChildExecutionInput{
-		ParentRunID:      acq.DispatchID,
-		ParentRunScopeID: acq.RunScopeID,
-		InstanceID:       acq.InstanceID,
-		FrameID:          acq.FrameID,
-		ChildGraphName:   acq.GraphName,
+		ParentRunID:       acq.DispatchID,
+		ParentRunScopeID:  acq.RunScopeID,
+		InstanceID:        acq.InstanceID,
+		FrameID:           acq.FrameID,
+		ChildGraphName:    acq.GraphName,
 		AggregationPolicy: spec.AggregationPolicy{},
 		EntryAbsorbed:     false,
 		Partitions:        FanOutPartitions(acq.SubClaims),

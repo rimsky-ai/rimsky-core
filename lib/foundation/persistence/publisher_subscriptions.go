@@ -31,7 +31,7 @@ type PublisherSubscriptionRow struct {
 	MessageType    string
 	StartedAt      time.Time
 	State          string
-	FailureReason string
+	FailureReason  string
 }
 
 type PublisherSubscriptionsTable interface {

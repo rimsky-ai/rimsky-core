@@ -263,7 +263,6 @@ function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
   return auth;
 }
 
-// @source: lib/services/executors/claude-agent/src/server.ts (unwrapStruct + unwrapStructValue + toRecord)
 function unwrapStructValue(v: unknown): unknown {
   if (v === null || v === undefined) return null;
   if (typeof v !== "object") return v;
@@ -311,7 +310,6 @@ function toRecord(v: unknown): Record<string, unknown> {
   return v as Record<string, unknown>;
 }
 
-// @source: lib/services/executors/claude-agent/src/server.ts (unwrapStores)
 function unwrapStores(stores: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(stores)) {
@@ -336,7 +334,6 @@ function stringOrUndefined(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
-// @source: lib/services/executors/claude-agent/src/server.ts (parseCliConfig + helpers)
 function boolOrUndefined(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
 }
@@ -391,7 +388,6 @@ export function parseCliConfig(v: unknown): {
   return Object.keys(out!).length > 0 ? out : undefined;
 }
 
-// @source: lib/services/executors/claude-agent/src/server.ts (parseMcpServers)
 function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
   if (v === undefined || v === null) return undefined;
   if (!Array.isArray(v)) {
@@ -439,7 +435,6 @@ function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-// @source: lib/services/executors/claude-agent/src/server.ts (parseRequiredSignoffs)
 function parseRequiredSignoffs(
   v: unknown,
 ): { publicKey: string; path?: string }[] | undefined {
@@ -467,7 +462,6 @@ function parseRequiredSignoffs(
   return out.length > 0 ? out : undefined;
 }
 
-// @source: lib/services/executors/claude-agent/src/server.ts (parseStringRecord)
 function parseStringRecord(v: unknown): Record<string, string> | undefined {
   if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
   const out: Record<string, string> = {};

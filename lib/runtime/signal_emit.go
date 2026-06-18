@@ -13,9 +13,9 @@ import (
 	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
 )
 
-//     @concept: cascade
-//     @concept: signal
-//     @concept: wait-set
+// @concept: cascade
+// @concept: signal
+// @concept: wait-set
 func emitSignalInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	senderID foundationshared.UUID,

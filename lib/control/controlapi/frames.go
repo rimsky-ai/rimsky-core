@@ -29,8 +29,8 @@ type frameItem struct {
 	TriggeringMessageID string     `json:"triggering_message_id"`
 	StartedAt           *time.Time `json:"started_at,omitempty"`
 	EndedAt             *time.Time `json:"ended_at,omitempty"`
-	LastProgressAt *time.Time `json:"last_progress_at,omitempty"`
-	FrameTimeoutMs int64      `json:"frame_timeout_ms"`
+	LastProgressAt      *time.Time `json:"last_progress_at,omitempty"`
+	FrameTimeoutMs      int64      `json:"frame_timeout_ms"`
 
 	MessageType       string `json:"message_type,omitempty"`
 	MessageSender     string `json:"message_sender,omitempty"`

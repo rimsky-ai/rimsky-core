@@ -240,7 +240,6 @@ func (f *fakeLifecycleServer) countFor(verb string) int {
 	return n
 }
 
-
 func (f *fakeLifecycleServer) OnTemplateRegistered(_ context.Context, req *genv1.OnTemplateRegisteredRequest) (*genv1.LifecycleAck, error) {
 	f.record(lifecycleEvent{verb: "OnTemplateRegistered", templateHash: req.GetTemplateHash()})
 	return &genv1.LifecycleAck{}, nil

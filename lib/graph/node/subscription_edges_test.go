@@ -77,7 +77,7 @@ func TestBuildSubscriptionEdges_CrossCutting(t *testing.T) {
 	}
 }
 
-//	@decision: subscription-edges-only-from-explicit-block
+// @decision: subscription-edges-only-from-explicit-block
 func TestBuildSubscriptionEdges_NoImplicitEdgeFromSubstitutionRef(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "stage", Executor: "stub",
@@ -190,8 +190,8 @@ func TestParseSubstitutionDirective_EventFormRetired(t *testing.T) {
 	}
 }
 
-//	@decision: structural-root-edge-injection-at-registration
-//	@story: empty-message-wakes-roots
+// @decision: structural-root-edge-injection-at-registration
+// @story: empty-message-wakes-roots
 func TestBuildSubscriptionEdges_StructuralRootInjection(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "root-a", Executor: "stub"},
@@ -224,7 +224,7 @@ func TestBuildSubscriptionEdges_StructuralRootInjection(t *testing.T) {
 	}
 }
 
-//	@decision: structural-root-edge-injection-at-registration
+// @decision: structural-root-edge-injection-at-registration
 func TestBuildSubscriptionEdges_StructuralRootInjection_CrossCuttingOnly(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "monitor", Executor: "stub",
@@ -255,7 +255,7 @@ func TestBuildSubscriptionEdges_StructuralRootInjection_CrossCuttingOnly(t *test
 	}
 }
 
-//	@decision: structural-root-edge-injection-at-registration
+// @decision: structural-root-edge-injection-at-registration
 func TestBuildSubscriptionEdges_StructuralRootInjection_AttributeRef(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "upstream", Executor: "stub",
@@ -285,7 +285,7 @@ func TestBuildSubscriptionEdges_StructuralRootInjection_AttributeRef(t *testing.
 	}
 }
 
-//     @decision: empty-sender-key-edge-disambiguation
+// @decision: empty-sender-key-edge-disambiguation
 func TestSubscriptionEdgeMap_Match_StructuralRootDisambiguation(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "cleanup", Executor: "stub",

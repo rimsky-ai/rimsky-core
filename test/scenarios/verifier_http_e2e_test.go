@@ -63,7 +63,6 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-
 	t.Run("leg1_2xx_terminal_success_with_echo", func(t *testing.T) {
 		configuredBody := map[string]any{
 			"claim_id":   "claim-2xx-leg",

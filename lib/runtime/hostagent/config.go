@@ -13,14 +13,14 @@ import (
 )
 
 type Config struct {
-	RimskyURL string
-	APIKey string
-	ListenAddr string
-	AllowPaths []string
-	AgentLabel string
-	LogLevel string
+	RimskyURL         string
+	APIKey            string
+	ListenAddr        string
+	AllowPaths        []string
+	AgentLabel        string
+	LogLevel          string
 	HeartbeatInterval time.Duration
-	ReapGracePeriod time.Duration
+	ReapGracePeriod   time.Duration
 	// @story: host-agent-control-plane — the falsifier "status reports
 	StatusFile string
 }

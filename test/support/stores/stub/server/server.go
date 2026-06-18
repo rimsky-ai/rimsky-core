@@ -27,8 +27,8 @@ import (
 const gracefulStopBudget = 5 * time.Second
 
 type Config struct {
-	Substrate stubstore.Config
-	EnableLifecycle bool
+	Substrate            stubstore.Config
+	EnableLifecycle      bool
 	EnableDataProcessing bool
 }
 
@@ -75,8 +75,8 @@ func RunWithStore(ctx context.Context, cfg Config, st *stubstore.Store, grpcLis,
 
 type Server struct {
 	genv1.UnimplementedClaimProducerServer
-	Store          *stubstore.Store
-	DataProcessing *dataprocessing.Server
+	Store                *stubstore.Store
+	DataProcessing       *dataprocessing.Server
 	EnableDataProcessing bool
 }
 
@@ -95,7 +95,7 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 		SupportsSplitScope:     true,
 		SupportsScopesConflict: true,
 		Protocols:              protocols,
-		DeclaredErrorClasses: c.DeclaredErrorClasses,
+		DeclaredErrorClasses:   c.DeclaredErrorClasses,
 	}, nil
 }
 
@@ -173,11 +173,6 @@ func (s *Server) SplitScope(ctx context.Context, req *genv1.SplitScopeRequest) (
 	return &genv1.SplitScopeResponse{SubScopes: out}, nil
 }
 
-// ScopesConflict returns true iff a and b are byte-equal. The
-// stub-store has no producer-specific overlap semantics, so it
-// honors the trivial byte-equal default while still advertising
-// SupportsScopesConflict so test suites can exercise the wire
-// path. Per @blessed-invariant 4b's fallback semantics.
 func (s *Server) ScopesConflict(_ context.Context, req *genv1.ClaimScopesConflictRequest) (*genv1.ScopesConflictResponse, error) {
 	return &genv1.ScopesConflictResponse{Conflicts: bytes.Equal(req.GetClaimScopeA(), req.GetClaimScopeB())}, nil
 }

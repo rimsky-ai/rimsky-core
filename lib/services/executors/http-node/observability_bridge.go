@@ -28,7 +28,7 @@ func mountObservabilityBridge(mux *http.ServeMux, obs *ObservabilityServer, http
 			SupportsTraceStream:           true,
 			RetentionAfterTerminalSeconds: retentionSeconds,
 			HttpBridgeUrl:                 httpBridgeURL,
-			ExpectedAttributesSchema: []byte(`{"type":"object"}`),
+			ExpectedAttributesSchema:      []byte(`{"type":"object"}`),
 		}
 		writeProtoJSON(w, caps)
 	})

@@ -20,7 +20,7 @@ type RetentionConfig struct {
 	RecentFramesKept int
 	// @concept: frame
 	// @concept: event-log
-	TraceTrailing time.Duration
+	TraceTrailing   time.Duration
 	LineageTrailing time.Duration
 	// @concept: claim-handle
 	// @concept: claim-lifetime

@@ -42,8 +42,8 @@ var (
 	ReasonPolicyGiveUp       = TransitionReason{Kind: "policy_give_up"}
 	ReasonOperatorReset      = TransitionReason{Kind: "operator_reset"}
 	ReasonOperatorInvalidate = TransitionReason{Kind: "operator_invalidate"}
-	ReasonInfraReenqueue = TransitionReason{Kind: "infra_reenqueue"}
-	ReasonPureCascade    = TransitionReason{Kind: "pure_cascade"}
+	ReasonInfraReenqueue     = TransitionReason{Kind: "infra_reenqueue"}
+	ReasonPureCascade        = TransitionReason{Kind: "pure_cascade"}
 	ReasonDispatchImpossible = TransitionReason{Kind: "dispatch_impossible"}
 
 	ReasonAcquirePass = TransitionReason{Kind: "acquire_pass"}

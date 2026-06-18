@@ -34,9 +34,9 @@ type EventListFilter struct {
 	InstanceID *shared.UUID
 	NodeID     *shared.UUID
 	Kind       string
-	KindIn []string
-	Since  *time.Time
-	Until  *time.Time
+	KindIn     []string
+	Since      *time.Time
+	Until      *time.Time
 
 	KeyID          *string
 	KeyName        *string

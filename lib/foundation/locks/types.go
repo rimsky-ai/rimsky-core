@@ -5,6 +5,6 @@
 package locks
 
 type NamedLockSpec struct {
-	Name string
+	Name         string
 	TemplateName string
 }

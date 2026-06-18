@@ -545,7 +545,6 @@ export function parseCliConfig(v: unknown): {
   return Object.keys(out!).length > 0 ? out : undefined;
 }
 
-// @source: lib/services/executors/claude-agent/src/server.ts (parseMcpServers) — mirrored in http-bridge.ts.
 function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
   if (v === undefined || v === null) return undefined;
   if (!Array.isArray(v)) {
@@ -593,7 +592,6 @@ function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-// @source: lib/services/executors/claude-agent/src/server.ts (parseRequiredSignoffs) — mirrored in http-bridge.ts.
 function parseRequiredSignoffs(
   v: unknown,
 ): { publicKey: string; path?: string }[] | undefined {
@@ -621,7 +619,6 @@ function parseRequiredSignoffs(
   return out.length > 0 ? out : undefined;
 }
 
-// @source: lib/services/executors/claude-agent/src/server.ts (parseStringRecord) — mirrored in http-bridge.ts.
 function parseStringRecord(v: unknown): Record<string, string> | undefined {
   if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
   const out: Record<string, string> = {};

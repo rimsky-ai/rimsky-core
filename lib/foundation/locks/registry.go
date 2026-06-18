@@ -77,11 +77,6 @@ func (r *Registry) Get(name string) (ClaimProducer, bool) {
 	return p, ok
 }
 
-// @diverged: true
-// @reason: parallels runtime/executor/resolver.go::Resolver.Resolve(name, DispatchContext)
-//
-//	but uses a plain ctx + instanceID arg instead of a DispatchContext type
-//	to avoid foundation→runtime imports (banned by layer-purity).
 func (r *Registry) GetWithContext(ctx context.Context, name string, instanceID string) (ClaimProducer, bool) {
 	if p, ok := r.Get(name); ok {
 		return p, true

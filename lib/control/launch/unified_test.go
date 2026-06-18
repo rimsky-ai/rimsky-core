@@ -16,13 +16,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// @blessed-invariant: unified-stack-reverse-drain — Drain MUST invoke
-// the per-role StopFuncs in reverse of start order so the operator-
-// facing control-api stops first, before the engines under it. The
-// test records the order in which mocked stops fire and asserts the
-// reversal. Without the reversal, an executor mid-request would race
-// the supervisor's claim-loop teardown and surface a confusing 5xx to
-// the operator at the moment the verb is exiting.
 func TestUnifiedStack_DrainReversesStartOrder(t *testing.T) {
 	var (
 		mu        sync.Mutex
@@ -69,13 +62,6 @@ func TestUnifiedStack_DrainEmptyIsNoOp(t *testing.T) {
 	stack.Drain(context.Background(), time.Second)
 }
 
-// structural exhibit for @blessed-invariant: one-driver-per-process:
-// the three role-runner seams record the persistence.Database pointer
-// they receive, and the test asserts all three observed the SAME
-// pointer (driver identity). A refactor that accidentally opened a
-// per-role driver — re-introducing sqlite writer-slot contention
-// inside one process — would surface here as a pointer mismatch
-// rather than as a flaky concurrent-writer scenario test.
 func TestStartUnifiedStack_OneDriverAcrossRunners(t *testing.T) {
 	origScheduler, origSupervisor, origControlAPI := runSchedulerFn, runSupervisorFn, runControlAPIFn
 	defer func() {

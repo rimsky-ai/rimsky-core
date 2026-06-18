@@ -46,7 +46,7 @@ var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
 var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|trigger|child|messages)\.(.+)$`)
 
-//	@concept: template
+// @concept: template
 type RefValidationMode int
 
 const (
@@ -79,9 +79,9 @@ func refValidationModeRejection(refDesc string, mode RefValidationMode) string {
 type RegistryHooks struct {
 	RefValidationMode RefValidationMode
 
-	StoreDeclared func(name string) bool
+	StoreDeclared     func(name string) bool
 	NamedLockDeclared func(name string) bool
-	ExecutorDeclared func(name string) bool
+	ExecutorDeclared  func(name string) bool
 
 	ExecutorDeclaredTags func(name string) ([]string, bool)
 
@@ -285,8 +285,8 @@ func ApplyFrameResolutionDefaults(spec *TemplateSpec) {
 	}
 }
 
-//	@concept: error-policy
-//	@concept: signal
+// @concept: error-policy
+// @concept: signal
 func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks RegistryHooks, res *ValidationResult) {
 	validActions := map[string]bool{
 		"pass":                      true,
@@ -360,7 +360,7 @@ func isRuntimeSynthesizedErrorClass(className string) bool {
 	return false
 }
 
-//	@concept: signal
+// @concept: signal
 func errorClassMatchesDeclared(class string, declared []string) bool {
 	for _, d := range declared {
 		if d == class {
@@ -376,7 +376,7 @@ func errorClassMatchesDeclared(class string, declared []string) bool {
 	return false
 }
 
-//	@concept: error-policy
+// @concept: error-policy
 func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res *ValidationResult) {
 	if len(n.Stores) == 0 {
 		return
@@ -400,9 +400,9 @@ func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res
 	})
 }
 
-//	@concept: node-subscription
-//	@concept: signal
-//	@concept: message-schema
+// @concept: node-subscription
+// @concept: signal
+// @concept: message-schema
 func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int, declaredMessages map[string]struct{}, messageBodyFields map[string]map[string]struct{}, hooks RegistryHooks, tmpl *TemplateSpec, res *ValidationResult) {
 	for i, s := range n.Subscribes {
 		sbase := fmt.Sprintf("%s.subscribes[%d]", base, i)
@@ -599,8 +599,8 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 	}
 }
 
-//	@concept: attribute
-//	@concept: node-subscription
+// @concept: attribute
+// @concept: node-subscription
 func validateSubstitutionRefExistence(
 	spec *TemplateSpec,
 	declared map[string]int,
@@ -636,11 +636,11 @@ func validateSubstitutionRefExistence(
 	}
 }
 
-//	@concept: node-subscription
-//	@concept: attribute
-//	@decision: substitution-ref-coverage-required
-//	@decision: coverage-wildcard-asymmetry
-//	@decision: uncovered-substitution-error-shape
+// @concept: node-subscription
+// @concept: attribute
+// @decision: substitution-ref-coverage-required
+// @decision: coverage-wildcard-asymmetry
+// @decision: uncovered-substitution-error-shape
 func validateSubstitutionRefCoverage(tmpl *TemplateSpec, refs map[string][]substitutionRef, res *ValidationResult) {
 	if tmpl == nil {
 		return

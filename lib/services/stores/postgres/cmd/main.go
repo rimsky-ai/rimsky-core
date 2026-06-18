@@ -38,7 +38,7 @@ type yamlConfig struct {
 	AdminPort            int                       `yaml:"admin_port"`
 	SweepIntervalSeconds int                       `yaml:"sweep_interval_seconds"`
 	EnableLifecycle      bool                      `yaml:"enable_lifecycle"`
-	EnableExecutor bool `yaml:"enable_executor"`
+	EnableExecutor       bool                      `yaml:"enable_executor"`
 }
 
 type yamlPickPolicy struct {

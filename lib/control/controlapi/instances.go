@@ -67,13 +67,13 @@ func resolveNodeTags(rawTags []string, paramsBytes json.RawMessage) ([]string, e
 }
 
 type createInstanceRequest struct {
-	Template    string         `json:"template"`
-	InstanceKey *string        `json:"instance_key,omitempty"`
-	Params      map[string]any `json:"params,omitempty"`
-	AttributeOverrides map[string]any `json:"attribute_overrides,omitempty"`
-	Paused bool `json:"paused,omitempty"`
-	TerminateAfterRun bool `json:"terminate_after_run,omitempty"`
-	ServiceBindings json.RawMessage `json:"service_bindings,omitempty"`
+	Template           string          `json:"template"`
+	InstanceKey        *string         `json:"instance_key,omitempty"`
+	Params             map[string]any  `json:"params,omitempty"`
+	AttributeOverrides map[string]any  `json:"attribute_overrides,omitempty"`
+	Paused             bool            `json:"paused,omitempty"`
+	TerminateAfterRun  bool            `json:"terminate_after_run,omitempty"`
+	ServiceBindings    json.RawMessage `json:"service_bindings,omitempty"`
 }
 
 type createInstanceResponse struct {
@@ -84,24 +84,24 @@ type createInstanceResponse struct {
 }
 
 type instanceItem struct {
-	ID                            string         `json:"id"`
-	TemplateHash                  string         `json:"template_hash"`
-	InstanceKey                   *string        `json:"instance_key,omitempty"`
-	Params                        map[string]any `json:"params"`
-	AttributeOverrides            map[string]any `json:"attribute_overrides,omitempty"`
-	AttributeOverridesMatchCounts []int64        `json:"attribute_overrides_match_counts,omitempty"`
-	Paused                        bool           `json:"paused"`
-	TerminateAfterRun             bool           `json:"terminate_after_run"`
-	CreatedAt                     time.Time      `json:"created_at"`
-	TerminatedAt                  *time.Time     `json:"terminated_at,omitempty"`
-	ServiceBindings   json.RawMessage `json:"service_bindings,omitempty"`
-	CreatedByAPIKeyID string          `json:"created_by_api_key_id,omitempty"`
-	Subscriptions []instanceSubscriptionItem `json:"subscriptions,omitempty"`
+	ID                            string                     `json:"id"`
+	TemplateHash                  string                     `json:"template_hash"`
+	InstanceKey                   *string                    `json:"instance_key,omitempty"`
+	Params                        map[string]any             `json:"params"`
+	AttributeOverrides            map[string]any             `json:"attribute_overrides,omitempty"`
+	AttributeOverridesMatchCounts []int64                    `json:"attribute_overrides_match_counts,omitempty"`
+	Paused                        bool                       `json:"paused"`
+	TerminateAfterRun             bool                       `json:"terminate_after_run"`
+	CreatedAt                     time.Time                  `json:"created_at"`
+	TerminatedAt                  *time.Time                 `json:"terminated_at,omitempty"`
+	ServiceBindings               json.RawMessage            `json:"service_bindings,omitempty"`
+	CreatedByAPIKeyID             string                     `json:"created_by_api_key_id,omitempty"`
+	Subscriptions                 []instanceSubscriptionItem `json:"subscriptions,omitempty"`
 }
 
 type instanceSubscriptionItem struct {
-	ID            string `json:"id"`
-	PublisherName string `json:"publisher_name"`
+	ID            string    `json:"id"`
+	PublisherName string    `json:"publisher_name"`
 	Kind          string    `json:"kind"`
 	MessageType   string    `json:"message_type"`
 	State         string    `json:"state"`
@@ -256,8 +256,8 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			respOut           createInstanceResponse
 			existedKey        bool
 			existingOverrides map[string]any
-			fanOutBindings json.RawMessage
-			fanOutOwner *foundationshared.UUID
+			fanOutBindings    json.RawMessage
+			fanOutOwner       *foundationshared.UUID
 		)
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
@@ -276,7 +276,6 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			if vErr := validateAttributeOverrides(body.AttributeOverrides, row.Spec.Nodes, row.Spec.Graphs, deps.Executors); vErr != nil {
 				return vErr
 			}
-			// (@blessed-invariant 12).
 			if sErr := validateStaticConfigAgainstExecutorSchemas(row.Spec.Nodes, row.Spec.Defaults, deps.ExecutorCapabilities); sErr != nil {
 				return sErr
 			}
@@ -620,13 +619,6 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 				"instance_id", inst.ID.String(),
 				"error", err.Error())
 		}
-		// Per `@blessed-invariant 22` durable claim handles persist
-		// past auto-terminal; the only sanctioned release paths are the
-		// operator-driven asset delete and instance-termination cleanup.
-		// Without this, an instance with held-durable assets would leave
-		// producer-side state dangling forever. Failures are logged +
-		// retained on the row for retry rather than blocking instance
-		// deletion.
 		if deps.Stores != nil {
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 				_, rErr := runtime.ReleaseHeldDurableClaims(ctx,
@@ -873,14 +865,14 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 }
 
 type provisionArgs struct {
-	InstanceKey        *string
-	Params             map[string]any
-	AttributeOverrides map[string]any
+	InstanceKey                   *string
+	Params                        map[string]any
+	AttributeOverrides            map[string]any
 	AttributeOverridesMatchCounts []int64
-	Paused bool
-	TerminateAfterRun bool
-	ServiceBindings json.RawMessage
-	CreatedByAPIKeyID *foundationshared.UUID
+	Paused                        bool
+	TerminateAfterRun             bool
+	ServiceBindings               json.RawMessage
+	CreatedByAPIKeyID             *foundationshared.UUID
 }
 
 func provisionInstanceTx(

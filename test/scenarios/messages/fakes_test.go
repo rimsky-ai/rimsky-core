@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @source: lib/runtime/message_delivery_test.go::fakeMessagesTable
-// @diverged: false
 package messages
 
 import (

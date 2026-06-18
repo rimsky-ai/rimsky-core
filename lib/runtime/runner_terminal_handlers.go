@@ -11,10 +11,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-//	@concept: error-policy
-//	@concept: executor
-//	@concept: terminal-tag
-//	@concept: attribute
+// @concept: error-policy
+// @concept: executor
+// @concept: terminal-tag
+// @concept: attribute
 func applyTerminalError(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	resolvedAttrs map[string]any,

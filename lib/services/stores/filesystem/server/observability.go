@@ -26,7 +26,7 @@ import (
 
 type ObservabilityServer struct {
 	genv1.UnimplementedClaimProducerObservabilityServer
-	store *fsstore.Store
+	store             *fsstore.Store
 	pickPolicies      map[string]*fsstore.PickPolicy
 	root              string
 	httpBridgeURLOnce sync.Once
@@ -79,7 +79,6 @@ func (s *ObservabilityServer) GetClaim(_ context.Context, req *genv1.GetClaimReq
 	return claimRecordToDetail(rec), nil
 }
 
-//	@source: lib/services/stores/postgres/server/observability.go:StreamClaim
 func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream genv1.ClaimProducerObservability_StreamClaimServer) error {
 	history, rec, ch, unsub := s.store.Ledger().SubscribeWithSnapshot(req.GetClaimId())
 	defer unsub()
@@ -335,7 +334,6 @@ func countDir(path string) (int, error) {
 	return len(entries), nil
 }
 
-//	@source: lib/services/stores/filesystem/store/store.go:trimAtPrefix
 func trimAt(s string) string {
 	if len(s) > 0 && s[0] == '@' {
 		return s[1:]

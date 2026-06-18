@@ -17,7 +17,6 @@ import (
 )
 
 const (
-
 	fsCommitSelector  = "@content-commit"
 	fsCommitSource    = "incoming-commit"
 	fsCommitFolder    = "batch-commit"

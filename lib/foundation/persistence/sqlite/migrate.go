@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @source: lib/foundation/persistence/postgres/migrate.go
-// @diverged: true
-// @reason: parallel driver — SQLite migration dialect (positional ? params, modernc.org/sqlite, no concurrent DDL) vs Postgres (pgx, $-params, transactional DDL)
-
 package sqlite
 
 import (

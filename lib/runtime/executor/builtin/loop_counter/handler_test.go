@@ -16,11 +16,11 @@ import (
 
 func TestExecute_TagsAndDeltaAcrossBoundary(t *testing.T) {
 	cases := []struct {
-		name     string
-		max      int
-		count    int
-		wantTag  string
-		wantNew  float64
+		name    string
+		max     int
+		count   int
+		wantTag string
+		wantNew float64
 	}{
 		{name: "first_dispatch_no_count", max: 3, count: -1, wantTag: "loop", wantNew: 1},
 		{name: "below_max", max: 3, count: 1, wantTag: "loop", wantNew: 2},

@@ -107,10 +107,10 @@ func startAgent(t *testing.T, proxyAddr, ownerKeyID string) (context.CancelFunc,
 }
 
 type fixtureOpts struct {
-	withAgent bool
+	withAgent  bool
 	blindProxy bool
-	stores config.RemoteStoresConfig
-	anonymous bool
+	stores     config.RemoteStoresConfig
+	anonymous  bool
 }
 
 func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {

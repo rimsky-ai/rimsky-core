@@ -84,8 +84,8 @@ func (h *SensorObjectStoreHandle) PutObject(ctx context.Context, bucket, objectN
 func runSensorObjectStoreContainer(ctx context.Context, t testing.TB, networkName, alias, stateDSN string) testcontainers.Container {
 	t.Helper()
 	env := map[string]string{
-		"RIMSKY_SENSOR_OBJECT_STORE_PORT": "9083",
-		"RIMSKY_ENDPOINT":                 "http://rimsky:8080",
+		"RIMSKY_SENSOR_OBJECT_STORE_PORT":    "9083",
+		"RIMSKY_ENDPOINT":                    "http://rimsky:8080",
 		"RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT": sensorObjectStoreBucketRoot,
 	}
 	if stateDSN != "" {

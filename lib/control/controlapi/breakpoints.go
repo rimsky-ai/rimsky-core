@@ -162,7 +162,6 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			if err := matcher.Validate(matcher.Matcher(body.Matcher), refs, -1); err != nil {
 				return err
 			}
-			// @concept: dry-run). The tx rolls back the FOR UPDATE lock.
 			if isDryRun {
 				return errDryRunOK
 			}
@@ -257,9 +256,6 @@ func handleListBreakpointHits(deps AppDeps) http.HandlerFunc {
 			badRequest(w, mcpErr.Message)
 			return
 		}
-		// @source: lib/control/controlapi/mcp_resources.go
-		// @diverged: false
-		// @reason: identical truncation-detection idiom shared between HTTP and MCP read paths
 		var hits []persistence.BreakpointHitRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			var err error
@@ -314,7 +310,6 @@ func handleDeleteBreakpoint(deps AppDeps) http.HandlerFunc {
 			if bp == nil || bp.InstanceID != inst.ID {
 				return foundationshared.ErrBreakpointNotFound
 			}
-			// never-mutates property; @concept: dry-run).
 			if isDryRun {
 				return errDryRunOK
 			}
@@ -384,7 +379,6 @@ func handleResumeBreakpointHit(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// @concept: dry-run).
 		if WriteDryRunResponse(w, req, "would_have_resumed_breakpoint", map[string]any{
 			"hit_id": hitID.String(),
 		}) {

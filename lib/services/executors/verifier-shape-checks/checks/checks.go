@@ -26,11 +26,10 @@ type Counters struct {
 	Threshold float64
 }
 
-//	@source: lib/foundation/spec/enums.go::Severity
 type Severity string
 
 const (
-	SeverityError Severity = "error"
+	SeverityError   Severity = "error"
 	SeverityWarning Severity = "warning"
 )
 

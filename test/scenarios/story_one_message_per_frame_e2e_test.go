@@ -112,7 +112,6 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 	require.GreaterOrEqual(t, receiverRuns, N,
 		"receiver must run %d times; got %d (one-message-per-frame broken)", N, receiverRuns)
 
-
 	var msgCount int
 	h.QueryRowSQL(
 		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'ping/recheck'`,

@@ -132,7 +132,7 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-//	@concept: parked-state
+// @concept: parked-state
 func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		reasonFilter := req.URL.Query().Get("reason")

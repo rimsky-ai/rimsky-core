@@ -15,10 +15,10 @@ import (
 type MetricsRegistry struct {
 	reg *prometheus.Registry
 
-	Dispatches        *prometheus.CounterVec
-	TerminalVerdicts  *prometheus.CounterVec
-	Invalidates       *prometheus.CounterVec
-	ClaimAcquisitions *prometheus.CounterVec
+	Dispatches            *prometheus.CounterVec
+	TerminalVerdicts      *prometheus.CounterVec
+	Invalidates           *prometheus.CounterVec
+	ClaimAcquisitions     *prometheus.CounterVec
 	NamedLockAcquisitions *prometheus.CounterVec
 
 	NodesByState    *prometheus.GaugeVec

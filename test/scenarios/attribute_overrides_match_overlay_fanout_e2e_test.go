@@ -59,7 +59,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 					FanOut: &tmplspec.FanOutSpec{
 						Claim:            "data",
 						PartitionRequest: `{"partition_keys":["a","b","c"]}`,
-						ErrorPolicy: tmplspec.AggregationPolicy{Kind: "best_effort"},
+						ErrorPolicy:      tmplspec.AggregationPolicy{Kind: "best_effort"},
 					},
 				},
 				openAttrs,

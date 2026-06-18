@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// (@blessed-invariant 13, concept:claim-co-holdership) is that a
 package verifier
 
 import (
@@ -72,7 +71,6 @@ func TestHoldsOnlyAutoTerminal(t *testing.T) {
 	require.True(t, h.WaitForNodeState(coholder.ID, cascade.NodeStateFresh, 15*time.Second),
 		"co-holder did not reach fresh")
 
-	// (aggregate-completed → Commit per @blessed-invariant 13). Abandon
 	deadline := time.Now().Add(5 * time.Second)
 	var commitCount, abandonCount int
 	for time.Now().Before(deadline) {

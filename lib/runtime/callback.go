@@ -28,7 +28,6 @@ import (
 	rimskyscratch "github.com/rimsky-ai/rimsky-core/lib/graph/scratch"
 )
 
-// @blessed-invariant: callback-determinism
 type callbackAckBody struct {
 	AckStatus         string  `json:"ack_status"`
 	CurrentDispatchID *string `json:"current_dispatch_id,omitempty"`
@@ -74,29 +73,29 @@ func (r *CallbackRegistry) Pop(ackID string) (AsyncContext, bool) {
 }
 
 type CallbackServer struct {
-	Registry       *CallbackRegistry
-	Persist        persistence.Tables
-	Queue          persistence.Queue
-	AdvisoryLocker persistence.AdvisoryLocker
-	ClaimHandles   persistence.ClaimHandleTable
-	Clock          shared.Clock
-	Logger         shared.Logger
-	SupervisorID   string
-	ResumeGrace time.Duration
+	Registry                         *CallbackRegistry
+	Persist                          persistence.Tables
+	Queue                            persistence.Queue
+	AdvisoryLocker                   persistence.AdvisoryLocker
+	ClaimHandles                     persistence.ClaimHandleTable
+	Clock                            shared.Clock
+	Logger                           shared.Logger
+	SupervisorID                     string
+	ResumeGrace                      time.Duration
 	Blob                             persistence.BlobBackend
 	BlobSpillThreshold               int
 	MaxRetriesWithoutProgressDefault int
-	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
-	Metrics MetricsHook
-	LifecycleSubs         *locks.LifecycleRegistry
-	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
+	ExpectedAttributesSchemaFor      func(executorName string) (schema []byte, ok bool)
+	Metrics                          MetricsHook
+	LifecycleSubs                    *locks.LifecycleRegistry
+	LifecyclePeersForSpec            func(tplSpec node.TemplateSpec) []string
 	// @concept: data-processing
 	DataProcessors DataProcessingRegistry
 	addr           string
 	srv            *http.Server
-	serveErr chan error
-	ackMu       sync.Mutex
-	ackOutcomes map[shared.UUID]ackOutcomeRecord
+	serveErr       chan error
+	ackMu          sync.Mutex
+	ackOutcomes    map[shared.UUID]ackOutcomeRecord
 }
 
 func (c *CallbackServer) recordAckOutcome(dispatchID shared.UUID, status, phase string, _ bool) {
@@ -212,9 +211,9 @@ type asyncCallbackError struct {
 }
 
 type asyncCallbackPark struct {
-	Reason     string `json:"reason,omitempty"`
-	ReasonNote string `json:"reason_note,omitempty"`
-	ReasonLabel string `json:"reason_label,omitempty"`
+	Reason          string         `json:"reason,omitempty"`
+	ReasonNote      string         `json:"reason_note,omitempty"`
+	ReasonLabel     string         `json:"reason_label,omitempty"`
 	ResumeAt        string         `json:"resume_at,omitempty"`
 	AttributesDelta map[string]any `json:"attributes_delta,omitempty"`
 	Tags            []string       `json:"tags,omitempty"`
@@ -222,8 +221,6 @@ type asyncCallbackPark struct {
 	Scratch []byte `json:"scratch,omitempty"`
 }
 
-// @blessed-invariant: persistent-registry-survives-restart
-// @concept: async-callback-persistence
 func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 	ackID := chi.URLParam(r, "async_ack_id")
 	if ackID == "" {
@@ -412,7 +409,6 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 	return terminalEvent{}, errors.New("unreachable")
 }
 
-// @blessed-invariant: callback-honored-iff
 func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t terminalEvent) error {
 	args := RunArgs{
 		Persist:                          c.Persist,
@@ -434,19 +430,17 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		DataProcessors:                   c.DataProcessors,
 	}
 	acq := &acquisition{
-		DispatchID: ac.DispatchID,
-		NodeID:     ac.NodeID,
-		InstanceID: ac.InstanceID,
-		NodeType:   ac.NodeType,
-		Executor:   ac.Executor,
-		GraphName: "",
+		DispatchID:     ac.DispatchID,
+		NodeID:         ac.NodeID,
+		InstanceID:     ac.InstanceID,
+		NodeType:       ac.NodeType,
+		Executor:       ac.Executor,
+		GraphName:      "",
 		FrameID:        ac.FrameID,
 		Locks:          ac.AcquiredLocks,
 		NodeDef:        ac.NodeDef,
 		InstanceParams: nil,
 	}
-	// @blessed-invariant: callback-determinism
-	// @concept: run-scope
 	var ackStatus string
 	var phase string
 	rejected := false

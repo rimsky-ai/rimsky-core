@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Gate 3 — the post-commit limb of @blessed-invariant 5 (verify-before-run).
 package scenarios
 
 import (

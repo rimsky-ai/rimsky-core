@@ -20,7 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-//	@story: explicit-attribute-context-read
+// @story: explicit-attribute-context-read
 func TestStoryReadWithoutWaking(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})

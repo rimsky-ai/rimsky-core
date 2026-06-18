@@ -174,9 +174,6 @@ func truncate(s string, max int) string {
 	return s[:max-1] + "…"
 }
 
-//	@source: lib/services/executors/http-node/server.go::classifyTransportErr
-//	@diverged: true
-//	@reason: verifier-http uses the `verifier/` prefix in line with
 func classifyTransportErr(err error) string {
 	if err == nil {
 		return "verifier/network_error"

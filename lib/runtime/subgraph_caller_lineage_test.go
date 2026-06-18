@@ -137,10 +137,10 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		frameID = fid
 		callerRunID = shared.UUID(uuid.New())
 		if err := backend.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-			RunID:      callerRunID,
-			NodeID:     callerNode.ID,
-			FrameID:    frameID,
-			RunScopeID: inst.MainRunScopeID,
+			RunID:        callerRunID,
+			NodeID:       callerNode.ID,
+			FrameID:      frameID,
+			RunScopeID:   inst.MainRunScopeID,
 			ExecutorName: "",
 		}); err != nil {
 			return err
@@ -154,10 +154,10 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 	require.Equal(t, "staging", nodeDef.Delegate, "node def must carry the delegate target")
 
 	acq := &acquisition{
-		DispatchID: callerRunID,
-		NodeID:     callerNode.ID,
-		InstanceID: inst.ID,
-		NodeType:   "outer-caller",
+		DispatchID:       callerRunID,
+		NodeID:           callerNode.ID,
+		InstanceID:       inst.ID,
+		NodeType:         "outer-caller",
 		Executor:         "",
 		GraphName:        "main",
 		FrameID:          frameID,

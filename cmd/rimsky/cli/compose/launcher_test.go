@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant: migrations-run-before-runners — the
 package compose_test
 
 import (
@@ -90,7 +89,6 @@ func TestStartRoleStack_BootsAndDrains(t *testing.T) {
 	}
 }
 
-// @blessed-invariant: migrations-run-before-runners slug: the
 func TestMigrationsRunBeforeRunners(t *testing.T) {
 	runDir, endpoint, _ := setupRoleStackEnv(t)
 

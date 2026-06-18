@@ -83,7 +83,6 @@ func EnsureRunDir(root, timestamp, name string) (string, error) {
 	return "", fmt.Errorf("exhausted run-dir collision suffixes (-2..-%d) under %q; the most likely fix is to remove stale run dirs under %q", maxRunDirCollisionSuffix, base, filepath.Dir(base))
 }
 
-// @blessed-invariant: latest-symlink-no-broken-window — on platforms
 func UpdateLatestSymlink(root, runDir string) error {
 	linkDir := filepath.Join(root, ".rimsky")
 	if err := os.MkdirAll(linkDir, 0o700); err != nil {

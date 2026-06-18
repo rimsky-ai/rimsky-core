@@ -5,8 +5,8 @@
 // @concept: lineage
 // @concept: lineage-record
 
-//	@concept: lineage
-//	@concept: lineage-record
+// @concept: lineage
+// @concept: lineage-record
 package conformance
 
 import (

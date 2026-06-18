@@ -26,30 +26,30 @@ type ClaimHandleRow struct {
 	LockName       *string         `json:"lock_name,omitempty"`
 	ProducerName   *string         `json:"producer_name,omitempty"`
 	ClaimScopeData json.RawMessage `json:"claim_scope_data,omitempty"`
-	Address json.RawMessage `json:"-"`
+	Address        json.RawMessage `json:"-"`
 	// @concept: claim-co-holdership
-	Payload json.RawMessage `json:"-"`
-	Intent  *string         `json:"intent,omitempty"`
-	HolderSupervisorID *string      `json:"holder_supervisor_id,omitempty"`
-	HolderNodeID       shared.UUID  `json:"holder_node_id"`
-	ClaimedAt          time.Time    `json:"claimed_at"`
-	ExpiresAt          time.Time    `json:"expires_at"`
-	FrameID            *shared.UUID `json:"frame_id,omitempty"`
-	RealizedWriteSemantics string `json:"realized_write_semantics,omitempty"`
-	NodeRunID *shared.UUID `json:"node_run_id,omitempty"`
-	IsHeld bool `json:"is_held"`
-	ParentClaimHandleID *shared.UUID `json:"parent_claim_handle_id,omitempty"`
+	Payload                json.RawMessage `json:"-"`
+	Intent                 *string         `json:"intent,omitempty"`
+	HolderSupervisorID     *string         `json:"holder_supervisor_id,omitempty"`
+	HolderNodeID           shared.UUID     `json:"holder_node_id"`
+	ClaimedAt              time.Time       `json:"claimed_at"`
+	ExpiresAt              time.Time       `json:"expires_at"`
+	FrameID                *shared.UUID    `json:"frame_id,omitempty"`
+	RealizedWriteSemantics string          `json:"realized_write_semantics,omitempty"`
+	NodeRunID              *shared.UUID    `json:"node_run_id,omitempty"`
+	IsHeld                 bool            `json:"is_held"`
+	ParentClaimHandleID    *shared.UUID    `json:"parent_claim_handle_id,omitempty"`
 	// @concept: claim-lifetime
 	Lifetime spec.ClaimLifetime `json:"lifetime,omitempty"`
 	// @concept: claim-handle
-	State spec.ClaimHandleState `json:"state,omitempty"`
-	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
-	VersionID string `json:"version_id,omitempty"`
-	ProducerCandidateHandle []byte `json:"-"`
-	AggregationPolicy json.RawMessage `json:"aggregation_policy,omitempty"`
-	ExpectedChildrenCount int `json:"expected_children_count,omitempty"`
-	CommittedChildrenCount int `json:"committed_children_count,omitempty"`
-	AbandonedChildrenCount int `json:"abandoned_children_count,omitempty"`
+	State                   spec.ClaimHandleState `json:"state,omitempty"`
+	ResolvedAt              *time.Time            `json:"resolved_at,omitempty"`
+	VersionID               string                `json:"version_id,omitempty"`
+	ProducerCandidateHandle []byte                `json:"-"`
+	AggregationPolicy       json.RawMessage       `json:"aggregation_policy,omitempty"`
+	ExpectedChildrenCount   int                   `json:"expected_children_count,omitempty"`
+	CommittedChildrenCount  int                   `json:"committed_children_count,omitempty"`
+	AbandonedChildrenCount  int                   `json:"abandoned_children_count,omitempty"`
 }
 
 type ClaimHandleInsertInput struct {
@@ -67,12 +67,12 @@ type ClaimHandleInsertInput struct {
 	ExpiresAt              time.Time
 	FrameID                *shared.UUID
 	RealizedWriteSemantics string
-	IsHeld bool
-	ParentClaimHandleID *shared.UUID
+	IsHeld                 bool
+	ParentClaimHandleID    *shared.UUID
 	// @concept: claim-lifetime
-	Lifetime spec.ClaimLifetime
+	Lifetime                spec.ClaimLifetime
 	ProducerCandidateHandle []byte
-	AggregationPolicy json.RawMessage
+	AggregationPolicy       json.RawMessage
 }
 
 type ClaimHandleTable interface {

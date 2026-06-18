@@ -44,7 +44,6 @@ func TestFrameOriginAuditDemo_RunExitsZero(t *testing.T) {
 	}
 }
 
-// @source: lib/services/test/scenarios/cross_frame_coupling_demo_e2e_test.go::runCrossFrameDemoScript
 func runFrameOriginAuditDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string, timeout time.Duration) (string, int) {
 	t.Helper()
 	runCtx, cancel := context.WithTimeout(ctx, timeout)

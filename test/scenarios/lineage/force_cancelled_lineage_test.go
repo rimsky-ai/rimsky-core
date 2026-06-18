@@ -169,7 +169,6 @@ func seedForceCancelScenario(
 	return inst.ID, frameID, runID, nodeRow.ID
 }
 
-// @source: lib/runtime/auto_terminal_test.go::seedFanOutParentAndSubclaims
 func seedFanOutTree(
 	ctx context.Context, t *testing.T, backend persistence.Tables,
 	parentRunID, parentNodeID, frameID shared.UUID,

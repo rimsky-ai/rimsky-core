@@ -52,7 +52,6 @@ func TestAsyncCallbackHoldsFrame_EndToEnd(t *testing.T) {
 	require.Nil(t, getInstance(t, h, iid).TerminatedAt,
 		"instance must NOT be terminated while async work is outstanding, even with terminate_after_run set")
 
-
 	cbURL := "http://" + h.Supervisor.CallbackAddr() + "/v1/callback/ack-async-holds"
 	cbBody, _ := json.Marshal(map[string]any{
 		"success": map[string]any{

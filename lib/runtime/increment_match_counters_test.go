@@ -19,7 +19,7 @@ import (
 type fakeMatchCounterPersist struct {
 	txCount        int
 	incrementCalls []fakeIncrementCall
-	incrementErr error
+	incrementErr   error
 }
 
 type fakeIncrementCall struct {

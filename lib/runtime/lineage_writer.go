@@ -37,9 +37,9 @@ type SubstitutionRef struct {
 }
 
 type LeafRunRecord struct {
-	RunID   shared.UUID `json:"run_id"`
-	NodeID  shared.UUID `json:"node_id"`
-	FrameID shared.UUID `json:"frame_id"`
+	RunID              shared.UUID        `json:"run_id"`
+	NodeID             shared.UUID        `json:"node_id"`
+	FrameID            shared.UUID        `json:"frame_id"`
 	ChildKey           string             `json:"child_key,omitempty"`
 	NodeAlias          string             `json:"node_alias,omitempty"`
 	ParentRunID        string             `json:"parent_run_id,omitempty"`
@@ -54,12 +54,12 @@ type LeafRunRecord struct {
 	AttributesHash     string             `json:"attributes_hash,omitempty"`
 	ClaimScopeDataHash string             `json:"claim_scope_data_hash,omitempty"`
 	State              string             `json:"state"`
-	SettlingSignalType string            `json:"settling_signal_type"`
-	Changed            bool              `json:"changed,omitempty"`
-	TerminalKind       string            `json:"terminal_kind,omitempty"`
-	ErrorClass         string            `json:"error_class,omitempty"`
-	SubstitutionRefs   []SubstitutionRef `json:"substitution_refs,omitempty"`
-	Extra              map[string]any    `json:"extra,omitempty"`
+	SettlingSignalType string             `json:"settling_signal_type"`
+	Changed            bool               `json:"changed,omitempty"`
+	TerminalKind       string             `json:"terminal_kind,omitempty"`
+	ErrorClass         string             `json:"error_class,omitempty"`
+	SubstitutionRefs   []SubstitutionRef  `json:"substitution_refs,omitempty"`
+	Extra              map[string]any     `json:"extra,omitempty"`
 }
 
 type ClaimTerminalRecord struct {
@@ -140,10 +140,10 @@ func HashBytes(b []byte) string {
 }
 
 type LeafRunEmitInput struct {
-	InstanceID shared.UUID
-	FrameID    shared.UUID
-	RunID      shared.UUID
-	NodeID     shared.UUID
+	InstanceID         shared.UUID
+	FrameID            shared.UUID
+	RunID              shared.UUID
+	NodeID             shared.UUID
 	ChildKey           string
 	State              string
 	SettlingSignalType string
@@ -155,9 +155,9 @@ type LeafRunEmitInput struct {
 	Params             map[string]any
 	AttributesMerged   map[string]any
 	HeldClaims         []LeafRunHeldClaim
-	ParentRunID *shared.UUID
-	TemplateHash string
-	SubstitutionRefs []SubstitutionRef
+	ParentRunID        *shared.UUID
+	TemplateHash       string
+	SubstitutionRefs   []SubstitutionRef
 }
 
 func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) {

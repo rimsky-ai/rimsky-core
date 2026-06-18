@@ -16,32 +16,32 @@ import (
 )
 
 type Config struct {
-	Persist persistence.Tables
-	Queue persistence.Queue
+	Persist        persistence.Tables
+	Queue          persistence.Queue
 	AdvisoryLocker persistence.AdvisoryLocker
 	Clock          shared.Clock
 	Logger         shared.Logger
 	TickInterval   time.Duration
 	// @concept: dispatch-deadlines
-	MaxQuietPeriodDefault time.Duration
-	MaxRuntimeDefault     time.Duration
-	ClaimHandles          persistence.ClaimHandleTable
-	SupervisorID string
-	ParkedSweepInterval time.Duration
-	StoreRegistry *locks.Registry
-	BlobBackend persistence.BlobBackend
-	BlobOrphans persistence.BlobOrphanTable
+	MaxQuietPeriodDefault   time.Duration
+	MaxRuntimeDefault       time.Duration
+	ClaimHandles            persistence.ClaimHandleTable
+	SupervisorID            string
+	ParkedSweepInterval     time.Duration
+	StoreRegistry           *locks.Registry
+	BlobBackend             persistence.BlobBackend
+	BlobOrphans             persistence.BlobOrphanTable
 	OrphanBlobSweepInterval time.Duration
-	Metrics runtime.MetricsHook
-	MaxParkDuration map[string]time.Duration
+	Metrics                 runtime.MetricsHook
+	MaxParkDuration         map[string]time.Duration
 	// @concept: claim-lifetime
 	// @concept: claim-handle
 	Retention runtime.RetentionConfig
 }
 
 type Handle struct {
-	stop chan struct{}
-	done chan struct{}
+	stop                chan struct{}
+	done                chan struct{}
 	lastOrphanBlobSweep time.Time
 }
 

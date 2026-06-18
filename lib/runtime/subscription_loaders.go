@@ -2,8 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@concept: node-subscription
-//	@concept: wait-set
+// @concept: node-subscription
+// @concept: wait-set
 package runtime
 
 import (
@@ -40,11 +40,11 @@ func subscriptionEdgesForTemplate(
 	return actual.(*node.SubscriptionEdgeMap), nil
 }
 
-//	@concept: message-schema
+// @concept: message-schema
 var templateDeclaredMessageTypes sync.Map
 
-//	@decision: empty-message-as-root-trigger
-//	@story: empty-message-wakes-roots
+// @decision: empty-message-as-root-trigger
+// @story: empty-message-wakes-roots
 func declaredMessageTypesForTemplate(
 	ctx context.Context, args RunArgs, templateHash string, tx persistence.Tx,
 ) map[string]struct{} {
@@ -70,8 +70,8 @@ func declaredMessageTypesForTemplate(
 	return actual.(map[string]struct{})
 }
 
-//	@concept: cascade
-//	@concept: node-subscription
+// @concept: cascade
+// @concept: node-subscription
 var templateHardDepEdges sync.Map
 
 func hardDepEdgesForTemplate(

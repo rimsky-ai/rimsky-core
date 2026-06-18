@@ -15,8 +15,8 @@ import (
 
 const (
 	defaultSyncRPCDeadline = 30 * time.Second
-	defaultMaxQuietPeriod = time.Duration(0)
-	defaultMaxRuntime = time.Duration(0)
+	defaultMaxQuietPeriod  = time.Duration(0)
+	defaultMaxRuntime      = time.Duration(0)
 )
 
 // @concept: dispatch-deadlines

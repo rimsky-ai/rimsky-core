@@ -17,9 +17,6 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @source: lib/runtime/peer/dial.go::Dial
-// @diverged: true
-// @reason: consumption-side-isolation bars runtime/peer; the
 func DialClaimProducer(ctx context.Context, name, endpoint string) (*ClaimProducerClient, error) {
 	target := strings.TrimPrefix(endpoint, "grpc://")
 	if target == "" {

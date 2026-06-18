@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//     ReasonAnyFailure per @decision: exit-codes;
-//     complete per the spec's @decision: artifact-layout);
 // @story: one-shot-to-terminal
 // @story: audit-artifact
 // @decision: compose-driver-emits-empty-message-after-create
@@ -69,7 +67,6 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 
 	stderrStr := stderr.String()
 
-	// spec's @decision: exit-codes. A 0 here would mean the classifier
 	if rc != 1 {
 		t.Fatalf("expected exit code 1 (any-failure for mixed outcome); got %d\nstderr:\n%s", rc, stderrStr)
 	}

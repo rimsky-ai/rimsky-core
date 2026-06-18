@@ -73,7 +73,6 @@ func TestHttpNodeCrossStack(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-
 	t.Run("leg1_200_attributes_delta", func(t *testing.T) {
 		tid := h.DeployTemplate(node.TemplateSpec{
 			Name: "http-node-200", Version: "1",
@@ -180,8 +179,8 @@ func TestHttpNodeCrossStack(t *testing.T) {
 					scenario.WithAttributes(map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"url":    map[string]any{"type": "string", "source": "{{params.url}}"},
-							"method": map[string]any{"type": "string", "default": "GET"},
+							"url":               map[string]any{"type": "string", "source": "{{params.url}}"},
+							"method":            map[string]any{"type": "string", "default": "GET"},
 							"error_class_field": map[string]any{"type": "string", "default": httpNodeErrorClassField},
 						},
 					}),

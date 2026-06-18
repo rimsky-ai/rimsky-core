@@ -17,8 +17,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-//	@concept: signal
-//	@concept: node-run
+// @concept: signal
+// @concept: node-run
 func isSettledForSubstitution(senderRun *persistence.RunTreeRow) bool {
 	if senderRun == nil {
 		return false

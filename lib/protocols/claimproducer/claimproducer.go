@@ -6,16 +6,6 @@ package claimproducer
 
 import "context"
 
-// @blessed-invariant 9a: Lock state lives only in the persistence layer.
-// No ClaimProducer implementation persists lock state; producers may
-// persist data state (items-table flips, staging metadata), but the
-// question "is anyone holding lock X" is answered exclusively by
-// rimsky_claim_handles on the rimsky side.
-//
-// @blessed-invariant 9b: ClaimProducer implementations MUST NOT
-// internally serialize on lock-shaped predicates. The reader-lease
-// serialization pattern is forbidden for staged_async; honest support
-// requires snapshot delegation or native MVCC pass-through.
 type ClaimProducer interface {
 	Name() string
 

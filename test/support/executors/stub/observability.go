@@ -36,7 +36,7 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorC
 		SupportsTraceGet:              false,
 		SupportsTraceStream:           false,
 		RetentionAfterTerminalSeconds: 0,
-		ExpectedAttributesSchema: schema,
+		ExpectedAttributesSchema:      schema,
 		DeclaredTags: []string{
 			"ready",
 			"signal",

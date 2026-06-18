@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@concept: sensor
+// @concept: sensor
 package main
 
 import (
@@ -59,7 +59,7 @@ type SensorService struct {
 	clock          func() time.Time
 	logger         logger
 	tickInterval   time.Duration
-	state *stateDB
+	state          *stateDB
 }
 
 func (s *SensorService) AttachStateDB(state *stateDB) {

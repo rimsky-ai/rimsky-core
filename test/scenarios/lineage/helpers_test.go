@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @source: lib/runtime/auto_terminal_test.go (seedRunForNode, seedFrame,
-
 package lineage
 
 import (
@@ -21,7 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// @source: lib/runtime/auto_terminal_test.go::insertDeployedTemplate
 func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence.Tables, tag string) persistence.TemplateRow {
 	t.Helper()
 	sum := sha256.Sum256([]byte("lineage-forensics:" + tag))
@@ -48,7 +45,6 @@ func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence
 	return *row
 }
 
-// @source: lib/runtime/auto_terminal_test.go::seedFrame
 func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
 	_ = sourceNodeID
@@ -111,7 +107,6 @@ func seedRunRow(ctx context.Context, t *testing.T, backend persistence.Tables, n
 	return runID
 }
 
-// @source: lib/runtime/auto_terminal_test.go::countCallsOnID
 func countCallsOnID(calls []storetest.FakeCall, claimID, verb string) int {
 	n := 0
 	for _, c := range calls {

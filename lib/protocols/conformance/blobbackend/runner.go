@@ -12,13 +12,6 @@ import (
 	"sync"
 )
 
-// @source: lib/foundation/persistence/blob.go::BlobBackend
-// @diverged: true
-// @reason: rimsky's internal BlobBackend takes a typed BlobKey
-// argument and returns an opaque Handle. The conformance suite
-// only needs Write/Read/ReadRange/Delete, so the interface is
-// reduced and `Handle`/`Key` collapse to []byte hints. The cmd
-// binary adapts the concrete backends to this surface.
 type Backend interface {
 	Write(ctx context.Context, hint string, bytes []byte) (Handle, error)
 	Read(ctx context.Context, handle Handle) ([]byte, error)

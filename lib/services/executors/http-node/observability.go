@@ -39,10 +39,10 @@ type subscriber struct {
 type ObservabilityServer struct {
 	genv1.UnimplementedExecutorObservabilityServer
 
-	mu          sync.RWMutex
-	traces      map[string]*traceRecord
-	subs        map[string]map[*subscriber]struct{}
-	idleTimeout time.Duration
+	mu                sync.RWMutex
+	traces            map[string]*traceRecord
+	subs              map[string]map[*subscriber]struct{}
+	idleTimeout       time.Duration
 	httpBridgeURLOnce sync.Once
 	httpBridgeURL     string
 }

@@ -23,33 +23,33 @@ import (
 )
 
 type Config struct {
-	SupervisorID string
-	Persist persistence.Tables
-	Queue persistence.Queue
-	AdvisoryLocker persistence.AdvisoryLocker
-	Clock          shared.Clock
-	Logger         shared.Logger
-	Concurrency    int
-	LivenessInterval time.Duration
-	ClaimPollInterval time.Duration
-	Resolver          executor.Resolver
-	StoreRegistry *locks.Registry
-	NamedLocks   locks.NamedLocksConfig
-	CallbackHost string
-	CallbackPort int
+	SupervisorID          string
+	Persist               persistence.Tables
+	Queue                 persistence.Queue
+	AdvisoryLocker        persistence.AdvisoryLocker
+	Clock                 shared.Clock
+	Logger                shared.Logger
+	Concurrency           int
+	LivenessInterval      time.Duration
+	ClaimPollInterval     time.Duration
+	Resolver              executor.Resolver
+	StoreRegistry         *locks.Registry
+	NamedLocks            locks.NamedLocksConfig
+	CallbackHost          string
+	CallbackPort          int
 	CallbackAdvertiseHost string
 	CallbackAdvertisePort int
 
-	Blob persistence.BlobBackend
-	BlobSpillThreshold int
+	Blob                             persistence.BlobBackend
+	BlobSpillThreshold               int
 	MaxRetriesWithoutProgressDefault int
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
-	Metrics MetricsHook
-	MaxParkDuration map[string]time.Duration
+	Metrics                     MetricsHook
+	MaxParkDuration             map[string]time.Duration
 
-	LifecycleSubs *locks.LifecycleRegistry
-	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
+	LifecycleSubs          *locks.LifecycleRegistry
+	LifecyclePeersForSpec  func(tplSpec node.TemplateSpec) []string
 	LateBindServiceProxies map[string]string
 
 	// @concept: data-processing
@@ -60,13 +60,13 @@ type Config struct {
 }
 
 type Handle struct {
-	stop          chan struct{}
-	done          chan struct{}
-	addr          string
-	advertisedURL string
-	callbackReg *CallbackRegistry
+	stop             chan struct{}
+	done             chan struct{}
+	addr             string
+	advertisedURL    string
+	callbackReg      *CallbackRegistry
 	callbackServeErr <-chan error
-	wg sync.WaitGroup
+	wg               sync.WaitGroup
 }
 
 func (h *Handle) Shutdown(ctx context.Context) error {

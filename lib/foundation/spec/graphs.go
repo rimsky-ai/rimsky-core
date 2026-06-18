@@ -18,14 +18,14 @@ const MainGraphName = "main"
 
 type HoldsBinding struct {
 	From string `yaml:"from" json:"from"`
-	As string `yaml:"as,omitempty" json:"as,omitempty"`
+	As   string `yaml:"as,omitempty" json:"as,omitempty"`
 }
 
 type FanOutSpec struct {
-	Claim string `yaml:"claim" json:"claim"`
-	PartitionRequest string `yaml:"partition_request" json:"partition_request"`
-	Parallelism int `yaml:"parallelism,omitempty" json:"parallelism,omitempty"`
-	ErrorPolicy AggregationPolicy `yaml:"error_policy" json:"error_policy"`
+	Claim            string            `yaml:"claim" json:"claim"`
+	PartitionRequest string            `yaml:"partition_request" json:"partition_request"`
+	Parallelism      int               `yaml:"parallelism,omitempty" json:"parallelism,omitempty"`
+	ErrorPolicy      AggregationPolicy `yaml:"error_policy" json:"error_policy"`
 }
 
 // @concept: claim-lifetime

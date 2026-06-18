@@ -123,11 +123,6 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// @source: lib/runtime/callback.go::parseAsyncCallback
-// @diverged: true
-// @reason: The supervisor parses a typed body via json.Unmarshal into
-// asyncCallbackBody. The conformance receiver operates on a
-// map[string]any so test fixtures can be loose.
 func parseCallbackBody(body map[string]any) (*genv1.Outcome, error) {
 	outcomeCount := 0
 	if _, ok := body["success"]; ok {

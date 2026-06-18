@@ -17,13 +17,13 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-//	@concept: parked-state
+// @concept: parked-state
 func parkReasonStorageForm(r genv1.ParkReason) string {
 	s := strings.TrimPrefix(r.String(), "PARK_REASON_")
 	return strings.ToLower(s)
 }
 
-//	@concept: parked-state
+// @concept: parked-state
 func parkReasonFromStorageForm(s string) genv1.ParkReason {
 	upper := "PARK_REASON_" + strings.ToUpper(s)
 	if v, ok := genv1.ParkReason_value[upper]; ok {
@@ -129,12 +129,11 @@ func applyTerminalPark(
 	return post, nil
 }
 
-// @source: lib/foundation/persistence/blob_spill.go
 func shouldSpillBlob(args RunArgs, size int) bool {
 	return persistence.ShouldSpillBlob(args.Blob, args.BlobSpillThreshold, size)
 }
 
-//	@concept: signal
+// @concept: signal
 func parkTerminalSignal(t terminalEvent) signalpkg.Signal {
 	payload := map[string]any{
 		"parked_reason_label": t.ParkReasonLabel,

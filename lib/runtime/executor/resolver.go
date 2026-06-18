@@ -13,11 +13,11 @@ import (
 type Endpoint struct {
 	Transport string
 	URL       string
-	TLS string
+	TLS       string
 }
 
 type DispatchContext struct {
-	Ctx context.Context
+	Ctx        context.Context
 	InstanceID string
 	RunScopeID string
 }
@@ -65,8 +65,8 @@ func (r *StaticResolver) AcceptedNames() []string {
 }
 
 type LateBindResolver struct {
-	static         Resolver
-	lookupBindings func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error)
+	static          Resolver
+	lookupBindings  func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error)
 	lateBindProxies map[string]string
 }
 

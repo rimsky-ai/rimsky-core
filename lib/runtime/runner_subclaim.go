@@ -29,13 +29,13 @@ type AcquireSubClaimsInput struct {
 	NodeRunID           shared.UUID
 	HolderNodeID        shared.UUID
 	HolderSupervisorID  string
-	InstanceID       shared.UUID
-	FrameID          *shared.UUID
-	LivenessInterval time.Duration
-	PartitionRequest []byte
+	InstanceID          shared.UUID
+	FrameID             *shared.UUID
+	LivenessInterval    time.Duration
+	PartitionRequest    []byte
 	// @concept: claim-lifetime
-	Lifetime spec.ClaimLifetime
-	ParentIsHeld bool
+	Lifetime          spec.ClaimLifetime
+	ParentIsHeld      bool
 	AggregationPolicy spec.AggregationPolicy
 }
 
@@ -124,18 +124,18 @@ func AcquireSubClaims(
 		}
 		intent := "rw"
 		insert := persistence.ClaimHandleInsertInput{
-			ID:                  subID,
-			NodeRunID:           &in.NodeRunID,
-			LockKind:            persistence.LockKindScope,
-			ProducerName:        &in.ProducerName,
-			ClaimScopeData:      json.RawMessage(desc.ClaimScopeData),
-			Intent:              &intent,
-			HolderSupervisorID:  in.HolderSupervisorID,
-			HolderNodeID:        in.HolderNodeID,
-			ExpiresAt:           args.Clock.Now().Add(5 * in.LivenessInterval),
-			FrameID:             in.FrameID,
-			ParentClaimHandleID: &parentID,
-			Lifetime:            lifetime,
+			ID:                      subID,
+			NodeRunID:               &in.NodeRunID,
+			LockKind:                persistence.LockKindScope,
+			ProducerName:            &in.ProducerName,
+			ClaimScopeData:          json.RawMessage(desc.ClaimScopeData),
+			Intent:                  &intent,
+			HolderSupervisorID:      in.HolderSupervisorID,
+			HolderNodeID:            in.HolderNodeID,
+			ExpiresAt:               args.Clock.Now().Add(5 * in.LivenessInterval),
+			FrameID:                 in.FrameID,
+			ParentClaimHandleID:     &parentID,
+			Lifetime:                lifetime,
 			IsHeld:                  in.ParentIsHeld,
 			ProducerCandidateHandle: candidateHandle,
 		}

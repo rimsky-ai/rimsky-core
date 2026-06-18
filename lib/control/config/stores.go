@@ -60,10 +60,10 @@ const (
 )
 
 type StoreEntry struct {
-	Endpoint     string
-	Capabilities claimproducer.Capabilities
-	TLS string
-	Protocols []string
+	Endpoint              string
+	Capabilities          claimproducer.Capabilities
+	TLS                   string
+	Protocols             []string
 	ObservabilityEndpoint string
 }
 
@@ -81,10 +81,10 @@ type RemoteStoresConfig struct {
 }
 
 type ExecutorEntry struct {
-	Transport string
-	Endpoint  string
-	TLS string
-	Protocols []string
+	Transport             string
+	Endpoint              string
+	TLS                   string
+	Protocols             []string
 	ObservabilityEndpoint string
 }
 
@@ -102,9 +102,9 @@ type ExecutorsConfig struct {
 }
 
 type PublisherEntry struct {
-	Endpoint string
-	TLS string
-	Protocols []string
+	Endpoint              string
+	TLS                   string
+	Protocols             []string
 	ObservabilityEndpoint string
 }
 
@@ -141,19 +141,18 @@ func (c ExecutorsConfig) ExecutorDeclared(name string) bool {
 	return ok
 }
 
-//
 // @concept: rimsky-yml
 type RimskyConfig struct {
-	Persistence persistence.Config
-	Blob       persistence.BlobConfig
-	Stores     RemoteStoresConfig
-	NamedLocks locks.NamedLocksConfig
-	Executors  ExecutorsConfig
-	Publishers RemotePublishersConfig
-	MaxParkDuration map[string]time.Duration
-	Retention runtime.RetentionConfig
+	Persistence            persistence.Config
+	Blob                   persistence.BlobConfig
+	Stores                 RemoteStoresConfig
+	NamedLocks             locks.NamedLocksConfig
+	Executors              ExecutorsConfig
+	Publishers             RemotePublishersConfig
+	MaxParkDuration        map[string]time.Duration
+	Retention              runtime.RetentionConfig
 	LateBindServiceProxies map[string]string
-	RefValidationMode node.RefValidationMode
+	RefValidationMode      node.RefValidationMode
 }
 
 func ParseRefValidationMode(raw string) (node.RefValidationMode, error) {
@@ -179,11 +178,11 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 	}
 	expanded := os.ExpandEnv(string(raw))
 	type yamlClaimProducerEntry struct {
-		Endpoint              string   `yaml:"endpoint"`
-		TLS                   string   `yaml:"tls"`
-		Protocols             []string `yaml:"protocols"`
-		WriteSemanticsAllowed []string `yaml:"write_semantics_allowed"`
-		LegacyWriteSemantics string `yaml:"write_semantics"`
+		Endpoint                     string   `yaml:"endpoint"`
+		TLS                          string   `yaml:"tls"`
+		Protocols                    []string `yaml:"protocols"`
+		WriteSemanticsAllowed        []string `yaml:"write_semantics_allowed"`
+		LegacyWriteSemantics         string   `yaml:"write_semantics"`
 		LegacyWriteSemanticsEnvelope []string `yaml:"write_semantics_envelope"`
 		ObservabilityEndpoint        string   `yaml:"observability_endpoint"`
 	}
@@ -228,15 +227,15 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			} `yaml:"sqlite"`
 			Blob *yamlBlob `yaml:"blob"`
 		} `yaml:"persistence"`
-		ClaimProducers map[string]yamlClaimProducerEntry `yaml:"claim_producers"`
-		Stores     map[string]yamlClaimProducerEntry `yaml:"stores"`
-		NamedLocks map[string]locks.NamedLockConfig  `yaml:"named_locks"`
-		Executors  map[string]yamlExecutorEntry      `yaml:"executors"`
-		Publishers map[string]yamlPublisherEntry     `yaml:"publishers"`
-		MaxParkDuration map[string]time.Duration `yaml:"max_park_duration"`
-		Retention *yamlRetention `yaml:"retention"`
-		LateBindServiceProxies map[string]string `yaml:"late_bind_service_proxies"`
-		Templates struct {
+		ClaimProducers         map[string]yamlClaimProducerEntry `yaml:"claim_producers"`
+		Stores                 map[string]yamlClaimProducerEntry `yaml:"stores"`
+		NamedLocks             map[string]locks.NamedLockConfig  `yaml:"named_locks"`
+		Executors              map[string]yamlExecutorEntry      `yaml:"executors"`
+		Publishers             map[string]yamlPublisherEntry     `yaml:"publishers"`
+		MaxParkDuration        map[string]time.Duration          `yaml:"max_park_duration"`
+		Retention              *yamlRetention                    `yaml:"retention"`
+		LateBindServiceProxies map[string]string                 `yaml:"late_bind_service_proxies"`
+		Templates              struct {
 			RefValidationMode string `yaml:"ref_validation_mode"`
 		} `yaml:"templates"`
 	}

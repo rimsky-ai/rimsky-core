@@ -2,8 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@concept: event-log
-//	@decision: event-log-kind-enum
+// @concept: event-log
+// @decision: event-log-kind-enum
 package events
 
 import (
@@ -23,8 +23,8 @@ const (
 )
 
 type Kind struct {
-	family Family
-	op     genv1.OperationalKind
+	family     Family
+	op         genv1.OperationalKind
 	signalPath string
 }
 

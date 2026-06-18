@@ -21,7 +21,7 @@ const storePostgresImage = "rimsky-store-postgres:latest"
 
 type PostgresOnNetwork struct {
 	InternalDSN string
-	HostDSN string
+	HostDSN     string
 }
 
 func StartPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) PostgresOnNetwork {
@@ -69,10 +69,10 @@ type PostgresStorePickPolicy struct {
 }
 
 type PostgresStoreSpec struct {
-	Connection string
-	WriteSemantics string
-	PickPolicies map[string]PostgresStorePickPolicy
-	EnableExecutor bool
+	Connection           string
+	WriteSemantics       string
+	PickPolicies         map[string]PostgresStorePickPolicy
+	EnableExecutor       bool
 	SweepIntervalSeconds int
 }
 

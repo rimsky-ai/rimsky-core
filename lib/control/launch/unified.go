@@ -29,10 +29,6 @@ type UnifiedStack struct {
 
 func (s *UnifiedStack) FailCh() <-chan RoleFailure { return s.failCh }
 
-// @blessed-invariant: unified-stack-reverse-drain — the operator-
-// facing control-api stops FIRST so no new request lands while the
-// engines under it (supervisor, scheduler) are tearing down. Reversing
-// the start order is the mechanical guarantee.
 func (s *UnifiedStack) Drain(ctx context.Context, deadline time.Duration) {
 	drainCtx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
@@ -41,16 +37,12 @@ func (s *UnifiedStack) Drain(ctx context.Context, deadline time.Duration) {
 	}
 }
 
-// @blessed-invariant: one-driver-per-process
 var (
 	runSchedulerFn  = RunScheduler
 	runSupervisorFn = RunSupervisor
 	runControlAPIFn = RunControlAPI
 )
 
-// The driver is shared across all three roles per @blessed-invariant:
-// one-driver-per-process (see OpenDriverFromEnv). The caller opens
-// the driver and owns its Close.
 func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig) (*UnifiedStack, error) {
 	type roleRunner struct {
 		name string

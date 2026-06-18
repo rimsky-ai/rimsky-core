@@ -37,32 +37,32 @@ type ResolvedAction struct {
 	NewState EvaluatorState
 }
 
-//	@concept: error-policy
+// @concept: error-policy
 type DispatchDisposition string
 
 const (
-	DispositionEnd DispatchDisposition = "end"
-	DispositionRetry DispatchDisposition = "retry"
-	DispositionParkAsync DispatchDisposition = "park_async"
+	DispositionEnd           DispatchDisposition = "end"
+	DispositionRetry         DispatchDisposition = "retry"
+	DispositionParkAsync     DispatchDisposition = "park_async"
 	DispositionParkScheduled DispatchDisposition = "park_scheduled"
 )
 
-//	@concept: error-policy
+// @concept: error-policy
 type SettledColor string
 
 const (
-	ColorFresh SettledColor = "fresh"
+	ColorFresh  SettledColor = "fresh"
 	ColorFailed SettledColor = "failed"
 	ColorParked SettledColor = "parked"
 )
 
-//	@concept: error-policy
-//	@concept: signal
+// @concept: error-policy
+// @concept: signal
 type Resolution struct {
 	Signal              signal.Signal
 	DispatchDisposition DispatchDisposition
 	Color               SettledColor
-	RetryDiscardClaims bool
-	RetryDelayMs int
-	WakeAt time.Time
+	RetryDiscardClaims  bool
+	RetryDelayMs        int
+	WakeAt              time.Time
 }

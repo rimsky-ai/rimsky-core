@@ -50,8 +50,8 @@ type script struct {
 	parkReason        genv1.ParkReason
 	parkReasonNote    string
 	parkResumeAt      time.Time
-	tags []string
-	holdUntil <-chan struct{}
+	tags              []string
+	holdUntil         <-chan struct{}
 }
 
 type Stub struct {
@@ -72,7 +72,7 @@ type ObservedRequest struct {
 	DispatchID               string
 	PriorDispatchID          string
 	PriorDispatchDisposition genv1.PriorDispatchDisposition
-	CandidateHandles map[string][]byte
+	CandidateHandles         map[string][]byte
 }
 
 func New() *Stub { return &Stub{scripts: map[string]*script{}} }

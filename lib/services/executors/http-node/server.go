@@ -30,7 +30,7 @@ type Server struct {
 	cfg      Config
 	client   *http.Client
 	stubMode bool
-	obs *ObservabilityServer
+	obs      *ObservabilityServer
 }
 
 func NewServer(cfg Config) *Server {

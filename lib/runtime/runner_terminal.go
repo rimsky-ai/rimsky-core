@@ -19,10 +19,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// @blessed-invariant: callback-determinism
 type postCommitFn func(ctx context.Context)
 
-// @blessed-invariant: callback-determinism
 func applyTerminal(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	resolvedAttrs map[string]any, schema map[string]any,
@@ -85,7 +83,6 @@ func emitWorkCompleted(ctx context.Context, args RunArgs, acq *acquisition, kind
 	}
 }
 
-// @blessed-invariant: callback-determinism
 func runApplyTerminal(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	resolvedAttrs map[string]any, schema map[string]any,
@@ -251,7 +248,6 @@ func applyTerminalComplete(
 	successType := string(signalpkg.TypePath("terminal/success"))
 	settlingSignalType := &successType
 
-	// @blessed-invariant: callback-determinism
 	if err := releaseLocksInTx(ctx, args, tx, acq, true, false); err != nil {
 		return nil, err
 	}
@@ -422,9 +418,9 @@ func applyTerminalComplete(
 	return post, nil
 }
 
-//	@concept: cascade
-//	@concept: signal
-//	@concept: wait-set
+// @concept: cascade
+// @concept: signal
+// @concept: wait-set
 func cascadeSubscribersStaleInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	senderID foundationshared.UUID,
@@ -599,7 +595,6 @@ func cascadeSubscribersStaleInTxWithVisited(
 						}
 					}
 				}
-				// @blessed-invariant: affirm-node-run-row
 				var receiverRunID foundationshared.UUID
 				if skipAffirm {
 					existingID, hasInFlight, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
@@ -653,8 +648,8 @@ func cascadeSubscribersStaleInTxWithVisited(
 	return nil
 }
 
-//	@concept: cascade
-//	@concept: attribute
+// @concept: cascade
+// @concept: attribute
 func pullForceRefreshUpstreams(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	receiver persistence.NodeRow,
@@ -819,7 +814,7 @@ func pullForceRefreshUpstreams(
 	return nil
 }
 
-//	@concept: wait-set
+// @concept: wait-set
 func drainWaitSetOnSettled(
 	ctx context.Context, args RunArgs, tx persistence.Tx, frameID, senderRunID foundationshared.UUID,
 ) error {

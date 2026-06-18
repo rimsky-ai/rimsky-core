@@ -30,40 +30,40 @@ const (
 )
 
 type AccessAttemptedPayload struct {
-	KeyID         *shared.UUID    `json:"key_id"`
-	KeyName       string          `json:"key_name"`
-	IdentityKind  IdentityKind    `json:"identity_kind"`
-	ProtocolSkin  string          `json:"protocol_skin"`
-	Action        string          `json:"action"`
-	RequestPath   string          `json:"request_path"`
-	RequestMethod string          `json:"request_method"`
-	RequestParams json.RawMessage `json:"request_params,omitempty"`
-	RequestParamsInvalid bool   `json:"request_params_invalid,omitempty"`
-	ResponseStatus       int    `json:"response_status"`
-	Mode                 Mode   `json:"mode,omitempty"`
-	Executed             bool   `json:"executed"`
-	DurationMS           int64  `json:"duration_ms"`
-	ClientIP             string `json:"client_ip,omitempty"`
-	UserAgent            string `json:"user_agent,omitempty"`
+	KeyID                *shared.UUID    `json:"key_id"`
+	KeyName              string          `json:"key_name"`
+	IdentityKind         IdentityKind    `json:"identity_kind"`
+	ProtocolSkin         string          `json:"protocol_skin"`
+	Action               string          `json:"action"`
+	RequestPath          string          `json:"request_path"`
+	RequestMethod        string          `json:"request_method"`
+	RequestParams        json.RawMessage `json:"request_params,omitempty"`
+	RequestParamsInvalid bool            `json:"request_params_invalid,omitempty"`
+	ResponseStatus       int             `json:"response_status"`
+	Mode                 Mode            `json:"mode,omitempty"`
+	Executed             bool            `json:"executed"`
+	DurationMS           int64           `json:"duration_ms"`
+	ClientIP             string          `json:"client_ip,omitempty"`
+	UserAgent            string          `json:"user_agent,omitempty"`
 }
 
 type AccessDeniedPayload struct {
-	KeyID         *shared.UUID    `json:"key_id"`
-	KeyName       *string         `json:"key_name"`
-	IdentityKind  *IdentityKind   `json:"identity_kind"`
-	ProtocolSkin  string          `json:"protocol_skin"`
-	Action        *string         `json:"action"`
-	RequestPath   string          `json:"request_path"`
-	RequestMethod string          `json:"request_method"`
-	RequestParams json.RawMessage `json:"request_params,omitempty"`
-	RequestParamsInvalid bool         `json:"request_params_invalid,omitempty"`
-	ResponseStatus       int          `json:"response_status"`
-	Mode                 *Mode        `json:"mode"`
-	Executed             bool         `json:"executed"`
-	DurationMS           int64        `json:"duration_ms"`
-	ClientIP             string       `json:"client_ip,omitempty"`
-	UserAgent            string       `json:"user_agent,omitempty"`
-	DenialReason         DenialReason `json:"denial_reason"`
+	KeyID                *shared.UUID    `json:"key_id"`
+	KeyName              *string         `json:"key_name"`
+	IdentityKind         *IdentityKind   `json:"identity_kind"`
+	ProtocolSkin         string          `json:"protocol_skin"`
+	Action               *string         `json:"action"`
+	RequestPath          string          `json:"request_path"`
+	RequestMethod        string          `json:"request_method"`
+	RequestParams        json.RawMessage `json:"request_params,omitempty"`
+	RequestParamsInvalid bool            `json:"request_params_invalid,omitempty"`
+	ResponseStatus       int             `json:"response_status"`
+	Mode                 *Mode           `json:"mode"`
+	Executed             bool            `json:"executed"`
+	DurationMS           int64           `json:"duration_ms"`
+	ClientIP             string          `json:"client_ip,omitempty"`
+	UserAgent            string          `json:"user_agent,omitempty"`
+	DenialReason         DenialReason    `json:"denial_reason"`
 }
 
 type KeyCreatedPayload struct {

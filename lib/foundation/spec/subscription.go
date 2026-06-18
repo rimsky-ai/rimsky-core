@@ -4,7 +4,7 @@
 
 package spec
 
-//	@concept: node-subscription
+// @concept: node-subscription
 type SubscriptionEntry struct {
 	Node string `yaml:"node,omitempty" json:"node,omitempty"`
 

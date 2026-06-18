@@ -38,8 +38,8 @@ func (e *BreakpointInfraError) Unwrap() error { return e.Cause }
 
 // @concept: breakpoint
 type CheckpointContext struct {
-	InstanceID shared.UUID
-	NodeID shared.UUID
+	InstanceID       shared.UUID
+	NodeID           shared.UUID
 	DispatchID       shared.UUID
 	FrameID          shared.UUID
 	Executor         string
@@ -48,11 +48,11 @@ type CheckpointContext struct {
 	ChildKey         string
 	MergedAttributes map[string]any
 	Checkpoint       persistence.BreakpointCheckpoint
-	TerminalSignal *signalpkg.Signal
-	EffectiveSchema map[string]any
-	NodeRunSnapshot map[string]any
-	HeldClaims      []map[string]any
-	OpenWaitSet     []map[string]any
+	TerminalSignal   *signalpkg.Signal
+	EffectiveSchema  map[string]any
+	NodeRunSnapshot  map[string]any
+	HeldClaims       []map[string]any
+	OpenWaitSet      []map[string]any
 }
 
 // @concept: breakpoint

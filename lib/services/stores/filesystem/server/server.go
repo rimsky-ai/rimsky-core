@@ -28,10 +28,10 @@ import (
 const gracefulStopBudget = 5 * time.Second
 
 type Config struct {
-	Root          string
-	PickPolicies  map[string]*fsstore.PickPolicy
-	SweepInterval time.Duration
-	HTTPBridgeURL string
+	Root            string
+	PickPolicies    map[string]*fsstore.PickPolicy
+	SweepInterval   time.Duration
+	HTTPBridgeURL   string
 	EnableLifecycle bool
 }
 
@@ -99,9 +99,6 @@ type Server struct {
 	store *fsstore.Store
 }
 
-// @source: lib/services/stores/postgres/server/server.go:producerDeclaredErrorClasses
-// @diverged: true
-// @reason: the filesystem store transmits a single class (no swap staging).
 func producerDeclaredErrorClasses() []string {
 	return []string{
 		fsstore.RootUnavailableClass,
@@ -164,7 +161,6 @@ func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1
 	return &genv1.ReleaseResponse{}, nil
 }
 
-// @source: lib/services/stores/postgres/server/server.go:classedStatus
 func classedStatus(err error) error {
 	if err == nil {
 		return nil

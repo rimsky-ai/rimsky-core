@@ -10,13 +10,13 @@ import (
 )
 
 type Config struct {
-	Host         string
-	GRPCPort     int
-	HTTPPort     int
-	TimeoutMs    int
-	MaxBodyBytes int
-	StubMode     bool
-	HTTPBridgeURL string
+	Host            string
+	GRPCPort        int
+	HTTPPort        int
+	TimeoutMs       int
+	MaxBodyBytes    int
+	StubMode        bool
+	HTTPBridgeURL   string
 	ErrorClassField string
 }
 

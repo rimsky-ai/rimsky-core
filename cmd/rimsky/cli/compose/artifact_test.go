@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant: latest-symlink-no-broken-window — concurrent readers of
-
 package compose
 
 import (
@@ -207,7 +205,6 @@ func TestUpdateLatestSymlink_OverwritesExisting(t *testing.T) {
 	}
 }
 
-// @blessed-invariant: latest-symlink-no-broken-window property at
 func TestUpdateLatestSymlink_ConcurrentFirstInstall(t *testing.T) {
 	tmp := t.TempDir()
 	const writers = 8

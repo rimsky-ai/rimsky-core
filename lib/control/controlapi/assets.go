@@ -43,19 +43,17 @@ func registerAssetsRoutes(r chi.Router, deps AppDeps) {
 	r.Delete("/instances/{id}/assets/{alias}", gate(deps, "asset:delete", handleDeleteAsset(deps)))
 }
 
-// intentionally omitted per `@blessed-invariant 20` — operators read
-// `scope`, `producer_name`, `version_id`; never the wire address.
 type assetItem struct {
 	Alias        string          `json:"alias"`
 	ClaimID      string          `json:"claim_id"`
 	ProducerName string          `json:"producer_name"`
 	Scope        json.RawMessage `json:"scope,omitempty"`
 	VersionID    string          `json:"version_id,omitempty"`
-	State        string    `json:"state"`
-	Lifetime     string    `json:"lifetime"`
-	ClaimedAt    time.Time `json:"claimed_at"`
-	HolderNodeID string    `json:"holder_node_id"`
-	NodeType     string    `json:"node_type,omitempty"`
+	State        string          `json:"state"`
+	Lifetime     string          `json:"lifetime"`
+	ClaimedAt    time.Time       `json:"claimed_at"`
+	HolderNodeID string          `json:"holder_node_id"`
+	NodeType     string          `json:"node_type,omitempty"`
 }
 
 func handleListAssets(deps AppDeps) http.HandlerFunc {
@@ -370,9 +368,6 @@ func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 		}
 		items := make([]map[string]any, 0, len(resp.Versions))
 		for _, v := range resp.Versions {
-			// @constraint: `producer_metadata` is opaque bytes per @blessed-invariant
-			// 20-class; surface as raw JSON when valid, otherwise base64
-			// is implicit via the JSON-encoded byte slice.
 			items = append(items, map[string]any{
 				"version_id":          v.VersionID,
 				"committed_at_unix_s": v.CommittedAtUnixS,
@@ -528,8 +523,6 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 				}
 			}
 		}
-		// @blessed-invariant 4 (post-refactor): non-active-row deletions
-		// are guarded by absence + the row-discovery query filter.
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			return deps.Persist.ClaimHandles().DeleteResolved(ctx, row.ID, tx)
 		})

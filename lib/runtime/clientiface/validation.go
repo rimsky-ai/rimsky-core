@@ -74,5 +74,5 @@ type UnreachableValidatorPolicy string
 
 const (
 	UnreachableValidatorPermissiveWarn UnreachableValidatorPolicy = "permissive_warn"
-	UnreachableValidatorStrict UnreachableValidatorPolicy = "strict"
+	UnreachableValidatorStrict         UnreachableValidatorPolicy = "strict"
 )

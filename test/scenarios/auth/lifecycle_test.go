@@ -73,10 +73,10 @@ func newAuthFixtureOpts(t *testing.T, withObservability bool) *authFixture {
 		Logger:   shared.SilentLogger{},
 	}
 	deps := controlapi.AppDeps{
-		Persist: d.Tables(),
-		Queue:   d.Queue(),
-		Clock:   clock,
-		Logger:  shared.SilentLogger{},
+		Persist:       d.Tables(),
+		Queue:         d.Queue(),
+		Clock:         clock,
+		Logger:        shared.SilentLogger{},
 		LifecycleSubs: locks.NewLifecycleRegistry(),
 		AuthState:     state,
 	}
@@ -633,7 +633,6 @@ func TestSweepRotationGrace_InvalidatesAnonCache(t *testing.T) {
 func TestAnonymousModePredicateCache_InvalidatesOnMint(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
-
 
 	ctx := context.Background()
 	anon, err := f.state.IsAnonymousMode(ctx)

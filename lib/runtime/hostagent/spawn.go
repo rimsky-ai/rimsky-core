@@ -38,20 +38,19 @@ func (a *agent) runSpawn(ctx context.Context, sp *genv1.Spawn) {
 }
 
 type SpawnServiceParams struct {
-	BinaryPath string
-	Args []string
-	Cwd string
-	Env []string
+	BinaryPath   string
+	Args         []string
+	Cwd          string
+	Env          []string
 	ReadyTimeout time.Duration
 }
 
 type SpawnedService struct {
-	Cmd *exec.Cmd
+	Cmd    *exec.Cmd
 	Port   int
 	Exited <-chan struct{}
 }
 
-// @blessed-invariant: spawn-no-leak-on-readiness-timeout
 func SpawnService(ctx context.Context, params SpawnServiceParams) (*SpawnedService, error) {
 	port, err := FreeLocalPort()
 	if err != nil {
@@ -85,7 +84,6 @@ func SpawnService(ctx context.Context, params SpawnServiceParams) (*SpawnedServi
 	}
 
 	if !waitPortReady(ctx, port, exited, readyTimeout) {
-		// @blessed-invariant: spawn-no-leak-on-readiness-timeout
 		killProcess(cmd)
 		<-exited
 		return nil, fmt.Errorf("child did not bind port %d within %s", port, readyTimeout)

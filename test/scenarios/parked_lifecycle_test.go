@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-
 package scenarios
 
 import (
@@ -111,7 +110,6 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 15*time.Second),
 		"worker should land in failed after park_timeout")
 }
-
 
 func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	t.Parallel()

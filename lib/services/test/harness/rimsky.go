@@ -39,15 +39,15 @@ type RimskyEndpoint struct {
 type Option func(*configBuilder)
 
 type configBuilder struct {
-	claimProducers  map[string]producerCfg
-	executors       map[string]executorCfg
-	publishers      map[string]publisherCfg
-	namedLocks      map[string]int
-	hostAccessPorts []int
-	existingNetwork string
-	blob *blobCfg
-	extraEnv map[string]string
-	sqlite bool
+	claimProducers    map[string]producerCfg
+	executors         map[string]executorCfg
+	publishers        map[string]publisherCfg
+	namedLocks        map[string]int
+	hostAccessPorts   []int
+	existingNetwork   string
+	blob              *blobCfg
+	extraEnv          map[string]string
+	sqlite            bool
 	refValidationMode string
 }
 
@@ -63,12 +63,12 @@ type blobCfg struct {
 type producerCfg struct {
 	endpoint              string
 	writeSemanticsAllowed []string
-	extraProtocols []string
+	extraProtocols        []string
 }
 
 type executorCfg struct {
-	endpoint  string
-	transport string
+	endpoint       string
+	transport      string
 	extraProtocols []string
 }
 
@@ -359,12 +359,12 @@ func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, ya
 func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT testing.TB, cb *configBuilder, yamlBytes []byte, networkName string) (testcontainers.Container, string, string) {
 	t.Helper()
 	env := map[string]string{
-		"RIMSKY_CONFIG":            "/etc/rimsky/rimsky.yml",
-		"RIMSKY_SUPERVISOR_CONFIG": "/etc/rimsky/supervisor-config.yml",
-		"RIMSKY_CONTROL_API_HOST":  "0.0.0.0",
-		"RIMSKY_CONTROL_API_PORT":  "8080",
+		"RIMSKY_CONFIG":                             "/etc/rimsky/rimsky.yml",
+		"RIMSKY_SUPERVISOR_CONFIG":                  "/etc/rimsky/supervisor-config.yml",
+		"RIMSKY_CONTROL_API_HOST":                   "0.0.0.0",
+		"RIMSKY_CONTROL_API_PORT":                   "8080",
 		"RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST": "rimsky",
-		"RIMSKY_OBSERVABILITY_REFRESH_INTERVAL": "5s",
+		"RIMSKY_OBSERVABILITY_REFRESH_INTERVAL":     "5s",
 	}
 	for k, v := range cb.extraEnv {
 		env[k] = v

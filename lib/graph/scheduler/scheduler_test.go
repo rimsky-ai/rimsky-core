@@ -203,7 +203,6 @@ func TestScheduler_ReadySweep_EnqueuesExecutorNodes(t *testing.T) {
 	assert.Equal(t, 1, count, "expected a dispatch row for the ready node")
 }
 
-// @blessed-invariant: orphan-claim-cutoff-five-times-heartbeat-timeout
 func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

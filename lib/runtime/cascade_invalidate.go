@@ -24,9 +24,9 @@ var invalidationCascadeSignal = signalpkg.Signal{
 	},
 }
 
-//	@concept: cascade
-//	@concept: wait-set
-//	@story: upstream-pull-on-invalidate
+// @concept: cascade
+// @concept: wait-set
+// @story: upstream-pull-on-invalidate
 func walkCascadeForInvalidatedNode(
 	ctx context.Context, sb persistence.Tables, queue persistence.Queue, tx persistence.Tx,
 	logger shared.Logger,
@@ -74,8 +74,8 @@ func walkCascadeForInvalidatedNode(
 		invalidationCascadeSignal)
 }
 
-//	@concept: cascade
-//	@concept: attribute
+// @concept: cascade
+// @concept: attribute
 func stalemarkAndEnqueueInFrame(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	target *persistence.NodeRow, targetRunScopeID shared.UUID, frameID shared.UUID,

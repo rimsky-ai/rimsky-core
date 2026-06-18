@@ -94,7 +94,6 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 						},
 					},
 				},
-				// @deliberate: Sorted acquisition order (@blessed-invariant 3) is
 				scenario.WithStores(
 					scenario.WriteClaimRef("store-a", "@items"),
 					scenario.WriteClaimRef("store-b", "@queue"),

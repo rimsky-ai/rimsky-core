@@ -146,7 +146,6 @@ func LoadSiblingBlocks(path string) (*SiblingBlocks, error) {
 	}, nil
 }
 
-// @source: dockerfiles/all-in-one.supervisor-config.yml — the
 const syntheticSupervisorYAML = `# Default supervisor tuning baked into the rimsky-all-in-one image and copied
 # to /etc/rimsky/supervisor-config.yml at build time. Loaded by the supervisor
 # process via RIMSKY_SUPERVISOR_CONFIG; deployment-shape config

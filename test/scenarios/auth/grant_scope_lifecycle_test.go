@@ -133,7 +133,6 @@ func requireOK(t *testing.T, code int, body map[string]any, what string) {
 func TestGrantScope_TemplateDeploy(t *testing.T) {
 	h := newScopeLifecycleHarness(t)
 
-
 	t.Run("in-scope tag-form admits deploy", func(t *testing.T) {
 		name := "deploy-tag-in-" + randomNoun(t)
 		hash := registerOnly(t, h.f, h.adminKey, name, "analytics")
@@ -218,7 +217,6 @@ func TestGrantScope_TemplateUndeploy(t *testing.T) {
 
 func TestGrantScope_TemplateDeregister(t *testing.T) {
 	h := newScopeLifecycleHarness(t)
-
 
 	t.Run("in-scope tag-form admits deregister", func(t *testing.T) {
 		name := "dereg-tag-in-" + randomNoun(t)

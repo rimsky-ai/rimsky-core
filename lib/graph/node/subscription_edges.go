@@ -2,9 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@concept: node-subscription
-//	@concept: signal
-//	@concept: cascade
+// @concept: node-subscription
+// @concept: signal
+// @concept: cascade
 package node
 
 import (
@@ -17,7 +17,7 @@ import (
 )
 
 type SubscriptionEdge struct {
-	ReceiverNodeType string
+	ReceiverNodeType  string
 	TypePattern       signal.TypePath
 	WhenExpr          *signal.CompiledPredicate
 	SubscriptionScope string
@@ -88,7 +88,7 @@ func (m *SubscriptionEdgeMap) Insert(senderNodeType string, edge SubscriptionEdg
 	}
 }
 
-//	@decision: empty-sender-key-edge-disambiguation
+// @decision: empty-sender-key-edge-disambiguation
 type senderBoundFilter int
 
 const (
@@ -311,12 +311,12 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 	return false
 }
 
-//	@concept: node-subscription
-//	@concept: signal
-//	@concept: message-schema
-//	@concept: cascade
-//	@decision: structural-root-edge-injection-at-registration
-//	@story: empty-message-wakes-roots
+// @concept: node-subscription
+// @concept: signal
+// @concept: message-schema
+// @concept: cascade
+// @decision: structural-root-edge-injection-at-registration
+// @story: empty-message-wakes-roots
 func BuildSubscriptionEdges(
 	tmpl spec.TemplateSpec,
 	substitutionRefs map[string][]substitutionRef,
@@ -414,7 +414,7 @@ func edgeFromMessageRef(receiverType string) SubscriptionEdge {
 }
 
 type substitutionRef struct {
-	SenderNodeType string
+	SenderNodeType    string
 	TopicKind         string
 	Name              string
 	RefLiteral        string
@@ -524,14 +524,14 @@ func parseMessageDirective(body string) (messageRef, bool) {
 	return messageRef{MessageType: mtype, Field: field}, true
 }
 
-//	@concept: node-subscription
+// @concept: node-subscription
 type SubstitutionRefSpec struct {
 	SenderNodeType string
 	TopicKind      string
 	Name           string
 }
 
-//	@concept: node-subscription
+// @concept: node-subscription
 func SubstitutionRefsFromAttributes(n TemplateNodeDef) []SubstitutionRefSpec {
 	refs := parseSubstitutionRefsFromAttributes(n)
 	out := make([]SubstitutionRefSpec, 0, len(refs))
@@ -545,7 +545,7 @@ func SubstitutionRefsFromAttributes(n TemplateNodeDef) []SubstitutionRefSpec {
 	return out
 }
 
-//	@concept: node-subscription
+// @concept: node-subscription
 func UpstreamNodeTypesFromAttributes(n TemplateNodeDef) []string {
 	seen := make(map[string]struct{})
 	for _, ref := range parseSubstitutionRefsFromAttributes(n) {
@@ -564,8 +564,8 @@ func UpstreamNodeTypesFromAttributes(n TemplateNodeDef) []string {
 	return out
 }
 
-//	@concept: node-subscription
-//	@decision: substitution-ref-coverage-required
+// @concept: node-subscription
+// @decision: substitution-ref-coverage-required
 func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 	var out []substitutionRef
 	type dedupKey struct {

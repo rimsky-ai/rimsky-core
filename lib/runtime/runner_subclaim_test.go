@@ -119,9 +119,9 @@ func (c *tickClock) Sleep(ctx context.Context, d time.Duration) error {
 }
 
 type fakeDataProcessingClient struct {
-	mu     sync.Mutex
-	name   string
-	begins []runtime.BeginCandidateInput
+	mu              sync.Mutex
+	name            string
+	begins          []runtime.BeginCandidateInput
 	beginHandleFunc func(callIdx int, in runtime.BeginCandidateInput) []byte
 
 	commits   []runtime.CommitCandidateInput

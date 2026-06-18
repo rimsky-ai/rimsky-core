@@ -22,10 +22,10 @@ import (
 const storeFilesystemImage = "rimsky-store-filesystem:latest"
 
 type FilesystemStoreSpec struct {
-	PickPolicies map[string]FilesystemPickPolicy `yaml:"pick_policies"`
-	SweepIntervalSeconds int `yaml:"sweep_interval_seconds"`
-	SeedFolders [][]string
-	AdvertiseHTTPBridge bool
+	PickPolicies         map[string]FilesystemPickPolicy `yaml:"pick_policies"`
+	SweepIntervalSeconds int                             `yaml:"sweep_interval_seconds"`
+	SeedFolders          [][]string
+	AdvertiseHTTPBridge  bool
 }
 
 type FilesystemPickPolicy struct {
@@ -39,8 +39,8 @@ type FilesystemPickPolicy struct {
 
 type FilesystemStoreEndpoint struct {
 	InternalEndpoint string
-	HostDir string
-	HostHTTPBridge string
+	HostDir          string
+	HostHTTPBridge   string
 }
 
 func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias string, spec FilesystemStoreSpec) FilesystemStoreEndpoint {

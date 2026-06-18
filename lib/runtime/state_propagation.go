@@ -125,7 +125,7 @@ func walkUpwards(
 			inputs[i] = ChildState{
 				State:              c.State,
 				SettlingSignalType: sigType,
-				Changed: true,
+				Changed:            true,
 			}
 		}
 		result := Aggregate(inputs, parent.AggregationPolicy)

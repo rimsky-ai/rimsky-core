@@ -475,7 +475,6 @@ func TestSubstitute_Messages(t *testing.T) {
 	})
 
 	t.Run("error-message-does-not-leak-payload", func(t *testing.T) {
-		// @blessed-invariant: message-inertness — error messages must
 		sentinel := "SENTINEL-DO-NOT-LEAK"
 		sentinelCtx := ResolveContext{
 			TriggerMessagePayload: mustJSON(t, map[string]any{"value": sentinel}),

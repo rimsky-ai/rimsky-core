@@ -19,16 +19,16 @@ import (
 )
 
 type ParkedSweepArgs struct {
-	Persist        persistence.Tables
-	Queue          persistence.Queue
-	Clock          shared.Clock
-	Logger         shared.Logger
-	SupervisorID   string
-	ClaimHandles   persistence.ClaimHandleTable
-	AdvisoryLocker persistence.AdvisoryLocker
-	StoreRegistry  *locks.Registry
-	Limit int
-	Metrics MetricsHook
+	Persist          persistence.Tables
+	Queue            persistence.Queue
+	Clock            shared.Clock
+	Logger           shared.Logger
+	SupervisorID     string
+	ClaimHandles     persistence.ClaimHandleTable
+	AdvisoryLocker   persistence.AdvisoryLocker
+	StoreRegistry    *locks.Registry
+	Limit            int
+	Metrics          MetricsHook
 	PerReasonMaxPark map[string]time.Duration
 }
 

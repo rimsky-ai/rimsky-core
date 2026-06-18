@@ -21,7 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// @source: lib/services/test/scenarios/cli_example_spec_e2e_test.go::instanceIDLine
 var onboardingInstanceIDLine = regexp.MustCompile(`(?m)^instance_id=([0-9a-fA-F-]{36})\s*$`)
 
 func TestOnboardingDemo_RunReachesTerminal(t *testing.T) {
@@ -102,7 +101,6 @@ func runDemoScript(t *testing.T, ctx context.Context, scriptPath, binPath, baseU
 	return combined, exitErr.ExitCode()
 }
 
-// @source: lib/services/test/scenarios/atomic_staging/conformance_claimproducer_cli_test.go::buildRimskyCLI
 func buildOnboardingRimskyCLI(t *testing.T, binPath string) {
 	t.Helper()
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/rimsky")

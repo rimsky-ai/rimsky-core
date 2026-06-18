@@ -15,11 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// @source: lib/foundation/persistence/conformance/claimant_guard.go:seedClaimedGuardRun
-// @diverged: true
-// @reason: takes the node id as a parameter so one test can hold
-// several concurrently-parked runs (the in-flight unique index allows
-// only one in-flight run per (node, run scope)).
 func seedClaimedRunForNode(
 	ctx context.Context, t *testing.T, d persistence.Database,
 	fix fixtureSet, nodeID shared.UUID, supID string,

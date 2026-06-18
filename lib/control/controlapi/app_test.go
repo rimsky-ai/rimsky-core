@@ -32,7 +32,7 @@ type harness struct {
 	driver  persistence.Database
 	persist persistence.Tables
 	stores  *locks.Registry
-	logger *shared.CapturingLogger
+	logger  *shared.CapturingLogger
 }
 
 func newHarness(t *testing.T) (*harness, func()) {

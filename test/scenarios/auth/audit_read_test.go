@@ -329,7 +329,6 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 		}
 	}
 
-
 	created := findRowMatching(rows, "auth.key_created", func(p map[string]any) bool {
 		kid, _ := p["key_id"].(string)
 		return kid == revokeeKeyID

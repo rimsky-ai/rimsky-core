@@ -30,7 +30,7 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 		Stores: config.RemoteStoresConfig{
 			Stores: map[string]config.StoreEntry{
 				"fanout-store": {
-					Endpoint: "grpc://" + endpoint,
+					Endpoint:     "grpc://" + endpoint,
 					Protocols:    []string{config.ProtocolClaimProducer, claimproducer.ProtocolDataProcessing},
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 				},

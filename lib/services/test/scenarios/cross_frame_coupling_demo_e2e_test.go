@@ -48,7 +48,6 @@ func TestCrossFrameCouplingDemo_RunExitsZero(t *testing.T) {
 	requireCrossFrameInstanceEmittedIterate(t, ep, 60*time.Second)
 }
 
-// @source: lib/services/test/scenarios/onboarding_demo_e2e_test.go::runDemoScript
 func runCrossFrameDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string, timeout time.Duration) (string, int) {
 	t.Helper()
 	runCtx, cancel := context.WithTimeout(ctx, timeout)

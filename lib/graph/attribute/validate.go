@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant 12 — Attributes validate twice.
-
 package attributes
 
 import (
@@ -18,7 +16,7 @@ import (
 type ErrSchemaValidation struct {
 	Phase   string
 	Message string
-	Cause error
+	Cause   error
 }
 
 func (e *ErrSchemaValidation) Error() string {

@@ -7,16 +7,16 @@ package spec
 import "fmt"
 
 type AggregationPolicy struct {
-	Kind string `yaml:"kind" json:"kind"`
-	CancelSiblings bool `yaml:"cancel_siblings,omitempty" json:"cancel_siblings,omitempty"`
-	MaxFailures int `yaml:"max_failures,omitempty" json:"max_failures,omitempty"`
+	Kind           string `yaml:"kind" json:"kind"`
+	CancelSiblings bool   `yaml:"cancel_siblings,omitempty" json:"cancel_siblings,omitempty"`
+	MaxFailures    int    `yaml:"max_failures,omitempty" json:"max_failures,omitempty"`
 }
 
 const (
-	AggregationKindStrict     = "strict"
-	AggregationKindThreshold  = "threshold"
-	AggregationKindBestEffort = "best_effort"
-	AggregationKindFirst      = "first"
+	AggregationKindStrict        = "strict"
+	AggregationKindThreshold     = "threshold"
+	AggregationKindBestEffort    = "best_effort"
+	AggregationKindFirst         = "first"
 	AggregationKindCarryVerbatim = "carry_verbatim"
 )
 

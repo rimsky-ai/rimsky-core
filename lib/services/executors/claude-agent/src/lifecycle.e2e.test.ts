@@ -2,8 +2,6 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// @reason: CliRunner is mocked so the suite runs in CI without spawning the
-
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import pino from "pino";
 import { runAgent } from "./agent-run.js";

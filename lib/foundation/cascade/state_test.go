@@ -52,7 +52,7 @@ func TestTransitionTable(t *testing.T) {
 			"pure_cascade":        NodeStateFresh,
 			"dispatch_impossible": NodeStateFailed,
 			"acquire_pass":        NodeStateFresh,
-			"policy_give_up": NodeStateFailed,
+			"policy_give_up":      NodeStateFailed,
 		},
 		NodeStateRunning: {
 			"handler_complete": NodeStateFresh,

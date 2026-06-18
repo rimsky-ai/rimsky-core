@@ -11,6 +11,7 @@ import (
 )
 
 // @concept: terminal-resolution.
+//
 //	@concept: error-policy
 func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) {
 	if acq.NodeDef == nil {
@@ -61,7 +62,7 @@ const acquireUnavailableSyntheticClass = "acquire/unavailable"
 
 const producerAcquireErrorFallbackClass = "acquire/producer_error"
 
-//	@concept: error-policy
+// @concept: error-policy
 func handleAcquireProducerError(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) {
 	if acq.NodeDef == nil {
 		return

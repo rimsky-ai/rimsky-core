@@ -4,7 +4,10 @@
     { "tag": "@story:",    "file_template": ".ok-planner/design/stories/{slug}.md" },
     { "tag": "@decision:", "file_template": ".ok-planner/design/decisions/{slug}.md" }
   ],
-  "ignore": ["lib/protocols/proto/v1/gen/"],
+  "ignore": [
+    "lib/protocols/proto/v1/gen/",
+    ".ok-planner/sketches/"
+  ],
   "checks": {
     "comment_hygiene": true,
     "citation_resolution": true

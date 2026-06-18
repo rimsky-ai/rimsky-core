@@ -55,7 +55,6 @@ func TestCascadeSignalBlind_E2E(t *testing.T) {
 	t.Run("terminal_success_with_tag_filter__per_sender", testCascadeTerminalSuccessWithTagFilterPerSender)
 }
 
-
 func testCascadeTerminalSuccessPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("sender").Success(map[string]any{"k": 1}, true, "ok")
@@ -90,7 +89,6 @@ func testCascadeTerminalSuccessPerSender(t *testing.T) {
 		"audit row for terminal/success must land in rimsky_events")
 }
 
-
 func testCascadeTerminalSuccessCrossCutting(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("sender").Success(map[string]any{"k": 1}, true, "ok")
@@ -124,7 +122,6 @@ func testCascadeTerminalSuccessCrossCutting(t *testing.T) {
 	require.True(t, h.WaitForEventKind(sender.ID, "terminal/success", 10*time.Second),
 		"audit row for terminal/success must land in rimsky_events")
 }
-
 
 func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -207,7 +204,6 @@ func testCascadeTerminalErrorGiveUpCrossCutting(t *testing.T) {
 		"audit row for terminal/error/<class> must land in rimsky_events")
 }
 
-
 func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("sender").Error("pass_class", map[string]any{"hint": "absolve"})
@@ -247,7 +243,6 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 	require.True(t, h.WaitForEventKind(sender.ID, "terminal/error/stub/pass_class", 10*time.Second),
 		"audit row for terminal/error/<class> must land in rimsky_events under pass")
 }
-
 
 func testCascadeAttributeChangedPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -290,7 +285,6 @@ func testCascadeAttributeChangedPerSender(t *testing.T) {
 	require.True(t, h.WaitForEventKind(sender.ID, "attribute/score/changed", 10*time.Second),
 		"audit row for attribute/<key>/changed must land in rimsky_events")
 }
-
 
 func testCascadeTerminalSuccessWithTagFilterPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})

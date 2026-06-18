@@ -233,7 +233,7 @@ func TestCreateMessage_SenderKindPublisherActiveSubscriptionSucceeds(t *testing.
 		"type":                      "system/invalidate",
 		"sender_kind":               "publisher",
 		"publisher_subscription_id": subID,
-		"sender": "ignored-by-trust",
+		"sender":                    "ignored-by-trust",
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
 	require.Equal(t, http.StatusCreated, resp.status, resp.body)
 	msgID, _ := resp.body["message_id"].(string)
@@ -315,7 +315,7 @@ func TestCreateMessage_SenderKindInvalidBadRequest(t *testing.T) {
 
 	instID := newInstanceForMessages(t, h, "invalid-kind")
 	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"type": "system/invalidate",
+		"type":        "system/invalidate",
 		"sender_kind": "sensor",
 	})
 	require.Equal(t, http.StatusBadRequest, status)
@@ -479,12 +479,6 @@ func newInstanceWithMessageSchema(t *testing.T, h *harness, tag string) string {
 	return id
 }
 
-// persistence-layer fetch" rule (`@blessed-invariant: 21` + `concept:
-// message-schema`'s "the body remains inert at receipt"): a payload that
-// does NOT satisfy the declared body_schema is admitted at receipt with
-// HTTP 201. Receivers reading `{{messages.<type>.<field>}}` would fail
-// substitution at dispatch via the existing attribute-validation gate;
-// the receipt path stays inert.
 func TestCreateMessage_AdmitsPayloadFailingBodySchema(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -523,8 +517,8 @@ func TestCreateMessage_AcceptsPayloadMatchingBodySchema(t *testing.T) {
 	require.NotEmpty(t, msgID)
 }
 
-//	@story: empty-message-wakes-roots
-//	@decision: empty-message-as-root-trigger
+// @story: empty-message-wakes-roots
+// @decision: empty-message-as-root-trigger
 func TestCreateMessage_EmptyTypeAdmittedAsImplicitEntry(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -569,8 +563,8 @@ func TestCreateMessage_EmptyTypeAdmittedAsImplicitEntry(t *testing.T) {
 		"the frame's triggering_message_id must point at the empty-typed envelope")
 }
 
-//	@story: empty-message-wakes-roots
-//	@decision: empty-message-as-root-trigger
+// @story: empty-message-wakes-roots
+// @decision: empty-message-as-root-trigger
 func TestCreateMessage_UndeclaredTypeRefused_SurfacesImplicitTypes(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

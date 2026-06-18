@@ -20,24 +20,24 @@ import (
 )
 
 type RunnerResult struct {
-	Ran bool
-	Async bool
+	Ran        bool
+	Async      bool
 	AsyncAckID string
 	NodeID     shared.UUID
 	DispatchID shared.UUID
 }
 
 type RunArgs struct {
-	Persist persistence.Tables
-	Queue persistence.Queue
+	Persist        persistence.Tables
+	Queue          persistence.Queue
 	AdvisoryLocker persistence.AdvisoryLocker
-	ClaimHandles persistence.ClaimHandleTable
-	StoreRegistry *locks.Registry
-	NamedLocks locks.NamedLocksConfig
+	ClaimHandles   persistence.ClaimHandleTable
+	StoreRegistry  *locks.Registry
+	NamedLocks     locks.NamedLocksConfig
 
-	Clock        shared.Clock
-	Logger       shared.Logger
-	SupervisorID string
+	Clock             shared.Clock
+	Logger            shared.Logger
+	SupervisorID      string
 	AcceptedExecutors []string
 	AcceptedStores    []string
 
@@ -45,22 +45,19 @@ type RunArgs struct {
 	Resolver    executor.Resolver
 	CallbackURL string
 
-	LivenessInterval time.Duration
-	ResumeGrace time.Duration
+	LivenessInterval      time.Duration
+	ResumeGrace           time.Duration
 	SelectCandidatesLimit int
 
-	Blob persistence.BlobBackend
+	Blob               persistence.BlobBackend
 	BlobSpillThreshold int
 
 	MaxRetriesWithoutProgressDefault int
 
-	// @concept: dispatch-deadlines
 	SyncRPCDeadlineDefault time.Duration
 
-	// @concept: dispatch-deadlines
 	MaxQuietPeriodDefault time.Duration
 
-	// @concept: dispatch-deadlines
 	MaxRuntimeDefault time.Duration
 
 	// @concept: attribute
@@ -73,8 +70,8 @@ type RunArgs struct {
 
 	DataProcessors DataProcessingRegistry
 
-	LifecycleSubs *locks.LifecycleRegistry
-	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
+	LifecycleSubs          *locks.LifecycleRegistry
+	LifecyclePeersForSpec  func(tplSpec node.TemplateSpec) []string
 	LateBindServiceProxies map[string]string
 
 	PostCommitHook func(ctx context.Context)
@@ -116,29 +113,29 @@ func metricsOf(args RunArgs) MetricsHook {
 }
 
 type AsyncContext struct {
-	NodeID        shared.UUID
-	InstanceID    shared.UUID
-	DispatchID    shared.UUID
-	SupervisorID  string
-	StoreRegistry *locks.Registry
-	FrameID shared.UUID
-	AcquiredLocks []AcquiredLock
-	NodeType string
-	Executor string
-	NodeDef *node.TemplateNodeDef
+	NodeID             shared.UUID
+	InstanceID         shared.UUID
+	DispatchID         shared.UUID
+	SupervisorID       string
+	StoreRegistry      *locks.Registry
+	FrameID            shared.UUID
+	AcquiredLocks      []AcquiredLock
+	NodeType           string
+	Executor           string
+	NodeDef            *node.TemplateNodeDef
 	ResolvedAttributes map[string]any
-	AttributesSchema map[string]any
+	AttributesSchema   map[string]any
 }
 
 type AcquiredLock struct {
-	Spec any
-	ClaimHandleID shared.UUID
-	ClaimResult claimproducer.ClaimResult
-	Producer locks.ClaimProducer
-	Alias string
-	IsHeld bool
+	Spec                    any
+	ClaimHandleID           shared.UUID
+	ClaimResult             claimproducer.ClaimResult
+	Producer                locks.ClaimProducer
+	Alias                   string
+	IsHeld                  bool
 	ProducerCandidateHandle []byte
-	UnavailableClass string
+	UnavailableClass        string
 }
 
 // @concept: supervisor (this claim-and-execute cycle is the supervisor's
@@ -304,7 +301,6 @@ func applyAttributeFailure(
 	class, eventKind := classifyAttributeFailure(err)
 	emitAttributeFailureEvent(ctx, args, acq.NodeID, acq.InstanceID,
 		eventKind, extractDirective(err), "attribute", "", err.Error())
-	// @blessed-invariant: callback-determinism
 	var postCommit postCommitFn
 	if txErr := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pc, perr := applyErrorPolicy(ctx, args, acq, class,

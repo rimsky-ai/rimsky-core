@@ -17,18 +17,18 @@ import (
 )
 
 type SchedulerConfig struct {
-	Driver persistence.Database
-	Clock  shared.Clock
-	Logger shared.Logger
-	TickInterval          time.Duration
-	MaxQuietPeriodDefault time.Duration
-	Stores RemoteStoresConfig
-	NamedLocks locks.NamedLocksConfig
-	SupervisorID string
-	Blob persistence.BlobBackend
+	Driver                  persistence.Database
+	Clock                   shared.Clock
+	Logger                  shared.Logger
+	TickInterval            time.Duration
+	MaxQuietPeriodDefault   time.Duration
+	Stores                  RemoteStoresConfig
+	NamedLocks              locks.NamedLocksConfig
+	SupervisorID            string
+	Blob                    persistence.BlobBackend
 	OrphanBlobSweepInterval time.Duration
-	Metrics runtime.MetricsHook
-	Retention runtime.RetentionConfig
+	Metrics                 runtime.MetricsHook
+	Retention               runtime.RetentionConfig
 }
 
 type SchedulerHandle interface {
@@ -61,17 +61,16 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		return nil, fmt.Errorf("StartScheduler: Driver.Coordinator() returned nil")
 	}
 	inner := scheduler.Config{
-		Persist:               persistStore,
-		Queue:                 persistQueue,
-		AdvisoryLocker:        coordinator,
-		Clock:                 cfg.Clock,
-		Logger:                cfg.Logger,
-		TickInterval:          cfg.TickInterval,
-		MaxQuietPeriodDefault: cfg.MaxQuietPeriodDefault,
-		ClaimHandles:          persistStore.ClaimHandles(),
-		SupervisorID:          cfg.SupervisorID,
-		// claims (@blessed-invariant 13).
-		StoreRegistry: registry,
+		Persist:                 persistStore,
+		Queue:                   persistQueue,
+		AdvisoryLocker:          coordinator,
+		Clock:                   cfg.Clock,
+		Logger:                  cfg.Logger,
+		TickInterval:            cfg.TickInterval,
+		MaxQuietPeriodDefault:   cfg.MaxQuietPeriodDefault,
+		ClaimHandles:            persistStore.ClaimHandles(),
+		SupervisorID:            cfg.SupervisorID,
+		StoreRegistry:           registry,
 		BlobBackend:             cfg.Blob,
 		BlobOrphans:             persistStore.BlobOrphans(),
 		OrphanBlobSweepInterval: cfg.OrphanBlobSweepInterval,

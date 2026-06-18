@@ -29,11 +29,11 @@ import (
 const gracefulStopBudget = 5 * time.Second
 
 type Config struct {
-	Connection     string
-	WriteSemantics claimproducer.WriteSemantics
-	PickPolicies   map[string]*pgsstore.PickPolicy
-	SweepInterval  time.Duration
-	HTTPBridgeURL string
+	Connection      string
+	WriteSemantics  claimproducer.WriteSemantics
+	PickPolicies    map[string]*pgsstore.PickPolicy
+	SweepInterval   time.Duration
+	HTTPBridgeURL   string
 	EnableLifecycle bool
 	// @concept: executor
 	EnableExecutor bool

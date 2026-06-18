@@ -22,7 +22,6 @@ import (
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
-// inert-bytes contract (@blessed-invariant 20): rimsky must surface
 const commitResponseStampedVersion = "v-base-commit-7"
 
 var commitResponseStampedMetadata = []byte("opaque\x00producer-bytes")

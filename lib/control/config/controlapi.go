@@ -27,18 +27,18 @@ import (
 )
 
 type ControlAPIConfig struct {
-	Driver persistence.Database
-	Clock  shared.Clock
-	Logger shared.Logger
-	Host   string
-	Port   int
-	Stores RemoteStoresConfig
-	NamedLocks locks.NamedLocksConfig
-	Executors ExecutorsConfig
-	Publishers RemotePublishersConfig
-	Metrics runtime.MetricsHook
+	Driver                 persistence.Database
+	Clock                  shared.Clock
+	Logger                 shared.Logger
+	Host                   string
+	Port                   int
+	Stores                 RemoteStoresConfig
+	NamedLocks             locks.NamedLocksConfig
+	Executors              ExecutorsConfig
+	Publishers             RemotePublishersConfig
+	Metrics                runtime.MetricsHook
 	LateBindServiceProxies map[string]string
-	RefValidationMode node.RefValidationMode
+	RefValidationMode      node.RefValidationMode
 }
 
 type ControlAPIHandle interface {
@@ -56,7 +56,7 @@ type controlAPIHandle struct {
 	terminator      *controlapi.InstanceTerminator
 	cancelLoops     context.CancelFunc
 	cancelDiscovery context.CancelFunc
-	peerClosers []func()
+	peerClosers     []func()
 }
 
 func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
@@ -207,13 +207,13 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 				Discovery: disc,
 			})
 		},
-		Metrics:        cfg.Metrics,
-		Publishers:     publisherReg,
-		Validators:     validationReg,
-		DataProcessors: dataProcessorReg,
+		Metrics:                cfg.Metrics,
+		Publishers:             publisherReg,
+		Validators:             validationReg,
+		DataProcessors:         dataProcessorReg,
 		LateBindServiceProxies: cfg.LateBindServiceProxies,
-		RefValidationMode: cfg.RefValidationMode,
-		KindAliases: buildKindAliases(),
+		RefValidationMode:      cfg.RefValidationMode,
+		KindAliases:            buildKindAliases(),
 	}
 	app := controlapi.NewApp(deps)
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))

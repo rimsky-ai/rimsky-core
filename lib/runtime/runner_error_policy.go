@@ -130,8 +130,7 @@ func isRetryKind(kind string) bool {
 	return kind == "retry" || kind == "discard_claims_then_retry"
 }
 
-// @blessed-invariant: state-machine-writes-single-tx
-//	@concept: wait-set
+// @concept: wait-set
 func applyResolvedAction(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	acq *acquisition, prior *persistence.NodeRow, resolved node.ResolvedAction,
@@ -325,8 +324,8 @@ func requiredStoresForAcq(acq *acquisition) []string {
 	return node.RequiredStores(*acq.NodeDef)
 }
 
-//	@concept: error-policy
-//	@concept: signal
+// @concept: error-policy
+// @concept: signal
 func buildResolution(
 	resolved node.ResolvedAction,
 	errorClass string,
@@ -365,7 +364,7 @@ func buildResolution(
 	}
 }
 
-//	@concept: signal
+// @concept: signal
 func errorPolicySignal(errorClass string, errorPayload map[string]any, tags []string, resolvedKind string, retriesSoFar int, delayMs int) signalpkg.Signal {
 	switch resolvedKind {
 	case "retry", "discard_claims_then_retry":

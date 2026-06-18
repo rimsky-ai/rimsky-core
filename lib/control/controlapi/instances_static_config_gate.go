@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// inputs, so they stay validated at dispatch (@blessed-invariant 12 —
-// attributes validate twice). For the static part, this gate is the
-// early, create-time enforcement and the dispatch pass becomes
-// defense-in-depth.
-//
 // @concept: instance
 package controlapi
 
@@ -47,22 +42,6 @@ func (e *staticConfigGateError) validationErrorEntry() map[string]string {
 	}
 }
 
-// validated at dispatch (@blessed-invariant 12). The executor schema's
-// top-level `required` is stripped before validating because the static
-// bag is a proper subset of the dispatch bag (source-bound and
-// executor-written properties are absent), so enforcing `required` here
-// would fire false-positive missing-property errors. This mirrors the
-// registration-time defaults-bag pass.
-//
-// Schema visibility: a node whose referenced executor's schema is not
-// visible (lookup returns ok=false / empty) is skipped here — the
-// dispatch-time executor_schema_unavailable gate is the loud backstop
-// for a genuinely-missing schema. In practice instantiation runs after
-// the template is deployed and the executor has handshaked, so the
-// schema is visible for every referenced executor (the spec's
-// "all referenced services exist at instantiation" precondition).
-//
-// @source: lib/graph/node/template_validator.go::validateCompositionAgainstExecutor
 func validateStaticConfigAgainstExecutorSchemas(
 	nodes []nodepkg.TemplateNodeDef,
 	defaults *nodepkg.TemplateDefaults,
@@ -110,7 +89,6 @@ func lookupExecutorSchema(
 	return schema, true
 }
 
-// @source: lib/graph/node/template_validator.go::validateCompositionAgainstExecutor
 func composeStaticConfigBag(n nodepkg.TemplateNodeDef, defaults *nodepkg.TemplateDefaults) map[string]any {
 	bag := map[string]any{}
 	if defaults != nil && defaults.Attributes != nil {
@@ -138,7 +116,6 @@ func composeStaticConfigBag(n nodepkg.TemplateNodeDef, defaults *nodepkg.Templat
 	return bag
 }
 
-// @source: lib/graph/node/template_validator.go::schemaWithoutTopLevelRequired
 func schemaWithoutTopLevelRequiredLocal(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil

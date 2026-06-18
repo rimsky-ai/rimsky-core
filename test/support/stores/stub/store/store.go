@@ -54,8 +54,8 @@ type Call struct {
 }
 
 type Config struct {
-	Capabilities claimproducer.Capabilities
-	PickPolicies map[string]PickPolicyConfig
+	Capabilities           claimproducer.Capabilities
+	PickPolicies           map[string]PickPolicyConfig
 	CommitVersionID        string
 	CommitProducerMetadata []byte
 }

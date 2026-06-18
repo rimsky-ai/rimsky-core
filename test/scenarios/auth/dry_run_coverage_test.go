@@ -24,12 +24,12 @@ import (
 )
 
 type dryRunCase struct {
-	method string
-	path   string
-	body   map[string]any
+	method               string
+	path                 string
+	body                 map[string]any
 	headerKey, headerVal string
-	wouldHaveKey string
-	verifyNoMutation func(t *testing.T)
+	wouldHaveKey         string
+	verifyNoMutation     func(t *testing.T)
 }
 
 func TestDryRunCoverage_AllWriteActions(t *testing.T) {
@@ -124,7 +124,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	victimKey := victimBody["plaintext"].(string)
 
 	registeredOnlyHash := seedRegisteredTemplate(t, f, adminKey, "dryrun-deploy-target")
-
 
 	resetInstanceID, resetNodeID := seedFailedNodeOnNewInstance(ctx, t, f, adminKey, tplHash)
 	_ = resetInstanceID
@@ -394,7 +393,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 		},
 	}
 }
-
 
 func seedBreakpoint(t *testing.T, f *authFixture, adminKey, instanceID string) string {
 	t.Helper()

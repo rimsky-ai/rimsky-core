@@ -2,8 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@concept: lineage
-//	@concept: lineage-record
+// @concept: lineage
+// @concept: lineage-record
 package main
 
 import (
@@ -28,23 +28,23 @@ type LineageRow struct {
 }
 
 type LeafRunRecord struct {
-	RunID              string         `json:"run_id"`
-	NodeID             string         `json:"node_id"`
-	FrameID            string         `json:"frame_id"`
-	ChildKey           string         `json:"child_key,omitempty"`
-	NodeAlias          string         `json:"node_alias,omitempty"`
-	ParentRunID        string         `json:"parent_run_id,omitempty"`
-	FrameTriggerKind   string         `json:"frame_trigger_kind,omitempty"`
-	TriggerMessageID   string         `json:"trigger_message_id,omitempty"`
-	HeldClaims         []HeldClaimRef `json:"held_claims,omitempty"`
-	ExecutorName       string         `json:"executor_name,omitempty"`
-	ExecutorVersion    string         `json:"executor_version,omitempty"`
-	TemplateHash       string         `json:"template_hash,omitempty"`
-	TemplateNodeAlias  string         `json:"template_node_alias,omitempty"`
-	ParamsSnapshotHash string         `json:"params_snapshot_hash,omitempty"`
-	AttributesHash     string         `json:"attributes_hash,omitempty"`
-	ScopeDataHash      string         `json:"claim_scope_data_hash,omitempty"`
-	State              string         `json:"state"`
+	RunID              string            `json:"run_id"`
+	NodeID             string            `json:"node_id"`
+	FrameID            string            `json:"frame_id"`
+	ChildKey           string            `json:"child_key,omitempty"`
+	NodeAlias          string            `json:"node_alias,omitempty"`
+	ParentRunID        string            `json:"parent_run_id,omitempty"`
+	FrameTriggerKind   string            `json:"frame_trigger_kind,omitempty"`
+	TriggerMessageID   string            `json:"trigger_message_id,omitempty"`
+	HeldClaims         []HeldClaimRef    `json:"held_claims,omitempty"`
+	ExecutorName       string            `json:"executor_name,omitempty"`
+	ExecutorVersion    string            `json:"executor_version,omitempty"`
+	TemplateHash       string            `json:"template_hash,omitempty"`
+	TemplateNodeAlias  string            `json:"template_node_alias,omitempty"`
+	ParamsSnapshotHash string            `json:"params_snapshot_hash,omitempty"`
+	AttributesHash     string            `json:"attributes_hash,omitempty"`
+	ScopeDataHash      string            `json:"claim_scope_data_hash,omitempty"`
+	State              string            `json:"state"`
 	SettlingSignalType string            `json:"settling_signal_type"`
 	Changed            bool              `json:"changed,omitempty"`
 	TerminalKind       string            `json:"terminal_kind,omitempty"`

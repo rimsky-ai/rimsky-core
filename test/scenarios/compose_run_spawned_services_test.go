@@ -106,4 +106,3 @@ func parseSpawnedServicePID(t *testing.T, stderrStr, name string) int {
 	}
 	return 0
 }
-

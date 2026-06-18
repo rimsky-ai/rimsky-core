@@ -137,7 +137,6 @@ var exampleTerminalStates = map[string]bool{
 	"failed": true,
 }
 
-// @source: lib/services/test/scenarios/sqlite_all_in_one_test.go::waitForDispatchToFresh
 func waitForExampleDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)

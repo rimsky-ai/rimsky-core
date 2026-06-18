@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant: migrations-run-before-runners
 package compose
 
 import (
@@ -26,7 +25,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
-// @blessed-invariant: migrations-run-before-runners ordering
 func TestMigratePersistence_CompletesBeforeStartRoleStack(t *testing.T) {
 	runDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(runDir, "blobs"), 0o755); err != nil {

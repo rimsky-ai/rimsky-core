@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Six recognized source kinds:
-//
-//   - {{nodes.<node>.attribute.<field>}}
-//   - {{claim.<alias>.claim_scope}}
-//   - {{params.<key>}}
-//   - {{trigger.message.payload.<field>}}
-//   - {{child.partition_key}}
-//   - {{messages.<type>.<field>}}
-
 package attributes
 
 import (
@@ -215,7 +206,6 @@ func stringifyAny(v any) string {
 	return stringify(v)
 }
 
-// @blessed-invariant: message-inertness
 func resolveTriggerValue(directive string, rest []string, ctx ResolveContext) (any, error) {
 	if len(rest) < 2 {
 		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger directive needs trigger.message.payload[.<field>]"}
@@ -358,7 +348,6 @@ func resolveParamsValue(directive string, rest []string, params json.RawMessage)
 	return val, nil
 }
 
-// @blessed-invariant 20
 func walkPath(raw json.RawMessage, path []string) (any, bool) {
 	if len(raw) == 0 {
 		return nil, false

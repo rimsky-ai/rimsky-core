@@ -2075,7 +2075,7 @@ func TestValidateMessages_Ok_DeclaredTypeAndBodySchema(t *testing.T) {
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-//	@decision: empty-message-as-root-trigger
+// @decision: empty-message-as-root-trigger
 func TestValidateMessages_Error_EmptyType(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:     "demo",

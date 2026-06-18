@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//     (the deletion stays claimant-guarded, @blessed-invariant 4);
 package scenarios
 
 import (
@@ -81,7 +80,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1`, worker.ID,
 	).Scan(&dispatchID))
 
-	// (@blessed-invariant 4). Far-future expiry keeps the periodic
 	decoyID := uuid.New()
 	decoyName := "bail-decoy-lock"
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {

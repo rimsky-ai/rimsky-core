@@ -23,12 +23,12 @@ import (
 )
 
 type PickPolicy struct {
-	Root string
+	Root              string
 	FolderPattern     *regexp.Regexp
 	OnCommit          action.Action
 	OnGiveUp          action.Action
 	VisibilityTimeout time.Duration
-	SyncStrategy string
+	SyncStrategy      string
 
 	syncMu sync.Mutex
 }

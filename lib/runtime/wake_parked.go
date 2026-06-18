@@ -18,7 +18,7 @@ import (
 type WakeReason string
 
 const (
-	WakeDeadlineElapsed WakeReason = "deadline_elapsed"
+	WakeDeadlineElapsed    WakeReason = "deadline_elapsed"
 	WakeExternalInvalidate WakeReason = "external_invalidate"
 )
 
@@ -30,7 +30,7 @@ type WakeParkedArgs struct {
 	SupervisorID string
 }
 
-//	@concept: parked-state
+// @concept: parked-state
 func WakeParkedNode(ctx context.Context, args WakeParkedArgs, reason WakeReason) error {
 	if args.Persist == nil {
 		return errors.New("WakeParkedNode: Persist required")
@@ -107,8 +107,8 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 	})
 }
 
-//	@concept: parked-state
-//	@concept: cascade
+// @concept: parked-state
+// @concept: cascade
 func wakeParkedReceiverInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	receiver persistence.NodeRow, frameID shared.UUID,
@@ -116,8 +116,8 @@ func wakeParkedReceiverInTx(
 	return wakeParkedReceiverWithDepsInTx(ctx, args.Persist, args.Queue, tx, receiver, frameID)
 }
 
-//	@concept: parked-state
-//	@concept: cascade
+// @concept: parked-state
+// @concept: cascade
 func wakeParkedReceiverWithDepsInTx(
 	ctx context.Context, persist persistence.Tables, queue persistence.Queue, tx persistence.Tx,
 	receiver persistence.NodeRow, frameID shared.UUID,

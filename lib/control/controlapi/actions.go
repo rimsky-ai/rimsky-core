@@ -32,8 +32,8 @@ type Route struct {
 }
 
 type ActionRegistry struct {
-	mu    sync.RWMutex
-	built bool
+	mu      sync.RWMutex
+	built   bool
 	entries map[string]ActionEntry
 	byRoute map[string]string
 	byTool  map[string]string
@@ -219,7 +219,6 @@ var v1Actions = []ActionEntry{
 		Routes:      []Route{{"POST", "/v1/instances/{idOrKey}/terminate"}},
 		MCPTools:    []string{"instance_kill"},
 		Description: "Force-terminate an instance: mark it terminal and abandon in-flight node-runs."},
-	// @concept: debug-channel
 	{Action: "instance:debug-override", IsWrite: true,
 		Routes:      []Route{{"POST", "/v1/instances/{id}/debug/override"}},
 		MCPTools:    []string{"instance_debug_override"},
@@ -328,8 +327,6 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"event_list"},
 		Description: "Read the event log."},
 
-	// / user-agent / actions are sensitive — see @concept: event-log,
-	// @concept: permission.
 	{Action: "audit:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/audit"}},
 		MCPTools:    []string{"audit_list"},

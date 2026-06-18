@@ -28,7 +28,7 @@ var itemsTableIdentRe = pgsstore.ItemsTableIdentRegex
 
 type ObservabilityServer struct {
 	genv1.UnimplementedClaimProducerObservabilityServer
-	store *pgsstore.Store
+	store             *pgsstore.Store
 	httpBridgeURLOnce sync.Once
 	httpBridgeURL     string
 	idleTimeout       time.Duration
@@ -149,7 +149,6 @@ func (s *ObservabilityServer) ListClaims(_ context.Context, req *genv1.ListClaim
 	return &genv1.ClaimList{Claims: out, NextCursor: next}, nil
 }
 
-//	@source: lib/services/stores/filesystem/server/observability.go:claimRecordToDetail
 func claimRecordToDetail(rec *pgsstore.ClaimRecord) *genv1.ClaimDetail {
 	d := &genv1.ClaimDetail{
 		ClaimId: rec.ClaimID,
@@ -183,7 +182,6 @@ func claimRecordToDetail(rec *pgsstore.ClaimRecord) *genv1.ClaimDetail {
 	return d
 }
 
-//	@source: lib/services/stores/filesystem/server/observability.go:claimEventToProto
 func claimEventToProto(ev pgsstore.ClaimEvent) *genv1.ClaimEvent {
 	out := &genv1.ClaimEvent{
 		EventId:   ev.EventID,
@@ -200,7 +198,6 @@ func claimEventToProto(ev pgsstore.ClaimEvent) *genv1.ClaimEvent {
 	return out
 }
 
-//	@source: lib/services/stores/filesystem/server/observability.go:claimStateToProto
 func claimStateToProto(st pgsstore.ClaimState) genv1.ClaimState {
 	switch st {
 	case pgsstore.ClaimStateOpen:
@@ -216,7 +213,6 @@ func claimStateToProto(st pgsstore.ClaimState) genv1.ClaimState {
 	}
 }
 
-//	@source: lib/services/stores/filesystem/server/observability.go:severityFromString
 func severityFromString(s string) genv1.Severity {
 	switch s {
 	case "DEBUG":

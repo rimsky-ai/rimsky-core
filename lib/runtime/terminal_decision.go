@@ -79,7 +79,7 @@ type ClaimLineageHint struct {
 	RunID        shared.UUID
 	NodeID       shared.UUID
 	ProducerName string
-	VersionID string
+	VersionID    string
 }
 
 func ResolveClaimHandleTerminal(
@@ -223,4 +223,3 @@ func promoteHandleState(
 	}
 	return fmt.Errorf("ResolveClaimHandleTerminal: Promote: %w", err)
 }
-

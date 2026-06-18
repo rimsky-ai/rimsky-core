@@ -19,14 +19,14 @@ import (
 )
 
 type fakeProber struct {
-	mu            sync.Mutex
-	executorErr   error
-	storeErr      error
-	executorCaps  *ObservabilityCapabilities
-	storeCaps     *ObservabilityCapabilities
-	storeClasses  []string
-	storeClassErr error
-	probeAttempts atomic.Int64
+	mu                 sync.Mutex
+	executorErr        error
+	storeErr           error
+	executorCaps       *ObservabilityCapabilities
+	storeCaps          *ObservabilityCapabilities
+	storeClasses       []string
+	storeClassErr      error
+	probeAttempts      atomic.Int64
 	executorTLSModes   []string
 	storeTLSModes      []string
 	storeClassTLSModes []string

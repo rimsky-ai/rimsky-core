@@ -25,8 +25,8 @@ import (
 )
 
 const (
-	lineageWalkDefaultDepth = 3
-	lineageWalkMaxDepth = 50
+	lineageWalkDefaultDepth     = 3
+	lineageWalkMaxDepth         = 50
 	lineageWalkPerFrontierLimit = 1000
 )
 

@@ -24,7 +24,6 @@ const (
 
 var ErrInvalidPlaintext = errors.New("auth: invalid api-key plaintext")
 
-// @blessed-invariant: plaintext-mint-once
 func Mint() (plaintext string, hash [HashSize]byte, err error) {
 	var buf [EntropyBytes]byte
 	if _, err = rand.Read(buf[:]); err != nil {

@@ -18,27 +18,27 @@ import (
 )
 
 type SupervisorConfig struct {
-	SupervisorID string
-	Driver            persistence.Database
-	Clock             shared.Clock
-	Logger            shared.Logger
-	Concurrency       int
-	LivenessInterval  time.Duration
-	ClaimPollInterval time.Duration
-	Resolver          executor.Resolver
-	Stores RemoteStoresConfig
-	NamedLocks   locks.NamedLocksConfig
-	CallbackHost string
-	CallbackPort int
+	SupervisorID          string
+	Driver                persistence.Database
+	Clock                 shared.Clock
+	Logger                shared.Logger
+	Concurrency           int
+	LivenessInterval      time.Duration
+	ClaimPollInterval     time.Duration
+	Resolver              executor.Resolver
+	Stores                RemoteStoresConfig
+	NamedLocks            locks.NamedLocksConfig
+	CallbackHost          string
+	CallbackPort          int
 	CallbackAdvertiseHost string
 	CallbackAdvertisePort int
 
-	Blob persistence.BlobBackend
+	Blob               persistence.BlobBackend
 	BlobSpillThreshold int
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
-	Metrics runtime.MetricsHook
-	MaxParkDuration map[string]time.Duration
+	Metrics                     runtime.MetricsHook
+	MaxParkDuration             map[string]time.Duration
 
 	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
 
@@ -48,7 +48,6 @@ type SupervisorConfig struct {
 
 	LateBindServiceProxies map[string]string
 
-	// TD-inproc-registry. @concept: executor
 	ExtraInprocHandlers map[string]executor.InProcessHandler
 }
 

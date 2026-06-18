@@ -17,7 +17,6 @@ import (
 	"time"
 )
 
-// Inert payload per `@blessed-invariant: message-inertness — messages are inert in rimsky`.
 func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 	t.Parallel()
 

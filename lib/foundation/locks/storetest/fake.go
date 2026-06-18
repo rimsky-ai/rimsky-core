@@ -46,18 +46,18 @@ type fakeState struct {
 }
 
 type FakeCall struct {
-	Verb       string
-	ClaimID    claimproducer.ClaimID
-	Selector   string
-	Intent     claimproducer.Intent
-	Scope      []byte
-	Address    []byte
-	TemplateID string
-	InstanceID string
-	RunScopeID string
+	Verb            string
+	ClaimID         claimproducer.ClaimID
+	Selector        string
+	Intent          claimproducer.Intent
+	Scope           []byte
+	Address         []byte
+	TemplateID      string
+	InstanceID      string
+	RunScopeID      string
 	ServiceBindings []byte
 	OwnerAPIKeyID   string
-	Sequence int
+	Sequence        int
 }
 
 func NewFake(name string, caps claimproducer.Capabilities) *Fake {

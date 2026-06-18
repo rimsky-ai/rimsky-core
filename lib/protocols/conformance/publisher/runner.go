@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-
 package publisher
 
 import (
@@ -22,14 +21,14 @@ type CheckResult struct {
 }
 
 type RunOpts struct {
-	Kind string
-	ResolvedConfig []byte
+	Kind            string
+	ResolvedConfig  []byte
 	MessageReceiver *MessageReceiver
-	SubscriptionID string
-	InstanceID string
-	TargetNode string
-	MessageType string
-	MessageTimeout time.Duration
+	SubscriptionID  string
+	InstanceID      string
+	TargetNode      string
+	MessageType     string
+	MessageTimeout  time.Duration
 }
 
 func Run(ctx context.Context, c genv1.PublisherClient, opts RunOpts) []CheckResult {

@@ -14,7 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 )
 
-//	@concept: signal
+// @concept: signal
 func EmitSignal(
 	ctx context.Context,
 	events persistence.EventTable,

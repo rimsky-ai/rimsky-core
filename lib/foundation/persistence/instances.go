@@ -27,9 +27,9 @@ type InstanceRow struct {
 	// @concept: breakpoint
 	Paused bool `json:"paused"`
 	// @concept: instance
-	TerminateAfterRun bool `json:"terminate_after_run"`
-	ServiceBindings json.RawMessage `json:"service_bindings,omitempty"`
-	CreatedByAPIKeyID *shared.UUID `json:"created_by_api_key_id,omitempty"`
+	TerminateAfterRun bool            `json:"terminate_after_run"`
+	ServiceBindings   json.RawMessage `json:"service_bindings,omitempty"`
+	CreatedByAPIKeyID *shared.UUID    `json:"created_by_api_key_id,omitempty"`
 }
 
 type InstanceTable interface {
@@ -49,11 +49,11 @@ type InstanceTable interface {
 }
 
 type InstanceCreateInput struct {
-	ID                 shared.UUID
-	TemplateHash       string
-	InstanceKey        *string
-	Params             map[string]any
-	AttributeOverrides map[string]any
+	ID                            shared.UUID
+	TemplateHash                  string
+	InstanceKey                   *string
+	Params                        map[string]any
+	AttributeOverrides            map[string]any
 	AttributeOverridesMatchCounts []int64
 	// @concept: run-scope
 	MainRunScopeID shared.UUID
@@ -61,11 +61,11 @@ type InstanceCreateInput struct {
 	Paused bool
 	// @concept: instance
 	TerminateAfterRun bool
-	ServiceBindings json.RawMessage
+	ServiceBindings   json.RawMessage
 	CreatedByAPIKeyID *shared.UUID
 }
 
 type InstanceListFilter struct {
 	TemplateHash string
-	Active *bool
+	Active       *bool
 }

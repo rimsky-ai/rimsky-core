@@ -19,10 +19,10 @@ import (
 var fakeClaudeBuildMu sync.Mutex
 
 type ClaudeAgentFakeOptions struct {
-	McpCatalogYAML string
-	AllowInline string
+	McpCatalogYAML       string
+	AllowInline          string
 	SignoffPrivateKeyPEM string
-	ExtraEnv map[string]string
+	ExtraEnv             map[string]string
 }
 
 func StartClaudeAgentFakeOnNetwork(
@@ -34,12 +34,12 @@ func StartClaudeAgentFakeOnNetwork(
 	t.Helper()
 
 	env := map[string]string{
-		"CLAUDE_CODE_OAUTH_TOKEN":   "dummy-token-for-fake-cli-cross-stack-test",
-		"RIMSKY_EXECUTOR_HOST":      "0.0.0.0",
-		"RIMSKY_EXECUTOR_PORT_GRPC": "9090",
-		"RIMSKY_EXECUTOR_PORT_HTTP": "9190",
+		"CLAUDE_CODE_OAUTH_TOKEN":       "dummy-token-for-fake-cli-cross-stack-test",
+		"RIMSKY_EXECUTOR_HOST":          "0.0.0.0",
+		"RIMSKY_EXECUTOR_PORT_GRPC":     "9090",
+		"RIMSKY_EXECUTOR_PORT_HTTP":     "9190",
 		"RIMSKY_EXECUTOR_CALLBACK_HOST": "127.0.0.1",
-		"RIMSKY_EXECUTOR_SILENCE_MS": "30000",
+		"RIMSKY_EXECUTOR_SILENCE_MS":    "30000",
 	}
 	if opts.AllowInline != "" {
 		env["RIMSKY_EXECUTOR_MCP_ALLOW_INLINE"] = opts.AllowInline

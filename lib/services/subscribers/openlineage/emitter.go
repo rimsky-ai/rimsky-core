@@ -13,17 +13,17 @@ import (
 	"time"
 )
 
-//	@concept: lineage
+// @concept: lineage
 type Event struct {
-	EventType string `json:"eventType"`
-	EventTime string `json:"eventTime"`
-	ProducerURI string `json:"producer"`
-	SchemaURL string         `json:"schemaURL"`
-	Run       RunRef         `json:"run"`
-	Job       JobRef         `json:"job"`
-	Inputs    []DatasetRef   `json:"inputs,omitempty"`
-	Outputs   []DatasetRef   `json:"outputs,omitempty"`
-	Facets    map[string]any `json:"facets,omitempty"`
+	EventType   string         `json:"eventType"`
+	EventTime   string         `json:"eventTime"`
+	ProducerURI string         `json:"producer"`
+	SchemaURL   string         `json:"schemaURL"`
+	Run         RunRef         `json:"run"`
+	Job         JobRef         `json:"job"`
+	Inputs      []DatasetRef   `json:"inputs,omitempty"`
+	Outputs     []DatasetRef   `json:"outputs,omitempty"`
+	Facets      map[string]any `json:"facets,omitempty"`
 }
 
 type RunRef struct {
@@ -43,7 +43,7 @@ type DatasetRef struct {
 	Facets    map[string]any `json:"facets,omitempty"`
 }
 
-//	@concept: lineage
+// @concept: lineage
 type Emitter struct {
 	BackendURL string
 	Client     *http.Client
@@ -81,7 +81,7 @@ func (e *Emitter) Send(ctx context.Context, ev Event) error {
 	return nil
 }
 
-//	@concept: lineage-record
+// @concept: lineage-record
 func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string, namespace string) Event {
 	runID := instanceID
 	if rec.ChildKey != "" {
@@ -138,7 +138,7 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 	}
 }
 
-//	@concept: lineage-record
+// @concept: lineage-record
 func MakeClaimTerminalEvent(rec ClaimTerminalRecord, observedAt time.Time, namespace string) Event {
 	eventType := "COMPLETE"
 	jobSuffix := ".commit"

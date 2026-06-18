@@ -118,7 +118,6 @@ func testAffirmNodeRunRow_ErrorsOnClosedScope(t *testing.T, d persistence.Databa
 	}
 }
 
-// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 func testAffirmNodeRunRow_NoReturnValueDependency(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)

@@ -81,10 +81,10 @@ func DialPublisherAndValidationRegistries(
 	// @story: validation-author
 	// @story: validation-mixin-uniform
 	type peerSpec struct {
-		name     string
-		endpoint string
-		tls       string
-		protocols []string
+		name       string
+		endpoint   string
+		tls        string
+		protocols  []string
 		fetchRoles func(context.Context) ([]string, error)
 	}
 	peers := make([]peerSpec, 0, len(stores.Stores)+len(execs.Executors)+len(publishers.Publishers))

@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//     Delete (held-durable Promote contract per @blessed-invariant 22).
 // @concept: claim-lifetime
 // @concept: auto-terminal
 // @concept: claim-handle
@@ -117,7 +116,6 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		return runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
 	}))
 
-	// @blessed-invariant 22).
 	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, claimHandleID, tx)
@@ -167,8 +165,6 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	require.True(t, releaseSeen, "producer.Release must fire during instance termination cleanup")
 }
 
-// @source: lib/runtime/auto_terminal_test.go::insertDeployedTemplate
-// @diverged: false
 func insertDeployedTemplateAsset(ctx context.Context, t *testing.T, sb persistence.Tables, tmplSpec node.TemplateSpec) persistence.TemplateRow {
 	t.Helper()
 	sum := sha256.Sum256([]byte(tmplSpec.Name + ":" + tmplSpec.Version))
@@ -191,8 +187,6 @@ func insertDeployedTemplateAsset(ctx context.Context, t *testing.T, sb persisten
 	return *row
 }
 
-// @source: lib/runtime/auto_terminal_test.go::seedFrame
-// @diverged: false
 func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
 	_ = sourceNodeID
@@ -221,8 +215,6 @@ func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, in
 	return frameID
 }
 
-// @source: lib/runtime/auto_terminal_test.go::seedRunForNode
-// @diverged: false
 func seedRunForNodeAsset(
 	ctx context.Context, t *testing.T, sb persistence.Tables, q persistence.Queue,
 	nodeID, frameID shared.UUID,

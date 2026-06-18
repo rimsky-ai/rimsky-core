@@ -160,7 +160,7 @@ type PeerSpec struct {
 	Name                  string
 	Endpoint              string
 	ObservabilityEndpoint string
-	TLS string
+	TLS                   string
 }
 
 func RunHandshake(ctx context.Context, prober Prober, executors, stores []PeerSpec, log *slog.Logger) *Discovery {

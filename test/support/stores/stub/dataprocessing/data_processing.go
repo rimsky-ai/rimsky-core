@@ -22,11 +22,11 @@ import (
 type Server struct {
 	genv1.UnimplementedDataProcessingServer
 
-	mu sync.Mutex
+	mu         sync.Mutex
 	candidates map[string]*candidateRow
-	versions map[string][]VersionRow
+	versions   map[string][]VersionRow
 
-	clock func() time.Time
+	clock     func() time.Time
 	splitFunc func(req *genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error)
 }
 

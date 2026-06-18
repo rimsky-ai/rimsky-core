@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@source: lib/services/stores/filesystem/store/ledger.go
 package store
 
 import (
@@ -51,7 +50,7 @@ type ClaimLedger struct {
 	records map[string]*ClaimRecord
 	order   []string
 	max     int
-	subs map[string]map[*subscriber]struct{}
+	subs    map[string]map[*subscriber]struct{}
 }
 
 func NewClaimLedger(max int) *ClaimLedger {
@@ -294,7 +293,6 @@ func (l *ClaimLedger) List(stateFilter, cursor string, limit int) ([]*ClaimRecor
 	return out, next
 }
 
-//	@source: lib/services/stores/filesystem/store/ledger.go:evictIfNeeded
 func (l *ClaimLedger) evictIfNeeded() {
 	for len(l.records) > l.max {
 		evicted := ""

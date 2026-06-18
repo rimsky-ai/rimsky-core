@@ -20,7 +20,7 @@ type OrphanBlobsArgs struct {
 	Backend     persistence.BlobBackend
 	Clock       shared.Clock
 	Logger      shared.Logger
-	Limit int
+	Limit       int
 }
 
 func SweepOrphanedBlobs(ctx context.Context, args OrphanBlobsArgs) error {

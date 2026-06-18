@@ -19,7 +19,7 @@ type DispatchRequest struct {
 	ExecutorName   string
 	RequiredStores []string
 	EnqueuedAt     time.Time
-	FrameID shared.UUID
+	FrameID        shared.UUID
 	// @concept: run-scope
 	RunScopeID shared.UUID
 
@@ -57,7 +57,7 @@ type Candidate struct {
 	ExecutorName   string
 	RequiredStores []string
 	EnqueuedAt     time.Time
-	FrameID shared.UUID
+	FrameID        shared.UUID
 
 	// @concept: run-scope
 	PriorDispatchID *shared.UUID
@@ -175,14 +175,14 @@ type ParkedDiagnosticRow struct {
 }
 
 type ParkedRow struct {
-	DispatchID     shared.UUID
-	NodeID         shared.UUID
-	ExecutorName   string
-	RequiredStores []string
-	FrameID        shared.UUID
-	ParkedAt       time.Time
-	ResumeAt       *time.Time
-	Reason         string
+	DispatchID               shared.UUID
+	NodeID                   shared.UUID
+	ExecutorName             string
+	RequiredStores           []string
+	FrameID                  shared.UUID
+	ParkedAt                 time.Time
+	ResumeAt                 *time.Time
+	Reason                   string
 	ReasonNote               string
 	MaxParkDurationSeconds   *int
 	ConsecutiveRetriesNoProg int

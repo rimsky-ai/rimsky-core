@@ -17,22 +17,21 @@ import (
 )
 
 type OnErrorArgs struct {
-	Persist persistence.Tables
+	Persist    persistence.Tables
 	Queue      persistence.Queue
 	Clock      shared.Clock
 	Logger     shared.Logger
 	NodeID     shared.UUID
 	InstanceID shared.UUID
 	// @concept: run-scope
-	RunScopeID shared.UUID
-	SupervisorID string
-	ErrorClass   string
+	RunScopeID          shared.UUID
+	SupervisorID        string
+	ErrorClass          string
 	PolicyFallbackClass string
 	Payload             map[string]any
-	Metrics MetricsHook
+	Metrics             MetricsHook
 }
 
-// @blessed-invariant: state-machine-writes-single-tx
 func OnError(ctx context.Context, args OnErrorArgs) error {
 	sb, log := args.Persist, args.Logger
 	if log == nil {

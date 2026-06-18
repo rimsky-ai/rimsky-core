@@ -31,7 +31,7 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 					"type": "object",
 					"properties": map[string]any{
 						"present": map[string]any{"type": "string"},
-						"maybe": map[string]any{"type": "string"},
+						"maybe":   map[string]any{"type": "string"},
 					},
 				}),
 			),

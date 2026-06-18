@@ -125,13 +125,13 @@ type SubscriptionState struct {
 	SubscriptionID string
 	InstanceID     string
 	URL            string
-	PollInterval time.Duration
-	MatchStatus  []int
-	MatchJSONKey string
-	MatchJSONVal string
-	TargetNode   string
-	MessageType  string
-	LastHash     string
+	PollInterval   time.Duration
+	MatchStatus    []int
+	MatchJSONKey   string
+	MatchJSONVal   string
+	TargetNode     string
+	MessageType    string
+	LastHash       string
 }
 
 func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {

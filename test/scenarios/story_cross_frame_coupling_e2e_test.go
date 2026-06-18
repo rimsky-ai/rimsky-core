@@ -171,7 +171,6 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) 
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-
 	h.Stub.WhenType("a").Success(map[string]any{
 		"counter":     1,
 		"should_loop": true,

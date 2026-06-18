@@ -53,11 +53,11 @@ type TemplatePayload struct {
 }
 
 type InstancePayload struct {
-	InstanceKey string
-	Params json.RawMessage
+	InstanceKey        string
+	Params             json.RawMessage
 	TerminatedAtUnixMs int64
-	ServiceBindings json.RawMessage
-	OwnerAPIKeyID *shared.UUID
+	ServiceBindings    json.RawMessage
+	OwnerAPIKeyID      *shared.UUID
 }
 
 func FanOutTemplateEvent(

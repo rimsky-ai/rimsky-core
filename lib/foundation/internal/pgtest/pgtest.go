@@ -34,33 +34,6 @@ func StartPostgres(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
 	return pool, func() {}
 }
 
-// @source: test/support/testpg/testpg.go::StartFreshPostgresDSN
-// @diverged: false
-// @reason: foundation/ does not import testpg because that would add a
-// foundation→testpg cross-module test dependency (a `replace` directive
-// and module coupling) for a ~40-line helper; the duplication is kept
-// tracked and byte-identical instead. Keep this body byte-identical
-// to the testpg copy modulo the log prefix; port-mapping retry tuning
-// lives in two places and any fix must land in both. Symptoms drift
-// silently if the copies disagree (testpg consumers see one timeout
-// behavior, rimsky-internal tests see another).
-//
-// The wait strategy pairs the postgres-ready log signal with
-// `wait.ForListeningPort` — both are required to defeat the docker
-// port-table race. Without the port-listening wait, ConnectionString
-// races against docker reflecting the bound port and intermittently
-// fails with `port "5432/tcp" not found` even after the container's
-// own ready-log fires. The startup timeout is raised to 300s so the
-// per-poll Docker state-query (~1-6s under saturated parallel load;
-// occasional 15-20s spikes when the daemon is heavily contended) has
-// slack to converge before the strategy gives up. Cycle-4 evidence
-// showed 180s was tight enough that `wait.ForListeningPort` itself
-// would time out (`retries: 9, port: "invalid port"`) under heavy
-// parallel scenario runs.
-//
-// `resolveConnectionString` adds a belt-and-suspenders retry around
-// the eventual ConnectionString call to absorb any residual race that
-// slips past the wait strategy.
 func StartFreshPostgresDSN(ctx context.Context, t *testing.T) (string, func()) {
 	t.Helper()
 	container, err := pgmodule.Run(ctx,
@@ -92,11 +65,6 @@ func StartFreshPostgresDSN(ctx context.Context, t *testing.T) (string, func()) {
 	return dsn, teardown
 }
 
-// @source: test/support/testpg/testpg.go::resolveConnectionString
-// @diverged: false
-// @reason: foundation/ does not import testpg (avoids a foundation→testpg
-// cross-module test dependency). See StartFreshPostgresDSN above for the
-// divergence-tracking rationale.
 func resolveConnectionString(
 	ctx context.Context, t *testing.T, container *pgmodule.PostgresContainer,
 ) (string, error) {

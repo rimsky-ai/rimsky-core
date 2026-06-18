@@ -79,7 +79,7 @@ func acquireNamedLock(
 		HolderNodeID:       cand.NodeID,
 		ExpiresAt:          args.Clock.Now().Add(5 * livenessInterval),
 		FrameID:            &frameID,
-		IsHeld: false,
+		IsHeld:             false,
 	}
 	if err := args.ClaimHandles.Insert(ctx, in, tx); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: Insert: %w", err)

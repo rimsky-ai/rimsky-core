@@ -24,7 +24,7 @@ type TemplateRow struct {
 	Spec         spec.TemplateSpec `json:"spec"`
 	State        TemplateState     `json:"state"`
 	RegisteredAt time.Time         `json:"registered_at"`
-	Source string `json:"source"`
+	Source       string            `json:"source"`
 }
 
 type TemplateInsertInput struct {
@@ -45,7 +45,7 @@ type TemplateTable interface {
 
 type TemplateListFilter struct {
 	State TemplateState
-	Tag string
+	Tag   string
 }
 
 type TemplateTagRow struct {

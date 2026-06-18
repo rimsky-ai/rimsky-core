@@ -18,14 +18,14 @@ import (
 )
 
 type RunTreeNode struct {
-	RunID shared.UUID
-	NodeID shared.UUID
-	ParentRunID shared.UUID
-	ChildKey string
-	FrameID shared.UUID
-	State cascade.NodeState
+	RunID              shared.UUID
+	NodeID             shared.UUID
+	ParentRunID        shared.UUID
+	ChildKey           string
+	FrameID            shared.UUID
+	State              cascade.NodeState
 	SettlingSignalType *string
-	AggregationPolicy *spec.AggregationPolicy
+	AggregationPolicy  *spec.AggregationPolicy
 }
 
 func (r RunTreeNode) IsRoot() bool { return r.ParentRunID == (shared.UUID{}) }

@@ -44,5 +44,5 @@ type OnInstanceTerminatedRequest struct {
 type OnRunScopeTerminalRequest struct {
 	RunScopeID     string
 	TerminalReason string
-	InstanceID string
+	InstanceID     string
 }

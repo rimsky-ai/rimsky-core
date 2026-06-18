@@ -14,9 +14,9 @@ import (
 )
 
 type MessageIdempotencyRow struct {
-	InstanceID shared.UUID
-	SenderKind string
-	Sender     string
+	InstanceID     shared.UUID
+	SenderKind     string
+	Sender         string
 	SenderSubject  string
 	IdempotencyKey string
 	MessageID      shared.UUID

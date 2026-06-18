@@ -4,10 +4,6 @@
 
 package runtime
 
-// @blessed-invariant: terminal-atomic-commit
-// @blessed-invariant: callback-determinism — coverage anchor: see
-// @blessed-invariant: affirm-node-run-row — coverage anchor: see
-
 import (
 	"testing"
 

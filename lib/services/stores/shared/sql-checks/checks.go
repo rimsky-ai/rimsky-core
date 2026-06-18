@@ -11,8 +11,8 @@ type CheckSpec struct {
 }
 
 type Result struct {
-	Kind string `json:"kind"`
-	Pass bool `json:"pass"`
-	Counts map[string]any `json:"counts,omitempty"`
-	Message string `json:"message,omitempty"`
+	Kind    string         `json:"kind"`
+	Pass    bool           `json:"pass"`
+	Counts  map[string]any `json:"counts,omitempty"`
+	Message string         `json:"message,omitempty"`
 }

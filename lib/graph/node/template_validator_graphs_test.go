@@ -302,7 +302,7 @@ func TestCanonicalizeGraphs_RejectDuplicateNodeTypeAcrossGraphs(t *testing.T) {
 		Graphs: []GraphSpec{
 			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "shared"}}},
 			{
-				Name: "sub",
+				Name:  "sub",
 				Entry: "shared",
 				Exit:  "b",
 				Nodes: []TemplateNodeDef{{Type: "shared"}, {Type: "b", Subscribes: []SubscriptionEntry{{Node: "shared", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}}},

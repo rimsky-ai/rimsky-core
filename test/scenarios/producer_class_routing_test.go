@@ -34,8 +34,8 @@ func startClassifyingProducer(t *testing.T) (*scenario.Harness, *stubstore.Store
 		Capabilities: caps,
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
-				OnCommit: action.Action{Kind: action.Pop},
-				OnGiveUp: action.Action{Kind: action.Recycle},
+				OnCommit:         action.Action{Kind: action.Pop},
+				OnGiveUp:         action.Action{Kind: action.Recycle},
 				UnavailableClass: producerClassUnavailable,
 			},
 		},

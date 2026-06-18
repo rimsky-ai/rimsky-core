@@ -14,21 +14,21 @@ import (
 )
 
 type NodeRow struct {
-	ID         shared.UUID       `json:"id"`
-	InstanceID shared.UUID       `json:"instance_id"`
-	NodeType   string            `json:"node_type"`
-	Executor   string            `json:"executor"`
-	State      cascade.NodeState `json:"state"`
-	SettlingSignalType   *string      `json:"settling_signal_type,omitempty"`
-	CurrentErrorClass    string       `json:"current_error_class,omitempty"`
-	RetryCounter         int          `json:"retry_counter"`
-	ActionIndex          int          `json:"action_index"`
-	AssignedSupervisorID string       `json:"assigned_supervisor_id,omitempty"`
-	FrameID              *shared.UUID `json:"frame_id,omitempty"`
+	ID                   shared.UUID       `json:"id"`
+	InstanceID           shared.UUID       `json:"instance_id"`
+	NodeType             string            `json:"node_type"`
+	Executor             string            `json:"executor"`
+	State                cascade.NodeState `json:"state"`
+	SettlingSignalType   *string           `json:"settling_signal_type,omitempty"`
+	CurrentErrorClass    string            `json:"current_error_class,omitempty"`
+	RetryCounter         int               `json:"retry_counter"`
+	ActionIndex          int               `json:"action_index"`
+	AssignedSupervisorID string            `json:"assigned_supervisor_id,omitempty"`
+	FrameID              *shared.UUID      `json:"frame_id,omitempty"`
 	// @concept: node
-	Tags      []string  `json:"tags"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Tags          []string     `json:"tags"`
+	CreatedAt     time.Time    `json:"created_at"`
+	UpdatedAt     time.Time    `json:"updated_at"`
 	InFlightRunID *shared.UUID `json:"-"`
 
 	// @concept: run-scope
@@ -40,7 +40,7 @@ type NodeCreateInput struct {
 	InstanceID shared.UUID
 	NodeType   string
 	Executor   string
-	Tags []string
+	Tags       []string
 }
 
 type NodeListFilter struct {
@@ -67,23 +67,15 @@ type NodeTable interface {
 	GetFailedTerminalRunScopeID(ctx context.Context, id shared.UUID, tx Tx) (*shared.UUID, error)
 
 	DeleteByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) error
-	// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
-	// tx-atomic. Caller MUST resolve the run id (via the affirm-then-read
-	// pattern) within the same tx as this UPDATE.
-	//
 	// @concept: cascade
 	MarkStaleForCascade(ctx context.Context, runID shared.UUID, frameID shared.UUID, tx Tx) error
 
-	// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency
-	// per spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
-	//
 	// @concept: run-scope
 	AffirmNodeRunRow(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, frameID shared.UUID, tx Tx) error
 
 	// @concept: signal
 	HasRunForNodeInFrame(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx Tx) (bool, error)
 
-	// @blessed-invariant: callback-determinism — Callback determinism per spec.
 	GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID shared.UUID, tx Tx) (*NodeRunForCallback, error)
 }
 

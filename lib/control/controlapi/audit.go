@@ -107,17 +107,6 @@ func (s *AuthState) EmitKeyRotated(ctx context.Context, p auth.KeyRotatedPayload
 
 const auditWriteTimeout = 2 * time.Second
 
-// @blessed-invariant: event-log-canonical-forensic — the event log is the canonical forensic record
-// (concept:event-log) — the per-request auth-audit write is durable
-// and is never silently dropped. There is no queue/worker/buffer: the
-// row lands (or the failure is surfaced) before the gate returns. The
-// write is derived from request context (response_status / duration_ms
-// are already known), so it runs after the handler returns.
-//
-// Durability over latency: on insert failure we log at Error (the
-// operator-visible signal that the forensic record has a gap) rather
-// than dropping silently. The bounded auditWriteTimeout caps the
-// per-row cost so a wedged Postgres cannot pin the request goroutine.
 func (s *AuthState) insertEvent(_ context.Context, kind string, payload any) {
 	data, err := json.Marshal(payload)
 	if err != nil {

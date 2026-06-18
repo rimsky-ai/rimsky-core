@@ -251,8 +251,6 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 	require.NotEqual(t, msgBID, msgAReplayID,
 		"key A's replay must NOT inherit key B's message_id (would prove sender_subject did not isolate the tuple)")
 
-	// @blessed-invariant 21 — payload is forwarded as-is, no
-	// transformation.
 	envA := h.getMessage(t, msgAID, adminKey)
 	payloadA, _ := envA["payload"].(map[string]any)
 	require.Equal(t, "A-first", payloadA["label"],

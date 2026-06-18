@@ -194,7 +194,7 @@ func TestStoryCascadeEmit_SchemaMismatchRejectsAtRegistration(t *testing.T) {
 				"schema": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"pong_status": map[string]any{"type": "string"},
+						"pong_status":  map[string]any{"type": "string"},
 						"sneaky_extra": map[string]any{"type": "string"},
 					},
 					"required": []any{"pong_status"},

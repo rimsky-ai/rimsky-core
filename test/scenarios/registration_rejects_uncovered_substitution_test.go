@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@story: uncovered-substitution-rejected
+// @story: uncovered-substitution-rejected
 package scenarios
 
 import (
@@ -15,7 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-//	@story: uncovered-substitution-rejected
+// @story: uncovered-substitution-rejected
 func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -45,7 +45,7 @@ func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 			refContains:      "nodes.foo.attribute",
 			attrPropContains: "all_of_foo",
 			suggestedSender:  "foo",
-			suggestedType: "attribute/*",
+			suggestedType:    "attribute/*",
 		},
 	}
 

@@ -59,7 +59,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 					FanOut: &tmplspec.FanOutSpec{
 						Claim:            "data",
 						PartitionRequest: `{"partition_keys":["a","b","c"]}`,
-						ErrorPolicy: tmplspec.AggregationPolicy{Kind: tmplspec.AggregationKindStrict},
+						ErrorPolicy:      tmplspec.AggregationPolicy{Kind: tmplspec.AggregationKindStrict},
 					},
 				},
 				openAttrs,

@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-
 package conformance
 
 import (
@@ -18,14 +17,12 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @source: lib/runtime/executor/resolver.go::Endpoint
 type Endpoint struct {
 	Transport string
 	URL       string
-	TLS string
+	TLS       string
 }
 
-// @source: lib/runtime/executor/client.go::Client
 type Client interface {
 	Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error)
 	Close() error
@@ -36,10 +33,6 @@ type grpcClient struct {
 	api  genv1.ExecutorClient
 }
 
-// @source: lib/runtime/executor/client.go::NewGRPCClient
-// @diverged: true
-// @reason: the conformance harness keeps the protocols module's
-// dependency budget (no lib/runtime import).
 func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("conformance.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
@@ -64,7 +57,6 @@ func transportCredsFor(tlsMode string) credentials.TransportCredentials {
 
 func (c *grpcClient) Close() error { return c.conn.Close() }
 
-// @source: lib/runtime/executor/client.go::ClientPool
 type ClientPool struct {
 	mu      sync.Mutex
 	clients map[string]Client

@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant: one-driver-per-process — these tests exhibit the
-// open-side half of the invariant: every call to OpenDriverFromEnv
-// that reaches a runner does so by funneling through THIS helper, so
-// a single process exposes one persistence.Driver across whichever
-// Run* runners it starts. The structural sharing exhibit lives in
-// unified_test.go (TestStartUnifiedStack_OneDriverAcrossRunners),
-// which substitutes the three runner seams and asserts the SAME
-// driver pointer reaches each runner. These open-side tests pin the
-// upstream half (one driver opened per process) and the runner-end
-// test pins the downstream half (the one driver is the one threaded
-// into every runner).
 package launch
 
 import (

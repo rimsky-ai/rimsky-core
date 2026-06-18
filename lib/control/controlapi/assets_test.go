@@ -62,7 +62,7 @@ func (r *stubDataProcessorRegistry) Get(name string) (runtime.DataProcessingClie
 
 type assetHarness struct {
 	*harness
-	dp *stubDataProcessor
+	dp      *stubDataProcessor
 	content *storetest.Fake
 }
 

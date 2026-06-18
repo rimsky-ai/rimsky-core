@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@source: lib/services/stores/postgres/store/ledger.go
 package store
 
 import (
@@ -42,7 +41,6 @@ type ClaimRecord struct {
 	History  []ClaimEvent
 }
 
-//	@source: lib/services/stores/postgres/store/ledger.go:subscriber
 type subscriber struct {
 	ch chan ClaimEvent
 }
@@ -163,7 +161,6 @@ func (l *ClaimLedger) RecordTerminal(claimID, category string, attrs map[string]
 	l.evictIfNeeded()
 }
 
-//	@source: lib/services/stores/postgres/store/ledger.go:SubscribeWithSnapshot
 func (l *ClaimLedger) SubscribeWithSnapshot(claimID string) ([]ClaimEvent, *ClaimRecord, <-chan ClaimEvent, func()) {
 	if l == nil {
 		ch := make(chan ClaimEvent)
@@ -200,7 +197,6 @@ func (l *ClaimLedger) SubscribeWithSnapshot(claimID string) ([]ClaimEvent, *Clai
 	return cp.History, &cp, sub.ch, unsub
 }
 
-//	@source: lib/services/stores/postgres/store/ledger.go:broadcast
 func (l *ClaimLedger) broadcast(claimID string, ev ClaimEvent) {
 	for sub := range l.subs[claimID] {
 		select {
@@ -225,7 +221,6 @@ func (l *ClaimLedger) Get(claimID string) (*ClaimRecord, bool) {
 	return &cp, true
 }
 
-//	@source: lib/services/stores/postgres/store/ledger.go:List
 func (l *ClaimLedger) List(stateFilter string, cursor string, limit int) ([]*ClaimRecord, string) {
 	if l == nil {
 		return nil, ""

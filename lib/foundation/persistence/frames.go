@@ -50,8 +50,8 @@ type FrameRow struct {
 	TriggeringMessageID shared.UUID `json:"triggering_message_id"`
 	StartedAt           *time.Time  `json:"started_at,omitempty"`
 	EndedAt             *time.Time  `json:"ended_at,omitempty"`
-	LastProgressAt *time.Time `json:"last_progress_at,omitempty"`
-	FrameTimeoutMs int64      `json:"frame_timeout_ms"`
+	LastProgressAt      *time.Time  `json:"last_progress_at,omitempty"`
+	FrameTimeoutMs      int64       `json:"frame_timeout_ms"`
 }
 
 type FrameRowWithMessage struct {

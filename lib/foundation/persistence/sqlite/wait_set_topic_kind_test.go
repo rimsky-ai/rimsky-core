@@ -117,7 +117,6 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 			"the topic_kind CHECK must admit 'transient','terminal'", count)
 	}
 
-	// @blessed-invariant: wait-set-topic-kind-rejects-message — post-011 the rimsky_wait_set.topic_kind CHECK MUST reject 'message'; the virtual-node-settle model carries no wait-set rows under that bucket, so any INSERT with topic_kind='message' must fail through the CHECK rejection path.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_wait_set
 		   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)

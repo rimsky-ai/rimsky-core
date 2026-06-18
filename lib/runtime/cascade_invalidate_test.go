@@ -25,7 +25,7 @@ type invTestQueue struct {
 	mu           sync.Mutex
 	enqueued     []persistence.DispatchRequest
 	removedNodes []shared.UUID
-	real persistence.Queue
+	real         persistence.Queue
 }
 
 func newInvTestQueueWithReal(real persistence.Queue) *invTestQueue {
@@ -224,7 +224,6 @@ func newFixture(t *testing.T) *fixture {
 	}
 }
 
-// @blessed-invariant: dispatch-row-bound-to-frame.
 func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade.NodeState, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
 	ctx := context.Background()

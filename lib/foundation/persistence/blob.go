@@ -24,7 +24,7 @@ type BlobBackend interface {
 type BlobKey struct {
 	NodeID        string
 	AttributeName string
-	Hint string
+	Hint          string
 }
 
 type Handle string

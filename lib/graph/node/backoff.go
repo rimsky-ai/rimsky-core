@@ -14,7 +14,7 @@ type BackoffConfig struct {
 	Kind        spec.BackoffKind
 	BaseDelayMs int
 	Jitter      spec.JitterKind
-	MaxDelayMs int
+	MaxDelayMs  int
 }
 
 func ComputeDelay(cfg BackoffConfig, attemptIndex int, rng func() float64) int {

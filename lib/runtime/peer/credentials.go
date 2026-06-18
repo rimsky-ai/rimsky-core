@@ -25,7 +25,7 @@ const (
 
 var (
 	tlsRootCAsMu sync.RWMutex
-	tlsRootCAs *x509.CertPool
+	tlsRootCAs   *x509.CertPool
 )
 
 func SetTLSRootCAsForTesting(pool *x509.CertPool) {
