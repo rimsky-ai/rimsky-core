@@ -41,6 +41,10 @@ export const ReportParkInput = z.object({
   resume_at: z.string().optional(),
 });
 
+export const DispatchContextReadInput = z.object({
+  token: z.string(),
+});
+
 export { AttributesReadInput, AttributesSetInput };
 
 export interface ToolDefinition {
@@ -125,6 +129,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           format: "date-time",
           description: "Optional ISO 8601 timestamp at which to wake. Absent means signal-only.",
         },
+      },
+    },
+  },
+  {
+    name: "dispatch_context_read",
+    description:
+      "Read the dispatch's identity and disposition as captured at " +
+      "executor spawn. Returns dispatch_id and run_scope_id (always " +
+      "present as strings, possibly empty in non-supervised " +
+      "invocations), and prior_dispatch_id + prior_dispatch_disposition " +
+      "when this dispatch supersedes a predecessor (stale_recovery, " +
+      "retry_after_error, or recalculate). Returns the same snapshot " +
+      "for the duration of the run.",
+    inputSchema: {
+      type: "object",
+      required: ["token"],
+      properties: {
+        token: { type: "string" },
       },
     },
   },

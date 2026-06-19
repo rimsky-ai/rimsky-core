@@ -25,6 +25,7 @@ import {
 import { detectRateLimit } from "./rate-limit.js";
 import { classifyAgentError } from "./error-classify.js";
 import { verifyRequiredSignoffs } from "./signoff.js";
+import { dispatchContextSnapshot } from "./token-registry.js";
 
 export type AgentOutcome =
   | {
@@ -81,6 +82,9 @@ export interface AgentRunOptions {
   mcpCatalog?: McpCatalog;
   mcpAllowInline?: boolean;
   dispatchId?: string;
+  runScopeId?: string;
+  priorDispatchId?: string;
+  priorDispatchDisposition?: string;
   callbackUrl: string;
   cancelToken: string;
   cliRunner: CliRunner;
@@ -209,6 +213,9 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     mcpCatalog,
     mcpAllowInline,
     dispatchId,
+    runScopeId,
+    priorDispatchId,
+    priorDispatchDisposition,
     callbackUrl,
     cancelToken,
     cliRunner,
@@ -458,6 +465,24 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     cancelToken,
     nodeId,
     callbackUrl,
+    dispatchContext: dispatchContextSnapshot(
+      dispatchId ?? "",
+      runScopeId ?? "",
+      priorDispatchId ?? "",
+      priorDispatchDisposition ?? "",
+      (event) => {
+        logger.warn(
+          {
+            runId,
+            kind: event.kind,
+            prior_dispatch_id: event.prior_dispatch_id,
+            prior_dispatch_disposition_wire:
+              event.prior_dispatch_disposition_wire,
+          },
+          `dispatch_context: ${event.message}`,
+        );
+      },
+    ),
     onComplete: async (
       attributesDelta,
       changed,

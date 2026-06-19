@@ -8,6 +8,7 @@ import {
   ReportBlockedInput,
   ReportErrorInput,
   ReportParkInput,
+  DispatchContextReadInput,
   AttributesReadInput,
   AttributesSetInput,
   TOOL_DEFINITIONS,
@@ -100,11 +101,12 @@ describe("internal-mcp-tools schemas", () => {
     ).toThrow();
   });
 
-  it("TOOL_DEFINITIONS exposes the six tools (post emit_named_event retirement, incl. report_park)", () => {
+  it("TOOL_DEFINITIONS exposes the seven tools (incl. report_park + dispatch_context_read)", () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name).sort();
     expect(names).toEqual([
       "attributes_read",
       "attributes_set",
+      "dispatch_context_read",
       "report_blocked",
       "report_complete",
       "report_error",
@@ -142,5 +144,12 @@ describe("internal-mcp-tools schemas", () => {
     expect(parsed.reason).toBe("snooze");
     expect(parsed.reason_note).toBeUndefined();
     expect(parsed.resume_at).toBeUndefined();
+  });
+
+  it("DispatchContextReadInput requires only token", () => {
+    expect(DispatchContextReadInput.parse({ token: "tok" })).toEqual({
+      token: "tok",
+    });
+    expect(() => DispatchContextReadInput.parse({})).toThrow();
   });
 });

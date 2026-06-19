@@ -315,6 +315,30 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
   );
 
   mcp.tool(
+    "dispatch_context_read",
+    "Read the dispatch's identity and disposition as captured at executor " +
+      "spawn. Returns dispatch_id and run_scope_id (always present as " +
+      "strings, possibly empty in non-supervised invocations), and " +
+      "prior_dispatch_id + prior_dispatch_disposition (one of " +
+      "stale_recovery / retry_after_error / recalculate) when this dispatch " +
+      "supersedes a predecessor. Returns the same snapshot for the " +
+      "duration of the run.",
+    {
+      token: tokenField,
+    },
+    async (args) => {
+      const entry = registry.lookup(args.token);
+      if (!entry) return unknownToken("dispatch_context_read");
+      logCall("dispatch_context_read", entry.runId);
+      return {
+        content: [
+          { type: "text" as const, text: JSON.stringify(entry.dispatchContext) },
+        ],
+      };
+    },
+  );
+
+  mcp.tool(
     "attributes_read",
     "Read the per-run attributes object as captured at executor spawn. " +
       "Returns the same snapshot for the duration of the run.",

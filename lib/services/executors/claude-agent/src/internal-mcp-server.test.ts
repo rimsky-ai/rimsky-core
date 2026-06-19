@@ -13,12 +13,13 @@ import {
   startInternalMcpServer,
   type CallbackServerHandle,
 } from "./internal-mcp-server.js";
-import { TokenRegistry } from "./token-registry.js";
+import { TokenRegistry, dispatchContextSnapshot, type DispatchContextSnapshot } from "./token-registry.js";
 
 const logger = pino({ level: "silent" });
 
 function makeRegistryEntry(overrides: {
   attributesAtSpawn?: Record<string, unknown>;
+  dispatchContext?: DispatchContextSnapshot;
   cancelToken?: string;
   nodeId?: string;
   callbackUrl?: string;
@@ -29,6 +30,9 @@ function makeRegistryEntry(overrides: {
   return {
     runId: "run-1",
     attributesAtSpawn: overrides.attributesAtSpawn ?? {},
+    dispatchContext:
+      overrides.dispatchContext ??
+      dispatchContextSnapshot("d-1", "rs-1", "", ""),
     cancelToken: overrides.cancelToken ?? "ct",
     nodeId: overrides.nodeId ?? "n-1",
     callbackUrl: overrides.callbackUrl ?? "http://supervisor.invalid/cb",
@@ -62,7 +66,7 @@ function parseToolText<T>(content: unknown): T {
 }
 
 describe("rimsky-callback MCP tools", () => {
-  it("lists all six tools (post emit_named_event retirement, incl. report_park)", async () => {
+  it("lists all seven tools (incl. report_park and dispatch_context_read)", async () => {
     const registry = new TokenRegistry();
     const client = await buildClient(registry);
 
@@ -71,6 +75,7 @@ describe("rimsky-callback MCP tools", () => {
     expect(names).toEqual([
       "attributes_read",
       "attributes_set",
+      "dispatch_context_read",
       "report_blocked",
       "report_complete",
       "report_error",
@@ -151,6 +156,131 @@ describe("rimsky-callback MCP tools", () => {
     expect(parseToolText(res.content)).toEqual({
       foo: 1,
       bar: { nested: true },
+    });
+  });
+
+  it("dispatch_context_read returns dispatch_id + run_scope_id with no prior on a fresh dispatch", async () => {
+    const registry = new TokenRegistry();
+    registry.register(
+      "tok-fresh",
+      makeRegistryEntry({
+        dispatchContext: dispatchContextSnapshot("d-fresh", "rs-1", "", ""),
+      }),
+    );
+    const client = await buildClient(registry);
+    const res = await client.callTool({
+      name: "dispatch_context_read",
+      arguments: { token: "tok-fresh" },
+    });
+    expect(parseToolText(res.content)).toEqual({
+      dispatch_id: "d-fresh",
+      run_scope_id: "rs-1",
+      prior_dispatch_id: null,
+      prior_dispatch_disposition: null,
+    });
+  });
+
+  it("dispatch_context_read maps PRIOR_RETRY_AFTER_ERROR wire enum to retry_after_error", async () => {
+    const registry = new TokenRegistry();
+    registry.register(
+      "tok-retry",
+      makeRegistryEntry({
+        dispatchContext: dispatchContextSnapshot(
+          "d-retry",
+          "rs-1",
+          "d-prior",
+          "PRIOR_RETRY_AFTER_ERROR",
+        ),
+      }),
+    );
+    const client = await buildClient(registry);
+    const res = await client.callTool({
+      name: "dispatch_context_read",
+      arguments: { token: "tok-retry" },
+    });
+    expect(parseToolText(res.content)).toEqual({
+      dispatch_id: "d-retry",
+      run_scope_id: "rs-1",
+      prior_dispatch_id: "d-prior",
+      prior_dispatch_disposition: "retry_after_error",
+    });
+  });
+
+  it("dispatch_context_read maps PRIOR_STALE_RECOVERY wire enum to stale_recovery", async () => {
+    const registry = new TokenRegistry();
+    registry.register(
+      "tok-stale",
+      makeRegistryEntry({
+        dispatchContext: dispatchContextSnapshot(
+          "d-stale",
+          "rs-1",
+          "d-prior",
+          "PRIOR_STALE_RECOVERY",
+        ),
+      }),
+    );
+    const client = await buildClient(registry);
+    const res = await client.callTool({
+      name: "dispatch_context_read",
+      arguments: { token: "tok-stale" },
+    });
+    expect(parseToolText(res.content)).toEqual({
+      dispatch_id: "d-stale",
+      run_scope_id: "rs-1",
+      prior_dispatch_id: "d-prior",
+      prior_dispatch_disposition: "stale_recovery",
+    });
+  });
+
+  it("dispatch_context_read maps PRIOR_RECALCULATE wire enum to recalculate", async () => {
+    const registry = new TokenRegistry();
+    registry.register(
+      "tok-recalc",
+      makeRegistryEntry({
+        dispatchContext: dispatchContextSnapshot(
+          "d-recalc",
+          "rs-1",
+          "d-prior",
+          "PRIOR_RECALCULATE",
+        ),
+      }),
+    );
+    const client = await buildClient(registry);
+    const res = await client.callTool({
+      name: "dispatch_context_read",
+      arguments: { token: "tok-recalc" },
+    });
+    expect(parseToolText(res.content)).toEqual({
+      dispatch_id: "d-recalc",
+      run_scope_id: "rs-1",
+      prior_dispatch_id: "d-prior",
+      prior_dispatch_disposition: "recalculate",
+    });
+  });
+
+  it("dispatch_context_read clears disposition when no prior_dispatch_id is present", async () => {
+    const registry = new TokenRegistry();
+    registry.register(
+      "tok-noprior",
+      makeRegistryEntry({
+        dispatchContext: dispatchContextSnapshot(
+          "d-x",
+          "rs-1",
+          "",
+          "PRIOR_RETRY_AFTER_ERROR",
+        ),
+      }),
+    );
+    const client = await buildClient(registry);
+    const res = await client.callTool({
+      name: "dispatch_context_read",
+      arguments: { token: "tok-noprior" },
+    });
+    expect(parseToolText(res.content)).toEqual({
+      dispatch_id: "d-x",
+      run_scope_id: "rs-1",
+      prior_dispatch_id: null,
+      prior_dispatch_disposition: null,
     });
   });
 

@@ -1,8 +1,16 @@
 # claude-agent: full executor protocol coverage
 
-**Date:** 2026-05-28 (rewritten 2026-06-17 — see "Revision note" at end)
+**Date:** 2026-05-28 (rewritten 2026-06-17; piece #1 retired 2026-06-18 — see "Revision note" at end)
 **Touches:** `lib/services/executors/claude-agent/`
 **Type:** Pre-spec sketch.
+
+## Finding — piece #1 retired (2026-06-18)
+
+The "missing AwaitAsyncCallback emit tool" framing was a misread of the executor layering. The claude-agent executor is **inherently async at the envelope layer** — its gRPC `Execute` always pre-replies `Outcome.AwaitAsyncCallback` carrying an executor-chosen `async_ack_id`; the agent script never emits that outcome itself. The script's only settling options are the three terminals (`Success` / `Error` / `Park`), which already have tools (`report_complete` / `report_error` / `report_park`). The proto explicitly forbids chaining `AwaitAsyncCallback` inside `AsyncCallbackBody` for exactly this reason — the webhook IS the second half of the async path.
+
+For the "wait on an external system" use case that motivated #1, `report_park(reason: await_callback)` is already the right tool: the supervisor parks the node and an external invalidate wakes it. There is no remaining gap on the emit side; piece #1 is closed without work.
+
+Piece #2 (dispatch-context exposure) is the live, remaining gap. Spec scope below collapses to #2 only.
 
 ## Why
 
@@ -31,7 +39,7 @@ Today it doesn't. Two coverage gaps are live:
 | `proto:executor.proto::Outcome.Success` | `report_complete` | None |
 | `proto:executor.proto::Outcome.Error` | `report_error` (arbitrary class) + `report_blocked` (agent_blocked class) | None |
 | `proto:executor.proto::Outcome.Park` (typed `ParkReason`: `await_callback` / `snooze`) | `report_park` | None |
-| `proto:executor.proto::Outcome.AwaitAsyncCallback` | — | **Missing tool** |
+| `proto:executor.proto::Outcome.AwaitAsyncCallback` | Resolved by `report_park(reason: await_callback)` — see "Finding — piece #1 retired" at top | None (closed without work) |
 
 ### Inputs (rimsky → executor / agent)
 
@@ -47,9 +55,11 @@ Today it doesn't. Two coverage gaps are live:
 
 ## Proposed additions
 
-### 1. AwaitAsyncCallback emission
+### 1. AwaitAsyncCallback emission — RETIRED
 
-MCP tool:
+See "Finding — piece #1 retired" at top of file. The original proposal below is preserved for context but is no longer in scope. `report_park(reason: await_callback)` is the right tool for the use case, and the proto explicitly forbids `AwaitAsyncCallback` chaining inside `AsyncCallbackBody`. The agent script never emits `AwaitAsyncCallback`; only the executor's gRPC envelope does, and it already does so unconditionally at pre-reply time.
+
+Original proposal (retired):
 
 ```
 report_await_async_callback(
@@ -58,10 +68,6 @@ report_await_async_callback(
   expected_completion_ms?: number
 )
 ```
-
-Emits the `proto:executor.proto::Outcome.AwaitAsyncCallback` variant. After emission the agent process exits the dispatch normally — the external system POSTs `proto:executor.proto::AsyncCallbackBody` to `${callback_url}/v1/callback/{async_ack_id}` to settle (exactly one of `success` / `error` / `park`, per the proto invariant; nested `await_async` is forbidden).
-
-The wire field names map straight through: `async_ack_id` echoes back on the callback so the supervisor correlates; `expected_completion_ms` is the optional hint, with the supervisor's own `max_quiet_period` / `max_runtime` deadlines still authoritative.
 
 ### 2. Dispatch-context exposure
 
@@ -97,8 +103,8 @@ Spec-time choice; A is the cleaner separation. Mentioned together because both d
 
 ## Spec scope
 
-- **#1 (AwaitAsyncCallback tool):** closes the protocol-coverage gap. Self-contained; no proto changes; no rimsky-side changes; one new MCP tool + the wire emission path.
-- **#2 (dispatch-context exposure):** independent from #1 but lands in the same files. Spec can ship either or both.
+- **#1 (AwaitAsyncCallback tool):** RETIRED — see "Finding — piece #1 retired" at top of file. No work.
+- **#2 (dispatch-context exposure):** the live remaining gap; one new MCP tool + the snapshot capture path.
 
 ## Touch points
 

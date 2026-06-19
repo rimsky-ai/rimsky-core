@@ -57,6 +57,7 @@ interface ExecuteBody {
   };
   prior_dispatch_id?: string;
   prior_dispatch_disposition?: string;
+  run_scope_id?: string;
 }
 
 export async function startHttpBridge(
@@ -145,6 +146,9 @@ async function runAndCallback(
       mcpCatalog: config.mcpCatalog,
       mcpAllowInline: config.mcpAllowInline,
       dispatchId: body.dispatch_id ?? "",
+      runScopeId: body.run_scope_id ?? "",
+      priorDispatchId: body.prior_dispatch_id ?? "",
+      priorDispatchDisposition: body.prior_dispatch_disposition ?? "",
       callbackUrl: body.callback_url ?? "",
       cancelToken: body.cancel_token ?? "",
       cliRunner,

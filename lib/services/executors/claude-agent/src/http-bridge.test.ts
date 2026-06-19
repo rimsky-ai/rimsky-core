@@ -242,6 +242,132 @@ describe("HTTP bridge /execute observability ledger", () => {
   });
 });
 
+describe("HTTP bridge /execute threads dispatch-context fields end-to-end", () => {
+  let cb: CallbackServerHandle;
+  let bridge: RunningHttpBridge;
+  const posts: Array<{ url: string; body: unknown }> = [];
+
+  function makeDispatchContextProbeCli(): CliRunner {
+    return {
+      spawn: async (req) => {
+        const exitWaiters: Array<
+          (r: { exitCode: number | null; signal: NodeJS.Signals | null }) => void
+        > = [];
+        let exited = false;
+        const resolveExit = (): void => {
+          if (exited) return;
+          exited = true;
+          for (const w of exitWaiters) w({ exitCode: 0, signal: null });
+        };
+        const url = req.env.RIMSKY_CALLBACK_URL;
+        const token = req.env.RIMSKY_CALLBACK_TOKEN;
+        setTimeout(() => {
+          void (async () => {
+            const mod = await import("@modelcontextprotocol/sdk/client/index.js");
+            const transportMod = await import(
+              "@modelcontextprotocol/sdk/client/streamableHttp.js"
+            );
+            const transport = new transportMod.StreamableHTTPClientTransport(
+              new URL(url),
+            );
+            const client = new mod.Client({
+              name: "rimsky-http-bridge-dispatch-context-probe",
+              version: "1.0.0",
+            });
+            try {
+              await client.connect(transport);
+              const res = await client.callTool({
+                name: "dispatch_context_read",
+                arguments: { token },
+              });
+              const arr = res.content as Array<{ text?: string }>;
+              const observed = JSON.parse(arr[0]!.text ?? "null") as Record<
+                string,
+                unknown
+              >;
+              await client.callTool({
+                name: "report_complete",
+                arguments: {
+                  token,
+                  changed: false,
+                  attributes_delta: { observed },
+                },
+              });
+            } finally {
+              await client.close().catch(() => {});
+            }
+          })().catch(() => resolveExit());
+        }, 0);
+        return {
+          pid: 1234,
+          onStdout: () => {},
+          onStderr: () => {},
+          onExit: () => {},
+          sendSigterm: () => resolveExit(),
+          sendSigkill: () => resolveExit(),
+          waitExit: () =>
+            exited
+              ? Promise.resolve({ exitCode: 0, signal: null })
+              : new Promise((resolve) => exitWaiters.push(resolve)),
+        };
+      },
+    };
+  }
+
+  beforeEach(async () => {
+    delete process.env.RIMSKY_EXECUTOR_STUB_MODE;
+    posts.length = 0;
+    cb = await startInternalMcpServer({ logger });
+    bridge = await startHttpBridge({
+      host: "127.0.0.1",
+      port: 0,
+      callback: cb,
+      cliRunner: makeDispatchContextProbeCli(),
+      silenceTimeoutMs: 60_000,
+      logger,
+      postCallback: async (url, body) => {
+        posts.push({ url, body });
+      },
+    });
+  });
+
+  afterEach(async () => {
+    await bridge.shutdown();
+    await cb.close();
+  });
+
+  it("routes run_scope_id + prior_dispatch_id + prior_dispatch_disposition into the agent's dispatch_context_read snapshot", async () => {
+    const res = await fetch(`${bridge.address}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        node_id: "n-ctx",
+        node_type: "agent",
+        dispatch_id: "d-ctx-2",
+        run_scope_id: "rs-ctx-1",
+        prior_dispatch_id: "d-ctx-1",
+        prior_dispatch_disposition: "PRIOR_RETRY_AFTER_ERROR",
+        attributes: { model: "sonnet" },
+        attributes_schema: {},
+        callback_url: "http://supervisor.invalid/cb",
+      }),
+    });
+    expect(res.status).toBe(202);
+    await waitFor(() => posts.length > 0, 5000);
+    const body = posts[0]!.body as Record<string, unknown>;
+    const success = body.success as Record<string, unknown>;
+    expect(success).toBeDefined();
+    const delta = success.attributes_delta as Record<string, unknown>;
+    const observed = delta.observed as Record<string, unknown>;
+    expect(observed).toEqual({
+      dispatch_id: "d-ctx-2",
+      run_scope_id: "rs-ctx-1",
+      prior_dispatch_id: "d-ctx-1",
+      prior_dispatch_disposition: "retry_after_error",
+    });
+  });
+});
+
 describe("http-bridge outcomeToCallbackBody park outcome", () => {
   it("merges sessionToken into attributes_delta on Park (no top-level session_token / payload)", () => {
     const resumeAt = new Date("2026-06-04T12:00:00.000Z");

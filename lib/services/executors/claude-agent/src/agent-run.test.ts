@@ -687,3 +687,165 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
     }
   });
 });
+
+describe("runAgent surfaces dispatch context end-to-end via dispatch_context_read", () => {
+  function makeDispatchContextProbeCli(): CliRunner {
+    return {
+      spawn: async (req: CliSpawnRequest) => {
+        const exitWaiters: Array<
+          (r: { exitCode: number | null; signal: NodeJS.Signals | null }) => void
+        > = [];
+        let exited = false;
+        const resolveExit = (): void => {
+          if (exited) return;
+          exited = true;
+          for (const w of exitWaiters) w({ exitCode: 0, signal: null });
+        };
+        const url = req.env.RIMSKY_CALLBACK_URL;
+        const token = req.env.RIMSKY_CALLBACK_TOKEN;
+        setTimeout(() => {
+          void (async () => {
+            const transport = new StreamableHTTPClientTransport(new URL(url));
+            const client = new Client({
+              name: "rimsky-dispatch-context-probe",
+              version: "1.0.0",
+            });
+            try {
+              await client.connect(transport);
+              const res = await client.callTool({
+                name: "dispatch_context_read",
+                arguments: { token },
+              });
+              const arr = res.content as Array<{ text?: string }>;
+              const observed = JSON.parse(arr[0]!.text ?? "null") as Record<
+                string,
+                unknown
+              >;
+              await client.callTool({
+                name: "report_complete",
+                arguments: {
+                  token,
+                  changed: false,
+                  attributes_delta: { observed },
+                },
+              });
+            } finally {
+              await client.close().catch(() => {});
+            }
+          })().catch(() => resolveExit());
+        }, 0);
+        return {
+          pid: 9876,
+          onStdout: () => {},
+          onStderr: () => {},
+          onExit: () => {},
+          sendSigterm: () => resolveExit(),
+          sendSigkill: () => resolveExit(),
+          waitExit: () =>
+            exited
+              ? Promise.resolve({ exitCode: 0, signal: null })
+              : new Promise((resolve) => exitWaiters.push(resolve)),
+        };
+      },
+    };
+  }
+
+  async function runProbe(opts: {
+    runId: string;
+    dispatchId: string;
+    runScopeId: string;
+    priorDispatchId?: string;
+    priorDispatchDisposition?: string;
+  }): Promise<Record<string, unknown>> {
+    const outcome = await runAgent({
+      runId: opts.runId,
+      nodeId: "n-probe",
+      nodeType: "agent",
+      model: "sonnet",
+      systemPrompt: "sys",
+      userPrompt: "u",
+      attributesSchema: {},
+      attributes: {},
+      callbackUrl: "",
+      cancelToken: "",
+      cliRunner: makeDispatchContextProbeCli(),
+      callback: undefined as never,
+      silenceTimeoutMs: 60_000,
+      logger,
+      dispatchId: opts.dispatchId,
+      runScopeId: opts.runScopeId,
+      priorDispatchId: opts.priorDispatchId,
+      priorDispatchDisposition: opts.priorDispatchDisposition,
+    });
+    expect(outcome.kind).toBe("complete");
+    if (outcome.kind !== "complete") throw new Error("unreachable");
+    const observedHolder = outcome.attributesDelta as Record<string, unknown>;
+    return observedHolder.observed as Record<string, unknown>;
+  }
+
+  beforeEach(() => {
+    delete process.env.RIMSKY_EXECUTOR_STUB_MODE;
+  });
+
+  it("fresh dispatch reports dispatch_id + run_scope_id with no prior", async () => {
+    const observed = await runProbe({
+      runId: "run-fresh",
+      dispatchId: "d-1",
+      runScopeId: "rs-1",
+    });
+    expect(observed).toEqual({
+      dispatch_id: "d-1",
+      run_scope_id: "rs-1",
+      prior_dispatch_id: null,
+      prior_dispatch_disposition: null,
+    });
+  });
+
+  it("retry-after-error dispatch reports prior_dispatch_id + retry_after_error", async () => {
+    const observed = await runProbe({
+      runId: "run-retry",
+      dispatchId: "d-2",
+      runScopeId: "rs-1",
+      priorDispatchId: "d-1",
+      priorDispatchDisposition: "PRIOR_RETRY_AFTER_ERROR",
+    });
+    expect(observed).toEqual({
+      dispatch_id: "d-2",
+      run_scope_id: "rs-1",
+      prior_dispatch_id: "d-1",
+      prior_dispatch_disposition: "retry_after_error",
+    });
+  });
+
+  it("stale-recovery dispatch reports prior_dispatch_id + stale_recovery", async () => {
+    const observed = await runProbe({
+      runId: "run-stale",
+      dispatchId: "d-3",
+      runScopeId: "rs-1",
+      priorDispatchId: "d-2",
+      priorDispatchDisposition: "PRIOR_STALE_RECOVERY",
+    });
+    expect(observed).toEqual({
+      dispatch_id: "d-3",
+      run_scope_id: "rs-1",
+      prior_dispatch_id: "d-2",
+      prior_dispatch_disposition: "stale_recovery",
+    });
+  });
+
+  it("recalculate dispatch reports prior_dispatch_id + recalculate", async () => {
+    const observed = await runProbe({
+      runId: "run-recalc",
+      dispatchId: "d-4",
+      runScopeId: "rs-1",
+      priorDispatchId: "d-3",
+      priorDispatchDisposition: "PRIOR_RECALCULATE",
+    });
+    expect(observed).toEqual({
+      dispatch_id: "d-4",
+      run_scope_id: "rs-1",
+      prior_dispatch_id: "d-3",
+      prior_dispatch_disposition: "recalculate",
+    });
+  });
+});

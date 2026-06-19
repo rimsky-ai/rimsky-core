@@ -3,7 +3,7 @@
 // See LICENSE.apache at the repo root.
 
 import { describe, it, expect } from "vitest";
-import { TokenRegistry, type TokenEntry } from "./token-registry.js";
+import { TokenRegistry, dispatchContextSnapshot, type TokenEntry } from "./token-registry.js";
 
 describe("TokenRegistry", () => {
   it("registers, looks up, and releases tokens", () => {
@@ -27,6 +27,7 @@ function makeEntry(runId: string): TokenEntry {
   return {
     runId,
     attributesAtSpawn: {},
+    dispatchContext: dispatchContextSnapshot("d-1", "rs-1", "", ""),
     cancelToken: "ct",
     nodeId: "n-1",
     callbackUrl: "http://supervisor.invalid/cb",

@@ -56,6 +56,7 @@ interface ExecuteRequest {
   dispatch_id?: string;
   prior_dispatch_id?: string;
   prior_dispatch_disposition?: string;
+  run_scope_id?: string;
 }
 
 interface OutcomeWire {
@@ -304,6 +305,9 @@ async function runAndCallback(
       mcpCatalog: config.mcpCatalog,
       mcpAllowInline: config.mcpAllowInline,
       dispatchId: req.dispatch_id ?? "",
+      runScopeId: req.run_scope_id ?? "",
+      priorDispatchId: req.prior_dispatch_id ?? "",
+      priorDispatchDisposition: req.prior_dispatch_disposition ?? "",
       callbackUrl: req.callback_url ?? "",
       cancelToken: req.cancel_token ?? "",
       cliRunner,
