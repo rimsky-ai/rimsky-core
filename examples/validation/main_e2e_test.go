@@ -26,7 +26,7 @@ func TestE2E_ExampleValidationAgainstRunningRimsky(t *testing.T) {
 	ctx := context.Background()
 
 	netName := harness.NewNetwork(ctx, t)
-	stubEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-stub")
+	stubEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 	valEndpoint := startExampleValidatorOnNetwork(ctx, t, netName, "validator")
 
 	ep := harness.BringUpRimsky(ctx, t,

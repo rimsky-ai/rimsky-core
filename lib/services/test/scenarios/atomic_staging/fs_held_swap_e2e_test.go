@@ -58,8 +58,8 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 		},
 	})
 
-	okEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
-	errEndpoint := harness.StartErroringExecutorStubOnNetwork(ctx, t, netName, "exec-err")
+	okEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
+	errEndpoint := harness.StartErroringExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),

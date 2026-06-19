@@ -41,10 +41,13 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	netName := harness.NewNetwork(ctx, t)
 	statePG := startSensorObjectStoreStatePostgres(ctx, t, netName)
 
-	sensor := harness.StartSensorObjectStoreHandle(ctx, t, netName, "sensor-object-store", statePG.internalDSN)
+	rimskyAlias := harness.NextRimskyAlias()
+	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
+	sensor := harness.StartSensorObjectStoreHandle(ctx, t, netName, "sensor-object-store", rimskyInternalURL, statePG.internalDSN)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
+		harness.WithRimskyAlias(rimskyAlias),
 		harness.WithPublisher(objectStorePublisherName, sensor.Endpoint),
 		harness.WithRefValidationMode("none"),
 	)

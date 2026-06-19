@@ -155,7 +155,7 @@ func TestValidateFanOut_RejectsUnknownClaim(t *testing.T) {
 				Executor: "handler.fan",
 				FanOut: &FanOutSpec{
 					Claim:            "missing",
-					PartitionRequest: "{{trigger.message.payload.x}}",
+					PartitionRequest: `{"list":[{"key":"a"}]}`,
 				},
 			},
 		},
@@ -163,6 +163,68 @@ func TestValidateFanOut_RejectsUnknownClaim(t *testing.T) {
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].fan_out.claim")
+}
+
+func TestValidateFanOut_RejectsStoreNotAdvertisingSplitScope(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{
+			{
+				Type:     "fan",
+				Executor: "handler.fan",
+				Stores: []NodeStoreRef{
+					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
+				},
+				FanOut: &FanOutSpec{
+					Claim:            "items",
+					PartitionRequest: `{"list":[{"key":"a"}]}`,
+					ErrorPolicy:      AggregationPolicy{Kind: "strict"},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{
+		StoreDeclared:             storeDeclaredLookup(knownStores),
+		StoreAdvertisesSplitScope: func(name string) bool { return false },
+	})
+	require.False(t, res.Ok())
+	var found bool
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "supports_split_scope") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found,
+		"validator must reject fan_out template targeting a store not advertising split_scope; errors=%+v", res.Errors)
+}
+
+func TestValidateFanOut_AcceptsStoreAdvertisingSplitScope(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{
+			{
+				Type:     "fan",
+				Executor: "handler.fan",
+				Stores: []NodeStoreRef{
+					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
+				},
+				FanOut: &FanOutSpec{
+					Claim:            "items",
+					PartitionRequest: `{"list":[{"key":"a"}]}`,
+					ErrorPolicy:      AggregationPolicy{Kind: "strict"},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{
+		StoreDeclared:             storeDeclaredLookup(knownStores),
+		StoreAdvertisesSplitScope: func(name string) bool { return true },
+	})
+	require.True(t, res.Ok(),
+		"fan_out template targeting a store that advertises split_scope must register cleanly; errors=%+v", res.Errors)
 }
 
 func TestValidateFanOut_RejectsThresholdWithoutMaxFailures(t *testing.T) {
@@ -178,7 +240,7 @@ func TestValidateFanOut_RejectsThresholdWithoutMaxFailures(t *testing.T) {
 				},
 				FanOut: &FanOutSpec{
 					Claim:            "items",
-					PartitionRequest: "{{trigger.message.payload.x}}",
+					PartitionRequest: `{"list":[{"key":"a"}]}`,
 					ErrorPolicy: AggregationPolicy{
 						Kind: "threshold",
 					},
@@ -204,7 +266,7 @@ func TestValidateFanOut_RejectsCancelSiblingsOutsideStrict(t *testing.T) {
 				},
 				FanOut: &FanOutSpec{
 					Claim:            "items",
-					PartitionRequest: "{{trigger.message.payload.x}}",
+					PartitionRequest: `{"list":[{"key":"a"}]}`,
 					ErrorPolicy: AggregationPolicy{
 						Kind:           "best_effort",
 						CancelSiblings: true,
@@ -231,7 +293,7 @@ func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
 				},
 				FanOut: &FanOutSpec{
 					Claim:            "items",
-					PartitionRequest: "{{trigger.message.payload.x}}",
+					PartitionRequest: `{"list":[{"key":"a"}]}`,
 					ErrorPolicy: AggregationPolicy{
 						Kind: "carry_verbatim",
 					},
@@ -262,7 +324,7 @@ func TestValidateFanOut_RejectsDelegateCombo(t *testing.T) {
 				Delegate: "subgraph_x",
 				FanOut: &FanOutSpec{
 					Claim:            "items",
-					PartitionRequest: "{{trigger.message.payload.x}}",
+					PartitionRequest: `{"list":[{"key":"a"}]}`,
 				},
 			},
 		},
@@ -285,7 +347,7 @@ func TestValidateFanOut_Ok(t *testing.T) {
 				},
 				FanOut: &FanOutSpec{
 					Claim:            "items",
-					PartitionRequest: "{{trigger.message.payload.x}}",
+					PartitionRequest: `{"list":[{"key":"a"}]}`,
 					Parallelism:      4,
 					ErrorPolicy: AggregationPolicy{
 						Kind:           "strict",

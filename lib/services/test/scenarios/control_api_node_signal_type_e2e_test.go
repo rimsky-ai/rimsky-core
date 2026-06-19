@@ -21,7 +21,7 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 	ctx := context.Background()
 
 	netName := harness.NewNetwork(ctx, t)
-	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithSQLite(),

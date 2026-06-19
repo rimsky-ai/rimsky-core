@@ -79,7 +79,7 @@ func TestSubscriberOpenlineage(t *testing.T) {
 			},
 			SeedFolders: [][]string{{"docs", "alpha"}, {"docs", "beta"}},
 		})
-	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithClaimProducer("docs", fs.InternalEndpoint),

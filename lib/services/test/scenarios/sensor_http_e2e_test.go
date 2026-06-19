@@ -57,12 +57,15 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	netName := harness.NewNetwork(ctx, t)
 	statePG := startSensorHTTPStatePostgres(ctx, t, netName)
 
-	sensor := harness.StartSensorHTTPHandle(ctx, t, netName, "sensor-http", statePG.internalDSN, hostPort)
+	rimskyAlias := harness.NextRimskyAlias()
+	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
+	sensor := harness.StartSensorHTTPHandle(ctx, t, netName, "sensor-http", rimskyInternalURL, statePG.internalDSN, hostPort)
 
-	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
+	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
+		harness.WithRimskyAlias(rimskyAlias),
 		harness.WithExecutor("stub", execEP),
 		harness.WithPublisher(httpPublisherName, sensor.Endpoint),
 	)

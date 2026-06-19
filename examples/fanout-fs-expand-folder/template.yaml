@@ -1,0 +1,75 @@
+# fanout-fs-expand-folder template — STORY-fs-fanout-expand-folder proof.
+#
+# A template author declares a fan-out node whose parent claim is one
+# folder picked from the bundled filesystem store and whose
+# partition_request says "expand the folder's contents into one
+# sub-claim per matching file." The filesystem store's SplitScope
+# decodes the `{"expand_folder": {...}}` shape, walks the parent
+# folder, and emits one SubScopeDescriptor per matching child path with
+# Address = absolute file path.
+#
+# The demo script (demo.sh) registers, deploys, posts a wake message,
+# and polls until N children show distinct addresses pointing at
+# distinct files under the seeded folder — exhibiting the story's
+# outcome: file-level parallelism with no upstream enumeration.
+#
+# Stack prerequisites (operator-side):
+#   - rimsky stack reachable at RIMSKY_ENDPOINT
+#   - bundled `rimsky-store-filesystem` registered as claim producer
+#     `fs-store` advertising supports_split_scope=true with pick policy
+#     `@folder-queue` rooted at the seed/queue/ directory shipped with
+#     this example. The seeded folder `example-folder/` contains
+#     `a.json`, `b.json`, `c.json`.
+#   - bundled `attribute_passthrough` inproc executor
+name: fanout-fs-expand-folder
+version: "1"
+description: |
+  STORY-fs-fanout-expand-folder proof: the parent fan-out node holds a
+  filesystem-store folder claim; partition_request shape is
+  `{"expand_folder": {"filter": "*.json"}}`. The store walks the
+  picked folder and emits one sub-scope per matching file; rimsky
+  dispatches one child per file with claim.<alias>.address bound to
+  the file's absolute path.
+
+messages:
+  - type: wake
+    body_schema:
+      type: object
+      properties:
+        nonce:
+          type: string
+
+nodes:
+  - type: process_files
+    kind: attribute_passthrough
+    description: |
+      Fan-out parent: holds one filesystem-store folder claim under the
+      `@folder-queue` pick policy. partition_request asks the store to
+      expand the folder's `*.json` files. Each child sees its file's
+      absolute path through {{claim.folder.address}}.
+    stores:
+      - name: fs-store
+        selector: "@folder-queue"
+        intent: rw
+        alias: folder
+    subscribes:
+      - node: wake
+        type: terminal/success
+        wake_on_change: true
+        force_upstream_refresh: false
+    fan_out:
+      claim: folder
+      partition_request: "{\"expand_folder\":{\"filter\":\"*.json\"}}"
+      error_policy:
+        kind: best_effort
+    attributes:
+      schema:
+        type: object
+        properties:
+          partition_key:
+            type: string
+            source: "{{child.partition_key}}"
+          file_address:
+            type: string
+            source: "{{claim.folder.address}}"
+        required: [partition_key, file_address]

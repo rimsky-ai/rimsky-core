@@ -21,6 +21,29 @@ pick_policies:
     on_give_up: recycle
     visibility_timeout_seconds: 300
 
+# Partition policies are operator-declared queries the store's SplitScope
+# verb dispatches when a template's `partition_request` selects one by name
+# via {"partition_policy": "@<name>", "params": {...}}. Each policy names
+# the items_table, a select column list, a parameterized where clause, and
+# a params_schema whose properties (top-level key order) declares the
+# binding order of $1..$N. Only the property NAMES (key order) are
+# load-bearing; per-property type metadata is documentary — postgres
+# rejects type-mismatched values at query time.
+# partition_policies:
+#   "@open_issues":
+#     items_table: issues
+#     # CONVENTION: the FIRST selected column is used as the row id and
+#     # becomes the partition_key on each emitted sub-claim. The store
+#     # warns at startup if it doesn't look like an id column. Place
+#     # `id` (or your row-identifier column) first.
+#     select: "id, payload"
+#     where: "status = $1 AND created_at > $2"
+#     params_schema:
+#       properties:
+#         status: {}
+#         since: {}
+#     limit: 100
+
 # Listen addresses. The admin port hosts the store-internal items
 # insertion endpoint (per spec §13.1).
 host: 0.0.0.0

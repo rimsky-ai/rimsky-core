@@ -20,26 +20,29 @@ const sensorCronImage = "rimsky-sensor-cron:latest"
 type SensorCronHandle struct {
 	Endpoint string
 
-	ctx         context.Context
-	t           testing.TB
-	networkName string
-	alias       string
-	stateDSN    string
+	ctx            context.Context
+	t              testing.TB
+	networkName    string
+	alias          string
+	rimskyEndpoint string
+	stateDSN       string
 
 	container testcontainers.Container
 }
 
-func StartSensorCron(ctx context.Context, t testing.TB, networkName, alias, stateDSN string) *SensorCronHandle {
+func StartSensorCron(ctx context.Context, t testing.TB, networkName, alias, rimskyEndpoint, stateDSN string) *SensorCronHandle {
 	t.Helper()
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 	h := &SensorCronHandle{
-		ctx:         ctx,
-		t:           t,
-		networkName: networkName,
-		alias:       alias,
-		stateDSN:    stateDSN,
+		ctx:            ctx,
+		t:              t,
+		networkName:    networkName,
+		alias:          uniqueAlias,
+		rimskyEndpoint: rimskyEndpoint,
+		stateDSN:       stateDSN,
 	}
-	h.container = runSensorCronContainer(ctx, t, networkName, alias, stateDSN)
-	h.Endpoint = fmt.Sprintf("%s:9081", alias)
+	h.container = runSensorCronContainer(ctx, t, networkName, uniqueAlias, rimskyEndpoint, stateDSN)
+	h.Endpoint = fmt.Sprintf("%s:9081", uniqueAlias)
 	t.Cleanup(func() {
 		if h.container == nil {
 			return
@@ -65,14 +68,17 @@ func (h *SensorCronHandle) Stop(ctx context.Context) {
 func (h *SensorCronHandle) Restart(ctx context.Context) {
 	h.t.Helper()
 	h.Stop(ctx)
-	h.container = runSensorCronContainer(ctx, h.t, h.networkName, h.alias, h.stateDSN)
+	h.container = runSensorCronContainer(ctx, h.t, h.networkName, h.alias, h.rimskyEndpoint, h.stateDSN)
 }
 
-func runSensorCronContainer(ctx context.Context, t testing.TB, networkName, alias, stateDSN string) testcontainers.Container {
+func runSensorCronContainer(ctx context.Context, t testing.TB, networkName, alias, rimskyEndpoint, stateDSN string) testcontainers.Container {
 	t.Helper()
+	if rimskyEndpoint == "" {
+		rimskyEndpoint = "http://rimsky:8080"
+	}
 	env := map[string]string{
 		"RIMSKY_SENSOR_CRON_PORT": "9081",
-		"RIMSKY_ENDPOINT":         "http://rimsky:8080",
+		"RIMSKY_ENDPOINT":         rimskyEndpoint,
 	}
 	if stateDSN != "" {
 		env["RIMSKY_SENSOR_CRON_STATE_DSN"] = stateDSN

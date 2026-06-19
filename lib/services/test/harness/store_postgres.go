@@ -26,12 +26,13 @@ type PostgresOnNetwork struct {
 
 func StartPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) PostgresOnNetwork {
 	t.Helper()
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 	c, err := pgmodule.Run(ctx,
 		"postgres:15-alpine",
 		pgmodule.WithDatabase("storedb"),
 		pgmodule.WithUsername("store"),
 		pgmodule.WithPassword("store"),
-		tcnet.WithNetworkName([]string{alias}, networkName),
+		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithWaitStrategy(
 			wait.ForAll(
 				wait.ForLog("database system is ready to accept connections").
@@ -53,7 +54,7 @@ func StartPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alia
 	if err != nil {
 		t.Fatalf("harness: store postgres host DSN: %v", err)
 	}
-	internalDSN := fmt.Sprintf("postgres://store:store@%s:5432/storedb?sslmode=disable", alias)
+	internalDSN := fmt.Sprintf("postgres://store:store@%s:5432/storedb?sslmode=disable", uniqueAlias)
 
 	return PostgresOnNetwork{
 		InternalDSN: internalDSN,
@@ -78,11 +79,12 @@ type PostgresStoreSpec struct {
 
 func StartPostgresStore(ctx context.Context, t testing.TB, networkName, alias string, spec PostgresStoreSpec) (endpoint string) {
 	t.Helper()
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 
 	configYAML := renderPostgresStoreConfig(spec)
 
 	c, err := testcontainers.Run(ctx, storePostgresImage,
-		tcnet.WithNetworkName([]string{alias}, networkName),
+		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"STORE_POSTGRES_CONFIG": "/etc/store/config.yml",
 		}),
@@ -105,7 +107,7 @@ func StartPostgresStore(ctx context.Context, t testing.TB, networkName, alias st
 		_ = c.Terminate(termCtx)
 	})
 
-	return fmt.Sprintf("grpc://%s:9101", alias)
+	return fmt.Sprintf("grpc://%s:9101", uniqueAlias)
 }
 
 func renderPostgresStoreConfig(spec PostgresStoreSpec) string {

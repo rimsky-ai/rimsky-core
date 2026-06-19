@@ -74,7 +74,6 @@ func buildLockSpecs(
 	if err != nil {
 		return nil, err
 	}
-	triggerPayload, triggerType := triggerMessageForFrame(ctx, args, tx, frameID)
 	var templateHash string
 	if inst != nil {
 		templateHash = inst.TemplateHash
@@ -84,8 +83,6 @@ func buildLockSpecs(
 		Params:                paramsRaw,
 		Deps:                  deps,
 		Claim:                 loadInheritedClaimsForNode(ctx, args, tx, nd),
-		TriggerMessagePayload: triggerPayload,
-		TriggerMessageType:    triggerType,
 		RegistryDeclaredTypes: registryTypes,
 	}
 

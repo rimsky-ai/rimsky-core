@@ -258,6 +258,19 @@ message SubScopeDescriptor {
   bytes  claim_scope_data  = 1;
   string partition_key    = 2;
   bytes  producer_metadata = 3;
+  // Producer-supplied per-sub-claim address — what an executor uses to access
+  // the underlying data. Empty allowed (e.g., for pass-through list-array
+  // shapes where data lives in payload). The bytes wire type carries opaque
+  // content, but rimsky's runtime requires JSON-valid bytes when non-empty:
+  // producers emitting non-JSON address bytes must wrap them in a JSON
+  // envelope (e.g. a base64-tagged object). Non-JSON address bytes are
+  // rejected with a clear error.
+  bytes  address           = 4;
+  // Producer-supplied per-sub-claim payload bytes, surfaced to the child's
+  // substitution via {{claim.<alias>.payload[.<field>]}}. Inert in rimsky's
+  // runtime. Same JSON-validity contract as address — when non-empty, bytes
+  // must be JSON-valid.
+  bytes  payload           = 5;
 }
 
 message SplitScopeResponse {

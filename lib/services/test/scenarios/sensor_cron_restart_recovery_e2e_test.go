@@ -35,10 +35,13 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 
 	statePGContainer := startSensorStatePostgres(ctx, t, netName)
 
-	sensor := harness.StartSensorCron(ctx, t, netName, "sensor-cron", statePGContainer.internalDSN)
+	rimskyAlias := harness.NextRimskyAlias()
+	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
+	sensor := harness.StartSensorCron(ctx, t, netName, "sensor-cron", rimskyInternalURL, statePGContainer.internalDSN)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
+		harness.WithRimskyAlias(rimskyAlias),
 		harness.WithPublisher(cronPublisherName, sensor.Endpoint),
 		harness.WithRefValidationMode("none"),
 	)

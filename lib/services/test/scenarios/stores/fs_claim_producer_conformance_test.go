@@ -1,0 +1,74 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+package stores
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	cpconf "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/lib/services/stores/filesystem/server"
+	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+)
+
+// @story: claim-producer-conformance
+func TestFsStore_ClaimProducerConformance(t *testing.T) {
+	root := t.TempDir()
+	grpcAddr, teardown := startFilesystemStore(t, server.Config{
+		Root:          root,
+		SweepInterval: 60 * time.Second,
+	})
+	t.Cleanup(teardown)
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer dialCancel()
+	client, err := harness.DialClaimProducer(dialCtx, "conformance-target", "grpc://"+grpcAddr)
+	if err != nil {
+		t.Fatalf("DialClaimProducer: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	runCtx, runCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer runCancel()
+	results := cpconf.Run(runCtx, client)
+	failed := 0
+	for _, r := range results {
+		if r.Err != nil {
+			failed++
+			t.Errorf("claim-producer conformance FAIL %s: %v", r.Name, r.Err)
+		} else {
+			t.Logf("claim-producer conformance ok %s", r.Name)
+		}
+	}
+	if failed > 0 {
+		t.Fatalf("%d/%d claim-producer conformance checks failed", failed, len(results))
+	}
+
+	for _, name := range []string{
+		"SplitScopeListReturnsAllElements",
+		"SplitScopePreservesPartitionKey",
+		"SplitScopePreservesPayload",
+		"SplitScopeAddressFieldPresent",
+	} {
+		assertFsResultPassing(t, results, name)
+	}
+}
+
+func assertFsResultPassing(t *testing.T, results []cpconf.CheckResult, name string) {
+	t.Helper()
+	for _, r := range results {
+		if r.Name == name {
+			return
+		}
+	}
+	rowNames := make([]string, 0, len(results))
+	for _, r := range results {
+		rowNames = append(rowNames, r.Name)
+	}
+	t.Errorf("claim-producer conformance result set is missing the %q row (have: [%s])",
+		name, strings.Join(rowNames, ", "))
+}

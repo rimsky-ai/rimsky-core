@@ -13,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 type Client struct {
@@ -125,6 +126,8 @@ func (c *Client) SplitScope(ctx context.Context, req claimproducer.SplitClaimSco
 			ClaimScopeData:   sub.GetClaimScopeData(),
 			PartitionKey:     sub.GetPartitionKey(),
 			ProducerMetadata: sub.GetProducerMetadata(),
+			Address:          sub.GetAddress(),
+			Payload:          sub.GetPayload(),
 		})
 	}
 	return out, nil
@@ -164,16 +167,5 @@ func (c *Client) ValidateCapabilities(declared claimproducer.Capabilities) error
 }
 
 func writeSemanticsFromProto(ws genv1.WriteSemantics) claimproducer.WriteSemantics {
-	switch ws {
-	case genv1.WriteSemantics_WRITE_SEMANTICS_SYNC:
-		return claimproducer.WriteSemanticsSync
-	case genv1.WriteSemantics_WRITE_SEMANTICS_STAGED_ASYNC:
-		return claimproducer.WriteSemanticsStagedAsync
-	case genv1.WriteSemantics_WRITE_SEMANTICS_BLOCKING_ASYNC:
-		return claimproducer.WriteSemanticsBlockingAsync
-	case genv1.WriteSemantics_WRITE_SEMANTICS_READ_ONLY:
-		return claimproducer.WriteSemanticsReadOnly
-	default:
-		return claimproducer.WriteSemanticsUnknown
-	}
+	return claimproducer.WriteSemantics(bridge.WriteSemanticsFromProto(ws))
 }

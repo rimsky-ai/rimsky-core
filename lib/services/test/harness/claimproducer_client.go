@@ -15,6 +15,7 @@ import (
 
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 func DialClaimProducer(ctx context.Context, name, endpoint string) (*ClaimProducerClient, error) {
@@ -151,6 +152,8 @@ func (c *ClaimProducerClient) SplitScope(ctx context.Context, req claimproducer.
 			ClaimScopeData:   s.GetClaimScopeData(),
 			PartitionKey:     s.GetPartitionKey(),
 			ProducerMetadata: s.GetProducerMetadata(),
+			Address:          s.GetAddress(),
+			Payload:          s.GetPayload(),
 		})
 	}
 	return claimproducer.SplitClaimScopeResponse{SubClaimScopes: subs}, nil
@@ -171,12 +174,5 @@ func (c *ClaimProducerClient) ScopesConflict(ctx context.Context, a, b []byte) (
 }
 
 func writeSemanticsFromProto(ws genv1.WriteSemantics) claimproducer.WriteSemantics {
-	switch ws {
-	case genv1.WriteSemantics_WRITE_SEMANTICS_SYNC:
-		return claimproducer.WriteSemanticsSync
-	case genv1.WriteSemantics_WRITE_SEMANTICS_STAGED_ASYNC:
-		return claimproducer.WriteSemanticsStagedAsync
-	default:
-		return claimproducer.WriteSemanticsUnknown
-	}
+	return claimproducer.WriteSemantics(bridge.WriteSemanticsFromProto(ws))
 }

@@ -153,21 +153,49 @@ func (s *Server) SplitScope(ctx context.Context, req *genv1.SplitScopeRequest) (
 	if s.DataProcessing != nil {
 		return s.DataProcessing.SplitScope(ctx, req)
 	}
-	var decoded struct {
-		PartitionKeys []string `json:"partition_keys"`
+	var probe struct {
+		PartitionKeys []string          `json:"partition_keys"`
+		List          []json.RawMessage `json:"list"`
 	}
-	if err := json.Unmarshal(req.GetPartitionRequest(), &decoded); err != nil {
+	if err := json.Unmarshal(req.GetPartitionRequest(), &probe); err != nil {
 		return nil, fmt.Errorf("stub.SplitScope: decode partition_request: %w", err)
 	}
-	if len(decoded.PartitionKeys) == 0 {
+	if probe.List != nil {
+		return splitScopeList(probe.List)
+	}
+	if len(probe.PartitionKeys) == 0 {
 		return nil, fmt.Errorf("stub.SplitScope: partition_request.partition_keys must be non-empty")
 	}
-	out := make([]*genv1.SubScopeDescriptor, 0, len(decoded.PartitionKeys))
-	for _, key := range decoded.PartitionKeys {
+	out := make([]*genv1.SubScopeDescriptor, 0, len(probe.PartitionKeys))
+	for _, key := range probe.PartitionKeys {
 		scope, _ := json.Marshal(map[string]string{"partition_key": key})
 		out = append(out, &genv1.SubScopeDescriptor{
 			ClaimScopeData: scope,
 			PartitionKey:   key,
+		})
+	}
+	return &genv1.SplitScopeResponse{SubScopes: out}, nil
+}
+
+func splitScopeList(elements []json.RawMessage) (*genv1.SplitScopeResponse, error) {
+	out := make([]*genv1.SubScopeDescriptor, 0, len(elements))
+	for i, raw := range elements {
+		var el struct {
+			Key     string          `json:"key"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(raw, &el); err != nil {
+			return nil, fmt.Errorf("stub.SplitScope: decode list[%d]: %w", i, err)
+		}
+		if el.Key == "" {
+			return nil, fmt.Errorf("stub.SplitScope: list[%d].key must be non-empty", i)
+		}
+		scope, _ := json.Marshal(map[string]string{"partition_key": el.Key})
+		out = append(out, &genv1.SubScopeDescriptor{
+			ClaimScopeData: scope,
+			PartitionKey:   el.Key,
+			Payload:        []byte(el.Payload),
+			Address:        []byte{},
 		})
 	}
 	return &genv1.SplitScopeResponse{SubScopes: out}, nil

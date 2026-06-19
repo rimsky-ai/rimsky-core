@@ -34,7 +34,7 @@ func TestStoresRedesignSmoke(t *testing.T) {
 			SeedFolders: [][]string{{"docs", "alpha"}, {"docs", "beta"}, {"docs", "gamma"}},
 		})
 
-	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),

@@ -44,7 +44,7 @@ var anyBraceRe = regexp.MustCompile(`\{[^{}]*\}`)
 
 var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
-var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|trigger|child|messages)\.(.+)$`)
+var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|child|messages)\.(.+)$`)
 
 // @concept: template
 type RefValidationMode int
@@ -205,7 +205,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 
 	refs := ExtractSubstitutionRefsFromTemplate(*spec)
 	validateSubstitutionRefExistence(spec, declared, hooks, refs, &res)
-	validateSubstitutionRefCoverage(spec, refs, &res)
+	validateSubstitutionRefCoverage(spec, refs, messageRefs, &res)
 
 	if _, err := BuildHardDepEdges(*spec); err != nil {
 		res.Errors = append(res.Errors, ValidationError{
@@ -641,7 +641,12 @@ func validateSubstitutionRefExistence(
 // @decision: substitution-ref-coverage-required
 // @decision: coverage-wildcard-asymmetry
 // @decision: uncovered-substitution-error-shape
-func validateSubstitutionRefCoverage(tmpl *TemplateSpec, refs map[string][]substitutionRef, res *ValidationResult) {
+func validateSubstitutionRefCoverage(
+	tmpl *TemplateSpec,
+	refs map[string][]substitutionRef,
+	messageRefsByReceiver map[string][]messageRef,
+	res *ValidationResult,
+) {
 	if tmpl == nil {
 		return
 	}
@@ -684,6 +689,41 @@ func validateSubstitutionRefCoverage(tmpl *TemplateSpec, refs map[string][]subst
 			})
 		}
 	}
+	// @story: typed-message-substitution
+	for receiverType, list := range messageRefsByReceiver {
+		idx := indexByReceiver[receiverType]
+		for _, ref := range list {
+			adapted := substitutionRef{
+				SenderNodeType: ref.MessageType,
+				TopicKind:      "message",
+			}
+			suggestedType, covered := coverageMatch(idx, adapted)
+			if covered {
+				continue
+			}
+			refLiteral := "{{messages." + ref.MessageType
+			if ref.Field != "" {
+				refLiteral += "." + ref.Field
+			}
+			refLiteral += "}}"
+			res.StructuredErrors = append(res.StructuredErrors, map[string]any{
+				"kind":               "substitution_ref_uncovered",
+				"receiver_node_type": receiverType,
+				"ref":                refLiteral,
+				"attribute_property": "",
+				"suggested_subscribes_entry": map[string]any{
+					"node":                   ref.MessageType,
+					"type":                   suggestedType,
+					"wake_on_change":         false,
+					"force_upstream_refresh": false,
+				},
+				"suggested_subscribes_note": fmt.Sprintf(
+					"set wake_on_change: true if this ref should also fire this receiver; set force_upstream_refresh: true if %s should be re-evaluated when this receiver is invalidated",
+					ref.MessageType,
+				),
+			})
+		}
+	}
 }
 
 type coverageEntryKey struct {
@@ -706,6 +746,18 @@ func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (sugg
 			return suggestedType, true
 		}
 		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: "attribute/*"}]; ok {
+			return suggestedType, true
+		}
+		return suggestedType, false
+	case "message":
+		suggestedType = "terminal/success"
+		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: suggestedType}]; ok {
+			return suggestedType, true
+		}
+		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: "terminal/*"}]; ok {
+			return suggestedType, true
+		}
+		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: "*"}]; ok {
 			return suggestedType, true
 		}
 		return suggestedType, false
@@ -1417,7 +1469,7 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 	if bodyMatch == nil {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: path,
-			Msg:  fmt.Sprintf("source directive %q must start with claim.|params.|nodes.", body),
+			Msg:  fmt.Sprintf("source directive %q must start with claim.|params.|nodes.|messages.|child.", body),
 		})
 		return
 	}
@@ -1499,27 +1551,6 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 				Msg:  fmt.Sprintf("nodes directive %q second segment must be 'attribute'", body),
 			})
 		}
-	case "trigger":
-		if len(parts) < 2 || parts[0] != "message" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: path,
-				Msg:  fmt.Sprintf("trigger directive %q must be trigger.message.payload[.<field>]", body),
-			})
-			return
-		}
-		if len(parts) < 2 || parts[1] != "payload" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: path,
-				Msg:  fmt.Sprintf("trigger directive %q must be trigger.message.payload[.<field>]", body),
-			})
-			return
-		}
-		if len(parts) > 2 && parts[2] == "" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: path,
-				Msg:  fmt.Sprintf("trigger directive %q has an empty trailing segment", body),
-			})
-		}
 	case "child":
 		if len(parts) != 1 || parts[0] != "partition_key" {
 			res.Errors = append(res.Errors, ValidationError{
@@ -1579,7 +1610,7 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], trigger.message.payload[.<f>], child.partition_key, or messages.<type>[.<field>])", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], messages.<type>[.<field>], or child.partition_key)", body),
 			})
 		}
 	}

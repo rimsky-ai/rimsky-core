@@ -29,6 +29,7 @@ func Mount(mux *http.ServeMux, srv genv1.ClaimProducerServer) {
 	mux.HandleFunc("/v1/commit", producerHandler(srv, "commit"))
 	mux.HandleFunc("/v1/abandon", producerHandler(srv, "abandon"))
 	mux.HandleFunc("/v1/release", producerHandler(srv, "release"))
+	mux.HandleFunc("/v1/split_scope", producerHandler(srv, "split_scope"))
 }
 
 func MountLifecycle(mux *http.ServeMux, srv genv1.LifecycleSubscriberServer) {
@@ -132,6 +133,15 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 		return srv.Release(ctx, &genv1.ReleaseRequest{
 			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address,
 		})
+	case "split_scope":
+		var req splitScopeBody
+		if err := decodeOptional(body, &req); err != nil {
+			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		}
+		return srv.SplitScope(ctx, &genv1.SplitScopeRequest{
+			ClaimHandleId:    req.ClaimHandleID,
+			PartitionRequest: req.PartitionRequest,
+		})
 	}
 	return nil, errUnknownVerb
 }
@@ -207,6 +217,11 @@ type actionBody struct {
 	ClaimID string `json:"claim_id"`
 	Scope   []byte `json:"scope"`
 	Address []byte `json:"address"`
+}
+
+type splitScopeBody struct {
+	ClaimHandleID    string `json:"claim_handle_id"`
+	PartitionRequest []byte `json:"partition_request"`
 }
 
 type templateScopeBody struct {

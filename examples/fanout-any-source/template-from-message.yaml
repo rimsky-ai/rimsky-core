@@ -1,0 +1,54 @@
+# template-from-message.yaml — STORY-fanout-any-substitution-source half 2.
+#
+# Same fan-out node + claim shape as template-from-node.yaml, but the
+# partition_request reads from a typed-message body
+# (`{{messages.backfill_trigger.items}}`). Operator posts a
+# backfill_trigger message carrying the list; fan-out dispatches one
+# child per item. Same store, same value-delivering component as the
+# from-node template — only the substitution source differs.
+name: fanout-any-source-from-message
+version: "1"
+description: |
+  STORY-fanout-any-substitution-source — partition_request source =
+  typed message body. backfill_trigger carries the list; the triage
+  fan-out node substitutes it into its partition_request.
+
+messages:
+  - type: backfill_trigger
+    body_schema:
+      type: object
+      properties:
+        items:
+          type: array
+      required: [items]
+
+nodes:
+  - type: triage
+    kind: attribute_passthrough
+    description: |
+      Fan-out node: partition_request substitutes the backfill_trigger
+      message's `items` array. Subscribes to the message type so the
+      substitution-ref coverage check is satisfied.
+    stores:
+      - name: fs-store
+        selector: "@seed-queue"
+        intent: rw
+        alias: fs_queue
+    subscribes:
+      - node: backfill_trigger
+        type: terminal/success
+        wake_on_change: true
+        force_upstream_refresh: false
+    fan_out:
+      claim: fs_queue
+      partition_request: "{\"list\":{{messages.backfill_trigger.items}}}"
+      error_policy:
+        kind: best_effort
+    attributes:
+      schema:
+        type: object
+        properties:
+          partition_key:
+            type: string
+            source: "{{child.partition_key}}"
+        required: [partition_key]

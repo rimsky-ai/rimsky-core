@@ -6,6 +6,7 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 func StartOverlapClaimProducerOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (endpoint string) {
 	t.Helper()
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 	c, err := testcontainers.Run(ctx, "",
 		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
 			Context:    repoRoot(),
@@ -24,7 +26,7 @@ func StartOverlapClaimProducerOnNetwork(ctx context.Context, t testing.TB, netwo
 			Tag:        "latest",
 			KeepImage:  true,
 		}),
-		tcnet.WithNetworkName([]string{alias}, networkName),
+		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"OVERLAP_PRODUCER_BIND": "0.0.0.0:9400",
 		}),
@@ -41,5 +43,5 @@ func StartOverlapClaimProducerOnNetwork(ctx context.Context, t testing.TB, netwo
 		defer cancel()
 		_ = c.Terminate(termCtx)
 	})
-	return "grpc://" + alias + ":9400"
+	return "grpc://" + uniqueAlias + ":9400"
 }

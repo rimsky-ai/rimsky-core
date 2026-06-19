@@ -45,6 +45,7 @@ type FilesystemStoreEndpoint struct {
 
 func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias string, spec FilesystemStoreSpec) FilesystemStoreEndpoint {
 	t.Helper()
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 
 	hostDir := t.TempDir()
 	if err := os.MkdirAll(hostDir, 0o755); err != nil {
@@ -60,7 +61,7 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 
 	httpBridgeURL := ""
 	if spec.AdvertiseHTTPBridge {
-		httpBridgeURL = fmt.Sprintf("http://%s:9110", alias)
+		httpBridgeURL = fmt.Sprintf("http://%s:9110", uniqueAlias)
 	}
 	configYAML := renderFilesystemConfig(spec, httpBridgeURL)
 
@@ -70,7 +71,7 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 	}
 
 	c, err := testcontainers.Run(ctx, storeFilesystemImage,
-		tcnet.WithNetworkName([]string{alias}, networkName),
+		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"STORE_FILESYSTEM_CONFIG": "/etc/store/config.yml",
 		}),
@@ -110,7 +111,7 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 	}
 
 	return FilesystemStoreEndpoint{
-		InternalEndpoint: fmt.Sprintf("grpc://%s:9100", alias),
+		InternalEndpoint: fmt.Sprintf("grpc://%s:9100", uniqueAlias),
 		HostDir:          hostDir,
 		HostHTTPBridge:   hostHTTPBridge,
 	}

@@ -24,7 +24,7 @@ func TestTerminateAfterRun_EndToEnd(t *testing.T) {
 	ctx := context.Background()
 
 	netName := harness.NewNetwork(ctx, t)
-	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
+	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),

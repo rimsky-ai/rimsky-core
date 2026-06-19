@@ -1,0 +1,50 @@
+# template-readwrite.yaml — STORY-fanout-intent-inheritance half 2.
+#
+# Identical to the read-only template except intent=rw. Sub-claims
+# inherit intent=rw in the persisted rimsky_claim_handles row, which
+# is the precondition the cascade contract (ModeCoexists) relies on
+# to block conflicting rw siblings.
+name: fanout-intent-readwrite
+version: "1"
+description: |
+  STORY-fanout-intent-inheritance — read-write side. Fan-out claim
+  intent=rw; sub-claims inherit intent=rw verbatim.
+
+messages:
+  - type: fanout_seed_rw
+    body_schema:
+      type: object
+      properties:
+        items:
+          type: array
+      required: [items]
+
+nodes:
+  - type: triage_rw
+    kind: attribute_passthrough
+    description: |
+      Fan-out parent declaring intent=rw. Sub-claims inherit intent=rw
+      verbatim in the persisted claim-handle row.
+    stores:
+      - name: pg-store
+        selector: "@items-queue-rw"
+        intent: rw
+        alias: data
+    subscribes:
+      - node: fanout_seed_rw
+        type: terminal/success
+        wake_on_change: true
+        force_upstream_refresh: false
+    fan_out:
+      claim: data
+      partition_request: "{\"list\":{{messages.fanout_seed_rw.items}}}"
+      error_policy:
+        kind: best_effort
+    attributes:
+      schema:
+        type: object
+        properties:
+          partition_key:
+            type: string
+            source: "{{child.partition_key}}"
+        required: [partition_key]

@@ -33,8 +33,8 @@ func TestE2E_ExampleClaimProducerAgainstRunningRimsky(t *testing.T) {
 
 	netName := harness.NewNetwork(ctx, t)
 	prodInternal := startExampleClaimProducerOnNetwork(ctx, t, netName, "example-producer")
-	okEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
-	errEndpoint := harness.StartErroringExecutorStubOnNetwork(ctx, t, netName, "exec-err")
+	okEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
+	errEndpoint := harness.StartErroringExecutorStubOnNetwork(ctx, t, netName)
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithClaimProducer("example", prodInternal, "read_only"),

@@ -28,17 +28,18 @@ var itemsTableIdentRe = pgsstore.ItemsTableIdentRegex
 const defaultConfigEnv = "STORE_POSTGRES_CONFIG"
 
 type yamlConfig struct {
-	Connection           string                    `yaml:"connection"`
-	WriteSemantics       string                    `yaml:"write_semantics"`
-	PickPolicies         map[string]yamlPickPolicy `yaml:"pick_policies"`
-	Host                 string                    `yaml:"host"`
-	GRPCPort             int                       `yaml:"grpc_port"`
-	HTTPPort             int                       `yaml:"http_port"`
-	HTTPBridgeURL        string                    `yaml:"http_bridge_url"`
-	AdminPort            int                       `yaml:"admin_port"`
-	SweepIntervalSeconds int                       `yaml:"sweep_interval_seconds"`
-	EnableLifecycle      bool                      `yaml:"enable_lifecycle"`
-	EnableExecutor       bool                      `yaml:"enable_executor"`
+	Connection           string                         `yaml:"connection"`
+	WriteSemantics       string                         `yaml:"write_semantics"`
+	PickPolicies         map[string]yamlPickPolicy      `yaml:"pick_policies"`
+	PartitionPolicies    map[string]yamlPartitionPolicy `yaml:"partition_policies"`
+	Host                 string                         `yaml:"host"`
+	GRPCPort             int                            `yaml:"grpc_port"`
+	HTTPPort             int                            `yaml:"http_port"`
+	HTTPBridgeURL        string                         `yaml:"http_bridge_url"`
+	AdminPort            int                            `yaml:"admin_port"`
+	SweepIntervalSeconds int                            `yaml:"sweep_interval_seconds"`
+	EnableLifecycle      bool                           `yaml:"enable_lifecycle"`
+	EnableExecutor       bool                           `yaml:"enable_executor"`
 }
 
 type yamlPickPolicy struct {
@@ -46,6 +47,18 @@ type yamlPickPolicy struct {
 	OnCommit                 action.Action `yaml:"on_commit"`
 	OnGiveUp                 action.Action `yaml:"on_give_up"`
 	VisibilityTimeoutSeconds int           `yaml:"visibility_timeout_seconds"`
+}
+
+type yamlPartitionPolicy struct {
+	ItemsTable   string           `yaml:"items_table"`
+	Select       string           `yaml:"select"`
+	Where        string           `yaml:"where"`
+	ParamsSchema yamlParamsSchema `yaml:"params_schema"`
+	Limit        int              `yaml:"limit"`
+}
+
+type yamlParamsSchema struct {
+	Properties yaml.Node `yaml:"properties"`
 }
 
 func main() {
@@ -89,6 +102,29 @@ func main() {
 		}
 	}
 
+	partitionPolicies := make(map[string]*pgsstore.PartitionPolicy, len(cfg.PartitionPolicies))
+	for name, pp := range cfg.PartitionPolicies {
+		if !itemsTableIdentRe.MatchString(pp.ItemsTable) {
+			fmt.Fprintf(os.Stderr,
+				"store-postgres: partition_policies[%q]: items_table %q is not a valid SQL identifier (lowercase letters/digits/underscore; not starting with a digit)\n",
+				name, pp.ItemsTable)
+			os.Exit(1)
+		}
+		paramOrder, perr := extractParamOrder(pp.ParamsSchema)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr,
+				"store-postgres: partition_policies[%q]: params_schema: %v\n", name, perr)
+			os.Exit(1)
+		}
+		partitionPolicies[name] = &pgsstore.PartitionPolicy{
+			ItemsTable: pp.ItemsTable,
+			Select:     pp.Select,
+			Where:      pp.Where,
+			ParamOrder: paramOrder,
+			Limit:      pp.Limit,
+		}
+	}
+
 	grpcLis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, cfg.GRPCPort))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "store-postgres: grpc listen: %v\n", err)
@@ -124,17 +160,40 @@ func main() {
 	defer cancel()
 
 	if err := server.Run(ctx, server.Config{
-		Connection:      cfg.Connection,
-		WriteSemantics:  ws,
-		PickPolicies:    policies,
-		SweepInterval:   sweep,
-		HTTPBridgeURL:   cfg.HTTPBridgeURL,
-		EnableLifecycle: cfg.EnableLifecycle,
-		EnableExecutor:  cfg.EnableExecutor,
+		Connection:        cfg.Connection,
+		WriteSemantics:    ws,
+		PickPolicies:      policies,
+		PartitionPolicies: partitionPolicies,
+		SweepInterval:     sweep,
+		HTTPBridgeURL:     cfg.HTTPBridgeURL,
+		EnableLifecycle:   cfg.EnableLifecycle,
+		EnableExecutor:    cfg.EnableExecutor,
 	}, grpcLis, httpLis, adminLis); err != nil {
 		fmt.Fprintf(os.Stderr, "store-postgres: server.Run: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func extractParamOrder(schema yamlParamsSchema) ([]string, error) {
+	if schema.Properties.Kind == 0 {
+		return nil, nil
+	}
+	if schema.Properties.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("properties must be a YAML mapping (got kind=%d)", schema.Properties.Kind)
+	}
+	content := schema.Properties.Content
+	if len(content)%2 != 0 {
+		return nil, fmt.Errorf("properties mapping has odd content count %d", len(content))
+	}
+	out := make([]string, 0, len(content)/2)
+	for i := 0; i < len(content); i += 2 {
+		key := content[i]
+		if key.Kind != yaml.ScalarNode {
+			return nil, fmt.Errorf("properties: key at index %d is not a scalar", i/2)
+		}
+		out = append(out, key.Value)
+	}
+	return out, nil
 }
 
 func loadYAML(path string) (yamlConfig, error) {

@@ -2,6 +2,21 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// @plumbline:allow-docstrings
+//
+// Five recognized source kinds:
+//
+//   - {{claim.<alias>.<address|claim_scope|payload[.<field>]>}}
+//   - {{params.<key>[.<sub-field>...]}}
+//   - {{nodes.<node-type>.attribute[.<field>...]}}
+//   - {{messages.<message-type>[.<field>...]}}
+//   - {{child.partition_key}}
+//
+// `messages.<type>.<field>` is sugar for `nodes.<type>.attribute.<field>`
+// — both resolve through the same `Deps` lookup. The only difference is
+// the registration-time validation: a `messages.<type>` ref requires
+// `<type>` to be declared in the template's `messages:` registry, where
+// `nodes.<type>` requires `<type>` to be declared as a node-type.
 package attributes
 
 import (
@@ -18,11 +33,6 @@ type ResolveContext struct {
 	Deps   map[string]json.RawMessage
 	Claim  map[string]claimproducer.ClaimResult
 	Params json.RawMessage
-
-	TriggerMessagePayload json.RawMessage
-
-	// @concept: message-schema
-	TriggerMessageType string
 
 	ChildPartitionKey string
 
@@ -153,14 +163,14 @@ func resolveDirectiveValueRaw(directive string, ctx ResolveContext) (any, error)
 	switch parts[0] {
 	case "deps":
 		return nil, &ErrMissingSource{Directive: directive, Reason: "`deps.<X>.<Y>` retired; use `nodes.<X>.attribute.<Y>` (see spec 2026-05-14)"}
+	case "trigger":
+		return nil, &ErrMissingSource{Directive: directive, Reason: "`trigger.<X>` retired; use `messages.<type>[.<field>]`"}
 	case "claim":
 		return resolveClaimValue(directive, parts[1:], ctx.Claim)
 	case "params":
 		return resolveParamsValue(directive, parts[1:], ctx.Params)
 	case "nodes":
 		return resolveNodesValue(directive, parts[1:], ctx)
-	case "trigger":
-		return resolveTriggerValue(directive, parts[1:], ctx)
 	case "child":
 		return resolveChildValue(directive, parts[1:], ctx)
 	case "messages":
@@ -206,26 +216,6 @@ func stringifyAny(v any) string {
 	return stringify(v)
 }
 
-func resolveTriggerValue(directive string, rest []string, ctx ResolveContext) (any, error) {
-	if len(rest) < 2 {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger directive needs trigger.message.payload[.<field>]"}
-	}
-	if rest[0] != "message" {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger directive second segment must be 'message'"}
-	}
-	if rest[1] != "payload" {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger directive third segment must be 'payload'"}
-	}
-	if len(ctx.TriggerMessagePayload) == 0 {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "no trigger message bound to this frame"}
-	}
-	val, ok := walkPath(ctx.TriggerMessagePayload, rest[2:])
-	if !ok {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger payload field path not found"}
-	}
-	return val, nil
-}
-
 // @concept: message-schema
 func resolveMessagesValue(directive string, rest []string, ctx ResolveContext) (any, error) {
 	if len(rest) < 1 {
@@ -243,20 +233,15 @@ func resolveMessagesValue(directive string, rest []string, ctx ResolveContext) (
 			}
 		}
 	}
-	if ctx.TriggerMessageType == "" {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "no trigger message bound to this frame"}
-	}
-	if ctx.TriggerMessageType != declaredType {
+	data, ok := ctx.Deps[declaredType]
+	if !ok {
 		return nil, &ErrMissingSource{
 			Directive: directive,
-			Reason:    "frame's triggering message type does not match directive <type>",
+			Reason:    "no delivered message of type " + declaredType + " bound to this frame",
 		}
 	}
-	if len(ctx.TriggerMessagePayload) == 0 {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger message body is empty"}
-	}
 	fieldPath := rest[1:]
-	val, ok := walkPath(ctx.TriggerMessagePayload, fieldPath)
+	val, ok := walkPath(data, fieldPath)
 	if !ok {
 		return nil, &ErrMissingSource{Directive: directive, Reason: "message body field path not found"}
 	}

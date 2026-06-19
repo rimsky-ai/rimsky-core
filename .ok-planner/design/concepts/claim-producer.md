@@ -13,7 +13,7 @@ A claim producer is an out-of-process service that implements the gRPC claim-pro
 
 The protocol carries three optional methods, each advertised in the capabilities handshake:
 
-- **Split-scope** — partitions a claim's claim scope into sub-scopes for fan-out, returning one sub-scope descriptor per partition. Advertised via a split-scope capability flag. Rimsky opens one sub-claim per sub-scope at parent-acquisition time.
+- **Split-scope** — partitions a claim's claim scope into sub-scopes for fan-out. Advertised via a split-scope capability flag. Rimsky opens one sub-claim per sub-scope at parent-acquisition time. SplitScope's SubScopeDescriptor carries the same substrate-meaningful claim fields a regular Open's Acquired carries — `claim_scope_data`, `address`, `payload` — plus the per-partition discriminators `partition_key` and `producer_metadata`. A sub-claim is a claim; substitution paths over a sub-claim resolve identically to those over a regular claim.
 - **Scopes-conflict** — a producer-aware overlap predicate over two claim scopes. Advertised via a scopes-conflict capability flag. Producers that don't advertise default to byte-equal comparison (`@blessed-invariant 4b`).
 - **Validation (mix-in)** — the same validate request/response RPC any service can advertise via the validation protocol. Validates a node's userdata at template-registration time against the producer's domain (claim bindings, scopes). Inert `userdata` per `@blessed-invariant 11` — rimsky forwards opaque bytes; receives a verdict. See `concept:validation`.
 

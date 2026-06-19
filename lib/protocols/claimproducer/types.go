@@ -114,6 +114,8 @@ type SubClaimScopeDescriptor struct {
 	ClaimScopeData   []byte
 	PartitionKey     string
 	ProducerMetadata []byte
+	Address          []byte
+	Payload          []byte
 }
 
 type SplitClaimScopeResponse struct {

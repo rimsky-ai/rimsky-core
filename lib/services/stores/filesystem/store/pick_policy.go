@@ -5,6 +5,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -247,6 +248,124 @@ func (s *Store) tryRenameClaim(claimID, selector string, pp *PickPolicy, availDi
 	return claimproducer.OpenOutcome{Available: false}, false, nil
 }
 
+type PickedItem struct {
+	ClaimID         string
+	Folder          string
+	AbsPath         string
+	SubPath         string
+	AddressBytes    []byte
+	ClaimScopeBytes []byte
+	PayloadBytes    []byte
+}
+
+func (s *Store) BatchPop(_ context.Context, selector string, claimIDs []string) ([]PickedItem, error) {
+	if len(claimIDs) == 0 {
+		return nil, fmt.Errorf("filesystem store: BatchPop: claimIDs must be non-empty (one distinct id per item to pop)")
+	}
+	seen := make(map[string]struct{}, len(claimIDs))
+	for i, id := range claimIDs {
+		if id == "" {
+			return nil, fmt.Errorf("filesystem store: BatchPop: claimIDs[%d] is empty; every entry must be a non-empty unique id", i)
+		}
+		if _, dup := seen[id]; dup {
+			return nil, fmt.Errorf("filesystem store: BatchPop: claimIDs[%d] = %q duplicates a prior entry; every id must be unique", i, id)
+		}
+		seen[id] = struct{}{}
+	}
+	if err := s.checkRootAvailable("BatchPop"); err != nil {
+		return nil, err
+	}
+	pp, ok := s.pickPolicies[selector]
+	if !ok {
+		return nil, fmt.Errorf("filesystem store: BatchPop: unknown pick policy %q", selector)
+	}
+	state := policyStateDir(s.root, selector)
+	availDir := filepath.Join(state, "available")
+	inProgDir := filepath.Join(state, "in_progress")
+
+	switch pp.SyncStrategy {
+	case "on_open":
+		if err := s.runSync(selector, pp); err != nil {
+			return nil, fmt.Errorf("filesystem store: BatchPop sync: %w", err)
+		}
+	case "on_drain":
+		empty, err := isDirEmpty(availDir)
+		if err != nil {
+			return nil, fmt.Errorf("filesystem store: BatchPop readdir available: %w", err)
+		}
+		if empty {
+			if err := s.runSync(selector, pp); err != nil {
+				return nil, fmt.Errorf("filesystem store: BatchPop sync: %w", err)
+			}
+		}
+	}
+
+	out := make([]PickedItem, 0, len(claimIDs))
+	for _, claimID := range claimIDs {
+		item, ok, err := s.popOne(claimID, selector, pp, availDir, inProgDir)
+		if err != nil {
+			return out, err
+		}
+		if !ok {
+			break
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func (s *Store) popOne(claimID, selector string, pp *PickPolicy, availDir, inProgDir string) (PickedItem, bool, error) {
+	entries, err := os.ReadDir(availDir)
+	if err != nil {
+		return PickedItem{}, false, fmt.Errorf("filesystem store: BatchPop readdir available: %w", err)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		ii, _ := entries[i].Info()
+		jj, _ := entries[j].Info()
+		if ii != nil && jj != nil && !ii.ModTime().Equal(jj.ModTime()) {
+			return ii.ModTime().Before(jj.ModTime())
+		}
+		return entries[i].Name() < entries[j].Name()
+	})
+	for _, entry := range entries {
+		folder := entry.Name()
+		src := filepath.Join(availDir, folder)
+		nowNanos := time.Now().UnixNano()
+		dst := filepath.Join(inProgDir, fmt.Sprintf("%s.%s.%d", folder, claimID, nowNanos))
+		if err := os.Rename(src, dst); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return PickedItem{}, false, fmt.Errorf("filesystem store: BatchPop claim rename: %w", err)
+		}
+		subPath := filepath.Join(pp.Root, folder)
+		absPath := filepath.Join(s.root, subPath)
+		addr, err := json.Marshal(absPath)
+		if err != nil {
+			return PickedItem{}, false, err
+		}
+		scope, err := json.Marshal(subPath)
+		if err != nil {
+			return PickedItem{}, false, err
+		}
+		payload, err := json.Marshal(map[string]string{"folder": folder})
+		if err != nil {
+			return PickedItem{}, false, err
+		}
+		_ = selector
+		return PickedItem{
+			ClaimID:         claimID,
+			Folder:          folder,
+			AbsPath:         absPath,
+			SubPath:         subPath,
+			AddressBytes:    addr,
+			ClaimScopeBytes: scope,
+			PayloadBytes:    payload,
+		}, true, nil
+	}
+	return PickedItem{}, false, nil
+}
+
 func isDirEmpty(dir string) (bool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -270,6 +389,49 @@ func (s *Store) findByClaimID(claimID string) (pp *PickPolicy, selector, entry, 
 		for _, e := range entries {
 			f, c, _, perr := parseFromRight(e.Name())
 			if perr != nil || c != claimID {
+				continue
+			}
+			return candidate, sel, e.Name(), f
+		}
+	}
+	return nil, "", "", ""
+}
+
+func (s *Store) findByScope(scope []byte) (pp *PickPolicy, selector, entry, folder string) {
+	if len(scope) == 0 {
+		return nil, "", "", ""
+	}
+	var subPath string
+	if err := json.Unmarshal(scope, &subPath); err != nil {
+		return nil, "", "", ""
+	}
+	if subPath == "" {
+		return nil, "", "", ""
+	}
+	for sel, candidate := range s.pickPolicies {
+		policyRoot := candidate.Root
+		var wantFolder string
+		switch {
+		case subPath == policyRoot:
+			continue
+		case strings.HasPrefix(subPath, policyRoot+string(filepath.Separator)):
+			wantFolder = subPath[len(policyRoot)+1:]
+		case policyRoot == "" || policyRoot == ".":
+			wantFolder = subPath
+		default:
+			continue
+		}
+		if strings.ContainsRune(wantFolder, filepath.Separator) {
+			continue
+		}
+		inProg := filepath.Join(policyStateDir(s.root, sel), "in_progress")
+		entries, err := os.ReadDir(inProg)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			f, _, _, perr := parseFromRight(e.Name())
+			if perr != nil || f != wantFolder {
 				continue
 			}
 			return candidate, sel, e.Name(), f

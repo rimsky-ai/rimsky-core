@@ -435,6 +435,9 @@ func tryAcquire(
 		out.InstanceAttributeOverrides = inst.AttributeOverrides
 		out.TemplateHash = inst.TemplateHash
 	}
+	if held := loadInheritedClaimsForNode(ctx, args, tx, nd); len(held) > 0 {
+		out.HeldClaims = held
+	}
 	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, livenessInterval); err != nil {
 		return acquisition{}, false, err
 	}
@@ -446,9 +449,6 @@ func tryAcquire(
 	// @concept: claim-co-holdership
 	if err := insertCoHolderClaimHoldersAtAcquire(ctx, args, tx, cand, nodeDef, tmpl); err != nil {
 		return acquisition{}, false, fmt.Errorf("tryAcquire: co-holder rows: %w", err)
-	}
-	if held := loadInheritedClaimsForNode(ctx, args, tx, nd); len(held) > 0 {
-		out.HeldClaims = held
 	}
 
 	// @concept: executor

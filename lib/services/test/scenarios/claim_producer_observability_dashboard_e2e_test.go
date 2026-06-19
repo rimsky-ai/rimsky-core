@@ -46,7 +46,7 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		t.Fatal("harness: AdvertiseHTTPBridge=true but HostHTTPBridge is empty")
 	}
 
-	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),

@@ -23,7 +23,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/template/canonical"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	loop_counter "github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin/loop_counter"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
 )
 
 func readAllBody(req *http.Request) ([]byte, error) {
@@ -93,6 +93,20 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			_, ok := deps.Stores.Get(name)
 			return ok
 		}
+		hooks.StoreAdvertisesSplitScope = func(name string) bool {
+			if isLateBind(name) {
+				return true
+			}
+			p, ok := deps.Stores.Get(name)
+			if !ok {
+				return false
+			}
+			caps, err := p.Capabilities(context.Background())
+			if err != nil {
+				return false
+			}
+			return caps.SupportsSplitScope
+		}
 	}
 	if deps.StoreDeclaredErrorClasses != nil {
 		hooks.StoreDeclaredErrorClasses = func(name string) ([]string, bool) {
@@ -106,16 +120,12 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		_, ok := deps.NamedLocks.Get(name)
 		return ok
 	}
-	inprocAlias := func(name string) bool {
-		return name == loop_counter.ExecutorAlias
-	}
-
 	if deps.Executors != nil {
 		hooks.ExecutorDeclared = func(name string) bool {
 			if isLateBind(name) {
 				return true
 			}
-			if inprocAlias(name) {
+			if builtin.IsBuiltinAlias(name) {
 				return true
 			}
 			_, ok := deps.Executors[name]
@@ -123,19 +133,19 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		}
 	} else if deps.KindAliases != nil {
 		hooks.ExecutorDeclared = func(name string) bool {
-			return inprocAlias(name)
+			return builtin.IsBuiltinAlias(name)
 		}
 	}
 	if deps.ExecutorCapabilities != nil {
 		hooks.ExecutorDeclaredTags = func(name string) ([]string, bool) {
-			if name == loop_counter.ExecutorAlias {
-				return loop_counter.DeclaredTags(), true
+			if tags, ok := builtin.DeclaredTagsFor(name); ok {
+				return tags, true
 			}
 			tags, _, _, ok := deps.ExecutorCapabilities(name)
 			return tags, ok
 		}
 		hooks.ExecutorDeclaredErrorClasses = func(name string) ([]string, bool) {
-			if inprocAlias(name) {
+			if builtin.IsBuiltinAlias(name) {
 				return nil, true
 			}
 			_, classes, _, ok := deps.ExecutorCapabilities(name)
@@ -145,30 +155,24 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			if isLateBind(name) {
 				return nil, true
 			}
-			if name == loop_counter.ExecutorAlias {
-				return loop_counter.SchemaBytes(), true
+			if schema, ok := builtin.SchemaFor(name); ok {
+				return schema, true
 			}
 			_, _, schema, ok := deps.ExecutorCapabilities(name)
 			return schema, ok
 		}
 	} else if deps.KindAliases != nil {
 		hooks.ExecutorDeclaredTags = func(name string) ([]string, bool) {
-			if name == loop_counter.ExecutorAlias {
-				return loop_counter.DeclaredTags(), true
-			}
-			return nil, false
+			return builtin.DeclaredTagsFor(name)
 		}
 		hooks.ExecutorDeclaredErrorClasses = func(name string) ([]string, bool) {
-			if inprocAlias(name) {
+			if builtin.IsBuiltinAlias(name) {
 				return nil, true
 			}
 			return nil, false
 		}
 		hooks.ExecutorExpectedAttributesSchema = func(name string) ([]byte, bool) {
-			if name == loop_counter.ExecutorAlias {
-				return loop_counter.SchemaBytes(), true
-			}
-			return nil, false
+			return builtin.SchemaFor(name)
 		}
 	}
 	return hooks

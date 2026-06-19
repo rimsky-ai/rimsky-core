@@ -202,63 +202,6 @@ func TestSubstitute_ErrorRedaction(t *testing.T) {
 	}
 }
 
-func TestSubstitute_TriggerMessage(t *testing.T) {
-	t.Parallel()
-
-	payload := mustJSON(t, map[string]any{
-		"partition_request_override": map[string]any{
-			"date_range": map[string]any{
-				"start": "2024-01-01",
-				"end":   "2024-09-30",
-			},
-		},
-		"reason": "refresh-q3-2024",
-	})
-
-	ctx := ResolveContext{TriggerMessagePayload: payload}
-
-	t.Run("ok-shallow-leaf", func(t *testing.T) {
-		got, err := Substitute("{{trigger.message.payload.reason}}", ctx)
-		if err != nil {
-			t.Fatalf("Substitute: %v", err)
-		}
-		if got != "refresh-q3-2024" {
-			t.Fatalf("got %q, want backfill-q3-2024", got)
-		}
-	})
-
-	t.Run("ok-deep-leaf", func(t *testing.T) {
-		got, err := Substitute("{{trigger.message.payload.partition_request_override.date_range.start}}", ctx)
-		if err != nil {
-			t.Fatalf("Substitute: %v", err)
-		}
-		if got != "2024-01-01" {
-			t.Fatalf("got %q, want 2024-01-01", got)
-		}
-	})
-
-	t.Run("missing-field", func(t *testing.T) {
-		_, err := Substitute("{{trigger.message.payload.no_such_field}}", ctx)
-		if !IsMissingSource(err) {
-			t.Fatalf("want ErrMissingSource, got %v", err)
-		}
-	})
-
-	t.Run("no-trigger-bound", func(t *testing.T) {
-		_, err := Substitute("{{trigger.message.payload.reason}}", ResolveContext{})
-		if !IsMissingSource(err) {
-			t.Fatalf("want ErrMissingSource, got %v", err)
-		}
-	})
-
-	t.Run("malformed-shape", func(t *testing.T) {
-		_, err := Substitute("{{trigger.message.reason}}", ctx)
-		if !IsMissingSource(err) {
-			t.Fatalf("want ErrMissingSource, got %v", err)
-		}
-	})
-}
-
 // @concept: message-schema
 // @story: typed-message-substitution
 func TestSubstitute_OneEngineTwoSurfaces(t *testing.T) {
@@ -266,10 +209,9 @@ func TestSubstitute_OneEngineTwoSurfaces(t *testing.T) {
 
 	ctx := ResolveContext{
 		Deps: map[string]json.RawMessage{
-			"upstream": mustJSON(t, map[string]any{"reason": "from-attribute"}),
+			"upstream":     mustJSON(t, map[string]any{"reason": "from-attribute"}),
+			"ping/recheck": mustJSON(t, map[string]any{"reason": "from-message"}),
 		},
-		TriggerMessagePayload: mustJSON(t, map[string]any{"reason": "from-message"}),
-		TriggerMessageType:    "ping/recheck",
 	}
 
 	gotNodes, err := Substitute("{{nodes.upstream.attribute.reason}}", ctx)
@@ -345,12 +287,9 @@ func TestSubstitution_SharedResolverServicesNodesAndMessages(t *testing.T) {
 
 	ctx := ResolveContext{
 		Deps: map[string]json.RawMessage{
-			"upstream": mustJSON(t, map[string]any{"label": "alpha"}),
+			"upstream":     mustJSON(t, map[string]any{"label": "alpha"}),
+			"ping/recheck": mustJSON(t, map[string]any{"reason": "operator-triggered"}),
 		},
-		TriggerMessagePayload: mustJSON(t, map[string]any{
-			"reason": "operator-triggered",
-		}),
-		TriggerMessageType: "ping/recheck",
 	}
 
 	got, err := Substitute(
@@ -400,8 +339,9 @@ func TestSubstitute_Messages(t *testing.T) {
 	})
 
 	ctx := ResolveContext{
-		TriggerMessagePayload: payload,
-		TriggerMessageType:    "ping/recheck",
+		Deps: map[string]json.RawMessage{
+			"ping/recheck": payload,
+		},
 	}
 
 	t.Run("ok-shallow-leaf", func(t *testing.T) {
@@ -445,23 +385,15 @@ func TestSubstitute_Messages(t *testing.T) {
 		}
 	})
 
-	t.Run("type-mismatch-rejects", func(t *testing.T) {
+	t.Run("type-not-bound", func(t *testing.T) {
 		_, err := Substitute("{{messages.other-type.pong_status}}", ctx)
 		if !IsMissingSource(err) {
 			t.Fatalf("want ErrMissingSource, got %v", err)
 		}
 	})
 
-	t.Run("no-trigger-type-bound", func(t *testing.T) {
+	t.Run("no-deps-at-all", func(t *testing.T) {
 		_, err := Substitute("{{messages.ping/recheck.pong_status}}", ResolveContext{})
-		if !IsMissingSource(err) {
-			t.Fatalf("want ErrMissingSource, got %v", err)
-		}
-	})
-
-	t.Run("empty-payload-with-type-bound", func(t *testing.T) {
-		emptyCtx := ResolveContext{TriggerMessageType: "ping/recheck"}
-		_, err := Substitute("{{messages.ping/recheck.pong_status}}", emptyCtx)
 		if !IsMissingSource(err) {
 			t.Fatalf("want ErrMissingSource, got %v", err)
 		}
@@ -477,8 +409,9 @@ func TestSubstitute_Messages(t *testing.T) {
 	t.Run("error-message-does-not-leak-payload", func(t *testing.T) {
 		sentinel := "SENTINEL-DO-NOT-LEAK"
 		sentinelCtx := ResolveContext{
-			TriggerMessagePayload: mustJSON(t, map[string]any{"value": sentinel}),
-			TriggerMessageType:    "ping/recheck",
+			Deps: map[string]json.RawMessage{
+				"ping/recheck": mustJSON(t, map[string]any{"value": sentinel}),
+			},
 		}
 		_, err := Substitute("{{messages.ping/recheck.no_such_field}}", sentinelCtx)
 		if err == nil {
@@ -488,6 +421,57 @@ func TestSubstitute_Messages(t *testing.T) {
 			t.Fatalf("error message leaked payload sentinel: %q", err.Error())
 		}
 	})
+}
+
+// @story: typed-message-substitution
+// @concept: message-schema
+func TestResolveDirective_MessagesIsSugarForNodes(t *testing.T) {
+	t.Parallel()
+
+	body := mustJSON(t, map[string]any{
+		"body_field": "value-alpha",
+		"nested":     map[string]any{"deep": "value-beta"},
+	})
+
+	const declaredType = "foo"
+
+	ctxNodes := ResolveContext{
+		Deps: map[string]json.RawMessage{declaredType: body},
+	}
+	ctxMessages := ResolveContext{
+		Deps: map[string]json.RawMessage{declaredType: body},
+	}
+
+	for _, leaf := range []string{"body_field", "nested.deep"} {
+		nodesDir := "{{nodes." + declaredType + ".attribute." + leaf + "}}"
+		messagesDir := "{{messages." + declaredType + "." + leaf + "}}"
+		gotNodes, errN := Substitute(nodesDir, ctxNodes)
+		if errN != nil {
+			t.Fatalf("nodes substitution for leaf %s: %v", leaf, errN)
+		}
+		gotMessages, errM := Substitute(messagesDir, ctxMessages)
+		if errM != nil {
+			t.Fatalf("messages substitution for leaf %s: %v", leaf, errM)
+		}
+		if gotNodes != gotMessages {
+			t.Fatalf("messages.<type>.%s is NOT byte-equal to nodes.<type>.attribute.%s: nodes=%q messages=%q",
+				leaf, leaf, gotNodes, gotMessages)
+		}
+	}
+
+	bareNodes, err := SubstituteValue("{{nodes."+declaredType+".attribute}}", ctxNodes)
+	if err != nil {
+		t.Fatalf("bare nodes: %v", err)
+	}
+	bareMessages, err := SubstituteValue("{{messages."+declaredType+"}}", ctxMessages)
+	if err != nil {
+		t.Fatalf("bare messages: %v", err)
+	}
+	bareNodesJSON, _ := json.Marshal(bareNodes)
+	bareMessagesJSON, _ := json.Marshal(bareMessages)
+	if string(bareNodesJSON) != string(bareMessagesJSON) {
+		t.Fatalf("bare lift differs: nodes=%s messages=%s", bareNodesJSON, bareMessagesJSON)
+	}
 }
 
 func TestSubstitute_ChildPartitionKey(t *testing.T) {
@@ -660,7 +644,6 @@ func TestSubstituteValue_BareForm(t *testing.T) {
 				Payload: mustJSON(t, map[string]any{"items": float64(5)}),
 			},
 		},
-		TriggerMessagePayload: mustJSON(t, map[string]any{"kind": "trigger"}),
 	}
 
 	t.Run("nodes.X.attribute (whole attribute object)", func(t *testing.T) {
@@ -681,17 +664,6 @@ func TestSubstituteValue_BareForm(t *testing.T) {
 		}
 		m, _ := got.(map[string]any)
 		if m["items"] != float64(5) {
-			t.Fatalf("got %v", got)
-		}
-	})
-
-	t.Run("trigger.message.payload (whole trigger payload)", func(t *testing.T) {
-		got, err := SubstituteValue("{{trigger.message.payload}}", ctx)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
-		m, _ := got.(map[string]any)
-		if m["kind"] != "trigger" {
 			t.Fatalf("got %v", got)
 		}
 	})
@@ -790,7 +762,7 @@ var headerCountLinePattern = regexp.MustCompile(`(?i)^//\s*([A-Za-z]+)\s+recogni
 
 var headerBulletPattern = regexp.MustCompile(`^//\s*-\s*\{\{([a-z_]+)\.`)
 
-var liveResolverKinds = []string{"claim", "params", "nodes", "trigger", "child", "messages"}
+var liveResolverKinds = []string{"claim", "params", "nodes", "child", "messages"}
 
 func TestSubstitutionDocstringMatchesResolver(t *testing.T) {
 	t.Parallel()
@@ -829,7 +801,6 @@ func assertResolverArms(t *testing.T) {
 		"claim":    "claim.a.payload",
 		"params":   "params.k",
 		"nodes":    "nodes.n.attribute.f",
-		"trigger":  "trigger.message.payload",
 		"child":    "child.partition_key",
 		"messages": "messages.some-type.f",
 	}
@@ -859,6 +830,18 @@ func assertResolverArms(t *testing.T) {
 	}
 	if strings.Contains(depsMissing.Reason, "unknown source kind") {
 		t.Fatalf("`deps` routed to the unknown-source-kind default arm; expected its dedicated retired-form rejection arm")
+	}
+
+	_, triggerErr := resolveDirectiveValueRaw("trigger.message.payload", ResolveContext{})
+	var triggerMissing *ErrMissingSource
+	if !errors.As(triggerErr, &triggerMissing) {
+		t.Fatalf("`trigger.message.payload`: want *ErrMissingSource migration-pointer, got %T: %v", triggerErr, triggerErr)
+	}
+	if strings.Contains(triggerMissing.Reason, "unknown source kind") {
+		t.Fatalf("`trigger` routed to the unknown-source-kind default arm; expected its dedicated retired-form rejection arm")
+	}
+	if !strings.Contains(triggerMissing.Reason, "messages.<type>") {
+		t.Fatalf("`trigger.message.payload` reason should point at the messages migration; got %q", triggerMissing.Reason)
 	}
 }
 

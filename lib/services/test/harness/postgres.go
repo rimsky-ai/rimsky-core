@@ -6,6 +6,7 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -47,12 +48,13 @@ func StartFreshPostgres(ctx context.Context, t testing.TB) string {
 
 func StartFreshPostgresWithAlias(ctx context.Context, t testing.TB, networkName, alias string) (internalDSN, hostDSN string) {
 	t.Helper()
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 	c, err := pgmodule.Run(ctx,
 		"postgres:15-alpine",
 		pgmodule.WithDatabase("rimsky_test"),
 		pgmodule.WithUsername("test"),
 		pgmodule.WithPassword("test"),
-		tcnet.WithNetworkName([]string{alias}, networkName),
+		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithWaitStrategy(
 			wait.ForAll(
 				wait.ForLog("database system is ready to accept connections").
@@ -62,7 +64,7 @@ func StartFreshPostgresWithAlias(ctx context.Context, t testing.TB, networkName,
 		),
 	)
 	if err != nil {
-		t.Fatalf("harness: start postgres (alias=%s): %v", alias, err)
+		t.Fatalf("harness: start postgres (alias=%s): %v", uniqueAlias, err)
 	}
 	t.Cleanup(func() {
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -71,8 +73,8 @@ func StartFreshPostgresWithAlias(ctx context.Context, t testing.TB, networkName,
 	})
 	host, err := c.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		t.Fatalf("harness: postgres DSN (alias=%s): %v", alias, err)
+		t.Fatalf("harness: postgres DSN (alias=%s): %v", uniqueAlias, err)
 	}
-	in := "postgres://test:test@" + alias + ":5432/rimsky_test?sslmode=disable"
+	in := "postgres://test:test@" + uniqueAlias + ":5432/rimsky_test?sslmode=disable"
 	return in, host
 }

@@ -110,53 +110,159 @@ func Run(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 }
 
 func runOptionalChecks(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) []CheckResult {
-	out := make([]CheckResult, 0, 7)
+	out := make([]CheckResult, 0, 10)
 	out = append(out, checkTerminals(ctx, c)...)
-	out = append(out, checkSplitScope(ctx, c, caps))
+	out = append(out, checkSplitScope(ctx, c, caps)...)
 	out = append(out, checkScopesConflict(ctx, c, caps))
 	out = append(out, checkSerialization9b(ctx, c, caps))
 	return out
 }
 
-func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) CheckResult {
+type splitScopeListElement struct {
+	key     string
+	payload []byte
+}
+
+var splitScopeListProbeElements = []splitScopeListElement{
+	{key: "alpha", payload: []byte(`{"v":1}`)},
+	{key: "bravo", payload: []byte(`{"v":2}`)},
+}
+
+func splitScopeListProbeRequest() []byte {
+	var buf bytes.Buffer
+	buf.WriteString(`{"list":[`)
+	for i, el := range splitScopeListProbeElements {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		fmt.Fprintf(&buf, `{"key":%q,"payload":%s}`, el.key, string(el.payload))
+	}
+	buf.WriteString(`]}`)
+	return buf.Bytes()
+}
+
+func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) []CheckResult {
 	if !caps.SupportsSplitScope {
 		_, err := c.SplitScope(ctx, claimproducer.SplitClaimScopeRequest{ClaimHandleID: "probe"})
 		if err == nil {
-			return CheckResult{
+			return []CheckResult{{
 				Name: "SplitScopeSkipped",
 				Err:  fmt.Errorf("producer does not advertise SupportsSplitScope yet SplitScope returned nil error"),
-			}
+			}}
 		}
 		if !errors.Is(err, claimproducer.ErrSplitScopeUnsupported) {
 			if !containsErrorSubstring(err, "split_scope unsupported", "unsupported", "unimplemented") {
-				return CheckResult{
+				return []CheckResult{{
 					Name: "SplitScopeSkipped",
 					Err:  fmt.Errorf("expected ErrSplitScopeUnsupported (or unimplemented status), got %v", err),
-				}
+				}}
 			}
 		}
-		return CheckResult{Name: "SplitScopeSkipped"}
+		return []CheckResult{{Name: "SplitScopeSkipped"}}
 	}
+
+	claimID := claimproducer.ClaimID(uuid.New().String())
+	openOut, err := c.Open(ctx, claimID, claimproducer.ClaimSpec{
+		ProducerName: "conformance-target",
+		Selector:     "rimsky/conformance/split-scope/" + uuid.New().String(),
+		Intent:       claimproducer.IntentReadWrite,
+		Alias:        "conformance-split-scope",
+	})
+	if err != nil {
+		return []CheckResult{{Name: "SplitScope", Err: fmt.Errorf("parent Open failed: %w", err)}}
+	}
+	if !openOut.Available {
+		return []CheckResult{{Name: "SplitScopeSkipped"}}
+	}
+	defer func() {
+		_ = c.Abandon(ctx, claimID, openOut.Result.ClaimScope, openOut.Result.Address)
+		_ = c.Release(ctx, claimID, openOut.Result.ClaimScope, openOut.Result.Address)
+	}()
+
 	req := claimproducer.SplitClaimScopeRequest{
-		ClaimHandleID:    "rimsky/conformance/split-scope-probe",
-		PartitionRequest: []byte(`{"partition_keys":["a","b","c"]}`),
+		ClaimHandleID:    string(claimID),
+		PartitionRequest: splitScopeListProbeRequest(),
 	}
 	resp, err := c.SplitScope(ctx, req)
 	if err != nil {
-		return CheckResult{Name: "SplitScope", Err: err}
+		return []CheckResult{{Name: "SplitScope", Err: err}}
 	}
-	if len(resp.SubClaimScopes) == 0 {
-		return CheckResult{Name: "SplitScope", Err: fmt.Errorf("SplitScope returned zero sub-claim-scopes")}
+
+	results := make([]CheckResult, 0, 4)
+
+	if len(resp.SubClaimScopes) != len(splitScopeListProbeElements) {
+		results = append(results, CheckResult{
+			Name: "SplitScopeListReturnsAllElements",
+			Err: fmt.Errorf("expected %d sub-scopes (one per list element), got %d",
+				len(splitScopeListProbeElements), len(resp.SubClaimScopes)),
+		})
+		return results
 	}
-	for i, sub := range resp.SubClaimScopes {
-		if sub.PartitionKey == "" {
-			return CheckResult{
-				Name: "SplitScope",
-				Err:  fmt.Errorf("sub_scopes[%d].partition_key empty (producer must set a stable human-readable key)", i),
-			}
+	results = append(results, CheckResult{Name: "SplitScopeListReturnsAllElements"})
+
+	subByKey := make(map[string]claimproducer.SubClaimScopeDescriptor, len(resp.SubClaimScopes))
+	for _, sub := range resp.SubClaimScopes {
+		subByKey[sub.PartitionKey] = sub
+	}
+
+	keyMissing := ""
+	for _, el := range splitScopeListProbeElements {
+		if _, ok := subByKey[el.key]; !ok {
+			keyMissing = el.key
+			break
 		}
 	}
-	return CheckResult{Name: "SplitScope"}
+	if keyMissing != "" {
+		results = append(results, CheckResult{
+			Name: "SplitScopePreservesPartitionKey",
+			Err: fmt.Errorf("input element key %q is not the PartitionKey of any returned sub-scope "+
+				"(producer must surface each input element's key verbatim on its sub-scope)", keyMissing),
+		})
+	} else {
+		results = append(results, CheckResult{Name: "SplitScopePreservesPartitionKey"})
+	}
+
+	payloadMismatch := ""
+	for _, el := range splitScopeListProbeElements {
+		sub, ok := subByKey[el.key]
+		if !ok {
+			continue
+		}
+		if !bytes.Equal(sub.Payload, el.payload) {
+			payloadMismatch = fmt.Sprintf("key %q: expected payload bytes %q, got %q",
+				el.key, string(el.payload), string(sub.Payload))
+			break
+		}
+	}
+	if payloadMismatch != "" {
+		results = append(results, CheckResult{
+			Name: "SplitScopePreservesPayload",
+			Err: fmt.Errorf("%s (the universal list shape requires payload bytes byte-equal on round-trip)",
+				payloadMismatch),
+		})
+	} else {
+		results = append(results, CheckResult{Name: "SplitScopePreservesPayload"})
+	}
+
+	addrFailure := ""
+	for _, sub := range resp.SubClaimScopes {
+		if len(sub.Address) != 0 {
+			addrFailure = fmt.Sprintf("sub-scope for key %q returned non-empty Address %q on a list shape; "+
+				"the list shape carries data in payload only — address must be empty",
+				sub.PartitionKey, string(sub.Address))
+			break
+		}
+	}
+	if addrFailure != "" {
+		results = append(results, CheckResult{
+			Name: "SplitScopeAddressFieldPresent",
+			Err:  fmt.Errorf("%s", addrFailure),
+		})
+	} else {
+		results = append(results, CheckResult{Name: "SplitScopeAddressFieldPresent"})
+	}
+
+	return results
 }
 
 func checkScopesConflict(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) CheckResult {

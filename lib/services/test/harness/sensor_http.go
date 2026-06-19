@@ -17,16 +17,17 @@ import (
 
 const sensorHTTPImage = "rimsky-sensor-http:latest"
 
-func StartSensorHTTP(ctx context.Context, t testing.TB, networkName, alias string, hostAccessPorts ...int) (endpoint string) {
+func StartSensorHTTP(ctx context.Context, t testing.TB, networkName, alias, rimskyEndpoint string, hostAccessPorts ...int) (endpoint string) {
 	t.Helper()
-	c := runSensorHTTPContainer(ctx, t, networkName, alias, "", hostAccessPorts)
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
+	c := runSensorHTTPContainer(ctx, t, networkName, uniqueAlias, rimskyEndpoint, "", hostAccessPorts)
 	t.Cleanup(func() {
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = c.Terminate(termCtx)
 	})
 
-	return fmt.Sprintf("%s:9082", alias)
+	return fmt.Sprintf("%s:9082", uniqueAlias)
 }
 
 type SensorHTTPHandle struct {
@@ -35,23 +36,26 @@ type SensorHTTPHandle struct {
 	t               testing.TB
 	networkName     string
 	alias           string
+	rimskyEndpoint  string
 	stateDSN        string
 	hostAccessPorts []int
 
 	container testcontainers.Container
 }
 
-func StartSensorHTTPHandle(ctx context.Context, t testing.TB, networkName, alias, stateDSN string, hostAccessPorts ...int) *SensorHTTPHandle {
+func StartSensorHTTPHandle(ctx context.Context, t testing.TB, networkName, alias, rimskyEndpoint, stateDSN string, hostAccessPorts ...int) *SensorHTTPHandle {
 	t.Helper()
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 	h := &SensorHTTPHandle{
 		t:               t,
 		networkName:     networkName,
-		alias:           alias,
+		alias:           uniqueAlias,
+		rimskyEndpoint:  rimskyEndpoint,
 		stateDSN:        stateDSN,
 		hostAccessPorts: append([]int(nil), hostAccessPorts...),
 	}
-	h.container = runSensorHTTPContainer(ctx, t, networkName, alias, stateDSN, h.hostAccessPorts)
-	h.Endpoint = fmt.Sprintf("%s:9082", alias)
+	h.container = runSensorHTTPContainer(ctx, t, networkName, uniqueAlias, rimskyEndpoint, stateDSN, h.hostAccessPorts)
+	h.Endpoint = fmt.Sprintf("%s:9082", uniqueAlias)
 	t.Cleanup(func() {
 		if h.container == nil {
 			return
@@ -77,14 +81,17 @@ func (h *SensorHTTPHandle) Stop(ctx context.Context) {
 func (h *SensorHTTPHandle) Restart(ctx context.Context) {
 	h.t.Helper()
 	h.Stop(ctx)
-	h.container = runSensorHTTPContainer(ctx, h.t, h.networkName, h.alias, h.stateDSN, h.hostAccessPorts)
+	h.container = runSensorHTTPContainer(ctx, h.t, h.networkName, h.alias, h.rimskyEndpoint, h.stateDSN, h.hostAccessPorts)
 }
 
-func runSensorHTTPContainer(ctx context.Context, t testing.TB, networkName, alias, stateDSN string, hostAccessPorts []int) testcontainers.Container {
+func runSensorHTTPContainer(ctx context.Context, t testing.TB, networkName, alias, rimskyEndpoint, stateDSN string, hostAccessPorts []int) testcontainers.Container {
 	t.Helper()
+	if rimskyEndpoint == "" {
+		rimskyEndpoint = "http://rimsky:8080"
+	}
 	env := map[string]string{
 		"RIMSKY_SENSOR_HTTP_PORT": "9082",
-		"RIMSKY_ENDPOINT":         "http://rimsky:8080",
+		"RIMSKY_ENDPOINT":         rimskyEndpoint,
 	}
 	if stateDSN != "" {
 		env["RIMSKY_SENSOR_HTTP_STATE_DSN"] = stateDSN

@@ -17,20 +17,43 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-var stubBuildMu sync.Mutex
+const (
+	sharedStubAlias    = "executor-stub"
+	sharedStubErrAlias = "executor-stub-erroring"
+)
 
-func StartExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (endpoint string) {
+var (
+	stubBuildMu sync.Mutex
+
+	stubOnce    sync.Once
+	stubErr     error
+	stubErrOnce sync.Once
+	stubErrErr  error
+)
+
+func StartExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName string) (endpoint string) {
 	t.Helper()
-	return startExecutorStub(ctx, t, networkName, alias, false)
+	stubOnce.Do(func() {
+		stubErr = launchExecutorStub(ctx, networkName, sharedStubAlias, false)
+	})
+	if stubErr != nil {
+		t.Fatalf("harness: start executor-stub: %v", stubErr)
+	}
+	return sharedStubAlias + ":9300"
 }
 
-func StartErroringExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (endpoint string) {
+func StartErroringExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName string) (endpoint string) {
 	t.Helper()
-	return startExecutorStub(ctx, t, networkName, alias, true)
+	stubErrOnce.Do(func() {
+		stubErrErr = launchExecutorStub(ctx, networkName, sharedStubErrAlias, true)
+	})
+	if stubErrErr != nil {
+		t.Fatalf("harness: start erroring executor-stub: %v", stubErrErr)
+	}
+	return sharedStubErrAlias + ":9300"
 }
 
-func startExecutorStub(ctx context.Context, t testing.TB, networkName, alias string, forceError bool) (endpoint string) {
-	t.Helper()
+func launchExecutorStub(ctx context.Context, networkName, alias string, forceError bool) error {
 	env := map[string]string{
 		"EXECUTOR_STUB_BIND": "0.0.0.0:9300",
 	}
@@ -38,7 +61,8 @@ func startExecutorStub(ctx context.Context, t testing.TB, networkName, alias str
 		env["EXECUTOR_STUB_FORCE_ERROR"] = "1"
 	}
 	stubBuildMu.Lock()
-	c, err := testcontainers.Run(ctx, "",
+	defer stubBuildMu.Unlock()
+	_, err := testcontainers.Run(ctx, "",
 		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
 			Context:    repoRoot(),
 			Dockerfile: "lib/services/test/stubexecutor/Dockerfile.stubexecutor",
@@ -53,16 +77,7 @@ func startExecutorStub(ctx context.Context, t testing.TB, networkName, alias str
 			wait.ForListeningPort("9300/tcp").WithStartupTimeout(120*time.Second),
 		),
 	)
-	stubBuildMu.Unlock()
-	if err != nil {
-		t.Fatalf("harness: start executor-stub: %v", err)
-	}
-	t.Cleanup(func() {
-		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = c.Terminate(termCtx)
-	})
-	return alias + ":9300"
+	return err
 }
 
 func repoRoot() string {

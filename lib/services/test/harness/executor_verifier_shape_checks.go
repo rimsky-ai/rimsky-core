@@ -6,6 +6,7 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -18,9 +19,10 @@ const verifierShapeChecksImage = "rimsky-executor-verifier-shape-checks:latest"
 
 func StartVerifierShapeChecksOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (endpoint string) {
 	t.Helper()
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 
 	c, err := testcontainers.Run(ctx, verifierShapeChecksImage,
-		tcnet.WithNetworkName([]string{alias}, networkName),
+		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_HOST": "0.0.0.0",
 			"RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_PORT": "9095",
@@ -38,5 +40,5 @@ func StartVerifierShapeChecksOnNetwork(ctx context.Context, t testing.TB, networ
 		defer cancel()
 		_ = c.Terminate(termCtx)
 	})
-	return alias + ":9095"
+	return uniqueAlias + ":9095"
 }

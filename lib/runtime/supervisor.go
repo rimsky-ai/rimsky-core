@@ -19,7 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
-	loop_counter "github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin/loop_counter"
 )
 
 type Config struct {
@@ -45,8 +44,10 @@ type Config struct {
 	MaxRetriesWithoutProgressDefault int
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
-	Metrics                     MetricsHook
-	MaxParkDuration             map[string]time.Duration
+	// @concept: node
+	DeclaredTagsFor func(executorName string) (tags []string, ok bool)
+	Metrics         MetricsHook
+	MaxParkDuration map[string]time.Duration
 
 	LifecycleSubs          *locks.LifecycleRegistry
 	LifecyclePeersForSpec  func(tplSpec node.TemplateSpec) []string
@@ -120,11 +121,21 @@ func Start(cfg Config) (*Handle, error) {
 	callbackReg := NewCallbackRegistry()
 	baseSchemaHook := cfg.ExpectedAttributesSchemaFor
 	cfg.ExpectedAttributesSchemaFor = func(name string) ([]byte, bool) {
-		if name == loop_counter.ExecutorAlias {
-			return loop_counter.SchemaBytes(), true
+		if schema, ok := builtin.SchemaFor(name); ok {
+			return schema, true
 		}
 		if baseSchemaHook != nil {
 			return baseSchemaHook(name)
+		}
+		return nil, false
+	}
+	baseTagsHook := cfg.DeclaredTagsFor
+	cfg.DeclaredTagsFor = func(name string) ([]string, bool) {
+		if tags, ok := builtin.DeclaredTagsFor(name); ok {
+			return tags, true
+		}
+		if baseTagsHook != nil {
+			return baseTagsHook(name)
 		}
 		return nil, false
 	}
@@ -152,14 +163,11 @@ func Start(cfg Config) (*Handle, error) {
 	}
 
 	// @concept: executor
-	// @concept: node
 	inprocReg := executor.NewInProcessRegistry()
-	kindAliases := node.NewKindAliasMap()
-	if err := builtin.RegisterAll(inprocReg, kindAliases); err != nil {
+	if err := builtin.RegisterAllInProcessHandlers(inprocReg); err != nil {
 		_ = callbackSrv.Close(context.Background())
 		return nil, fmt.Errorf("supervisor: %w", err)
 	}
-	_ = kindAliases
 
 	// @concept: executor
 	for url, h := range cfg.ExtraInprocHandlers {
@@ -356,6 +364,7 @@ func runLoop(
 				BlobSpillThreshold:               cfg.BlobSpillThreshold,
 				MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
 				ExpectedAttributesSchemaFor:      cfg.ExpectedAttributesSchemaFor,
+				DeclaredTagsFor:                  cfg.DeclaredTagsFor,
 				Metrics:                          cfg.Metrics,
 				LifecycleSubs:                    cfg.LifecycleSubs,
 				LifecyclePeersForSpec:            cfg.LifecyclePeersForSpec,

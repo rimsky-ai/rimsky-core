@@ -42,12 +42,15 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	hostPort := hostPortOf(t, upstream.URL)
 
 	netName := harness.NewNetwork(ctx, t)
-	sensorEP := harness.StartSensorHTTP(ctx, t, netName, "sensor-http", hostPort)
+	rimskyAlias := harness.NextRimskyAlias()
+	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
+	sensorEP := harness.StartSensorHTTP(ctx, t, netName, "sensor-http", rimskyInternalURL, hostPort)
 
-	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
+	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
+		harness.WithRimskyAlias(rimskyAlias),
 		harness.WithExecutor("stub", execEP),
 		harness.WithPublisher("watcher", sensorEP),
 	)
@@ -102,11 +105,14 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	hostPort := hostPortOf(t, upstream.URL)
 
 	netName := harness.NewNetwork(ctx, t)
-	sensorEP := harness.StartSensorHTTP(ctx, t, netName, "sensor-http", hostPort)
-	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
+	rimskyAlias := harness.NextRimskyAlias()
+	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
+	sensorEP := harness.StartSensorHTTP(ctx, t, netName, "sensor-http", rimskyInternalURL, hostPort)
+	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
+		harness.WithRimskyAlias(rimskyAlias),
 		harness.WithExecutor("stub", execEP),
 		harness.WithPublisher("watcher", sensorEP),
 	)

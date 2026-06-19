@@ -5,7 +5,6 @@
 package fanout
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -17,9 +16,9 @@ import (
 func TestChildRunsPerPartitionKey_OneChildPerKey(t *testing.T) {
 	t.Parallel()
 	subClaims := []runtime.SubClaim{
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p1", Address: json.RawMessage(`{}`)},
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p2", Address: json.RawMessage(`{}`)},
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p3", Address: json.RawMessage(`{}`)},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p1"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p2"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p3"},
 	}
 	parts := runtime.FanOutPartitions(subClaims)
 	seen := make(map[string]bool, len(parts))

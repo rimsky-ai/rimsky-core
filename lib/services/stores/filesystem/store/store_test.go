@@ -8,9 +8,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 )
 
 func TestNewRejectsEmptyRoot(t *testing.T) {
@@ -147,6 +151,41 @@ func TestCommitAbandonReleaseAreNoops(t *testing.T) {
 	}
 	if err := st.Release(context.Background(), "claim-3", nil, nil); err != nil {
 		t.Fatalf("Release: %v", err)
+	}
+}
+
+func TestBatchPopDoesNotPopulateClaimsMap(t *testing.T) {
+	root := t.TempDir()
+	queueDir := filepath.Join(root, "queue")
+	if err := os.MkdirAll(queueDir, 0o755); err != nil {
+		t.Fatalf("mkdir queue: %v", err)
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		if err := os.MkdirAll(filepath.Join(queueDir, name), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+	}
+	pp := &PickPolicy{
+		Root:              "queue",
+		OnCommit:          action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "on_open",
+	}
+	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@queue": pp}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	before := len(st.claims)
+	items, err := st.BatchPop(context.Background(), "@queue", []string{"id-1", "id-2"})
+	if err != nil {
+		t.Fatalf("BatchPop: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("BatchPop: got %d items, want 2", len(items))
+	}
+	if got := len(st.claims); got != before {
+		t.Errorf("BatchPop populated s.claims map (before=%d, after=%d) — would leak entries because the server-internal claim IDs never get released by rimsky", before, got)
 	}
 }
 

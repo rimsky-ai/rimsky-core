@@ -21,7 +21,8 @@ import (
 type fakeServer struct {
 	genv1.UnimplementedClaimProducerServer
 
-	OpenFunc func(*genv1.OpenRequest) (*genv1.OpenResponse, error)
+	OpenFunc       func(*genv1.OpenRequest) (*genv1.OpenResponse, error)
+	SplitScopeFunc func(*genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error)
 }
 
 func (f *fakeServer) Open(_ context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
@@ -29,6 +30,13 @@ func (f *fakeServer) Open(_ context.Context, req *genv1.OpenRequest) (*genv1.Ope
 		return f.OpenFunc(req)
 	}
 	return &genv1.OpenResponse{}, nil
+}
+
+func (f *fakeServer) SplitScope(_ context.Context, req *genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error) {
+	if f.SplitScopeFunc != nil {
+		return f.SplitScopeFunc(req)
+	}
+	return &genv1.SplitScopeResponse{}, nil
 }
 
 func mountFake(t *testing.T, srv *fakeServer) *httptest.Server {
@@ -211,6 +219,70 @@ func TestLifecycleBridge_InstanceScopeRoundTrip(t *testing.T) {
 	}
 	if gotInstance != "00000000-0000-0000-0000-000000000abc" {
 		t.Fatalf("instance_id mismatch: got %q", gotInstance)
+	}
+}
+
+func TestSplitScopeBridge_RoundTrips(t *testing.T) {
+	wantPartitionRequest := []byte(`{"list":[{"key":"a"}]}`)
+	wantAddress := []byte(`{"path":"/items/a"}`)
+	wantPayload := []byte(`{"v":42}`)
+	gotPartitionRequest := []byte(nil)
+	gotClaimHandleID := ""
+	srv := &fakeServer{}
+	srv.SplitScopeFunc = func(req *genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error) {
+		gotClaimHandleID = req.GetClaimHandleId()
+		gotPartitionRequest = req.GetPartitionRequest()
+		return &genv1.SplitScopeResponse{
+			SubScopes: []*genv1.SubScopeDescriptor{
+				{
+					PartitionKey:   "a",
+					ClaimScopeData: []byte(`"sub-a"`),
+					Address:        wantAddress,
+					Payload:        wantPayload,
+				},
+			},
+		}, nil
+	}
+	ts := mountFake(t, srv)
+
+	body, err := json.Marshal(map[string]any{
+		"claim_handle_id":   "00000000-0000-0000-0000-000000000001",
+		"partition_request": wantPartitionRequest,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/v1/split_scope", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /v1/split_scope: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", resp.StatusCode, raw)
+	}
+	if gotClaimHandleID != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("claim_handle_id mismatch: %q", gotClaimHandleID)
+	}
+	if !bytes.Equal(gotPartitionRequest, wantPartitionRequest) {
+		t.Fatalf("partition_request not transported intact: got %s want %s", gotPartitionRequest, wantPartitionRequest)
+	}
+	var got genv1.SplitScopeResponse
+	if err := protojson.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("protojson.Unmarshal: %v\nbody: %s", err, raw)
+	}
+	if n := len(got.GetSubScopes()); n != 1 {
+		t.Fatalf("SubScopes count = %d, want 1", n)
+	}
+	sub := got.GetSubScopes()[0]
+	if sub.GetPartitionKey() != "a" {
+		t.Fatalf("PartitionKey = %q, want \"a\"", sub.GetPartitionKey())
+	}
+	if !bytes.Equal(sub.GetAddress(), wantAddress) {
+		t.Fatalf("Address not transported intact: got %s want %s", sub.GetAddress(), wantAddress)
+	}
+	if !bytes.Equal(sub.GetPayload(), wantPayload) {
+		t.Fatalf("Payload not transported intact: got %s want %s", sub.GetPayload(), wantPayload)
 	}
 }
 

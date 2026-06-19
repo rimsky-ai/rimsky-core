@@ -969,8 +969,21 @@ type SubScopeDescriptor struct {
 	ClaimScopeData   []byte                 `protobuf:"bytes,1,opt,name=claim_scope_data,json=claimScopeData,proto3" json:"claim_scope_data,omitempty"`
 	PartitionKey     string                 `protobuf:"bytes,2,opt,name=partition_key,json=partitionKey,proto3" json:"partition_key,omitempty"`
 	ProducerMetadata []byte                 `protobuf:"bytes,3,opt,name=producer_metadata,json=producerMetadata,proto3" json:"producer_metadata,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Producer-supplied per-sub-claim address — what an executor uses to access
+	// the underlying data. Empty allowed (e.g., for pass-through list-array
+	// shapes where data lives in payload). The bytes wire type carries opaque
+	// content, but rimsky's runtime requires JSON-valid bytes when non-empty:
+	// producers emitting non-JSON address bytes must wrap them in a JSON
+	// envelope (e.g. a base64-tagged object). Non-JSON address bytes are
+	// rejected with a clear error.
+	Address []byte `protobuf:"bytes,4,opt,name=address,proto3" json:"address,omitempty"`
+	// Producer-supplied per-sub-claim payload bytes, surfaced to the child's
+	// substitution via {{claim.<alias>.payload[.<field>]}}. Inert in rimsky's
+	// runtime. Same JSON-validity contract as address — when non-empty, bytes
+	// must be JSON-valid.
+	Payload       []byte `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SubScopeDescriptor) Reset() {
@@ -1020,6 +1033,20 @@ func (x *SubScopeDescriptor) GetPartitionKey() string {
 func (x *SubScopeDescriptor) GetProducerMetadata() []byte {
 	if x != nil {
 		return x.ProducerMetadata
+	}
+	return nil
+}
+
+func (x *SubScopeDescriptor) GetAddress() []byte {
+	if x != nil {
+		return x.Address
+	}
+	return nil
+}
+
+func (x *SubScopeDescriptor) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
 	}
 	return nil
 }
@@ -1229,11 +1256,13 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\x0fReleaseResponse\"h\n" +
 	"\x11SplitScopeRequest\x12&\n" +
 	"\x0fclaim_handle_id\x18\x01 \x01(\tR\rclaimHandleId\x12+\n" +
-	"\x11partition_request\x18\x02 \x01(\fR\x10partitionRequest\"\x90\x01\n" +
+	"\x11partition_request\x18\x02 \x01(\fR\x10partitionRequest\"\xc4\x01\n" +
 	"\x12SubScopeDescriptor\x12(\n" +
 	"\x10claim_scope_data\x18\x01 \x01(\fR\x0eclaimScopeData\x12#\n" +
 	"\rpartition_key\x18\x02 \x01(\tR\fpartitionKey\x12+\n" +
-	"\x11producer_metadata\x18\x03 \x01(\fR\x10producerMetadata\"R\n" +
+	"\x11producer_metadata\x18\x03 \x01(\fR\x10producerMetadata\x12\x18\n" +
+	"\aaddress\x18\x04 \x01(\fR\aaddress\x12\x18\n" +
+	"\apayload\x18\x05 \x01(\fR\apayload\"R\n" +
 	"\x12SplitScopeResponse\x12<\n" +
 	"\n" +
 	"sub_scopes\x18\x01 \x03(\v2\x1d.rimsky.v1.SubScopeDescriptorR\tsubScopes\"d\n" +

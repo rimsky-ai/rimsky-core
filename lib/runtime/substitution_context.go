@@ -15,6 +15,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
 // @concept: signal
@@ -38,57 +40,82 @@ func BuildAttributeDeps(
 ) (map[string]json.RawMessage, error) {
 	out := make(map[string]json.RawMessage)
 
-	rows, err := args.Persist.WaitSet().ListDrainedAttributeRowsForReceiver(
-		ctx, frameID, receiverRunID, tx,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("BuildAttributeDeps: list drained attribute rows: %w", err)
+	if receiverRunID != (shared.UUID{}) {
+		rows, err := args.Persist.WaitSet().ListDrainedAttributeRowsForReceiver(
+			ctx, frameID, receiverRunID, tx,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("BuildAttributeDeps: list drained attribute rows: %w", err)
+		}
+		for _, r := range rows {
+			senderRun, err := args.Persist.RunTree().GetByID(ctx, tx, r.SenderRunID)
+			if err != nil {
+				return nil, fmt.Errorf("BuildAttributeDeps: run-tree lookup for sender_run_id %s: %w", r.SenderRunID, err)
+			}
+			if senderRun == nil {
+				if args.Logger != nil {
+					args.Logger.Warn("BuildAttributeDeps: wait-set sender_run_id has no run-tree row",
+						"sender_run_id", r.SenderRunID.String(),
+						"receiver_run_id", receiverRunID.String(),
+						"frame_id", frameID.String())
+				}
+				continue
+			}
+			if !isSettledForSubstitution(senderRun) {
+				continue
+			}
+			attrRow, err := args.Persist.NodeAttributes().GetByRun(ctx, r.SenderRunID, tx)
+			if err != nil {
+				return nil, fmt.Errorf("BuildAttributeDeps: attribute row for sender_run_id %s: %w", r.SenderRunID, err)
+			}
+			nodeType, err := nodeTypeOf(ctx, args, senderRun.NodeID, tx)
+			if err != nil {
+				return nil, fmt.Errorf("BuildAttributeDeps: node-type for sender node_id %s: %w", senderRun.NodeID, err)
+			}
+			if nodeType == "" {
+				if args.Logger != nil {
+					args.Logger.Warn("BuildAttributeDeps: sender has empty node_type",
+						"sender_run_id", r.SenderRunID.String(),
+						"sender_node_id", senderRun.NodeID.String())
+				}
+				continue
+			}
+			var raw json.RawMessage
+			if attrRow == nil {
+				raw = json.RawMessage(`{}`)
+			} else {
+				marshaled, marshalErr := json.Marshal(attrRow.Data)
+				if marshalErr != nil {
+					return nil, fmt.Errorf("BuildAttributeDeps: marshal attribute data for sender_run_id %s: %w", r.SenderRunID, marshalErr)
+				}
+				raw = marshaled
+			}
+			out[nodeType] = raw
+		}
 	}
-	for _, r := range rows {
-		senderRun, err := args.Persist.RunTree().GetByID(ctx, tx, r.SenderRunID)
-		if err != nil {
-			return nil, fmt.Errorf("BuildAttributeDeps: run-tree lookup for sender_run_id %s: %w", r.SenderRunID, err)
+
+	// @concept: message
+	// @concept: message-schema
+	if args.Persist != nil && args.Persist.Messages() != nil {
+		msgs, msgErr := args.Persist.Messages().ListDeliveredForFrame(ctx, tx, frameID)
+		if msgErr != nil {
+			return nil, fmt.Errorf("BuildAttributeDeps: list delivered messages: %w", msgErr)
 		}
-		if senderRun == nil {
-			if args.Logger != nil {
-				args.Logger.Warn("BuildAttributeDeps: wait-set sender_run_id has no run-tree row",
-					"sender_run_id", r.SenderRunID.String(),
-					"receiver_run_id", receiverRunID.String(),
-					"frame_id", frameID.String())
+		for _, m := range msgs {
+			if m.Type == "" {
+				continue
 			}
-			continue
-		}
-		if !isSettledForSubstitution(senderRun) {
-			continue
-		}
-		attrRow, err := args.Persist.NodeAttributes().GetByRun(ctx, r.SenderRunID, tx)
-		if err != nil {
-			return nil, fmt.Errorf("BuildAttributeDeps: attribute row for sender_run_id %s: %w", r.SenderRunID, err)
-		}
-		nodeType, err := nodeTypeOf(ctx, args, senderRun.NodeID, tx)
-		if err != nil {
-			return nil, fmt.Errorf("BuildAttributeDeps: node-type for sender node_id %s: %w", senderRun.NodeID, err)
-		}
-		if nodeType == "" {
-			if args.Logger != nil {
-				args.Logger.Warn("BuildAttributeDeps: sender has empty node_type",
-					"sender_run_id", r.SenderRunID.String(),
-					"sender_node_id", senderRun.NodeID.String())
+			if _, alreadyPresent := out[m.Type]; alreadyPresent {
+				continue
 			}
-			continue
-		}
-		var raw json.RawMessage
-		if attrRow == nil {
-			raw = json.RawMessage(`{}`)
-		} else {
-			marshaled, marshalErr := json.Marshal(attrRow.Data)
-			if marshalErr != nil {
-				return nil, fmt.Errorf("BuildAttributeDeps: marshal attribute data for sender_run_id %s: %w", r.SenderRunID, marshalErr)
+			if len(m.Payload) == 0 {
+				out[m.Type] = json.RawMessage(`{}`)
+				continue
 			}
-			raw = marshaled
+			out[m.Type] = m.Payload
 		}
-		out[nodeType] = raw
 	}
+
 	return out, nil
 }
 
@@ -98,4 +125,25 @@ func nodeTypeOf(ctx context.Context, args RunArgs, nodeID shared.UUID, tx persis
 		return "", err
 	}
 	return n.NodeType, nil
+}
+
+// @decision: substitution-grammar-closed
+// @decision: substitution-context-builder-reads-drained-rows
+func buildResolveContextForAcquisition(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	frameID, receiverRunID shared.UUID,
+	templateHash string,
+	params json.RawMessage,
+	claims map[string]claimproducer.ClaimResult,
+) (attributes.ResolveContext, error) {
+	deps, err := BuildAttributeDeps(ctx, tx, args, receiverRunID, frameID)
+	if err != nil {
+		return attributes.ResolveContext{}, fmt.Errorf("buildResolveContextForAcquisition: %w", err)
+	}
+	return attributes.ResolveContext{
+		Deps:                  deps,
+		Claim:                 claims,
+		Params:                params,
+		RegistryDeclaredTypes: declaredMessageTypesForTemplate(ctx, args, templateHash, tx),
+	}, nil
 }

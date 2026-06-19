@@ -37,12 +37,12 @@ type AcquireSubClaimsInput struct {
 	Lifetime          spec.ClaimLifetime
 	ParentIsHeld      bool
 	AggregationPolicy spec.AggregationPolicy
+	ParentIntent      string
 }
 
 type SubClaim struct {
 	ClaimHandleID           shared.UUID
 	PartitionKey            string
-	Address                 json.RawMessage
 	ClaimScope              json.RawMessage
 	ProducerCandidateHandle []byte
 }
@@ -50,6 +50,10 @@ type SubClaim struct {
 func AcquireSubClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in AcquireSubClaimsInput,
 ) ([]SubClaim, error) {
+	if in.ParentIntent == "" {
+		return nil, fmt.Errorf("AcquireSubClaims: ParentIntent must be set (got empty); "+
+			"caller must thread the parent claim's intent (producer=%q)", in.ProducerName)
+	}
 	producer, ok := args.StoreRegistry.GetWithContext(ctx, in.ProducerName, in.InstanceID.String())
 	if !ok {
 		return nil, fmt.Errorf("AcquireSubClaims: unknown producer %q", in.ProducerName)
@@ -95,6 +99,18 @@ func AcquireSubClaims(
 				"every SplitScope descriptor must carry a non-empty partition_key (the empty key is reserved for the delegation shape)",
 				in.ProducerName)
 		}
+		if len(desc.Address) > 0 && !json.Valid(desc.Address) {
+			return nil, fmt.Errorf("AcquireSubClaims: producer %q returned a sub-claim scope (partition_key=%q) "+
+				"with non-JSON address bytes; the persistence layer requires JSON-valid address bytes "+
+				"(producers must JSON-encode opaque bytes — wrap in a base64-tagged JSON envelope if non-JSON)",
+				in.ProducerName, desc.PartitionKey)
+		}
+		if len(desc.Payload) > 0 && !json.Valid(desc.Payload) {
+			return nil, fmt.Errorf("AcquireSubClaims: producer %q returned a sub-claim scope (partition_key=%q) "+
+				"with non-JSON payload bytes; the persistence layer requires JSON-valid payload bytes "+
+				"(producers must JSON-encode opaque bytes — wrap in a base64-tagged JSON envelope if non-JSON)",
+				in.ProducerName, desc.PartitionKey)
+		}
 		subScope := json.RawMessage(desc.ClaimScopeData)
 		for _, prior := range acceptedScopes {
 			conflicts, cErr := scopesConflict(ctx, producer, caps, subScope, prior)
@@ -122,13 +138,15 @@ func AcquireSubClaims(
 			candidateHandle = beginOut.CandidateHandle
 			emitSubclaimBeginCandidate(ctx, args, tx, parentID, subID, in.ProducerName, len(candidateHandle))
 		}
-		intent := "rw"
+		intent := in.ParentIntent
 		insert := persistence.ClaimHandleInsertInput{
 			ID:                      subID,
 			NodeRunID:               &in.NodeRunID,
 			LockKind:                persistence.LockKindScope,
 			ProducerName:            &in.ProducerName,
 			ClaimScopeData:          json.RawMessage(desc.ClaimScopeData),
+			Address:                 json.RawMessage(desc.Address),
+			Payload:                 json.RawMessage(desc.Payload),
 			Intent:                  &intent,
 			HolderSupervisorID:      in.HolderSupervisorID,
 			HolderNodeID:            in.HolderNodeID,
@@ -149,7 +167,6 @@ func AcquireSubClaims(
 		out = append(out, SubClaim{
 			ClaimHandleID:           subID,
 			PartitionKey:            desc.PartitionKey,
-			Address:                 nil,
 			ClaimScope:              json.RawMessage(desc.ClaimScopeData),
 			ProducerCandidateHandle: candidateHandle,
 		})

@@ -23,25 +23,28 @@ type SensorObjectStoreHandle struct {
 	Endpoint string
 	FsRoot   string
 
-	t           testing.TB
-	networkName string
-	alias       string
-	stateDSN    string
+	t              testing.TB
+	networkName    string
+	alias          string
+	rimskyEndpoint string
+	stateDSN       string
 
 	container testcontainers.Container
 }
 
-func StartSensorObjectStoreHandle(ctx context.Context, t testing.TB, networkName, alias, stateDSN string) *SensorObjectStoreHandle {
+func StartSensorObjectStoreHandle(ctx context.Context, t testing.TB, networkName, alias, rimskyEndpoint, stateDSN string) *SensorObjectStoreHandle {
 	t.Helper()
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 	h := &SensorObjectStoreHandle{
-		t:           t,
-		networkName: networkName,
-		alias:       alias,
-		stateDSN:    stateDSN,
-		FsRoot:      sensorObjectStoreBucketRoot,
+		t:              t,
+		networkName:    networkName,
+		alias:          uniqueAlias,
+		rimskyEndpoint: rimskyEndpoint,
+		stateDSN:       stateDSN,
+		FsRoot:         sensorObjectStoreBucketRoot,
 	}
-	h.container = runSensorObjectStoreContainer(ctx, t, networkName, alias, stateDSN)
-	h.Endpoint = fmt.Sprintf("%s:9083", alias)
+	h.container = runSensorObjectStoreContainer(ctx, t, networkName, uniqueAlias, rimskyEndpoint, stateDSN)
+	h.Endpoint = fmt.Sprintf("%s:9083", uniqueAlias)
 	t.Cleanup(func() {
 		if h.container == nil {
 			return
@@ -67,7 +70,7 @@ func (h *SensorObjectStoreHandle) Stop(ctx context.Context) {
 func (h *SensorObjectStoreHandle) Restart(ctx context.Context) {
 	h.t.Helper()
 	h.Stop(ctx)
-	h.container = runSensorObjectStoreContainer(ctx, h.t, h.networkName, h.alias, h.stateDSN)
+	h.container = runSensorObjectStoreContainer(ctx, h.t, h.networkName, h.alias, h.rimskyEndpoint, h.stateDSN)
 }
 
 func (h *SensorObjectStoreHandle) PutObject(ctx context.Context, bucket, objectName string, content []byte) {
@@ -81,11 +84,14 @@ func (h *SensorObjectStoreHandle) PutObject(ctx context.Context, bucket, objectN
 	}
 }
 
-func runSensorObjectStoreContainer(ctx context.Context, t testing.TB, networkName, alias, stateDSN string) testcontainers.Container {
+func runSensorObjectStoreContainer(ctx context.Context, t testing.TB, networkName, alias, rimskyEndpoint, stateDSN string) testcontainers.Container {
 	t.Helper()
+	if rimskyEndpoint == "" {
+		rimskyEndpoint = "http://rimsky:8080"
+	}
 	env := map[string]string{
 		"RIMSKY_SENSOR_OBJECT_STORE_PORT":    "9083",
-		"RIMSKY_ENDPOINT":                    "http://rimsky:8080",
+		"RIMSKY_ENDPOINT":                    rimskyEndpoint,
 		"RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT": sensorObjectStoreBucketRoot,
 	}
 	if stateDSN != "" {

@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +22,27 @@ import (
 	tcnet "github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+var (
+	sharedNetworkOnceReapedByRyukAtProcessExit sync.Once
+	sharedNetwork                              *testcontainers.DockerNetwork
+	sharedNetworkErr                           error
+	aliasCounter                               atomic.Uint64
+)
+
+func sharedNetworkName(ctx context.Context) (string, error) {
+	sharedNetworkOnceReapedByRyukAtProcessExit.Do(func() {
+		sharedNetwork, sharedNetworkErr = tcnet.New(ctx)
+	})
+	if sharedNetworkErr != nil {
+		return "", sharedNetworkErr
+	}
+	return sharedNetwork.Name, nil
+}
+
+func nextAliasSuffix() uint64 {
+	return aliasCounter.Add(1)
+}
 
 const rimskyAllImage = "rimsky-all-in-one:latest"
 
@@ -45,6 +68,7 @@ type configBuilder struct {
 	namedLocks        map[string]int
 	hostAccessPorts   []int
 	existingNetwork   string
+	rimskyAlias       string
 	blob              *blobCfg
 	extraEnv          map[string]string
 	sqlite            bool
@@ -168,19 +192,26 @@ func WithRefValidationMode(mode string) Option {
 
 func NewNetwork(ctx context.Context, t testing.TB) string {
 	t.Helper()
-	nw, err := tcnet.New(ctx)
+	name, err := sharedNetworkName(ctx)
 	if err != nil {
 		t.Fatalf("harness: create network: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = nw.Remove(context.Background())
-	})
-	return nw.Name
+	return name
+}
+
+func NextRimskyAlias() string {
+	return fmt.Sprintf("rimsky-%d", nextAliasSuffix())
 }
 
 func WithExistingNetwork(name string) Option {
 	return func(cb *configBuilder) {
 		cb.existingNetwork = name
+	}
+}
+
+func WithRimskyAlias(alias string) Option {
+	return func(cb *configBuilder) {
+		cb.rimskyAlias = alias
 	}
 }
 
@@ -197,7 +228,8 @@ type RimskyHandle struct {
 	cb        *configBuilder
 	yamlBytes []byte
 
-	parentT testing.TB
+	parentT     testing.TB
+	rimskyAlias string
 }
 
 func (h *RimskyHandle) DumpRimskyLogs(t testing.TB) {
@@ -253,7 +285,7 @@ func (h *RimskyHandle) Restart(ctx context.Context, t testing.TB) {
 	if cleanupT == nil {
 		cleanupT = t
 	}
-	c, baseURL, callbackBaseURL := runRimskyContainerWithCleanupT(ctx, t, cleanupT, h.cb, h.yamlBytes, h.Endpoint.Network)
+	c, baseURL, callbackBaseURL := runRimskyContainerWithCleanupT(ctx, t, cleanupT, h.cb, h.yamlBytes, h.Endpoint.Network, h.rimskyAlias)
 	h.container = c
 	h.Endpoint.BaseURL = baseURL
 	h.Endpoint.CallbackBaseURL = callbackBaseURL
@@ -277,15 +309,18 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 	if cb.existingNetwork != "" {
 		networkName = cb.existingNetwork
 	} else {
-		nw, err := tcnet.New(ctx)
+		name, err := sharedNetworkName(ctx)
 		if err != nil {
 			t.Fatalf("harness: create network: %v", err)
 		}
-		t.Cleanup(func() {
-			_ = nw.Remove(context.Background())
-		})
-		networkName = nw.Name
+		networkName = name
 	}
+
+	rimskyAlias := cb.rimskyAlias
+	if rimskyAlias == "" {
+		rimskyAlias = NextRimskyAlias()
+	}
+	pgAlias := rimskyAlias + "-pg"
 
 	var (
 		hostDSN     string
@@ -295,14 +330,14 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 	if cb.sqlite {
 		yamlBytes = []byte(renderRimskyYAMLSQLite(cb))
 	} else {
-		hostDSN, internalDSN = startPostgresOnNetwork(ctx, t, networkName)
+		hostDSN, internalDSN = startPostgresOnNetwork(ctx, t, networkName, pgAlias)
 
 		yamlBytes = []byte(renderRimskyYAML(internalDSN, cb))
 	}
 
-	rimsky, baseURL, callbackBaseURL := runRimskyContainer(ctx, t, cb, yamlBytes, networkName)
+	rimsky, baseURL, callbackBaseURL := runRimskyContainer(ctx, t, cb, yamlBytes, networkName, rimskyAlias)
 
-	internalURL := "http://rimsky:8080"
+	internalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
 
 	return &RimskyHandle{
 		Endpoint: RimskyEndpoint{
@@ -313,14 +348,15 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 			InternalDSN:     internalDSN,
 			Network:         networkName,
 		},
-		container: rimsky,
-		cb:        cb,
-		yamlBytes: yamlBytes,
-		parentT:   t,
+		container:   rimsky,
+		cb:          cb,
+		yamlBytes:   yamlBytes,
+		parentT:     t,
+		rimskyAlias: rimskyAlias,
 	}
 }
 
-func startPostgresOnNetwork(ctx context.Context, t testing.TB, networkName string) (hostDSN, internalDSN string) {
+func startPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (hostDSN, internalDSN string) {
 	t.Helper()
 	pgContainer, err := pgmodule.Run(ctx,
 		"postgres:15-alpine",
@@ -334,7 +370,7 @@ func startPostgresOnNetwork(ctx context.Context, t testing.TB, networkName strin
 				wait.ForListeningPort("5432/tcp").WithStartupTimeout(120*time.Second),
 			),
 		),
-		tcnet.WithNetworkName([]string{"rimsky-pg"}, networkName),
+		tcnet.WithNetworkName([]string{alias}, networkName),
 	)
 	if err != nil {
 		t.Fatalf("harness: start postgres: %v", err)
@@ -348,22 +384,22 @@ func startPostgresOnNetwork(ctx context.Context, t testing.TB, networkName strin
 	if err != nil {
 		t.Fatalf("harness: postgres host DSN: %v", err)
 	}
-	internalDSN = "postgres://rimsky:rimsky@rimsky-pg:5432/rimsky?sslmode=disable"
+	internalDSN = fmt.Sprintf("postgres://rimsky:rimsky@%s:5432/rimsky?sslmode=disable", alias)
 	return hostDSN, internalDSN
 }
 
-func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, yamlBytes []byte, networkName string) (testcontainers.Container, string, string) {
-	return runRimskyContainerWithCleanupT(ctx, t, t, cb, yamlBytes, networkName)
+func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, yamlBytes []byte, networkName, alias string) (testcontainers.Container, string, string) {
+	return runRimskyContainerWithCleanupT(ctx, t, t, cb, yamlBytes, networkName, alias)
 }
 
-func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT testing.TB, cb *configBuilder, yamlBytes []byte, networkName string) (testcontainers.Container, string, string) {
+func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT testing.TB, cb *configBuilder, yamlBytes []byte, networkName, alias string) (testcontainers.Container, string, string) {
 	t.Helper()
 	env := map[string]string{
 		"RIMSKY_CONFIG":                             "/etc/rimsky/rimsky.yml",
 		"RIMSKY_SUPERVISOR_CONFIG":                  "/etc/rimsky/supervisor-config.yml",
 		"RIMSKY_CONTROL_API_HOST":                   "0.0.0.0",
 		"RIMSKY_CONTROL_API_PORT":                   "8080",
-		"RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST": "rimsky",
+		"RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST": alias,
 		"RIMSKY_OBSERVABILITY_REFRESH_INTERVAL":     "5s",
 	}
 	for k, v := range cb.extraEnv {
@@ -371,7 +407,7 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 	}
 	rimskyOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithExposedPorts("8080/tcp", "9100/tcp"),
-		tcnet.WithNetworkName([]string{"rimsky"}, networkName),
+		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
 			Reader:            strings.NewReader(string(yamlBytes)),

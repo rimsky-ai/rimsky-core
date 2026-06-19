@@ -1,0 +1,70 @@
+# template-valid.yaml — STORY-messages-as-nodes-substitution half 1.
+#
+# Declares a message type `foo` and a node `bar`. A `receiver` node
+# reads both `{{messages.foo.body}}` (a typed-message body field) and
+# `{{nodes.bar.attribute.body}}` (a node attribute), demonstrating that
+# both directives resolve through the same lookup. The receiver
+# subscribes to both so the substitution-ref coverage check passes.
+name: messages-as-nodes-valid
+version: "1"
+description: |
+  STORY-messages-as-nodes-substitution — valid case. messages.<type>
+  resolves identically to nodes.<type>, with the only difference being
+  that messages.foo requires `foo` declared in messages: (which it is).
+
+messages:
+  - type: foo
+    body_schema:
+      type: object
+      properties:
+        body:
+          type: string
+      required: [body]
+
+nodes:
+  - type: bar
+    kind: attribute_passthrough
+    description: |
+      A real node carrying an attribute named `body`. The receiver
+      reads it via {{nodes.bar.attribute.body}}. Structural root —
+      wakes on the implicit empty-message trigger.
+    attributes:
+      schema:
+        type: object
+        properties:
+          body:
+            type: string
+            default: "from-node"
+        required: [body]
+
+  - type: receiver
+    kind: attribute_passthrough
+    description: |
+      Reads both message body and node attribute through the unified
+      substitution surface. Concatenates the two into an observable
+      `combined` attribute so the demo can verify both directives
+      resolved.
+    subscribes:
+      - node: foo
+        type: terminal/success
+        wake_on_change: true
+        force_upstream_refresh: false
+      - node: bar
+        type: terminal/success
+        wake_on_change: true
+        force_upstream_refresh: false
+      - node: bar
+        type: attribute/body/changed
+        wake_on_change: false
+        force_upstream_refresh: false
+    attributes:
+      schema:
+        type: object
+        properties:
+          from_message:
+            type: string
+            source: "{{messages.foo.body}}"
+          from_node:
+            type: string
+            source: "{{nodes.bar.attribute.body}}"
+        required: [from_message, from_node]

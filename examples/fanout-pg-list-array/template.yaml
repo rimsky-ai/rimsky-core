@@ -1,0 +1,72 @@
+# fanout-pg-list-array template — STORY-pg-fanout-list-array proof.
+#
+# Same shape as the filesystem-store list-array story, but the parent
+# claim is held against the bundled postgres store. The store's
+# SplitScope decodes the `{"list": [...]}` shape (shared helper) and
+# returns one SubScopeDescriptor per element with PartitionKey =
+# element.key and Payload = element.payload.
+#
+# Stack prerequisites (operator-side):
+#   - rimsky stack reachable at RIMSKY_ENDPOINT
+#   - bundled `rimsky-store-postgres` registered as claim producer
+#     `pg-store` advertising supports_split_scope=true and a pick
+#     policy `@items-queue` over a `pgfanout_items` table (see
+#     store-config.yml in this directory for the wiring shape)
+#   - the items table seeded with at least one row keyed by some id so
+#     the parent Open succeeds; the partition_request shape does not
+#     re-read this table — substitution from upstream supplies the
+#     elements
+#   - bundled `attribute_passthrough` inproc executor
+name: fanout-pg-list-array
+version: "1"
+description: |
+  STORY-pg-fanout-list-array proof: a fan-out node whose parent claim
+  is postgres-store-backed; partition_request is a list of items
+  substituted from an operator-posted message; three children
+  dispatch, each carrying its own partition_key and per-sub-claim
+  payload.
+
+messages:
+  - type: fanout_seed
+    body_schema:
+      type: object
+      properties:
+        items:
+          type: array
+      required: [items]
+
+nodes:
+  - type: triage
+    kind: attribute_passthrough
+    description: |
+      Fan-out parent. Holds one postgres-store claim under the
+      `@items-queue` pick policy; partition_request reads the
+      operator-posted `fanout_seed.items` array. The postgres store's
+      SplitScope decodes the `{"list": [...]}` shape and emits one
+      SubScopeDescriptor per element.
+    stores:
+      - name: pg-store
+        selector: "@items-queue"
+        intent: rw
+        alias: pg_queue
+    subscribes:
+      - node: fanout_seed
+        type: terminal/success
+        wake_on_change: true
+        force_upstream_refresh: false
+    fan_out:
+      claim: pg_queue
+      partition_request: "{\"list\":{{messages.fanout_seed.items}}}"
+      error_policy:
+        kind: best_effort
+    attributes:
+      schema:
+        type: object
+        properties:
+          partition_key:
+            type: string
+            source: "{{child.partition_key}}"
+          processed_payload:
+            type: object
+            source: "{{claim.pg_queue.payload}}"
+        required: [partition_key]

@@ -5,7 +5,6 @@
 package fanout
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -21,11 +20,11 @@ func TestSplitScopeEmitsNSubClaims_InputProjectsOnePartitionPerSubScope(t *testi
 	frameID := shared.UUID(uuid.New())
 
 	subClaims := []runtime.SubClaim{
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "us-east-1", Address: json.RawMessage(`{"path":"a"}`)},
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "us-west-2", Address: json.RawMessage(`{"path":"b"}`)},
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "eu-west-1", Address: json.RawMessage(`{"path":"c"}`)},
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "ap-south-1", Address: json.RawMessage(`{"path":"d"}`)},
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "sa-east-1", Address: json.RawMessage(`{"path":"e"}`)},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "us-east-1"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "us-west-2"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "eu-west-1"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "ap-south-1"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "sa-east-1"},
 	}
 	in := runtime.ChildExecutionInput{
 		ParentRunID: parentRun,

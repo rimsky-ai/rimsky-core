@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -34,12 +35,15 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 
 	netName := harness.NewNetwork(ctx, t)
 
-	sensor := harness.StartSensorWebhook(ctx, t, netName, "sensor-webhook")
+	rimskyAlias := harness.NextRimskyAlias()
+	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
+	sensor := harness.StartSensorWebhook(ctx, t, netName, "sensor-webhook", rimskyInternalURL)
 
-	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
+	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
+		harness.WithRimskyAlias(rimskyAlias),
 		harness.WithExecutor("stub", execEP),
 		harness.WithPublisher(webhookPublisherName, sensor.GRPCEndpoint),
 	)

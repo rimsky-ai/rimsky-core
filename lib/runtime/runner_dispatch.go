@@ -532,36 +532,14 @@ func buildResolveContextForDispatch(
 		}
 		paramsRaw = b
 	}
-	triggerPayload, triggerType := lookupTriggerMessageForFrame(ctx, args, acq.FrameID)
 	registryTypes := declaredMessageTypesForTemplate(ctx, args, acq.TemplateHash, nil)
 	return attributes.ResolveContext{
 		Deps:                  deps,
 		Claim:                 claims,
 		Params:                paramsRaw,
 		ChildPartitionKey:     partitionKey,
-		TriggerMessagePayload: triggerPayload,
-		TriggerMessageType:    triggerType,
 		RegistryDeclaredTypes: registryTypes,
 	}, nil
-}
-
-func lookupTriggerMessageForFrame(
-	ctx context.Context, args RunArgs, frameID shared.UUID,
-) (json.RawMessage, string) {
-	if args.Persist == nil || args.Persist.Messages() == nil {
-		return nil, ""
-	}
-	var (
-		payload json.RawMessage
-		mtype   string
-	)
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, t := triggerMessageForFrame(ctx, args, tx, frameID)
-		payload = p
-		mtype = t
-		return nil
-	})
-	return payload, mtype
 }
 
 // @concept: attribute

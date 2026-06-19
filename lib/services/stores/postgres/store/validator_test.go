@@ -5,6 +5,7 @@
 package store
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -106,5 +107,72 @@ func TestPGValidator_RejectsZeroVisibility(t *testing.T) {
 	res := validatePickPolicy("@q", pp)
 	if res.OK() {
 		t.Fatal("expected error for zero VisibilityTimeout")
+	}
+}
+
+func TestPartitionPolicy_RejectsPlaceholdersWithoutParamOrder(t *testing.T) {
+	pp := &PartitionPolicy{
+		ItemsTable: "items",
+		Select:     "id, status",
+		Where:      "status = $1 AND created_at > $2",
+		ParamOrder: nil,
+	}
+	err := validatePartitionPolicy("@bad", pp)
+	if err == nil {
+		t.Fatal("expected error for $N placeholders without params_schema")
+	}
+	if !strings.Contains(err.Error(), "params_schema") {
+		t.Errorf("expected message to mention params_schema; got %q", err.Error())
+	}
+}
+
+func TestPartitionPolicy_AcceptsPlaceholdersWithParamOrder(t *testing.T) {
+	pp := &PartitionPolicy{
+		ItemsTable: "items",
+		Select:     "id, status",
+		Where:      "status = $1",
+		ParamOrder: []string{"status"},
+	}
+	if err := validatePartitionPolicy("@ok", pp); err != nil {
+		t.Fatalf("expected no error; got %v", err)
+	}
+}
+
+func TestCanonicalRowID_Variants(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want string
+	}{
+		{name: "string", in: "row-42", want: "row-42"},
+		{name: "bytes", in: []byte("abc"), want: "abc"},
+		{name: "int", in: int64(7), want: "7"},
+	}
+	for _, tc := range cases {
+		got, err := canonicalRowID(tc.in)
+		if err != nil {
+			t.Errorf("canonicalRowID(%v): unexpected error: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("canonicalRowID(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestRunPartitionPolicy_RejectsParamsWithoutOrder(t *testing.T) {
+	s := NewForTest()
+	pp := &PartitionPolicy{
+		ItemsTable: "items",
+		Select:     "id",
+		Where:      "status = $1",
+		ParamOrder: nil,
+	}
+	_, err := s.RunPartitionPolicy(context.TODO(), pp, map[string]any{"status": "open"})
+	if err == nil {
+		t.Fatal("expected error for params without ParamOrder")
+	}
+	if !strings.Contains(err.Error(), "params_schema") {
+		t.Errorf("expected message to mention params_schema; got %q", err.Error())
 	}
 }

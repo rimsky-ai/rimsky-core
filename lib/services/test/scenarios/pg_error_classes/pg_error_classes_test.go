@@ -52,7 +52,7 @@ func testClaimUnavailableDelivered(t *testing.T) {
 		},
 	})
 
-	execEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
+	execEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
@@ -119,7 +119,7 @@ func testSwapFailedDelivered(t *testing.T) {
 		EnableExecutor: true,
 	})
 
-	execEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
+	execEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),

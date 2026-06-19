@@ -1097,28 +1097,6 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
-	t.Run("bare trigger payload pull accepted", func(t *testing.T) {
-		spec := &TemplateSpec{
-			Name:    "demo",
-			Version: "1.0.0",
-			Nodes: []TemplateNodeDef{{
-				Type:     "a",
-				Executor: "h",
-				Attributes: &NodeAttributesDef{Schema: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"trigger": map[string]any{
-							"type":   "object",
-							"source": "{{trigger.message.payload}}",
-						},
-					},
-				}},
-			}},
-		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
-	})
-
 	t.Run("bare nodes event pull rejected (retired)", func(t *testing.T) {
 		spec := &TemplateSpec{
 			Name:    "demo",
@@ -2218,6 +2196,14 @@ func TestValidateMessageSubstitutionRef_Ok(t *testing.T) {
 		Nodes: []TemplateNodeDef{{
 			Type:     "receiver",
 			Executor: "handler.a",
+			Subscribes: []SubscriptionEntry{
+				{
+					Node:                 "ping/recheck",
+					Type:                 "terminal/success",
+					WakeOnChange:         BoolPtr(true),
+					ForceUpstreamRefresh: BoolPtr(false),
+				},
+			},
 			Attributes: &NodeAttributesDef{Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -2230,7 +2216,7 @@ func TestValidateMessageSubstitutionRef_Ok(t *testing.T) {
 		}},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	assert.True(t, res.Ok(), "errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 }
 
 func TestValidateMessageSubstitutionRef_Error_UnknownType(t *testing.T) {
@@ -2295,6 +2281,14 @@ func TestValidateMessageSubstitutionRef_Ok_BareWholeBodyPull(t *testing.T) {
 		Nodes: []TemplateNodeDef{{
 			Type:     "receiver",
 			Executor: "handler.a",
+			Subscribes: []SubscriptionEntry{
+				{
+					Node:                 "ping/recheck",
+					Type:                 "terminal/success",
+					WakeOnChange:         BoolPtr(true),
+					ForceUpstreamRefresh: BoolPtr(false),
+				},
+			},
 			Attributes: &NodeAttributesDef{Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -2307,7 +2301,7 @@ func TestValidateMessageSubstitutionRef_Ok_BareWholeBodyPull(t *testing.T) {
 		}},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	assert.True(t, res.Ok(), "errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 }
 
 func TestValidateMessageSubstitutionRef_Error_NamedFieldAgainstEmptyBody(t *testing.T) {

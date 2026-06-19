@@ -37,10 +37,23 @@ func TestClaimProducerConformance_StubStore(t *testing.T) {
 			t.Errorf("%s: unexpected error: %v", r.Name, r.Err)
 		}
 	}
-	wantNames := map[string]bool{"SplitScope": false, "ScopesConflict": false}
+	wantNames := map[string]bool{
+		"SplitScopeListReturnsAllElements": false,
+		"SplitScopePreservesPartitionKey":  false,
+		"SplitScopePreservesPayload":       false,
+		"SplitScopeAddressFieldPresent":    false,
+		"ScopesConflict":                   false,
+	}
+	seenCounts := make(map[string]int, len(results))
 	for _, r := range results {
+		seenCounts[r.Name]++
 		if _, ok := wantNames[r.Name]; ok {
 			wantNames[r.Name] = true
+		}
+	}
+	for name, count := range seenCounts {
+		if count > 1 {
+			t.Errorf("conformance result row %q appears %d times; check names are required-unique", name, count)
 		}
 	}
 	for name, seen := range wantNames {

@@ -21,11 +21,11 @@ func TestVerifierSeverityPartition(t *testing.T) {
 	ctx := context.Background()
 
 	netName := harness.NewNetwork(ctx, t)
-	harness.StartVerifierShapeChecksOnNetwork(ctx, t, netName, "verifier-shape-checks")
+	verifierEP := harness.StartVerifierShapeChecksOnNetwork(ctx, t, netName, "verifier-shape-checks")
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
-		harness.WithExecutor("verifier-shape-checks", "verifier-shape-checks:9095"),
+		harness.WithExecutor("verifier-shape-checks", verifierEP),
 	)
 
 	inBoundsTemplate := buildSeverityPartitionTemplate(

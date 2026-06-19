@@ -41,7 +41,7 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 			},
 			SeedFolders: [][]string{{"docs", "alpha"}, {"docs", "beta"}},
 		})
-	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithClaimProducer("docs", fs.InternalEndpoint),
@@ -159,7 +159,7 @@ func TestSubscriber_EmitFailureHaltsBatch(t *testing.T) {
 			},
 			SeedFolders: [][]string{{"docs", "alpha"}},
 		})
-	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithClaimProducer("docs", fs.InternalEndpoint),

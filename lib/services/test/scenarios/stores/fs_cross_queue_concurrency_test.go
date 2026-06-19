@@ -40,7 +40,7 @@ func TestFSCrossQueueConcurrency(t *testing.T) {
 		})
 	_ = fs
 
-	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),

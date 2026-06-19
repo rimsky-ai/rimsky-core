@@ -6,6 +6,7 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,7 @@ func StartClaudeAgentFakeOnNetwork(
 	opts ClaudeAgentFakeOptions,
 ) (endpoint string) {
 	t.Helper()
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 
 	env := map[string]string{
 		"CLAUDE_CODE_OAUTH_TOKEN":       "dummy-token-for-fake-cli-cross-stack-test",
@@ -74,7 +76,7 @@ func StartClaudeAgentFakeOnNetwork(
 			Tag:        "latest",
 			KeepImage:  true,
 		}),
-		tcnet.WithNetworkName([]string{alias}, networkName),
+		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithFiles(files...),
 		testcontainers.WithExposedPorts("9090/tcp", "9190/tcp"),
@@ -94,7 +96,7 @@ func StartClaudeAgentFakeOnNetwork(
 		defer cancel()
 		_ = c.Terminate(termCtx)
 	})
-	return alias + ":9090"
+	return uniqueAlias + ":9090"
 }
 
 func DumpClaudeAgentFakeLogsForFailure(t testing.TB, c testcontainers.Container) {

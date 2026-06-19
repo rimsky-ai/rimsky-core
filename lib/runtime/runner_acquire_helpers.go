@@ -54,7 +54,7 @@ func acquireFanOutIfDeclared(
 		return nil
 	}
 	frameID := cand.FrameID
-	partitionRequest, err := substituteFanOutPartitionRequest(ctx, args, tx, frameID, out, nodeDef.FanOut.PartitionRequest)
+	partitionRequest, err := substituteFanOutPartitionRequest(ctx, args, tx, frameID, out, acquiredLocks, nodeDef.FanOut.PartitionRequest)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: fan-out partition_request substitution failed",
 			"node_id", cand.NodeID.String(),
@@ -76,6 +76,7 @@ func acquireFanOutIfDeclared(
 		Lifetime:          spec.ClaimLifetime(parentClaimSpec.Lifetime),
 		ParentIsHeld:      parent.IsHeld,
 		AggregationPolicy: nodeDef.FanOut.ErrorPolicy,
+		ParentIntent:      string(parentClaimSpec.Intent),
 	})
 	if err != nil {
 		args.Logger.Warn("tryAcquire: fan-out sub-claim acquisition failed",
@@ -89,21 +90,34 @@ func acquireFanOutIfDeclared(
 }
 
 // @concept: fan-out
+// @decision: substitution-grammar-closed
 func substituteFanOutPartitionRequest(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	frameID shared.UUID, out *acquisition, partitionRequest string,
+	frameID shared.UUID, out *acquisition, acquiredLocks []AcquiredLock,
+	partitionRequest string,
 ) ([]byte, error) {
-	resolveCtx := attributes.ResolveContext{
-		Params:                instanceParamsRaw(out),
-		Claim:                 out.HeldClaims,
-		RegistryDeclaredTypes: declaredMessageTypesForTemplate(ctx, args, out.TemplateHash, tx),
+	claims := map[string]claimproducer.ClaimResult{}
+	for _, lk := range acquiredLocks {
+		if lk.Alias == "" {
+			continue
+		}
+		claims[lk.Alias] = lk.ClaimResult
 	}
-	payload, mtype := triggerMessageForFrame(ctx, args, tx, frameID)
-	if len(payload) > 0 {
-		resolveCtx.TriggerMessagePayload = payload
+	for alias, held := range out.HeldClaims {
+		if _, alreadyPresent := claims[alias]; alreadyPresent {
+			continue
+		}
+		claims[alias] = held
 	}
-	if mtype != "" {
-		resolveCtx.TriggerMessageType = mtype
+	resolveCtx, err := buildResolveContextForAcquisition(
+		ctx, args, tx,
+		frameID, out.DispatchID,
+		out.TemplateHash,
+		instanceParamsRaw(out),
+		claims,
+	)
+	if err != nil {
+		return nil, err
 	}
 	val, err := attributes.SubstituteValue(partitionRequest, resolveCtx)
 	if err != nil {
@@ -128,25 +142,6 @@ func instanceParamsRaw(out *acquisition) json.RawMessage {
 		return nil
 	}
 	return b
-}
-
-func triggerMessageForFrame(
-	ctx context.Context, args RunArgs, tx persistence.Tx, frameID shared.UUID,
-) (json.RawMessage, string) {
-	if args.Persist == nil || args.Persist.Messages() == nil {
-		return nil, ""
-	}
-	rows, err := args.Persist.Messages().ListDeliveredForFrame(ctx, tx, frameID)
-	if err != nil {
-		args.Logger.Warn("trigger-message lookup failed; substitution falls back to ErrMissingSource",
-			"frame_id", frameID.String(),
-			"error", err.Error())
-		return nil, ""
-	}
-	if len(rows) != 1 {
-		return nil, ""
-	}
-	return rows[0].Payload, rows[0].Type
 }
 
 // @concept: executor

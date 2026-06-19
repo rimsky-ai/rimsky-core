@@ -357,13 +357,16 @@ func TestSQLite_RetentionSweepRespectsWriterSerializationUnderContention(t *test
 				first = false
 				close(bumperReady)
 			}
+			time.Sleep(100 * time.Microsecond)
 		}
 	}()
 	<-bumperReady
 
+	const contentionWindow = 500 * time.Millisecond
 	sweepDeadline := time.Now().Add(30 * time.Second)
+	contentionUntil := time.Now().Add(contentionWindow)
 	iters := 0
-	for time.Now().Before(sweepDeadline) && iters < 10 {
+	for time.Now().Before(sweepDeadline) {
 		if _, err := store.Frames().PruneTraceForRetention(ctx, 1, f.cutoff); err != nil {
 			close(stop)
 			wg.Wait()
@@ -375,13 +378,16 @@ func TestSQLite_RetentionSweepRespectsWriterSerializationUnderContention(t *test
 			t.Fatalf("Events.DeleteOlderThan under contention: %v", err)
 		}
 		iters++
+		if !time.Now().Before(contentionUntil) {
+			break
+		}
 	}
 	close(stop)
 	wg.Wait()
 	if iters == 0 {
 		t.Fatalf("retention sweep never completed under contention (deadlock or livelock)")
 	}
-	if bumpsCompleted.Load() == 0 {
-		t.Fatalf("background bumper never made progress alongside the sweep")
+	if got := bumpsCompleted.Load(); got < 100 {
+		t.Fatalf("background bumper completed only %d bumps under sustained contention over %v (lower bound: ≥100 at 100µs per bump) — sweep is starving the bumper, weakening the serialization invariant the test exists to verify", got, contentionWindow)
 	}
 }

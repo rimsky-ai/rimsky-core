@@ -26,11 +26,11 @@ func TestScopesConflict_OverlapHeldOff(t *testing.T) {
 
 	netName := harness.NewNetwork(ctx, t)
 	producerEndpoint := harness.StartOverlapClaimProducerOnNetwork(ctx, t, netName, "overlap-producer")
-	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+	execEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithClaimProducer(overlapProducerName, producerEndpoint, "sync"),
-		harness.WithExecutor("stub", "executor-stub:9300"),
+		harness.WithExecutor("stub", execEndpoint),
 	)
 
 	pool, err := pgxpool.New(ctx, ep.HostDSN)

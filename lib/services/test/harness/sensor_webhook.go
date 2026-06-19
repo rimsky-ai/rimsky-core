@@ -22,15 +22,19 @@ type SensorWebhookHandle struct {
 	WebhookBaseURL string
 }
 
-func StartSensorWebhook(ctx context.Context, t testing.TB, networkName, alias string) *SensorWebhookHandle {
+func StartSensorWebhook(ctx context.Context, t testing.TB, networkName, alias, rimskyEndpoint string) *SensorWebhookHandle {
 	t.Helper()
+	if rimskyEndpoint == "" {
+		rimskyEndpoint = "http://rimsky:8080"
+	}
+	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 	env := map[string]string{
 		"RIMSKY_SENSOR_WEBHOOK_PORT":      "9084",
 		"RIMSKY_SENSOR_WEBHOOK_HTTP_PORT": "9184",
-		"RIMSKY_ENDPOINT":                 "http://rimsky:8080",
+		"RIMSKY_ENDPOINT":                 rimskyEndpoint,
 	}
 	opts := []testcontainers.ContainerCustomizer{
-		tcnet.WithNetworkName([]string{alias}, networkName),
+		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9084/tcp", "9184/tcp"),
 		testcontainers.WithWaitStrategy(
@@ -56,7 +60,7 @@ func StartSensorWebhook(ctx context.Context, t testing.TB, networkName, alias st
 		t.Fatalf("harness: sensor-webhook mapped http port: %v", err)
 	}
 	return &SensorWebhookHandle{
-		GRPCEndpoint:   fmt.Sprintf("%s:9084", alias),
+		GRPCEndpoint:   fmt.Sprintf("%s:9084", uniqueAlias),
 		WebhookBaseURL: fmt.Sprintf("http://%s:%s", hostIP, mapped.Port()),
 	}
 }

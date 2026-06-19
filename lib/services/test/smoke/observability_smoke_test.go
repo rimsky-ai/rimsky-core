@@ -17,7 +17,7 @@ func TestObservabilitySmoke(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	netName := harness.NewNetwork(ctx, t)
-	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithExecutor("stub", "executor-stub:9300"),

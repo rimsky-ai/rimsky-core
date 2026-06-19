@@ -18,8 +18,6 @@ import (
 
 const rimskyCoreImage = "rimsky:latest"
 
-const splitSupervisorAlias = "rimsky-supervisor"
-
 func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) RimskyEndpoint {
 	t.Helper()
 
@@ -44,33 +42,37 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 
 	networkName := cb.existingNetwork
 	if networkName == "" {
-		nw, err := tcnet.New(ctx)
+		name, err := sharedNetworkName(ctx)
 		if err != nil {
 			t.Fatalf("harness: create network: %v", err)
 		}
-		t.Cleanup(func() {
-			_ = nw.Remove(context.Background())
-		})
-		networkName = nw.Name
+		networkName = name
 	}
 
-	hostDSN, internalDSN := startPostgresOnNetwork(ctx, t, networkName)
+	suffix := nextAliasSuffix()
+	controlAlias := fmt.Sprintf("rimsky-%d", suffix)
+	pgAlias := fmt.Sprintf("rimsky-pg-%d", suffix)
+	schedulerAlias := fmt.Sprintf("rimsky-scheduler-%d", suffix)
+	supervisorAlias := fmt.Sprintf("rimsky-supervisor-%d", suffix)
+
+	hostDSN, internalDSN := startPostgresOnNetwork(ctx, t, networkName, pgAlias)
 
 	yamlBytes := []byte(renderRimskyYAML(internalDSN, cb))
-	supervisorYAML := []byte(renderSplitSupervisorYAML())
+	supervisorYAML := []byte(renderSplitSupervisorYAML(supervisorAlias))
 
-	baseURL := startSplitControlAPI(ctx, t, cb, yamlBytes, networkName)
+	baseURL := startSplitControlAPI(ctx, t, cb, yamlBytes, networkName, controlAlias)
 
 	startSplitRole(ctx, t, cb, splitRoleSpec{
 		role:    "rimsky-scheduler",
-		alias:   "rimsky-scheduler",
+		alias:   schedulerAlias,
 		yaml:    yamlBytes,
 		network: networkName,
 		waitFor: wait.ForLog("scheduler started").WithStartupTimeout(120 * time.Second),
 	})
 	startSplitRole(ctx, t, cb, splitRoleSpec{
 		role:           "rimsky-supervisor",
-		alias:          splitSupervisorAlias,
+		alias:          supervisorAlias,
+		advertiseHost:  supervisorAlias,
 		yaml:           yamlBytes,
 		supervisorYAML: supervisorYAML,
 		network:        networkName,
@@ -79,7 +81,7 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 
 	return RimskyEndpoint{
 		BaseURL:     baseURL,
-		InternalURL: "http://rimsky:8080",
+		InternalURL: fmt.Sprintf("http://%s:8080", controlAlias),
 		HostDSN:     hostDSN,
 		InternalDSN: internalDSN,
 		Network:     networkName,
@@ -89,13 +91,14 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 type splitRoleSpec struct {
 	role           string
 	alias          string
+	advertiseHost  string
 	yaml           []byte
 	supervisorYAML []byte
 	network        string
 	waitFor        wait.Strategy
 }
 
-func startSplitControlAPI(ctx context.Context, t testing.TB, cb *configBuilder, yamlBytes []byte, networkName string) string {
+func startSplitControlAPI(ctx context.Context, t testing.TB, cb *configBuilder, yamlBytes []byte, networkName, alias string) string {
 	t.Helper()
 	env := map[string]string{
 		"RIMSKY_CONFIG":           "/etc/rimsky/rimsky.yml",
@@ -108,7 +111,7 @@ func startSplitControlAPI(ctx context.Context, t testing.TB, cb *configBuilder, 
 	c, err := testcontainers.Run(ctx, rimskyCoreImage,
 		testcontainers.WithCmd("rimsky-control-api"),
 		testcontainers.WithExposedPorts("8080/tcp"),
-		tcnet.WithNetworkName([]string{"rimsky"}, networkName),
+		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
 			Reader:            strings.NewReader(string(yamlBytes)),
@@ -158,7 +161,7 @@ func startSplitRole(ctx context.Context, t testing.TB, cb *configBuilder, spec s
 	}}
 	if spec.supervisorYAML != nil {
 		env["RIMSKY_SUPERVISOR_CONFIG"] = "/etc/rimsky/supervisor-config.yml"
-		env["RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST"] = splitSupervisorAlias
+		env["RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST"] = spec.advertiseHost
 		files = append(files, testcontainers.ContainerFile{
 			Reader:            strings.NewReader(string(spec.supervisorYAML)),
 			ContainerFilePath: "/etc/rimsky/supervisor-config.yml",
@@ -188,7 +191,7 @@ func startSplitRole(ctx context.Context, t testing.TB, cb *configBuilder, spec s
 	})
 }
 
-func renderSplitSupervisorYAML() string {
+func renderSplitSupervisorYAML(advertiseHost string) string {
 	var b strings.Builder
 	b.WriteString("concurrency: 8\n")
 	b.WriteString("heartbeat_interval_ms: 5000\n")
@@ -196,6 +199,6 @@ func renderSplitSupervisorYAML() string {
 	b.WriteString("callback:\n")
 	b.WriteString("  host: 0.0.0.0\n")
 	b.WriteString("  port: 9100\n")
-	fmt.Fprintf(&b, "  advertise_host: %s\n", splitSupervisorAlias)
+	fmt.Fprintf(&b, "  advertise_host: %s\n", advertiseHost)
 	return b.String()
 }

@@ -224,13 +224,13 @@ strip it.
 - Other artifact slugs across catalogs (`see also:
   claim-handle`, `concept:claim-handle`, `story:claim-co-holder`,
   `decision:persistence`).
-- Invariant IDs the codebase uses (`@blessed-invariant: N`) —
-  IDs are stable across file moves; paths are not.
-  Coding-style annotations whose referent is the code itself
-  (`@agent-contract`, `@source:`, `@constraint:`,
-  `@deliberate:`) are not citable: a tag belongs to whichever
-  layer owns its referent, and the design docs cite only
-  design-owned identities.
+- Invariant IDs the codebase uses, whatever the project's
+  numbering convention is — the ID is stable across file moves,
+  the file path is not. Code-referent annotations the project
+  may carry for its own coding conventions are not cited here:
+  those tags belong to the code layer, and design docs cite only
+  design-owned identities (concept / story / decision slugs and
+  invariant IDs).
 
 **Disallowed in artifact body** (concepts / stories /
 decisions):
@@ -293,9 +293,8 @@ the code is load-bearing for it:
   decision (the persistence call, the handler-registration
   mechanism, the chosen retry cadence).
 
-Same granularity discipline as `@blessed-invariant`: annotate
-where the design is enforced or expressed, not every file
-that happens to touch it. No carpet-bombing.
+Annotate where the design is enforced or expressed, not every
+file that happens to touch it. No carpet-bombing.
 
 - **`execute-plan`** adds or modifies annotations when a plan
   task explicitly directs (the spec usually surfaces this when

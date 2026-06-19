@@ -264,3 +264,21 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 		}
 	})
 }
+
+func TestAtomicStaging_ListShapeSubClaimCommitAndAbandon_BypassSwapPath_UnderStagedAsync(t *testing.T) {
+	_, st := bootStagingStore(t)
+	ctx := context.Background()
+
+	listShapeSubClaimScope := json.RawMessage(`{"parent_row_id":"row-parent","key":"k-1"}`)
+	listShapeSubClaimAddress := json.RawMessage(nil)
+
+	commitClaimID := uuid.NewString()
+	if err := st.Commit(ctx, commitClaimID, listShapeSubClaimScope, listShapeSubClaimAddress); err != nil {
+		t.Fatalf("Commit of list-shape sub-claim under staged_async failed (regression: was routed into swap path and decodeSchemaName errored on JSON object): %v", err)
+	}
+
+	abandonClaimID := uuid.NewString()
+	if err := st.Abandon(ctx, abandonClaimID, listShapeSubClaimScope, listShapeSubClaimAddress); err != nil {
+		t.Fatalf("Abandon of list-shape sub-claim under staged_async failed (regression: was routed into swap path and decodeSchemaName errored on JSON object): %v", err)
+	}
+}

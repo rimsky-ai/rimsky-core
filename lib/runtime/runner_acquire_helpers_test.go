@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -68,11 +69,12 @@ type messagesPersist struct {
 func (p *messagesPersist) Messages() persistence.MessagesTable { return p.msgs }
 
 // @concept: fan-out
-func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *testing.T) {
+// @story: typed-message-substitution
+func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	const directive = `{{trigger.message.payload.partition_request_override | "all"}}`
+	const directive = `{{messages.invalidate.partition_request_override | "all"}}`
 
 	frameID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
@@ -106,7 +108,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *tes
 
 	msgs := newFakeMessages()
 	deliverMessage(msgs, `{"partition_request_override":{"partition_keys":["region-x","region-y"]}}`)
-	got, err := substituteFanOutPartitionRequest(ctx, newArgs(msgs), nil, frameID, out, directive)
+	got, err := substituteFanOutPartitionRequest(ctx, newArgs(msgs), nil, frameID, out, nil, directive)
 	if err != nil {
 		t.Fatalf("substitute (override present): %v", err)
 	}
@@ -120,15 +122,15 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *tes
 		t.Fatalf("override did not reach SplitScope: got partition_keys=%v, want [region-x region-y]", override.PartitionKeys)
 	}
 
-	gotDefault, err := substituteFanOutPartitionRequest(ctx, newArgs(newFakeMessages()), nil, frameID, out, directive)
+	gotDefault, err := substituteFanOutPartitionRequest(ctx, newArgs(newFakeMessages()), nil, frameID, out, nil, directive)
 	if err != nil {
-		t.Fatalf("substitute (no trigger): %v", err)
+		t.Fatalf("substitute (no message): %v", err)
 	}
 	if string(gotDefault) != "all" {
 		t.Fatalf("fallback default not used: got %q want %q", gotDefault, "all")
 	}
 
-	literal, err := substituteFanOutPartitionRequest(ctx, newArgs(newFakeMessages()), nil, frameID, out, "all")
+	literal, err := substituteFanOutPartitionRequest(ctx, newArgs(newFakeMessages()), nil, frameID, out, nil, "all")
 	if err != nil {
 		t.Fatalf("substitute (literal): %v", err)
 	}
@@ -137,16 +139,80 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *tes
 	}
 }
 
-func TestSubstituteFanOutPartitionRequest_StrictDirectiveRefusesWithoutTrigger(t *testing.T) {
+// @concept: fan-out
+// @story: typed-message-substitution
+func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage_NonZeroReceiver(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const directive = `{{messages.invalidate.partition_request_override | "all"}}`
+
+	frameID := shared.UUID(uuid.New())
+	instanceID := shared.UUID(uuid.New())
+	receiverRunID := shared.UUID(uuid.New())
+
+	msgs := newFakeMessages()
+	id := shared.UUID(uuid.New())
+	if err := msgs.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+		ID:         id,
+		InstanceID: instanceID,
+		Type:       "invalidate",
+		Sender:     "operator",
+		SenderKind: "operator",
+		Payload:    json.RawMessage(`{"partition_request_override":{"partition_keys":["region-x","region-y"]}}`),
+		ReceivedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if ok, err := msgs.MarkDelivered(ctx, nil, id, frameID, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("MarkDelivered: ok=%v err=%v", ok, err)
+	}
+
+	wait := &fakeWaitSet{drained: map[shared.UUID][]persistence.WaitSetRow{}}
+	runTree := &fakeRunTreeDeps{rows: map[shared.UUID]*persistence.RunTreeRow{}}
+	nodes := &fakeNodesDeps{rows: map[shared.UUID]*persistence.NodeRow{}}
+	attrs := &fakeNodeAttrs{rows: map[shared.UUID]*persistence.NodeAttributesRow{}}
+	persist := &depsCapablePersist{
+		messagesPersist: messagesPersist{msgs: msgs},
+		waitSet:         wait,
+		runTree:         runTree,
+		nodes:           nodes,
+		nodeAttrs:       attrs,
+	}
+	args := RunArgs{Logger: shared.SilentLogger{}, Persist: persist}
+	out := &acquisition{
+		InstanceID: instanceID,
+		DispatchID: receiverRunID,
+		FrameID:    frameID,
+	}
+
+	got, err := substituteFanOutPartitionRequest(ctx, args, nil, frameID, out, nil, directive)
+	if err != nil {
+		t.Fatalf("substitute (production-path, non-zero receiverRunID): %v", err)
+	}
+	var override struct {
+		PartitionKeys []string `json:"partition_keys"`
+	}
+	if err := json.Unmarshal(got, &override); err != nil {
+		t.Fatalf("override did not bind through BuildAttributeDeps' message seeding (production path): %v (bytes=%s)", err, got)
+	}
+	if len(override.PartitionKeys) != 2 || override.PartitionKeys[0] != "region-x" || override.PartitionKeys[1] != "region-y" {
+		t.Fatalf("production-path message override did not reach SplitScope: got partition_keys=%v, want [region-x region-y]", override.PartitionKeys)
+	}
+}
+
+// @concept: fan-out
+// @story: typed-message-substitution
+func TestSubstituteFanOutPartitionRequest_StrictDirectiveRefusesWithoutMessage(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	frameID := shared.UUID(uuid.New())
 	out := &acquisition{InstanceID: shared.UUID(uuid.New())}
 	args := RunArgs{Logger: shared.SilentLogger{}, Persist: &messagesPersist{msgs: newFakeMessages()}}
 
-	_, err := substituteFanOutPartitionRequest(ctx, args, nil, frameID, out, `{{trigger.message.payload.partition_request_override}}`)
+	_, err := substituteFanOutPartitionRequest(ctx, args, nil, frameID, out, nil, `{{messages.invalidate.partition_request_override}}`)
 	if err == nil {
-		t.Fatal("expected ErrMissingSource for a strict directive with no trigger message; got nil")
+		t.Fatal("expected ErrMissingSource for a strict directive with no delivered message; got nil")
 	}
 	if !attributes.IsMissingSource(err) {
 		t.Fatalf("expected ErrMissingSource, got %v", err)
@@ -305,7 +371,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 	ctx := context.Background()
 
 	const storeName = "fan-out-store"
-	const directive = `{{trigger.message.payload.partition_request_override | "all"}}`
+	const directive = `{{messages.invalidate.partition_request_override | "all"}}`
 	frameID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
 	rootScopeID := shared.UUID(uuid.New())
@@ -353,7 +419,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 	}
 	acquiredLocks := []AcquiredLock{{
 		Alias:         "data",
-		Spec:          claimproducer.ClaimSpec{ProducerName: storeName},
+		Spec:          claimproducer.ClaimSpec{ProducerName: storeName, Intent: "rw"},
 		ClaimHandleID: shared.UUID(uuid.New()),
 		ClaimResult:   claimproducer.ClaimResult{ClaimScope: json.RawMessage(`"parent-scope"`)},
 	}}
@@ -397,5 +463,332 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 	}
 	if len(got.PartitionKeys) != 2 || got.PartitionKeys[0] != "region-x" || got.PartitionKeys[1] != "region-y" {
 		t.Fatalf("forwarded override partitions = %v, want [region-x region-y]", got.PartitionKeys)
+	}
+}
+
+// @concept: fan-out
+// @decision: substitution-grammar-closed
+// @story: typed-message-substitution
+func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	frameID := shared.UUID(uuid.New())
+	receiverRunID := shared.UUID(uuid.New())
+	senderRunID := shared.UUID(uuid.New())
+	senderNodeID := shared.UUID(uuid.New())
+	instanceID := shared.UUID(uuid.New())
+
+	const upstreamType = "prefilter"
+	itemsValue := []any{
+		map[string]any{"key": "a", "payload": map[string]any{"v": float64(1)}},
+		map[string]any{"key": "b", "payload": map[string]any{"v": float64(2)}},
+	}
+
+	wait := &fakeWaitSet{
+		drained: map[shared.UUID][]persistence.WaitSetRow{
+			receiverRunID: {{
+				FrameID:       frameID,
+				ReceiverRunID: receiverRunID,
+				SenderRunID:   senderRunID,
+				TopicKind:     "attribute",
+				DrainedAt:     timeNowPtr(),
+			}},
+		},
+	}
+	settling := "terminal/success"
+	runTree := &fakeRunTreeDeps{
+		rows: map[shared.UUID]*persistence.RunTreeRow{
+			senderRunID: {
+				RunID:              senderRunID,
+				NodeID:             senderNodeID,
+				FrameID:            frameID,
+				State:              "fresh",
+				SettlingSignalType: &settling,
+			},
+		},
+	}
+	nodes := &fakeNodesDeps{
+		rows: map[shared.UUID]*persistence.NodeRow{
+			senderNodeID: {ID: senderNodeID, InstanceID: instanceID, NodeType: upstreamType},
+		},
+	}
+	attrs := &fakeNodeAttrs{
+		rows: map[shared.UUID]*persistence.NodeAttributesRow{
+			senderRunID: {NodeRunID: senderRunID, NodeID: senderNodeID, Data: map[string]any{
+				"items": itemsValue,
+			}},
+		},
+	}
+
+	persist := &depsCapablePersist{
+		messagesPersist: messagesPersist{msgs: newFakeMessages()},
+		waitSet:         wait,
+		runTree:         runTree,
+		nodes:           nodes,
+		nodeAttrs:       attrs,
+	}
+	args := RunArgs{
+		Logger:  shared.SilentLogger{},
+		Persist: persist,
+	}
+
+	out := &acquisition{
+		DispatchID: receiverRunID,
+		FrameID:    frameID,
+		InstanceID: instanceID,
+	}
+
+	directive := "{{nodes." + upstreamType + ".attribute.items}}"
+	got, err := substituteFanOutPartitionRequest(ctx, args, nil, frameID, out, nil, directive)
+	if err != nil {
+		t.Fatalf("substitute: %v", err)
+	}
+	wantBytes, _ := json.Marshal(itemsValue)
+	if string(got) != string(wantBytes) {
+		t.Fatalf("nodes.<X>.attribute.items did not resolve through Deps: got %s want %s", got, wantBytes)
+	}
+}
+
+func timeNowPtr() *time.Time {
+	t := time.Now().UTC()
+	return &t
+}
+
+type fakeWaitSet struct {
+	drained map[shared.UUID][]persistence.WaitSetRow
+}
+
+func (f *fakeWaitSet) Insert(_ context.Context, _ persistence.WaitSetRow, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeWaitSet) MarkDrainedBySender(_ context.Context, _, _ shared.UUID, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeWaitSet) ListForReceiver(_ context.Context, _, _ shared.UUID, _ persistence.Tx) ([]persistence.WaitSetRow, error) {
+	return nil, nil
+}
+func (f *fakeWaitSet) ListForFrame(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]persistence.WaitSetRow, error) {
+	return nil, nil
+}
+func (f *fakeWaitSet) ListDrainedAttributeRowsForReceiver(_ context.Context, _, receiverRunID shared.UUID, _ persistence.Tx) ([]persistence.WaitSetRow, error) {
+	return f.drained[receiverRunID], nil
+}
+
+type fakeRunTreeDeps struct {
+	rows map[shared.UUID]*persistence.RunTreeRow
+}
+
+func (f *fakeRunTreeDeps) CreateRootRun(_ context.Context, _ persistence.Tx, _ persistence.CreateRootRunInput) error {
+	return nil
+}
+func (f *fakeRunTreeDeps) CreateChildRun(_ context.Context, _ persistence.Tx, _ persistence.CreateChildRunInput) error {
+	return nil
+}
+func (f *fakeRunTreeDeps) GetByID(_ context.Context, _ persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
+	r, ok := f.rows[runID]
+	if !ok {
+		return nil, nil
+	}
+	c := *r
+	return &c, nil
+}
+func (f *fakeRunTreeDeps) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
+	return f.GetByID(ctx, tx, runID)
+}
+func (f *fakeRunTreeDeps) ListChildren(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.RunTreeRow, error) {
+	return nil, nil
+}
+func (f *fakeRunTreeDeps) UpdateStateAndOutcome(_ context.Context, _ persistence.Tx, _ shared.UUID, _ cascade.NodeState, _ *string) error {
+	return nil
+}
+func (f *fakeRunTreeDeps) UpdateAggregationPolicy(_ context.Context, _ persistence.Tx, _ shared.UUID, _ spec.AggregationPolicy) error {
+	return nil
+}
+
+type fakeNodesDeps struct {
+	rows map[shared.UUID]*persistence.NodeRow
+}
+
+func (f *fakeNodesDeps) Create(_ context.Context, _ persistence.NodeCreateInput, _ persistence.Tx) (persistence.NodeRow, error) {
+	return persistence.NodeRow{}, nil
+}
+func (f *fakeNodesDeps) Get(_ context.Context, id shared.UUID, _ persistence.Tx) (*persistence.NodeRow, error) {
+	r, ok := f.rows[id]
+	if !ok {
+		return nil, nil
+	}
+	c := *r
+	return &c, nil
+}
+func (f *fakeNodesDeps) ListByInstance(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]persistence.NodeRow, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) ListByInstancePaged(_ context.Context, _ shared.UUID, _ persistence.ListPagination, _ persistence.Tx) (persistence.PaginatedListResult[persistence.NodeRow], error) {
+	return persistence.PaginatedListResult[persistence.NodeRow]{}, nil
+}
+func (f *fakeNodesDeps) ListByInstancePagedFiltered(_ context.Context, _ shared.UUID, _ persistence.ListPagination, _ persistence.NodeListFilter, _ persistence.Tx) (persistence.PaginatedListResult[persistence.NodeRow], error) {
+	return persistence.PaginatedListResult[persistence.NodeRow]{}, nil
+}
+func (f *fakeNodesDeps) ListReadyForDispatch(_ context.Context, _ persistence.Tx) ([]persistence.NodeRow, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) ListRunning(_ context.Context, _ persistence.Tx) ([]persistence.NodeRow, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) ListPureCascadeReady(_ context.Context, _ persistence.Tx) ([]persistence.NodeRow, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) CountByState(_ context.Context, _ persistence.Tx) (map[cascade.NodeState]int, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) UpdateState(_ context.Context, _ shared.UUID, _ shared.UUID, _ cascade.NodeState, _ cascade.TransitionReason, _ *string, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodesDeps) UpdateError(_ context.Context, _ shared.UUID, _ spec.EvaluatorState, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodesDeps) SetFrameID(_ context.Context, _ shared.UUID, _ *shared.UUID, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodesDeps) ClearSettlingSignalType(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodesDeps) ResetFailedTerminalSettlingSignalType(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodesDeps) GetFailedTerminalRunScopeID(_ context.Context, _ shared.UUID, _ persistence.Tx) (*shared.UUID, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) DeleteByInstance(_ context.Context, _ shared.UUID, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodesDeps) MarkStaleForCascade(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodesDeps) AffirmNodeRunRow(_ context.Context, _ shared.UUID, _ shared.UUID, _ shared.UUID, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodesDeps) HasRunForNodeInFrame(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) (bool, error) {
+	return false, nil
+}
+func (f *fakeNodesDeps) GetRunByDispatchIDForUpdate(_ context.Context, _ shared.UUID, _ persistence.Tx) (*persistence.NodeRunForCallback, error) {
+	return nil, nil
+}
+
+type fakeNodeAttrs struct {
+	rows map[shared.UUID]*persistence.NodeAttributesRow
+}
+
+func (f *fakeNodeAttrs) GetByRun(_ context.Context, runID shared.UUID, _ persistence.Tx) (*persistence.NodeAttributesRow, error) {
+	r, ok := f.rows[runID]
+	if !ok {
+		return nil, nil
+	}
+	c := *r
+	return &c, nil
+}
+func (f *fakeNodeAttrs) GetLatestByNode(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) (*persistence.NodeAttributesRow, error) {
+	return nil, nil
+}
+func (f *fakeNodeAttrs) Upsert(_ context.Context, _, _ shared.UUID, _ map[string]any, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodeAttrs) MergeDelta(_ context.Context, _ shared.UUID, _ map[string]any, _ persistence.Tx) error {
+	return nil
+}
+
+type depsCapablePersist struct {
+	messagesPersist
+	waitSet   persistence.WaitSetTable
+	runTree   persistence.RunTreeTable
+	nodes     persistence.NodeTable
+	nodeAttrs persistence.NodeAttributeTable
+}
+
+func (p *depsCapablePersist) WaitSet() persistence.WaitSetTable              { return p.waitSet }
+func (p *depsCapablePersist) RunTree() persistence.RunTreeTable              { return p.runTree }
+func (p *depsCapablePersist) Nodes() persistence.NodeTable                   { return p.nodes }
+func (p *depsCapablePersist) NodeAttributes() persistence.NodeAttributeTable { return p.nodeAttrs }
+
+// @concept: fan-out
+// @decision: substitution-grammar-closed
+func TestSubstituteFanOutPartitionRequest_BindsFromAcquiredClaim(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	frameID := shared.UUID(uuid.New())
+	instanceID := shared.UUID(uuid.New())
+
+	acquiredLocks := []AcquiredLock{{
+		Alias: "data",
+		Spec:  claimproducer.ClaimSpec{ProducerName: "store"},
+		ClaimResult: claimproducer.ClaimResult{
+			Payload: json.RawMessage(`{"items":[{"key":"a","payload":{"v":1}},{"key":"b","payload":{"v":2}}]}`),
+		},
+	}}
+
+	out := &acquisition{InstanceID: instanceID}
+	args := RunArgs{
+		Logger:  shared.SilentLogger{},
+		Persist: &messagesPersist{msgs: newFakeMessages()},
+	}
+
+	got, err := substituteFanOutPartitionRequest(
+		ctx, args, nil, frameID, out, acquiredLocks,
+		`{"list":{{claim.data.payload.items}}}`,
+	)
+	if err != nil {
+		t.Fatalf("substitute: %v", err)
+	}
+	var parsed struct {
+		List []struct {
+			Key     string          `json:"key"`
+			Payload json.RawMessage `json:"payload"`
+		} `json:"list"`
+	}
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("unmarshal substituted bytes: %v (bytes=%s)", err, got)
+	}
+	if len(parsed.List) != 2 || parsed.List[0].Key != "a" || parsed.List[1].Key != "b" {
+		t.Fatalf("substituted list = %v, want [{a ...} {b ...}]", parsed.List)
+	}
+}
+
+// @concept: fan-out
+func TestSubstituteFanOutPartitionRequest_BindsFromHeldClaim(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	frameID := shared.UUID(uuid.New())
+	instanceID := shared.UUID(uuid.New())
+
+	out := &acquisition{
+		InstanceID: instanceID,
+		HeldClaims: map[string]claimproducer.ClaimResult{
+			"inherited": {
+				Payload: json.RawMessage(`{"items":[{"key":"x","payload":{}}]}`),
+			},
+		},
+	}
+	args := RunArgs{
+		Logger:  shared.SilentLogger{},
+		Persist: &messagesPersist{msgs: newFakeMessages()},
+	}
+
+	got, err := substituteFanOutPartitionRequest(
+		ctx, args, nil, frameID, out, nil,
+		`{"list":{{claim.inherited.payload.items}}}`,
+	)
+	if err != nil {
+		t.Fatalf("substitute: %v", err)
+	}
+	var parsed struct {
+		List []struct {
+			Key string `json:"key"`
+		} `json:"list"`
+	}
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("unmarshal substituted bytes: %v (bytes=%s)", err, got)
+	}
+	if len(parsed.List) != 1 || parsed.List[0].Key != "x" {
+		t.Fatalf("substituted list = %v, want [{x}]", parsed.List)
 	}
 }

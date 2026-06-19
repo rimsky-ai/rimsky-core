@@ -505,6 +505,9 @@ func parseMessageRefsFromAttributes(n TemplateNodeDef) []messageRef {
 	for _, l := range n.Locks {
 		scanSrc(l.Name)
 	}
+	if n.FanOut != nil {
+		scanSrc(n.FanOut.PartitionRequest)
+	}
 	return out
 }
 
@@ -640,6 +643,9 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 	}
 	for i, l := range n.Locks {
 		scanSrcAttributeOnly(l.Name, fmt.Sprintf("locks[%d].name", i))
+	}
+	if n.FanOut != nil && n.FanOut.PartitionRequest != "" {
+		scanSrcAttributeOnly(n.FanOut.PartitionRequest, "fan_out.partition_request")
 	}
 	return out
 }

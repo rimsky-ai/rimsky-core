@@ -50,6 +50,31 @@ type Store struct {
 
 func (s *Store) Ledger() *ClaimLedger { return s.ledger }
 
+func (s *Store) Root() string { return s.root }
+
+func (s *Store) LookupClaimPath(claimID string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.claims[claimID]
+	return p, ok
+}
+
+func (s *Store) LookupClaimPickPolicy(claimID string) (selector string, pp *PickPolicy, ok bool) {
+	pp, sel, _, _ := s.findByClaimID(claimID)
+	if pp == nil {
+		return "", nil, false
+	}
+	return sel, pp, true
+}
+
+func (s *Store) LookupPickPolicy(selector string) (string, *PickPolicy, bool) {
+	pp, ok := s.pickPolicies[selector]
+	if !ok {
+		return "", nil, false
+	}
+	return selector, pp, true
+}
+
 func New(cfg Config) (*Store, error) {
 	if cfg.Root == "" {
 		return nil, errors.New("filesystem store: root must not be empty")
@@ -160,11 +185,14 @@ func (s *Store) openScoped(claimID, selector string) (claimproducer.OpenOutcome,
 	}, nil
 }
 
-func (s *Store) Commit(_ context.Context, claimID string, _ []byte, _ []byte) error {
+func (s *Store) Commit(_ context.Context, claimID string, scope []byte, _ []byte) error {
 	if err := s.checkRootAvailable("Commit"); err != nil {
 		return err
 	}
 	pp, sel, entry, folder := s.findByClaimID(claimID)
+	if pp == nil {
+		pp, sel, entry, folder = s.findByScope(scope)
+	}
 	s.mu.Lock()
 	delete(s.claims, claimID)
 	s.mu.Unlock()
@@ -178,11 +206,14 @@ func (s *Store) Commit(_ context.Context, claimID string, _ []byte, _ []byte) er
 	return nil
 }
 
-func (s *Store) Abandon(_ context.Context, claimID string, _ []byte, _ []byte) error {
+func (s *Store) Abandon(_ context.Context, claimID string, scope []byte, _ []byte) error {
 	if err := s.checkRootAvailable("Abandon"); err != nil {
 		return err
 	}
 	pp, sel, entry, folder := s.findByClaimID(claimID)
+	if pp == nil {
+		pp, sel, entry, folder = s.findByScope(scope)
+	}
 	s.mu.Lock()
 	delete(s.claims, claimID)
 	s.mu.Unlock()

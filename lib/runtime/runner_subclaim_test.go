@@ -48,6 +48,7 @@ func TestAcquireSubClaims_UnsupportedSplitErrors(t *testing.T) {
 		HolderSupervisorID:  "sup-U",
 		InstanceID:          shared.UUID{},
 		LivenessInterval:    30 * time.Second,
+		ParentIntent:        "rw",
 	})
 	require.Error(t, err)
 }
@@ -70,6 +71,7 @@ func TestAcquireSubClaims_UnknownProducerErrors(t *testing.T) {
 		HolderSupervisorID:  "sup-X",
 		InstanceID:          shared.UUID{},
 		LivenessInterval:    30 * time.Second,
+		ParentIntent:        "rw",
 	})
 	require.Error(t, err)
 }
@@ -105,6 +107,7 @@ func TestAcquireSubClaims_EmptyPartitionKeyRejected(t *testing.T) {
 		HolderSupervisorID:  "sup-EK",
 		InstanceID:          shared.UUID{},
 		LivenessInterval:    30 * time.Second,
+		ParentIntent:        "rw",
 	})
 	require.ErrorContains(t, err, "empty partition_key")
 }
@@ -300,6 +303,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			InstanceID:          shared.UUID{},
 			LivenessInterval:    30 * time.Second,
 			ParentIsHeld:        false,
+			ParentIntent:        string(claimproducer.IntentReadWrite),
 		})
 		subClaims = out
 		return err
@@ -487,6 +491,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 			HolderSupervisorID:  supOne,
 			InstanceID:          shared.UUID{},
 			LivenessInterval:    30 * time.Second,
+			ParentIntent:        string(claimproducer.IntentReadWrite),
 		})
 		subClaims = out
 		return err
@@ -553,4 +558,405 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 	}
 	require.Equal(t, 1, parentCommits,
 		"the parent's aggregate Commit must fire exactly once under cross-supervisor settlement")
+}
+
+func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	const storeName = "ro-intent-store"
+	reg := locks.NewRegistry()
+	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+	})
+	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+		return claimproducer.SplitClaimScopeResponse{
+			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
+				{PartitionKey: "alpha", ClaimScopeData: []byte(`{"p":"alpha"}`)},
+				{PartitionKey: "beta", ClaimScopeData: []byte(`{"p":"beta"}`)},
+			},
+		}, nil
+	}
+	reg.Add(storeName, store)
+
+	clk := newTickClock(time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC))
+	args := runtime.RunArgs{
+		Persist:       backend,
+		ClaimHandles:  backend.ClaimHandles(),
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		Clock:         clk,
+		SupervisorID:  "sup-RO",
+	}
+
+	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
+		Name: "fanout-intent-inheritance", Version: "1",
+	})
+	ck := "ck-ro"
+	var inst persistence.InstanceRow
+	var parentNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		inst = i
+		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		parentNode = p
+		return nil
+	}))
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
+	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+
+	parentClaimID := shared.UUID(uuid.New())
+	parentScope := json.RawMessage(`"parent-scope-ro"`)
+	parentIntent := string(claimproducer.IntentRead)
+	producerName := storeName
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID:                 parentClaimID,
+			LockKind:           persistence.LockKindScope,
+			ProducerName:       &producerName,
+			ClaimScopeData:     parentScope,
+			Intent:             &parentIntent,
+			HolderSupervisorID: "sup-RO",
+			HolderNodeID:       parentNode.ID,
+			ExpiresAt:          time.Now().Add(10 * time.Minute),
+			NodeRunID:          &parentRunID,
+		}, tx)
+	}))
+
+	var subClaims []runtime.SubClaim
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
+			ParentClaimHandleID: parentClaimID,
+			ParentClaimScope:    parentScope,
+			ProducerName:        storeName,
+			NodeRunID:           parentRunID,
+			HolderNodeID:        parentNode.ID,
+			HolderSupervisorID:  "sup-RO",
+			InstanceID:          inst.ID,
+			LivenessInterval:    30 * time.Second,
+			ParentIsHeld:        false,
+			ParentIntent:        string(claimproducer.IntentRead),
+		})
+		subClaims = out
+		return err
+	}))
+	require.Len(t, subClaims, 2, "two sub-scopes → two sub-claims")
+
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for _, sc := range subClaims {
+			row, err := backend.ClaimHandles().Get(ctx, sc.ClaimHandleID, tx)
+			if err != nil {
+				return err
+			}
+			require.NotNil(t, row, "sub-claim row must be persisted")
+			require.NotNil(t, row.Intent, "sub-claim row must carry intent")
+			require.Equal(t, string(claimproducer.IntentRead), *row.Intent,
+				"sub-claim must inherit parent read-only intent — not be hardcoded to rw")
+		}
+		return nil
+	}))
+}
+
+func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	const storeName = "rw-intent-store"
+	reg := locks.NewRegistry()
+	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+	})
+	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+		return claimproducer.SplitClaimScopeResponse{
+			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
+				{PartitionKey: "alpha", ClaimScopeData: []byte(`{"p":"alpha"}`)},
+				{PartitionKey: "beta", ClaimScopeData: []byte(`{"p":"beta"}`)},
+			},
+		}, nil
+	}
+	reg.Add(storeName, store)
+
+	clk := newTickClock(time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC))
+	args := runtime.RunArgs{
+		Persist:       backend,
+		ClaimHandles:  backend.ClaimHandles(),
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		Clock:         clk,
+		SupervisorID:  "sup-RW",
+	}
+
+	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
+		Name: "fanout-intent-inheritance-rw", Version: "1",
+	})
+	ck := "ck-rw"
+	var inst persistence.InstanceRow
+	var parentNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		inst = i
+		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		parentNode = p
+		return nil
+	}))
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
+	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+
+	parentClaimID := shared.UUID(uuid.New())
+	parentScope := json.RawMessage(`"parent-scope-rw"`)
+	parentIntent := string(claimproducer.IntentReadWrite)
+	producerName := storeName
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID:                 parentClaimID,
+			LockKind:           persistence.LockKindScope,
+			ProducerName:       &producerName,
+			ClaimScopeData:     parentScope,
+			Intent:             &parentIntent,
+			HolderSupervisorID: "sup-RW",
+			HolderNodeID:       parentNode.ID,
+			ExpiresAt:          time.Now().Add(10 * time.Minute),
+			NodeRunID:          &parentRunID,
+		}, tx)
+	}))
+
+	var subClaims []runtime.SubClaim
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
+			ParentClaimHandleID: parentClaimID,
+			ParentClaimScope:    parentScope,
+			ProducerName:        storeName,
+			NodeRunID:           parentRunID,
+			HolderNodeID:        parentNode.ID,
+			HolderSupervisorID:  "sup-RW",
+			InstanceID:          inst.ID,
+			LivenessInterval:    30 * time.Second,
+			ParentIsHeld:        false,
+			ParentIntent:        string(claimproducer.IntentReadWrite),
+		})
+		subClaims = out
+		return err
+	}))
+	require.Len(t, subClaims, 2)
+
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for _, sc := range subClaims {
+			row, err := backend.ClaimHandles().Get(ctx, sc.ClaimHandleID, tx)
+			if err != nil {
+				return err
+			}
+			require.NotNil(t, row, "sub-claim row must be persisted")
+			require.NotNil(t, row.Intent, "sub-claim row must carry intent")
+			require.Equal(t, string(claimproducer.IntentReadWrite), *row.Intent,
+				"sub-claim must inherit parent read-write intent")
+		}
+		return nil
+	}))
+}
+
+func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	const storeName = "addr-payload-store"
+	reg := locks.NewRegistry()
+	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+	})
+	wantAddrAlpha := []byte(`{"folder":"/q/alpha"}`)
+	wantPayloadAlpha := []byte(`{"items":["a","b"]}`)
+	wantAddrBeta := []byte(`{"folder":"/q/beta"}`)
+	wantPayloadBeta := []byte(`{"items":["c"]}`)
+	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+		return claimproducer.SplitClaimScopeResponse{
+			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
+				{PartitionKey: "alpha", ClaimScopeData: []byte(`{"p":"alpha"}`), Address: wantAddrAlpha, Payload: wantPayloadAlpha},
+				{PartitionKey: "beta", ClaimScopeData: []byte(`{"p":"beta"}`), Address: wantAddrBeta, Payload: wantPayloadBeta},
+			},
+		}, nil
+	}
+	reg.Add(storeName, store)
+
+	clk := newTickClock(time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC))
+	args := runtime.RunArgs{
+		Persist:       backend,
+		ClaimHandles:  backend.ClaimHandles(),
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		Clock:         clk,
+		SupervisorID:  "sup-AP",
+	}
+
+	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
+		Name: "fanout-addr-payload-persist", Version: "1",
+	})
+	ck := "ck-ap"
+	var inst persistence.InstanceRow
+	var parentNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		inst = i
+		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		parentNode = p
+		return nil
+	}))
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
+	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+
+	parentClaimID := shared.UUID(uuid.New())
+	parentScope := json.RawMessage(`"parent-scope-ap"`)
+	parentIntent := string(claimproducer.IntentReadWrite)
+	producerName := storeName
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID:                 parentClaimID,
+			LockKind:           persistence.LockKindScope,
+			ProducerName:       &producerName,
+			ClaimScopeData:     parentScope,
+			Intent:             &parentIntent,
+			HolderSupervisorID: "sup-AP",
+			HolderNodeID:       parentNode.ID,
+			ExpiresAt:          time.Now().Add(10 * time.Minute),
+			NodeRunID:          &parentRunID,
+		}, tx)
+	}))
+
+	var subClaims []runtime.SubClaim
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
+			ParentClaimHandleID: parentClaimID,
+			ParentClaimScope:    parentScope,
+			ProducerName:        storeName,
+			NodeRunID:           parentRunID,
+			HolderNodeID:        parentNode.ID,
+			HolderSupervisorID:  "sup-AP",
+			InstanceID:          inst.ID,
+			LivenessInterval:    30 * time.Second,
+			ParentIsHeld:        false,
+			ParentIntent:        string(claimproducer.IntentReadWrite),
+		})
+		subClaims = out
+		return err
+	}))
+	require.Len(t, subClaims, 2)
+
+	byKey := map[string]struct {
+		addr, payload []byte
+	}{
+		"alpha": {wantAddrAlpha, wantPayloadAlpha},
+		"beta":  {wantAddrBeta, wantPayloadBeta},
+	}
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for _, sc := range subClaims {
+			row, err := backend.ClaimHandles().Get(ctx, sc.ClaimHandleID, tx)
+			if err != nil {
+				return err
+			}
+			require.NotNil(t, row, "sub-claim row must be persisted")
+			want := byKey[sc.PartitionKey]
+			require.JSONEq(t, string(want.addr), string(row.Address),
+				"sub-claim row Address must JSON-equal the SplitScope descriptor Address (partition_key=%s)", sc.PartitionKey)
+			require.JSONEq(t, string(want.payload), string(row.Payload),
+				"sub-claim row Payload must JSON-equal the SplitScope descriptor Payload (partition_key=%s)", sc.PartitionKey)
+		}
+		return nil
+	}))
+}
+
+func TestAcquireSubClaims_RejectsNonJSONAddress(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const storeName = "non-json-addr-store"
+	reg := locks.NewRegistry()
+	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+	})
+	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+		return claimproducer.SplitClaimScopeResponse{
+			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
+				{PartitionKey: "alpha", ClaimScopeData: []byte(`{"p":"alpha"}`), Address: []byte("not-json")},
+			},
+		}, nil
+	}
+	reg.Add(storeName, store)
+
+	clk := newTickClock(time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC))
+	args := runtime.RunArgs{
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		Clock:         clk,
+		SupervisorID:  "sup-AJ",
+	}
+	_, err := runtime.AcquireSubClaims(ctx, args, nil, runtime.AcquireSubClaimsInput{
+		ParentClaimHandleID: shared.UUID(uuid.New()),
+		ProducerName:        storeName,
+		HolderSupervisorID:  "sup-AJ",
+		InstanceID:          shared.UUID{},
+		LivenessInterval:    30 * time.Second,
+		ParentIntent:        "rw",
+	})
+	require.ErrorContains(t, err, "non-JSON address bytes")
+}
+
+func TestAcquireSubClaims_RejectsNonJSONPayload(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const storeName = "non-json-payload-store"
+	reg := locks.NewRegistry()
+	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+	})
+	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+		return claimproducer.SplitClaimScopeResponse{
+			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
+				{PartitionKey: "alpha", ClaimScopeData: []byte(`{"p":"alpha"}`), Payload: []byte("not-json")},
+			},
+		}, nil
+	}
+	reg.Add(storeName, store)
+
+	clk := newTickClock(time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC))
+	args := runtime.RunArgs{
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		Clock:         clk,
+		SupervisorID:  "sup-PJ",
+	}
+	_, err := runtime.AcquireSubClaims(ctx, args, nil, runtime.AcquireSubClaimsInput{
+		ParentClaimHandleID: shared.UUID(uuid.New()),
+		ProducerName:        storeName,
+		HolderSupervisorID:  "sup-PJ",
+		InstanceID:          shared.UUID{},
+		LivenessInterval:    30 * time.Second,
+		ParentIntent:        "rw",
+	})
+	require.ErrorContains(t, err, "non-JSON payload bytes")
 }
