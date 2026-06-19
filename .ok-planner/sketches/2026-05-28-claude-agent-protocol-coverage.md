@@ -1,99 +1,53 @@
 # claude-agent: full executor protocol coverage
 
-**Date:** 2026-05-28
+**Date:** 2026-05-28 (rewritten 2026-06-17 — see "Revision note" at end)
 **Touches:** `lib/services/executors/claude-agent/`
 **Type:** Pre-spec sketch.
 
 ## Why
 
-While planning an external consumer (`rimsky-github-bot`, a sibling
-repo using rimsky off-the-shelf), grounding caught a gap: the spec
-needed per-item fan-out via `concept:named-event` +
-`concept:node-subscription`, but claude-agent's MCP tool surface
-exposes no way to emit a `NamedEvent`. The wire protocol supports it;
-claude-agent just never sends one (`declaredEvents = []` and no code
-path emits the wire message).
+`lib/services/executors/claude-agent/` is rimsky's reference Claude-Code-driven executor and the canonical example consumers fork or derive from. Its MCP tool surface should expose a way to emit every output the executor wire protocol allows, and to read every input the wire protocol delivers — anything less pushes consumers to fork the executor or wrap it, which defeats the "claude-agent is the universal Claude-Code-driven executor" framing.
 
-The general pattern: claude-agent's agent-facing MCP covers a subset
-of what the executor (+ observability) protocol allows the executor
-to emit, and one outcome variant (AwaitAsyncCallback) is missing
-entirely. Consumers that need the rest end up either forking
-claude-agent or wrapping it in a custom executor binary. Both defeat
-the "claude-agent is the universal Claude-Code-driven executor"
-framing.
+Today it doesn't. Two coverage gaps are live:
+
+1. The wire has four `proto:executor.proto::Outcome` variants — `Success`, `Error`, `Park`, `AwaitAsyncCallback`. The agent's MCP exposes tools for the first three (`report_complete`, `report_error` + `report_blocked`, `report_park`) but not for `AwaitAsyncCallback`. An agent that wants to hand off long-running work to an external system and resume via rimsky-issued callback has no way to emit the verdict.
+2. `proto:executor.proto::ExecuteRequest` carries `run_scope_id`, `dispatch_id`, `prior_dispatch_id`, and `prior_dispatch_disposition` (the `PriorDispatchDisposition` classifier — `stale_recovery` / `retry_after_error` / `recalculate`). None of those reach the agent. The agent's `attributes_read` returns only the per-run attribute bag captured at spawn — no `concept:run-scope` identity, no dispatch identity, no retry-vs-fresh signal. An agent on a retry-after-error or stale-recovery dispatch has no first-class way to know it.
 
 ## Design principle
 
 **Faithful protocol coverage, no flow escape.**
 
-- For every OUTPUT the executor protocol allows the executor to emit,
-  the agent's MCP exposes a tool to emit it.
-- For every INPUT the protocol delivers to the executor, the agent
-  has a way to read it.
-- The MCP surface adds NO capability beyond the protocol. No
-  "post a message to another instance"; no "register a template";
-  no "read sibling-node attribute outside of substitution"; no
-  "force-fire a downstream cascade." The agent participates as a
-  fully-rigged executor implementor, not a privileged backdoor
-  into rimsky orchestration.
+- For every output the executor protocol allows the executor to emit, the agent's MCP exposes a tool to emit it.
+- For every input the protocol delivers to the executor, the agent has a way to read it.
+- The MCP surface adds NO capability beyond the protocol. No "post a message to another instance"; no "register a template"; no "read sibling-node attribute outside of substitution"; no "force-fire a downstream cascade." The agent participates as a fully-rigged executor implementor, not a privileged backdoor into rimsky orchestration.
 
-## Audit
+## Audit (verified 2026-06-17)
 
 ### Outputs (executor → rimsky)
 
 | Wire output | Today | Gap |
 |---|---|---|
 | Heartbeat | Handled by Claude Code's agent harness (activity-based) | None — already implicit |
-| NamedEvent (name + inert payload) | `declaredEvents = []`; no emission path | **Missing tool + missing declaration mechanism** |
-| StreamClose: Success | `report_complete` | None |
-| StreamClose: Error | `report_blocked` (agent/blocked class) + `report_error` (arbitrary class) | None |
-| StreamClose: Park (await_callback / snooze) | `report_park` | None |
-| StreamClose: AwaitAsyncCallback | — | **Missing tool** |
+| `proto:executor.proto::Outcome.Success` | `report_complete` | None |
+| `proto:executor.proto::Outcome.Error` | `report_error` (arbitrary class) + `report_blocked` (agent_blocked class) | None |
+| `proto:executor.proto::Outcome.Park` (typed `ParkReason`: `await_callback` / `snooze`) | `report_park` | None |
+| `proto:executor.proto::Outcome.AwaitAsyncCallback` | — | **Missing tool** |
 
 ### Inputs (rimsky → executor / agent)
 
-| Wire input | Today | Gap |
+| `ExecuteRequest` field | Today | Gap |
 |---|---|---|
-| Dispatched attributes (incl. substitution-resolved values) | `attributes_read`; `user_prompt` / `system_prompt` delivered in the dispatched bag | None |
-| Run-scope context (run-scope id, parent-run id, partition key for fan-out children) | Unclear — needs an audit of what's surfaced to the agent today | Possible gap; close via well-known reserved attribute names if not already surfaced |
-| Async-callback body (only relevant if AwaitAsyncCallback is used) | N/A today | Becomes relevant once AwaitAsyncCallback ships |
+| `attributes` (substitution-resolved, includes `{{child.partition_key}}` and `{{claim.<name>.payload}}` for fan-out children) | `attributes_read` snapshot | None — partition keys reach fan-out children via substitution, as the protocol intends |
+| `attributes_schema` | Surfaced via the dispatched bag | None |
+| `callback_url` | Used internally by `attributes_set`; not surfaced as a tool input the agent reads | None — the agent calls back through the tool, not by URL |
+| `dispatch_id` (field 12) | — | **Not surfaced** |
+| `run_scope_id` (field 16) | — | **Not surfaced** |
+| `prior_dispatch_id` (field 14) | — | **Not surfaced** |
+| `prior_dispatch_disposition` (field 15: `stale_recovery` / `retry_after_error` / `recalculate`) | — | **Not surfaced** |
 
 ## Proposed additions
 
-### 1. NamedEvent emission
-
-MCP tool:
-
-```
-emit_named_event(name: string, payload: object) → void
-```
-
-- Cross-check `name` against the executor's declared events list at
-  the MCP boundary; reject with a tool error if not declared.
-- Payload JSON-serialized to the NamedEvent wire shape.
-- Inertness discipline applies (`@blessed-invariant 21` per
-  `concept:inertness`) — claude-agent does not parse, log, or
-  format the payload.
-
-### 2. Declared-events configuration override
-
-Today `declaredEvents` is a TypeScript constant baked into the image.
-For FROM-claude-agent derivative images to advertise their own event
-names without forking source, accept an env var:
-
-```
-RIMSKY_AGENT_DECLARED_EVENTS=name1,name2,name3
-```
-
-Read at startup; replaces the empty default. Advertised via the
-existing `Capabilities.declared_events` so rimsky's template
-registration cross-checks `subscribes:` against it.
-
-Env var (image-level identity) rather than per-dispatch attribute
-(per-run state) because declared events are a property of the
-binary's contract.
-
-### 3. AwaitAsyncCallback outcome
+### 1. AwaitAsyncCallback emission
 
 MCP tool:
 
@@ -101,78 +55,64 @@ MCP tool:
 report_await_async_callback(
   token: string,
   async_ack_id: string,
-  hint?: string
-) → void
+  expected_completion_ms?: number
+)
 ```
 
-Emits the AwaitAsyncCallback variant of StreamClose. Lets the agent
-hand off long-running work to an external system and wake on the
-rimsky-issued callback at `${callback_url}/v1/callback/{async_ack_id}`
-(body keyed `type`, per `concept:executor`'s invariant + the CLAUDE.md
-gotcha).
+Emits the `proto:executor.proto::Outcome.AwaitAsyncCallback` variant. After emission the agent process exits the dispatch normally — the external system POSTs `proto:executor.proto::AsyncCallbackBody` to `${callback_url}/v1/callback/{async_ack_id}` to settle (exactly one of `success` / `error` / `park`, per the proto invariant; nested `await_async` is forbidden).
 
-Rare for typical interactive Claude Code agents, but a real protocol
-variant the agent should be able to use when needed (e.g., agent
-spawns a long-running batch job, parks awaiting completion).
+The wire field names map straight through: `async_ack_id` echoes back on the callback so the supervisor correlates; `expected_completion_ms` is the optional hint, with the supervisor's own `max_quiet_period` / `max_runtime` deadlines still authoritative.
 
-### 4. Run-scope context exposure (audit + close)
+### 2. Dispatch-context exposure
 
-Audit what the agent sees of:
+The four `ExecuteRequest` context fields above need to reach the agent. Two candidate shapes — both consistent with the "no flow escape" principle (read-only snapshot captured at spawn, same lifetime as `attributes_read`):
 
-- Run-scope id of the current dispatch.
-- Parent-run id (for fan-out children, sub-graph dispatches).
-- Partition key (for fan-out children specifically).
+**Option A — new tool.**
 
-If any are not currently surfaced via the dispatched attribute bag
-or a reserved attribute namespace, surface them via well-known
-reserved attribute names (e.g., `_rimsky.run_scope.id`,
-`_rimsky.run_scope.parent_run_id`,
-`_rimsky.run_scope.partition_key`). No new tools; just ensure the
-existing `attributes_read` returns these.
+```
+dispatch_context_read(token: string) → {
+  dispatch_id: string,
+  run_scope_id: string,
+  prior_dispatch_id?: string,
+  prior_dispatch_disposition?: "stale_recovery" | "retry_after_error" | "recalculate"
+}
+```
 
-Agents running as fan-out children currently have no first-class
-way to know they ARE fan-out children, which is information they
-sometimes need for prompt construction.
+Cleanest separation: the per-node attribute bag stays the per-node attribute bag; rimsky-injected dispatch identity sits in its own tool. Maps 1:1 onto the wire fields, so future additions to `ExecuteRequest` extend this tool's return shape.
+
+**Option B — reserved keys on `attributes_read`.**
+
+Inject `_rimsky.dispatch_id`, `_rimsky.run_scope_id`, `_rimsky.prior_dispatch_id`, `_rimsky.prior_dispatch_disposition` into the snapshot `attributes_read` already returns. No new tool; one shape to learn.
+
+Spec-time choice; A is the cleaner separation. Mentioned together because both decisions land at the same code site.
 
 ## Explicit non-goals
 
-- **No `read_node_attribute` runtime read.** Sibling-node attribute
-  access stays via substitution at dispatch time. Runtime reads
-  would let the agent see post-dispatch mutations and shape its
-  behavior on them — an escape from rimsky's cascade-frame
-  discipline.
-- **No `read_node_event` runtime read.** Same reason. Named-event
-  consumption stays via subscription + (for substitution) the
-  existing `{{nodes.X.event.Y}}` grammar.
-- **No `post_message` to instances.** Publishers post messages;
-  agents don't. Cross-node coupling within an instance is
-  NamedEvent + node-subscription; cross-instance messaging is a
-  publisher concern.
-- **No `register_template` / `create_instance` / `deploy_template`
-  tools.** Lifecycle control is the operator's, not the agent's.
-- **No tools that bypass the inertness invariant.** Payloads stay
-  inert in rimsky-side persistence; agent-side reads only at
-  sanctioned leaves.
+- **No replacement for the retired NamedEvent surface.** `proto:executor.proto` field 1 on `AsyncCallbackBody` and field 1 on `Outcome` Success/Error/Park is reserved (`"was: repeated NamedEvent events = 1"`). Per-emission events collapse into the chosen outcome's `tags` set with per-emission data on `attributes_delta`; that is the protocol's answer to "something happened mid-run," and the agent's `report_complete` / `report_error` / `report_park` already accept it.
+- **No `read_node_attribute` runtime read.** Sibling-node attribute access stays via substitution at dispatch time.
+- **No `read_node_event` runtime read.** No more NamedEvents to read; downstream coupling rides `tags` + subscription `when:` filters at the template layer.
+- **No `post_message` to instances.** Publishers post messages; agents don't.
+- **No `register_template` / `create_instance` / `deploy_template` tools.** Lifecycle control is the operator's.
+- **No tools that bypass the inertness invariant.** Payloads stay inert in rimsky-side persistence (per `@blessed-invariant 21`); agent-side reads only at sanctioned leaves.
 
 ## Spec scope
 
-- Minimum to unblock the rimsky-github-bot consumer: #1 + #2.
-- Worth folding in for completeness: #3 + #4.
-
-#3 and #4 are independent of the bot's need; they could ship as a
-follow-up if the spec wants to stay tight.
+- **#1 (AwaitAsyncCallback tool):** closes the protocol-coverage gap. Self-contained; no proto changes; no rimsky-side changes; one new MCP tool + the wire emission path.
+- **#2 (dispatch-context exposure):** independent from #1 but lands in the same files. Spec can ship either or both.
 
 ## Touch points
 
-- `lib/services/executors/claude-agent/src/internal-mcp-tools.ts`
-  (new tool definitions).
-- `lib/services/executors/claude-agent/src/internal-mcp-server.ts`
-  (tool handlers, calling out to the executor wire connection).
-- `lib/services/executors/claude-agent/src/server.ts` and/or
-  `http-bridge.ts` (the wire-write path for NamedEvent + the new
-  StreamClose variant).
-- `lib/services/executors/claude-agent/src/expected-attributes-schema.ts`
-  (drop the hard-coded empty `declaredEvents`; read from env at
-  startup).
-- `lib/services/executors/claude-agent/src/observability.ts` (advertise
-  the env-driven declared-events list in Capabilities).
+- `code:lib/services/executors/claude-agent/src/internal-mcp-tools.ts` — add `ReportAwaitAsyncCallbackInput` + the tool definition; optionally `DispatchContextReadInput` for #2A.
+- `code:lib/services/executors/claude-agent/src/internal-mcp-server.ts` — handler that calls the wire-write path; optionally the dispatch-context snapshot capture for #2.
+- `code:lib/services/executors/claude-agent/src/server.ts` and/or `http-bridge.ts` — emit the `AwaitAsyncCallback` outcome on the wire-write path.
+- `code:lib/services/executors/claude-agent/src/attributes-tools.ts` — only if #2B is the chosen shape (extend the snapshot under reserved `_rimsky.*` keys).
+
+## Revision note (2026-06-17)
+
+This sketch was originally written 2026-05-28 alongside an `rimsky-github-bot` plan that wanted per-item fan-out via `concept:named-event` + `concept:node-subscription`. Three things changed since:
+
+- **`concept:named-event` was retired.** `proto:executor.proto` field 1 on `Outcome.Success` / `Outcome.Error` / `Outcome.Park` / `AsyncCallbackBody` is reserved with the comment `"was: repeated NamedEvent events = 1"`. The original sketch's items #1 (`emit_named_event` MCP tool) and #2 (`RIMSKY_AGENT_DECLARED_EVENTS` env-driven declared-events override) are obsolete — the wire no longer carries the message they would emit. Both are dropped from this rewrite.
+- **The bot's fan-out need moved to `concept:fan-out` via `SplitScope`.** That work lives in the companion `sketch:bundled-stores-split-scope`. Per-dispatch sub-claim access for fan-out children already rides `{{child.partition_key}}` + `{{claim.<name>.payload}}` substitution, not runtime tools.
+- **`report_park` exists with typed `ParkReason` (`await_callback` / `snooze`).** The original sketch's "missing tool for AwaitAsyncCallback" was conflated in places with "missing park-reason discrimination"; that conflation is resolved — `report_park` carries the typed reason today and `AwaitAsyncCallback` remains its own outcome variant.
+
+What remains and is still live: **#3 from the original (AwaitAsyncCallback tool) and #4 (run-scope context exposure)**, renumbered #1 and #2 here.
