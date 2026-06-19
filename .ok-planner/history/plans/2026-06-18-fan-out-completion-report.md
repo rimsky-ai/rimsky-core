@@ -209,5 +209,5 @@ None. Annotation integrity sweep over `--type=go --type=sh --type=md` outside `.
 ## Coverage check (summary)
 
 - **Proofs exhibited:** 7 / 7 manifest stories.
-- **Technical decisions:** 11 kept + 3 diverged = 14 total. (11 named TDs from the manifest + 3 necessitated items the spec did not name.)
+- **Technical decisions:** 11 spec TDs all honored (Section 2); 7 divergence entries in Section 3 — 4 are improved / selected / necessitated refinements to spec-named TDs already counted in Section 2 (items 1, 2, 3, 4), and 3 are net-new necessitated items the spec did not name (items 5, 6, 7).
 - **Coverage divergences:** 0 manifest-relevant gaps, 0 intent drifts, 0 dangling annotations. 40 informational out-of-manifest coverage gaps (pre-existing, not introduced by this plan).
