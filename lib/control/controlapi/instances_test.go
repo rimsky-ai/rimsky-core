@@ -202,8 +202,8 @@ func TestGetInstance_SurfacesSubscriptionStates(t *testing.T) {
 			PublisherName:  "sensor-alpha",
 			Kind:           "http",
 			ResolvedConfig: []byte(`{"url":"https://example.invalid"}`),
-			TargetNode:     "root",
-			State:          persistence.PublisherSubscriptionStateMounting,
+
+			State: persistence.PublisherSubscriptionStateMounting,
 		}); err != nil {
 			return err
 		}
@@ -213,9 +213,9 @@ func TestGetInstance_SurfacesSubscriptionStates(t *testing.T) {
 			PublisherName:  "sensor-beta",
 			Kind:           "http",
 			ResolvedConfig: []byte(`{}`),
-			TargetNode:     "root",
-			State:          persistence.PublisherSubscriptionStateFailed,
-			FailureReason:  `publisher "sensor-beta" is not registered`,
+
+			State:         persistence.PublisherSubscriptionStateFailed,
+			FailureReason: `publisher "sensor-beta" is not registered`,
 		})
 	}))
 

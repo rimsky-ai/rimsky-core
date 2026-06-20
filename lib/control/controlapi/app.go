@@ -25,16 +25,16 @@ import (
 )
 
 type AppDeps struct {
-	Persist       persistence.Tables
-	Queue         persistence.Queue
-	Clock         foundationshared.Clock
-	Logger        foundationshared.Logger
-	AuthState     *AuthState
-	Stores        *locks.Registry
-	LifecycleSubs *locks.LifecycleRegistry
-	NamedLocks    locks.NamedLocksConfig
-	Executors     map[string]ExecutorEntry
-	Observability ObservabilityRouter
+	Persist        persistence.Tables
+	Queue          persistence.Queue
+	Clock          foundationshared.Clock
+	Logger         foundationshared.Logger
+	AuthState      *AuthState
+	ClaimProducers *locks.Registry
+	LifecycleSubs  *locks.LifecycleRegistry
+	NamedLocks     locks.NamedLocksConfig
+	Executors      map[string]ExecutorEntry
+	Observability  ObservabilityRouter
 
 	ExecutorCapabilities func(executorName string) (declaredEvents []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool)
 

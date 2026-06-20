@@ -16,7 +16,7 @@ attributes with `default:` properties (static-default attributes); see
 `concept:attribute`. Override mechanism renamed: `userdata_overrides` →
 `attribute_overrides`. Wire field removed:
 `proto:executor.proto::ExecuteRequest.userdata` is gone.
-`@blessed-invariant 11` retires. See
+Invariant 11 retires. See
 `.ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md`.
 
 # Userdata
@@ -45,7 +45,7 @@ Per-instance overrides via `col:rimsky_instances.userdata_overrides` extend this
 
 ## Invariants
 
-- Userdata is inert (`@blessed-invariant 11`). No substitution pass. No inspection. No validation beyond the executor-side schema check.
+- Userdata is inert (invariant 11). No substitution pass. No inspection. No validation beyond the executor-side schema check.
 - Rimsky never substitutes, validates, or otherwise interprets userdata. The per-instance overrides merge is the only structural traversal of userdata content (handled by `code:foundation/shared/jsonmerge.go::DeepMergeJSON`).
 - `{{...}}` directives in userdata are literal text reaching the executor verbatim; the substitution grammar does not include a `{{userdata.*}}` source kind.
 - Per-instance `userdata_overrides` validate only routing keys (`by_executor`, `by_node`, plus the executor/node names). Fragment values are never inspected.
@@ -66,7 +66,7 @@ template.defaults.userdata.by_executor[<executor>]
 
 More specific wins; operator-level overrides win over template-author defaults. Merge helper is `code:foundation/shared/jsonmerge.go::DeepMergeJSON`.
 
-Validation discipline (preserves `@blessed-invariant 11`):
+Validation discipline (preserves invariant 11):
 - Inspects only routing keys (`by_executor`, `by_node`, plus the executor/node names which must be declared in the template). Fragment values never inspected.
 - Unknown top-level keys are rejected at create-time.
 - Nodes whose `executor_name` is null (claim-only path) get only `by_node[name]` overrides.
@@ -79,9 +79,9 @@ CLAUDE.md "Common mistakes" calls out the confusion with cloud-init userdata (cl
 
 ## Open within this concept
 
-- The executor's `userdata_schema` (read by rimsky to validate userdata bytes at template-registration and dispatch time) is a sanctioned but unnamed exception to `@blessed-invariant 11` inertness — see `tensions/userdata-schema-as-opacity-exception.md`.
+- The executor's `userdata_schema` (read by rimsky to validate userdata bytes at template-registration and dispatch time) is a sanctioned but unnamed exception to invariant 11 inertness — see `tensions/userdata-schema-as-opacity-exception.md`.
 
 ## Notes
 
-- 2026-05-19 — Template-level userdata defaults added per spec 2026-05-19-multi-instance-template-ergonomics-design. `@blessed-invariant 11` unchanged: only routing keys (`by_executor` plus executor names) are inspected; fragment values are never read.
+- 2026-05-19 — Template-level userdata defaults added per spec 2026-05-19-multi-instance-template-ergonomics-design. Invariant 11 unchanged: only routing keys (`by_executor` plus executor names) are inspected; fragment values are never read.
 

@@ -173,9 +173,8 @@ func cascadeMessageVirtualNodeSettleInTx(
 	if tmpl == nil {
 		return nil
 	}
-	subRefs := node.ExtractSubstitutionRefsFromTemplate(tmpl.Spec)
 	msgRefs := node.ExtractMessageRefsFromTemplate(tmpl.Spec)
-	edges, err := node.BuildSubscriptionEdges(tmpl.Spec, subRefs, msgRefs)
+	edges, err := node.BuildSubscriptionEdges(tmpl.Spec, msgRefs)
 	if err != nil {
 		return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: build edges: %w", err)
 	}

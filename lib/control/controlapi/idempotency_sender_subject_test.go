@@ -69,12 +69,12 @@ func newSenderSubjectHarness(t *testing.T) *senderSubjectHarness {
 	lcReg.Add("topics-ring", topicsFake)
 
 	app := NewApp(AppDeps{
-		Persist:       d.Tables(),
-		Queue:         d.Queue(),
-		Clock:         clock,
-		Logger:        shared.SilentLogger{},
-		Stores:        reg,
-		LifecycleSubs: lcReg,
+		Persist:        d.Tables(),
+		Queue:          d.Queue(),
+		Clock:          clock,
+		Logger:         shared.SilentLogger{},
+		ClaimProducers: reg,
+		LifecycleSubs:  lcReg,
 		NamedLocks: locks.NamedLocksConfig{
 			Locks: map[string]locks.NamedLockConfig{
 				"topics-ring:concurrent": {Limit: 5},

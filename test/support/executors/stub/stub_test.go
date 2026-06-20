@@ -187,7 +187,7 @@ func TestObservedRequest_CapturesCandidateHandles(t *testing.T) {
 
 	_, err := c.Execute(context.Background(), &genv1.ExecuteRequest{
 		NodeType: "t.handles",
-		Stores: map[string]*genv1.StoreHandle{
+		ClaimProducers: map[string]*genv1.ClaimProducerHandle{
 			"primary": {CandidateHandle: []byte("ch-1")},
 			"shadow":  {CandidateHandle: []byte("ch-2")},
 		},

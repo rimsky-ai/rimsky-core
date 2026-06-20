@@ -316,7 +316,6 @@ func deploySensorWebhookTemplate(t *testing.T, ep harness.RimskyEndpoint) string
 					"name":         webhookPublisherName,
 					"kind":         "webhook",
 					"config":       json.RawMessage(configBytes),
-					"target_node":  webhookReactorNode,
 					"message_type": webhookMessageType,
 				},
 			},

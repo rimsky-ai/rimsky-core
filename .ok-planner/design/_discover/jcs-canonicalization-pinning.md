@@ -19,7 +19,7 @@ The annotation at `jcs.go:13-15`:
 
 > The canonical-hash function is the registry's identity function. Any change that alters output bytes for previously-registered specs is a breaking change. The JCS library version is pinned in go.mod.
 
-This is `@blessed-invariant`-shaped though it's not numbered. The pin in `go.mod` is the actual lock; a transitive minor bump that changed canonicalization output bytes (different number-formatting, different string-escape choice, different key sort) would invalidate every existing template hash. The hash IS the identity, so identity change = registry data loss.
+This is `invariant`-shaped though it's not numbered. The pin in `go.mod` is the actual lock; a transitive minor bump that changed canonicalization output bytes (different number-formatting, different string-escape choice, different key sort) would invalidate every existing template hash. The hash IS the identity, so identity change = registry data loss.
 
 JCS guarantees byte-identical output across implementations regardless of map ordering, whitespace, and non-essential string escape variations. The comment at `jcs.go:8-12` justifies the JCS choice (vs a hand-rolled canonicalizer): "JCS guarantees byte-identical output across implementations regardless of map ordering / whitespace / non-essential string escape variations."
 
@@ -55,5 +55,5 @@ The split between `modeling/template/canonical/` (the hashing) and `foundation/p
 
 - JCS is RFC 8785; the library `github.com/cyberphone/json-canonicalization` is one Go impl. Other Go impls exist; the choice of this particular library is unstated beyond "we pinned it." A future migration to a different JCS impl would have to produce byte-identical output to be safe.
 - The canonical bytes are NOT compressed; large templates produce large canonical bytes. The SHA-256 is over the uncompressed form. This is irrelevant for hashing but matters for the `OnTemplateRegistered.spec` payload size (which is the canonical bytes).
-- The pin in `go.mod` is `@blessed-invariant`-class but is not numbered. CLAUDE.md "Blessed invariants" list doesn't include it; the annotation lives in `jcs.go:13-15` as a per-file `@blessed-invariant` without a number.
+- The pin in `go.mod` is `invariant`-class but is not numbered. CLAUDE.md "Blessed invariants" list doesn't include it; the annotation lives in `jcs.go:13-15` as a per-file `invariant` without a number.
 - A pre-v1 breaking change to the canonicalization (e.g. switching to a different RFC, normalizing escape sequences differently) would require: bump the library; record the breaking change in CHANGELOG; nuke the dev DB. Post-v1, this becomes a much harder migration.

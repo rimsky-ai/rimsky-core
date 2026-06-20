@@ -85,19 +85,19 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		RefValidationMode: deps.RefValidationMode,
 		KindAliases:       deps.KindAliases,
 	}
-	if deps.Stores != nil {
+	if deps.ClaimProducers != nil {
 		hooks.StoreDeclared = func(name string) bool {
 			if isLateBind(name) {
 				return true
 			}
-			_, ok := deps.Stores.Get(name)
+			_, ok := deps.ClaimProducers.Get(name)
 			return ok
 		}
-		hooks.StoreAdvertisesSplitScope = func(name string) bool {
+		hooks.ClaimProducerAdvertisesSplitScope = func(name string) bool {
 			if isLateBind(name) {
 				return true
 			}
-			p, ok := deps.Stores.Get(name)
+			p, ok := deps.ClaimProducers.Get(name)
 			if !ok {
 				return false
 			}
@@ -217,6 +217,8 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		staticWarnings := staticWarningsToFindings(res.Warnings)
 		node.ApplyFrameResolutionDefaults(&spec)
 		node.CanonicalizeKindSugar(&spec, deps.KindAliases)
+		node.CanonicalizeEmitMessageSugar(&spec, deps.KindAliases)
+		node.CanonicalizeAggregationPolicyDefault(&spec)
 
 		tHash := time.Now()
 		hash, err := canonical.CanonicalSpecHash(spec)
@@ -369,6 +371,8 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 
 		node.ApplyFrameResolutionDefaults(&spec)
 		node.CanonicalizeKindSugar(&spec, deps.KindAliases)
+		node.CanonicalizeEmitMessageSugar(&spec, deps.KindAliases)
+		node.CanonicalizeAggregationPolicyDefault(&spec)
 
 		hash, err := canonical.CanonicalSpecHash(spec)
 		if err != nil {

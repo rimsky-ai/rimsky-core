@@ -19,7 +19,7 @@ The rules file makes this explicit: "Rimsky is pre-v1. There is no production da
 
 Pre-v1 also extends to other surfaces. Per `.claude/rules/rules.md`: "No backwards-compat guarantees on the wire protocol, the YAML config shape, the event-log payloads, or the resource interface until v1 ships. If a change requires nuking a dev Postgres, say so explicitly."
 
-The migration runner uses the session advisory lock (`@blessed-invariant 8` per `2026-05-10-advisory-locks-tick-and-migrate`) so concurrent migrate runs across replicas serialize on the lock; the per-batch idempotency is the operator's responsibility.
+The migration runner uses the session advisory lock (per `2026-05-10-advisory-locks-tick-and-migrate`) so concurrent migrate runs across replicas serialize on the lock; the per-batch idempotency is the operator's responsibility.
 
 When v1 ships, this rule flips. The `pre-v1` markers in migration files become trip-wires for any post-v1 migration that wants the same freedom — a future audit can grep `pre-v1` to find the spots that need a forward-compat path. The rules file is explicit: "When v1 ships, replace this section with deployed-stage rules."
 

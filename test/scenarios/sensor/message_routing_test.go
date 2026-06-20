@@ -74,7 +74,6 @@ func TestMessageRouting_PublisherPostsEnvelopeToInstanceMessages(t *testing.T) {
 		"type":                      "sensor/observation",
 		"payload":                   map[string]any{"observed_at": "2026-05-17T12:00:00Z"},
 		"sender":                    "sensor-cron",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": "scenario-subscription",
 	}
 	body, _ := json.Marshal(envelope)
@@ -102,9 +101,6 @@ func TestMessageRouting_PublisherPostsEnvelopeToInstanceMessages(t *testing.T) {
 	}
 	if !strings.HasPrefix(rec.IdempotencyKey, "scenario-subscription") {
 		t.Errorf("Idempotency-Key: got %q want prefix scenario-subscription", rec.IdempotencyKey)
-	}
-	if rec.Body["sender_kind"] != "publisher" {
-		t.Errorf("body.sender_kind: %v", rec.Body["sender_kind"])
 	}
 	if rec.Body["publisher_subscription_id"] != "scenario-subscription" {
 		t.Errorf("body.publisher_subscription_id: %v", rec.Body["publisher_subscription_id"])

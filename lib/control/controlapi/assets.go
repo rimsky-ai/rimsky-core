@@ -126,7 +126,7 @@ func lookupClaimAliasForProducer(s spec.TemplateSpec, nodeType, producerName str
 		if n.Type != nodeType {
 			continue
 		}
-		for _, st := range n.Stores {
+		for _, st := range n.ClaimProducers {
 			if st.Name == producerName {
 				return st.AliasOf()
 			}
@@ -156,11 +156,11 @@ func toAssetItem(r persistence.ClaimHandleRow, node persistence.NodeRow, claimAl
 }
 
 func buildDataProcessingPredicate(deps AppDeps) func(string) bool {
-	if deps.Stores == nil {
+	if deps.ClaimProducers == nil {
 		return func(string) bool { return true }
 	}
 	return func(name string) bool {
-		p, ok := deps.Stores.Get(name)
+		p, ok := deps.ClaimProducers.Get(name)
 		if !ok {
 			return true
 		}
@@ -234,7 +234,7 @@ func lookupProducerForAlias(s spec.TemplateSpec, nodeType, claimAlias string) st
 		if n.Type != nodeType {
 			continue
 		}
-		for _, st := range n.Stores {
+		for _, st := range n.ClaimProducers {
 			if st.AliasOf() == claimAlias {
 				return st.Name
 			}
@@ -504,8 +504,8 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		if deps.Stores != nil && row.ProducerName != nil {
-			if producer, ok := deps.Stores.Get(*row.ProducerName); ok {
+		if deps.ClaimProducers != nil && row.ProducerName != nil {
+			if producer, ok := deps.ClaimProducers.Get(*row.ProducerName); ok {
 				if err := producer.Release(req.Context(), claimproducer.ClaimID(row.ID.String()), row.ClaimScopeData, row.Address); err != nil {
 					writeError(w, err)
 					return

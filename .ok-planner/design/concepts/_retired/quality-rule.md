@@ -39,7 +39,7 @@ Owns: the per-rule declarative spec, the `Evaluator` interface, the severity par
 
 ## Invariants
 
-- Evaluation fires adjacent to (not in place of) the commit-time JSON Schema gate (`@blessed-invariant 12`). The supervisor calls `runQualityRules` at `runtime/runner_terminal.go:120-126`, immediately after the schema gate passes.
+- Evaluation fires adjacent to (not in place of) the commit-time JSON Schema gate (invariant 12). The supervisor calls `runQualityRules` at `runtime/runner_terminal.go:120-126`, immediately after the schema gate passes.
 - `EvaluateAll` partitions failures by `Severity` (`graph/qualityrule/eval/rules.go:39-67`): **only the literal string `"warning"` diverts to the warnings slice; every other value — empty, `error`, or a typo — lands in the blocking errors slice**.
 - Per-rule evaluator failure (returned `err`) short-circuits with a wrapped error; an unknown type name short-circuits identically. The supervisor wraps such short-circuit errors into a synthetic `Failure{RuleType: "evaluation_error", Severity: SeverityError}` so the commit-time emit always sees a structured `Failure` slice.
 - On any non-warning failure, the supervisor emits one `quality_rule_failed` event per failure (`emitQualityRuleFailures` at `runtime/runner_terminal.go:245-268`, batched in a single tx) and routes through `applyTerminalAppError` with `error_class="quality_rule_failed"`.

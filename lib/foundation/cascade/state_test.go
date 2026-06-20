@@ -27,6 +27,7 @@ var allReasons = []TransitionReason{
 	ReasonHandlerPass,
 	ReasonHandlerPark,
 	ReasonHandlerResume,
+	ReasonDeadlineResume,
 	ReasonParkTimeout,
 	ReasonChildTransitioned,
 	ReasonSubGraphInternalCascadeFired,
@@ -39,6 +40,7 @@ var allStates = []NodeState{
 	NodeStateRunning,
 	NodeStateFailed,
 	NodeStateParked,
+	NodeStateResuming,
 }
 
 func TestTransitionTable(t *testing.T) {
@@ -68,9 +70,15 @@ func TestTransitionTable(t *testing.T) {
 			"operator_invalidate": NodeStateStale,
 		},
 		NodeStateParked: {
+			"deadline_resume": NodeStateResuming,
 			"handler_resume":  NodeStateStale,
 			"park_timeout":    NodeStateFailed,
 			"instance_killed": NodeStateFailed,
+		},
+		NodeStateResuming: {
+			"dispatch_claimed":    NodeStateRunning,
+			"policy_give_up":      NodeStateFailed,
+			"dispatch_impossible": NodeStateFailed,
 		},
 	}
 
@@ -108,10 +116,13 @@ func TestDispatchImpossibleTransitionsStaleToFailed(t *testing.T) {
 
 func TestDispatchImpossibleRejectedFromNonStale(t *testing.T) {
 	t.Parallel()
-	for _, from := range []NodeState{NodeStateFresh, NodeStateRunning, NodeStateFailed} {
+	for _, from := range []NodeState{NodeStateFresh, NodeStateRunning, NodeStateFailed, NodeStateParked} {
 		_, err := NextState(from, ReasonDispatchImpossible)
 		require.ErrorIs(t, err, ErrIllegalTransition, "from=%s", from)
 	}
+	got, err := NextState(NodeStateResuming, ReasonDispatchImpossible)
+	require.NoError(t, err)
+	require.Equal(t, NodeStateFailed, got)
 }
 
 func TestPureCascadeOnlyValidFromStale(t *testing.T) {
@@ -123,6 +134,8 @@ func TestPureCascadeOnlyValidFromStale(t *testing.T) {
 		NodeStateFresh,
 		NodeStateRunning,
 		NodeStateFailed,
+		NodeStateParked,
+		NodeStateResuming,
 	} {
 		from := from
 		t.Run("illegal/"+string(from), func(t *testing.T) {
@@ -142,6 +155,8 @@ func TestNextState_AcquirePass(t *testing.T) {
 		NodeStateFresh,
 		NodeStateRunning,
 		NodeStateFailed,
+		NodeStateParked,
+		NodeStateResuming,
 	} {
 		from := from
 		t.Run("illegal/"+string(from), func(t *testing.T) {
@@ -161,6 +176,8 @@ func TestNextState_HandlerComplete(t *testing.T) {
 		NodeStateFresh,
 		NodeStateStale,
 		NodeStateFailed,
+		NodeStateParked,
+		NodeStateResuming,
 	} {
 		from := from
 		t.Run("illegal/"+string(from), func(t *testing.T) {
@@ -180,6 +197,8 @@ func TestNextState_HandlerPass(t *testing.T) {
 		NodeStateFresh,
 		NodeStateStale,
 		NodeStateFailed,
+		NodeStateParked,
+		NodeStateResuming,
 	} {
 		from := from
 		t.Run("illegal/"+string(from), func(t *testing.T) {
@@ -211,6 +230,7 @@ func TestNextState_HandlerPark(t *testing.T) {
 		NodeStateStale,
 		NodeStateFailed,
 		NodeStateParked,
+		NodeStateResuming,
 	} {
 		from := from
 		t.Run("illegal/"+string(from), func(t *testing.T) {
@@ -231,6 +251,7 @@ func TestNextState_HandlerResume(t *testing.T) {
 		NodeStateStale,
 		NodeStateRunning,
 		NodeStateFailed,
+		NodeStateResuming,
 	} {
 		from := from
 		t.Run("illegal/"+string(from), func(t *testing.T) {
@@ -239,6 +260,33 @@ func TestNextState_HandlerResume(t *testing.T) {
 			require.True(t, errors.Is(err, ErrIllegalTransition))
 		})
 	}
+}
+
+func TestNextState_DeadlineResume(t *testing.T) {
+	got, err := NextState(NodeStateParked, ReasonDeadlineResume)
+	require.NoError(t, err)
+	require.Equal(t, NodeStateResuming, got)
+
+	for _, from := range []NodeState{
+		NodeStateFresh,
+		NodeStateStale,
+		NodeStateRunning,
+		NodeStateFailed,
+		NodeStateResuming,
+	} {
+		from := from
+		t.Run("illegal/"+string(from), func(t *testing.T) {
+			_, err := NextState(from, ReasonDeadlineResume)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, ErrIllegalTransition))
+		})
+	}
+}
+
+func TestNextState_Resuming_DispatchClaimed(t *testing.T) {
+	got, err := NextState(NodeStateResuming, ReasonDispatchClaimed)
+	require.NoError(t, err)
+	require.Equal(t, NodeStateRunning, got)
 }
 
 func TestNextState_ParkTimeout(t *testing.T) {
@@ -251,6 +299,7 @@ func TestNextState_ParkTimeout(t *testing.T) {
 		NodeStateStale,
 		NodeStateRunning,
 		NodeStateFailed,
+		NodeStateResuming,
 	} {
 		from := from
 		t.Run("illegal/"+string(from), func(t *testing.T) {
@@ -269,7 +318,8 @@ func TestParkedToParkedRejected(t *testing.T) {
 			if got == NodeStateParked {
 				t.Fatalf("parked → parked under reason %q must be rejected, got success", reason.Kind)
 			}
-			if reason.Kind != "handler_resume" && reason.Kind != "park_timeout" && reason.Kind != "instance_killed" {
+			if reason.Kind != "handler_resume" && reason.Kind != "deadline_resume" &&
+				reason.Kind != "park_timeout" && reason.Kind != "instance_killed" {
 				require.Error(t, err, "reason=%s", reason.Kind)
 				require.True(t, errors.Is(err, ErrIllegalTransition))
 			}
@@ -283,7 +333,7 @@ func TestNextStateParent_SubGraphInternalCascadeFired_RunningOnly(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, NodeStateRunning, got)
 
-	for _, from := range []NodeState{NodeStateFresh, NodeStateStale, NodeStateFailed, NodeStateParked} {
+	for _, from := range []NodeState{NodeStateFresh, NodeStateStale, NodeStateFailed, NodeStateParked, NodeStateResuming} {
 		from := from
 		t.Run("illegal/"+string(from), func(t *testing.T) {
 			_, err := NextStateParent(from, ReasonSubGraphInternalCascadeFired)

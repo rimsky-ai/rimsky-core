@@ -69,7 +69,7 @@ func testClaimUnavailableDelivered(t *testing.T) {
 				{
 					"type":     "worker",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{
 							"name":     "queue-store",
 							"selector": queueSelector,
@@ -136,7 +136,7 @@ func testSwapFailedDelivered(t *testing.T) {
 				{
 					"type":     "acquirer",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{
 							"name":     "staged-store",
 							"selector": canonicalSchema,

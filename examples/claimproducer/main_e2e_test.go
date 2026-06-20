@@ -230,7 +230,7 @@ func deployClaimTemplateInternal(t *testing.T, ep harness.RimskyEndpoint, name, 
 	node := map[string]any{
 		"type":     "worker",
 		"executor": executor,
-		"stores": []map[string]any{
+		"claim_producers": []map[string]any{
 			{
 				"name":     "example",
 				"selector": selector,

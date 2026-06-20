@@ -32,7 +32,7 @@ type fakeValidator struct {
 	rpcErr    error
 	executor  int
 	producer  int
-	sensor    int
+	publisher int
 	lifecycle int
 }
 
@@ -51,10 +51,10 @@ func (f *fakeValidator) ValidateClaimProducer(_ context.Context, _ runtime.Valid
 	f.producer++
 	return f.errs, f.warns, f.rpcErr
 }
-func (f *fakeValidator) ValidateSensor(_ context.Context, _ runtime.ValidateSensorInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+func (f *fakeValidator) ValidatePublisher(_ context.Context, _ runtime.ValidatePublisherInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.sensor++
+	f.publisher++
 	return f.errs, f.warns, f.rpcErr
 }
 func (f *fakeValidator) ValidateLifecycleSubscriber(_ context.Context, _ runtime.ValidateLifecycleSubscriberInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
@@ -99,12 +99,12 @@ func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, vfake *fakeVal
 
 	capLog := shared.NewCapturingLogger()
 	app := NewApp(AppDeps{
-		Persist:       d.Tables(),
-		Queue:         d.Queue(),
-		Clock:         shared.SystemClock{},
-		Logger:        capLog,
-		Stores:        reg,
-		LifecycleSubs: lcReg,
+		Persist:        d.Tables(),
+		Queue:          d.Queue(),
+		Clock:          shared.SystemClock{},
+		Logger:         capLog,
+		ClaimProducers: reg,
+		LifecycleSubs:  lcReg,
 		Executors: map[string]ExecutorEntry{
 			"worker": {Transport: "grpc", Endpoint: "localhost:0"},
 		},

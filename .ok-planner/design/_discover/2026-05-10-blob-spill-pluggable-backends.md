@@ -25,7 +25,7 @@ Handles are self-describing: each backend prefixes its handles (`inline:`, `pglo
 
 Orphan-blob tracking lives in `rimsky_blob_orphans` (`migrations/006-platform-extensions-park-blob-events.sql`). When a row that references a blob handle is deleted, the handle is moved to the orphan table; a sweep (`foundation/integration/orphan_blobs.go`) calls `BlobBackend.Delete` after a retention window. This decoupling lets the foreign-key-cascading rows commit without producing a slow blob-delete inline.
 
-`@blessed-invariant 21` (annotated at `foundation/persistence/blob.go:25-50`) is the opacity discipline: blob bytes are read only via `walkPath` substitution (the modeling-attribute substitution leaf) and the persistence-layer fetch on attribute/parked-payload/event read. Rimsky never logs, normalizes, hashes, indexes, pattern-matches, or includes blob bytes in error messages. This makes the spill mechanism transparent to substitution — a 50MB attribute and a 50-byte attribute substitute identically.
+The blob-inertness rule (annotated at `foundation/persistence/blob.go:25-50`) is the opacity discipline: blob bytes are read only via `walkPath` substitution (the modeling-attribute substitution leaf) and the persistence-layer fetch on attribute/parked-payload/event read. Rimsky never logs, normalizes, hashes, indexes, pattern-matches, or includes blob bytes in error messages. This makes the spill mechanism transparent to substitution — a 50MB attribute and a 50-byte attribute substitute identically.
 
 ## Code surface
 
@@ -45,7 +45,7 @@ Orphan-blob tracking lives in `rimsky_blob_orphans` (`migrations/006-platform-ex
 
 ## Adjacent topics
 
-- `2026-05-10-opacity-of-userdata-claim-blob` — invariant 21 / 11 / 20 collectively.
+- `2026-05-10-opacity-of-userdata-claim-blob` — blob-inertness, userdata-opacity, and claim-inertness collectively.
 - `2026-05-10-postgres-only-runtime-state` — the three-process topology that rejects `memory`.
 - `2026-05-10-event-log-append-only-jsonb` — `rimsky_node_events` is one of the three spill-capable surfaces.
 - `2026-05-10-parked-state-and-resume` — parked payloads are another spill-capable surface.

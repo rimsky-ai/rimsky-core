@@ -72,7 +72,7 @@ other examples or other templates against the same primitives.
 | **Planner** | `claude-agent` executor with planning prompt | Reads a ticket or task description; produces a structured plan: files to touch, approach, expected tests, risks. |
 | **Implementer** | `claude-agent` executor with code-writing prompt | Reads the plan; writes the code changes on a feature branch. |
 | **Nitpicker reviewer** | `claude-agent` executor with strict-style prompt | Reviews the implementer's diff for style, naming, dead code, comment quality, test coverage. Adversarial — looks for things to flag. |
-| **Architect reviewer** | `claude-agent` executor with architectural-review prompt | Reviews the implementer's diff against the broader codebase: does this introduce coupling? Does it violate any blessed invariants? Does it duplicate logic? |
+| **Architect reviewer** | `claude-agent` executor with architectural-review prompt | Reviews the implementer's diff against the broader codebase: does this introduce coupling? Does it violate any load-bearing invariants? Does it duplicate logic? |
 | **Test runner** | `http-node` executor wrapping the repo's test command | Runs the test suite against the feature branch. |
 | **Deploy-gate** | `http-node` executor wrapping deploy validation | (Optional) For factories that auto-deploy, this gates merge on staging-environment health checks. |
 | **Human reviewer** | Long-running async executor | Optional final sign-off. Configurable: required for some templates, skipped for others. |
@@ -148,7 +148,7 @@ a different layer than Gas City solves it.
 
 The branch claim is opened when `plan` decides on a branch name and
 held across `implement`, the reviewers, `tests`, and `merge`. The
-auto-terminal mechanism (`@blessed-invariant 13`) commits or abandons
+auto-terminal mechanism commits or abandons
 based on the aggregate outcome of the holding subgraph:
 
 - All-completed (tests green, both reviewers approve, human approves)
@@ -208,8 +208,8 @@ the executor protocol on `:8090`," not "fork the framework."
 
 Every node transition lands in `rimsky_events`. The held-claim ledger
 shows which agent process held the branch claim at any given timestamp
-(claimant guard prevents stale orphans from impersonating a live
-holder; `@blessed-invariant 4`). Templates are content-addressed
+(the claimant-guarded release rule prevents stale orphans from impersonating a live
+holder). Templates are content-addressed
 (`sha256-...`), so "what spec was this factory running at the time of
 the incident" is a deterministic question.
 

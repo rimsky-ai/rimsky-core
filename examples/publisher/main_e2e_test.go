@@ -109,7 +109,6 @@ func exerciseMessageDeliveryLeg(t *testing.T, ep harness.RimskyEndpoint, state *
 		"type":                      exampleMessageType,
 		"payload":                   map[string]any{"hello": "world"},
 		"sender":                    "example-publisher",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": state.subscriptionID,
 	}
 	statusCode, body := postWithHeader(t, ep, "/v1/instances/"+state.instanceID+"/messages",
@@ -134,7 +133,6 @@ func exerciseMessageDeliveryLeg(t *testing.T, ep harness.RimskyEndpoint, state *
 		"type":                      exampleMessageType,
 		"payload":                   map[string]any{"hello": "world-2"},
 		"sender":                    "example-publisher",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": state.subscriptionID,
 	}
 	freshStatus, freshBody := postWithHeader(t, ep, "/v1/instances/"+state.instanceID+"/messages",
@@ -150,7 +148,6 @@ func exerciseMissingDedupHeaderLeg(t *testing.T, ep harness.RimskyEndpoint, stat
 		"type":                      exampleMessageType,
 		"payload":                   map[string]any{"missing": "header"},
 		"sender":                    "example-publisher",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": state.subscriptionID,
 	}
 	statusCode, body := postWithHeader(t, ep, "/v1/instances/"+state.instanceID+"/messages",
@@ -261,7 +258,6 @@ func deployExampleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 					"name":         "example",
 					"kind":         exampleKind,
 					"config":       json.RawMessage(`{}`),
-					"target_node":  reactorNodeType,
 					"message_type": exampleMessageType,
 				},
 			},

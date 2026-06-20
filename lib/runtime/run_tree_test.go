@@ -15,7 +15,7 @@ import (
 func success(changed bool) ChildState {
 	return ChildState{
 		State:              cascade.NodeStateFresh,
-		SettlingSignalType: signalpkg.TypePath("terminal/success"),
+		SettlingSignalType: signalpkg.PathPtr("terminal/success"),
 		Changed:            changed,
 	}
 }
@@ -23,7 +23,7 @@ func success(changed bool) ChildState {
 func failure() ChildState {
 	return ChildState{
 		State:              cascade.NodeStateFailed,
-		SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure"),
+		SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure"),
 	}
 }
 

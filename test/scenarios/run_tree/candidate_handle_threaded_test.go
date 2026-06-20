@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/test/support/stores/stub/dataprocessing"
+	"github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/dataprocessing"
 )
 
 func TestCandidateHandleThreaded_PerPartitionKeyUnique(t *testing.T) {

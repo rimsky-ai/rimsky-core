@@ -119,8 +119,7 @@ TEMPLATE_BODY='{
         "name": "watcher",
         "kind": "object-store",
         "config": {"backend": "filesystem", "bucket": "events", "prefix": "", "poll_interval": "1s", "watermark_field": "name"},
-        "target_node": "reactor",
-        "message_kind": "invalidate"
+        "message_type": "message/invalidate/publisher/reactor"
       }
     ]
   }

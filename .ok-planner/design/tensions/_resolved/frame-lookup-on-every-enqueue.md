@@ -18,7 +18,7 @@ resolution:
 
 `framesImpl.LookupFrameResolutionMode` (`foundation/persistence/postgres/frames.go`) executes a `JOIN rimsky_instances → rimsky_templates` query on every call to `frame.EnqueueOrCoalesce` (`graph/frame/producer.go`), reading `frame_resolution_mode` and `frame_timeout_ms` out of `rimsky_templates.spec` JSONB. The result is then used to route to `EnqueueSerialFrame` / `EnqueueCoalesceFrame` and stamp the new frame row.
 
-But: `i.template_hash` is fixed at instance creation, the spec JSONB is content-addressed (`@blessed-invariant adjacent to JCS canonicalization`), and there is no mechanism by which `frame_resolution_mode` or `frame_timeout_ms` could differ between two enqueues for the same instance. The lookup is doing real work to recompute a per-instance constant.
+But: `i.template_hash` is fixed at instance creation, the spec JSONB is content-addressed (`invariant adjacent to JCS canonicalization`), and there is no mechanism by which `frame_resolution_mode` or `frame_timeout_ms` could differ between two enqueues for the same instance. The lookup is doing real work to recompute a per-instance constant.
 
 The same `LookupFrameResolutionMode` is the only code path that reads those fields, so the cost is contained, but the boundary between "spec-resident" (source of truth) and "instance-resident" (denormalized for read efficiency) is unclear: per-instance immutable values live in the spec, not on the instance row.
 

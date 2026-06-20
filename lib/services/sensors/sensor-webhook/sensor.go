@@ -28,7 +28,6 @@ type Watch struct {
 	InstanceID        string
 	PathPrefix        string
 	IdempotencyHeader string
-	TargetNode        string
 	MessageType       string
 
 	mu              sync.Mutex
@@ -128,7 +127,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		InstanceID:        req.GetInstanceId(),
 		PathPrefix:        cfg.PathPrefix,
 		IdempotencyHeader: cfg.IdempotencyHeader,
-		TargetNode:        req.GetTargetNode(),
 		MessageType:       messageType,
 		StartedAt:         s.clock(),
 	}
@@ -260,7 +258,6 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			PublisherSubscriptionId: w.SubscriptionID,
 			InstanceId:              w.InstanceID,
 			Kind:                    "webhook",
-			TargetNode:              w.TargetNode,
 			MessageType:             w.MessageType,
 			StartedAt:               timestamppb.New(w.StartedAt),
 		})
@@ -277,7 +274,6 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 		"type":                      w.MessageType,
 		"payload":                   json.RawMessage(payloadBytes),
 		"sender":                    "sensor-webhook",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": w.SubscriptionID,
 	}
 	raw, err := publisherkit.MarshalEnvelope(envelope)
@@ -289,7 +285,7 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 		URL:            url,
 		Envelope:       raw,
 		IdempotencyKey: idempotencyKey,
-		SensorName:     "sensor-webhook",
+		PublisherName:  "sensor-webhook",
 		SubscriptionID: w.SubscriptionID,
 	})
 	return res.Err

@@ -16,9 +16,9 @@ import (
 func TestStatePropagation_NonTerminalChildHoldsParent(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 		{State: cascade.NodeStateRunning},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
 	if res.IsSettled {
@@ -41,7 +41,7 @@ func TestStatePropagation_AllStaleStillNonTerminal(t *testing.T) {
 func TestStatePropagation_ParkedChildAggregatesAsTerminal(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 		{State: cascade.NodeStateParked},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
@@ -53,8 +53,8 @@ func TestStatePropagation_ParkedChildAggregatesAsTerminal(t *testing.T) {
 func TestStatePropagation_FreshUnchangedAggregatesToParent(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
 	if !res.IsSettled {
@@ -68,9 +68,9 @@ func TestStatePropagation_FreshUnchangedAggregatesToParent(t *testing.T) {
 func TestStatePropagation_FreshChangedDominatesUnchanged(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
 	if !res.IsSettled {

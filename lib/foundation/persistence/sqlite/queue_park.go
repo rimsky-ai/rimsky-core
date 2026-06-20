@@ -464,7 +464,7 @@ func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 		FrameID:                  frame,
 		ParkedAt:                 parkedAt,
 		ConsecutiveRetriesNoProg: consecutiveRetries,
-		RequiredStores:           stores,
+		RequiredClaimProducers:   stores,
 	}
 	if executor.Valid {
 		out.ExecutorName = executor.String

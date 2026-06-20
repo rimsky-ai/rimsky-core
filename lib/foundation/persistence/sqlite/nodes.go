@@ -160,7 +160,7 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+nodeCols+` `+nodeSelect+`
 		 WHERE n.executor IS NOT NULL AND n.executor <> ''
-		   AND r.state = 'stale'
+		   AND r.state IN ('stale','resuming')
 		   AND r.phase = 'pending'
 		   AND NOT EXISTS (
 		     SELECT 1 FROM rimsky_wait_set w
@@ -218,10 +218,12 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[ca
 	}
 	defer rows.Close()
 	out := map[cascade.NodeState]int{
-		cascade.NodeStateFresh:   0,
-		cascade.NodeStateStale:   0,
-		cascade.NodeStateRunning: 0,
-		cascade.NodeStateFailed:  0,
+		cascade.NodeStateFresh:    0,
+		cascade.NodeStateStale:    0,
+		cascade.NodeStateRunning:  0,
+		cascade.NodeStateFailed:   0,
+		cascade.NodeStateParked:   0,
+		cascade.NodeStateResuming: 0,
 	}
 	for rows.Next() {
 		var state string
@@ -503,27 +505,12 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationsha
 
 // @concept: run-scope
 func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshared.UUID, runScopeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
-	// @story: cascade-emit
-	// @concept: message-emitter-node
 	res, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
 		 SELECT ?,
 		        n.id,
-		        COALESCE(
-		          NULLIF(n.executor, ''),
-		          (SELECT CASE
-		                    WHEN json_extract(nd.value, '$.emits_message') IS NOT NULL
-		                     AND json_extract(nd.value, '$.emits_message') <> ''
-		                    THEN '@emit-message'
-		                  END
-		             FROM rimsky_instances i
-		             JOIN rimsky_templates t ON t.id = i.template_hash
-		             JOIN json_each(t.spec, '$.nodes') AS nd
-		            WHERE i.id = n.instance_id
-		              AND json_extract(nd.value, '$.type') = n.node_type
-		            LIMIT 1)
-		        ),
+		        NULLIF(n.executor, ''),
 		        COALESCE((
 		          SELECT json_group_array(json_extract(store.value, '$.name'))
 		            FROM rimsky_instances i

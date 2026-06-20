@@ -57,7 +57,7 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 			ClaimHandleID:       subIDs[0],
 			SupervisorID:        args.SupervisorID,
 			Source:              runtime.ActiveTerminal,
-			Outcome:             runtime.AggregateAbandon,
+			Outcome:             runtime.OutcomeAbandon,
 			Producer:            store,
 			Scope:               []byte(`"sub-scope"`),
 			Address:             []byte(`"sub-addr"`),
@@ -82,8 +82,8 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 		"parent claim must receive its own Abandon (aggregator decision)")
 
 	verifyLineageOutcome(ctx, t, backend, subIDs[0], persistence.LineageOutcomeAbandoned, "")
-	verifyLineageOutcome(ctx, t, backend, subIDs[1], persistence.LineageOutcomeForceCancelled, string(runtime.TerminalCauseSiblingCancel))
-	verifyLineageOutcome(ctx, t, backend, subIDs[2], persistence.LineageOutcomeForceCancelled, string(runtime.TerminalCauseSiblingCancel))
+	verifyLineageOutcome(ctx, t, backend, subIDs[1], persistence.LineageOutcomeForceCancelled, "sibling_cancel")
+	verifyLineageOutcome(ctx, t, backend, subIDs[2], persistence.LineageOutcomeForceCancelled, "sibling_cancel")
 	verifyLineageOutcome(ctx, t, backend, parentID, persistence.LineageOutcomeAbandoned, "")
 
 	var page persistence.EventListResult

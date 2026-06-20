@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	pgstoreserver "github.com/rimsky-ai/rimsky-core/lib/services/stores/postgres/server"
+	pgstoreserver "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/server"
 )
 
 func startPgStore(t *testing.T, dsn string, enableExecutor bool) (grpcAddr string, teardown func()) {

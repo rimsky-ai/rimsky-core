@@ -15,7 +15,7 @@ A node's dispatch lifecycle has multiple distinct stages: queued, actively claim
 
 > Held claim handles outlive their owning worker-request's active-phase terminal until auto-terminal resolution... Cascade would race against held-claim resolution.
 
-`@blessed-invariant 19` (`foundation/persistence/worker_requests.go:34`): dispatch rows always carry a non-zero `frame_id`. Frame-end is the SQL predicate "no `rimsky_nodes` rows in `stale` or `running` for this instance" (`2026-05-10-frame-resolution-model`).
+The frame-id-non-null rule (`foundation/persistence/worker_requests.go:34`) requires that dispatch rows always carry a non-zero `frame_id`. Frame-end is the SQL predicate "no `rimsky_nodes` rows in `stale` or `running` for this instance" (`2026-05-10-frame-resolution-model`).
 
 The five phases:
 
@@ -43,7 +43,7 @@ The Phase-5 consolidation made every dispatch-state question answerable from one
 
 - `foundation/persistence/postgres/migrations/001-initial.sql:5-37, 103-120, 170-209, 221-232` — schema with annotations.
 - `foundation/persistence/postgres/migrations/006-platform-extensions-park-blob-events.sql:13-40` — `parked` phase + park columns.
-- `foundation/persistence/worker_requests.go:14-100` — Go-side struct + `@blessed-invariant 19`.
+- `foundation/persistence/worker_requests.go:14-100` — Go-side struct + frame-id-non-null annotation.
 - `foundation/persistence/claim_handles.go` — Go-side CRUD.
 - `foundation/persistence/claim_holders.go` — Go-side CRUD.
 - `foundation/integration/orphan_reaper.go` — phase='active' sweep.
@@ -62,7 +62,7 @@ The Phase-5 consolidation made every dispatch-state question answerable from one
 - `2026-05-10-auto-terminal-aggregate-resolution` — uses `phase='held'` rows.
 - `2026-05-10-parked-state-and-resume` — `phase='parked'`.
 - `2026-05-10-orphan-reaper-no-producer-abandon` — `phase='active'` only.
-- `2026-05-10-frame-resolution-model` — `frame_id NOT NULL` invariant 19.
+- `2026-05-10-frame-resolution-model` — the `frame_id NOT NULL` rule.
 - `2026-05-10-claimant-guarded-release` — `claimed_by` predicates.
 
 ## Observations

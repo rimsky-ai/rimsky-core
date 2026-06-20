@@ -17,9 +17,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 const producerClassUnavailable = "pg/claim_unavailable"
@@ -43,8 +43,8 @@ func startClassifyingProducer(t *testing.T) (*scenario.Harness, *stubstore.Store
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: caps,
@@ -71,7 +71,7 @@ func driveProducerClassifiedRetry(
 					Executor:   "stub",
 					ErrorTypes: errorTypes,
 				},
-				scenario.WithStores(scenario.WriteClaimRef("queue-store", "@queue")),
+				scenario.WithClaimProducers(scenario.WriteClaimRef("queue-store", "@queue")),
 			),
 		},
 	})

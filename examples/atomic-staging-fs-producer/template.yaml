@@ -3,7 +3,7 @@ version: "1.0"
 nodes:
   - type: stage-data
     executor: http-node
-    stores:
+    claim_producers:
       - { name: atomic-staging-fs, alias: target, selector: my-scope, intent: rw }
     userdata: { url: "http://my-loader.internal:8080/load" }
     attributes:

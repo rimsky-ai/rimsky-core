@@ -28,7 +28,7 @@ A small, exhaustively-enumerated state vocabulary keeps "is this node eligible t
 
 ## Invariants
 
-- `NextState(current, reason)` rejects `current == requested` under `dispatch_claimed` — no silent idempotent short-circuit (`@blessed-invariant 1`, `foundation/cascade/state.go:103-108`).
+- `NextState(current, reason)` rejects `current == requested` under `dispatch_claimed` — no silent idempotent short-circuit (invariant 1, `foundation/cascade/state.go:103-108`).
 - `ReasonHandlerError` is a deliberate dead-end sentinel; legal in audit but rejected as a transition reason.
 - `parked → fresh` is rejected; wake transitions go `parked → stale` then re-dispatch.
 

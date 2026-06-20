@@ -346,7 +346,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 
 		"message:send": {
 			method: "POST", path: "/v1/instances/" + instanceID + "/messages" + dr,
-			body:      map[string]any{"type": "system/invalidate", "sender": "operator-test", "sender_kind": "operator"},
+			body:      map[string]any{"type": "system/invalidate", "sender": "operator-test"},
 			headerKey: "Idempotency-Key", headerVal: "dryrun-msg-key",
 			wouldHaveKey: "would_have_sent", verifyNoMutation: messageCountUnchanged(instanceID),
 		},
@@ -555,7 +555,7 @@ func seedDurableAsset(ctx context.Context, t *testing.T, f *authFixture) (string
 		Version: "1",
 		Nodes: []spec.TemplateNodeDef{{
 			Type: nodeType,
-			Stores: []spec.NodeStoreRef{{
+			ClaimProducers: []spec.NodeClaimProducerRef{{
 				Name:     producerName,
 				Selector: "static",
 				Intent:   "rw",

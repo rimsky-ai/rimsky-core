@@ -8,7 +8,7 @@ aliases: []
 
 ## Definition
 
-An out-of-process gRPC binary that implements one or more rimsky service protocols and is orchestrated by rimsky.
+An out-of-process binary speaking rimsky's service protocols that implements one or more of them and is orchestrated by rimsky.
 
 ## Purpose
 
@@ -23,7 +23,7 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 - How a binary declares its protocol membership in the unified config (the per-service-entry protocol-membership list; see `concept:rimsky-yml`).
 - The capabilities startup handshake (one handshake call per protocol; see `concept:observability` for the discovery-cache that consumes them).
 - Conformance-validation entry points (the per-protocol conformance subcommands shipped in the single binary, not standalone per-protocol binaries; see `concept:conformance`).
-- The multi-protocol composition pattern: a binary implementing N rimsky protocols uses N distinct handlers, one per protocol. Method-name collisions across protocols (e.g., a capabilities query on both the claim-producer and the executor-observability protocol) are resolved at the composition site, not by collapsing the protocols into one. Each handler implements one protocol; the binary registers each separately at the gRPC server.
+- The multi-protocol composition pattern: a binary implementing N rimsky protocols uses N distinct handlers, one per protocol. Method-name collisions across protocols (e.g., a capabilities query on both the claim-producer and the executor-observability protocol) are resolved at the composition site, not by collapsing the protocols into one. Each handler implements one protocol; the binary registers each separately with its serving stack.
 
 ## Invariants
 

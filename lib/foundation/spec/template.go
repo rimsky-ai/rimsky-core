@@ -57,10 +57,10 @@ type TemplateNodeDef struct {
 	// @concept: node
 	Tags []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 
-	Stores     []NodeStoreRef             `yaml:"stores,omitempty" json:"stores,omitempty"`
-	Locks      []NodeLockRef              `yaml:"locks,omitempty" json:"locks,omitempty"`
-	Attributes *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
-	ErrorTypes map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
+	ClaimProducers []NodeClaimProducerRef     `yaml:"claim_producers,omitempty" json:"claim_producers,omitempty"`
+	Locks          []NodeLockRef              `yaml:"locks,omitempty" json:"locks,omitempty"`
+	Attributes     *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
+	ErrorTypes     map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
 
 	//	@concept: node-subscription
 	//	@concept: cascade
@@ -98,7 +98,7 @@ const (
 )
 
 // @concept: claim
-type NodeStoreRef struct {
+type NodeClaimProducerRef struct {
 	Name     string          `yaml:"name" json:"name"`
 	Selector string          `yaml:"selector" json:"selector"`
 	Intent   string          `yaml:"intent" json:"intent"`
@@ -107,7 +107,7 @@ type NodeStoreRef struct {
 	Data     json.RawMessage `yaml:"data,omitempty" json:"data,omitempty"`
 }
 
-func (s NodeStoreRef) AliasOf() string {
+func (s NodeClaimProducerRef) AliasOf() string {
 	if s.Alias != "" {
 		return s.Alias
 	}

@@ -21,10 +21,10 @@ Owns: the aggregate-outcome computation, the producer-verb dispatch, the post-fi
 
 ## Invariants
 
-- Exactly one resolution per held claim — enforced by a row-locking select plus the row-state check (`@blessed-invariant 13`).
+- Exactly one resolution per held claim — enforced by a row-locking select plus the row-state check (invariant 13).
 - Aggregate-outcome rule: any-failed → Abandon; all-completed → Commit.
 - The producer verb fires before the surrounding rimsky tx commits — the verb-then-tx-fail leak path is mitigated by requiring terminal verbs to be idempotent in the claim id.
-- State transition of the claim-handle row uses **two guard shapes** (`@blessed-invariant 4`):
+- State transition of the claim-handle row uses **two guard shapes** (invariant 4):
   - Active-row mutations (Promote, liveness-extend, the ownership-bail delete inside the unified engine) are claimant-guarded by matching the holder-supervisor id against the acting supervisor.
   - Non-active-row deletions (retention sweep, asset Release path) are absence-guarded: the row's holder-supervisor id is null by construction (Promote nulled it); the row-discovery query filter substitutes for the per-row claimant check.
 - The unified resolution engine is the audited entry point for resolving already-opened claims; its source kinds are active-terminal, held-terminal, and ownership-bail (the post-commit verify-before-run race-detection bail, under which the engine fires the per-acquired-claim Abandon and then deletes the row claimant-guarded instead of promoting it). One carve-out routes through the shared abandon helper instead of the unified engine: the pre-dispatch acquire-unavailable path, where the claim-handle rows are already gone (rolled back by the acquisition tx), so there is no row transition to fold.

@@ -74,12 +74,12 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 			return err
 		}
 		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         pausedNodeID,
-			ExecutorName:   "test-executor",
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now().Add(-1 * time.Second),
-			FrameID:        pausedFrameID,
-			RunScopeID:     pausedRunScopeID,
+			NodeID:                 pausedNodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                pausedFrameID,
+			RunScopeID:             pausedRunScopeID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("seed paused instance: %v", err)
@@ -87,12 +87,12 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         activeFix.NodeID,
-			ExecutorName:   "test-executor",
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now().Add(-1 * time.Second),
-			FrameID:        activeFix.FrameID,
-			RunScopeID:     activeFix.MainRunScopeID,
+			NodeID:                 activeFix.NodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                activeFix.FrameID,
+			RunScopeID:             activeFix.MainRunScopeID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("enqueue active row: %v", err)
@@ -102,9 +102,9 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 	var sawActive, sawPaused bool
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"test-executor"},
-			AcceptedStores:    []string{},
-			Limit:             100,
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  100,
 		})
 		if err != nil {
 			return err
@@ -139,9 +139,9 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 	sawPaused = false
 	err = store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"test-executor"},
-			AcceptedStores:    []string{},
-			Limit:             100,
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  100,
 		})
 		if err != nil {
 			return err

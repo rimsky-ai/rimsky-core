@@ -7,7 +7,7 @@ kind: discipline
 
 ## Description
 
-Rimsky's blessed invariants are mostly load-bearing safety properties (no double-execute, claimant-guarded release, verify-before-run, atomic acquisition). Each has a regression test that exercises it. The tests live in `test/scenarios/` and use a harness in `modeling/scenario/` to drive the supervisor through realistic flows.
+Rimsky's named invariants are mostly load-bearing safety properties (no double-execute, claimant-guarded release, verify-before-run, atomic acquisition). Each has a regression test that exercises it. The tests live in `test/scenarios/` and use a harness in `modeling/scenario/` to drive the supervisor through realistic flows.
 
 `modeling/scenario/harness.go` is the entry point. CLAUDE.md "Blessed invariants" guidance: "When adding new invariant coverage, drive the supervisor through `modeling/scenario.Start` against pre-launched producer-services on ephemeral ports (the smoke fixture in `test/smoke/setup.go` is the reference example)."
 

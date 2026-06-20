@@ -19,9 +19,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
@@ -34,8 +34,8 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 
 	h := scenario.Start(t, scenario.HarnessOpts{
 		NoSupervisor: true,
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -49,7 +49,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
-				scenario.WithStores(scenario.WriteClaimRef("content", "/region-A")),
+				scenario.WithClaimProducers(scenario.WriteClaimRef("content", "/region-A")),
 			),
 		},
 	})
@@ -75,17 +75,17 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	reg.Add("content", fake)
 
 	args := runtime.RunArgs{
-		Persist:           h.Persist,
-		Queue:             h.Queue,
-		ClaimHandles:      h.Persist.ClaimHandles(),
-		AdvisoryLocker:    h.Driver.AdvisoryLocker(),
-		StoreRegistry:     reg,
-		Clock:             shared.SystemClock{},
-		Logger:            shared.SilentLogger{},
-		SupervisorID:      "scenario-runner-rollback",
-		AcceptedExecutors: []string{"stub"},
-		AcceptedStores:    []string{"content"},
-		Pool:              pool,
+		Persist:                h.Persist,
+		Queue:                  h.Queue,
+		ClaimHandles:           h.Persist.ClaimHandles(),
+		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
+		StoreRegistry:          reg,
+		Clock:                  shared.SystemClock{},
+		Logger:                 shared.SilentLogger{},
+		SupervisorID:           "scenario-runner-rollback",
+		AcceptedExecutors:      []string{"stub"},
+		AcceptedClaimProducers: []string{"content"},
+		Pool:                   pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),
@@ -134,8 +134,8 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -150,7 +150,7 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
-				scenario.WithStores(scenario.WriteClaimRef("content", "/region-B")),
+				scenario.WithClaimProducers(scenario.WriteClaimRef("content", "/region-B")),
 			),
 		},
 	})
@@ -175,7 +175,7 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	require.Equal(t, 0, activeCount,
-		"after worker reaches fresh, zero ACTIVE lock-holder rows must remain (invariant 4 post-Stage-3)")
+		"after worker reaches fresh, zero ACTIVE lock-holder rows must remain (claimant-guarded release should have cleared them)")
 
 	var nullHolderCount int
 	err := h.Pool.QueryRow(h.Ctx,

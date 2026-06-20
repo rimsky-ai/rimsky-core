@@ -52,19 +52,19 @@ func seedRunForNode(
 	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         nodeID,
-			ExecutorName:   "stub",
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now().Add(-1 * time.Second),
-			FrameID:        frameID,
-			RunScopeID:     mainScopeID,
+			NodeID:                 nodeID,
+			ExecutorName:           "stub",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                frameID,
+			RunScopeID:             mainScopeID,
 		}, tx); err != nil {
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"stub"},
-			AcceptedStores:    []string{},
-			Limit:             16,
+			AcceptedExecutors:      []string{"stub"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  16,
 		})
 		if err != nil {
 			return err
@@ -429,7 +429,7 @@ func seedFanOutParentAndSubclaims(
 func resolveSubclaim(
 	ctx context.Context, t *testing.T, backend persistence.Tables,
 	args runtime.RunArgs, subID, parentID shared.UUID,
-	producer locks.ClaimProducer, outcome runtime.AggregateOutcome,
+	producer locks.ClaimProducer, outcome runtime.TerminalOutcome,
 ) {
 	t.Helper()
 	resolveSubclaimWithLifetime(ctx, t, backend, args, subID, parentID, producer, outcome, "subgraph")
@@ -438,7 +438,7 @@ func resolveSubclaim(
 func resolveSubclaimWithLifetime(
 	ctx context.Context, t *testing.T, backend persistence.Tables,
 	args runtime.RunArgs, subID, parentID shared.UUID,
-	producer locks.ClaimProducer, outcome runtime.AggregateOutcome,
+	producer locks.ClaimProducer, outcome runtime.TerminalOutcome,
 	lifetime spec.ClaimLifetime,
 ) {
 	t.Helper()
@@ -515,8 +515,8 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 		ctx, t, backend, parentRunID, parentNode.ID, "sup-BE",
 		"be-store", policy, 2,
 	)
-	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateAbandon)
-	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateCommit)
+	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeAbandon)
+	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.OutcomeCommit)
 
 	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "commit"),
 		"best_effort with 1 commit + 1 abandon must Commit the parent")
@@ -570,9 +570,9 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 		ctx, t, backend, parentRunID, parentNode.ID, "sup-TH",
 		"th-store", policy, 3,
 	)
-	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit)
-	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateCommit)
-	resolveSubclaim(ctx, t, backend, args, subIDs[2], parentID, store, runtime.AggregateAbandon)
+	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeCommit)
+	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.OutcomeCommit)
+	resolveSubclaim(ctx, t, backend, args, subIDs[2], parentID, store, runtime.OutcomeAbandon)
 
 	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "commit"),
 		"threshold(2) with abandoned=1 must Commit the parent")
@@ -626,8 +626,8 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 		ctx, t, backend, parentRunID, parentNode.ID, "sup-ST",
 		"st-store", policy, 2,
 	)
-	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit)
-	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateAbandon)
+	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeCommit)
+	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.OutcomeAbandon)
 
 	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
 		"strict with abandoned=1 must Abandon the parent")
@@ -695,8 +695,8 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 		}, tx)
 	}))
 
-	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit)
-	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateCommit)
+	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeCommit)
+	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.OutcomeCommit)
 
 	require.Equal(t, 0, countCallsOnID(store.Calls(), parentID.String(), "commit"),
 		"parent must NOT Commit while a co-holder is still active (issue D)")
@@ -772,7 +772,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 		"cq-store", policy, 2,
 	)
 
-	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit)
+	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeCommit)
 
 	parentHolderID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -804,10 +804,10 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 	require.NotNil(t, parentRow,
 		"parent claim_handle must survive the deferred cycle-6 quorum check")
 
-	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateCommit)
+	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.OutcomeCommit)
 
 	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "commit"),
-		"parent must Commit via `SettleChildren` once the last child resolves")
+		"parent must Commit via `SettleFromFanoutChild` once the last child resolves")
 	require.Equal(t, 0, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
 		"parent must NOT Abandon under strict aggregation when both children committed")
 }
@@ -968,8 +968,8 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 		ctx, t, backend, parentRunID, parentNode.ID, "sup-BD",
 		"be-dur-store", policy, 2,
 	)
-	resolveSubclaimWithLifetime(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit, spec.ClaimLifetimeDurable)
-	resolveSubclaimWithLifetime(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateCommit, spec.ClaimLifetimeDurable)
+	resolveSubclaimWithLifetime(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeCommit, spec.ClaimLifetimeDurable)
+	resolveSubclaimWithLifetime(ctx, t, backend, args, subIDs[1], parentID, store, runtime.OutcomeCommit, spec.ClaimLifetimeDurable)
 
 	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "commit"),
 		"best_effort with all-durable-Commit children must Commit the parent (counters must bump despite durable-promotion early return)")
@@ -1039,7 +1039,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 		"cs-store", policy, 3,
 	)
 
-	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateAbandon)
+	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeAbandon)
 
 	for i, sid := range subIDs {
 		var row *persistence.ClaimHandleRow
@@ -1126,7 +1126,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 		"cs-dur-store", policy, 3,
 	)
 
-	resolveSubclaimWithLifetime(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit, spec.ClaimLifetimeDurable)
+	resolveSubclaimWithLifetime(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeCommit, spec.ClaimLifetimeDurable)
 
 	var s0 *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -1138,7 +1138,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 	require.Equal(t, spec.ClaimHandleStateCommitted, s0.State,
 		"sub[0] must be promoted to state=committed on Commit")
 
-	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateAbandon)
+	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.OutcomeAbandon)
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, subIDs[0], tx)
@@ -1263,7 +1263,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 		return nil
 	}))
 
-	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateAbandon)
+	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeAbandon)
 
 	allIDs := []shared.UUID{subIDs[0], subIDs[1], g1, g2, parentID}
 	allNames := []string{"sub[0]", "sub[1]", "g1", "g2", "PARENT"}

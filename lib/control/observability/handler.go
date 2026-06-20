@@ -26,17 +26,17 @@ func inTx(ctx context.Context, tables persistence.Tables, fn func(ctx context.Co
 }
 
 type Deps struct {
-	Tables    persistence.Tables
-	Queue     persistence.Queue
-	Driver    persistence.Database
-	Executors []PeerSpec
-	Stores    []PeerSpec
-	Discovery *Discovery
+	Tables         persistence.Tables
+	Queue          persistence.Queue
+	Driver         persistence.Database
+	Executors      []PeerSpec
+	ClaimProducers []PeerSpec
+	Discovery      *Discovery
 }
 
 func Routes(r chi.Router, deps Deps) {
-	r.Get("/stores", handleListStores(deps))
-	r.Get("/stores/{name}", handleGetStore(deps))
+	r.Get("/claim-producers", handleListClaimProducers(deps))
+	r.Get("/claim-producers/{name}", handleGetClaimProducer(deps))
 	r.Get("/executors", handleListExecutors(deps))
 	r.Get("/executors/{name}", handleGetExecutor(deps))
 
@@ -114,14 +114,14 @@ func internalErr(w http.ResponseWriter, err error) {
 }
 
 type peerListResponse struct {
-	Stores    []PeerEntry `json:"stores,omitempty"`
-	Executors []PeerEntry `json:"executors,omitempty"`
+	ClaimProducers []PeerEntry `json:"claim_producers,omitempty"`
+	Executors      []PeerEntry `json:"executors,omitempty"`
 }
 
-func handleListStores(deps Deps) http.HandlerFunc {
+func handleListClaimProducers(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entries := []PeerEntry{}
-		for _, e := range deps.Stores {
+		for _, e := range deps.ClaimProducers {
 			cached, ok := deps.Discovery.GetStore(e.Name)
 			if !ok {
 				cached = PeerEntry{
@@ -133,14 +133,14 @@ func handleListStores(deps Deps) http.HandlerFunc {
 			}
 			entries = append(entries, cached)
 		}
-		writeJSON(w, http.StatusOK, peerListResponse{Stores: entries})
+		writeJSON(w, http.StatusOK, peerListResponse{ClaimProducers: entries})
 	}
 }
 
-func handleGetStore(deps Deps) http.HandlerFunc {
+func handleGetClaimProducer(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
-		if !peerExists(deps.Stores, name) {
+		if !peerExists(deps.ClaimProducers, name) {
 			notFound(w, "unknown store")
 			return
 		}
@@ -509,7 +509,7 @@ func handleListNodeRuns(deps Deps) http.HandlerFunc {
 				"claimed_at":       row.ClaimedAt,
 				"last_progress_at": row.LastProgressAt,
 				"frame_id":         row.FrameID,
-				"required_stores":  row.RequiredStores,
+				"required_stores":  row.RequiredClaimProducers,
 				"async_ack_id":     row.AsyncAckID,
 				"tags":             row.Tags,
 			})
@@ -742,7 +742,7 @@ func handleSystemHealth(deps Deps) http.HandlerFunc {
 			"postgres_status":    pgStatus,
 			"supervisors":        sups,
 			"executors":          deps.Discovery.ListExecutors(),
-			"stores":             deps.Discovery.ListStores(),
+			"claim_producers":    deps.Discovery.ListClaimProducers(),
 		})
 	}
 }

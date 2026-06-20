@@ -25,6 +25,10 @@ type MessageRow struct {
 	Cancelled   bool
 }
 
+// @decision: empty-message-as-root-trigger
+// @story: empty-message-wakes-roots
+func (m MessageRow) IsEmptyWake() bool { return m.Type == "" }
+
 type EnqueueMessageRequest struct {
 	ID         shared.UUID
 	InstanceID shared.UUID

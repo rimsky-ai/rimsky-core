@@ -53,8 +53,8 @@ func TestSubscribe_ParsesAndRegisters(t *testing.T) {
 		InstanceId:              "i1",
 		Kind:                    "http",
 		ResolvedConfig:          raw,
-		TargetNode:              "feed",
-		MessageType:             "invalidate",
+
+		MessageType: "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestSubscribe_ParsesAndRegisters(t *testing.T) {
 	if w.PollInterval != 15*time.Second {
 		t.Errorf("interval: %s", w.PollInterval)
 	}
-	if w.TargetNode != "feed" || w.MessageType != "invalidate" {
+	if w.MessageType != "invalidate" {
 		t.Errorf("routing fields: %+v", w)
 	}
 }
@@ -151,7 +151,7 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
-		TargetNode: "feed", MessageType: "invalidate",
+		MessageType: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -160,8 +160,8 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	if len(obsBody) != 1 {
 		t.Fatalf("messages after first tick: %d", len(obsBody))
 	}
-	if obsBody[0]["sender_kind"] != "publisher" {
-		t.Errorf("sender_kind: %v", obsBody[0]["sender_kind"])
+	if sub, _ := obsBody[0]["publisher_subscription_id"].(string); sub == "" {
+		t.Errorf("publisher_subscription_id: missing or empty (auth path discriminator)")
 	}
 	obsMu.Unlock()
 

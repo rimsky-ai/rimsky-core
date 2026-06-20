@@ -15,7 +15,7 @@ Some agentic workloads can't finish in a bounded window — they wait for human 
 2. **External invalidate** — an in-graph or admin invalidate against the parked node transitions parked → stale. Re-dispatch carries `resume_reason = "external_invalidate"`. The unified invalidate handler treats parked-node invalidates the same as admin-invalidates.
 3. **Watchdog timeout** — `max_park_duration` is the operator's safety cap; when `parked_at + max_park_duration < now()`, the watchdog forces parked → failed with `error_class: "park_timeout"`.
 
-Cascade does NOT propagate from `parked` (CLAUDE.md "Held vs. failed states"). Held claims are retained across the park boundary; the orphan-claim reaper skips `phase='parked'` rows because heartbeating is paused during park (`@blessed-invariant 6` adjustment per CLAUDE.md "Non-obvious gotchas").
+Cascade does NOT propagate from `parked` (CLAUDE.md "Held vs. failed states"). Held claims are retained across the park boundary; the orphan-claim reaper skips `phase='parked'` rows because heartbeating is paused during park (the orphan-cutoff adjustment per CLAUDE.md "Non-obvious gotchas").
 
 **Schema**: `rimsky_worker_request` adds the following columns (migration 006):
 

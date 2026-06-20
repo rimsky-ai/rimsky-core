@@ -16,8 +16,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 )
 
 const perRunScopeStoreName = "fanout-store"
@@ -40,7 +40,7 @@ func fanOutLateBindTemplateSpec(name string, partitionKeys []string) map[string]
 			{
 				"type":     "worker",
 				"executor": lateBindServiceName,
-				"stores": []map[string]any{
+				"claim_producers": []map[string]any{
 					{"name": perRunScopeStoreName, "selector": "data", "intent": "rw", "alias": "data"},
 				},
 				"fan_out": map[string]any{
@@ -67,8 +67,8 @@ func TestHostAgentPerRunScopeIsolation(t *testing.T) {
 
 	fx := newHostAgentFixture(t, fixtureOpts{
 		withAgent: true,
-		stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		stores: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				perRunScopeStoreName: {
 					Endpoint: "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{

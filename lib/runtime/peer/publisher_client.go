@@ -33,7 +33,6 @@ func (c *PublisherClient) Subscribe(ctx context.Context, req clientiface.Subscri
 		InstanceId:              req.InstanceID.String(),
 		Kind:                    req.Kind,
 		ResolvedConfig:          req.ResolvedConfig,
-		TargetNode:              req.TargetNode,
 		MessageType:             req.MessageType,
 	})
 	if err != nil {
@@ -71,7 +70,6 @@ func (c *PublisherClient) ListSubscriptions(ctx context.Context) ([]clientiface.
 			PublisherSubscriptionID: shared.UUID(wid),
 			InstanceID:              shared.UUID(iid),
 			Kind:                    w.GetKind(),
-			TargetNode:              w.GetTargetNode(),
 			MessageType:             w.GetMessageType(),
 		})
 	}

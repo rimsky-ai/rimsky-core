@@ -20,9 +20,9 @@ Owns: the four primitives, the two pinned long-lived keys (scheduler-tick and mi
 
 ## Invariants
 
-- Scheduler tick uses a non-blocking try-acquire on the pinned tick key (Postgres) or a non-blocking exclusive file lock (SQLite) — in both backends the exclusion holds across OS processes (`@blessed-invariant 7`).
+- Scheduler tick uses a non-blocking try-acquire on the pinned tick key (Postgres) or a non-blocking exclusive file lock (SQLite) — in both backends the exclusion holds across OS processes (invariant 7).
 - For the scheduler-tick lock, an error from the lock attempt is treated as lock-held: the sweep pass is skipped, never run unlocked. The sweeps are periodic recovery, so a one-interval delay is benign, while running unlocked permits the concurrent sweeping the lock exists to prevent.
-- Migration uses a blocking exclusion held for the duration of the batch — a session-level advisory lock (Postgres) or an exclusive file lock (SQLite), cross-process in both backends (`@blessed-invariant 8`).
+- Migration uses a blocking exclusion held for the duration of the batch — a session-level advisory lock (Postgres) or an exclusive file lock (SQLite), cross-process in both backends (invariant 8).
 - Per-name and per-scope advisory locks are transaction-scoped, released at COMMIT/ROLLBACK.
-- All multi-lock acquisitions walk a deterministic order keyed by lock kind then sort key (`@blessed-invariant 3`).
+- All multi-lock acquisitions walk a deterministic order keyed by lock kind then sort key (invariant 3).
 - Two pinned int64 keys are documented as "never reuse" at the definition site.

@@ -219,9 +219,9 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	var dispatchID shared.UUID
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		candidates, err := f.queue.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"worker"},
-			AcceptedStores:    []string{},
-			Limit:             1,
+			AcceptedExecutors:      []string{"worker"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  1,
 		})
 		if err != nil {
 			return err

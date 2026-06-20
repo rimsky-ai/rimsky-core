@@ -24,7 +24,7 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 	if accepts == nil {
 		accepts = []string{}
 	}
-	stores := in.AcceptedStores
+	stores := in.AcceptedClaimProducers
 	if stores == nil {
 		stores = []string{}
 	}
@@ -83,7 +83,7 @@ func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 		callbackPort *int
 	)
 	if err := sc.Scan(
-		&r.ID, &r.AcceptedExecutors, &r.AcceptedStores, &r.Concurrency,
+		&r.ID, &r.AcceptedExecutors, &r.AcceptedClaimProducers, &r.Concurrency,
 		&callbackHost, &callbackPort,
 		&r.RegisteredAt,
 	); err != nil {
@@ -96,8 +96,8 @@ func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 	if r.AcceptedExecutors == nil {
 		r.AcceptedExecutors = []string{}
 	}
-	if r.AcceptedStores == nil {
-		r.AcceptedStores = []string{}
+	if r.AcceptedClaimProducers == nil {
+		r.AcceptedClaimProducers = []string{}
 	}
 	return r, nil
 }

@@ -89,7 +89,7 @@ func (d *Discovery) SetExecutor(entry PeerEntry) {
 	d.executors[entry.Name] = entry
 }
 
-func (d *Discovery) SetStore(entry PeerEntry) {
+func (d *Discovery) SetClaimProducer(entry PeerEntry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.stores[entry.Name] = entry
@@ -119,7 +119,7 @@ func (d *Discovery) ListExecutors() []PeerEntry {
 	return out
 }
 
-func (d *Discovery) ListStores() []PeerEntry {
+func (d *Discovery) ListClaimProducers() []PeerEntry {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	out := make([]PeerEntry, 0, len(d.stores))

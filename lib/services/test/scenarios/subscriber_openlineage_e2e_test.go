@@ -417,7 +417,7 @@ func deployOLTemplate(t *testing.T, ep harness.RimskyEndpoint, name string) stri
 				{
 					"type":     "acquire-and-execute",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{"name": "docs", "selector": "@docs-ring", "intent": "rw"},
 					},
 				},

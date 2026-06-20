@@ -102,7 +102,7 @@ func BuildAttributeDeps(
 			return nil, fmt.Errorf("BuildAttributeDeps: list delivered messages: %w", msgErr)
 		}
 		for _, m := range msgs {
-			if m.Type == "" {
+			if m.IsEmptyWake() {
 				continue
 			}
 			if _, alreadyPresent := out[m.Type]; alreadyPresent {

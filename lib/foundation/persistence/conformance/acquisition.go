@@ -23,12 +23,12 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 	store := d.Tables()
 
 	if err := q.Enqueue(ctx, persistence.DispatchRequest{
-		NodeID:         fix.NodeID,
-		ExecutorName:   "test-executor",
-		RequiredStores: []string{},
-		EnqueuedAt:     time.Now().Add(-1 * time.Second),
-		FrameID:        fix.FrameID,
-		RunScopeID:     fix.MainRunScopeID,
+		NodeID:                 fix.NodeID,
+		ExecutorName:           "test-executor",
+		RequiredClaimProducers: []string{},
+		EnqueuedAt:             time.Now().Add(-1 * time.Second),
+		FrameID:                fix.FrameID,
+		RunScopeID:             fix.MainRunScopeID,
 	}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -40,9 +40,9 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"test-executor"},
-			AcceptedStores:    []string{},
-			Limit:             10,
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  10,
 		})
 		if err != nil {
 			return err
@@ -101,9 +101,9 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 	addressBytes := json.RawMessage(`{"addr":"committed"}`)
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"test-executor"},
-			AcceptedStores:    []string{},
-			Limit:             10,
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  10,
 		})
 		if err != nil {
 			return err

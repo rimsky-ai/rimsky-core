@@ -26,7 +26,7 @@ resolution:
 
 ## What is muddy
 
-`concepts/event-log.md` covers both `rimsky_events` (rimsky-internal audit log, free-form `kind`, rimsky-readable JSONB, drives `/events` dashboard) and `rimsky_node_events` (executor-emitted named-event ledger, inert payload per `@blessed-invariant 21`, read by attribute substitution and `on_event` handlers). The concept doc structurally separates them inside one file, but the unifying frame ("append-only events tables") is weak: different consumers, different schemas (`kind` free-form vs. `(emitter, event_name, seq)`), different opacity disciplines, different protocol-surface position (audit log is rimsky-internal; ledger is executor-protocol-facing).
+`concepts/event-log.md` covers both `rimsky_events` (rimsky-internal audit log, free-form `kind`, rimsky-readable JSONB, drives `/events` dashboard) and `rimsky_node_events` (executor-emitted named-event ledger, inert payload per the named-event inertness rule, read by attribute substitution and `on_event` handlers). The concept doc structurally separates them inside one file, but the unifying frame ("append-only events tables") is weak: different consumers, different schemas (`kind` free-form vs. `(emitter, event_name, seq)`), different opacity disciplines, different protocol-surface position (audit log is rimsky-internal; ledger is executor-protocol-facing).
 
 `tensions/events-table-name-overlap.md` already catalogs the naming overlap as a separate concern. The split-or-merge question is the structural decision behind it.
 

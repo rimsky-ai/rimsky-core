@@ -45,7 +45,6 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    publisher_subscription_id TEXT PRIMARY KEY,
 		    instance_id               TEXT NOT NULL,
 		    cron_expr                 TEXT NOT NULL,
-		    target_node               TEXT NOT NULL,
 		    message_type              TEXT NOT NULL,
 		    next_fire_at              TIMESTAMPTZ NOT NULL,
 		    started_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -55,9 +54,15 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx,
-		`ALTER TABLE sensor_cron_state DROP COLUMN IF EXISTS missed_fires`)
-	return err
+	for _, drop := range []string{
+		`ALTER TABLE sensor_cron_state DROP COLUMN IF EXISTS missed_fires`,
+		`ALTER TABLE sensor_cron_state DROP COLUMN IF EXISTS target_node`,
+	} {
+		if _, err := s.db.ExecContext(ctx, drop); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *stateDB) Close() error {
@@ -74,19 +79,18 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 	const q = `
 		INSERT INTO sensor_cron_state (
 		    publisher_subscription_id, instance_id, cron_expr,
-		    target_node, message_type, next_fire_at, started_at,
+		    message_type, next_fire_at, started_at,
 		    last_fire_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (publisher_subscription_id) DO UPDATE SET
 		    instance_id   = EXCLUDED.instance_id,
 		    cron_expr     = EXCLUDED.cron_expr,
-		    target_node   = EXCLUDED.target_node,
 		    message_type  = EXCLUDED.message_type,
 		    next_fire_at  = EXCLUDED.next_fire_at
 	`
 	_, err := s.db.ExecContext(ctx, q,
 		w.SubscriptionID, w.InstanceID, w.CronExpr,
-		w.TargetNode, w.MessageType, w.NextFireAt, w.StartedAt,
+		w.MessageType, w.NextFireAt, w.StartedAt,
 		w.LastFireAt)
 	return err
 }
@@ -113,7 +117,6 @@ type SubscriptionState struct {
 	SubscriptionID string
 	InstanceID     string
 	CronExpr       string
-	TargetNode     string
 	MessageType    string
 	NextFireAt     time.Time
 	StartedAt      time.Time
@@ -126,7 +129,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT publisher_subscription_id, instance_id, cron_expr,
-		        target_node, message_type, next_fire_at, started_at,
+		        message_type, next_fire_at, started_at,
 		        last_fire_at
 		   FROM sensor_cron_state`)
 	if err != nil {
@@ -137,7 +140,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	for rows.Next() {
 		var st SubscriptionState
 		if err := rows.Scan(&st.SubscriptionID, &st.InstanceID, &st.CronExpr,
-			&st.TargetNode, &st.MessageType, &st.NextFireAt, &st.StartedAt,
+			&st.MessageType, &st.NextFireAt, &st.StartedAt,
 			&st.LastFireAt); err != nil {
 			return nil, err
 		}

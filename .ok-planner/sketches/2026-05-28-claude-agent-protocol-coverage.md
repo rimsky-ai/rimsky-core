@@ -99,7 +99,7 @@ Spec-time choice; A is the cleaner separation. Mentioned together because both d
 - **No `read_node_event` runtime read.** No more NamedEvents to read; downstream coupling rides `tags` + subscription `when:` filters at the template layer.
 - **No `post_message` to instances.** Publishers post messages; agents don't.
 - **No `register_template` / `create_instance` / `deploy_template` tools.** Lifecycle control is the operator's.
-- **No tools that bypass the inertness invariant.** Payloads stay inert in rimsky-side persistence (per `@blessed-invariant 21`); agent-side reads only at sanctioned leaves.
+- **No tools that bypass the inertness invariant.** Payloads stay inert in rimsky-side persistence; agent-side reads only at sanctioned leaves.
 
 ## Spec scope
 

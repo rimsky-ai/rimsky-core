@@ -55,7 +55,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		return err
 	}
 
-	requiredStores := requiredStoresForNode(ctx, sb, nd)
+	requiredClaimProducers := requiredClaimProducersForNode(ctx, sb, nd)
 
 	var resolved node.ResolvedAction
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -127,7 +127,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
 				NodeID:                      args.NodeID,
 				ExecutorName:                cur.Executor,
-				RequiredStores:              requiredStores,
+				RequiredClaimProducers:      requiredClaimProducers,
 				EnqueuedAt:                  args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
 				FrameID:                     *cur.FrameID,
 				RunScopeID:                  args.RunScopeID,
@@ -285,7 +285,7 @@ func lookupPolicy(ctx context.Context, sb persistence.Tables, nd *persistence.No
 	return nil, nil
 }
 
-func requiredStoresForNode(ctx context.Context, sb persistence.Tables, nd *persistence.NodeRow) []string {
+func requiredClaimProducersForNode(ctx context.Context, sb persistence.Tables, nd *persistence.NodeRow) []string {
 	var inst *persistence.InstanceRow
 	var tmpl *persistence.TemplateRow
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -310,7 +310,7 @@ func requiredStoresForNode(ctx context.Context, sb persistence.Tables, nd *persi
 		if td.Type != nd.NodeType {
 			continue
 		}
-		return node.RequiredStores(td)
+		return node.RequiredClaimProducers(td)
 	}
 	return nil
 }

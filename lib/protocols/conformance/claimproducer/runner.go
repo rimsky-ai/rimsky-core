@@ -281,7 +281,7 @@ func checkScopesConflict(ctx context.Context, c claimproducer.ClaimProducer, cap
 		if !got {
 			return CheckResult{
 				Name: "ScopesConflictSkipped",
-				Err:  fmt.Errorf("byte-equal fallback returned Conflicts=false; @blessed-invariant 4b requires byte-equal scopes to conflict"),
+				Err:  fmt.Errorf("byte-equal fallback returned Conflicts=false; byte-equal scopes are required to conflict"),
 			}
 		}
 		return CheckResult{Name: "ScopesConflictSkipped"}

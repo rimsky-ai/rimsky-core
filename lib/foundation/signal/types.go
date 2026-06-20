@@ -47,3 +47,5 @@ func (t TypePath) HasPrefix(prefix TypePath) bool {
 	}
 	return string(t) == p
 }
+
+func PathPtr(t TypePath) *TypePath { return &t }

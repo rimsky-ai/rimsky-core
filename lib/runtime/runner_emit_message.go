@@ -9,7 +9,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -21,15 +20,33 @@ import (
 
 // @story: cascade-emit
 // @concept: message-emitter-node
-const EmitMessageDispatchName = "@emit-message"
+func emitCascadeMessage(
+	ctx context.Context,
+	tables persistence.Tables,
+	instanceID, nodeID, frameID shared.UUID,
+	emitMessageType string,
+	body []byte,
+) (shared.UUID, bool, error) {
+	var messageID shared.UUID
+	var replayed bool
+	err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var ierr error
+		messageID, replayed, ierr = emitCascadeMessageInTx(ctx, tables, tx,
+			instanceID, nodeID, frameID, emitMessageType, body)
+		return ierr
+	})
+	return messageID, replayed, err
+}
 
+// @story: cascade-emit
+// @concept: message-emitter-node
 func emitCascadeMessageInTx(
 	ctx context.Context,
 	tables persistence.Tables,
 	tx persistence.Tx,
 	instanceID, nodeID, frameID shared.UUID,
 	emitMessageType string,
-	resolvedAttrs map[string]any,
+	body []byte,
 ) (shared.UUID, bool, error) {
 	if instanceID == (shared.UUID{}) {
 		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: instance_id required")
@@ -43,12 +60,8 @@ func emitCascadeMessageInTx(
 	if emitMessageType == "" {
 		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: emits_message type required")
 	}
-	if resolvedAttrs == nil {
-		resolvedAttrs = map[string]any{}
-	}
-	body, err := json.Marshal(resolvedAttrs)
-	if err != nil {
-		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: marshal body: %w", err)
+	if body == nil {
+		body = []byte(`{}`)
 	}
 
 	idempotencyKey := fmt.Sprintf("cascade-emit:%s:%s", nodeID.String(), frameID.String())

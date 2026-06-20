@@ -17,7 +17,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const storePostgresImage = "rimsky-store-postgres:latest"
+const storePostgresImage = "rimsky-claim-producer-postgres:latest"
 
 type PostgresOnNetwork struct {
 	InternalDSN string

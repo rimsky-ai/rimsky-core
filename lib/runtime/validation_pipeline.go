@@ -23,7 +23,7 @@ type (
 	ValidateExecutorInput            = clientiface.ValidateExecutorInput
 	ValidateClaimProducerInput       = clientiface.ValidateClaimProducerInput
 	ValidateClaimBinding             = clientiface.ValidateClaimBinding
-	ValidateSensorInput              = clientiface.ValidateSensorInput
+	ValidatePublisherInput           = clientiface.ValidatePublisherInput
 	ValidateLifecycleSubscriberInput = clientiface.ValidateLifecycleSubscriberInput
 	ValidationRegistry               = clientiface.ValidationRegistry
 	UnreachableValidatorPolicy       = clientiface.UnreachableValidatorPolicy
@@ -62,15 +62,15 @@ func RunValidationPipeline(
 
 	for _, publisher := range tpl.Publishers {
 		client, ok := reg.Get(publisher.Name)
-		if !ok || !clientAdvertisesRole(client, "sensor") {
+		if !ok || !clientAdvertisesRole(client, "publisher") {
 			continue
 		}
-		errs, warns, err := client.ValidateSensor(ctx, ValidateSensorInput{
-			SensorName:     publisher.Name,
+		errs, warns, err := client.ValidatePublisher(ctx, ValidatePublisherInput{
+			PublisherName:  publisher.Name,
 			Kind:           publisher.Kind,
 			ResolvedConfig: publisher.Config,
 		})
-		appendFindings(&out, client.Name(), "sensor", "", errs, warns, err, policy)
+		appendFindings(&out, client.Name(), "publisher", "", errs, warns, err, policy)
 	}
 
 	_ = templateID
@@ -115,8 +115,8 @@ func runExecutorRoleCheck(
 		}
 		attrsBytes = b
 	}
-	aliases := make([]string, 0, len(n.Stores)+len(n.Holds))
-	for _, s := range n.Stores {
+	aliases := make([]string, 0, len(n.ClaimProducers)+len(n.Holds))
+	for _, s := range n.ClaimProducers {
 		aliases = append(aliases, s.AliasOf())
 	}
 	for alias := range n.Holds {
@@ -135,11 +135,11 @@ func runClaimProducerRoleChecks(
 	ctx context.Context, reg ValidationRegistry, policy UnreachableValidatorPolicy,
 	n spec.TemplateNodeDef, out *ValidationOutcome,
 ) error {
-	if len(n.Stores) == 0 {
+	if len(n.ClaimProducers) == 0 {
 		return nil
 	}
-	byProducer := map[string][]spec.NodeStoreRef{}
-	for _, s := range n.Stores {
+	byProducer := map[string][]spec.NodeClaimProducerRef{}
+	for _, s := range n.ClaimProducers {
 		byProducer[s.Name] = append(byProducer[s.Name], s)
 	}
 	for producer, refs := range byProducer {

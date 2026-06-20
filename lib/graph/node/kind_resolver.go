@@ -7,6 +7,8 @@ package node
 import (
 	"fmt"
 	"sync"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 // @concept: node
@@ -37,18 +39,56 @@ func (m *KindAliasMap) Resolve(kind string) (string, bool) {
 }
 
 // @concept: node
-func CanonicalizeKindSugar(spec *TemplateSpec, aliases *KindAliasMap) {
-	if spec == nil || aliases == nil {
+func CanonicalizeKindSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
+	if tspec == nil || aliases == nil {
 		return
 	}
-	for i := range spec.Nodes {
-		n := &spec.Nodes[i]
+	for i := range tspec.Nodes {
+		n := &tspec.Nodes[i]
 		if n.Kind == "" {
 			continue
 		}
 		if alias, ok := aliases.Resolve(n.Kind); ok {
 			n.Executor = alias
 			n.Kind = ""
+		}
+	}
+}
+
+// @concept: message-emitter-node
+// @concept: node
+func CanonicalizeEmitMessageSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
+	if tspec == nil || aliases == nil {
+		return
+	}
+	alias, ok := aliases.Resolve("emit_message")
+	if !ok {
+		return
+	}
+	for i := range tspec.Nodes {
+		n := &tspec.Nodes[i]
+		if n.EmitsMessage == "" {
+			continue
+		}
+		if n.Executor != "" {
+			continue
+		}
+		n.Executor = alias
+	}
+}
+
+// @concept: fan-out
+func CanonicalizeAggregationPolicyDefault(tspec *TemplateSpec) {
+	if tspec == nil {
+		return
+	}
+	for i := range tspec.Nodes {
+		n := &tspec.Nodes[i]
+		if n.FanOut == nil {
+			continue
+		}
+		if n.FanOut.ErrorPolicy.Kind == "" {
+			n.FanOut.ErrorPolicy.Kind = spec.AggregationKindStrict
 		}
 	}
 }

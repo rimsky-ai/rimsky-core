@@ -26,7 +26,7 @@ func TestValidateHolds_FromNotDependency(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].holds[target].from")
 }
@@ -39,7 +39,7 @@ func TestValidateHolds_UnknownClaimAlias(t *testing.T) {
 			{
 				Type:     "producer",
 				Executor: "handler.producer",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Intent: "rw", Selector: "{{params.s}}"},
 				},
 			},
@@ -52,7 +52,7 @@ func TestValidateHolds_UnknownClaimAlias(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[1].holds[nonexistent]")
 }
@@ -65,7 +65,7 @@ func TestValidateHolds_Ok(t *testing.T) {
 			{
 				Type:     "producer",
 				Executor: "handler.producer",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "shared_thing", Intent: "rw", Selector: "{{params.s}}"},
 				},
 			},
@@ -78,7 +78,7 @@ func TestValidateHolds_Ok(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
@@ -90,7 +90,7 @@ func TestValidateHolds_ClaimReadFromHeldAliasOk(t *testing.T) {
 			{
 				Type:     "producer",
 				Executor: "handler.producer",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "shared_thing", Intent: "rw", Selector: "{{params.s}}"},
 				},
 			},
@@ -114,7 +114,7 @@ func TestValidateHolds_ClaimReadFromHeldAliasOk(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
@@ -140,7 +140,7 @@ func TestValidateAttributes_ClaimReadUndeclaredAliasRejected(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].attributes.schema.properties.addr.source")
 }
@@ -160,7 +160,7 @@ func TestValidateFanOut_RejectsUnknownClaim(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].fan_out.claim")
 }
@@ -173,7 +173,7 @@ func TestValidateFanOut_RejectsStoreNotAdvertisingSplitScope(t *testing.T) {
 			{
 				Type:     "fan",
 				Executor: "handler.fan",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
 				},
 				FanOut: &FanOutSpec{
@@ -185,8 +185,8 @@ func TestValidateFanOut_RejectsStoreNotAdvertisingSplitScope(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{
-		StoreDeclared:             storeDeclaredLookup(knownStores),
-		StoreAdvertisesSplitScope: func(name string) bool { return false },
+		StoreDeclared:                     storeDeclaredLookup(knownClaimProducers),
+		ClaimProducerAdvertisesSplitScope: func(name string) bool { return false },
 	})
 	require.False(t, res.Ok())
 	var found bool
@@ -208,7 +208,7 @@ func TestValidateFanOut_AcceptsStoreAdvertisingSplitScope(t *testing.T) {
 			{
 				Type:     "fan",
 				Executor: "handler.fan",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
 				},
 				FanOut: &FanOutSpec{
@@ -220,8 +220,8 @@ func TestValidateFanOut_AcceptsStoreAdvertisingSplitScope(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{
-		StoreDeclared:             storeDeclaredLookup(knownStores),
-		StoreAdvertisesSplitScope: func(name string) bool { return true },
+		StoreDeclared:                     storeDeclaredLookup(knownClaimProducers),
+		ClaimProducerAdvertisesSplitScope: func(name string) bool { return true },
 	})
 	require.True(t, res.Ok(),
 		"fan_out template targeting a store that advertises split_scope must register cleanly; errors=%+v", res.Errors)
@@ -235,7 +235,7 @@ func TestValidateFanOut_RejectsThresholdWithoutMaxFailures(t *testing.T) {
 			{
 				Type:     "fan",
 				Executor: "handler.fan",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
 				},
 				FanOut: &FanOutSpec{
@@ -248,7 +248,7 @@ func TestValidateFanOut_RejectsThresholdWithoutMaxFailures(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.max_failures")
 }
@@ -261,7 +261,7 @@ func TestValidateFanOut_RejectsCancelSiblingsOutsideStrict(t *testing.T) {
 			{
 				Type:     "fan",
 				Executor: "handler.fan",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
 				},
 				FanOut: &FanOutSpec{
@@ -275,7 +275,7 @@ func TestValidateFanOut_RejectsCancelSiblingsOutsideStrict(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.cancel_siblings")
 }
@@ -288,7 +288,7 @@ func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
 			{
 				Type:     "fan",
 				Executor: "handler.fan",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
 				},
 				FanOut: &FanOutSpec{
@@ -301,7 +301,7 @@ func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.kind")
 	found := false
@@ -329,7 +329,7 @@ func TestValidateFanOut_RejectsDelegateCombo(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].fan_out")
 }
@@ -342,7 +342,7 @@ func TestValidateFanOut_Ok(t *testing.T) {
 			{
 				Type:     "fan",
 				Executor: "handler.fan",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
 				},
 				FanOut: &FanOutSpec{
@@ -357,11 +357,11 @@ func TestValidateFanOut_Ok(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-func TestValidateStores_RejectsInvalidLifetime(t *testing.T) {
+func TestValidateClaimProducers_RejectsInvalidLifetime(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
@@ -369,18 +369,18 @@ func TestValidateStores_RejectsInvalidLifetime(t *testing.T) {
 			{
 				Type:     "a",
 				Executor: "h",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Intent: "rw", Selector: "{{params.s}}", Lifetime: "bogus"},
 				},
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].stores[0].lifetime")
 }
 
-func TestValidateStores_DurableRequiresDataProcessing(t *testing.T) {
+func TestValidateClaimProducers_DurableRequiresDataProcessing(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
@@ -388,14 +388,14 @@ func TestValidateStores_DurableRequiresDataProcessing(t *testing.T) {
 			{
 				Type:     "a",
 				Executor: "h",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Intent: "rw", Selector: "{{params.s}}", Lifetime: "durable"},
 				},
 			},
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		StoreAdvertisesDataProcessing: func(name string) bool {
 			return false
 		},
@@ -416,7 +416,7 @@ func TestValidateExecutor_DelegateAndExecutorMutuallyExclusive(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].delegate")
 }
@@ -432,11 +432,11 @@ func TestValidateExecutor_DelegateOk(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-func TestValidateStores_DurableOkWhenDataProcessingAdvertised(t *testing.T) {
+func TestValidateClaimProducers_DurableOkWhenDataProcessingAdvertised(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
@@ -444,14 +444,14 @@ func TestValidateStores_DurableOkWhenDataProcessingAdvertised(t *testing.T) {
 			{
 				Type:     "a",
 				Executor: "h",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Intent: "rw", Selector: "{{params.s}}", Lifetime: "durable"},
 				},
 			},
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		StoreAdvertisesDataProcessing: func(name string) bool {
 			return name == "content"
 		},

@@ -57,7 +57,7 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 				{
 					"type":     "acquire-and-execute",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{"name": "docs", "selector": "@docs-ring", "intent": "rw"},
 					},
 				},
@@ -175,7 +175,7 @@ func TestSubscriber_EmitFailureHaltsBatch(t *testing.T) {
 				{
 					"type":     "acquire-and-execute",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{"name": "docs", "selector": "@docs-ring", "intent": "rw"},
 					},
 				},

@@ -20,37 +20,25 @@ import (
 func parentSettlementSignal(state cascade.NodeState, sigType signalpkg.TypePath, changed bool) signalpkg.Signal {
 	switch state {
 	case cascade.NodeStateFailed:
-		typ := sigType
-		if typ == "" {
-			typ = signalpkg.TypePath("terminal/error/aggregate/strict_failed")
-		}
 		return signalpkg.Signal{
-			Type: typ,
+			Type: sigType,
 			Payload: map[string]any{
-				"error_class":    string(typ)[len("terminal/error/"):],
+				"error_class":    string(sigType)[len("terminal/error/"):],
 				"error_payload":  map[string]any{},
 				"attempt":        0,
 				"retries_so_far": 0,
 			},
 		}
 	case cascade.NodeStateParked:
-		typ := sigType
-		if typ == "" {
-			typ = signalpkg.TypePath("terminal/park/snooze")
-		}
 		return signalpkg.Signal{
-			Type: typ,
+			Type: sigType,
 			Payload: map[string]any{
 				"parked_reason_label": "aggregated_park",
 			},
 		}
 	default:
-		typ := sigType
-		if typ == "" {
-			typ = signalpkg.TypePath("terminal/success")
-		}
 		return signalpkg.Signal{
-			Type: typ,
+			Type: sigType,
 			Payload: map[string]any{
 				"changed":          changed,
 				"attributes_delta": map[string]any{},
@@ -116,9 +104,10 @@ func walkUpwards(
 		// @concept: signal
 		inputs := make([]ChildState, len(children))
 		for i, c := range children {
-			var sigType signalpkg.TypePath
+			var sigType *signalpkg.TypePath
 			if c.SettlingSignalType != nil {
-				sigType = signalpkg.TypePath(*c.SettlingSignalType)
+				tp := signalpkg.TypePath(*c.SettlingSignalType)
+				sigType = &tp
 			}
 			inputs[i] = ChildState{
 				State:              c.State,

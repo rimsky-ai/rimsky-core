@@ -1,0 +1,76 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+package stores
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
+)
+
+func TestScopeClaimEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+	})
+	t.Cleanup(teardown)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
+				"content": {
+					Endpoint:     "grpc://" + endpoint,
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+				},
+			},
+		},
+	})
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "scenario")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "scope-claim", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
+				scenario.WithClaimProducers(scenario.WriteClaimRef("content", "/scope-A")),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-scope-claim", map[string]any{})
+
+	n := h.FindNode(iid, "worker")
+	require.NotNil(t, n)
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
+		"worker did not reach fresh")
+
+	deadline := time.Now().Add(2 * time.Second)
+	var sawOpen, sawTerminal bool
+	for time.Now().Before(deadline) {
+		for _, c := range sub.Calls() {
+			switch c.Verb {
+			case "open":
+				sawOpen = true
+			case "commit", "abandon", "delete", "release":
+				sawTerminal = true
+			}
+		}
+		if sawOpen && sawTerminal {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, sawOpen, "expected stub store to receive Open over the wire")
+	require.True(t, sawTerminal, "expected stub store to receive a terminal verb over the wire")
+}

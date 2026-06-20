@@ -6,22 +6,18 @@ package locks
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-func ModeCoexists(intentA claimproducer.Intent, semA claimproducer.WriteSemantics, intentB claimproducer.Intent, semB claimproducer.WriteSemantics) bool {
-	syncA := isSync(semA)
-	syncB := isSync(semB)
-	if syncA != syncB {
-		return true
-	}
+func ModeCoexists(intentA, intentB claimproducer.Intent, sem claimproducer.WriteSemantics) bool {
 	rwA := intentA == claimproducer.IntentReadWrite
 	rwB := intentB == claimproducer.IntentReadWrite
-	if syncA {
-		return !rwA && !rwB
+	if mvccPassThrough(sem) {
+		return !(rwA && rwB)
 	}
-	return !(rwA && rwB)
+	return !rwA && !rwB
 }
 
 // @concept: claim-scope
@@ -32,12 +28,12 @@ func ClaimScopesByteEqual(a, b []byte) bool {
 	return bytes.Equal(a, b)
 }
 
-func isSync(ws claimproducer.WriteSemantics) bool {
+func mvccPassThrough(ws claimproducer.WriteSemantics) bool {
 	switch ws {
-	case claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync, claimproducer.WriteSemanticsReadOnly:
-		return true
 	case claimproducer.WriteSemanticsStagedAsync:
+		return true
+	case claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync, claimproducer.WriteSemanticsReadOnly:
 		return false
 	}
-	return true
+	panic(fmt.Sprintf("ModeCoexists: unknown write-semantics %q", ws))
 }

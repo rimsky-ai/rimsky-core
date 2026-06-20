@@ -35,7 +35,7 @@ claim_producers:
 
 func TestTLSMode_AbsentKey_DefaultsOff(t *testing.T) {
 	cfg := mustLoadCfg(t, tlsTestYAML(""))
-	if got := cfg.Stores.Stores["items-store"].TLS; got != "off" {
+	if got := cfg.ClaimProducers.ClaimProducers["items-store"].TLS; got != "off" {
 		t.Fatalf("claim_producer TLS = %q, want off", got)
 	}
 	if got := cfg.Executors.Executors["agent-runner"].TLS; got != "off" {
@@ -49,7 +49,7 @@ func TestTLSMode_AbsentKey_DefaultsOff(t *testing.T) {
 func TestTLSMode_ValidValues_Pass(t *testing.T) {
 	for _, mode := range []string{"off", "required"} {
 		cfg := mustLoadCfg(t, tlsTestYAML("tls: "+mode))
-		if got := cfg.Stores.Stores["items-store"].TLS; got != mode {
+		if got := cfg.ClaimProducers.ClaimProducers["items-store"].TLS; got != mode {
 			t.Fatalf("claim_producer TLS = %q, want %q", got, mode)
 		}
 		if got := cfg.Executors.Executors["agent-runner"].TLS; got != mode {

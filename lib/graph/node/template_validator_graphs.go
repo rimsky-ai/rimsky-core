@@ -223,9 +223,9 @@ func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (Temp
 		out.Executor = entry.Executor
 	}
 
-	if len(entry.Stores) > 0 {
-		mergedStores, storeErrs := mergeStoresOnAbsorb(caller.Stores, entry.Stores, basePath)
-		out.Stores = mergedStores
+	if len(entry.ClaimProducers) > 0 {
+		mergedClaimProducers, storeErrs := mergeClaimProducersOnAbsorb(caller.ClaimProducers, entry.ClaimProducers, basePath)
+		out.ClaimProducers = mergedClaimProducers
 		errs = append(errs, storeErrs...)
 	}
 
@@ -250,15 +250,15 @@ func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (Temp
 	return out, errs
 }
 
-func mergeStoresOnAbsorb(callerStores, entryStores []NodeStoreRef, basePath string) ([]NodeStoreRef, []ValidationError) {
+func mergeClaimProducersOnAbsorb(callerClaimProducers, entryClaimProducers []NodeClaimProducerRef, basePath string) ([]NodeClaimProducerRef, []ValidationError) {
 	var errs []ValidationError
-	byAlias := make(map[string]NodeStoreRef, len(callerStores)+len(entryStores))
-	out := make([]NodeStoreRef, 0, len(callerStores)+len(entryStores))
-	for _, s := range callerStores {
+	byAlias := make(map[string]NodeClaimProducerRef, len(callerClaimProducers)+len(entryClaimProducers))
+	out := make([]NodeClaimProducerRef, 0, len(callerClaimProducers)+len(entryClaimProducers))
+	for _, s := range callerClaimProducers {
 		byAlias[s.AliasOf()] = s
 		out = append(out, s)
 	}
-	for _, s := range entryStores {
+	for _, s := range entryClaimProducers {
 		alias := s.AliasOf()
 		existing, dup := byAlias[alias]
 		if !dup {
@@ -279,7 +279,7 @@ func mergeStoresOnAbsorb(callerStores, entryStores []NodeStoreRef, basePath stri
 	return out, errs
 }
 
-func storeRefIdentical(a, b NodeStoreRef) bool {
+func storeRefIdentical(a, b NodeClaimProducerRef) bool {
 	if a.Name != b.Name || a.Selector != b.Selector || a.Intent != b.Intent {
 		return false
 	}

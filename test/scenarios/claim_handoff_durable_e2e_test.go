@@ -24,9 +24,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 // @story: claim-handoff-durable
@@ -59,7 +59,7 @@ func testClaimHandoffDurable_CrossDispatchPersistence(t *testing.T) {
 		time.Now(), shared.SilentLogger{})
 	require.NoError(t, err)
 	require.Equal(t, 0, n,
-		"retention sweep MUST NOT reap a committed-durable row (@blessed-invariant 22)")
+		"retention sweep MUST NOT reap a committed-durable row")
 
 	cfgAggressive := runtime.RetentionConfig{ClaimHandlesTrailing: 1 * time.Nanosecond}
 	n2, err := runtime.SweepClaimHandleRetention(h.Ctx, h.Persist.ClaimHandles(), cfgAggressive,
@@ -128,8 +128,8 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"queue-store": {
 					Endpoint: "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{
@@ -149,7 +149,7 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "durable-acquirer", Executor: "stub"},
-				scenario.WithStores(node.NodeStoreRef{
+				scenario.WithClaimProducers(node.NodeClaimProducerRef{
 					Name:     "queue-store",
 					Selector: sharedSelector,
 					Intent:   "rw",
@@ -179,7 +179,7 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 						},
 					},
 				},
-				scenario.WithStores(node.NodeStoreRef{
+				scenario.WithClaimProducers(node.NodeClaimProducerRef{
 					Name:     "queue-store",
 					Selector: sharedSelector,
 					Intent:   "rw",
@@ -236,8 +236,8 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"queue-store": {
 					Endpoint: "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{
@@ -257,7 +257,7 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "durable-acquirer", Executor: "stub"},
-				scenario.WithStores(node.NodeStoreRef{
+				scenario.WithClaimProducers(node.NodeClaimProducerRef{
 					Name:     "queue-store",
 					Selector: sharedSelector,
 					Intent:   "rw",
@@ -286,7 +286,7 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 						},
 					},
 				},
-				scenario.WithStores(node.NodeStoreRef{
+				scenario.WithClaimProducers(node.NodeClaimProducerRef{
 					Name:     "queue-store",
 					Selector: sharedSelector,
 					Intent:   "rw",
@@ -376,8 +376,8 @@ func startDurableHarness(t *testing.T, opts durableOpts) (*scenario.Harness, *pe
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"queue-store": {
 					Endpoint: "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{
@@ -394,7 +394,7 @@ func startDurableHarness(t *testing.T, opts durableOpts) (*scenario.Harness, *pe
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
-				scenario.WithStores(node.NodeStoreRef{
+				scenario.WithClaimProducers(node.NodeClaimProducerRef{
 					Name:     "queue-store",
 					Selector: opts.selector,
 					Intent:   "rw",
@@ -429,8 +429,8 @@ func startDurableHandoffHarness(t *testing.T, opts durableHandoffOpts) (*scenari
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"queue-store": {
 					Endpoint: "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{
@@ -452,7 +452,7 @@ func startDurableHandoffHarness(t *testing.T, opts durableHandoffOpts) (*scenari
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
-				scenario.WithStores(node.NodeStoreRef{
+				scenario.WithClaimProducers(node.NodeClaimProducerRef{
 					Name:     "queue-store",
 					Selector: opts.selector,
 					Intent:   "rw",

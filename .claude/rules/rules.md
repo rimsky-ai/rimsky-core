@@ -23,8 +23,8 @@ Run **every** check that could be affected by the change. This is mandatory, not
 - **If any check fails, fix it before moving on.** A passing test in one package does not guarantee others pass — interface changes, proto regenerations, and shared-type changes propagate across packages and across the Go ↔ TS boundary.
 
 ### Update documentation
-1. **Plumbline annotations** (`@source`, `@diverged`, `@agent-contract`, `@blessed-invariant`) — update when modifying annotated code.
-2. **`CLAUDE.md`** — only if the change affects something a future session would otherwise trip over (a new blessed invariant, a new gotcha, a new build step). Most changes don't need a CLAUDE.md update.
+1. **Plumbline annotations** (`@source`, `@diverged`, `@agent-contract`) — update when modifying annotated code.
+2. **`CLAUDE.md`** — only if the change affects something a future session would otherwise trip over (a new gotcha, a new build step, a new load-bearing invariant). Most changes don't need a CLAUDE.md update.
 3. **Dead code** — remove anything the change has rendered unreachable.
 
 ## Fix Every Bug You Find

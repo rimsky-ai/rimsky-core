@@ -17,7 +17,7 @@
 #
 # Stack prerequisites (operator-side):
 #   - rimsky stack reachable at RIMSKY_ENDPOINT
-#   - bundled `rimsky-store-filesystem` registered as claim producer
+#   - bundled `rimsky-claim-producer-filesystem` registered as claim producer
 #     `fs-store` in rimsky.yml advertising supports_split_scope=true
 #     and a pick policy `@seed-queue` over a seed root containing one
 #     pre-seeded folder (see seed/queue/example-job/.gitkeep)
@@ -51,7 +51,7 @@ nodes:
       filesystem store's SplitScope decodes the `{"list": [...]}`
       shape and emits one SubScopeDescriptor per element; rimsky
       acquires one sub-claim and dispatches one child per element.
-    stores:
+    claim_producers:
       - name: fs-store
         selector: "@seed-queue"
         intent: rw

@@ -39,7 +39,7 @@ func TestSubstitutionCoverage_PerFieldAttributeRefUncovered(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 	})
 	require.False(t, res.Ok(), "validator must reject the uncovered ref")
 	entry := findCoverageEntry(t, res, "rcv", "nodes.foo.attribute.bar")
@@ -79,7 +79,7 @@ func TestSubstitutionCoverage_WholePullRefUncovered(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 	})
 	require.False(t, res.Ok(), "validator must reject the uncovered whole-pull "+
 		"despite the per-field subscription (decision:coverage-wildcard-asymmetry)")
@@ -112,7 +112,7 @@ func TestSubstitutionCoverage_EventRefRetired(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 	})
 	require.False(t, res.Ok(), "validator must reject the retired event substitution form")
 	var found bool
@@ -187,7 +187,7 @@ func TestCoverageCheck_MessagesUndeclaredRejected(t *testing.T) {
 		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{Type: "fanout", Executor: "h",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "items", Intent: "r", Selector: "@x"},
 				},
 				FanOut: &FanOutSpec{
@@ -199,7 +199,7 @@ func TestCoverageCheck_MessagesUndeclaredRejected(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 	})
 	require.False(t, res.Ok(), "template with `{{messages.ev/bar.X}}` and no `ev/bar` in messages: must reject")
 	var found bool
@@ -232,7 +232,7 @@ func TestCoverageCheck_MessagesDeclaredAccepted(t *testing.T) {
 						ForceUpstreamRefresh: BoolPtr(false),
 					},
 				},
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "items", Intent: "r", Selector: "@x"},
 				},
 				FanOut: &FanOutSpec{
@@ -244,7 +244,7 @@ func TestCoverageCheck_MessagesDeclaredAccepted(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 	})
 	require.True(t, res.Ok(), "declared messages.bar + subscribed must register cleanly; errors=%+v structured=%+v", res.Errors, res.StructuredErrors)
 }
@@ -274,7 +274,7 @@ func TestCoverageCheck_SymmetryWithNodes(t *testing.T) {
 							ForceUpstreamRefresh: BoolPtr(false),
 						},
 					},
-					Stores: []NodeStoreRef{
+					ClaimProducers: []NodeClaimProducerRef{
 						{Name: "content", Alias: "data", Intent: "r", Selector: "@x"},
 					},
 					FanOut: &FanOutSpec{
@@ -286,7 +286,7 @@ func TestCoverageCheck_SymmetryWithNodes(t *testing.T) {
 			},
 		}
 		res := ValidateTemplate(spec, RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		})
 		require.True(t, res.Ok(), "nodes.foo path errors=%+v structured=%+v", res.Errors, res.StructuredErrors)
 	})
@@ -308,7 +308,7 @@ func TestCoverageCheck_SymmetryWithNodes(t *testing.T) {
 							ForceUpstreamRefresh: BoolPtr(false),
 						},
 					},
-					Stores: []NodeStoreRef{
+					ClaimProducers: []NodeClaimProducerRef{
 						{Name: "content", Alias: "data", Intent: "r", Selector: "@x"},
 					},
 					FanOut: &FanOutSpec{
@@ -320,7 +320,7 @@ func TestCoverageCheck_SymmetryWithNodes(t *testing.T) {
 			},
 		}
 		res := ValidateTemplate(spec, RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		})
 		require.True(t, res.Ok(), "messages.foo path errors=%+v structured=%+v", res.Errors, res.StructuredErrors)
 	})
@@ -345,7 +345,7 @@ func TestCoverageCheck_MessagesWildcardAccepted(t *testing.T) {
 						ForceUpstreamRefresh: BoolPtr(false),
 					},
 				},
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "data", Intent: "r", Selector: "@x"},
 				},
 				FanOut: &FanOutSpec{
@@ -357,7 +357,7 @@ func TestCoverageCheck_MessagesWildcardAccepted(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 	})
 	require.True(t, res.Ok(), "terminal/* wildcard subscription must cover messages.<type> refs symmetrically with attribute/* covering nodes.<type>; errors=%+v structured=%+v", res.Errors, res.StructuredErrors)
 }

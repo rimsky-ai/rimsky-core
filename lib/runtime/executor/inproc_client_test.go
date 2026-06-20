@@ -210,7 +210,7 @@ func TestInProcessClient_HandlerContextFactoryReceivesTypedIDs(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	factory := HandlerContextFactory(func(dispatchID, nodeID shared.UUID) HandlerContext {
+	factory := HandlerContextFactory(func(_ context.Context, dispatchID, nodeID shared.UUID) HandlerContext {
 		if dispatchID == (shared.UUID{}) || nodeID == (shared.UUID{}) {
 			t.Errorf("expected non-zero typed UUIDs, dispatch=%v node=%v", dispatchID, nodeID)
 		}

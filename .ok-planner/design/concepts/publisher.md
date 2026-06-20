@@ -8,9 +8,9 @@ aliases: []
 
 ## Definition
 
-A publisher is a peer service that publishes messages into rimsky. Publishers implement the publisher protocol (four verbs: a capabilities handshake, subscribe, unsubscribe, and list-subscriptions) and POST message envelopes to the generic operator message-emit endpoint with `sender_kind: "publisher"` and a `publisher_subscription_id` capability token.
+A publisher is a peer service that publishes messages into rimsky. Publishers implement the publisher protocol (four verbs: a capabilities handshake, subscribe, unsubscribe, and list-subscriptions) and POST message envelopes to the universal operator message-emit endpoint, identifying themselves as publishers and presenting a per-subscription capability token.
 
-Publishers are peer-services in the same trust perimeter as executors and claim-producers: out-of-process, gRPC-addressed at startup via the publishers block of the unified config (see `concept:rimsky-yml`), and exclusively responsible for their own state and HA posture.
+Publishers are peer-services in the same trust perimeter as executors and claim-producers: out-of-process, addressed at startup via the publisher service registry in `concept:rimsky-yml`, and exclusively responsible for their own state and HA posture.
 
 A publisher service is a provider of broadcasters: one service process serves many instances, and each subscription provisions a logical, per-instance broadcaster within it, parameterized by the instance's resolved config — the per-instance analogue of how an executor provides per-node-run execution.
 
@@ -20,7 +20,7 @@ To give rimsky a uniform way to accept inbound messages from peer services — s
 
 ## Boundaries
 
-Owns: the four-verb protocol surface (the wire message shapes + RPC contract), the gRPC peer client, the rimsky-side dispatch helpers, the operator-side dial path, and the universal capability check on the messages endpoint.
+Owns: the protocol surface, the peer client, the rimsky-side dispatch helpers, the operator dial path, and the capability check on the universal message-emit surface.
 
 Does NOT own: the publisher's substrate (cron clock, HTTP endpoint, object-store, etc.), per-publisher state persistence (each publisher owns its own state DB; see `concept:sensor`), the message envelope shape (that's `concept:message`), or the deployment-tier replica posture (that's `concept:replica`).
 
@@ -28,9 +28,9 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 
 ## Invariants
 
-- Publishers are advertised under the top-level publishers block of the unified config (see `concept:rimsky-yml`). Their declared protocol list must include `"publisher"`.
-- The subscribe verb carries inline routing fields (`target_node`, `message_kind`); there is no `on_change` substruct. The publisher persists these fields and copies them onto each emitted message envelope.
-- Emit-time messages set `sender_kind: "publisher"` and `publisher_subscription_id`. Rimsky derives `sender` from the publisher-subscription row's `publisher_name`; the request's `sender` is ignored for trust.
-- A reconciliation worker drives the subscribe verb for `mounting` subscriptions with backoff and no attempt cap; the `failed` state is reserved for non-retryable errors (per `concept:publisher-subscription`).
+- Publishers are advertised in the publisher service registry of `concept:rimsky-yml`. Their declared protocol membership must include the publisher protocol.
+- The subscribe verb carries the message type the publisher will stamp on every emitted envelope; the subscribe surface carries no receiver-routing field — delivery routes by message type against node-subscription edges. The publisher persists the type and copies it onto each emitted message envelope.
+- Emit-time messages identify the sender as a publisher and present the per-subscription capability token. Rimsky derives the sender name from the publisher-subscription row; the request's declared sender is ignored for trust.
+- A reconciliation worker drives the subscribe verb for mounting subscriptions with backoff and no attempt cap; the failed state is reserved for non-retryable errors (per `concept:publisher-subscription`).
 - Replicas are not coordinated by rimsky. Single-replica is the v1 contract per `concept:replica`.
-- `@blessed-invariant: message-inertness` — payload bytes flow from publisher → message envelope → consumer's substitution leaf without inspection.
+- invariant: message-inertness — payload bytes flow from publisher → message envelope → consumer's substitution leaf without inspection.

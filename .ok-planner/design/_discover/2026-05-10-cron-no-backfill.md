@@ -33,7 +33,7 @@ Stated rationale at `modeling/scheduler/schedule_ticker.go:6-14`: "backfilling a
 
 The cron expression is a robfig/cron/v3 standard 5-field expression (`schedule_ticker.go:44-50`).
 
-The advancement-from-row-NextFireAt rule is `@blessed-invariant`-adjacent: it's not in CLAUDE.md's blessed invariants list, but it's documented inline as a deliberate design choice that operators can rely on. The compose between "single post-outage fire" and "consistent on-rhythm cadence after the fire" is precisely what the row-based advancement delivers.
+The advancement-from-row-NextFireAt rule isn't in CLAUDE.md's named-invariants list, but it's documented inline as a deliberate design choice that operators can rely on. The compose between "single post-outage fire" and "consistent on-rhythm cadence after the fire" is precisely what the row-based advancement delivers.
 
 ## Code surface
 

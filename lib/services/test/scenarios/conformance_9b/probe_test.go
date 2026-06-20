@@ -39,8 +39,8 @@ func TestClaimProducer9b_Probe(t *testing.T) {
 	if checkB.Err == nil {
 		t.Fatalf("dishonest producer: Serialization9b reported ok, want FAIL (reader Open blocks behind an open writer)")
 	}
-	if !strings.Contains(checkB.Err.Error(), "9b") {
-		t.Fatalf("dishonest producer: Serialization9b error must name invariant 9b; got %q", checkB.Err.Error())
+	if !strings.Contains(checkB.Err.Error(), "reader-lease") {
+		t.Fatalf("dishonest producer: Serialization9b error must name the reader-lease violation; got %q", checkB.Err.Error())
 	}
 }
 

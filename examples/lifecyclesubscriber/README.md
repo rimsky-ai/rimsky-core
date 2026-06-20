@@ -73,7 +73,7 @@ it on a second listener; see the comments in `main.go`.
 Add a `claim_producers:` or `executors:` entry to `rimsky.yml` whose
 `protocols:` list includes `lifecycle_subscriber`. The subscriber
 peer rides on either entry kind; rimsky fans out lifecycle events to
-every peer the referencing template names in a node's `stores:` list
+every peer the referencing template names in a node's `claim_producers:` list
 or `executor:` field. A subscriber that only wants to react to
 events (and does no claim production or execution) advertises a
 minimal Capabilities response: `write_semantics_allowed: [sync]` on

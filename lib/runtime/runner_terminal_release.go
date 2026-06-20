@@ -65,9 +65,9 @@ func resolveLinkedSubClaimsInTx(
 		if !ok {
 			return fmt.Errorf("resolveLinkedSubClaims: unknown producer %q for sub-claim %s", producerName, row.ID)
 		}
-		outcome := AggregateCommit
+		outcome := OutcomeCommit
 		if !success {
-			outcome = AggregateAbandon
+			outcome = OutcomeAbandon
 		}
 		hint := ClaimLineageHint{
 			InstanceID:   acq.InstanceID,
@@ -146,9 +146,9 @@ func releaseClaim(
 		address = []byte(row.Address)
 	}
 	verbAction := releaseActionString(success)
-	outcome := AggregateCommit
+	outcome := OutcomeCommit
 	if !success {
-		outcome = AggregateAbandon
+		outcome = OutcomeAbandon
 	}
 	hint := ClaimLineageHint{
 		InstanceID: acq.InstanceID,

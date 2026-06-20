@@ -36,14 +36,14 @@ linters-settings:
           - "!**/test/support/pgmigrate/**"
           - "!**/testpg/**"
           - "!**/test/support/scenario/**"
-          - "!**/stores/**"
+          - "!**/claim_producers/**"
           - "!**/sensors/**"
           - "!**/subscribers/**"
           - "!**/test/smoke/**"
           - "!**/lib/services/test/scenarios/**"
         deny:
           - pkg: "github.com/jackc/pgx/v5"
-            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, foundation/pgpool/, cmd/, test/support/pgmigrate/, test/support/testpg/, test/support/scenario/, test/support/stores/, sensors/, subscribers/, test/smoke/, lib/services/test/scenarios/, lib/services/stores/, lib/services/sensors/, and lib/services/subscribers/. Use the persistence interfaces."
+            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, foundation/pgpool/, cmd/, test/support/pgmigrate/, test/support/testpg/, test/support/scenario/, test/support/claim_producers/, sensors/, subscribers/, test/smoke/, lib/services/test/scenarios/, lib/services/claim_producers/, lib/services/sensors/, and lib/services/subscribers/. Use the persistence interfaces."
           - pkg: "github.com/jackc/pgx/v5/pgxpool"
             desc: "see pgx isolation rule above"
           - pkg: "github.com/jackc/pgx/v5/pgconn"
@@ -94,8 +94,8 @@ linters-settings:
             desc: "foundation/ may not import control/ (four-layer ordering)."
           - pkg: "github.com/rimsky-ai/rimsky-core/cmd"
             desc: "foundation/ may not import cmd/ (cmd is the topmost binary layer)."
-          - pkg: "github.com/rimsky-ai/rimsky-core/test/support/stores"
-            desc: "foundation/ may not import test/support/stores/ (test-support stubs)."
+          - pkg: "github.com/rimsky-ai/rimsky-core/test/support/claim_producers"
+            desc: "foundation/ may not import test/support/claim_producers/ (test-support stubs)."
           - pkg: "github.com/rimsky-ai/rimsky-core/test/support/executors"
             desc: "foundation/ may not import test/support/executors/ (test-support stubs)."
       # graph-purity: graph/ depends only on foundation/ + protocols/ + stdlib + third-party.
@@ -117,8 +117,8 @@ linters-settings:
             desc: "graph/ may not import control/ (four-layer ordering)."
           - pkg: "github.com/rimsky-ai/rimsky-core/cmd"
             desc: "graph/ may not import cmd/ (cmd is the topmost binary layer)."
-          - pkg: "github.com/rimsky-ai/rimsky-core/test/support/stores"
-            desc: "graph/ may not import test/support/stores/ (test-support stubs)."
+          - pkg: "github.com/rimsky-ai/rimsky-core/test/support/claim_producers"
+            desc: "graph/ may not import test/support/claim_producers/ (test-support stubs)."
           - pkg: "github.com/rimsky-ai/rimsky-core/test/support/executors"
             desc: "graph/ may not import test/support/executors/ (test-support stubs). The scenario harness that boots reference executors now lives at test/support/scenario/, outside the graph/ glob."
       # runtime-purity: runtime/ depends only on foundation/ + graph/ + protocols/ + stdlib + third-party.
@@ -132,12 +132,12 @@ linters-settings:
             desc: "runtime/ may not import control/ (four-layer ordering: foundation < graph < runtime < control)."
           - pkg: "github.com/rimsky-ai/rimsky-core/cmd"
             desc: "runtime/ may not import cmd/ (cmd is the topmost binary layer)."
-          - pkg: "github.com/rimsky-ai/rimsky-core/test/support/stores"
-            desc: "runtime/ may not import test/support/stores/ (test-support stubs)."
+          - pkg: "github.com/rimsky-ai/rimsky-core/test/support/claim_producers"
+            desc: "runtime/ may not import test/support/claim_producers/ (test-support stubs)."
           - pkg: "github.com/rimsky-ai/rimsky-core/test/support/executors"
             desc: "runtime/ may not import test/support/executors/ (test-support stubs)."
       # consumption-side-isolation: lib/services/ is the in-tree home of the
-      # bundled consumption-side services (stores, sensors, subscribers,
+      # bundled consumption-side services (claim_producers, sensors, subscribers,
       # executors) that rimsky ships as images. They implement against
       # lib/protocols/ only — the lib/services module's go.mod requires only
       # lib/protocols, so the module graph already prevents importing any
@@ -145,7 +145,7 @@ linters-settings:
       # This depguard rule is retained as defense-in-depth at the package
       # level, in case a future refactor would otherwise grow such an edge.
       #
-      # The root-anchored globs (stores/**, sensors/**, subscribers/**,
+      # The root-anchored globs (claim_producers/**, sensors/**, subscribers/**,
       # executors/**) are intentionally distinct from the workspace-rooted
       # `**/lib/services/**` form: depending on how golangci-lint resolves
       # paths when linting the lib/services module (module-relative vs.
@@ -164,7 +164,7 @@ linters-settings:
         files:
           - "**/lib/services/**"
           - "!**/lib/services/test/**"
-          - "stores/**"
+          - "claim_producers/**"
           - "sensors/**"
           - "subscribers/**"
           - "executors/**"

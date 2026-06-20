@@ -39,7 +39,7 @@ func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in p
 	if in.RunScopeID == (shared.UUID{}) {
 		return errors.New("run_tree.CreateRootRun: run_scope_id required")
 	}
-	stores := in.RequiredStores
+	stores := in.RequiredClaimProducers
 	if stores == nil {
 		stores = []string{}
 	}
@@ -69,7 +69,7 @@ func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in 
 	if err != nil {
 		return fmt.Errorf("run_tree.CreateChildRun: marshal policy: %w", err)
 	}
-	stores := in.RequiredStores
+	stores := in.RequiredClaimProducers
 	if stores == nil {
 		stores = []string{}
 	}

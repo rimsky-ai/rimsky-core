@@ -11,7 +11,7 @@ resolution:
   shape: extract-shared-helper
   helper: foundation/integration/abandon_claim.go::abandonOpenedClaim
   doc-sweep:
-    - concepts/auto-terminal.md (Invariant 5 reworded)
+    - concepts/auto-terminal.md (unified-engine-entry invariant reworded)
     - concepts/terminal-resolution.md (OnAcquireUnavailable paragraph + kind→verb table reworded)
   summary: |
     Extracted a narrow shared helper centralizing producer.Abandon on
@@ -33,7 +33,7 @@ This tension is resolved by `2026-05-11-design-log-convergence`'s extraction of 
 
 ## Why it matters
 
-The unified-engine narrative is load-bearing for `@blessed-invariant 13` ("Held-claim resolution is auto-terminal, single, and aggregate-outcome-driven") and for the spec's §7.3 statement that the producer verb + claim-handle delete is a single audited sequence. A reader walking the spine for the first time sees `ResolveClaimHandleTerminal` as the bottom of the pipe and reasonably assumes "every producer.Abandon happens here" — only to discover that the pre-dispatch unavailability path and the `applyTerminalPass` early-out do their own direct calls.
+The unified-engine narrative is load-bearing for the held-claim auto-terminal aggregate-outcome rule and for the spec's §7.3 statement that the producer verb + claim-handle delete is a single audited sequence. A reader walking the spine for the first time sees `ResolveClaimHandleTerminal` as the bottom of the pipe and reasonably assumes "every producer.Abandon happens here" — only to discover that the pre-dispatch unavailability path and the `applyTerminalPass` early-out do their own direct calls.
 
 If a future change adds telemetry, a metric, or an audit-event emit at `ResolveClaimHandleTerminal`, the pre-dispatch and pass paths silently miss it.
 
@@ -43,14 +43,14 @@ If a future change adds telemetry, a metric, or an audit-event emit at `ResolveC
 - Extract a smaller "abandon-already-opened-claim" helper that both sites call, with the same audit emit + delete sequence.
 - Re-scope the unified-engine narrative to "all post-dispatch terminal paths" and document the pre-dispatch carve-out explicitly at `terminal_decision.go:5-27`.
 
-**Picked shape (refine-design step 5):** Extract a small "abandon-already-opened-claim" helper that both `handleAcquireUnavailable.abandonPartialLocks` and `ResolveClaimHandleTerminal`'s Abandon branch call. Same audit emit + delete sequence in one place; both sites become thin call-sites. The helper does not force the pre-dispatch path through the post-dispatch spine (no synthetic `acq.Locks` glue). Doc-language sweep (per the Additional context section): once the helper exists, reword `concepts/auto-terminal.md` invariant 5 to read "Unified `ResolveClaimHandleTerminal` (post-dispatch) and the shared `abandon-already-opened-claim` helper are the two audited sites for `Producer.Abandon` on already-Open'd claims; the pre-dispatch `OnAcquireUnavailable` carve-out routes through the helper but not through `ResolveClaimHandleTerminal` itself" (or equivalent). Reword `concepts/terminal-resolution.md` opening prose to match.
+**Picked shape (refine-design step 5):** Extract a small "abandon-already-opened-claim" helper that both `handleAcquireUnavailable.abandonPartialLocks` and `ResolveClaimHandleTerminal`'s Abandon branch call. Same audit emit + delete sequence in one place; both sites become thin call-sites. The helper does not force the pre-dispatch path through the post-dispatch spine (no synthetic `acq.Locks` glue). Doc-language sweep (per the Additional context section): once the helper exists, reword the unified-engine-entry rule in `concepts/auto-terminal.md` to read "Unified `ResolveClaimHandleTerminal` (post-dispatch) and the shared `abandon-already-opened-claim` helper are the two audited sites for `Producer.Abandon` on already-Open'd claims; the pre-dispatch `OnAcquireUnavailable` carve-out routes through the helper but not through `ResolveClaimHandleTerminal` itself" (or equivalent). Reword `concepts/terminal-resolution.md` opening prose to match.
 
 ## Additional context (added during refine-design intake)
 
 The body of "What is muddy" above over-states which sites bypass `ResolveClaimHandleTerminal`. The genuinely duplicated path is **only** the pre-dispatch `handleAcquireUnavailable.abandonPartialLocks` (which calls `lk.Store.Abandon` directly at `runner_lifecycle.go:75`). The post-dispatch `applyTerminalPass` **does** route through `releaseLocksInTx(success=false)` → `ResolveClaimHandleTerminal` for both held and non-held branches (`runner_terminal_release.go:137`). Reword the tension body during resolution to match.
 
 There is a corresponding documentation-language inconsistency between two concepts:
-- `concepts/auto-terminal.md` invariant 5 currently reads "Unified `ResolveClaimHandleTerminal` is also the entry point for orphan-reaper bail paths and error-policy `pass`/`error` resolutions on already-Open'd claims." This is correct for the post-dispatch `OnExecutorBlocked`/`OnExecutorErrored` `pass` path but silently wrong for the pre-dispatch `OnAcquireUnavailable` `pass`/`error` path.
+- `concepts/auto-terminal.md`'s unified-engine-entry rule currently reads "Unified `ResolveClaimHandleTerminal` is also the entry point for orphan-reaper bail paths and error-policy `pass`/`error` resolutions on already-Open'd claims." This is correct for the post-dispatch `OnExecutorBlocked`/`OnExecutorErrored` `pass` path but silently wrong for the pre-dispatch `OnAcquireUnavailable` `pass`/`error` path.
 - `concepts/terminal-resolution.md` opening prose notes the `OnAcquireUnavailable` carve-out correctly but does not state the post-dispatch `pass` site routes through the unified engine.
 
 Once the structural resolution shape is picked (re-route the pre-dispatch path through the unified engine, vs. extract a shared helper, vs. rescope the engine's narrative to "post-dispatch only"), the doc-language sweep across both concepts follows from that decision. Both concept files must be updated as part of the same resolution.
@@ -62,7 +62,7 @@ Once the structural resolution shape is picked (re-route the pre-dispatch path t
 - `foundation/integration/runner_terminal_handlers.go:75-121` (post-dispatch; routes through `releaseLocksInTx`).
 - `foundation/integration/runner_terminal_release.go:137`.
 - `foundation/integration/terminal_decision.go:5-27,110-135`.
-- `concepts/auto-terminal.md` Invariants block (invariant 5).
+- `concepts/auto-terminal.md` Invariants block (unified-engine-entry rule).
 - `concepts/terminal-resolution.md` opening prose + `OnAcquireUnavailable` paragraph.
-- `review-notes.md` "Back-edge judgment calls" / "Tension `abandon-on-pass-duplicated-path` framing is partially imprecise" + "Inconsistency between `terminal-resolution` and `auto-terminal` invariant 5".
+- `review-notes.md` "Back-edge judgment calls" / "Tension `abandon-on-pass-duplicated-path` framing is partially imprecise" + "Inconsistency between `terminal-resolution` and `auto-terminal` on unified-engine entry".
 

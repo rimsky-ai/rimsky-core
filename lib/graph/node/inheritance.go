@@ -21,7 +21,7 @@ func HoldingSubgraphsForTemplate(spec *TemplateSpec) []HoldingSubgraph {
 
 	subgraphs := make(map[string]map[string]struct{})
 	for _, n := range spec.Nodes {
-		for _, s := range n.Stores {
+		for _, s := range n.ClaimProducers {
 			alias := s.AliasOf()
 			acquirer := n.Type
 			key := acquirer + "|" + alias

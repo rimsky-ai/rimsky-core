@@ -77,22 +77,22 @@ func (c *ValidationClient) ValidateClaimProducer(ctx context.Context, in clienti
 		nil
 }
 
-func (c *ValidationClient) ValidateSensor(ctx context.Context, in clientiface.ValidateSensorInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
+func (c *ValidationClient) ValidatePublisher(ctx context.Context, in clientiface.ValidatePublisherInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
 	resp, err := c.rpc.Validate(ctx, &genv1.ValidateRequest{
-		Role: "sensor",
-		Context: &genv1.ValidateRequest_Sensor{
-			Sensor: &genv1.SensorContext{
-				SensorName:     in.SensorName,
+		Role: "publisher",
+		Context: &genv1.ValidateRequest_Publisher{
+			Publisher: &genv1.PublisherContext{
+				PublisherName:  in.PublisherName,
 				Kind:           in.Kind,
 				ResolvedConfig: in.ResolvedConfig,
 			},
 		},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("remote validation %q: Validate(sensor): %w", c.name, err)
+		return nil, nil, fmt.Errorf("remote validation %q: Validate(publisher): %w", c.name, err)
 	}
-	return projectFindings(c.name, "sensor", "", resp.GetErrors()),
-		projectFindings(c.name, "sensor", "", resp.GetWarnings()),
+	return projectFindings(c.name, "publisher", "", resp.GetErrors()),
+		projectFindings(c.name, "publisher", "", resp.GetWarnings()),
 		nil
 }
 

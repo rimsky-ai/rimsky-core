@@ -163,9 +163,9 @@ func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 
 func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	var candidateHandles map[string][]byte
-	if len(req.GetStores()) > 0 {
-		candidateHandles = make(map[string][]byte, len(req.GetStores()))
-		for alias, sh := range req.GetStores() {
+	if len(req.GetClaimProducers()) > 0 {
+		candidateHandles = make(map[string][]byte, len(req.GetClaimProducers()))
+		for alias, sh := range req.GetClaimProducers() {
 			if ch := sh.GetCandidateHandle(); len(ch) > 0 {
 				candidateHandles[alias] = append([]byte(nil), ch...)
 			}

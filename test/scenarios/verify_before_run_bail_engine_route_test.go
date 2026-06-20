@@ -25,9 +25,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
@@ -51,8 +51,8 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 
 	h := scenario.Start(t, scenario.HarnessOpts{
 		NoSupervisor: true,
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"store-a": {Endpoint: "grpc://" + endpointA, Capabilities: syncCaps},
 			},
 		},
@@ -64,7 +64,7 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
-				scenario.WithStores(scenario.WriteClaimRef("store-a", "@items")),
+				scenario.WithClaimProducers(scenario.WriteClaimRef("store-a", "@items")),
 			),
 		},
 	})
@@ -104,17 +104,17 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 
 	var stolen atomic.Bool
 	args := runtime.RunArgs{
-		Persist:           h.Persist,
-		Queue:             h.Queue,
-		ClaimHandles:      h.Persist.ClaimHandles(),
-		AdvisoryLocker:    h.Driver.AdvisoryLocker(),
-		StoreRegistry:     registry,
-		Clock:             shared.SystemClock{},
-		Logger:            shared.SilentLogger{},
-		SupervisorID:      "scenario-runner",
-		AcceptedExecutors: []string{"stub"},
-		AcceptedStores:    []string{"store-a"},
-		Pool:              pool,
+		Persist:                h.Persist,
+		Queue:                  h.Queue,
+		ClaimHandles:           h.Persist.ClaimHandles(),
+		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
+		StoreRegistry:          registry,
+		Clock:                  shared.SystemClock{},
+		Logger:                 shared.SilentLogger{},
+		SupervisorID:           "scenario-runner",
+		AcceptedExecutors:      []string{"stub"},
+		AcceptedClaimProducers: []string{"store-a"},
+		Pool:                   pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),

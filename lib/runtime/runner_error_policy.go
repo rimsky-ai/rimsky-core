@@ -162,7 +162,7 @@ func applyResolvedAction(
 		if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                      acq.NodeID,
 			ExecutorName:                acq.Executor,
-			RequiredStores:              requiredStoresForAcq(acq),
+			RequiredClaimProducers:      requiredClaimProducersForAcq(acq),
 			EnqueuedAt:                  args.Clock.Now().Add(time.Duration(resolution.RetryDelayMs) * time.Millisecond),
 			FrameID:                     acq.FrameID,
 			RunScopeID:                  acq.RunScopeID,
@@ -255,7 +255,7 @@ func applyTerminalInfraError(
 	if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
 		NodeID:                      acq.NodeID,
 		ExecutorName:                acq.Executor,
-		RequiredStores:              requiredStoresForAcq(acq),
+		RequiredClaimProducers:      requiredClaimProducersForAcq(acq),
 		EnqueuedAt:                  args.Clock.Now(),
 		FrameID:                     acq.FrameID,
 		RunScopeID:                  acq.RunScopeID,
@@ -317,11 +317,11 @@ func lookupPolicyForNode(
 	return &cp, nil
 }
 
-func requiredStoresForAcq(acq *acquisition) []string {
+func requiredClaimProducersForAcq(acq *acquisition) []string {
 	if acq == nil || acq.NodeDef == nil {
 		return nil
 	}
-	return node.RequiredStores(*acq.NodeDef)
+	return node.RequiredClaimProducers(*acq.NodeDef)
 }
 
 // @concept: error-policy

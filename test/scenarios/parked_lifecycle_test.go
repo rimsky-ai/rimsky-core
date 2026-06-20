@@ -19,9 +19,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
@@ -119,8 +119,8 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -138,7 +138,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
-				scenario.WithStores(scenario.AliasedClaimRef("queue-store", "/held-A", "rw", "held")),
+				scenario.WithClaimProducers(scenario.AliasedClaimRef("queue-store", "/held-A", "rw", "held")),
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -229,8 +229,8 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -250,7 +250,7 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 					Executor:        "stub",
 					MaxParkDuration: "1s",
 				},
-				scenario.WithStores(scenario.AliasedClaimRef("queue-store", "/held-T", "rw", "held")),
+				scenario.WithClaimProducers(scenario.AliasedClaimRef("queue-store", "/held-T", "rw", "held")),
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -312,7 +312,7 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	require.True(t, abandonSeen,
-		"producer Abandon verb must fire on park-timeout for held claim (blessed invariant 13)")
+		"producer Abandon verb must fire on park-timeout for held claim")
 }
 
 func lastEventPayload(t *testing.T, h *scenario.Harness, nodeID shared.UUID, kind string) map[string]any {

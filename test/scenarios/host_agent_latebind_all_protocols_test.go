@@ -99,19 +99,19 @@ func assertLateBindPublisher(t *testing.T, conn *grpc.ClientConn, instanceID, pu
 
 	client := genv1.NewPublisherClient(conn)
 	const subID = "pub-sub-latebind-1"
-	const targetNode = "receiver"
+	const messageType = "lifecycle/tick"
 	_, err := client.Subscribe(ctx, &genv1.SubscribeRequest{
 		PublisherSubscriptionId: subID,
 		InstanceId:              instanceID,
 		Kind:                    "cron",
-		TargetNode:              targetNode,
+		MessageType:             messageType,
 	})
 
 	require.NotEqual(t, codes.Unimplemented, status.Code(err),
 		"publisher dispatch returned gRPC Unimplemented — the proxy did not forward to the spawned binary")
 	require.NoError(t, err, "publisher dispatch should be served by the real spawned publisher")
 
-	want := strings.Join([]string{subID, instanceID, targetNode}, " ")
+	want := strings.Join([]string{subID, instanceID, messageType}, " ")
 	require.Eventually(t, func() bool {
 		data, readErr := os.ReadFile(publishLog)
 		if readErr != nil {

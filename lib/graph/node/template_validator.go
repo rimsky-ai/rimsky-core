@@ -96,7 +96,7 @@ type RegistryHooks struct {
 
 	StoreAdvertisesDataProcessing func(name string) bool
 
-	StoreAdvertisesSplitScope func(name string) bool
+	ClaimProducerAdvertisesSplitScope func(name string) bool
 
 	// @concept: node
 	KindAliases *KindAliasMap
@@ -154,7 +154,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateExecutorDeclared(n, base, hooks, &res)
 		validateKindDeclaration(n, base, hooks, &res)
 		validateEmitsMessage(n, base, spec, declaredMessages, &res)
-		validateStores(n, base, hooks, &res)
+		validateClaimProducers(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, spec, hooks, &res)
 		validateAcquireUnavailablePolicyAdvised(n, base, &res)
@@ -165,7 +165,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateTagsAtRegistration(n, base, spec, &res)
 	}
 
-	validatePublishers(spec, declared, declaredMessages, &res)
+	validatePublishers(spec, declaredMessages, &res)
 
 	// @concept: message-schema
 	messageRefs := ExtractMessageRefsFromTemplate(*spec)
@@ -173,31 +173,31 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	for receiverType, list := range messageRefs {
 		for _, ref := range list {
 			path := fmt.Sprintf("nodes[%s].attributes.schema (substitution ref)", receiverType)
-			if _, ok := declaredMessages[ref.MessageType]; !ok {
+			if _, ok := declaredMessages[ref.TypeName]; !ok {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
 					Msg: fmt.Sprintf("substitution ref `messages.%s.%s` references unknown message type %q (not declared in `messages:`)",
-						ref.MessageType, ref.Field, ref.MessageType),
+						ref.TypeName, ref.FieldPath, ref.TypeName),
 				})
 				continue
 			}
-			if ref.Field == "" {
+			if ref.FieldPath == "" {
 				continue
 			}
-			fields, ok := messageBodyFields[ref.MessageType]
+			fields, ok := messageBodyFields[ref.TypeName]
 			if !ok {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
 					Msg: fmt.Sprintf("substitution ref `messages.%s.%s` reads a field but message type %q declares no body_schema (empty body)",
-						ref.MessageType, ref.Field, ref.MessageType),
+						ref.TypeName, ref.FieldPath, ref.TypeName),
 				})
 				continue
 			}
-			if _, ok := fields[ref.Field]; !ok {
+			if _, ok := fields[ref.FieldPath]; !ok {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
 					Msg: fmt.Sprintf("substitution ref `messages.%s.%s` reads a field %q not declared in message type %q's body_schema",
-						ref.MessageType, ref.Field, ref.Field, ref.MessageType),
+						ref.TypeName, ref.FieldPath, ref.FieldPath, ref.TypeName),
 				})
 			}
 		}
@@ -305,7 +305,7 @@ func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks 
 	}
 	var producerClasses []string
 	if hooks.StoreDeclaredErrorClasses != nil {
-		for _, storeName := range RequiredStores(n) {
+		for _, storeName := range RequiredClaimProducers(n) {
 			if classes, ok := hooks.StoreDeclaredErrorClasses(storeName); ok {
 				producerClasses = append(producerClasses, classes...)
 				vocabularyKnown = true
@@ -337,7 +337,7 @@ func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks 
 		res.Warnings = append(res.Warnings, ValidationWarning{
 			Path: fmt.Sprintf("%s.error_types[%s]", base, className),
 			Msg: fmt.Sprintf("error class %q is not in any declared vocabulary — not declared by executor %q (declared: %v), "+
-				"not in the acquire/* synthetic family, and not declared by any producer in this node's stores: block (declared: %v); "+
+				"not in the acquire/* synthetic family, and not declared by any producer in this node's claim_producers: block (declared: %v); "+
 				"the policy registers but will only match if a peer emits this exact class",
 				className, executorForClasses, executorClasses, producerClasses),
 		})
@@ -378,7 +378,7 @@ func errorClassMatchesDeclared(class string, declared []string) bool {
 
 // @concept: error-policy
 func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res *ValidationResult) {
-	if len(n.Stores) == 0 {
+	if len(n.ClaimProducers) == 0 {
 		return
 	}
 	for key := range n.ErrorTypes {
@@ -508,7 +508,7 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 					}
 				}
 				if hooks.StoreDeclaredErrorClasses != nil {
-					for _, storeName := range RequiredStores(sender) {
+					for _, storeName := range RequiredClaimProducers(sender) {
 						if classes, ok := hooks.StoreDeclaredErrorClasses(storeName); ok {
 							vocabularyKnown = true
 							matched = matched || errorClassMatchesDeclared(leaf, classes)
@@ -519,7 +519,7 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 					res.Warnings = append(res.Warnings, ValidationWarning{
 						Path: sbase + ".type",
 						Msg: fmt.Sprintf("error class %q is not in any vocabulary declared by sender %q "+
-							"(executor %q or its stores: producers); the subscription registers but will only "+
+							"(executor %q or its claim_producers: producers); the subscription registers but will only "+
 							"fire if a peer emits this exact class", leaf, s.Node, sender.Executor),
 					})
 				}
@@ -611,24 +611,24 @@ func validateSubstitutionRefExistence(
 	for receiverType, list := range refs {
 		for _, ref := range list {
 			path := fmt.Sprintf("nodes[%s].attributes.schema (substitution ref)", receiverType)
-			senderIdx, declaredOk := declared[ref.SenderNodeType]
+			senderIdx, declaredOk := declared[ref.TypeName]
 			if !declaredOk {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
-					Msg:  fmt.Sprintf("substitution ref `nodes.%s.%s.%s` references unknown node %q", ref.SenderNodeType, ref.TopicKind, ref.Name, ref.SenderNodeType),
+					Msg:  fmt.Sprintf("substitution ref `nodes.%s.%s.%s` references unknown node %q", ref.TypeName, ref.TopicKind, ref.FieldPath, ref.TypeName),
 				})
 				continue
 			}
 			sender := spec.Nodes[senderIdx]
 			switch ref.TopicKind {
 			case "attribute":
-				if ref.Name == "" {
+				if ref.FieldPath == "" {
 					continue
 				}
-				if !attributeKeyDeclared(sender, ref.Name) {
+				if !attributeKeyDeclared(sender, ref.FieldPath) {
 					res.Errors = append(res.Errors, ValidationError{
 						Path: path,
-						Msg:  fmt.Sprintf("substitution ref `nodes.%s.attribute.%s` references an attribute key not declared on the sender", ref.SenderNodeType, ref.Name),
+						Msg:  fmt.Sprintf("substitution ref `nodes.%s.attribute.%s` references an attribute key not declared on the sender", ref.TypeName, ref.FieldPath),
 					})
 				}
 			}
@@ -677,14 +677,14 @@ func validateSubstitutionRefCoverage(
 				"ref":                ref.RefLiteral,
 				"attribute_property": ref.AttributeProperty,
 				"suggested_subscribes_entry": map[string]any{
-					"node":                   ref.SenderNodeType,
+					"node":                   ref.TypeName,
 					"type":                   suggestedType,
 					"wake_on_change":         false,
 					"force_upstream_refresh": false,
 				},
 				"suggested_subscribes_note": fmt.Sprintf(
 					"set wake_on_change: true if this ref should also fire this receiver; set force_upstream_refresh: true if %s should be re-evaluated when this receiver is invalidated",
-					ref.SenderNodeType,
+					ref.TypeName,
 				),
 			})
 		}
@@ -694,16 +694,17 @@ func validateSubstitutionRefCoverage(
 		idx := indexByReceiver[receiverType]
 		for _, ref := range list {
 			adapted := substitutionRef{
-				SenderNodeType: ref.MessageType,
-				TopicKind:      "message",
+				Prefix:    "messages",
+				TypeName:  ref.TypeName,
+				TopicKind: "message",
 			}
 			suggestedType, covered := coverageMatch(idx, adapted)
 			if covered {
 				continue
 			}
-			refLiteral := "{{messages." + ref.MessageType
-			if ref.Field != "" {
-				refLiteral += "." + ref.Field
+			refLiteral := "{{messages." + ref.TypeName
+			if ref.FieldPath != "" {
+				refLiteral += "." + ref.FieldPath
 			}
 			refLiteral += "}}"
 			res.StructuredErrors = append(res.StructuredErrors, map[string]any{
@@ -712,14 +713,14 @@ func validateSubstitutionRefCoverage(
 				"ref":                refLiteral,
 				"attribute_property": "",
 				"suggested_subscribes_entry": map[string]any{
-					"node":                   ref.MessageType,
+					"node":                   ref.TypeName,
 					"type":                   suggestedType,
 					"wake_on_change":         false,
 					"force_upstream_refresh": false,
 				},
 				"suggested_subscribes_note": fmt.Sprintf(
 					"set wake_on_change: true if this ref should also fire this receiver; set force_upstream_refresh: true if %s should be re-evaluated when this receiver is invalidated",
-					ref.MessageType,
+					ref.TypeName,
 				),
 			})
 		}
@@ -734,30 +735,30 @@ type coverageEntryKey struct {
 func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (suggestedType string, covered bool) {
 	switch ref.TopicKind {
 	case "attribute":
-		if ref.Name == "" {
+		if ref.FieldPath == "" {
 			suggestedType = "attribute/*"
-			if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: "attribute/*"}]; ok {
+			if _, ok := idx[coverageEntryKey{sender: ref.TypeName, typ: "attribute/*"}]; ok {
 				return suggestedType, true
 			}
 			return suggestedType, false
 		}
-		suggestedType = fmt.Sprintf("attribute/%s/changed", ref.Name)
-		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: suggestedType}]; ok {
+		suggestedType = fmt.Sprintf("attribute/%s/changed", ref.FieldPath)
+		if _, ok := idx[coverageEntryKey{sender: ref.TypeName, typ: suggestedType}]; ok {
 			return suggestedType, true
 		}
-		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: "attribute/*"}]; ok {
+		if _, ok := idx[coverageEntryKey{sender: ref.TypeName, typ: "attribute/*"}]; ok {
 			return suggestedType, true
 		}
 		return suggestedType, false
 	case "message":
 		suggestedType = "terminal/success"
-		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: suggestedType}]; ok {
+		if _, ok := idx[coverageEntryKey{sender: ref.TypeName, typ: suggestedType}]; ok {
 			return suggestedType, true
 		}
-		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: "terminal/*"}]; ok {
+		if _, ok := idx[coverageEntryKey{sender: ref.TypeName, typ: "terminal/*"}]; ok {
 			return suggestedType, true
 		}
-		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: "*"}]; ok {
+		if _, ok := idx[coverageEntryKey{sender: ref.TypeName, typ: "*"}]; ok {
 			return suggestedType, true
 		}
 		return suggestedType, false
@@ -1022,9 +1023,9 @@ func emitsMessageRequiredSet(schema map[string]any) map[string]struct{} {
 	return out
 }
 
-func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
-	seenAlias := make(map[string]int, len(n.Stores))
-	for j, s := range n.Stores {
+func validateClaimProducers(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
+	seenAlias := make(map[string]int, len(n.ClaimProducers))
+	for j, s := range n.ClaimProducers {
 		sbase := fmt.Sprintf("%s.stores[%d]", base, j)
 		name := strings.TrimSpace(s.Name)
 		if name == "" {
@@ -1038,7 +1039,7 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 				res.Errors = append(res.Errors, ValidationError{
 					Path: sbase + ".name",
 					Msg: refValidationModeRejection(
-						fmt.Sprintf("store %q is not declared in the operator's stores: block", name),
+						fmt.Sprintf("store %q is not declared in the operator's claim_producers: block", name),
 						hooks.RefValidationMode),
 				})
 				continue
@@ -1164,8 +1165,8 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		})
 	}
 
-	directAliases := make(map[string]struct{}, len(n.Stores))
-	for _, s := range n.Stores {
+	directAliases := make(map[string]struct{}, len(n.ClaimProducers))
+	for _, s := range n.ClaimProducers {
 		directAliases[s.AliasOf()] = struct{}{}
 	}
 	heldAliases := make(map[string]struct{}, len(n.Holds))
@@ -1512,7 +1513,7 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 		if !isOwn && !isHeld {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("claim directive references alias %q which is neither acquired here (stores:) nor declared in holds:", alias),
+				Msg:  fmt.Sprintf("claim directive references alias %q which is neither acquired here (claim_producers:) nor declared in holds:", alias),
 			})
 		}
 	case "params":
@@ -1943,7 +1944,7 @@ func paramsSchemaProperties(spec *TemplateSpec) map[string]any {
 }
 
 // @concept: message-schema
-func validatePublishers(spec *TemplateSpec, declared map[string]int, declaredMessages map[string]struct{}, res *ValidationResult) {
+func validatePublishers(spec *TemplateSpec, declaredMessages map[string]struct{}, res *ValidationResult) {
 	seenNames := make(map[string]struct{}, len(spec.Publishers))
 	for i, p := range spec.Publishers {
 		base := fmt.Sprintf("publishers[%d]", i)
@@ -1962,19 +1963,6 @@ func validatePublishers(spec *TemplateSpec, declared map[string]int, declaredMes
 		if strings.TrimSpace(p.Kind) == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: base + ".kind", Msg: "kind is required",
-			})
-		}
-		if strings.TrimSpace(p.TargetNode) == "" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: base + ".target_node",
-				Msg:  "target_node is required (cannot be empty)",
-			})
-			continue
-		}
-		if _, ok := declared[p.TargetNode]; !ok {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: base + ".target_node",
-				Msg:  fmt.Sprintf("target_node %q does not reference a declared node type", p.TargetNode),
 			})
 		}
 		mt := strings.TrimSpace(p.MessageType)

@@ -402,7 +402,7 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 		Nodes: []nodepkg.TemplateNodeDef{{
 			Type:     "t",
 			Executor: "",
-			Stores: []nodepkg.NodeStoreRef{
+			ClaimProducers: []nodepkg.NodeClaimProducerRef{
 				{Name: "alpha", Selector: "x", Intent: "rw"},
 				{Name: "beta", Selector: "y", Intent: "r"},
 			},
@@ -429,7 +429,7 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	require.Len(t, enq, 1)
 	assert.Equal(t, claimNode.ID, enq[0].NodeID)
 	assert.Equal(t, "", enq[0].ExecutorName)
-	assert.ElementsMatch(t, []string{"alpha", "beta"}, enq[0].RequiredStores)
+	assert.ElementsMatch(t, []string{"alpha", "beta"}, enq[0].RequiredClaimProducers)
 
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {

@@ -18,7 +18,7 @@ A node's execution can take milliseconds (deterministic transforms via `executor
 
 Terminal semantics differ:
 
-- **`Complete`** — success. Carries `changed: bool` and the writeback delta for attributes. Validated against the schema at commit (`@blessed-invariant 12`).
+- **`Complete`** — success. Carries `changed: bool` and the writeback delta for attributes. Validated against the schema at commit (the dual-gate attribute-validation invariant).
 - **`Blocked`** — "I produced output but explicitly chose not to claim success" (e.g. low-confidence routing). Distinct from `Errored`. Routed via `on_executor_blocked` handler.
 - **`Errored`** — true failure. Carries an `error_class` string; the supervisor's policy chain looks up the action.
 - **`AsyncAccepted`** — long-running handoff. Carries an `async_ack_id`. The supervisor switches to expecting a POST to `${callback_url}/v1/callback/{async_ack_id}` with the final event. The HTTP body is `AsyncCallbackBody` (executor.proto:192-208); the body key is `type` (not `kind`) per the chi route at `foundation/integration/callback.go`.
@@ -63,4 +63,4 @@ The supervisor's callback registry is in-memory (`foundation/integration/callbac
 - The five terminal events have different parallel semantics; `Complete` and `Errored` are "always terminal," `AsyncAccepted` is "stream-terminal but logical-non-terminal," and `ParkRequested` is "terminal-but-resumable." A reader counting "terminal events" gets different numbers depending on what counts as terminal.
 - The body-key `type` vs `kind` distinction is a known footgun documented in CLAUDE.md, executor.md, and `executors/claude-agent/src/server.test.ts`. The chi route's error message could be more explicit.
 - The HTTP+JSON bridge (`executors/http-node/bridge.go`) is described as available for non-Go peers but `executors/claude-agent/` uses gRPC + async-callback (not the bridge). The bridge is for executors that genuinely cannot speak gRPC.
-- `Heartbeat` events are zero-or-more and non-terminal; their cadence and content are executor-defined. They primarily refresh the worker-request heartbeat column (`@blessed-invariant 6` cutoff).
+- `Heartbeat` events are zero-or-more and non-terminal; their cadence and content are executor-defined. They primarily refresh the worker-request heartbeat column (the `5 × heartbeat_interval` orphan cutoff).

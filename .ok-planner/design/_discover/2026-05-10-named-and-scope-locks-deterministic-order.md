@@ -16,7 +16,7 @@ Two primitives, two types, no common interface:
 
 The two types do not share an interface. The comment at `foundation/locks/types.go:16-17` is explicit: "Two types, no common interface: ClaimSpec and NamedLockSpec are distinct. Callers dispatch by type." This avoids the polymorphism trap where named locks and claims look interchangeable but differ in disposition semantics (named-lock disposition is rimsky-internal — increment/decrement the holder count; claim disposition is producer-driven — `Commit` / `Abandon` / `Release`).
 
-`@blessed-invariant 3` (`foundation/integration/runner.go:20-29`): all per-spec lock acquisitions for a candidate are walked in `(lock_kind, sort_key)` order. Three sites walk the same sorted slice:
+The deterministic lock-ordering rule (`foundation/integration/runner.go:20-29`) requires that all per-spec lock acquisitions for a candidate are walked in `(lock_kind, sort_key)` order. Three sites walk the same sorted slice:
 
 - Named-lock advisory locks (`TakeNamedLockInTx` per `2026-05-10-advisory-locks-tick-and-migrate`).
 - Scope re-evaluation (`evaluateScopeConflict` at `runner_acquire.go:670`).
@@ -32,7 +32,7 @@ The sort is implemented at `foundation/integration/runner_locks.go::sortLockSpec
 
 - `foundation/locks/types.go:73-110` — `NamedLockSpec`, `ClaimSpec`, two-types-no-interface comment.
 - `foundation/locks/conflict.go:44-77` — `ModeCoexists` + `ScopesByteEqual`.
-- `foundation/integration/runner.go:20-29` — invariant 3 annotation.
+- `foundation/integration/runner.go:20-29` — deterministic lock-ordering annotation.
 - `foundation/integration/runner_locks.go` — sort + acquisition walk.
 - `foundation/integration/runner_acquire.go:670-705` — `evaluateScopeConflict`.
 - `foundation/persistence/postgres/migrations/001-initial.sql:170-209` — `rimsky_claim_handle.lock_kind` CHECK.

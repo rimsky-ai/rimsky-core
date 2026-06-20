@@ -13,9 +13,9 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 func TestLeafCarriesCandidateHandle(t *testing.T) {
@@ -27,8 +27,8 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"fanout-store": {
 					Endpoint:     "grpc://" + endpoint,
 					Protocols:    []string{config.ProtocolClaimProducer, claimproducer.ProtocolDataProcessing},
@@ -61,7 +61,7 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 					},
 				},
 				openAttrs,
-				scenario.WithStores(scenario.AliasedClaimRef("fanout-store", "data", "rw", "data")),
+				scenario.WithClaimProducers(scenario.AliasedClaimRef("fanout-store", "data", "rw", "data")),
 			),
 		},
 	})
@@ -118,6 +118,6 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 			t.Logf("  sub-claim %s node_run_id=%s producer_candidate_handle_len=%d", id, nodeRun, handleLen)
 			return nil
 		})
-		t.Fatalf("each fan-out leaf should dispatch with a non-empty, per-partition-unique candidate_handle on its StoreHandle; did not converge")
+		t.Fatalf("each fan-out leaf should dispatch with a non-empty, per-partition-unique candidate_handle on its ClaimProducerHandle; did not converge")
 	}
 }

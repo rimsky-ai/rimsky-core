@@ -19,7 +19,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const storeFilesystemImage = "rimsky-store-filesystem:latest"
+const storeFilesystemImage = "rimsky-claim-producer-filesystem:latest"
 
 type FilesystemStoreSpec struct {
 	PickPolicies         map[string]FilesystemPickPolicy `yaml:"pick_policies"`

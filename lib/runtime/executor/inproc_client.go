@@ -15,7 +15,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-type HandlerContextFactory func(dispatchID, nodeID shared.UUID) HandlerContext
+type HandlerContextFactory func(ctx context.Context, dispatchID, nodeID shared.UUID) HandlerContext
 
 // @concept: executor
 type InProcessClient struct {
@@ -53,7 +53,7 @@ func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest
 	}
 	hctx := HandlerContext{}
 	if c.newHctx != nil {
-		hctx = c.newHctx(shared.UUID(dispatchID), shared.UUID(nodeID))
+		hctx = c.newHctx(ctx, shared.UUID(dispatchID), shared.UUID(nodeID))
 	}
 	var outcome *genv1.Outcome
 	func() {

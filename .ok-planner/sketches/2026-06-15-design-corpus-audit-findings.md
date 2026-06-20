@@ -115,7 +115,7 @@ When you're ready, tell me and I'll dispatch parallel fixers on the `[x]` set on
 ### Decisions TOC entries (4)
 
 - [ ] **`decisions.md:32 — TOC entry violates one-sentence rule + packs multiple clauses**
-  Quoted: `` "`coding-style` — Rimsky's coding methodology is Plumbline; all three lint checks active (`source_validity`, `blessed_invariant_test_coverage`, `comment_hygiene`) with GoDoc/JSDoc exemptions; PostToolUse + CI lint enforce." `` Fix: compress to one sentence summarizing chosen methodology and enforcement posture.
+  Quoted: `` "`coding-style` — Rimsky's coding methodology is Plumbline; both lint checks active (`comment_hygiene`, `citation_resolution`) with GoDoc/JSDoc exemptions; PostToolUse + CI lint enforce." `` Fix: compress to one sentence summarizing chosen methodology and enforcement posture.
 
 - [ ] **`decisions.md:66 — TOC entry enumerates entrypoint role-selection behavior in three clauses**
   Quoted: ``"`image-entrypoint-role-selection` — A single entrypoint binary that runs all three roles when given no command, a single role when the command names one, and runs migrate once per deployment with the owner role determined by the command."`` Fix: compress to one-sentence summary (a single command-dispatching entrypoint with migrate owned by one role).

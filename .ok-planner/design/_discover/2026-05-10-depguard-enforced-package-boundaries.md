@@ -25,7 +25,7 @@ The denial message: "pgx is allowed only in [allow-list]. Use the persistence in
 
 Both rules ship in the lint set `make lint` runs. CLAUDE.md's "Package import rules" section calls them out as "non-negotiable" and lists the allow-lists explicitly.
 
-The rules' value is twofold: (a) the modeling and integration layers can only see Postgres through `persistence.Driver` / `persistence.AdvisoryLocker` / `persistence.Queue` interfaces, which keeps the persistence-pluggable design (`@blessed-invariant`s 7, 8, 10 all rely on advisory-lock helpers exposed via the interface); (b) the second concrete persistence driver (sqlite) is in fact present at `foundation/persistence/sqlite/`, validating the abstraction. A second prod-grade driver (CockroachDB, planetscale, …) plugs in at the same interface.
+The rules' value is twofold: (a) the modeling and integration layers can only see Postgres through `persistence.Driver` / `persistence.AdvisoryLocker` / `persistence.Queue` interfaces, which keeps the persistence-pluggable design (`invariant`s 7, 8, 10 all rely on advisory-lock helpers exposed via the interface); (b) the second concrete persistence driver (sqlite) is in fact present at `foundation/persistence/sqlite/`, validating the abstraction. A second prod-grade driver (CockroachDB, planetscale, …) plugs in at the same interface.
 
 Adding a new package that needs raw pgx requires editing `.golangci.yml`'s allow-list explicitly — a visible review-time decision rather than a silent type assertion that would slip through.
 

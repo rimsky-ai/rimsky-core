@@ -122,8 +122,7 @@ auto-terminal mechanism resolves it at the holding-subgraph close:
 - Any-failed → `Abandon` → delete the branch, post a comment with
   what failed, route to human queue.
 
-This is `@blessed-invariant 13` (auto-terminal aggregate-outcome
-resolution) doing real work.
+This is the auto-terminal aggregate-outcome rule doing real work.
 
 ### Per-repo named lock for cost guardrails
 

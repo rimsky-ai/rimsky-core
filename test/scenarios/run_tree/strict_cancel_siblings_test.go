@@ -17,7 +17,7 @@ func TestStrictCancelSiblings_ActionFiresOnFailure(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
 		{State: cascade.NodeStateRunning},
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict", CancelSiblings: true})
 	if !res.IsSettled {
@@ -35,7 +35,7 @@ func TestStrictCancelSiblings_NotFiredWhenFlagOff(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
 		{State: cascade.NodeStateRunning},
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
 	if res.Action != runtime.AggregateActionNone {
@@ -46,8 +46,8 @@ func TestStrictCancelSiblings_NotFiredWhenFlagOff(t *testing.T) {
 func TestStrictCancelSiblings_NotFiredOnAllSuccess(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict", CancelSiblings: true})
 	if res.Action != runtime.AggregateActionNone {

@@ -169,9 +169,9 @@ func applyTerminalCompleteSubgraphCaller(
 					def.Type, acq.InstanceID.String())
 			}
 			children = append(children, ChildRunSpec{
-				NodeID:         nrow.ID,
-				Executor:       def.Executor,
-				RequiredStores: node.RequiredStores(def),
+				NodeID:                 nrow.ID,
+				Executor:               def.Executor,
+				RequiredClaimProducers: node.RequiredClaimProducers(def),
 			})
 		}
 		if _, err := DispatchChildren(ctx, args, tx, ChildExecutionInput{
@@ -268,8 +268,7 @@ func applyTerminalCompleteSubgraphExit(
 		}
 		wb = encoded
 	}
-	return SettleChildren(ctx, args, tx, ChildSettlementInput{
-		Policy:        spec.AggregationPolicy{Kind: spec.AggregationKindCarryVerbatim},
+	return SettleFromDelegate(ctx, args, tx, DelegateSettlementInput{
 		ExitRunID:     acq.DispatchID,
 		ExitNodeID:    acq.NodeID,
 		ExitNodeAlias: acq.NodeType,

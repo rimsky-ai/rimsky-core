@@ -95,7 +95,7 @@ type ClaimProducerClient interface {
 	// ScopesConflict is optional. Producers that advertise
 	// CapabilitiesResponse.supports_scopes_conflict = true MUST
 	// implement this RPC. When unsupported, rimsky falls back to the
-	// byte-equal default (per @blessed-invariant 4b).
+	// byte-equal default.
 	ScopesConflict(ctx context.Context, in *ClaimScopesConflictRequest, opts ...grpc.CallOption) (*ScopesConflictResponse, error)
 }
 
@@ -222,7 +222,7 @@ type ClaimProducerServer interface {
 	// ScopesConflict is optional. Producers that advertise
 	// CapabilitiesResponse.supports_scopes_conflict = true MUST
 	// implement this RPC. When unsupported, rimsky falls back to the
-	// byte-equal default (per @blessed-invariant 4b).
+	// byte-equal default.
 	ScopesConflict(context.Context, *ClaimScopesConflictRequest) (*ScopesConflictResponse, error)
 	mustEmbedUnimplementedClaimProducerServer()
 }

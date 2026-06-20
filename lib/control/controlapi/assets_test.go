@@ -93,7 +93,7 @@ func newAssetHarness(t *testing.T, versions []runtime.DataProcessingVersion) (*a
 		Queue:          d.Queue(),
 		Clock:          shared.SystemClock{},
 		Logger:         capLog,
-		Stores:         reg,
+		ClaimProducers: reg,
 		LifecycleSubs:  lcReg,
 		DataProcessors: dpReg,
 		Executors: map[string]ExecutorEntry{
@@ -116,7 +116,7 @@ func assetTemplateBody(name string) map[string]any {
 				{
 					"type":     "producer",
 					"executor": "worker",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{"name": "content", "selector": "items/x", "intent": "rw", "alias": "dataset"},
 					},
 				},

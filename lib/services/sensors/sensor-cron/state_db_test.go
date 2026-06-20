@@ -61,7 +61,7 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 	raw, _ := json.Marshal(cfg)
 	if _, err := s1.Subscribe(ctx, &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "cron-1", InstanceId: "inst-1", Kind: "cron",
-		ResolvedConfig: raw, TargetNode: "tick", MessageType: "invalidate",
+		ResolvedConfig: raw, MessageType: "invalidate",
 	}); err != nil {
 		t.Fatalf("Subscribe (first): %v", err)
 	}
@@ -121,8 +121,8 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 	if len(*bodies) != 1 {
 		t.Fatalf("recorded envelopes: got %d want 1", len(*bodies))
 	}
-	if (*bodies)[0]["sender_kind"] != "publisher" {
-		t.Errorf("sender_kind: got %v want publisher", (*bodies)[0]["sender_kind"])
+	if sub, _ := (*bodies)[0]["publisher_subscription_id"].(string); sub == "" {
+		t.Errorf("publisher_subscription_id: missing or empty (auth path discriminator)")
 	}
 	payload, _ := (*bodies)[0]["payload"].(map[string]any)
 	if payload == nil {
@@ -158,7 +158,7 @@ func TestSensorCronStateDSN_UnsetLosesSubscriptionOnRestart(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	if _, err := s1.Subscribe(ctx, &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "cron-1", InstanceId: "inst-1", Kind: "cron",
-		ResolvedConfig: raw, TargetNode: "tick", MessageType: "invalidate",
+		ResolvedConfig: raw, MessageType: "invalidate",
 	}); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}

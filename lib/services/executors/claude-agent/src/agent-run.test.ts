@@ -32,7 +32,7 @@ describe("resolveCwd", () => {
 
   it("returns ok+cwd when cwdFromStore points at an existing directory", () => {
     const out = resolveCwd({
-      stores: { content: { kind: "filesystem", handle: { address: dir } } },
+      claimProducers: { content: { kind: "filesystem", handle: { address: dir } } },
       cwdFromStore: "content",
       cwdOverride: undefined,
     });
@@ -41,19 +41,19 @@ describe("resolveCwd", () => {
 
   it("errors when the named store handle is missing", () => {
     const out = resolveCwd({
-      stores: {},
+      claimProducers: {},
       cwdFromStore: "content",
       cwdOverride: undefined,
     });
     expect(out.kind).toBe("error");
     if (out.kind === "error") {
-      expect(out.message).toMatch(/no store handle named/);
+      expect(out.message).toMatch(/no claim_producer handle named/);
     }
   });
 
   it("errors when the address is not a string", () => {
     const out = resolveCwd({
-      stores: { content: { kind: "filesystem", handle: { address: 42 } } },
+      claimProducers: { content: { kind: "filesystem", handle: { address: 42 } } },
       cwdFromStore: "content",
       cwdOverride: undefined,
     });
@@ -67,7 +67,7 @@ describe("resolveCwd", () => {
     const filePath = join(dir, "not-a-dir.txt");
     writeFileSync(filePath, "x");
     const out = resolveCwd({
-      stores: { content: { kind: "filesystem", handle: { address: filePath } } },
+      claimProducers: { content: { kind: "filesystem", handle: { address: filePath } } },
       cwdFromStore: "content",
       cwdOverride: undefined,
     });
@@ -79,7 +79,7 @@ describe("resolveCwd", () => {
 
   it("errors when the address path does not exist", () => {
     const out = resolveCwd({
-      stores: {
+      claimProducers: {
         content: { kind: "filesystem", handle: { address: join(dir, "nope") } },
       },
       cwdFromStore: "content",
@@ -93,7 +93,7 @@ describe("resolveCwd", () => {
 
   it("falls back to cwdOverride when cwdFromStore is unset", () => {
     const out = resolveCwd({
-      stores: {},
+      claimProducers: {},
       cwdFromStore: undefined,
       cwdOverride: dir,
     });
@@ -102,7 +102,7 @@ describe("resolveCwd", () => {
 
   it("returns ok+undefined when neither field is set", () => {
     const out = resolveCwd({
-      stores: {},
+      claimProducers: {},
       cwdFromStore: undefined,
       cwdOverride: undefined,
     });
@@ -137,7 +137,7 @@ describe("runAgent in real mode short-circuits on invalid cwd_from_store", () =>
       userPrompt: "do it",
       attributesSchema: {},
       attributes: {},
-      stores: {},
+      claimProducers: {},
       cwdFromStore: "content",
       callbackUrl: "",
       cancelToken: "",

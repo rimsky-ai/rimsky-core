@@ -21,6 +21,7 @@ import (
 	pgmodule "github.com/testcontainers/testcontainers-go/modules/postgres"
 	tcnet "github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
+
 )
 
 var (

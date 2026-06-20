@@ -81,6 +81,6 @@ func TestMigratePersistence_CompletesBeforeStartRoleStack(t *testing.T) {
 		t.Fatal("fake startRoleStackFn was never called — migrate must have failed before the runner-start seam was reached")
 	}
 	if !migrationsTableSeen.Load() {
-		t.Fatal("rimsky_migrations was empty at the moment startRoleStackFn fired — migrate did NOT complete before runner-start (the @blessed-invariant: migrations-run-before-runners falsifier)")
+		t.Fatal("rimsky_migrations was empty at the moment startRoleStackFn fired — migrate did NOT complete before runner-start")
 	}
 }

@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-A periodic sweep that hard-deletes stale rows from the node-run ledger and the claim-handle ledger. The runtime carries a family of sweep functions — stale-recovery, orphaned-node-run, ready, and orphaned-claim-handle sweeps. Cutoff: the per-dispatch `max_runtime` deadline for orphaned-row detection (absolute upper bound), with the supervisor's outgoing gRPC client failure driving in-band cleanup for sync dispatches and the persistent `last_progress_at` quiet-period check (`now - last_progress_at > max_quiet_period`, when set) driving cleanup for async dispatches. A claimant-guarded delete predicate ensures live owners are never clobbered.
+A periodic sweep that hard-deletes stale rows from the node-run ledger and the claim-handle ledger. The runtime carries a family of sweep functions — stale-recovery, orphaned-node-run, ready, and orphaned-claim-handle sweeps. Cutoff: the per-dispatch absolute-deadline for orphaned-row detection, with the supervisor's outgoing dispatch-channel failure driving in-band cleanup for sync dispatches and the persistent quiet-period check on the run's progress timestamp (when configured) driving cleanup for async dispatches. A claimant-guarded delete predicate ensures live owners are never clobbered.
 
 ## Purpose
 
@@ -20,8 +20,8 @@ Owns: the periodic sweep, the cutoff, the claimant-guarded delete. Does NOT own:
 
 ## Invariants
 
-- The reaper does NOT call the producer's `Abandon`. The orphaned-claim bail handler IS the deliberate exception that does.
-- Sweep cutoff for active rows is `max_runtime` (the per-dispatch absolute-deadline, when set); the supervisor's gRPC client failure drives in-band cleanup for sync RPCs without waiting for the sweep. For async dispatches, the quiet-period check (`now - last_progress_at > max_quiet_period`, when set) is an early-trigger before `max_runtime`. Claim-handle and node-run sweeps share the same cutoff.
-- All active-row deletes are claimant-guarded (`@blessed-invariant 4`).
-- The claim-handle reaper skips non-`active` rows (its predicate matches only active rows past the expiry cutoff); the held-durable preservation property follows from the state-column structure. Terminal rows are owned by the claim-handle retention sweep (subgraph at cutoff) or by the asset Release path (durable, never reaped).
-- `phase='parked'` rows are explicitly skipped (parked is settled with respect to liveness; no quiet-period or RPC-state to observe).
+- The reaper does NOT call the producer's Abandon. The orphaned-claim bail handler IS the deliberate exception that does.
+- Sweep cutoff for active rows is the per-dispatch absolute-deadline (when set); the supervisor's dispatch-channel failure drives in-band cleanup for sync dispatches without waiting for the sweep. For async dispatches, the quiet-period check (when configured) is an early-trigger before the absolute-deadline. Claim-handle and node-run sweeps share the same cutoff.
+- All active-row deletes are claimant-guarded (invariant 4).
+- The claim-handle reaper skips non-active rows (its predicate matches only active rows past the expiry cutoff); the held-durable preservation property follows from the state-column structure. Terminal rows are owned by the claim-handle retention sweep (subgraph at cutoff) or by the asset Release path (durable, never reaped).
+- Rows in the parked state are skipped (parked is settled with respect to liveness; no quiet-period or dispatch-channel-state to observe).

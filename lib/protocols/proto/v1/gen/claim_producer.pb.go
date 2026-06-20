@@ -158,7 +158,7 @@ type CapabilitiesResponse struct {
 	// templates at registration when the producer advertises false.
 	SupportsSplitScope bool `protobuf:"varint,2,opt,name=supports_split_scope,json=supportsSplitScope,proto3" json:"supports_split_scope,omitempty"`
 	// supports_scopes_conflict: producer implements ScopesConflict.
-	// When false, rimsky uses byte-equal default (per @blessed-invariant 4b).
+	// When false, rimsky uses byte-equal default.
 	SupportsScopesConflict bool `protobuf:"varint,3,opt,name=supports_scopes_conflict,json=supportsScopesConflict,proto3" json:"supports_scopes_conflict,omitempty"`
 	// protocols advertises the mix-in service protocols this binary
 	// implements alongside ClaimProducer (e.g. "data_processing",
@@ -166,7 +166,7 @@ type CapabilitiesResponse struct {
 	Protocols []string `protobuf:"bytes,4,rep,name=protocols,proto3" json:"protocols,omitempty"`
 	// validation_supported_roles: when "validation" is in protocols,
 	// the set of role discriminators this service is willing to validate
-	// ("executor" | "claim_producer" | "lifecycle_subscriber" | "sensor").
+	// ("executor" | "claim_producer" | "lifecycle_subscriber" | "publisher").
 	ValidationSupportedRoles []string `protobuf:"bytes,5,rep,name=validation_supported_roles,json=validationSupportedRoles,proto3" json:"validation_supported_roles,omitempty"`
 	// declared_error_classes is the set of error-class paths this
 	// producer may name on acquisition-failure responses (the
@@ -457,12 +457,12 @@ func (*OpenResponse_Acquired) isOpenResponse_Result() {}
 func (*OpenResponse_Unavailable) isOpenResponse_Result() {}
 
 // Acquired carries the producer's acquisition outputs. Address,
-// payload, and scope are opaque bytes per blessed invariant 20;
-// any or all may be empty depending on the (write_semantics, intent)
-// combination. realized_write_semantics declares the per-claim
-// semantics; MUST be a member of the producer's
+// payload, and scope are opaque bytes (inert in rimsky; not
+// introspected); any or all may be empty depending on the
+// (write_semantics, intent) combination. realized_write_semantics
+// declares the per-claim semantics; MUST be a member of the producer's
 // CapabilitiesResponse.write_semantics_allowed; MUST be uniform
-// across byte-equal-scope claims (uniformity invariant per spec §2.5).
+// across byte-equal-scope claims.
 type Acquired struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	Address                []byte                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
@@ -654,8 +654,8 @@ type CommitResponse struct {
 	// wins over the staged DataProcessing CommitCandidate one (the base
 	// verb is the finalizing call).
 	VersionId string `protobuf:"bytes,1,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
-	// Optional producer-supplied metadata bytes. Inert in rimsky per
-	// @blessed-invariant 20; surfaced (base64-encoded — the writeback
+	// Optional producer-supplied metadata bytes. Inert in rimsky;
+	// surfaced (base64-encoded — the writeback
 	// row is JSON) in the parent run's writeback row at fan-out parent
 	// terminal under the `producer_metadata` key, keyed by the child's
 	// partition key (spec §Output aggregation).

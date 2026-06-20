@@ -28,7 +28,7 @@ Three concept files cite `Adjacent: on-event-handler` (`concepts/lifecycle-handl
 ## Why it matters
 
 - Cross-link integrity: three dangling `Adjacent:` slugs survived discover-design final approval.
-- Catalog coverage: the `on_event` map is load-bearing for the reactive-loops design (`@blessed-invariant`-adjacent: `on_event` handlers gated against `Capabilities.declared_events`) and currently has no canonical noun entry.
+- Catalog coverage: the `on_event` map is load-bearing for the reactive-loops design (`invariant`-adjacent: `on_event` handlers gated against `Capabilities.declared_events`) and currently has no canonical noun entry.
 - Defect surface: an agent reasoning about reactive policy reads `lifecycle-handler.md` and sees a one-line aside referring to a sibling concept that doesn't exist.
 
 ## Resolution candidates (do NOT pick)

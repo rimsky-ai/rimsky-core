@@ -52,7 +52,7 @@ executors:
 	}
 }
 
-func TestStoreEntry_ObservabilityEndpoint_Honored(t *testing.T) {
+func TestClaimProducerEntry_ObservabilityEndpoint_Honored(t *testing.T) {
 	yamlBody := `
 persistence:
   driver: sqlite
@@ -65,7 +65,7 @@ claim_producers:
     write_semantics_allowed: [sync]
 `
 	cfg := mustLoadCfg(t, yamlBody)
-	s := cfg.Stores.Stores["topics-ring"]
+	s := cfg.ClaimProducers.ClaimProducers["topics-ring"]
 	if s.ObservabilityEndpoint != "store-postgres:9102" {
 		t.Fatalf("ObservabilityEndpoint = %q, want store-postgres:9102", s.ObservabilityEndpoint)
 	}

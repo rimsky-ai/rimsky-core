@@ -41,11 +41,11 @@ func newTerminatorFixture(t *testing.T) *terminatorFixture {
 	lcReg := locks.NewLifecycleRegistry()
 	lcReg.Add("alpha", alpha)
 	deps := AppDeps{
-		Persist:       d.Tables(),
-		Queue:         d.Queue(),
-		Logger:        shared.SilentLogger{},
-		Stores:        reg,
-		LifecycleSubs: lcReg,
+		Persist:        d.Tables(),
+		Queue:          d.Queue(),
+		Logger:         shared.SilentLogger{},
+		ClaimProducers: reg,
+		LifecycleSubs:  lcReg,
 	}
 	return &terminatorFixture{
 		deps: deps, driver: d, persist: d.Tables(), alpha: alpha,
@@ -61,8 +61,8 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 	spec := node.TemplateSpec{
 		Name: "term-test", Version: "v1",
 		Nodes: []node.TemplateNodeDef{{
-			Type:   "n1",
-			Stores: []node.NodeStoreRef{{Name: storeName, Selector: "x", Intent: "r"}},
+			Type:           "n1",
+			ClaimProducers: []node.NodeClaimProducerRef{{Name: storeName, Selector: "x", Intent: "r"}},
 		}},
 	}
 	instanceID = uuid.New()

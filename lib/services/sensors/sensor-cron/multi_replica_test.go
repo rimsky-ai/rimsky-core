@@ -44,7 +44,7 @@ func TestSingleReplica_FiresOnceWhenSubscriptionTickFires(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-		TargetNode: "tick", MessageType: "invalidate",
+		MessageType: "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -61,8 +61,8 @@ func TestSingleReplica_FiresOnceWhenSubscriptionTickFires(t *testing.T) {
 	if len(bodies) != 1 {
 		t.Fatalf("bodies: got %d want 1", len(bodies))
 	}
-	if bodies[0]["sender_kind"] != "publisher" {
-		t.Errorf("sender_kind: got %v", bodies[0]["sender_kind"])
+	if sub, _ := bodies[0]["publisher_subscription_id"].(string); sub == "" {
+		t.Errorf("publisher_subscription_id: missing or empty (auth path discriminator)")
 	}
 }
 
@@ -84,7 +84,7 @@ func TestMultiReplica_TwoInProcessInstancesEachFireIndependently(t *testing.T) {
 		raw, _ := json.Marshal(cfg)
 		_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 			PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-			TargetNode: "tick", MessageType: "invalidate",
+			MessageType: "invalidate",
 		})
 		if err != nil {
 			t.Fatal(err)

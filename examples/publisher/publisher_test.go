@@ -47,7 +47,7 @@ func TestSubscribeListUnsubscribe(t *testing.T) {
 	}
 
 	if _, err := client.Subscribe(ctx, &genv1.SubscribeRequest{
-		PublisherSubscriptionId: "s1", InstanceId: "i1", Kind: exampleKind, TargetNode: "tick",
+		PublisherSubscriptionId: "s1", InstanceId: "i1", Kind: exampleKind,
 	}); err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}

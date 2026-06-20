@@ -86,7 +86,7 @@ func buildLockSpecs(
 		RegistryDeclaredTypes: registryTypes,
 	}
 
-	out := make([]any, 0, len(def.Locks)+len(def.Stores))
+	out := make([]any, 0, len(def.Locks)+len(def.ClaimProducers))
 	for _, l := range def.Locks {
 		nameSub, err := attributes.Substitute(l.Name, resolveCtx)
 		if err != nil {
@@ -94,7 +94,7 @@ func buildLockSpecs(
 		}
 		out = append(out, locks.NamedLockSpec{Name: nameSub, TemplateName: l.Name})
 	}
-	for _, sref := range def.Stores {
+	for _, sref := range def.ClaimProducers {
 		selectorSub, err := attributes.Substitute(sref.Selector, resolveCtx)
 		if err != nil {
 			return nil, err
@@ -202,7 +202,7 @@ func lookupClaimHandleForAlias(
 		return nil
 	}
 	var producerName string
-	for _, sref := range upstreamDef.Stores {
+	for _, sref := range upstreamDef.ClaimProducers {
 		if sref.AliasOf() == alias {
 			producerName = sref.Name
 			break

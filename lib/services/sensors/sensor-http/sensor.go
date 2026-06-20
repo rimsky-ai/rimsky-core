@@ -32,7 +32,6 @@ type Watch struct {
 	MatchStatus    []int
 	MatchJSONKey   string
 	MatchJSONVal   string
-	TargetNode     string
 	MessageType    string
 
 	LastPollAt time.Time
@@ -72,7 +71,6 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 			MatchStatus:    r.MatchStatus,
 			MatchJSONKey:   r.MatchJSONKey,
 			MatchJSONVal:   r.MatchJSONVal,
-			TargetNode:     r.TargetNode,
 			MessageType:    r.MessageType,
 			LastHash:       r.LastHash,
 		}
@@ -171,7 +169,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		MatchStatus:    cfg.Match.Status,
 		MatchJSONKey:   cfg.Match.JSONPath.Path,
 		MatchJSONVal:   cfg.Match.JSONPath.Value,
-		TargetNode:     req.GetTargetNode(),
 		MessageType:    messageType,
 	}
 	s.mu.Lock()
@@ -231,7 +228,6 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			PublisherSubscriptionId: w.SubscriptionID,
 			InstanceId:              w.InstanceID,
 			Kind:                    "http",
-			TargetNode:              w.TargetNode,
 			MessageType:             w.MessageType,
 			StartedAt:               timestamppb.New(s.clock()),
 		})
@@ -389,7 +385,6 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 		"type":                      w.MessageType,
 		"payload":                   json.RawMessage(payloadBytes),
 		"sender":                    "sensor-http",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": w.SubscriptionID,
 	}
 	raw, err := publisherkit.MarshalEnvelope(envelope)
@@ -401,7 +396,7 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 		URL:            url,
 		Envelope:       raw,
 		IdempotencyKey: idempotencyKey,
-		SensorName:     "sensor-http",
+		PublisherName:  "sensor-http",
 		SubscriptionID: w.SubscriptionID,
 	})
 	return res.Err

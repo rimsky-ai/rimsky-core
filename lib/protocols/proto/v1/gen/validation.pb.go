@@ -44,7 +44,7 @@ type ValidateRequest struct {
 	//	*ValidateRequest_Executor
 	//	*ValidateRequest_ClaimProducer
 	//	*ValidateRequest_LifecycleSubscriber
-	//	*ValidateRequest_Sensor
+	//	*ValidateRequest_Publisher
 	Context       isValidateRequest_Context `protobuf_oneof:"context"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -121,10 +121,10 @@ func (x *ValidateRequest) GetLifecycleSubscriber() *LifecycleSubscriberContext {
 	return nil
 }
 
-func (x *ValidateRequest) GetSensor() *SensorContext {
+func (x *ValidateRequest) GetPublisher() *PublisherContext {
 	if x != nil {
-		if x, ok := x.Context.(*ValidateRequest_Sensor); ok {
-			return x.Sensor
+		if x, ok := x.Context.(*ValidateRequest_Publisher); ok {
+			return x.Publisher
 		}
 	}
 	return nil
@@ -146,8 +146,8 @@ type ValidateRequest_LifecycleSubscriber struct {
 	LifecycleSubscriber *LifecycleSubscriberContext `protobuf:"bytes,4,opt,name=lifecycle_subscriber,json=lifecycleSubscriber,proto3,oneof"`
 }
 
-type ValidateRequest_Sensor struct {
-	Sensor *SensorContext `protobuf:"bytes,5,opt,name=sensor,proto3,oneof"`
+type ValidateRequest_Publisher struct {
+	Publisher *PublisherContext `protobuf:"bytes,5,opt,name=publisher,proto3,oneof"`
 }
 
 func (*ValidateRequest_Executor) isValidateRequest_Context() {}
@@ -156,7 +156,7 @@ func (*ValidateRequest_ClaimProducer) isValidateRequest_Context() {}
 
 func (*ValidateRequest_LifecycleSubscriber) isValidateRequest_Context() {}
 
-func (*ValidateRequest_Sensor) isValidateRequest_Context() {}
+func (*ValidateRequest_Publisher) isValidateRequest_Context() {}
 
 // ExecutorContext carries the executor-side binding rimsky sees at
 // template registration: the merged effective attribute schema for the
@@ -167,7 +167,7 @@ type ExecutorContext struct {
 	NodeAlias        string                 `protobuf:"bytes,1,opt,name=node_alias,json=nodeAlias,proto3" json:"node_alias,omitempty"`
 	AttributesSchema []byte                 `protobuf:"bytes,3,opt,name=attributes_schema,json=attributesSchema,proto3" json:"attributes_schema,omitempty"`
 	// claim_aliases lists the per-node aliases (claims + holds) the
-	// executor will receive in ExecuteRequest.stores at dispatch.
+	// executor will receive in ExecuteRequest.claim_producers at dispatch.
 	ClaimAliases  []string `protobuf:"bytes,4,rep,name=claim_aliases,json=claimAliases,proto3" json:"claim_aliases,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -432,32 +432,32 @@ func (x *LifecycleSubscriberContext) GetTemplateId() string {
 	return ""
 }
 
-type SensorContext struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	SensorName string                 `protobuf:"bytes,1,opt,name=sensor_name,json=sensorName,proto3" json:"sensor_name,omitempty"`
-	// kind is the sensor-kind discriminator (e.g. "cron", "http").
+type PublisherContext struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PublisherName string                 `protobuf:"bytes,1,opt,name=publisher_name,json=publisherName,proto3" json:"publisher_name,omitempty"`
+	// kind is the publisher-kind discriminator (e.g. "cron", "http").
 	Kind string `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	// resolved_config is the per-instance config the sensor will receive
+	// resolved_config is the per-instance config the publisher will receive
 	// at Subscribe.
 	ResolvedConfig []byte `protobuf:"bytes,3,opt,name=resolved_config,json=resolvedConfig,proto3" json:"resolved_config,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *SensorContext) Reset() {
-	*x = SensorContext{}
+func (x *PublisherContext) Reset() {
+	*x = PublisherContext{}
 	mi := &file_validation_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SensorContext) String() string {
+func (x *PublisherContext) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SensorContext) ProtoMessage() {}
+func (*PublisherContext) ProtoMessage() {}
 
-func (x *SensorContext) ProtoReflect() protoreflect.Message {
+func (x *PublisherContext) ProtoReflect() protoreflect.Message {
 	mi := &file_validation_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -469,26 +469,26 @@ func (x *SensorContext) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SensorContext.ProtoReflect.Descriptor instead.
-func (*SensorContext) Descriptor() ([]byte, []int) {
+// Deprecated: Use PublisherContext.ProtoReflect.Descriptor instead.
+func (*PublisherContext) Descriptor() ([]byte, []int) {
 	return file_validation_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *SensorContext) GetSensorName() string {
+func (x *PublisherContext) GetPublisherName() string {
 	if x != nil {
-		return x.SensorName
+		return x.PublisherName
 	}
 	return ""
 }
 
-func (x *SensorContext) GetKind() string {
+func (x *PublisherContext) GetKind() string {
 	if x != nil {
 		return x.Kind
 	}
 	return ""
 }
 
-func (x *SensorContext) GetResolvedConfig() []byte {
+func (x *PublisherContext) GetResolvedConfig() []byte {
 	if x != nil {
 		return x.ResolvedConfig
 	}
@@ -623,13 +623,13 @@ var File_validation_proto protoreflect.FileDescriptor
 
 const file_validation_proto_rawDesc = "" +
 	"\n" +
-	"\x10validation.proto\x12\trimsky.v1\"\xc4\x02\n" +
+	"\x10validation.proto\x12\trimsky.v1\"\xcd\x02\n" +
 	"\x0fValidateRequest\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x128\n" +
 	"\bexecutor\x18\x02 \x01(\v2\x1a.rimsky.v1.ExecutorContextH\x00R\bexecutor\x12H\n" +
 	"\x0eclaim_producer\x18\x03 \x01(\v2\x1f.rimsky.v1.ClaimProducerContextH\x00R\rclaimProducer\x12Z\n" +
-	"\x14lifecycle_subscriber\x18\x04 \x01(\v2%.rimsky.v1.LifecycleSubscriberContextH\x00R\x13lifecycleSubscriber\x122\n" +
-	"\x06sensor\x18\x05 \x01(\v2\x18.rimsky.v1.SensorContextH\x00R\x06sensorB\t\n" +
+	"\x14lifecycle_subscriber\x18\x04 \x01(\v2%.rimsky.v1.LifecycleSubscriberContextH\x00R\x13lifecycleSubscriber\x12;\n" +
+	"\tpublisher\x18\x05 \x01(\v2\x1b.rimsky.v1.PublisherContextH\x00R\tpublisherB\t\n" +
 	"\acontext\"\x92\x01\n" +
 	"\x0fExecutorContext\x12\x1d\n" +
 	"\n" +
@@ -652,10 +652,9 @@ const file_validation_proto_rawDesc = "" +
 	"\x1aLifecycleSubscriberContext\x12'\n" +
 	"\x0fsubscriber_name\x18\x01 \x01(\tR\x0esubscriberName\x12\x1f\n" +
 	"\vtemplate_id\x18\x02 \x01(\tR\n" +
-	"templateId\"m\n" +
-	"\rSensorContext\x12\x1f\n" +
-	"\vsensor_name\x18\x01 \x01(\tR\n" +
-	"sensorName\x12\x12\n" +
+	"templateId\"v\n" +
+	"\x10PublisherContext\x12%\n" +
+	"\x0epublisher_name\x18\x01 \x01(\tR\rpublisherName\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12'\n" +
 	"\x0fresolved_config\x18\x03 \x01(\fR\x0eresolvedConfig\"\x98\x01\n" +
 	"\x10ValidateResponse\x12\x14\n" +
@@ -689,7 +688,7 @@ var file_validation_proto_goTypes = []any{
 	(*ClaimProducerContext)(nil),       // 2: rimsky.v1.ClaimProducerContext
 	(*ClaimBinding)(nil),               // 3: rimsky.v1.ClaimBinding
 	(*LifecycleSubscriberContext)(nil), // 4: rimsky.v1.LifecycleSubscriberContext
-	(*SensorContext)(nil),              // 5: rimsky.v1.SensorContext
+	(*PublisherContext)(nil),           // 5: rimsky.v1.PublisherContext
 	(*ValidateResponse)(nil),           // 6: rimsky.v1.ValidateResponse
 	(*ValidationFinding)(nil),          // 7: rimsky.v1.ValidationFinding
 }
@@ -697,7 +696,7 @@ var file_validation_proto_depIdxs = []int32{
 	1, // 0: rimsky.v1.ValidateRequest.executor:type_name -> rimsky.v1.ExecutorContext
 	2, // 1: rimsky.v1.ValidateRequest.claim_producer:type_name -> rimsky.v1.ClaimProducerContext
 	4, // 2: rimsky.v1.ValidateRequest.lifecycle_subscriber:type_name -> rimsky.v1.LifecycleSubscriberContext
-	5, // 3: rimsky.v1.ValidateRequest.sensor:type_name -> rimsky.v1.SensorContext
+	5, // 3: rimsky.v1.ValidateRequest.publisher:type_name -> rimsky.v1.PublisherContext
 	3, // 4: rimsky.v1.ClaimProducerContext.claims:type_name -> rimsky.v1.ClaimBinding
 	7, // 5: rimsky.v1.ValidateResponse.errors:type_name -> rimsky.v1.ValidationFinding
 	7, // 6: rimsky.v1.ValidateResponse.warnings:type_name -> rimsky.v1.ValidationFinding
@@ -719,7 +718,7 @@ func file_validation_proto_init() {
 		(*ValidateRequest_Executor)(nil),
 		(*ValidateRequest_ClaimProducer)(nil),
 		(*ValidateRequest_LifecycleSubscriber)(nil),
-		(*ValidateRequest_Sensor)(nil),
+		(*ValidateRequest_Publisher)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

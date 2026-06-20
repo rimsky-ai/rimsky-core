@@ -73,33 +73,33 @@ func TestHandler_SystemSummary_EmptyDB(t *testing.T) {
 	}
 }
 
-func TestHandler_ListStores_DeclaredOnly(t *testing.T) {
+func TestHandler_ListClaimProducers_DeclaredOnly(t *testing.T) {
 	d := newSQLiteDriver(t)
 	disc := observability.RunHandshake(context.Background(), &nopProber{},
 		nil,
 		[]observability.PeerSpec{{Name: "topics-ring", Endpoint: "store:9000"}},
 		slog.Default())
 	deps := observability.Deps{
-		Tables:    d.Tables(),
-		Queue:     d.Queue(),
-		Stores:    []observability.PeerSpec{{Name: "topics-ring", Endpoint: "store:9000"}},
-		Discovery: disc,
+		Tables:         d.Tables(),
+		Queue:          d.Queue(),
+		ClaimProducers: []observability.PeerSpec{{Name: "topics-ring", Endpoint: "store:9000"}},
+		Discovery:      disc,
 	}
 	r := newRouter(t, deps)
-	req := httptest.NewRequest("GET", "/v1/observability/stores", nil)
+	req := httptest.NewRequest("GET", "/v1/observability/claim-producers", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 	var body struct {
-		Stores []map[string]any `json:"stores"`
+		ClaimProducers []map[string]any `json:"claim_producers"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(body.Stores) != 1 || body.Stores[0]["name"] != "topics-ring" {
-		t.Fatalf("stores = %+v", body.Stores)
+	if len(body.ClaimProducers) != 1 || body.ClaimProducers[0]["name"] != "topics-ring" {
+		t.Fatalf("stores = %+v", body.ClaimProducers)
 	}
 }
 

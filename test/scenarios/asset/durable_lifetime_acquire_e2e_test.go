@@ -46,7 +46,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 			{
 				Type:     nodeType,
 				Executor: "stub",
-				Stores: []node.NodeStoreRef{
+				ClaimProducers: []node.NodeClaimProducerRef{
 					{
 						Name:     storeName,
 						Selector: "/durable/root",
@@ -119,17 +119,17 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 	t.Cleanup(func() { _ = pool.Close() })
 
 	args := runtime.RunArgs{
-		Persist:           backend,
-		Queue:             d.Queue(),
-		ClaimHandles:      backend.ClaimHandles(),
-		AdvisoryLocker:    d.AdvisoryLocker(),
-		StoreRegistry:     reg,
-		Clock:             shared.SystemClock{},
-		Logger:            shared.SilentLogger{},
-		SupervisorID:      "sup-D5",
-		AcceptedExecutors: []string{"stub"},
-		AcceptedStores:    []string{storeName},
-		Pool:              pool,
+		Persist:                backend,
+		Queue:                  d.Queue(),
+		ClaimHandles:           backend.ClaimHandles(),
+		AdvisoryLocker:         d.AdvisoryLocker(),
+		StoreRegistry:          reg,
+		Clock:                  shared.SystemClock{},
+		Logger:                 shared.SilentLogger{},
+		SupervisorID:           "sup-D5",
+		AcceptedExecutors:      []string{"stub"},
+		AcceptedClaimProducers: []string{storeName},
+		Pool:                   pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: "127.0.0.1:1"},
 		}),

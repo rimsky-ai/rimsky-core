@@ -16,13 +16,18 @@ import (
 func TestAggregatorSet_RecognizedKindsAccepted(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 	}
-	for _, kind := range []string{"strict", "threshold", "best_effort", "first"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []tmplspec.AggregationKind{
+		tmplspec.AggregationKindStrict,
+		tmplspec.AggregationKindThreshold,
+		tmplspec.AggregationKindBestEffort,
+		tmplspec.AggregationKindFirst,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
 			policy := tmplspec.AggregationPolicy{Kind: kind}
-			if kind == "threshold" {
+			if kind == tmplspec.AggregationKindThreshold {
 				policy.MaxFailures = 1
 			}
 			res := runtime.Aggregate(children, policy)
@@ -39,8 +44,8 @@ func TestAggregatorSet_RecognizedKindsAccepted(t *testing.T) {
 func TestAggregatorSet_UnknownKindFallsBackToStrict(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "bogus-unknown"})
 	if !res.IsSettled {
@@ -54,8 +59,8 @@ func TestAggregatorSet_UnknownKindFallsBackToStrict(t *testing.T) {
 func TestAggregatorSet_EmptyKindDefaultsToStrict(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: ""})
 	if res.ParentState != cascade.NodeStateFailed {

@@ -331,7 +331,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			ClaimHandleID:       subClaims[0].ClaimHandleID,
 			SupervisorID:        "sup-FAN",
 			Source:              runtime.ActiveTerminal,
-			Outcome:             runtime.AggregateCommit,
+			Outcome:             runtime.OutcomeCommit,
 			Producer:            store,
 			Scope:               []byte(`{"p":"alpha"}`),
 			Address:             []byte{},
@@ -348,7 +348,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			ClaimHandleID:       subClaims[1].ClaimHandleID,
 			SupervisorID:        "sup-FAN",
 			Source:              runtime.ActiveTerminal,
-			Outcome:             runtime.AggregateAbandon,
+			Outcome:             runtime.OutcomeAbandon,
 			Producer:            store,
 			Scope:               []byte(`{"p":"beta"}`),
 			Address:             []byte{},
@@ -360,14 +360,14 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	}))
 
 	commits := dpClient.Commits()
-	require.Len(t, commits, 1, "CommitCandidate must fire on AggregateCommit")
+	require.Len(t, commits, 1, "CommitCandidate must fire on OutcomeCommit")
 	require.Equal(t, subClaims[0].ClaimHandleID.String(), commits[0].ClaimHandleID,
 		"CommitCandidate.ClaimHandleID must match the sub-claim row id")
 	require.Equal(t, candidateHandle0, commits[0].CandidateHandle,
 		"CommitCandidate.CandidateHandle must round-trip the bytes BeginCandidate handed back")
 
 	abandons := dpClient.Abandons()
-	require.Len(t, abandons, 1, "AbandonCandidate must fire on AggregateAbandon")
+	require.Len(t, abandons, 1, "AbandonCandidate must fire on OutcomeAbandon")
 	require.Equal(t, subClaims[1].ClaimHandleID.String(), abandons[0].ClaimHandleID,
 		"AbandonCandidate.ClaimHandleID must match the sub-claim row id")
 	require.Equal(t, candidateHandle1, abandons[0].CandidateHandle,
@@ -387,9 +387,9 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		}
 	}
 	require.True(t, parentAbandonSeen,
-		"recursive claim-tree resolution must fire Abandon on the parent ClaimID after the last sub-claim resolves (seedOutcome=AggregateAbandon)")
+		"recursive claim-tree resolution must fire Abandon on the parent ClaimID after the last sub-claim resolves (seedOutcome=OutcomeAbandon)")
 	require.False(t, parentCommitSeen,
-		"parent must NOT Commit when the last-resolved sub-claim seeded AggregateAbandon")
+		"parent must NOT Commit when the last-resolved sub-claim seeded OutcomeAbandon")
 
 	var parentRow *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -514,7 +514,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 				ClaimHandleID:       sc.ClaimHandleID,
 				SupervisorID:        supTwo,
 				Source:              runtime.ActiveTerminal,
-				Outcome:             runtime.AggregateCommit,
+				Outcome:             runtime.OutcomeCommit,
 				Producer:            store,
 				Scope:               []byte(sc.ClaimScope),
 				Address:             []byte{},

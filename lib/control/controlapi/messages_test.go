@@ -212,15 +212,15 @@ func insertPublisherSubscription(t *testing.T, h *harness, instanceID string, pu
 			PublisherName:  publisherName,
 			Kind:           "http",
 			ResolvedConfig: []byte(`{"url":"https://example.invalid"}`),
-			TargetNode:     "root",
-			MessageType:    "system/invalidate",
-			State:          state,
+
+			MessageType: "system/invalidate",
+			State:       state,
 		})
 	}))
 	return subID.String()
 }
 
-func TestCreateMessage_SenderKindPublisherActiveSubscriptionSucceeds(t *testing.T) {
+func TestCreateMessage_PublisherSubscriptionActiveSucceeds(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -231,7 +231,6 @@ func TestCreateMessage_SenderKindPublisherActiveSubscriptionSucceeds(t *testing.
 
 	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"type":                      "system/invalidate",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": subID,
 		"sender":                    "ignored-by-trust",
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
@@ -248,7 +247,7 @@ func TestCreateMessage_SenderKindPublisherActiveSubscriptionSucceeds(t *testing.
 	require.Equal(t, "sensor-http", row.Sender, "sender must be derived from publisher_name, not body")
 }
 
-func TestCreateMessage_SenderKindPublisherStoppedSubscriptionForbidden(t *testing.T) {
+func TestCreateMessage_PublisherSubscriptionStoppedForbidden(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -258,13 +257,12 @@ func TestCreateMessage_SenderKindPublisherStoppedSubscriptionForbidden(t *testin
 
 	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"type":                      "system/invalidate",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": subID,
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
 	require.Equal(t, http.StatusForbidden, resp.status)
 }
 
-func TestCreateMessage_SenderKindPublisherUnknownSubscriptionForbidden(t *testing.T) {
+func TestCreateMessage_PublisherSubscriptionUnknownForbidden(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -272,13 +270,12 @@ func TestCreateMessage_SenderKindPublisherUnknownSubscriptionForbidden(t *testin
 	instID := newInstanceForMessages(t, h, "unknown")
 	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"type":                      "system/invalidate",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": uuid.NewString(),
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
 	require.Equal(t, http.StatusForbidden, resp.status)
 }
 
-func TestCreateMessage_SenderKindPublisherWrongInstanceForbidden(t *testing.T) {
+func TestCreateMessage_PublisherSubscriptionWrongInstanceForbidden(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -289,36 +286,9 @@ func TestCreateMessage_SenderKindPublisherWrongInstanceForbidden(t *testing.T) {
 
 	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instB), map[string]any{
 		"type":                      "system/invalidate",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": subForA,
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
 	require.Equal(t, http.StatusForbidden, resp.status)
-}
-
-func TestCreateMessage_SenderKindPublisherMissingSubscriptionIDBadRequest(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-
-	instID := newInstanceForMessages(t, h, "missing-sub")
-	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"type":        "system/invalidate",
-		"sender_kind": "publisher",
-	})
-	require.Equal(t, http.StatusBadRequest, status)
-}
-
-func TestCreateMessage_SenderKindInvalidBadRequest(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-
-	instID := newInstanceForMessages(t, h, "invalid-kind")
-	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"type":        "system/invalidate",
-		"sender_kind": "sensor",
-	})
-	require.Equal(t, http.StatusBadRequest, status)
 }
 
 func TestCreateMessage_MissingIdempotencyKeyRejected(t *testing.T) {
@@ -426,7 +396,6 @@ func TestCreateMessage_IdempotencyKeyDistinctSendersDoNotCollide(t *testing.T) {
 		fmt.Sprintf("/v1/instances/%s/messages", instID),
 		map[string]any{
 			"type":                      "system/invalidate",
-			"sender_kind":               "publisher",
 			"publisher_subscription_id": subID,
 		},
 		map[string]string{"Idempotency-Key": idemKey})

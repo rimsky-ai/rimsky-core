@@ -20,9 +20,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
@@ -35,8 +35,8 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 
 	h := scenario.Start(t, scenario.HarnessOpts{
 		NoSupervisor: true,
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -50,7 +50,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
-				scenario.WithStores(scenario.WriteClaimRef("content", "/contended")),
+				scenario.WithClaimProducers(scenario.WriteClaimRef("content", "/contended")),
 			),
 		},
 	})
@@ -77,17 +77,17 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 
 	makeArgs := func(supID string) runtime.RunArgs {
 		return runtime.RunArgs{
-			Persist:           h.Persist,
-			Queue:             h.Queue,
-			ClaimHandles:      h.Persist.ClaimHandles(),
-			AdvisoryLocker:    h.Driver.AdvisoryLocker(),
-			StoreRegistry:     reg,
-			Clock:             shared.SystemClock{},
-			Logger:            shared.SilentLogger{},
-			SupervisorID:      supID,
-			AcceptedExecutors: []string{"stub"},
-			AcceptedStores:    []string{"content"},
-			Pool:              pool,
+			Persist:                h.Persist,
+			Queue:                  h.Queue,
+			ClaimHandles:           h.Persist.ClaimHandles(),
+			AdvisoryLocker:         h.Driver.AdvisoryLocker(),
+			StoreRegistry:          reg,
+			Clock:                  shared.SystemClock{},
+			Logger:                 shared.SilentLogger{},
+			SupervisorID:           supID,
+			AcceptedExecutors:      []string{"stub"},
+			AcceptedClaimProducers: []string{"content"},
+			Pool:                   pool,
 			Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 				"stub": {Transport: "grpc", URL: h.StubAddr},
 			}),
@@ -148,7 +148,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 		"content",
 	).Scan(&lhCount))
 	require.LessOrEqual(t, lhCount, 1,
-		"invariant 4b: at most one ACTIVE writer-scope lock-holder row per (store, scope)")
+		"at most one ACTIVE writer-scope lock-holder row per (store, scope)")
 
 	_ = iidA
 	_ = iidB

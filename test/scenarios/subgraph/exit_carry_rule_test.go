@@ -159,8 +159,7 @@ func makeFixture(t *testing.T) carryFixture {
 func settleCarry(fx carryFixture, exitRunID shared.UUID, writeback json.RawMessage) error {
 	args := runtime.RunArgs{Persist: fx.tables, Logger: shared.SilentLogger{}}
 	return fx.tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.SettleChildren(ctx, args, tx, runtime.ChildSettlementInput{
-			Policy:        tmplspec.AggregationPolicy{Kind: tmplspec.AggregationKindCarryVerbatim},
+		return runtime.SettleFromDelegate(ctx, args, tx, runtime.DelegateSettlementInput{
 			ExitRunID:     exitRunID,
 			ExitNodeID:    fx.exitNodeID,
 			ExitNodeAlias: "inner-exit",
@@ -183,14 +182,14 @@ func readParentAttrs(t *testing.T, fx carryFixture) *persistence.NodeAttributesR
 	return attrs
 }
 
-func TestSettleChildren_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
+func TestSettleFromDelegate_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fx := makeFixture(t)
 
 	writeback := json.RawMessage(`{"version_id":"v42","row_count":1024}`)
 	if err := settleCarry(fx, fx.exitRunID, writeback); err != nil {
-		t.Fatalf("SettleChildren (carry-verbatim): %v", err)
+		t.Fatalf("SettleFromDelegate (carry-verbatim): %v", err)
 	}
 
 	attrs := readParentAttrs(t, fx)
@@ -238,7 +237,7 @@ func TestSettleChildren_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 	}
 }
 
-func TestSettleChildren_CarryVerbatim_RejectsNonJSONBytes(t *testing.T) {
+func TestSettleFromDelegate_CarryVerbatim_RejectsNonJSONBytes(t *testing.T) {
 	t.Parallel()
 	fx := makeFixture(t)
 
@@ -248,7 +247,7 @@ func TestSettleChildren_CarryVerbatim_RejectsNonJSONBytes(t *testing.T) {
 	}
 }
 
-func TestSettleChildren_CarryVerbatim_RejectsRunWithoutParent(t *testing.T) {
+func TestSettleFromDelegate_CarryVerbatim_RejectsRunWithoutParent(t *testing.T) {
 	t.Parallel()
 	fx := makeFixture(t)
 
@@ -258,13 +257,13 @@ func TestSettleChildren_CarryVerbatim_RejectsRunWithoutParent(t *testing.T) {
 	}
 }
 
-func TestSettleChildren_CarryVerbatim_EmptyWritebackSkipsOnlyAttributeCarry(t *testing.T) {
+func TestSettleFromDelegate_CarryVerbatim_EmptyWritebackSkipsOnlyAttributeCarry(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fx := makeFixture(t)
 
 	if err := settleCarry(fx, fx.exitRunID, nil); err != nil {
-		t.Errorf("SettleChildren with empty writeback should succeed, got: %v", err)
+		t.Errorf("SettleFromDelegate with empty writeback should succeed, got: %v", err)
 	}
 	attrs := readParentAttrs(t, fx)
 	if attrs != nil && len(attrs.Data) > 0 {

@@ -180,7 +180,7 @@ func RunHandshake(ctx context.Context, prober Prober, executors, stores []PeerSp
 		wg.Add(1)
 		go func(s PeerSpec) {
 			defer wg.Done()
-			d.SetStore(probeStoreEntry(ctx, prober, s, log))
+			d.SetClaimProducer(probeClaimProducerEntry(ctx, prober, s, log))
 		}(s)
 	}
 	wg.Wait()
@@ -216,7 +216,7 @@ func probeExecutorEntry(ctx context.Context, prober Prober, e PeerSpec, log *slo
 	return entry
 }
 
-func probeStoreEntry(ctx context.Context, prober Prober, s PeerSpec, log *slog.Logger) PeerEntry {
+func probeClaimProducerEntry(ctx context.Context, prober Prober, s PeerSpec, log *slog.Logger) PeerEntry {
 	probe := chooseObsEndpoint(s.ObservabilityEndpoint, s.Endpoint)
 	entry := PeerEntry{
 		Name:                  s.Name,
@@ -284,7 +284,7 @@ func (d *Discovery) RefreshLoop(ctx context.Context, interval time.Duration, log
 
 func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 	executors := d.ListExecutors()
-	stores := d.ListStores()
+	stores := d.ListClaimProducers()
 	var wg sync.WaitGroup
 	for _, e := range executors {
 		wg.Add(1)
@@ -315,7 +315,7 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 		wg.Add(1)
 		go func(e PeerEntry) {
 			defer wg.Done()
-			d.SetStore(probeStoreEntry(ctx, d.prober, PeerSpec{
+			d.SetClaimProducer(probeClaimProducerEntry(ctx, d.prober, PeerSpec{
 				Name:                  e.Name,
 				Endpoint:              e.Endpoint,
 				ObservabilityEndpoint: e.ObservabilityEndpoint,
@@ -326,7 +326,7 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 	wg.Wait()
 	log.Debug("observability.handshake.refresh",
 		slog.Int("executors", len(executors)),
-		slog.Int("stores", len(stores)))
+		slog.Int("claim_producers", len(stores)))
 }
 
 func chooseObsEndpoint(observability, fallback string) string {

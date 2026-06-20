@@ -56,7 +56,7 @@ const sketches = [
 const TN = '.ok-planner/design/tensions/'
 const tensions = [
   'anonymous-mode-locks-out-late-bind.md',
-  'blessed-invariant-14-retired.md',
+  'retired-numbered-invariant-14.md',
   'blob-backend-conformance-fixture-asymmetry.md',
   'callback-hostname-split.md',
   'coalesced-fire-observability-gap.md',
@@ -241,17 +241,18 @@ Return findings (use sourceKind "coverage" for the coverage report, "spec" for t
 })
 
 harvestJobs.push({
-  label: 'harvest:blessed-invariants',
+  label: 'harvest:load-bearing-invariants',
   prompt: `${HARVEST_GUIDANCE}
 
-Rimsky marks load-bearing safety properties with @blessed-invariant annotations
-in source, and claims each is enforced at a code site and exercised by a
-scenario test under test/scenarios/. Run: grep -rn '@blessed-invariant' lib/ cmd/ test/
-For EACH invariant: (1) read the enforcing code and confirm it actually enforces
-the stated property; (2) confirm a scenario test actually exercises it (not just
-a stub). Report any invariant that is stated but NOT actually enforced, or whose
-enforcement is buggy, or that has no real test. Also grep '@concept:' to spot
-concept docs that claim behavior with no code behind it if you encounter such.
+Rimsky describes load-bearing safety properties in concept docs by descriptive
+name, and claims each is enforced at a code site and exercised by a scenario
+test under test/scenarios/. Walk the concept-doc Invariants sections to
+enumerate them. For EACH: (1) read the enforcing code and confirm it actually
+enforces the stated property; (2) confirm a scenario test actually exercises
+it (not just a stub). Report any invariant that is stated but NOT actually
+enforced, or whose enforcement is buggy, or that has no real test. Also
+grep '@concept:' to spot concept docs that claim behavior with no code behind
+it if you encounter such.
 
 Return findings (use sourceKind "invariant").`,
 })

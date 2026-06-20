@@ -188,7 +188,7 @@ func TestWriteSyntheticRimskyYAML_ClaimProducersFromManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRimskyConfigYAML: %v", err)
 	}
-	entry, ok := cfg.Stores.Stores["items"]
+	entry, ok := cfg.ClaimProducers.ClaimProducers["items"]
 	if !ok {
 		t.Fatalf("claim_producers[items] missing from round-tripped config")
 	}

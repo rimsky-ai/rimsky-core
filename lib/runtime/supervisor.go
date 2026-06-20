@@ -192,18 +192,15 @@ func Start(cfg Config) (*Handle, error) {
 
 	host, port := effectiveCallbackHostPort(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
 	accepted := cfg.Resolver.AcceptedNames()
-	// @story: cascade-emit
-	// @concept: message-emitter-node
-	accepted = append(accepted, EmitMessageDispatchName)
-	acceptedStores := storeRegistryNames(cfg.StoreRegistry)
+	acceptedClaimProducers := storeRegistryNames(cfg.StoreRegistry)
 	if err := cfg.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		return cfg.Persist.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{
-			ID:                cfg.SupervisorID,
-			AcceptedExecutors: accepted,
-			AcceptedStores:    acceptedStores,
-			Concurrency:       cfg.Concurrency,
-			CallbackHost:      host,
-			CallbackPort:      port,
+			ID:                     cfg.SupervisorID,
+			AcceptedExecutors:      accepted,
+			AcceptedClaimProducers: acceptedClaimProducers,
+			Concurrency:            cfg.Concurrency,
+			CallbackHost:           host,
+			CallbackPort:           port,
 		}, tx)
 	}); err != nil {
 		_ = callbackSrv.Close(context.Background())
@@ -215,8 +212,8 @@ func Start(cfg Config) (*Handle, error) {
 	blobCap := cfg.Blob
 	spillCap := cfg.BlobSpillThreshold
 	loggerCap := cfg.Logger
-	newHctx := executor.HandlerContextFactory(func(dispatchID, nodeID shared.UUID) executor.HandlerContext {
-		return executor.HandlerContext{
+	newHctx := executor.HandlerContextFactory(func(ctx context.Context, dispatchID, nodeID shared.UUID) executor.HandlerContext {
+		hctx := executor.HandlerContext{
 			Scratch: &executor.ScratchWriter{
 				Persist:        persistCap,
 				Queue:          queueCap,
@@ -227,11 +224,20 @@ func Start(cfg Config) (*Handle, error) {
 				Logger:         loggerCap,
 			},
 		}
+		if extras, ok := executor.DispatchExtrasFromContext(ctx); ok && extras.EmitMessageType != "" {
+			msgType := extras.EmitMessageType
+			instanceID := extras.InstanceID
+			frameID := extras.FrameID
+			hctx.EmitCascadeMessage = func(ctx context.Context, body []byte) (shared.UUID, bool, error) {
+				return emitCascadeMessage(ctx, persistCap, instanceID, nodeID, frameID, msgType, body)
+			}
+		}
+		return hctx
 	})
 	clientPool := executor.NewClientPoolWithInProcess(inprocReg, newHctx)
 	advertised := advertisedCallbackURL(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg, callbackServeErr: callbackSrv.ServeErr()}
-	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedStores, lockHolders)
+	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedClaimProducers, lockHolders)
 	return h, nil
 }
 
@@ -288,7 +294,7 @@ func runLoop(
 	reg *CallbackRegistry,
 	pool *executor.ClientPool,
 	accepted []string,
-	acceptedStores []string,
+	acceptedClaimProducers []string,
 	lockHolders persistence.ClaimHandleTable,
 ) {
 	defer close(h.done)
@@ -326,7 +332,7 @@ func runLoop(
 				Logger:                           cfg.Logger,
 				SupervisorID:                     cfg.SupervisorID,
 				AcceptedExecutors:                accepted,
-				AcceptedStores:                   acceptedStores,
+				AcceptedClaimProducers:           acceptedClaimProducers,
 				Pool:                             pool,
 				Resolver:                         cfg.Resolver,
 				StoreRegistry:                    cfg.StoreRegistry,

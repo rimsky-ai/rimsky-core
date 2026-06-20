@@ -17,22 +17,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-type RunTreeNode struct {
-	RunID              shared.UUID
-	NodeID             shared.UUID
-	ParentRunID        shared.UUID
-	ChildKey           string
-	FrameID            shared.UUID
-	State              cascade.NodeState
-	SettlingSignalType *string
-	AggregationPolicy  *spec.AggregationPolicy
-}
-
-func (r RunTreeNode) IsRoot() bool { return r.ParentRunID == (shared.UUID{}) }
-
 type ChildState struct {
 	State              cascade.NodeState
-	SettlingSignalType signalpkg.TypePath
+	SettlingSignalType *signalpkg.TypePath
 	Changed            bool
 }
 
@@ -44,12 +31,12 @@ func (c ChildState) IsSettled() bool {
 	return false
 }
 
+// @concept: error-policy
 func (c ChildState) IsSuccess() bool {
 	if c.State != cascade.NodeStateFresh {
 		return false
 	}
-	// @concept: error-policy
-	if c.SettlingSignalType == "" {
+	if c.SettlingSignalType == nil {
 		return true
 	}
 	if c.SettlingSignalType.HasPrefix("terminal/success") ||
@@ -87,18 +74,14 @@ func Aggregate(children []ChildState, policy spec.AggregationPolicy) AggregateRe
 	if len(children) == 0 {
 		return AggregateResult{IsSettled: false}
 	}
-	kind := policy.Kind
-	if kind == "" {
-		kind = "strict"
-	}
-	switch kind {
-	case "strict":
+	switch policy.Kind {
+	case spec.AggregationKindStrict:
 		return aggregateStrict(children, policy)
-	case "threshold":
+	case spec.AggregationKindThreshold:
 		return aggregateThreshold(children, policy)
-	case "best_effort":
+	case spec.AggregationKindBestEffort:
 		return aggregateBestEffort(children)
-	case "first":
+	case spec.AggregationKindFirst:
 		return aggregateFirst(children)
 	}
 	return aggregateStrict(children, policy)
@@ -184,9 +167,9 @@ func aggregateFirst(children []ChildState) AggregateResult {
 	allFailed := true
 	for _, c := range children {
 		if c.IsSuccess() {
-			sig := c.SettlingSignalType
-			if sig == "" {
-				sig = signalpkg.TypePath("terminal/success")
+			sig := signalpkg.TypePath("terminal/success")
+			if c.SettlingSignalType != nil {
+				sig = *c.SettlingSignalType
 			}
 			return AggregateResult{
 				IsSettled:                true,
@@ -222,18 +205,21 @@ func aggregateChanged(children []ChildState) bool {
 func CreateRootRun(
 	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable,
 	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
-	executor string, requiredStores []string,
+	executor string, requiredClaimProducers []string,
 	policy spec.AggregationPolicy,
 ) (shared.UUID, error) {
 	runID := shared.UUID(uuid.New())
+	if policy.Kind == "" {
+		policy.Kind = spec.AggregationKindStrict
+	}
 	if err := rt.CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-		RunID:             runID,
-		NodeID:            nodeID,
-		FrameID:           frameID,
-		RunScopeID:        runScopeID,
-		ExecutorName:      executor,
-		RequiredStores:    requiredStores,
-		AggregationPolicy: policy,
+		RunID:                  runID,
+		NodeID:                 nodeID,
+		FrameID:                frameID,
+		RunScopeID:             runScopeID,
+		ExecutorName:           executor,
+		RequiredClaimProducers: requiredClaimProducers,
+		AggregationPolicy:      policy,
 	}); err != nil {
 		return shared.UUID{}, fmt.Errorf("CreateRootRun: %w", err)
 	}
@@ -243,7 +229,7 @@ func CreateRootRun(
 func CreateChildRun(
 	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable, queue persistence.Queue,
 	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
-	executor string, requiredStores []string, policy spec.AggregationPolicy,
+	executor string, requiredClaimProducers []string, policy spec.AggregationPolicy,
 ) (shared.UUID, error) {
 	if queue != nil {
 		existing, ok, err := queue.GetInFlightRunForNode(ctx, tx, nodeID, runScopeID)
@@ -255,14 +241,17 @@ func CreateChildRun(
 		}
 	}
 	runID := shared.UUID(uuid.New())
+	if policy.Kind == "" {
+		policy.Kind = spec.AggregationKindStrict
+	}
 	if err := rt.CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
-		RunID:             runID,
-		NodeID:            nodeID,
-		FrameID:           frameID,
-		RunScopeID:        runScopeID,
-		ExecutorName:      executor,
-		RequiredStores:    requiredStores,
-		AggregationPolicy: policy,
+		RunID:                  runID,
+		NodeID:                 nodeID,
+		FrameID:                frameID,
+		RunScopeID:             runScopeID,
+		ExecutorName:           executor,
+		RequiredClaimProducers: requiredClaimProducers,
+		AggregationPolicy:      policy,
 	}); err != nil {
 		return shared.UUID{}, fmt.Errorf("CreateChildRun: %w", err)
 	}

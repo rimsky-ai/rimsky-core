@@ -56,12 +56,12 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         childNodeID,
-			ExecutorName:   "test-executor",
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now().Add(-2 * time.Second),
-			FrameID:        fix.FrameID,
-			RunScopeID:     partitionScopeID,
+			NodeID:                 childNodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-2 * time.Second),
+			FrameID:                fix.FrameID,
+			RunScopeID:             partitionScopeID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("EnqueueInTx (original): %v", err)
@@ -70,9 +70,9 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	var originalDispatchID shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"test-executor"},
-			AcceptedStores:    []string{},
-			Limit:             16,
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  16,
 		})
 		if err != nil {
 			return err
@@ -115,7 +115,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                      childNodeID,
 			ExecutorName:                "test-executor",
-			RequiredStores:              []string{},
+			RequiredClaimProducers:      []string{},
 			EnqueuedAt:                  time.Now().Add(-time.Second),
 			FrameID:                     fix.FrameID,
 			RunScopeID:                  partitionScopeID,
@@ -133,9 +133,9 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	var found bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"test-executor"},
-			AcceptedStores:    []string{},
-			Limit:             16,
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  16,
 		})
 		if err != nil {
 			return err

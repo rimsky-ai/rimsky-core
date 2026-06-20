@@ -31,7 +31,7 @@ type Request struct {
 	URL            string
 	Envelope       []byte
 	IdempotencyKey string
-	SensorName     string
+	PublisherName  string
 	SubscriptionID string
 }
 
@@ -72,7 +72,7 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 		}
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			log.Warn("publisher.message.rejected",
-				"sensor", req.SensorName,
+				"publisher", req.PublisherName,
 				"publisher_subscription_id", req.SubscriptionID,
 				"status", resp.StatusCode,
 				"body", truncate(string(body), 256),

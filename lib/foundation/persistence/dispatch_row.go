@@ -14,7 +14,7 @@ type DispatchRow struct {
 	ID                             shared.UUID `json:"id"`
 	NodeID                         shared.UUID `json:"node_id"`
 	ExecutorName                   *string     `json:"executor_name,omitempty"`
-	RequiredStores                 []string    `json:"required_stores,omitempty"`
+	RequiredClaimProducers         []string    `json:"required_stores,omitempty"`
 	EnqueuedAt                     time.Time   `json:"enqueued_at"`
 	ClaimedBy                      *string     `json:"claimed_by,omitempty"`
 	ClaimedAt                      *time.Time  `json:"claimed_at,omitempty"`

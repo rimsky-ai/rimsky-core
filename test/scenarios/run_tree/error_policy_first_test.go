@@ -17,7 +17,7 @@ func TestErrorPolicyFirst_OneWinnerCancelsOthers(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
 		{State: cascade.NodeStateRunning},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 		{State: cascade.NodeStateStale},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "first"})
@@ -35,8 +35,8 @@ func TestErrorPolicyFirst_OneWinnerCancelsOthers(t *testing.T) {
 func TestErrorPolicyFirst_AllFailedFails(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure")},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "first"})
 	if !res.IsSettled {
@@ -50,7 +50,7 @@ func TestErrorPolicyFirst_AllFailedFails(t *testing.T) {
 func TestErrorPolicyFirst_OneRunningHoldsTerminalUnlessWinner(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure")},
 		{State: cascade.NodeStateRunning},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "first"})

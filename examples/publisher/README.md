@@ -85,8 +85,7 @@ publishers:
   - name: example
     kind: example
     config: {}
-    target_node: reactor
-    message_kind: invalidate
+    message_type: message/invalidate/publisher/reactor
 ```
 
 When the instance is created, rimsky generates a

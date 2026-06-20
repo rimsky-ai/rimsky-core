@@ -15,15 +15,15 @@ Producer-side stage-then-swap pattern: writers stage data into a side area; on `
 
 ## Boundaries
 
-Owns: the producer-side discipline, the documented pattern, a filesystem-substrate reference implementation, the per-substrate atomicity caveats. Does NOT own: rimsky-side mechanics (those are subgraph-lifetime + co-holdership + aggregation, each their own concept), the specific substrate (producer-internal; rimsky doesn't interpret it). Adjacent: `concept:claim-producer`, `concept:claim-lifetime`, `concept:claim-co-holdership`, `concept:auto-terminal`.
+Owns: the producer-side discipline, the documented pattern, the per-substrate atomicity caveats. Does NOT own: rimsky-side mechanics (those are subgraph-lifetime + co-holdership + aggregation, each their own concept), the specific substrate (producer-internal; rimsky doesn't interpret it). Adjacent: `concept:claim-producer`, `concept:claim-lifetime`, `concept:claim-co-holdership`, `concept:auto-terminal`.
 
 ## Substrate atomicity caveats
 
-| Substrate | Atomicity envelope |
+| Substrate shape | Atomicity envelope |
 |---|---|
-| Postgres schema swap | Atomic via transaction. |
-| Iceberg branch fast-forward | Atomic via metadata pointer. |
-| Filesystem directory atomic-rename | Atomic within a filesystem. |
-| S3 copy+delete | Windowed; not strictly atomic. |
+| Transactional store | Atomic via transaction. |
+| Metadata-pointer flip | Atomic if the pointer write is atomic. |
+| Rename within a single volume | Atomic within the volume. |
+| Copy-then-delete across volumes | Windowed; not strictly atomic. |
 | Manifest pointer flip | Atomic if the manifest write is. |
-| Kafka | Incoherent for the pattern. |
+| Append-log substrate | Incoherent for the stage-then-swap pattern. |

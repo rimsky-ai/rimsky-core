@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-A long-running daemon on a user's dev machine, bundled into the rimsky CLI binary and invoked as the agent subcommand. Authenticates outbound to a `concept:host-agent-proxy` with the user's `concept:api-key`. Serves spawn / dispatch / reap / local-HTTP-forward requests against locally-running binaries.
+A long-running daemon on a user's dev machine. Authenticates outbound to a `concept:host-agent-proxy` with the user's `concept:api-key`. Serves spawn / dispatch / reap / local-HTTP-forward requests against locally-running binaries.
 
 ## Purpose
 
@@ -24,4 +24,4 @@ Owns: dev-machine process spawn/exec, local HTTP listener termination, the agent
 - Path resolution happens at exec time; absolute, relative, and bare-name paths all work via the shell search path.
 - Spawned children inherit the agent's full environment.
 - On bidi-stream close (clean or unclean), all live children are sent a terminate signal and force-killed after a configurable grace period.
-- The agent has no persistent state of its own; it reads auth from the CLI's active-context config (the user config file's api-key field).
+- The agent has no persistent state of its own; it reads auth from the CLI's active-context config.

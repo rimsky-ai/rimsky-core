@@ -374,7 +374,7 @@ func targetStateFor(event LifecycleEvent) persistence.LifecycleIdempotencyState 
 func peersReferencedBySpec(spec node.TemplateSpec) []string {
 	seen := map[string]struct{}{}
 	for _, n := range spec.Nodes {
-		for _, s := range n.Stores {
+		for _, s := range n.ClaimProducers {
 			if s.Name == "" {
 				continue
 			}
@@ -383,6 +383,12 @@ func peersReferencedBySpec(spec node.TemplateSpec) []string {
 		if n.Executor != "" {
 			seen[n.Executor] = struct{}{}
 		}
+	}
+	for _, p := range spec.Publishers {
+		if p.Name == "" {
+			continue
+		}
+		seen[p.Name] = struct{}{}
 	}
 	out := make([]string, 0, len(seen))
 	for name := range seen {

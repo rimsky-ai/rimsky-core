@@ -83,7 +83,7 @@ The application-error path always emits an `error` event with `error_class, acti
 `foundation/integration/terminal_decision.go::ResolveClaimHandleTerminal` (lines 110-135) is the bottom of the pipe — the single audited site that:
 
 1. Calls `Producer.Commit(claimID, scope, address)` for `AggregateCommit` or `Producer.Abandon(claimID, scope, address)` for `AggregateAbandon` (lines 119-126).
-2. Calls `args.ClaimHandles.Delete(claimHandleID, supervisorID, tx)` claimant-guarded (line 131; `@blessed-invariant 4`).
+2. Calls `args.ClaimHandles.Delete(claimHandleID, supervisorID, tx)` claimant-guarded (line 131).
 
 Both call paths (active-terminal and held-terminal) end here. Per spec §7.3, the producer verb runs in its own producer-side transaction; rimsky's bookkeeping tx commits the claim-handle DELETE independently. The verb-then-tx-fail leak is bounded by at-least-once delivery + claim_id idempotency on the producer side (`auto_terminal.go:43-50`; spec §7.8 obligation #3).
 

@@ -370,7 +370,6 @@ func deploySensorHttpTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedUR
 					"name":         httpPublisherName,
 					"kind":         "http",
 					"config":       json.RawMessage(configBytes),
-					"target_node":  httpReactorNode,
 					"message_type": httpMessageType,
 				},
 			},

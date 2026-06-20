@@ -14,9 +14,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 func TestNodeRunPhaseAdvancesOnClaim(t *testing.T) {
@@ -28,8 +28,8 @@ func TestNodeRunPhaseAdvancesOnClaim(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -44,7 +44,7 @@ func TestNodeRunPhaseAdvancesOnClaim(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
-				scenario.WithStores(scenario.WriteClaimRef("content", "/region-phase")),
+				scenario.WithClaimProducers(scenario.WriteClaimRef("content", "/region-phase")),
 			),
 		},
 	})
@@ -68,8 +68,8 @@ func TestClaimHandleIsHeldColumnPopulated(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -84,7 +84,7 @@ func TestClaimHandleIsHeldColumnPopulated(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
-				scenario.WithStores(scenario.WriteClaimRef("content", "/region-is-held")),
+				scenario.WithClaimProducers(scenario.WriteClaimRef("content", "/region-is-held")),
 			),
 		},
 	})

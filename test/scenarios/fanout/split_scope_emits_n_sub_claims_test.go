@@ -31,9 +31,9 @@ func TestSplitScopeEmitsNSubClaims_InputProjectsOnePartitionPerSubScope(t *testi
 		FrameID:     frameID,
 		Partitions:  runtime.FanOutPartitions(subClaims),
 		Children: []runtime.ChildRunSpec{{
-			NodeID:         parentNode,
-			Executor:       "my-loader",
-			RequiredStores: []string{"parquet-store"},
+			NodeID:                 parentNode,
+			Executor:               "my-loader",
+			RequiredClaimProducers: []string{"parquet-store"},
 		}},
 	}
 	if len(in.Partitions) != len(subClaims) {

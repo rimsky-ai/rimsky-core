@@ -29,7 +29,7 @@ nodes:
       Fan-out node: partition_request substitutes the backfill_trigger
       message's `items` array. Subscribes to the message type so the
       substitution-ref coverage check is satisfied.
-    stores:
+    claim_producers:
       - name: fs-store
         selector: "@seed-queue"
         intent: rw

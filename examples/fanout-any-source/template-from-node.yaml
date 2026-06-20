@@ -39,7 +39,7 @@ nodes:
       The fan-out node: partition_request substitutes the prefilter
       node's `items` attribute. Subscribes to prefilter so the
       substitution-ref coverage check is satisfied.
-    stores:
+    claim_producers:
       - name: fs-store
         selector: "@seed-queue"
         intent: rw

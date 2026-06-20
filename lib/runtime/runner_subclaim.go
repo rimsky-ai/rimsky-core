@@ -81,18 +81,6 @@ func AcquireSubClaims(
 	if lifetime == "" {
 		lifetime = spec.ClaimLifetimeSubgraph
 	}
-	acceptedScopes := make([][]byte, 0, len(resp.SubClaimScopes))
-	if in.AggregationPolicy.Kind != "" {
-		policyBytes, mErr := persistence.MarshalAggregationPolicy(in.AggregationPolicy)
-		if mErr != nil {
-			return nil, fmt.Errorf("AcquireSubClaims: marshal aggregation_policy: %w", mErr)
-		}
-		if len(policyBytes) > 0 {
-			if err := args.ClaimHandles.SetAggregationPolicy(ctx, parentID, in.HolderSupervisorID, policyBytes, tx); err != nil {
-				return nil, fmt.Errorf("AcquireSubClaims: SetAggregationPolicy on parent: %w", err)
-			}
-		}
-	}
 	for _, desc := range resp.SubClaimScopes {
 		if desc.PartitionKey == "" {
 			return nil, fmt.Errorf("AcquireSubClaims: producer %q returned a sub-claim scope with an empty partition_key; "+
@@ -111,6 +99,21 @@ func AcquireSubClaims(
 				"(producers must JSON-encode opaque bytes — wrap in a base64-tagged JSON envelope if non-JSON)",
 				in.ProducerName, desc.PartitionKey)
 		}
+	}
+	acceptedScopes := make([][]byte, 0, len(resp.SubClaimScopes))
+	if in.AggregationPolicy.Kind == "" {
+		in.AggregationPolicy.Kind = spec.AggregationKindStrict
+	}
+	policyBytes, mErr := persistence.MarshalAggregationPolicy(in.AggregationPolicy)
+	if mErr != nil {
+		return nil, fmt.Errorf("AcquireSubClaims: marshal aggregation_policy: %w", mErr)
+	}
+	if len(policyBytes) > 0 {
+		if err := args.ClaimHandles.SetAggregationPolicy(ctx, parentID, in.HolderSupervisorID, policyBytes, tx); err != nil {
+			return nil, fmt.Errorf("AcquireSubClaims: SetAggregationPolicy on parent: %w", err)
+		}
+	}
+	for _, desc := range resp.SubClaimScopes {
 		subScope := json.RawMessage(desc.ClaimScopeData)
 		for _, prior := range acceptedScopes {
 			conflicts, cErr := scopesConflict(ctx, producer, caps, subScope, prior)
@@ -120,7 +123,7 @@ func AcquireSubClaims(
 			if conflicts {
 				return nil, fmt.Errorf("AcquireSubClaims: overlapping sub-claim scopes for producer %q "+
 					"(partition_key %q conflicts with an already-acquired sibling) — rejecting the whole "+
-					"fan-out acquisition per @blessed-invariant 4b/10", in.ProducerName, desc.PartitionKey)
+					"fan-out acquisition", in.ProducerName, desc.PartitionKey)
 			}
 		}
 		subID := shared.UUID(uuid.New())

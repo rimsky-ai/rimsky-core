@@ -52,12 +52,12 @@ func newHarness(t *testing.T) (*harness, func()) {
 
 	capLog := shared.NewCapturingLogger()
 	app := NewApp(AppDeps{
-		Persist:       d.Tables(),
-		Queue:         d.Queue(),
-		Clock:         shared.SystemClock{},
-		Logger:        capLog,
-		Stores:        reg,
-		LifecycleSubs: lcReg,
+		Persist:        d.Tables(),
+		Queue:          d.Queue(),
+		Clock:          shared.SystemClock{},
+		Logger:         capLog,
+		ClaimProducers: reg,
+		LifecycleSubs:  lcReg,
 		NamedLocks: locks.NamedLocksConfig{
 			Locks: map[string]locks.NamedLockConfig{
 				"topics-ring:concurrent": {Limit: 5},
@@ -150,7 +150,7 @@ func specOf(body map[string]any) map[string]any {
 	return body["spec"].(map[string]any)
 }
 
-func templateWithStoresAndLocks(name string) map[string]any {
+func templateWithClaimProducersAndLocks(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
 			"name":    name,
@@ -159,7 +159,7 @@ func templateWithStoresAndLocks(name string) map[string]any {
 				{
 					"type":     "claim-topic",
 					"executor": "worker",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{"name": "topics-ring", "selector": "@queue", "intent": "rw"},
 					},
 					"locks": []map[string]any{
@@ -182,7 +182,7 @@ func templateWithStoresAndLocks(name string) map[string]any {
 					"type":       "review",
 					"executor":   "worker",
 					"subscribes": []map[string]any{{"node": "claim-topic", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}},
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{"name": "content", "selector": "items/x", "intent": "r"},
 					},
 					"holds": map[string]any{
@@ -221,12 +221,12 @@ func TestTemplateLifecycle_DeployGetListDelete(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-func TestTemplateDeploy_NewShape_StoresAndLocks(t *testing.T) {
+func TestTemplateDeploy_NewShape_ClaimProducersAndLocks(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	body := templateWithStoresAndLocks("stores-lc-" + uuid.NewString())
+	body := templateWithClaimProducersAndLocks("stores-lc-" + uuid.NewString())
 	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status, out)
 	require.NotEmpty(t, out["template_id"])
@@ -254,7 +254,7 @@ func TestTemplateDeploy_UnknownStore_400(t *testing.T) {
 	body := validTemplateBody("unknown-store-" + uuid.NewString())
 	spec := specOf(body)
 	nodes := spec["nodes"].([]map[string]any)
-	nodes[0]["stores"] = []map[string]any{
+	nodes[0]["claim_producers"] = []map[string]any{
 		{"name": "ghost-store", "selector": "x", "intent": "r"},
 	}
 	spec["nodes"] = nodes

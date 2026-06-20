@@ -31,8 +31,8 @@ func Run(ctx context.Context, c genv1.ValidationClient, role string) []CheckResu
 	case "lifecycle_subscriber":
 		results = append(results, checkLifecycleSubscriberHappy(ctx, c))
 		results = append(results, checkUnknownRole(ctx, c))
-	case "sensor":
-		results = append(results, checkSensorHappy(ctx, c))
+	case "publisher":
+		results = append(results, checkPublisherHappy(ctx, c))
 		results = append(results, checkUnknownRole(ctx, c))
 	default:
 		results = append(results, CheckResult{
@@ -170,17 +170,17 @@ func checkLifecycleSubscriberHappy(ctx context.Context, c genv1.ValidationClient
 	return CheckResult{Name: "LifecycleSubscriberHappy"}
 }
 
-func checkSensorHappy(ctx context.Context, c genv1.ValidationClient) CheckResult {
+func checkPublisherHappy(ctx context.Context, c genv1.ValidationClient) CheckResult {
 	req := &genv1.ValidateRequest{
-		Role: "sensor",
-		Context: &genv1.ValidateRequest_Sensor{Sensor: &genv1.SensorContext{
-			SensorName:     "conformance-sensor",
+		Role: "publisher",
+		Context: &genv1.ValidateRequest_Publisher{Publisher: &genv1.PublisherContext{
+			PublisherName:  "conformance-publisher",
 			Kind:           "cron",
 			ResolvedConfig: []byte(`{"cron":"*/5 * * * *"}`),
 		}},
 	}
 	if _, err := c.Validate(ctx, req); err != nil {
-		return CheckResult{Name: "SensorHappy", Err: err}
+		return CheckResult{Name: "PublisherHappy", Err: err}
 	}
-	return CheckResult{Name: "SensorHappy"}
+	return CheckResult{Name: "PublisherHappy"}
 }

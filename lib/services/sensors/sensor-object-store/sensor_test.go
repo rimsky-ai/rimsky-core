@@ -52,7 +52,7 @@ func TestSubscribe_RegistersInMemory(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
-		TargetNode: "ingest", MessageType: "invalidate",
+		MessageType: "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestSubscribe_RegistersInMemory(t *testing.T) {
 	if !ok || w.Bucket != "test-bucket" || w.WatermarkField != "name" {
 		t.Errorf("subscription: %+v", w)
 	}
-	if w.TargetNode != "ingest" || w.MessageType != "invalidate" {
+	if w.MessageType != "invalidate" {
 		t.Errorf("routing: %+v", w)
 	}
 }
@@ -169,7 +169,7 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
-		TargetNode: "ingest", MessageType: "invalidate",
+		MessageType: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -179,8 +179,8 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	if len(obsBody) != 2 {
 		t.Errorf("first tick messages: %d (want 2)", len(obsBody))
 	}
-	if obsBody[0]["sender_kind"] != "publisher" {
-		t.Errorf("sender_kind: %v", obsBody[0]["sender_kind"])
+	if sub, _ := obsBody[0]["publisher_subscription_id"].(string); sub == "" {
+		t.Errorf("publisher_subscription_id: missing or empty (auth path discriminator)")
 	}
 	obsMu.Unlock()
 

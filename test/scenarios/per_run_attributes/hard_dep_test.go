@@ -242,6 +242,6 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 	require.NotNil(t, cRow)
 	require.Equal(t, "from-b-2", cRow.Data["b_val"],
 		"c's direct invalidate must pull b (force_upstream_refresh: true) into the frame; "+
-			"b's second-fire value is the load-bearing observable for the direct-invalidate "+
-			"branch in walkCascadeForInvalidatedNode")
+			"b's second-fire value is the load-bearing observable for the upstream-refresh "+
+			"pull pass driven by pullUpstreamRefreshesForNode")
 }

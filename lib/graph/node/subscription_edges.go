@@ -319,7 +319,6 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 // @story: empty-message-wakes-roots
 func BuildSubscriptionEdges(
 	tmpl spec.TemplateSpec,
-	substitutionRefs map[string][]substitutionRef,
 	messageRefs map[string][]messageRef,
 ) (*SubscriptionEdgeMap, error) {
 	out := NewSubscriptionEdgeMap()
@@ -333,10 +332,9 @@ func BuildSubscriptionEdges(
 			}
 			out.Insert(s.Node, edge)
 		}
-		_ = substitutionRefs
 		for _, ref := range messageRefs[receiverType] {
 			edge := edgeFromMessageRef(receiverType)
-			out.Insert(ref.MessageType, edge)
+			out.Insert(ref.TypeName, edge)
 		}
 	}
 	subgraphInternal := subgraphInternalNodeTypes(tmpl)
@@ -413,27 +411,33 @@ func edgeFromMessageRef(receiverType string) SubscriptionEdge {
 	}
 }
 
+// @concept: message-schema
+// @concept: node-subscription
+// @decision: substitution-ref-coverage-required
 type substitutionRef struct {
-	SenderNodeType    string
+	Prefix            string
+	TypeName          string
+	FieldPath         string
 	TopicKind         string
-	Name              string
 	RefLiteral        string
 	AttributeProperty string
 }
 
 // @concept: message-schema
-// @concept: node-subscription
-type messageRef struct {
-	MessageType string
-	Field       string
-}
+type messageRef = substitutionRef
 
 var substitutionDirectiveRe = regexp.MustCompile(`\{\{([^}]*)\}\}`)
 
 func ExtractSubstitutionRefsFromTemplate(tmpl spec.TemplateSpec) map[string][]substitutionRef {
 	out := map[string][]substitutionRef{}
 	for _, n := range tmpl.Nodes {
-		refs := parseSubstitutionRefsFromAttributes(n)
+		var refs []substitutionRef
+		for _, r := range parseSubstitutionRefsFromAttributes(n) {
+			if r.Prefix != "nodes" {
+				continue
+			}
+			refs = append(refs, r)
+		}
 		if len(refs) > 0 {
 			out[n.Type] = refs
 		}
@@ -446,85 +450,18 @@ func ExtractSubstitutionRefsFromTemplate(tmpl spec.TemplateSpec) map[string][]su
 func ExtractMessageRefsFromTemplate(tmpl spec.TemplateSpec) map[string][]messageRef {
 	out := map[string][]messageRef{}
 	for _, n := range tmpl.Nodes {
-		refs := parseMessageRefsFromAttributes(n)
+		var refs []substitutionRef
+		for _, r := range parseSubstitutionRefsFromAttributes(n) {
+			if r.Prefix != "messages" {
+				continue
+			}
+			refs = append(refs, r)
+		}
 		if len(refs) > 0 {
 			out[n.Type] = refs
 		}
 	}
 	return out
-}
-
-// @concept: message-schema
-type MessageRefSpec struct {
-	MessageType string
-	Field       string
-}
-
-// @concept: message-schema
-func MessageRefsFromAttributes(n TemplateNodeDef) []MessageRefSpec {
-	refs := parseMessageRefsFromAttributes(n)
-	out := make([]MessageRefSpec, 0, len(refs))
-	for _, r := range refs {
-		out = append(out, MessageRefSpec(r))
-	}
-	return out
-}
-
-func parseMessageRefsFromAttributes(n TemplateNodeDef) []messageRef {
-	var out []messageRef
-	seen := map[messageRef]struct{}{}
-	scanSrc := func(src string) {
-		for _, m := range substitutionDirectiveRe.FindAllStringSubmatch(src, -1) {
-			body := strings.TrimSpace(m[1])
-			if body == "" {
-				continue
-			}
-			if idx := strings.Index(body, "|"); idx >= 0 {
-				body = strings.TrimSpace(body[:idx])
-			}
-			body = strings.TrimSpace(strings.TrimSuffix(body, "?"))
-			ref, ok := parseMessageDirective(body)
-			if !ok {
-				continue
-			}
-			if _, dup := seen[ref]; dup {
-				continue
-			}
-			seen[ref] = struct{}{}
-			out = append(out, ref)
-		}
-	}
-	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
-		walkSchemaForSourcesWithPath(n.Attributes.Schema, "", func(src, _ string) {
-			scanSrc(src)
-		})
-	}
-	for _, s := range n.Stores {
-		scanSrc(s.Selector)
-	}
-	for _, l := range n.Locks {
-		scanSrc(l.Name)
-	}
-	if n.FanOut != nil {
-		scanSrc(n.FanOut.PartitionRequest)
-	}
-	return out
-}
-
-func parseMessageDirective(body string) (messageRef, bool) {
-	parts := strings.Split(body, ".")
-	if len(parts) < 2 || parts[0] != "messages" {
-		return messageRef{}, false
-	}
-	mtype := parts[1]
-	if mtype == "" {
-		return messageRef{}, false
-	}
-	field := ""
-	if len(parts) >= 3 {
-		field = parts[2]
-	}
-	return messageRef{MessageType: mtype, Field: field}, true
 }
 
 // @concept: node-subscription
@@ -539,10 +476,13 @@ func SubstitutionRefsFromAttributes(n TemplateNodeDef) []SubstitutionRefSpec {
 	refs := parseSubstitutionRefsFromAttributes(n)
 	out := make([]SubstitutionRefSpec, 0, len(refs))
 	for _, r := range refs {
+		if r.Prefix != "nodes" {
+			continue
+		}
 		out = append(out, SubstitutionRefSpec{
-			SenderNodeType: r.SenderNodeType,
+			SenderNodeType: r.TypeName,
 			TopicKind:      r.TopicKind,
-			Name:           r.Name,
+			Name:           r.FieldPath,
 		})
 	}
 	return out
@@ -552,10 +492,13 @@ func SubstitutionRefsFromAttributes(n TemplateNodeDef) []SubstitutionRefSpec {
 func UpstreamNodeTypesFromAttributes(n TemplateNodeDef) []string {
 	seen := make(map[string]struct{})
 	for _, ref := range parseSubstitutionRefsFromAttributes(n) {
-		if ref.SenderNodeType == "" || ref.SenderNodeType == n.Type {
+		if ref.Prefix != "nodes" {
 			continue
 		}
-		seen[ref.SenderNodeType] = struct{}{}
+		if ref.TypeName == "" || ref.TypeName == n.Type {
+			continue
+		}
+		seen[ref.TypeName] = struct{}{}
 	}
 	if len(seen) == 0 {
 		return nil
@@ -567,18 +510,19 @@ func UpstreamNodeTypesFromAttributes(n TemplateNodeDef) []string {
 	return out
 }
 
+// @concept: message-schema
 // @concept: node-subscription
 // @decision: substitution-ref-coverage-required
 func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 	var out []substitutionRef
 	type dedupKey struct {
-		sender   string
-		kind     string
-		name     string
+		prefix   string
+		typeName string
+		field    string
 		property string
 	}
 	seen := map[dedupKey]struct{}{}
-	scanSrc := func(src, propertyPath string) {
+	scan := func(src, propertyPath string) {
 		for _, m := range substitutionDirectiveRe.FindAllStringSubmatch(src, -1) {
 			literal := m[0]
 			body := strings.TrimSpace(m[1])
@@ -588,44 +532,15 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 			if idx := strings.Index(body, "|"); idx >= 0 {
 				body = strings.TrimSpace(body[:idx])
 			}
+			body = strings.TrimSpace(strings.TrimSuffix(body, "?"))
 			ref, ok := parseSubstitutionDirective(body)
 			if !ok {
 				continue
 			}
-			if ref.SenderNodeType == "" || ref.SenderNodeType == n.Type {
+			if ref.Prefix == "nodes" && (ref.TypeName == "" || ref.TypeName == n.Type) {
 				continue
 			}
-			key := dedupKey{ref.SenderNodeType, ref.TopicKind, ref.Name, propertyPath}
-			if _, dup := seen[key]; dup {
-				continue
-			}
-			seen[key] = struct{}{}
-			ref.RefLiteral = literal
-			ref.AttributeProperty = propertyPath
-			out = append(out, ref)
-		}
-	}
-	scanSrcAttributeOnly := func(src, propertyPath string) {
-		for _, m := range substitutionDirectiveRe.FindAllStringSubmatch(src, -1) {
-			literal := m[0]
-			body := strings.TrimSpace(m[1])
-			if body == "" {
-				continue
-			}
-			if idx := strings.Index(body, "|"); idx >= 0 {
-				body = strings.TrimSpace(body[:idx])
-			}
-			ref, ok := parseSubstitutionDirective(body)
-			if !ok {
-				continue
-			}
-			if ref.TopicKind != "attribute" {
-				continue
-			}
-			if ref.SenderNodeType == "" || ref.SenderNodeType == n.Type {
-				continue
-			}
-			key := dedupKey{ref.SenderNodeType, ref.TopicKind, ref.Name, propertyPath}
+			key := dedupKey{ref.Prefix, ref.TypeName, ref.FieldPath, propertyPath}
 			if _, dup := seen[key]; dup {
 				continue
 			}
@@ -636,20 +551,22 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 		}
 	}
 	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
-		walkSchemaForSourcesWithPath(n.Attributes.Schema, "", scanSrc)
+		walkSchemaForSourcesWithPath(n.Attributes.Schema, "", scan)
 	}
-	for i, s := range n.Stores {
-		scanSrcAttributeOnly(s.Selector, fmt.Sprintf("stores[%d].selector", i))
+	for i, s := range n.ClaimProducers {
+		scan(s.Selector, fmt.Sprintf("claim_producers[%d].selector", i))
 	}
 	for i, l := range n.Locks {
-		scanSrcAttributeOnly(l.Name, fmt.Sprintf("locks[%d].name", i))
+		scan(l.Name, fmt.Sprintf("locks[%d].name", i))
 	}
 	if n.FanOut != nil && n.FanOut.PartitionRequest != "" {
-		scanSrcAttributeOnly(n.FanOut.PartitionRequest, "fan_out.partition_request")
+		scan(n.FanOut.PartitionRequest, "fan_out.partition_request")
 	}
 	return out
 }
 
+// @concept: message-schema
+// @concept: node-subscription
 func parseSubstitutionDirective(body string) (substitutionRef, bool) {
 	body = strings.TrimSpace(body)
 	if idx := strings.Index(body, "|"); idx >= 0 {
@@ -657,21 +574,44 @@ func parseSubstitutionDirective(body string) (substitutionRef, bool) {
 	}
 	body = strings.TrimSpace(strings.TrimSuffix(body, "?"))
 	parts := strings.Split(body, ".")
-	if len(parts) < 3 || parts[0] != "nodes" {
+	if len(parts) < 2 {
 		return substitutionRef{}, false
 	}
-	sender := parts[1]
-	if sender == "" {
-		return substitutionRef{}, false
-	}
-	switch parts[2] {
-	case "attribute":
-		name := ""
+	switch parts[0] {
+	case "nodes":
+		if len(parts) < 3 {
+			return substitutionRef{}, false
+		}
+		typeName := parts[1]
+		if typeName == "" {
+			return substitutionRef{}, false
+		}
+		if parts[2] != "attribute" {
+			return substitutionRef{}, false
+		}
+		field := ""
 		if len(parts) >= 4 {
-			name = parts[3]
+			field = parts[3]
 		}
 		return substitutionRef{
-			SenderNodeType: sender, TopicKind: "attribute", Name: name,
+			Prefix:    "nodes",
+			TypeName:  typeName,
+			FieldPath: field,
+			TopicKind: "attribute",
+		}, true
+	case "messages":
+		typeName := parts[1]
+		if typeName == "" {
+			return substitutionRef{}, false
+		}
+		field := ""
+		if len(parts) >= 3 {
+			field = parts[2]
+		}
+		return substitutionRef{
+			Prefix:    "messages",
+			TypeName:  typeName,
+			FieldPath: field,
 		}, true
 	default:
 		return substitutionRef{}, false

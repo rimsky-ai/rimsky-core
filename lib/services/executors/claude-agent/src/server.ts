@@ -50,7 +50,7 @@ interface ExecuteRequest {
   node_type?: string;
   attributes?: unknown;
   attributes_schema?: unknown;
-  stores?: Record<string, unknown>;
+  claim_producers?: Record<string, unknown>;
   callback_url?: string;
   cancel_token?: string;
   dispatch_id?: string;
@@ -250,7 +250,7 @@ function handleExecute(
       instance_id: req.instance_id,
       model: stringOrUndefined(toRecord(req.attributes).model),
       cwd_from_store: stringOrUndefined(toRecord(req.attributes).cwd_from_store),
-      stores: Object.keys(req.stores ?? {}),
+      claim_producers: Object.keys(req.claim_producers ?? {}),
     },
     "execute.received",
   );
@@ -298,7 +298,7 @@ async function runAndCallback(
       userPrompt: stringOr(attributes.user_prompt, ""),
       attributesSchema: req.attributes_schema ?? {},
       attributes,
-      stores: unwrapStores(req.stores ?? {}),
+      claimProducers: unwrapClaimProducers(req.claim_producers ?? {}),
       cwdFromStore: stringOrUndefined(attributes.cwd_from_store),
       cwdOverride: stringOrUndefined(attributes.cwd),
       cliConfig: parseCliConfig(attributes.cli),
@@ -471,9 +471,9 @@ function toRecord(v: unknown): Record<string, unknown> {
   return v as Record<string, unknown>;
 }
 
-function unwrapStores(stores: Record<string, unknown>): Record<string, unknown> {
+function unwrapClaimProducers(claimProducers: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(stores)) {
+  for (const [k, v] of Object.entries(claimProducers)) {
     if (!v || typeof v !== "object") {
       out[k] = v;
       continue;

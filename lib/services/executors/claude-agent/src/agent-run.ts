@@ -63,7 +63,7 @@ export interface AgentRunOptions {
   userPrompt: string;
   attributesSchema: unknown;
   attributes: Record<string, unknown>;
-  stores?: Record<string, unknown>;
+  claimProducers?: Record<string, unknown>;
   cwdFromStore?: string;
   cwdOverride?: string;
   cliConfig?: {
@@ -206,7 +206,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     userPrompt,
     attributesSchema,
     attributes,
-    stores,
+    claimProducers,
     cwdFromStore,
     cwdOverride,
     cliConfig,
@@ -226,7 +226,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   } = opts;
 
   const cwdResolution = resolveCwd({
-    stores: stores ?? {},
+    claimProducers: claimProducers ?? {},
     cwdFromStore,
     cwdOverride,
   });
@@ -1026,17 +1026,17 @@ type CwdResolution =
   | { kind: "error"; message: string };
 
 export function resolveCwd(args: {
-  stores: Record<string, unknown>;
+  claimProducers: Record<string, unknown>;
   cwdFromStore: string | undefined;
   cwdOverride: string | undefined;
 }): CwdResolution {
-  const { stores, cwdFromStore, cwdOverride } = args;
+  const { claimProducers, cwdFromStore, cwdOverride } = args;
   if (cwdFromStore && cwdFromStore.length > 0) {
-    const handleEntry = stores[cwdFromStore];
+    const handleEntry = claimProducers[cwdFromStore];
     if (!handleEntry || typeof handleEntry !== "object") {
       return {
         kind: "error",
-        message: `cwd_from_store: no store handle named ${JSON.stringify(cwdFromStore)} in ExecuteRequest.stores`,
+        message: `cwd_from_store: no claim_producer handle named ${JSON.stringify(cwdFromStore)} in ExecuteRequest.claim_producers`,
       };
     }
     const handle = (handleEntry as { handle?: unknown }).handle;

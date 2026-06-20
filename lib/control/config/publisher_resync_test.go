@@ -130,10 +130,10 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 			PublisherName:  publisherName,
 			Kind:           "object_store",
 			ResolvedConfig: json.RawMessage(`{"bucket":"b"}`),
-			TargetNode:     "ingest",
-			MessageType:    "fixture/ping",
-			State:          persistence.PublisherSubscriptionStateActive,
-			StartedAt:      time.Now().UTC(),
+
+			MessageType: "fixture/ping",
+			State:       persistence.PublisherSubscriptionStateActive,
+			StartedAt:   time.Now().UTC(),
 		})
 	}); err != nil {
 		t.Fatalf("seed subscription: %v", err)
@@ -146,8 +146,8 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 				PublisherSubscriptionID: orphanSubID,
 				InstanceID:              orphanInstanceID,
 				Kind:                    "object_store",
-				TargetNode:              "ingest",
-				MessageType:             "fixture/ping",
+
+				MessageType: "fixture/ping",
 			},
 		},
 	}

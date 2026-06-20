@@ -154,7 +154,7 @@ func validatedTemplate(name, selector string) map[string]any {
 						"policy": []map[string]any{{"action": "give_up"}},
 					},
 				},
-				"stores": []map[string]any{
+				"claim_producers": []map[string]any{
 					{
 						"name":     "validator",
 						"selector": selector,

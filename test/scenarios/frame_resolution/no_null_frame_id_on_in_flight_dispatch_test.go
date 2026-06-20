@@ -49,7 +49,7 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 		`SELECT count(*) FROM rimsky_node_runs WHERE frame_id IS NULL`).Scan(&nullDispatches)
 	require.NoError(t, err)
 	require.Equal(t, 0, nullDispatches,
-		"invariant 19 violated: %d rimsky_node_runs rows have NULL frame_id", nullDispatches)
+		"frame_id must not be NULL:%d rimsky_node_runs rows have NULL frame_id", nullDispatches)
 
 	var nullNodes int
 	err = h.Pool.QueryRow(context.Background(), `
@@ -60,7 +60,7 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	`).Scan(&nullNodes)
 	require.NoError(t, err)
 	require.Equal(t, 0, nullNodes,
-		"invariant 19 violated: %d non-fresh in-flight run rows have NULL frame_id", nullNodes)
+		"frame_id must not be NULL:%d non-fresh in-flight run rows have NULL frame_id", nullNodes)
 
 	for _, nodeType := range []string{"worker", "middle", "leaf"} {
 		nID := h.FindNode(iid, nodeType).ID

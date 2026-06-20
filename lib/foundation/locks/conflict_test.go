@@ -38,74 +38,72 @@ func TestClaimScopesByteEqual(t *testing.T) {
 }
 
 func TestModeCoexistsMatrix(t *testing.T) {
-	syncSemantics := []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync}
-	for _, sem := range syncSemantics {
-		t.Run("sync-"+string(sem)+"-r-r", func(t *testing.T) {
-			if !ModeCoexists(claimproducer.IntentRead, sem, claimproducer.IntentRead, sem) {
-				t.Fatal("sync r×r must coexist")
+	nonPassThrough := []claimproducer.WriteSemantics{
+		claimproducer.WriteSemanticsSync,
+		claimproducer.WriteSemanticsBlockingAsync,
+		claimproducer.WriteSemanticsReadOnly,
+	}
+	for _, sem := range nonPassThrough {
+		t.Run(string(sem)+"-r-r", func(t *testing.T) {
+			if !ModeCoexists(claimproducer.IntentRead, claimproducer.IntentRead, sem) {
+				t.Fatalf("%s r×r must coexist", sem)
 			}
 		})
-		t.Run("sync-"+string(sem)+"-r-w", func(t *testing.T) {
-			if ModeCoexists(claimproducer.IntentRead, sem, claimproducer.IntentReadWrite, sem) {
-				t.Fatal("sync r×w must conflict")
+		t.Run(string(sem)+"-r-w", func(t *testing.T) {
+			if ModeCoexists(claimproducer.IntentRead, claimproducer.IntentReadWrite, sem) {
+				t.Fatalf("%s r×w must conflict", sem)
 			}
 		})
-		t.Run("sync-"+string(sem)+"-w-r", func(t *testing.T) {
-			if ModeCoexists(claimproducer.IntentReadWrite, sem, claimproducer.IntentRead, sem) {
-				t.Fatal("sync w×r must conflict")
+		t.Run(string(sem)+"-w-r", func(t *testing.T) {
+			if ModeCoexists(claimproducer.IntentReadWrite, claimproducer.IntentRead, sem) {
+				t.Fatalf("%s w×r must conflict", sem)
 			}
 		})
-		t.Run("sync-"+string(sem)+"-w-w", func(t *testing.T) {
-			if ModeCoexists(claimproducer.IntentReadWrite, sem, claimproducer.IntentReadWrite, sem) {
-				t.Fatal("sync w×w must conflict")
+		t.Run(string(sem)+"-w-w", func(t *testing.T) {
+			if ModeCoexists(claimproducer.IntentReadWrite, claimproducer.IntentReadWrite, sem) {
+				t.Fatalf("%s w×w must conflict", sem)
 			}
 		})
 	}
 
-	async := claimproducer.WriteSemanticsStagedAsync
-	t.Run("async-r-r", func(t *testing.T) {
-		if !ModeCoexists(claimproducer.IntentRead, async, claimproducer.IntentRead, async) {
-			t.Fatal("async r×r must coexist")
+	staged := claimproducer.WriteSemanticsStagedAsync
+	t.Run("staged_async-r-r", func(t *testing.T) {
+		if !ModeCoexists(claimproducer.IntentRead, claimproducer.IntentRead, staged) {
+			t.Fatal("staged_async r×r must coexist")
 		}
 	})
-	t.Run("async-r-w", func(t *testing.T) {
-		if !ModeCoexists(claimproducer.IntentRead, async, claimproducer.IntentReadWrite, async) {
-			t.Fatal("async r×w must coexist")
+	t.Run("staged_async-r-w", func(t *testing.T) {
+		if !ModeCoexists(claimproducer.IntentRead, claimproducer.IntentReadWrite, staged) {
+			t.Fatal("staged_async r×w must coexist")
 		}
 	})
-	t.Run("async-w-r", func(t *testing.T) {
-		if !ModeCoexists(claimproducer.IntentReadWrite, async, claimproducer.IntentRead, async) {
-			t.Fatal("async w×r must coexist")
+	t.Run("staged_async-w-r", func(t *testing.T) {
+		if !ModeCoexists(claimproducer.IntentReadWrite, claimproducer.IntentRead, staged) {
+			t.Fatal("staged_async w×r must coexist")
 		}
 	})
-	t.Run("async-w-w", func(t *testing.T) {
-		if ModeCoexists(claimproducer.IntentReadWrite, async, claimproducer.IntentReadWrite, async) {
-			t.Fatal("async w×w must conflict")
+	t.Run("staged_async-w-w", func(t *testing.T) {
+		if ModeCoexists(claimproducer.IntentReadWrite, claimproducer.IntentReadWrite, staged) {
+			t.Fatal("staged_async w×w must conflict")
 		}
 	})
-}
-
-func TestModeCoexistsCrossQuadrant(t *testing.T) {
-	if !ModeCoexists(claimproducer.IntentRead, claimproducer.WriteSemanticsSync, claimproducer.IntentRead, claimproducer.WriteSemanticsStagedAsync) {
-		t.Fatal("cross-quadrant r×r should report no conflict")
-	}
-	if !ModeCoexists(claimproducer.IntentReadWrite, claimproducer.WriteSemanticsSync, claimproducer.IntentReadWrite, claimproducer.WriteSemanticsStagedAsync) {
-		t.Fatal("cross-quadrant w×w should report no conflict (different semantics)")
-	}
 }
 
 func TestModeCoexistsSymmetric(t *testing.T) {
 	intents := []claimproducer.Intent{claimproducer.IntentRead, claimproducer.IntentReadWrite}
-	semantics := []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync, claimproducer.WriteSemanticsStagedAsync}
-	for _, ia := range intents {
-		for _, sa := range semantics {
+	semantics := []claimproducer.WriteSemantics{
+		claimproducer.WriteSemanticsSync,
+		claimproducer.WriteSemanticsBlockingAsync,
+		claimproducer.WriteSemanticsStagedAsync,
+		claimproducer.WriteSemanticsReadOnly,
+	}
+	for _, sem := range semantics {
+		for _, ia := range intents {
 			for _, ib := range intents {
-				for _, sb := range semantics {
-					ab := ModeCoexists(ia, sa, ib, sb)
-					ba := ModeCoexists(ib, sb, ia, sa)
-					if ab != ba {
-						t.Fatalf("ModeCoexists not symmetric for (%v,%v,%v,%v): ab=%v ba=%v", ia, sa, ib, sb, ab, ba)
-					}
+				ab := ModeCoexists(ia, ib, sem)
+				ba := ModeCoexists(ib, ia, sem)
+				if ab != ba {
+					t.Fatalf("ModeCoexists not symmetric for (%v,%v,%v): ab=%v ba=%v", ia, ib, sem, ab, ba)
 				}
 			}
 		}

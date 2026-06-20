@@ -25,9 +25,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 func countCalls(calls []stubstore.Call, verb string) int {
@@ -72,8 +72,8 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 
 	h := scenario.Start(t, scenario.HarnessOpts{
 		NoSupervisor: true,
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"store-a": {Endpoint: "grpc://" + endpointA, Capabilities: syncCaps},
 				"store-b": {Endpoint: "grpc://" + endpointB, Capabilities: syncCaps},
 			},
@@ -94,7 +94,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 						},
 					},
 				},
-				scenario.WithStores(
+				scenario.WithClaimProducers(
 					scenario.WriteClaimRef("store-a", "@items"),
 					scenario.WriteClaimRef("store-b", "@queue"),
 				),
@@ -123,17 +123,17 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 
 	var hooked atomic.Bool
 	args := runtime.RunArgs{
-		Persist:           h.Persist,
-		Queue:             h.Queue,
-		ClaimHandles:      h.Persist.ClaimHandles(),
-		AdvisoryLocker:    h.Driver.AdvisoryLocker(),
-		StoreRegistry:     registry,
-		Clock:             shared.SystemClock{},
-		Logger:            shared.SilentLogger{},
-		SupervisorID:      "scenario-runner",
-		AcceptedExecutors: []string{"stub"},
-		AcceptedStores:    []string{"store-a", "store-b"},
-		Pool:              pool,
+		Persist:                h.Persist,
+		Queue:                  h.Queue,
+		ClaimHandles:           h.Persist.ClaimHandles(),
+		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
+		StoreRegistry:          registry,
+		Clock:                  shared.SystemClock{},
+		Logger:                 shared.SilentLogger{},
+		SupervisorID:           "scenario-runner",
+		AcceptedExecutors:      []string{"stub"},
+		AcceptedClaimProducers: []string{"store-a", "store-b"},
+		Pool:                   pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),

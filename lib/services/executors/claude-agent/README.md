@@ -47,7 +47,7 @@ catalog and migration table:
 | `model` | string | Claude model passed to the CLI's `--model` flag |
 | `system_prompt` | string | system prompt, typically a `default:` value (or a `source:` directive resolved from an upstream attribute) |
 | `user_prompt` | string | user prompt, typically a `source:` directive resolved at dispatch |
-| `cwd_from_store` | string | name of a store from `ExecuteRequest.stores` whose handle `address` (the filesystem store fills this with an absolute path) is used as the CLI's working directory. Validated as an existing directory before spawn; mismatches error as `invalid_cwd_from_store`. |
+| `cwd_from_store` | string | name of a claim-producer entry from `ExecuteRequest.claim_producers` whose handle `address` (the filesystem claim-producer fills this with an absolute path) is used as the CLI's working directory. Validated as an existing directory before spawn; mismatches error as `invalid_cwd_from_store`. |
 | `cwd` | string | raw working-directory override. Lower priority than `cwd_from_store`. Same existing-directory validation. |
 
 `cwd_from_store` is the recommended way to bind a CLI run to a workspace

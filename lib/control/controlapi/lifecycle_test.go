@@ -44,11 +44,11 @@ func newFanOutFixture(t *testing.T) *fanOutFixture {
 	lcReg.Add("beta", beta)
 
 	deps := AppDeps{
-		Persist:       d.Tables(),
-		Queue:         d.Queue(),
-		Logger:        shared.SilentLogger{},
-		Stores:        reg,
-		LifecycleSubs: lcReg,
+		Persist:        d.Tables(),
+		Queue:          d.Queue(),
+		Logger:         shared.SilentLogger{},
+		ClaimProducers: reg,
+		LifecycleSubs:  lcReg,
 	}
 	return &fanOutFixture{
 		deps: deps, alpha: alpha, beta: beta, registry: reg, lifecycle: lcReg,
@@ -59,9 +59,9 @@ func twoStoreSpec() node.TemplateSpec {
 	return node.TemplateSpec{
 		Name: "fan-out-test", Version: "v1",
 		Nodes: []node.TemplateNodeDef{
-			{Type: "n1", Stores: []node.NodeStoreRef{{Name: "beta", Selector: "x", Intent: "r"}}},
-			{Type: "n2", Stores: []node.NodeStoreRef{{Name: "alpha", Selector: "y", Intent: "rw"}}},
-			{Type: "n3", Stores: []node.NodeStoreRef{{Name: "alpha", Selector: "z", Intent: "r"}}},
+			{Type: "n1", ClaimProducers: []node.NodeClaimProducerRef{{Name: "beta", Selector: "x", Intent: "r"}}},
+			{Type: "n2", ClaimProducers: []node.NodeClaimProducerRef{{Name: "alpha", Selector: "y", Intent: "rw"}}},
+			{Type: "n3", ClaimProducers: []node.NodeClaimProducerRef{{Name: "alpha", Selector: "z", Intent: "r"}}},
 		},
 	}
 }
@@ -201,4 +201,26 @@ func TestFanOutInstanceEvent_TerminatedDeletesRow(t *testing.T) {
 
 func repeatHex(c string, n int) string {
 	return strings.Repeat(c, n)
+}
+
+func TestPeersReferencedBySpec_IncludesPublishers(t *testing.T) {
+	t.Parallel()
+
+	spec := node.TemplateSpec{
+		Name: "lifecycle-publishers", Version: "v1",
+		Nodes: []node.TemplateNodeDef{
+			{Type: "n1", ClaimProducers: []node.NodeClaimProducerRef{{Name: "alpha"}}},
+			{Type: "n2", Executor: "beta"},
+		},
+		Publishers: []node.PublisherSpec{
+			{Name: "gamma", Kind: "cron"},
+			{Name: "", Kind: "cron"},
+			{Name: "alpha", Kind: "cron"},
+		},
+	}
+
+	got := peersReferencedBySpec(spec)
+
+	require.Equal(t, []string{"alpha", "beta", "gamma"}, got,
+		"publisher-only services must be enumerated; empty names skipped; dedup with node refs preserved")
 }

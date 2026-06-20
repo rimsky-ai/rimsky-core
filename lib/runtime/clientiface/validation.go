@@ -29,7 +29,7 @@ type ValidationClient interface {
 
 	ValidateClaimProducer(ctx context.Context, in ValidateClaimProducerInput) ([]ValidationFinding, []ValidationFinding, error)
 
-	ValidateSensor(ctx context.Context, in ValidateSensorInput) ([]ValidationFinding, []ValidationFinding, error)
+	ValidatePublisher(ctx context.Context, in ValidatePublisherInput) ([]ValidationFinding, []ValidationFinding, error)
 
 	ValidateLifecycleSubscriber(ctx context.Context, in ValidateLifecycleSubscriberInput) ([]ValidationFinding, []ValidationFinding, error)
 }
@@ -55,8 +55,8 @@ type ValidateClaimBinding struct {
 	PartitionRequest []byte
 }
 
-type ValidateSensorInput struct {
-	SensorName     string
+type ValidatePublisherInput struct {
+	PublisherName  string
 	Kind           string
 	ResolvedConfig []byte
 }

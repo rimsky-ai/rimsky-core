@@ -27,7 +27,7 @@ This choice produces the "atomicity is decoupled" property described in `foundat
 
 The trade-offs (visible at `claim-producer.md` "Consumer-visible guarantees" + CLAUDE.md "What this repo is"):
 
-- Producer state (filesystem stagings, postgres items-table flips) is opaque to rimsky and recovered by the producer's own TTL/sweep — see `@blessed-invariant 9a` at `foundation/locks/interface.go:46-52`.
+- Producer state (filesystem stagings, postgres items-table flips) is opaque to rimsky and recovered by the producer's own TTL/sweep — see the lock-state-ownership rule at `foundation/locks/interface.go:46-52`.
 - Wire-format-compatible producers can be written in any language.
 - Every claim acquisition pays at least one extra round trip (rimsky → producer `Open`), but acquires "language-agnostic plug-in" and "single-writer-per-scope enforced by rimsky alone" in return.
 - Type-asserting to a concrete producer in the rimsky source tree is a depguard-or-review-time violation.

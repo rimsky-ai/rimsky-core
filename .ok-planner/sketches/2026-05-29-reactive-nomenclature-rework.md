@@ -101,7 +101,7 @@ everything is pulled on recompute.
    (`message.payload`, `Park.payload`, claim-producer `payload`), persistence
    columns (`payload_inline`, `payload_handle`), substitution directives
    (`{{trigger.message.payload}}` → `{{trigger.message.body}}`), and the
-   inertness language (`@blessed-invariant 21`). Some "payload"s are **not**
+   inertness language. Some "payload"s are **not**
    response/message bodies (claim-scope `payload`, `Park.payload`); decide
    whether the rename is uniform or scoped to response/message bodies only.
 
@@ -205,7 +205,7 @@ The proposed `STORY-retired-vocabulary-actionable-errors` second story was rejec
 - `concept:node-subscription` → **rename to** `concept:node-watch` (slug + body)
 - `concept:named-event` — body rewrite (lead with happens-at-node framing; payload → body)
 - `concept:signal` — inner field renames `event_payload`/`error_payload` (both `TerminalErrorPayload` and `TransientRetryPayload` carriers); receiver-side vocabulary; cross-ref repointing
-- `concept:inertness` — named-event payload → body; invariant 21 prose
+- `concept:inertness` — named-event payload → body; inertness prose
 - `concept:publisher-subscription` — retire `sensor-watch` alias; Naming-note cross-ref repoint and DSL keyword update
 - `concept:wait-set` — cross-ref repoint to `concept:node-watch`
 - `concept:cascade` — receiver-side cascade language (subscription-edge → watch-edge; subscription-driven → watcher-driven; subscribers → watchers). The literal phrase "subscriber-cascade" only appears in historical Notes (now purged).

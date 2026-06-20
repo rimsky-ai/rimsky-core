@@ -28,14 +28,14 @@ WHERE i.id = $1
 
 `frame.EnqueueOrCoalesce` (`modeling/frame/producer.go:26-43`) is the single producer-side entry point. It calls `LookupFrameMode`, then routes to `EnqueueSerialFrame` (which always INSERTs a fresh row with `mode='serial_queue'`, `state='queued'`, `frame_timeout_ms`) or `EnqueueCoalesceFrame` (which does an `ON CONFLICT (instance_id) WHERE state='queued' AND mode='coalesce' DO UPDATE` to append the source node into the pending row's `source_node_ids[]`). The `frame_timeout_ms` value is stamped onto the frame row at INSERT time (`foundation/persistence/postgres/frames.go:283-292, 303-323`) — a template-spec edit that changes the timeout takes effect on the next frame's creation, not on any in-flight frame. The `mode` flows the same way: a `frame_resolution` change in a re-registered template (new content-addressed hash) means only fresh instances bound to the new hash see the new mode.
 
-The producer is template-hash-stable: because `i.template_hash` is fixed at instance creation (`@blessed-invariant 19` neighborhood) and the spec JSONB is content-addressed, an instance's frame mode is stable across its lifetime. There is no "mode override" per instance — `modeling/frame/producer_test.go:50` documents this with a `spec = '{"frame_resolution":"..."}'` fixture pattern.
+The producer is template-hash-stable: because `i.template_hash` is fixed at instance creation (the frame_id-non-null neighborhood) and the spec JSONB is content-addressed, an instance's frame mode is stable across its lifetime. There is no "mode override" per instance — `modeling/frame/producer_test.go:50` documents this with a `spec = '{"frame_resolution":"..."}'` fixture pattern.
 
 Two unique partial indexes enforce the concurrency rules:
 
 - **`uq_rimsky_frames_running`** (line 31) — at most one frame per instance is `state='running'`.
 - **`uq_rimsky_frames_coalesce_queued`** (line 35) — at most one frame per instance is `state='queued' AND mode='coalesce'`.
 
-`rimsky_worker_request.frame_id` is NOT NULL (`@blessed-invariant 19` at `foundation/persistence/worker_requests.go:34`). Every dispatched run carries the frame it belongs to, so async terminal handlers can attribute their results correctly. `rimsky_nodes.frame_id` is nullable (line 55) because only nodes currently participating in the active cascade carry it.
+`rimsky_worker_request.frame_id` is NOT NULL (the frame-id-non-null rule at `foundation/persistence/worker_requests.go:34`). Every dispatched run carries the frame it belongs to, so async terminal handlers can attribute their results correctly. `rimsky_nodes.frame_id` is nullable (line 55) because only nodes currently participating in the active cascade carry it.
 
 Migration 004 adds `rimsky_frames.last_progress_at`, refreshed by every node-state transition (`foundation/integration/runner_terminal_handlers.go`). The scheduler tick reads `last_progress_at` for the stuck-frame warning; the warning is advisory only (`2026-05-10-frame-stuck-is-advisory`).
 
@@ -59,7 +59,7 @@ The `frame: in | next` per-emit discipline (per `docs/concepts/invalidate.md`) c
 - `foundation/persistence/postgres/frames.go:251-275` — `LookupFrameMode` reads from `rimsky_templates.spec` JSONB via instance join.
 - `foundation/persistence/postgres/frames.go:278-323` — `EnqueueSerialFrame` / `EnqueueCoalesceFrame` SQL bodies.
 - `modeling/frame/producer.go:26-43` — `EnqueueOrCoalesce` dispatch on mode.
-- `foundation/persistence/worker_requests.go:28-50` — `frame_id NOT NULL` invariant 19.
+- `foundation/persistence/worker_requests.go:28-50` — `frame_id NOT NULL` rule.
 - `foundation/integration/cascade_invalidate.go` — frame-aware cascade walks.
 - `foundation/integration/cascade_recalculate.go` — pure-cascade walks.
 

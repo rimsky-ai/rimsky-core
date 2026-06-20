@@ -83,7 +83,6 @@ func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 		"type":                      "sensor/observation",
 		"payload":                   json.RawMessage(payloadBytes),
 		"sender":                    "sensor-http",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": subscriptionID,
 	}
 	rawEnvelope, err := json.Marshal(envelope)
@@ -125,9 +124,6 @@ func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 	var decoded map[string]any
 	if err := json.Unmarshal(got.Body, &decoded); err != nil {
 		t.Fatalf("decode arrival body: %v", err)
-	}
-	if decoded["sender_kind"] != "publisher" {
-		t.Fatalf("sender_kind: %v", decoded["sender_kind"])
 	}
 	if decoded["publisher_subscription_id"] != subscriptionID {
 		t.Fatalf("publisher_subscription_id: %v", decoded["publisher_subscription_id"])

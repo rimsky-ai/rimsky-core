@@ -9,7 +9,7 @@ kind: discipline
 
 A node's output is a typed value (the writeback on `Complete`). Rimsky validates this at two layers:
 
-**Layer 1: Attribute JSON Schema validation** is structural. The template's `attributes:` block declares a JSON Schema; the supervisor validates twice (`@blessed-invariant 12`): at dispatch post-substitution, and at commit post-writeback. This catches shape problems — missing required fields, type mismatches, additionalProperties violations. Implementation lives in `modeling/attribute/validate.go` (see `2026-05-10-attribute-substitution-grammar`).
+**Layer 1: Attribute JSON Schema validation** is structural. The template's `attributes:` block declares a JSON Schema; the supervisor validates twice (the dual-gate attribute-validation rule): at dispatch post-substitution, and at commit post-writeback. This catches shape problems — missing required fields, type mismatches, additionalProperties violations. Implementation lives in `modeling/attribute/validate.go` (see `2026-05-10-attribute-substitution-grammar`).
 
 **Layer 2: Quality rules** is declarative-pluggable semantic validation. A template node can declare `quality_rules:` — a list of `Spec{Type, Config, Severity}` entries (`modeling/qualityrule/spec.go:16-20`; field on `TemplateNodeDef.QualityRules` at `modeling/node/template.go:64`). Each rule has a `type` string (builtin name or `custom`), a free-form `config` map, and a `severity` (default `error`). The evaluation is dispatched per rule via the `Evaluator` interface (`modeling/qualityrule/spec.go:43-45`):
 
@@ -35,7 +35,7 @@ A `Failure` (`spec.go:24-29`) carries `RuleType`, `Config`, `Severity`, and `Det
 
 **Integration with attribute writeback.** `foundation/integration/runner_terminal.go::applyTerminalComplete` fires both gates back-to-back (lines 102-126):
 
-1. After delta-merging `t.AttributesDel` into the resolved attributes (line 103), JSON Schema validation runs (`attributes.Validate(..., PhaseCommit)`) and on failure emits an `attributes_schema_failed` event and stops (lines 104-118). This is the second commit-side leg of `@blessed-invariant 12`.
+1. After delta-merging `t.AttributesDel` into the resolved attributes (line 103), JSON Schema validation runs (`attributes.Validate(..., PhaseCommit)`) and on failure emits an `attributes_schema_failed` event and stops (lines 104-118). This is the second commit-side leg of the dual-gate rule.
 2. If the schema gate passes, `runQualityRules(acq.NodeDef.QualityRules, merged)` (lines 120-126; helper at `runner_terminal.go:376-390`) calls `qreval.EvaluateAll(ctx, rules, EvalInput{NewData: attrs})`. Note: the supervisor only populates `NewData`; `PreviousData` is left nil at this call site, so any builtin that compares to prior state (e.g. `row_count_ratio`) silently passes on every commit. The prose surface (`docs/concepts/deterministic-transformations.md`) describes `PreviousData` semantics; the call site doesn't wire them.
 3. On quality-rule failure, the supervisor emits one `quality_rule_failed` event per failure entry (`emitQualityRuleFailures` at `runner_terminal.go:245-268`; one event per `Failure`, batched in a single tx) and routes through `applyTerminalAppError` with `error_class="quality_rule_failed"`. The downstream policy chain (`runner_terminal_errors.go:40`) treats this like any other application error — `error_types` mapping decides retry vs give_up vs invalidate.
 
@@ -48,7 +48,7 @@ The two layers fire in order:
 4. Commit-time quality-rule evaluation (writeback only; previous not wired at runner call site).
 5. Persist (if all pass) or `attributes_schema_failed` / `quality_rule_failed` (if not).
 
-This layering is documented across `docs/concepts/attributes.md` (schema part) and `modeling/qualityrule/spec.go` (rules part). The interaction with `@blessed-invariant 12` is precise: the dual-gate is mandatory, and quality-rule evaluation runs adjacent to (not in place of) the commit-time gate.
+This layering is documented across `docs/concepts/attributes.md` (schema part) and `modeling/qualityrule/spec.go` (rules part). The interaction with the dual-gate rule is precise: the dual-gate is mandatory, and quality-rule evaluation runs adjacent to (not in place of) the commit-time gate.
 
 ## Code surface
 
@@ -56,7 +56,7 @@ This layering is documented across `docs/concepts/attributes.md` (schema part) a
 - `modeling/qualityrule/eval/rules.go` — registry + three builtins + `EvaluateAll` (entire file, 197 lines, AGPL).
 - `modeling/qualityrule/eval/rules_test.go` — co-located unit tests for the builtins.
 - `modeling/node/template.go:64` — `QualityRules []qualityrule.Spec` field on `TemplateNodeDef`.
-- `modeling/attribute/validate.go` — JSON Schema gate (`@blessed-invariant 12`).
+- `modeling/attribute/validate.go` — JSON Schema gate (dual-gate rule).
 - `foundation/integration/runner_terminal.go:120-126` — commit-time call to `runQualityRules`.
 - `foundation/integration/runner_terminal.go:245-268` — `emitQualityRuleFailures` (one event per failure, single tx).
 - `foundation/integration/runner_terminal.go:376-390` — `runQualityRules` helper wrapping `qreval.EvaluateAll`.

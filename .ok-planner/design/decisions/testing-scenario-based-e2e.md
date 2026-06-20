@@ -11,4 +11,4 @@ End-to-end via the test group's scenarios directory + the services module's scen
 
 ## Rationale
 
-Real-stack integration tests against blessed invariants.
+Real-stack integration tests against the load-bearing safety properties documented in the concept catalog.

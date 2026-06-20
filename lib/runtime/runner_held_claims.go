@@ -125,7 +125,7 @@ func pickAliasForClaimHandle(
 		return picks[0].alias
 	}
 	for _, p := range picks {
-		for _, sref := range def.Stores {
+		for _, sref := range def.ClaimProducers {
 			if sref.AliasOf() != p.alias {
 				continue
 			}

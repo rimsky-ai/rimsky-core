@@ -52,16 +52,16 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 	mreg := observability.NewMetricsRegistry()
 
 	h, err := config.StartControlAPI(config.ControlAPIConfig{
-		Driver:     driver,
-		Clock:      shared.SystemClock{},
-		Logger:     log,
-		Host:       host,
-		Port:       port,
-		Stores:     rimskyCfg.Stores,
-		NamedLocks: rimskyCfg.NamedLocks,
-		Executors:  rimskyCfg.Executors,
-		Publishers: rimskyCfg.Publishers,
-		Metrics:    observability.MetricsHookOf(mreg),
+		Driver:         driver,
+		Clock:          shared.SystemClock{},
+		Logger:         log,
+		Host:           host,
+		Port:           port,
+		ClaimProducers: rimskyCfg.ClaimProducers,
+		NamedLocks:     rimskyCfg.NamedLocks,
+		Executors:      rimskyCfg.Executors,
+		Publishers:     rimskyCfg.Publishers,
+		Metrics:        observability.MetricsHookOf(mreg),
 
 		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,
 		RefValidationMode:      rimskyCfg.RefValidationMode,

@@ -29,7 +29,7 @@ Where completed work lives:
     that plan's own honest record of what it punted)
   - Completed specs:  .ok-planner/history/specs/*.md
   - Shipped guarantees: CLAUDE.md "MUST" statements & cross-cutting gotchas;
-    @blessed-invariant annotations; concept docs under .ok-planner/design/concepts/
+    invariant annotations; concept docs under .ok-planner/design/concepts/
   - A few early completed plans/specs are under .ok-planner/archive/
 
 Code is ground truth (lib/, cmd/, test/; ignore generated gen/, vendor,
@@ -64,8 +64,8 @@ const candidates = [
   { cap: 'SQLite + replicas>1 has no symmetric fail-fast startup gate', hint: 'The unified-image + pluggable persistence shipped via completed .ok-planner/archive/2026-05-02-persistence-pluggable-and-unified-image-plan.md (and later). Did a completed plan claim a symmetric fail-fast gate for sqlite-under-replicas, or did it only ever document sqlite as single-node? If the latter, the code matches the completed plan (drop-roadmap / not-a-broken-deliverable). The `memory` backend IS gated.', ev: 'blob_config.go:115-117 gates memory; sqlite/database.go:139-142 only slog.Warn; no role/replica check in open.go' },
   { cap: 'Callback advertise-host misconfig fails silently for routable typos', hint: 'Supervisor callback shipped via completed .ok-planner/history/plans/2026-05-24-host-agent-and-proxy.md. Did the completed plan claim fail-fast validation / self-probe of advertise_host, or only a warn? If only a warn was speced, code matches plan.', ev: 'cmd/rimsky-supervisor/main.go:174-180 warns only for empty/loopback; routable-but-wrong host only log.Info, dispatches orphan-reap silently' },
   { cap: 'compose: prefix reservation enforced client-side only', hint: 'rimsky compose shipped via a completed plan (.ok-planner/archive/2026-05-02-rimsky-cli-and-compose-plan.md or a history plan). Did a completed plan/concept claim the compose: tag/instance-key reservation is enforced (server-side)? If it was only ever a CLI-side convention, server has no obligation.', ev: 'cmd/rimsky/cli/templates.go:209,236-237 client-side guard; server validTag tags.go:30-38 allows ":" with no compose guard; instance-key path no prefix check' },
-  { cap: 'Blessed invariant 9b has no enforcement site and no conformance probe', hint: 'CLAUDE.md states the project guarantee: every @blessed-invariant has an enforcing code site AND a scenario test. Confirm invariant 9b (ClaimProducers MUST NOT internally serialize on lock-shaped predicates) has neither.', ev: '9b lives only as interface comments claimproducer.go:23-26, locks/interface.go:54-57; no enforcement site; no conformance probe; scenario test exercises only rimsky-side consequence' },
-  { cap: 'Unified 5x-heartbeat orphan cutoff (invariant 6) is two intervals, not one', hint: 'Orphan-reaper/heartbeat shipped via a completed plan (.ok-planner/history/plans/2026-05-05-reactive-loops-and-lifecycle-handlers.md and/or 2026-06-03-instance-lifecycle-durable-by-default.md). Does invariant 6 / a completed plan claim a SINGLE unified cutoff? Code has two base intervals.', ev: 'two representations + two base intervals (15s vs 5s -> 75s vs 25s); 5x hardcoded at 6 sites, no shared constant; invariant prose claims single cutoff' },
+  { cap: 'No-internal-serialization-for-staged-async guarantee has no enforcement site and no conformance probe', hint: 'CLAUDE.md states the project guarantee: every load-bearing invariant has an enforcing code site AND a scenario test. Confirm the no-internal-serialization rule (ClaimProducers MUST NOT internally serialize on lock-shaped predicates) has neither.', ev: 'rule lives only as interface comments claimproducer.go:23-26, locks/interface.go:54-57; no enforcement site; no conformance probe; scenario test exercises only rimsky-side consequence' },
+  { cap: 'Unified 5x-heartbeat orphan cutoff is two intervals, not one', hint: 'Orphan-reaper/heartbeat shipped via a completed plan (.ok-planner/history/plans/2026-05-05-reactive-loops-and-lifecycle-handlers.md and/or 2026-06-03-instance-lifecycle-durable-by-default.md). Does the orphan-cutoff rule / a completed plan claim a SINGLE unified cutoff? Code has two base intervals.', ev: 'two representations + two base intervals (15s vs 5s -> 75s vs 25s); 5x hardcoded at 6 sites, no shared constant; cutoff prose claims single cutoff' },
   { cap: 'rimsky_events.kind has no schema enforcement', hint: 'Event-log shipped via completed plans (concept:event-log). Did any completed plan/spec/concept claim event-kind values are VALIDATED/enumerated? If the design always intended free-form TEXT, this is by-design (drop). ValidateTypePath exists but is dead test-only code.', ev: 'rimsky_events.kind free-form TEXT, no CHECK/FK/write-validation; ValidateTypePath unused in production' },
   { cap: 'Quality-rule typed Severity enum is unwired (zero consumers)', hint: 'Quality rules shipped via completed .ok-planner/history/plans/2026-05-28-quality-of-life-features.md. Did the completed plan claim a wired warning/error severity partition? Code has the enum type but no consumer and dropped the partition.', ev: 'typed Severity enum exists with zero consumers; verifier-shape-checks treats every fail as blocking; old ==\"warning\" footgun removed' },
   { cap: 'stub-mode conformance signature has no single source of truth', hint: 'Stub-mode handshake shipped via completed conformance/collapse-sdk plans (2026-05-26). Did a completed plan claim a single shared constant? If this is only an open tension about fragility (handshake works today), lean drop-roadmap.', ev: '"stub_probe"/{stub:true} hardcoded at ~15 Go sites + TS independently; works today but rename-fragile' },
@@ -183,7 +183,7 @@ const SYNTH_SCHEMA = {
 
 const synth = await agent(
   `You are rewriting the Rimsky gap audit under a NARROWED scope: ONLY gaps where
-a COMPLETED plan/spec (or a shipped documented guarantee / blessed invariant)
+a COMPLETED plan/spec (or a shipped documented guarantee / load-bearing invariant)
 claimed something done, but the code does not deliver it. ALL forward-facing
 sketch/roadmap items have been removed.
 
@@ -200,7 +200,7 @@ Write a thorough markdown report:
    radius. Order by blast radius. Use tight tables where possible.
 3. "Recorded as deferred in a completed plan, never resumed" — the honest punts
    that were supposed to be follow-ups and weren't.
-4. "Unenforced documented guarantees" — CLAUDE.md MUSTs / blessed invariants the
+4. "Unenforced documented guarantees" — CLAUDE.md MUSTs / load-bearing invariants the
    code doesn't actually hold (most corrosive: operators rely on them).
 5. "Doc-drift inside completed work" — stale instructions/comments shipped by
    completed plans.

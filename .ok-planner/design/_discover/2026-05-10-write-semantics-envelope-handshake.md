@@ -25,7 +25,7 @@ The **uniformity invariant** lets the conflict-check at acquire time use the **h
 
 The legacy single-value `write_semantics:` (vs `write_semantics_envelope:`) YAML key is accepted as a single-element envelope shortcut (`2026-05-10-unified-rimsky-yml-config`). Pre-v1 transition affordance.
 
-The interaction with `@blessed-invariant 9b` (producers must not internally serialize on lock-shaped predicates): a producer that advertises `STAGED_ASYNC` must implement snapshot delegation or MVCC pass-through — reader-lease serialization is forbidden. The honest support requirement is part of the contract; the conformance binary checks it.
+The interaction with the no-internal-serialization rule (producers must not internally serialize on lock-shaped predicates): a producer that advertises `STAGED_ASYNC` must implement snapshot delegation or MVCC pass-through — reader-lease serialization is forbidden. The honest support requirement is part of the contract; the conformance binary checks it.
 
 Operator config is a deployment-level vault: a producer that advertises `STAGED_ASYNC` can be restricted to `SYNC`-only in a deployment that hasn't validated the producer's MVCC behavior. The envelope narrowing is one-way (subset only); the validation fails fast at startup if the operator declares values outside the producer's set.
 
@@ -48,7 +48,7 @@ A future deployment can add another semantic if the matrix is extended; the stri
 ## Adjacent topics
 
 - `2026-05-10-byte-equal-scope-conflict` — `ScopesByteEqual` is the conflict gate.
-- `2026-05-10-lock-state-in-rimsky-not-producer` — invariant 9b's reader-lease ban.
+- `2026-05-10-lock-state-in-rimsky-not-producer` — the reader-lease ban on internal serialization.
 - `2026-05-10-unified-rimsky-yml-config` — `write_semantics_envelope` in YAML.
 - `2026-05-10-conformance-test-binaries` — conformance probes uniformity.
 - `2026-05-10-out-of-process-claim-producers` — `Capabilities()` is the startup RPC.

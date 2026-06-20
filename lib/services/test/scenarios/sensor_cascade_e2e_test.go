@@ -17,7 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-const reactorTargetNode = "reactor"
+const reactorNodeAlias = "reactor"
 
 const reactorMessageType = "invalidate/reactor"
 const bystanderMessageType = "refresh/reactor"
@@ -62,10 +62,10 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	waitForSensorNodeState(t, ep, instanceID, reactorTargetNode, "fresh", 90*time.Second)
+	waitForSensorNodeState(t, ep, instanceID, reactorNodeAlias, "fresh", 90*time.Second)
 	waitForSensorNodeState(t, ep, instanceID, "bystander", "fresh", 90*time.Second)
 
-	waitForDispatchQuiescent(t, ep, instanceID, reactorTargetNode, 60*time.Second)
+	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
 
@@ -75,7 +75,7 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	bodyMu.Unlock()
 
 	// @story: cascade-signal-blind
-	requireReactorReran(t, ep, instanceID, reactorTargetNode, 120*time.Second)
+	requireReactorReran(t, ep, instanceID, reactorNodeAlias, 120*time.Second)
 
 	// @story: publisher-protocol
 	requirePublisherMessagePersisted(t, ep, instanceID, "watcher")
@@ -124,9 +124,9 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	waitForSensorNodeState(t, ep, instanceID, reactorTargetNode, "fresh", 90*time.Second)
+	waitForSensorNodeState(t, ep, instanceID, reactorNodeAlias, "fresh", 90*time.Second)
 	waitForSensorNodeState(t, ep, instanceID, "bystander", "fresh", 90*time.Second)
-	waitForDispatchQuiescent(t, ep, instanceID, reactorTargetNode, 60*time.Second)
+	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
 
@@ -136,16 +136,16 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	// @story: sensor-http
 	const fires = 3
 	for i := 1; i <= fires; i++ {
-		reactorBefore := workStartedCount(t, ep, instanceID, reactorTargetNode)
+		reactorBefore := workStartedCount(t, ep, instanceID, reactorNodeAlias)
 
 		bodyMu.Lock()
 		body = fmt.Sprintf(`{"state":"changed-%d"}`, i)
 		bodyMu.Unlock()
 
 		// @story: cascade-signal-blind
-		requireWorkStartedGrew(t, ep, instanceID, reactorTargetNode, reactorBefore, 120*time.Second,
+		requireWorkStartedGrew(t, ep, instanceID, reactorNodeAlias, reactorBefore, 120*time.Second,
 			fmt.Sprintf("fire %d/%d", i, fires))
-		waitForSensorNodeState(t, ep, instanceID, reactorTargetNode, "fresh", 30*time.Second)
+		waitForSensorNodeState(t, ep, instanceID, reactorNodeAlias, "fresh", 30*time.Second)
 		requireInstanceNotTerminated(t, ep, instanceID)
 	}
 
@@ -225,7 +225,7 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 			},
 			"nodes": []map[string]any{
 				{
-					"type":     reactorTargetNode,
+					"type":     reactorNodeAlias,
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
@@ -254,7 +254,6 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 					"name":         "watcher",
 					"kind":         "http",
 					"config":       json.RawMessage(configBytes),
-					"target_node":  reactorTargetNode,
 					"message_type": reactorMessageType,
 				},
 			},

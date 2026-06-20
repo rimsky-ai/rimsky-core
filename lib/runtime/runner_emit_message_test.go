@@ -113,7 +113,7 @@ func TestEmitCascadeMessageInTx_HappyPath(t *testing.T) {
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		id, replayed, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
-			map[string]any{"pong_status": "needs_work"})
+			[]byte(`{"pong_status":"needs_work"}`))
 		if err != nil {
 			return err
 		}
@@ -169,7 +169,7 @@ func TestEmitCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 	err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		id, replayed, emitErr := emitCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
-			map[string]any{"pong_status": "ok"})
+			[]byte(`{"pong_status":"ok"}`))
 		if emitErr != nil {
 			return emitErr
 		}
@@ -205,7 +205,7 @@ func TestEmitCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		id, replayed, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
-			map[string]any{"pong_status": "v1"})
+			[]byte(`{"pong_status":"v1"}`))
 		if err != nil {
 			return err
 		}
@@ -223,7 +223,7 @@ func TestEmitCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		id, replayed, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
-			map[string]any{"pong_status": "v2-IGNORED"})
+			[]byte(`{"pong_status":"v2-IGNORED"}`))
 		if err != nil {
 			return err
 		}
@@ -273,7 +273,7 @@ func TestEmitCascadeMessageInTx_EnqueuesFrameForEnvelope(t *testing.T) {
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		id, replayed, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
-			map[string]any{"pong_status": "needs_work"})
+			[]byte(`{"pong_status":"needs_work"}`))
 		if err != nil {
 			return err
 		}
@@ -326,7 +326,7 @@ func TestEmitCascadeMessageInTx_ReplayDoesNotDoubleEnqueueFrame(t *testing.T) {
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			_, _, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
 				instanceID, nodeID, frameID, "ping/recheck",
-				map[string]any{"pong_status": "v"})
+				[]byte(`{"pong_status":"v"}`))
 			return err
 		}); err != nil {
 			t.Fatalf("emit iter %d: %v", i, err)
@@ -363,7 +363,7 @@ func TestEmitCascadeMessageInTx_DistinctNodeFramePairProducesDistinctEnvelopes(t
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			_, _, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
 				instanceID, nodeID, frameID, "ping/recheck",
-				map[string]any{"pong_status": "v"})
+				[]byte(`{"pong_status":"v"}`))
 			return err
 		}); err != nil {
 			t.Fatalf("emit iter %d: %v", i, err)

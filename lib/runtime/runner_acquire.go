@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -29,7 +30,7 @@ func producerErrorClassOf(err error) string {
 }
 
 // @concept: attribute
-func lookupGraphName(graphs []spec.GraphSpec, nodeType string) string {
+func graphContainingNodeType(graphs []spec.GraphSpec, nodeType string) string {
 	for _, g := range graphs {
 		for _, n := range g.Nodes {
 			if n.Type == nodeType {
@@ -56,6 +57,9 @@ type acquisition struct {
 	PriorDispatchID *shared.UUID
 	// @concept: run-scope
 	PriorDispatchDisposition string
+
+	// @concept: parked-state
+	IsResume bool
 
 	FrameID                    shared.UUID
 	Locks                      []AcquiredLock
@@ -223,7 +227,7 @@ func selectCandidatesShortTx(
 	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := args.Queue.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:          args.AcceptedExecutors,
-			AcceptedStores:             args.AcceptedStores,
+			AcceptedClaimProducers:     args.AcceptedClaimProducers,
 			Limit:                      limit,
 			LateBindExecutorProxy:      args.LateBindServiceProxies["executor"],
 			LateBindClaimProducerProxy: args.LateBindServiceProxies["claim_producer"],
@@ -302,7 +306,7 @@ func tryAcquire(
 	// @concept: attribute
 	graphName := spec.MainGraphName
 	if tmpl != nil {
-		graphName = lookupGraphName(tmpl.Graphs, nd.NodeType)
+		graphName = graphContainingNodeType(tmpl.Graphs, nd.NodeType)
 	}
 	var runScopeID shared.UUID
 	if rt := args.Persist.RunTree(); rt != nil {
@@ -424,6 +428,7 @@ func tryAcquire(
 		RunScopeID:                runScopeID,
 		PriorDispatchID:           cand.PriorDispatchID,
 		PriorDispatchDisposition:  cand.PriorDispatchDisposition,
+		IsResume:                  cand.PreClaimState == string(cascade.NodeStateResuming),
 		FrameID:                   cand.FrameID,
 		Locks:                     acquiredLocks,
 		NodeDef:                   nodeDef,

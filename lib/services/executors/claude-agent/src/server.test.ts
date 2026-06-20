@@ -100,7 +100,7 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
         },
       },
       attributes_schema: { fields: {} },
-      stores: {},
+      claim_producers: {},
       callback_url: fakeCallbackUrl,
       cancel_token: "cancel-tok-1",
     });
@@ -196,7 +196,7 @@ describe("gRPC Execute observability ledger", () => {
         },
       },
       attributes_schema: { fields: {} },
-      stores: {},
+      claim_producers: {},
       callback_url: "http://supervisor.invalid/cb",
       cancel_token: "tok",
     });
@@ -307,7 +307,7 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
         },
       },
       attributes_schema: { fields: {} },
-      stores: {},
+      claim_producers: {},
       callback_url: supervisorBase,
       cancel_token: "cancel-tok-e2e",
     });

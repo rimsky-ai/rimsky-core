@@ -596,13 +596,13 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 				"instance_id", inst.ID.String(),
 				"error", err.Error())
 		}
-		if deps.Stores != nil {
+		if deps.ClaimProducers != nil {
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 				_, rErr := runtime.ReleaseHeldDurableClaims(ctx,
 					runtime.RunArgs{
 						Persist:       deps.Persist,
 						ClaimHandles:  deps.Persist.ClaimHandles(),
-						StoreRegistry: deps.Stores,
+						StoreRegistry: deps.ClaimProducers,
 						Clock:         deps.Clock,
 						Logger:        deps.Logger,
 					}, tx, inst.ID, deps.Logger)

@@ -63,7 +63,7 @@ func bailAcquiredLock(ctx context.Context, args RunArgs, lk AcquiredLock) error 
 			ClaimHandleID: lk.ClaimHandleID,
 			SupervisorID:  args.SupervisorID,
 			Source:        OwnershipBail,
-			Outcome:       AggregateAbandon,
+			Outcome:       OutcomeAbandon,
 			Producer:      lk.Producer,
 			Scope:         claimScope(lk),
 			Address:       claimAddress(lk),

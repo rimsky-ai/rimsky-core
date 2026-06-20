@@ -20,7 +20,7 @@ const tickBudget = 10 * time.Second
 
 const stopBudget = 5 * time.Second
 
-var errStoresRegistryUnset = errors.New("terminator: store registry not initialized")
+var errClaimProducersRegistryUnset = errors.New("terminator: store registry not initialized")
 
 type InstanceTerminator struct {
 	deps         AppDeps
@@ -163,7 +163,7 @@ func (t *InstanceTerminator) fanOutFromLifecycleRows(ctx context.Context, inst p
 		return err
 	}
 	if t.deps.LifecycleSubs == nil {
-		return errStoresRegistryUnset
+		return errClaimProducersRegistryUnset
 	}
 	for _, r := range rows {
 		s, ok := t.deps.LifecycleSubs.Get(r.StoreRegistrationName)

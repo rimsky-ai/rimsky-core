@@ -29,7 +29,7 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
               SELECT 1 FROM rimsky_node_runs r
               WHERE r.frame_id = f.frame_id
                 AND (
-                     (r.phase IN ('pending','active','held') AND r.state IN ('stale','running'))
+                     (r.phase IN ('pending','active','held') AND r.state IN ('stale','running','resuming'))
                   OR r.phase = 'parked'
                   OR r.state = 'parked'
                 )
@@ -159,7 +159,7 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
               JOIN rimsky_nodes n ON n.id = r.node_id
               WHERE n.instance_id = rimsky_instances.id
                 AND (
-                     (r.phase IN ('pending','active','held') AND r.state IN ('stale','running'))
+                     (r.phase IN ('pending','active','held') AND r.state IN ('stale','running','resuming'))
                   OR r.phase = 'parked'
                   OR r.state = 'parked'
                 )
@@ -342,7 +342,7 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
               JOIN rimsky_nodes n ON n.id = r.node_id
               WHERE n.instance_id = f.instance_id
                 AND r.phase IN ('pending','active','held')
-                AND r.state IN ('stale','running')
+                AND r.state IN ('stale','running','resuming')
           )
     `)
 	if err != nil {

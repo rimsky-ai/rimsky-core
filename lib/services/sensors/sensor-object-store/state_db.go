@@ -49,7 +49,6 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    prefix                    TEXT NOT NULL,
 		    poll_interval             TEXT NOT NULL,
 		    watermark_field           TEXT NOT NULL,
-		    target_node               TEXT NOT NULL,
 		    message_type              TEXT NOT NULL,
 		    last_poll_at              TIMESTAMPTZ,
 		    watermark_name            TEXT,
@@ -57,7 +56,11 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    started_at                TIMESTAMPTZ NOT NULL DEFAULT now()
 		);
 	`
-	_, err := s.db.ExecContext(ctx, schema)
+	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`ALTER TABLE sensor_object_store_state DROP COLUMN IF EXISTS target_node`)
 	return err
 }
 
@@ -75,8 +78,8 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 	const q = `
 		INSERT INTO sensor_object_store_state (
 		    publisher_subscription_id, instance_id, backend, bucket, prefix,
-		    poll_interval, watermark_field, target_node, message_type
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		    poll_interval, watermark_field, message_type
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (publisher_subscription_id) DO UPDATE SET
 		    instance_id     = EXCLUDED.instance_id,
 		    backend         = EXCLUDED.backend,
@@ -84,12 +87,11 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 		    prefix          = EXCLUDED.prefix,
 		    poll_interval   = EXCLUDED.poll_interval,
 		    watermark_field = EXCLUDED.watermark_field,
-		    target_node     = EXCLUDED.target_node,
 		    message_type    = EXCLUDED.message_type
 	`
 	_, err := s.db.ExecContext(ctx, q,
 		w.SubscriptionID, w.InstanceID, w.Backend, w.Bucket, w.Prefix,
-		w.PollInterval.String(), w.WatermarkField, w.TargetNode, w.MessageType)
+		w.PollInterval.String(), w.WatermarkField, w.MessageType)
 	return err
 }
 
@@ -129,7 +131,6 @@ type SubscriptionState struct {
 	Prefix         string
 	PollInterval   string
 	WatermarkField string
-	TargetNode     string
 	MessageType    string
 	WatermarkName  string
 	WatermarkTime  *time.Time
@@ -141,7 +142,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT publisher_subscription_id, instance_id, backend, bucket, prefix,
-		        poll_interval, watermark_field, target_node, message_type,
+		        poll_interval, watermark_field, message_type,
 		        COALESCE(watermark_name, ''), watermark_time
 		   FROM sensor_object_store_state`)
 	if err != nil {
@@ -153,7 +154,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 		var w SubscriptionState
 		var wmTime sql.NullTime
 		if err := rows.Scan(&w.SubscriptionID, &w.InstanceID, &w.Backend, &w.Bucket, &w.Prefix,
-			&w.PollInterval, &w.WatermarkField, &w.TargetNode, &w.MessageType,
+			&w.PollInterval, &w.WatermarkField, &w.MessageType,
 			&w.WatermarkName, &wmTime); err != nil {
 			return nil, err
 		}
@@ -172,7 +173,7 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 	}
 	row := s.db.QueryRowContext(ctx,
 		`SELECT publisher_subscription_id, instance_id, backend, bucket, prefix,
-		        poll_interval, watermark_field, target_node, message_type,
+		        poll_interval, watermark_field, message_type,
 		        COALESCE(watermark_name, ''), watermark_time
 		   FROM sensor_object_store_state
 		  WHERE publisher_subscription_id = $1`,
@@ -180,7 +181,7 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 	var w SubscriptionState
 	var wmTime sql.NullTime
 	if err := row.Scan(&w.SubscriptionID, &w.InstanceID, &w.Backend, &w.Bucket, &w.Prefix,
-		&w.PollInterval, &w.WatermarkField, &w.TargetNode, &w.MessageType,
+		&w.PollInterval, &w.WatermarkField, &w.MessageType,
 		&w.WatermarkName, &wmTime); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil

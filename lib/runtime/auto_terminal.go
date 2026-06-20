@@ -70,9 +70,9 @@ func CheckAndFireResolution(
 	if !ok {
 		return fmt.Errorf("CheckAndFireResolution: unknown producer %q", producerName)
 	}
-	outcome := AggregateCommit
+	outcome := OutcomeCommit
 	if anyFailed {
-		outcome = AggregateAbandon
+		outcome = OutcomeAbandon
 	}
 	if row.ExpectedChildrenCount > 0 && !anyFailed {
 		resolved := row.CommittedChildrenCount + row.AbandonedChildrenCount
@@ -153,7 +153,7 @@ func routeHeldClaimVerbError(
 		return fmt.Errorf("emit claim-terminal error signal: %w", err)
 	}
 	abandonTD := td
-	abandonTD.Outcome = AggregateAbandon
+	abandonTD.Outcome = OutcomeAbandon
 	if err := promoteHandleState(ctx, args, tx, abandonTD); err != nil {
 		return fmt.Errorf("promote handle after verb error: %w", err)
 	}
@@ -191,7 +191,7 @@ func expectedInheritorsMissing(
 		producerName = *row.ProducerName
 	}
 	var alias string
-	for _, sref := range acqDef.Stores {
+	for _, sref := range acqDef.ClaimProducers {
 		if sref.Name == producerName {
 			alias = sref.AliasOf()
 			break

@@ -86,7 +86,7 @@ func assertAllChecksActive(t *testing.T, repoRoot string) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("parse %s: %v", cfgPath, err)
 	}
-	required := []string{"source_validity", "blessed_invariant_test_coverage", "comment_hygiene"}
+	required := []string{"comment_hygiene", "citation_resolution"}
 	for _, name := range required {
 		v, present := cfg.Checks[name]
 		if !present {

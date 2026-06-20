@@ -8,7 +8,7 @@
 set -euo pipefail
 
 ALL_IN_ONE_IMAGE="${ALL_IN_ONE_IMAGE:-rimsky-all-in-one:latest}"
-STORE_IMAGE="${STORE_IMAGE:-rimsky-store-filesystem:latest}"
+STORE_IMAGE="${STORE_IMAGE:-rimsky-claim-producer-filesystem:latest}"
 EXECUTOR_IMAGE="${EXECUTOR_IMAGE:-rimsky-executor-http-node:latest}"
 
 for bin in docker curl python3; do
@@ -125,7 +125,7 @@ TEMPLATE_BODY='{
       {
         "type": "produce-report",
         "executor": "runner",
-        "stores": [
+        "claim_producers": [
           { "name": "docs", "alias": "out", "selector": "reports/out.json",
             "intent": "rw", "lifetime": "durable" }
         ],

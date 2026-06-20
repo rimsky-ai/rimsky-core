@@ -16,9 +16,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 func TestLifecycleE2E_FullSequence(t *testing.T) {
@@ -32,8 +32,8 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{
 		NoSupervisor: true,
 		NoScheduler:  true,
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"alpha": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -50,7 +50,7 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{{
 			Type:     "n1",
 			Executor: "stub",
-			Stores: []node.NodeStoreRef{{
+			ClaimProducers: []node.NodeClaimProducerRef{{
 				Name: "alpha", Selector: "x", Intent: "r",
 			}},
 		}},

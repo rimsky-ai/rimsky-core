@@ -144,7 +144,7 @@ func TestWriteClaimTerminalLineage_ForceCancelledOutcome(t *testing.T) {
 		NodeID:        shared.UUID(uuid.New()),
 		FrameID:       shared.UUID(uuid.New()),
 		Outcome:       persistence.LineageOutcomeForceCancelled,
-		Cause:         string(TerminalCauseSiblingCancel),
+		Cause:         "sibling_cancel",
 	}
 	if err := WriteClaimTerminalLineage(ctx, nil, lt, shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec); err != nil {
 		t.Fatalf("WriteClaimTerminalLineage: %v", err)
@@ -156,7 +156,7 @@ func TestWriteClaimTerminalLineage_ForceCancelledOutcome(t *testing.T) {
 	if err := json.Unmarshal(lt.rows[0].Record, &decoded); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if decoded.Cause != string(TerminalCauseSiblingCancel) {
+	if decoded.Cause != "sibling_cancel" {
 		t.Fatalf("cause got %q want sibling_cancel", decoded.Cause)
 	}
 }

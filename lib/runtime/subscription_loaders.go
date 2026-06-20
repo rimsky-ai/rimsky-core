@@ -30,9 +30,8 @@ func subscriptionEdgesForTemplate(
 	if row == nil {
 		return nil, fmt.Errorf("subscriptionEdgesForTemplate: template %s not found", templateHash)
 	}
-	subs := node.ExtractSubstitutionRefsFromTemplate(row.Spec)
 	msgs := node.ExtractMessageRefsFromTemplate(row.Spec)
-	edges, err := node.BuildSubscriptionEdges(row.Spec, subs, msgs)
+	edges, err := node.BuildSubscriptionEdges(row.Spec, msgs)
 	if err != nil {
 		return nil, fmt.Errorf("subscriptionEdgesForTemplate: build edges for %s: %w", templateHash, err)
 	}

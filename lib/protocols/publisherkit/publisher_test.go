@@ -35,7 +35,7 @@ func TestSend_Success_NoRetry(t *testing.T) {
 		URL:            srv.URL,
 		Envelope:       []byte(`{}`),
 		IdempotencyKey: "k1",
-		SensorName:     "test",
+		PublisherName:  "test",
 	})
 	if res.Err != nil {
 		t.Fatalf("Send: %v", res.Err)
@@ -59,7 +59,7 @@ func TestSend_5xx_RetriesUpToMax(t *testing.T) {
 		URL:            srv.URL,
 		Envelope:       []byte(`{}`),
 		IdempotencyKey: "k1",
-		SensorName:     "test",
+		PublisherName:  "test",
 	})
 	if res.Err == nil {
 		t.Fatal("Send: expected err on exhausted retries")
@@ -87,7 +87,7 @@ func TestSend_4xx_NoRetry_LogsRejected(t *testing.T) {
 		URL:            srv.URL,
 		Envelope:       []byte(`{}`),
 		IdempotencyKey: "k1",
-		SensorName:     "test",
+		PublisherName:  "test",
 		SubscriptionID: "sub-x",
 	})
 	if !res.Rejected {
@@ -116,9 +116,9 @@ func TestSend_5xxThenSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 	res := Send(context.Background(), srv.Client(), &captureLog{}, func(time.Duration) {}, Request{
-		URL:        srv.URL,
-		Envelope:   []byte(`{}`),
-		SensorName: "test",
+		URL:           srv.URL,
+		Envelope:      []byte(`{}`),
+		PublisherName: "test",
 	})
 	if res.Err != nil {
 		t.Fatalf("Send: %v", res.Err)

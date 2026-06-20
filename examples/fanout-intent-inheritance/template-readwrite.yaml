@@ -25,7 +25,7 @@ nodes:
     description: |
       Fan-out parent declaring intent=rw. Sub-claims inherit intent=rw
       verbatim in the persisted claim-handle row.
-    stores:
+    claim_producers:
       - name: pg-store
         selector: "@items-queue-rw"
         intent: rw

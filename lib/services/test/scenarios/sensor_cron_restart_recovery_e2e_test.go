@@ -233,7 +233,6 @@ func deployCronSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 					"name":         cronPublisherName,
 					"kind":         "cron",
 					"config":       json.RawMessage(cronBytes),
-					"target_node":  cronReactorNode,
 					"message_type": cronMessageType,
 				},
 			},

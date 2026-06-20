@@ -12,11 +12,12 @@ import (
 type NodeState string
 
 const (
-	NodeStateFresh   NodeState = "fresh"
-	NodeStateStale   NodeState = "stale"
-	NodeStateRunning NodeState = "running"
-	NodeStateFailed  NodeState = "failed"
-	NodeStateParked  NodeState = "parked"
+	NodeStateFresh    NodeState = "fresh"
+	NodeStateStale    NodeState = "stale"
+	NodeStateRunning  NodeState = "running"
+	NodeStateFailed   NodeState = "failed"
+	NodeStateParked   NodeState = "parked"
+	NodeStateResuming NodeState = "resuming"
 )
 
 var ErrIllegalTransition = errors.New("illegal state transition")
@@ -49,6 +50,8 @@ var (
 
 	ReasonHandlerResume = TransitionReason{Kind: "handler_resume"}
 
+	ReasonDeadlineResume = TransitionReason{Kind: "deadline_resume"}
+
 	ReasonParkTimeout = TransitionReason{Kind: "park_timeout"}
 
 	ReasonChildTransitioned = TransitionReason{Kind: "child_transitioned"}
@@ -80,6 +83,16 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 		if reason.Kind == "policy_give_up" {
 			return NodeStateFailed, nil
 		}
+	case NodeStateResuming:
+		if reason.Kind == "dispatch_claimed" {
+			return NodeStateRunning, nil
+		}
+		if reason.Kind == "policy_give_up" {
+			return NodeStateFailed, nil
+		}
+		if reason.Kind == "dispatch_impossible" {
+			return NodeStateFailed, nil
+		}
 	case NodeStateRunning:
 		if reason.Kind == "handler_complete" {
 			return NodeStateFresh, nil
@@ -105,6 +118,9 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 			return NodeStateStale, nil
 		}
 	case NodeStateParked:
+		if reason.Kind == "deadline_resume" {
+			return NodeStateResuming, nil
+		}
 		if reason.Kind == "handler_resume" {
 			return NodeStateStale, nil
 		}
@@ -124,7 +140,7 @@ func NextStateParent(current NodeState, reason TransitionReason) (NodeState, err
 		switch current {
 		case NodeStateFresh, NodeStateFailed:
 			return "", &parentAggregateOK{From: current}
-		case NodeStateStale, NodeStateRunning:
+		case NodeStateStale, NodeStateRunning, NodeStateResuming:
 			return "", &parentAggregateOK{From: current}
 		case NodeStateParked:
 			return "", &parentAggregateOK{From: current}

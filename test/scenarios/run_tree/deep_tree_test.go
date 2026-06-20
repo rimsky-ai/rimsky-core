@@ -16,8 +16,8 @@ import (
 func TestDeepTree_SubgraphOfFanout(t *testing.T) {
 	t.Parallel()
 	innerVerdicts := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 	}
 	outer := runtime.Aggregate(innerVerdicts, tmplspec.AggregationPolicy{Kind: "strict"})
 	if !outer.IsSettled {
@@ -37,8 +37,8 @@ func TestDeepTree_SubgraphOfFanout(t *testing.T) {
 func TestDeepTree_SubgraphOfFanoutOneInnerFails(t *testing.T) {
 	t.Parallel()
 	innerVerdicts := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure")},
 	}
 	outer := runtime.Aggregate(innerVerdicts, tmplspec.AggregationPolicy{Kind: "strict"})
 	if !outer.IsSettled {
@@ -52,8 +52,8 @@ func TestDeepTree_SubgraphOfFanoutOneInnerFails(t *testing.T) {
 func TestDeepTree_FanoutOfSubgraph(t *testing.T) {
 	t.Parallel()
 	innerChildren := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 	}
 	innerVerdict := runtime.Aggregate(innerChildren, tmplspec.AggregationPolicy{Kind: "best_effort"})
 	if !innerVerdict.IsSettled {
@@ -63,7 +63,7 @@ func TestDeepTree_FanoutOfSubgraph(t *testing.T) {
 		t.Errorf("inner best_effort verdict: %s (want fresh)", innerVerdict.ParentState)
 	}
 	outer := runtime.Aggregate([]runtime.ChildState{
-		{State: innerVerdict.ParentState, SettlingSignalType: innerVerdict.ParentSettlingSignalType},
+		{State: innerVerdict.ParentState, SettlingSignalType: signalpkg.PathPtr(innerVerdict.ParentSettlingSignalType)},
 	}, tmplspec.AggregationPolicy{Kind: "strict"})
 	if !outer.IsSettled {
 		t.Fatal("outer sub-graph should settle on inner verdict")

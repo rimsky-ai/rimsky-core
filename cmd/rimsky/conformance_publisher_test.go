@@ -49,7 +49,6 @@ func TestPublisherConformance_FixtureCron(t *testing.T) {
 		MessageTimeout:  3 * time.Second,
 		SubscriptionID:  "self-test-subscription",
 		InstanceID:      "self-test-instance",
-		TargetNode:      "tick",
 		MessageType:     "system/conformance",
 	}
 	results := pubconformance.Run(context.Background(), client, opts)
@@ -131,7 +130,6 @@ type fixtureSub struct {
 	subscriptionID string
 	instanceID     string
 	kind           string
-	targetNode     string
 	messageType    string
 	startedAt      time.Time
 	cancel         context.CancelFunc
@@ -166,7 +164,6 @@ func (s *fixturePublisher) Subscribe(_ context.Context, req *genv1.SubscribeRequ
 		subscriptionID: req.GetPublisherSubscriptionId(),
 		instanceID:     req.GetInstanceId(),
 		kind:           req.GetKind(),
-		targetNode:     req.GetTargetNode(),
 		messageType:    req.GetMessageType(),
 		startedAt:      time.Now(),
 		cancel:         cancel,
@@ -195,7 +192,6 @@ func (s *fixturePublisher) ListSubscriptions(_ context.Context, _ *emptypb.Empty
 			PublisherSubscriptionId: sub.subscriptionID,
 			InstanceId:              sub.instanceID,
 			Kind:                    sub.kind,
-			TargetNode:              sub.targetNode,
 			MessageType:             sub.messageType,
 			StartedAt:               timestamppb.New(sub.startedAt),
 		})
@@ -216,7 +212,6 @@ func (s *fixturePublisher) tick(ctx context.Context, sub *fixtureSub) {
 				"type":                      sub.messageType,
 				"payload":                   json.RawMessage(payload),
 				"sender":                    "fixture-publisher",
-				"sender_kind":               "publisher",
 				"publisher_subscription_id": sub.subscriptionID,
 			}
 			raw, _ := json.Marshal(envelope)

@@ -104,7 +104,7 @@ claim_producers:
     write_semantics_allowed: [sync]
 `
 		cfg := mustLoadCfg(t, body)
-		entry, ok := cfg.Stores.Stores["topics-ring"]
+		entry, ok := cfg.ClaimProducers.ClaimProducers["topics-ring"]
 		if !ok {
 			t.Fatal("expected topics-ring claim-producer entry to load under the current spelling")
 		}

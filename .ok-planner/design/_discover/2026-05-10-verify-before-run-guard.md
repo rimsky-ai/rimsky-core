@@ -7,12 +7,12 @@ kind: invariant
 
 ## Description
 
-Postgres MVCC snapshot isolation means a transaction reading `rimsky_worker_request.claimed_by` inside the acquisition tx sees the row as the supervisor's own, even if another supervisor concurrently completed a claim against the same row in the gap between the candidate-selection read and the COMMIT. The conflict-check + claim transaction protects against most races (per `@blessed-invariant 3` plus the per-scope advisory lock) but not against the rare cross-tx handoff.
+Postgres MVCC snapshot isolation means a transaction reading `rimsky_worker_request.claimed_by` inside the acquisition tx sees the row as the supervisor's own, even if another supervisor concurrently completed a claim against the same row in the gap between the candidate-selection read and the COMMIT. The conflict-check + claim transaction protects against most races (per the deterministic lock-ordering rule plus the per-scope advisory lock) but not against the rare cross-tx handoff.
 
-`@blessed-invariant 5` (annotated at `foundation/integration/runner.go:31-39`): after the acquisition tx commits, the runner does a separate single-statement read against `rimsky_worker_request.claimed_by`. The implementation:
+The verify-before-run rule (annotated at `foundation/integration/runner.go:31-39`): after the acquisition tx commits, the runner does a separate single-statement read against `rimsky_worker_request.claimed_by`. The implementation:
 
 - `foundation/integration/runner_acquire.go:756-765` — calls `Queue.GetClaimedBy`.
-- `foundation/persistence/postgres/queue.go:309-330` — the read; annotated `@blessed-invariant 5: verify-before-run.`
+- `foundation/persistence/postgres/queue.go:309-330` — the read; annotated `verify-before-run.`
 
 If ownership has moved, `handleOrphanedClaim` (`foundation/integration/runner_acquire.go:776-810`) bails:
 
@@ -35,7 +35,7 @@ CLAUDE.md "Blessed invariants" §5 captures this exactly: "Verify-before-run. Su
 
 ## Code surface
 
-- `foundation/integration/runner.go:31-39` — invariant 5 annotation.
+- `foundation/integration/runner.go:31-39` — verify-before-run annotation.
 - `foundation/integration/runner_acquire.go:756-810` — verify-before-run read + `handleOrphanedClaim` bail.
 - `foundation/persistence/postgres/queue.go:309-330` — `GetClaimedBy` annotated.
 - `foundation/persistence/sqlite/queue.go:401-420` — SQLite mirror.

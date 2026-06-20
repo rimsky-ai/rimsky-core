@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var knownStores = map[string]string{
+var knownClaimProducers = map[string]string{
 	"content": "filesystem",
 	"shared":  "filesystem",
 	"topics":  "postgres",
@@ -46,7 +46,7 @@ func TestValidateTemplate_Ok_MinimalExecutorNode(t *testing.T) {
 			Executor: "handler.a",
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
@@ -62,7 +62,7 @@ func TestValidateTemplate_Error_SubscribeToUnknownNode(t *testing.T) {
 			},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].subscribes[0].node")
 }
@@ -80,7 +80,7 @@ func TestValidateTemplate_Ok_SubscribeToMessageTypeShapedNode(t *testing.T) {
 			},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
@@ -96,7 +96,7 @@ func TestValidateTemplate_Error_SubscribeToUndeclaredMessageType(t *testing.T) {
 			},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].subscribes[0].node")
 }
@@ -117,7 +117,7 @@ func TestValidateSubscribes_Ok_MessageVirtualNodeWhenBodyField(t *testing.T) {
 			},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
@@ -137,7 +137,7 @@ func TestValidateSubscribes_Error_MessageVirtualNodeWhenUnknownBodyField(t *test
 			},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].subscribes[0].when")
 }
@@ -155,71 +155,71 @@ func TestValidateSubscribes_Error_MessageVirtualNodeWhenEmptyBodySchema(t *testi
 			},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].subscribes[0].when")
 }
 
-func TestValidateStores_Ok_RegionClaimWithIntent(t *testing.T) {
+func TestValidateClaimProducers_Ok_RegionClaimWithIntent(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
-			Stores: []NodeStoreRef{
+			ClaimProducers: []NodeClaimProducerRef{
 				{Name: "content", Selector: "/data/x", Intent: "rw"},
 			},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-func TestValidateStores_Error_MissingIntent(t *testing.T) {
+func TestValidateClaimProducers_Error_MissingIntent(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
-			Type:     "a",
-			Executor: "h",
-			Stores:   []NodeStoreRef{{Name: "content", Selector: "/data/x"}},
+			Type:           "a",
+			Executor:       "h",
+			ClaimProducers: []NodeClaimProducerRef{{Name: "content", Selector: "/data/x"}},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].stores[0].intent")
 }
 
-func TestValidateStores_Error_DuplicateAlias(t *testing.T) {
+func TestValidateClaimProducers_Error_DuplicateAlias(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
-			Stores: []NodeStoreRef{
+			ClaimProducers: []NodeClaimProducerRef{
 				{Name: "content", Selector: "/x", Intent: "r", Alias: "shared"},
 				{Name: "shared", Selector: "/y", Intent: "r", Alias: "shared"},
 			},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].stores[1].alias")
 }
 
-func TestValidateStores_Error_UnknownStoreKind(t *testing.T) {
+func TestValidateClaimProducers_Error_UnknownStoreKind(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
-			Type:     "a",
-			Executor: "h",
-			Stores:   []NodeStoreRef{{Name: "ghost", Selector: "/x", Intent: "r"}},
+			Type:           "a",
+			Executor:       "h",
+			ClaimProducers: []NodeClaimProducerRef{{Name: "ghost", Selector: "/x", Intent: "r"}},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].stores[0].name")
 }
@@ -229,7 +229,7 @@ func TestHoldingSubgraphsForTemplate_HeldChain(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{
 				Type: "pick",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
 				},
 			},
@@ -255,7 +255,7 @@ func TestHoldingSubgraphsForTemplate_NotHeld(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{
 				Type: "loner",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
 				},
 			},
@@ -276,7 +276,7 @@ func TestValidateTemplate_ExecutorDeclared_OK(t *testing.T) {
 		}},
 	}
 	hooks := RegistryHooks{
-		StoreDeclared:    storeDeclaredLookup(knownStores),
+		StoreDeclared:    storeDeclaredLookup(knownClaimProducers),
 		ExecutorDeclared: func(name string) bool { return name == "handler.a" },
 	}
 	res := ValidateTemplate(spec, hooks)
@@ -293,7 +293,7 @@ func TestValidateTemplate_ExecutorDeclared_Missing(t *testing.T) {
 		}},
 	}
 	hooks := RegistryHooks{
-		StoreDeclared:    storeDeclaredLookup(knownStores),
+		StoreDeclared:    storeDeclaredLookup(knownClaimProducers),
 		ExecutorDeclared: func(name string) bool { return false },
 	}
 	res := ValidateTemplate(spec, hooks)
@@ -317,7 +317,7 @@ func TestValidateTemplate_ClaimScopeSpelling(t *testing.T) {
 			Nodes: []TemplateNodeDef{{
 				Type:     "worker",
 				Executor: "handler.worker",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "content", Alias: "a", Intent: "rw", Selector: "/scope-A"},
 				},
 				Attributes: &NodeAttributesDef{
@@ -337,14 +337,14 @@ func TestValidateTemplate_ClaimScopeSpelling(t *testing.T) {
 
 	resCanonical := ValidateTemplate(
 		makeSpec("{{claim.a.claim_scope}}"),
-		RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)},
+		RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)},
 	)
 	assert.True(t, resCanonical.Ok(),
 		"canonical {{claim.a.claim_scope}} must validate; errors: %+v", resCanonical.Errors)
 
 	resLegacy := ValidateTemplate(
 		makeSpec("{{claim.a.scope}}"),
-		RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)},
+		RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)},
 	)
 	require.False(t, resLegacy.Ok(),
 		"legacy {{claim.a.scope}} must be rejected at registration")
@@ -367,7 +367,7 @@ func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
 			Name: "demo", Version: "1",
 			Nodes: []TemplateNodeDef{{
 				Type: "a",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "q", Selector: "@queue", Intent: "rw"},
 				},
 			}},
@@ -392,7 +392,7 @@ func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
 			Name: "demo", Version: "1",
 			Nodes: []TemplateNodeDef{{
 				Type: "a",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "q", Selector: "@queue", Intent: "rw"},
 				},
 				ErrorTypes: map[string]ErrorTypePolicy{
@@ -580,7 +580,7 @@ func TestValidateErrorTypes_AcceptsProducerDeclaredClass(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http",
-				Stores: []NodeStoreRef{{Name: "items-store", Alias: "items", Intent: "rw", Selector: "items?category=alpha"}},
+				ClaimProducers: []NodeClaimProducerRef{{Name: "items-store", Alias: "items", Intent: "rw", Selector: "items?category=alpha"}},
 				ErrorTypes: map[string]ErrorTypePolicy{
 					"pg/claim_unavailable": {Policy: []PolicyAction{{Action: "retry", Count: 3}}},
 				}},
@@ -888,7 +888,7 @@ func TestValidateMaxParkDuration_Ok(t *testing.T) {
 			Type: "a", Executor: "h", MaxParkDuration: "30m",
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
@@ -900,7 +900,7 @@ func TestValidateMaxParkDuration_Malformed(t *testing.T) {
 			Type: "a", Executor: "h", MaxParkDuration: "thirty-minutes",
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].max_park_duration")
 }
@@ -919,7 +919,7 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 			},
 			Nodes: []TemplateNodeDef{{Type: "a", Executor: "claude-agent"}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		require.False(t, res.Ok())
 		hasErrorAt(t, res, `defaults.attributes.by_executor["unknown-executor"]`)
 	})
@@ -937,7 +937,7 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 			},
 			Nodes: []TemplateNodeDef{{Type: "a", Executor: "claude-agent"}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
@@ -956,7 +956,7 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 			},
 			Nodes: []TemplateNodeDef{{Type: "a", Executor: "claude-agent"}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 }
@@ -977,7 +977,7 @@ func TestTemplateValidator_Tags(t *testing.T) {
 				Tags:     []string{"setup", "domain:{{params.domain}}"},
 			}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
@@ -996,7 +996,7 @@ func TestTemplateValidator_Tags(t *testing.T) {
 				Tags:     []string{"{{params.unknown}}"},
 			}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		require.False(t, res.Ok())
 		hasErrorAt(t, res, "nodes[0].tags[0]")
 	})
@@ -1011,7 +1011,7 @@ func TestTemplateValidator_Tags(t *testing.T) {
 				Tags:     []string{"{{claim.staging.address}}"},
 			}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		require.False(t, res.Ok())
 		hasErrorAt(t, res, "nodes[0].tags[0]")
 	})
@@ -1026,7 +1026,7 @@ func TestTemplateValidator_Tags(t *testing.T) {
 				Tags:     []string{"setup"},
 			}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 }
@@ -1068,7 +1068,7 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 				},
 			},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
@@ -1079,7 +1079,7 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
-				Stores: []NodeStoreRef{
+				ClaimProducers: []NodeClaimProducerRef{
 					{Name: "topics", Selector: "@q", Intent: "rw", Alias: "queue"},
 				},
 				Attributes: &NodeAttributesDef{Schema: map[string]any{
@@ -1093,7 +1093,7 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 				}},
 			}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
@@ -1118,7 +1118,7 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 				},
 			},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.False(t, res.Ok(), "expected validator to reject the retired event source-kind")
 	})
 
@@ -1143,7 +1143,7 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 				},
 			},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		require.False(t, res.Ok())
 	})
 }
@@ -1179,7 +1179,7 @@ func TestValidator_FallbackOperator_Valid(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	if !res.Ok() {
 		t.Fatalf("expected ok, got errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 	}
@@ -1207,7 +1207,7 @@ func TestValidator_FallbackOperator_ChainsRejected(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	if res.Ok() {
 		t.Fatalf("expected error for multi-pipe chain")
 	}
@@ -1232,7 +1232,7 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 				}},
 			}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
@@ -1254,7 +1254,7 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 				}},
 			}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
@@ -1292,7 +1292,7 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 				},
 			},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
@@ -1330,7 +1330,7 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 				},
 			},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
@@ -1351,7 +1351,7 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 				}},
 			}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		require.False(t, res.Ok())
 		hasErrorAt(t, res, "nodes[0].attributes.schema.properties.v.source")
 	})
@@ -1376,7 +1376,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 				}},
 			}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
@@ -1398,7 +1398,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 				}},
 			}},
 		}
-		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
@@ -1422,7 +1422,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 			}},
 		}
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 				return []byte(`{"type":"object","properties":{"both":{"type":"string"}}}`), true
 			},
@@ -1451,7 +1451,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 			}},
 		}
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 				return []byte(`{"type":"object","properties":{"summary":{"type":"string","readOnly":true}}}`), true
 			},
@@ -1479,7 +1479,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 			}},
 		}
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 				return []byte(`{"type":"object","properties":{"summary":{"type":"string"}}}`), true
 			},
@@ -1507,7 +1507,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 			}},
 		}
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 				return []byte(`{"type":"object","properties":{}}`), true
 			},
@@ -1535,7 +1535,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 			}},
 		}
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 				return []byte(`{"type":"object","properties":{"model":{"type":"string","default":"claude-sonnet-4-5"}},"additionalProperties":true}`), true
 			},
@@ -1563,7 +1563,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 			}},
 		}
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 				return []byte(`{"type":"object","properties":{"model":{"type":"string","default":"claude-sonnet-4-5"}},"additionalProperties":true}`), true
 			},
@@ -1590,7 +1590,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 			}},
 		}
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 				return []byte(`{"type":"object","properties":{"model":{"type":"string"}},"additionalProperties":true}`), true
 			},
@@ -1634,7 +1634,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 			}},
 		}
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 				return []byte(`{"type":"object","properties":{"cli":{"type":"object"}}}`), true
 			},
@@ -1671,7 +1671,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 			}},
 		}
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 				return []byte(`{"type":"object","properties":{"model":{"type":"string"}}}`), true
 			},
@@ -1698,7 +1698,7 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 			}},
 		}
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 				return []byte(`{"type":"object"}`), true
 			},
@@ -1755,7 +1755,7 @@ func TestValidateAttributesSchema_TypeRedeclarationConflict(t *testing.T) {
 		}},
 	}
 	hooks := RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 			return []byte(`{"type":"object","properties":{"model":{"type":"string"}}}`), true
 		},
@@ -1784,7 +1784,7 @@ func TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L2(t *testing.T)
 		}},
 	}
 	hooks := RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 			return []byte(`{"type":"object","properties":{"known":{"type":"string"}},"additionalProperties":false}`), true
 		},
@@ -1822,7 +1822,7 @@ func TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L1(t *testing.T)
 		}},
 	}
 	hooks := RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 			return []byte(`{"type":"object","properties":{"known":{"type":"string"}},"additionalProperties":false}`), true
 		},
@@ -1853,7 +1853,7 @@ func TestValidateAttributesSchema_NestedDefaultTypeConflict(t *testing.T) {
 		}},
 	}
 	hooks := RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 			return []byte(`{
 				"type":"object",
@@ -1892,7 +1892,7 @@ func TestValidateCompositionAgainstExecutor_RequiredInputWithSource(t *testing.T
 		}},
 	}
 	hooks := RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 			return []byte(`{
 				"type":"object",
@@ -1928,7 +1928,7 @@ func TestValidateAttributesSchema_OpenSchemaAcceptsExtraProperty(t *testing.T) {
 		}},
 	}
 	hooks := RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
 			return []byte(`{"type":"object","properties":{"known":{"type":"string","readOnly":true}}}`), true
 		},
@@ -1944,7 +1944,7 @@ func TestValidateTemplate_RefMode(t *testing.T) {
 
 	hooksFor := func(mode RefValidationMode) RegistryHooks {
 		return RegistryHooks{
-			StoreDeclared:     storeDeclaredLookup(knownStores),
+			StoreDeclared:     storeDeclaredLookup(knownClaimProducers),
 			RefValidationMode: mode,
 			ExecutorDeclared: func(name string) bool {
 				return name == provisionedConstrained
@@ -2017,7 +2017,7 @@ func TestValidateTemplate_RefMode(t *testing.T) {
 	t.Run("default zero-value mode is all (strict)", func(t *testing.T) {
 		spec := specWith(notProvisionedNode())
 		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownStores),
+			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 			ExecutorDeclared: func(name string) bool {
 				return name == provisionedConstrained
 			},
@@ -2049,7 +2049,7 @@ func TestValidateMessages_Ok_DeclaredTypeAndBodySchema(t *testing.T) {
 		},
 		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
@@ -2061,7 +2061,7 @@ func TestValidateMessages_Error_EmptyType(t *testing.T) {
 		Messages: []MessageSchema{{Type: ""}},
 		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "messages[0].type")
 	foundReservation := false
@@ -2083,7 +2083,7 @@ func TestValidateMessages_Ok_NoEmptyDeclaration(t *testing.T) {
 		},
 		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
@@ -2097,7 +2097,7 @@ func TestValidateMessages_Error_DuplicateType(t *testing.T) {
 		},
 		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "messages[1].type")
 }
@@ -2109,7 +2109,7 @@ func TestValidateMessages_Error_TypeWithWhitespace(t *testing.T) {
 		Messages: []MessageSchema{{Type: "ping recheck"}},
 		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "messages[0].type")
 }
@@ -2121,7 +2121,7 @@ func TestValidateMessages_Error_TypeTrailingSlash(t *testing.T) {
 		Messages: []MessageSchema{{Type: "ping/"}},
 		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "messages[0].type")
 }
@@ -2133,7 +2133,7 @@ func TestValidateMessages_Error_TypeMustBeSlashBearing(t *testing.T) {
 		Messages: []MessageSchema{{Type: "invalidate"}},
 		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "messages[0].type")
 }
@@ -2147,7 +2147,7 @@ func TestValidateMessages_Error_BodySchemaNotJSON(t *testing.T) {
 		},
 		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "messages[0].body_schema")
 }
@@ -2161,7 +2161,7 @@ func TestValidateMessages_Error_BodySchemaScalar(t *testing.T) {
 		},
 		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "messages[0].body_schema")
 }
@@ -2175,7 +2175,7 @@ func TestValidateMessages_Error_BodySchemaInvalidSchema(t *testing.T) {
 		},
 		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "messages[0].body_schema")
 }
@@ -2215,7 +2215,7 @@ func TestValidateMessageSubstitutionRef_Ok(t *testing.T) {
 			}},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 }
 
@@ -2240,7 +2240,7 @@ func TestValidateMessageSubstitutionRef_Error_UnknownType(t *testing.T) {
 			}},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[receiver].attributes.schema (substitution ref)")
 }
@@ -2266,7 +2266,7 @@ func TestValidateMessageSubstitutionRef_Error_UnknownField(t *testing.T) {
 			}},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[receiver].attributes.schema (substitution ref)")
 }
@@ -2300,7 +2300,7 @@ func TestValidateMessageSubstitutionRef_Ok_BareWholeBodyPull(t *testing.T) {
 			}},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 }
 
@@ -2325,7 +2325,7 @@ func TestValidateMessageSubstitutionRef_Error_NamedFieldAgainstEmptyBody(t *test
 			}},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[receiver].attributes.schema (substitution ref)")
 }
@@ -2348,9 +2348,8 @@ func TestBuildSubscriptionEdges_ImplicitFromMessageRef(t *testing.T) {
 				}}},
 		},
 	}
-	subRefs := ExtractSubstitutionRefsFromTemplate(tmpl)
 	msgRefs := ExtractMessageRefsFromTemplate(tmpl)
-	edges, err := BuildSubscriptionEdges(tmpl, subRefs, msgRefs)
+	edges, err := BuildSubscriptionEdges(tmpl, msgRefs)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -2399,7 +2398,7 @@ func emitsMessageOKSpec(t *testing.T) *TemplateSpec {
 
 func TestValidateTemplate_Ok_EmitsMessage_ExactShape(t *testing.T) {
 	spec := emitsMessageOKSpec(t)
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	if !res.Ok() {
 		t.Fatalf("expected ok, got errors: %+v", res.Errors)
 	}
@@ -2415,7 +2414,7 @@ func TestValidateTemplate_Error_EmitsMessage_UnknownType(t *testing.T) {
 			Attributes:   &NodeAttributesDef{Schema: map[string]any{}},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].emits_message")
 	found := false
@@ -2432,7 +2431,7 @@ func TestValidateTemplate_Error_EmitsMessage_UnknownType(t *testing.T) {
 func TestValidateTemplate_Error_EmitsMessage_MutexWithExecutor(t *testing.T) {
 	spec := emitsMessageOKSpec(t)
 	spec.Nodes[0].Executor = "handler.a"
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	found := false
 	for _, e := range res.Errors {
@@ -2448,7 +2447,7 @@ func TestValidateTemplate_Error_EmitsMessage_MutexWithExecutor(t *testing.T) {
 func TestValidateTemplate_Error_EmitsMessage_MutexWithDelegate(t *testing.T) {
 	spec := emitsMessageOKSpec(t)
 	spec.Nodes[0].Delegate = "sub"
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	found := false
 	for _, e := range res.Errors {
@@ -2471,7 +2470,7 @@ func TestValidateTemplate_Error_EmitsMessage_AttributeSuperset(t *testing.T) {
 		},
 		"required": []any{"pong_status"},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	found := false
 	for _, e := range res.Errors {
@@ -2490,7 +2489,7 @@ func TestValidateTemplate_Error_EmitsMessage_AttributeSubset_MissingField(t *tes
 		"type":       "object",
 		"properties": map[string]any{},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	found := false
 	for _, e := range res.Errors {
@@ -2512,7 +2511,7 @@ func TestValidateTemplate_Error_EmitsMessage_AttributeTypeMismatch(t *testing.T)
 		},
 		"required": []any{"pong_status"},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	found := false
 	for _, e := range res.Errors {
@@ -2533,7 +2532,7 @@ func TestValidateTemplate_Error_EmitsMessage_RequiredMismatch(t *testing.T) {
 			"pong_status": map[string]any{"type": "string"},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	found := false
 	for _, e := range res.Errors {

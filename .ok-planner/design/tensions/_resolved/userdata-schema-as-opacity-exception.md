@@ -13,7 +13,7 @@ affects:
 
 ## What is muddy
 
-`@blessed-invariant 11` says userdata is opaque: no inspection, no validation beyond the executor-side schema check. But:
+The userdata byte-opacity rule says userdata is opaque: no inspection, no validation beyond the executor-side schema check. But:
 
 - The executor reports `userdata_schema` via `ExecutorObservability.Capabilities`.
 - Rimsky validates userdata at template registration AND at dispatch post-merge/post-substitution against that schema.
@@ -28,13 +28,13 @@ A future contributor adding "validate userdata against `expected_size` field" mi
 
 ## Resolution candidates (do NOT pick)
 
-- Add a sub-invariant under `@blessed-invariant 11` explicitly carving out structural schema validation.
+- Add a sub-clause to the userdata byte-opacity rule explicitly carving out structural schema validation.
 - Move the validator to the executor side (rimsky forwards bytes; executor validates against its own schema).
 - Document the carve-out in `docs/concepts/userdata.md`.
 
 ## Resolution
 
-2026-05-21 — Resolved by userdata collapse. `concept:userdata` retires; `@blessed-invariant 11` retires. The opacity-exception muddiness was specifically about userdata-schema validation being a sanctioned but unnamed exception to the opacity invariant. With userdata gone, the exception is gone. The schema-validation surface that remains (attribute schema validation against the executor's `expected_attributes_schema`) is part of `concept:attribute`'s validation gate discipline, not an exception. See `.ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md`.
+2026-05-21 — Resolved by userdata collapse. `concept:userdata` retires; the userdata byte-opacity rule retires with it. The opacity-exception muddiness was specifically about userdata-schema validation being a sanctioned but unnamed exception to that rule. With userdata gone, the exception is gone. The schema-validation surface that remains (attribute schema validation against the executor's `expected_attributes_schema`) is part of `concept:attribute`'s validation gate discipline, not an exception. See `.ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md`.
 
 ## Evidence
 

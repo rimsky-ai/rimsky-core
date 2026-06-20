@@ -68,12 +68,12 @@ func (q *queueImpl) inTx(ctx context.Context, fn func(tx persistence.Tx) error) 
 
 // @concept: run-scope
 func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
-	stores := req.RequiredStores
+	stores := req.RequiredClaimProducers
 	if stores == nil {
 		stores = []string{}
 	}
 	if req.FrameID == (shared.UUID{}) {
-		return fmt.Errorf("sqlite.Enqueue: frame_id required (per blessed-invariant 19) for node %s", req.NodeID)
+		return fmt.Errorf("sqlite.Enqueue: frame_id required for node %s", req.NodeID)
 	}
 	if req.RunScopeID == (shared.UUID{}) {
 		return fmt.Errorf("sqlite.Enqueue: run_scope_id required for node %s", req.NodeID)
@@ -148,9 +148,9 @@ func (q *queueImpl) SelectCandidates(
 	if limit <= 0 {
 		limit = defaultCandidateLimit
 	}
-	acceptedStores := req.AcceptedStores
-	if acceptedStores == nil {
-		acceptedStores = []string{}
+	acceptedClaimProducers := req.AcceptedClaimProducers
+	if acceptedClaimProducers == nil {
+		acceptedClaimProducers = []string{}
 	}
 	acceptedExecutors := req.AcceptedExecutors
 	if acceptedExecutors == nil {
@@ -159,7 +159,7 @@ func (q *queueImpl) SelectCandidates(
 
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
-		        d.prior_dispatch_id, d.prior_dispatch_disposition
+		        d.prior_dispatch_id, d.prior_dispatch_disposition, d.state
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		   JOIN rimsky_instances i ON i.id = n.instance_id
@@ -194,7 +194,7 @@ func (q *queueImpl) SelectCandidates(
 	storeAccepted := func(required []string) bool {
 		for _, r := range required {
 			found := false
-			for _, a := range acceptedStores {
+			for _, a := range acceptedClaimProducers {
 				if a == r {
 					found = true
 					break
@@ -210,20 +210,21 @@ func (q *queueImpl) SelectCandidates(
 	var out []persistence.Candidate
 	for rows.Next() {
 		var (
-			c                   persistence.Candidate
-			dispatchIDStr       string
-			nodeIDStr           string
-			nodeType            string
-			executorName        sql.NullString
-			requiredStoresStr   string
-			enqueuedAtStr       string
-			frameIDStr          string
-			priorDispatchIDStr  sql.NullString
-			priorDispositionStr sql.NullString
+			c                         persistence.Candidate
+			dispatchIDStr             string
+			nodeIDStr                 string
+			nodeType                  string
+			executorName              sql.NullString
+			requiredClaimProducersStr string
+			enqueuedAtStr             string
+			frameIDStr                string
+			priorDispatchIDStr        sql.NullString
+			priorDispositionStr       sql.NullString
+			preClaimStateStr          sql.NullString
 		)
 		if err := rows.Scan(&dispatchIDStr, &nodeIDStr, &nodeType, &executorName,
-			&requiredStoresStr, &enqueuedAtStr, &frameIDStr,
-			&priorDispatchIDStr, &priorDispositionStr); err != nil {
+			&requiredClaimProducersStr, &enqueuedAtStr, &frameIDStr,
+			&priorDispatchIDStr, &priorDispositionStr, &preClaimStateStr); err != nil {
 			return nil, fmt.Errorf("sqlite.SelectCandidates: scan: %w", err)
 		}
 		c.NodeType = nodeType
@@ -240,12 +241,15 @@ func (q *queueImpl) SelectCandidates(
 		if priorDispositionStr.Valid {
 			c.PriorDispatchDisposition = priorDispositionStr.String
 		}
-		stores, err := unmarshalStringArray(requiredStoresStr)
+		if preClaimStateStr.Valid {
+			c.PreClaimState = preClaimStateStr.String
+		}
+		stores, err := unmarshalStringArray(requiredClaimProducersStr)
 		if err != nil {
 			return nil, err
 		}
-		c.RequiredStores = stores
-		if !executorAccepted(c.ExecutorName, c.RequiredStores) || !storeAccepted(c.RequiredStores) {
+		c.RequiredClaimProducers = stores
+		if !executorAccepted(c.ExecutorName, c.RequiredClaimProducers) || !storeAccepted(c.RequiredClaimProducers) {
 			continue
 		}
 		if c.DispatchID, err = uuid.Parse(dispatchIDStr); err != nil {
@@ -755,24 +759,24 @@ type scanner interface {
 
 func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
 	var (
-		idStr                string
-		nodeIDStr            string
-		executorName         sql.NullString
-		requiredStoresStr    string
-		enqueuedAtStr        string
-		claimedBy            sql.NullString
-		claimedAtStr         sql.NullString
-		frameIDStr           string
-		asyncAckID           sql.NullString
-		asyncAckRegisteredAt sql.NullString
-		lastProgressAtStr    sql.NullString
-		tagsStr              sql.NullString
-		maxQuietSec          sql.NullInt64
-		maxRuntimeSec        sql.NullInt64
-		r                    persistence.DispatchRow
+		idStr                     string
+		nodeIDStr                 string
+		executorName              sql.NullString
+		requiredClaimProducersStr string
+		enqueuedAtStr             string
+		claimedBy                 sql.NullString
+		claimedAtStr              sql.NullString
+		frameIDStr                string
+		asyncAckID                sql.NullString
+		asyncAckRegisteredAt      sql.NullString
+		lastProgressAtStr         sql.NullString
+		tagsStr                   sql.NullString
+		maxQuietSec               sql.NullInt64
+		maxRuntimeSec             sql.NullInt64
+		r                         persistence.DispatchRow
 	)
 	if err := row.Scan(
-		&idStr, &nodeIDStr, &executorName, &requiredStoresStr,
+		&idStr, &nodeIDStr, &executorName, &requiredClaimProducersStr,
 		&enqueuedAtStr, &claimedBy, &claimedAtStr, &frameIDStr,
 		&asyncAckID, &asyncAckRegisteredAt, &lastProgressAtStr, &tagsStr,
 		&maxQuietSec, &maxRuntimeSec,
@@ -790,11 +794,11 @@ func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
 		v := executorName.String
 		r.ExecutorName = &v
 	}
-	stores, err := unmarshalStringArray(requiredStoresStr)
+	stores, err := unmarshalStringArray(requiredClaimProducersStr)
 	if err != nil {
 		return persistence.DispatchRow{}, err
 	}
-	r.RequiredStores = stores
+	r.RequiredClaimProducers = stores
 	if r.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
 		return persistence.DispatchRow{}, err
 	}
@@ -835,8 +839,8 @@ func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
 		return persistence.DispatchRow{}, terr
 	}
 	r.Tags = dedupTags(rawTags)
-	if r.RequiredStores == nil {
-		r.RequiredStores = []string{}
+	if r.RequiredClaimProducers == nil {
+		r.RequiredClaimProducers = []string{}
 	}
 	if maxQuietSec.Valid {
 		v := int(maxQuietSec.Int64)

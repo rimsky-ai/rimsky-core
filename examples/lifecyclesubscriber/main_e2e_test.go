@@ -209,7 +209,7 @@ func exerciseFailureHonoredSynchronouslyLeg(t *testing.T, ep harness.RimskyEndpo
 				{
 					"type":     "worker",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{
 							"name":     "example-subscriber",
 							"intent":   "r",
@@ -543,7 +543,7 @@ func registerLifecycleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 				{
 					"type":     "worker",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{
 							"name":     "example-subscriber",
 							"intent":   "r",

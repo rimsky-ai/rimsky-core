@@ -28,8 +28,7 @@ surface:
   or `ScopesConflict`, so rimsky never calls them.
 - **Open.** Returns the `Acquired` arm of the `OpenResponse` oneof with
   a JSON-encoded address (the claim_id, JSON-quoted). The bytes are
-  opaque to rimsky per `@blessed-invariant 20`, but they MUST be
-  syntactically-valid JSON — rimsky's `address` column is
+  opaque to rimsky, but they MUST be syntactically-valid JSON — rimsky's `address` column is
   `json.RawMessage` on both Postgres and SQLite, and invalid JSON
   surfaces as SQLSTATE 22P02 at the supervisor's acquireClaim step.
 - **Commit.** No-op acknowledgement for a read-only producer; a
@@ -91,7 +90,7 @@ version: "1"
 nodes:
   - type: worker
     executor: my-executor
-    stores:
+    claim_producers:
       - name: example
         selector: r1            # opaque to rimsky; the producer parses it
         intent: r               # must be "r" or "rw"; the example
@@ -154,7 +153,7 @@ exhibits each protocol surface against the assembled product:
    dropped).
 4. **Un-advertised write-semantics is refused at registration.** The
    same in-process producer is dialed via `peer.Dial` (the same
-   function `lib/control/config/stores.go::dialRemoteStores` runs at
+   function `lib/control/config/claim_producers.go::dialRemoteClaimProducers` runs at
    rimsky startup); calling `Client.ValidateCapabilities` with an
    operator-declared envelope of `[sync]` returns the canonical
    "capabilities mismatch" error and never proceeds to instantiate a
@@ -166,7 +165,7 @@ exhibits each protocol surface against the assembled product:
 ### Why a Docker image and not host-port access?
 
 rimsky's control-api, scheduler, and supervisor ALL eager-dial every
-declared claim-producer at startup (`dialRemoteStores`) and EXIT
+declared claim-producer at startup (`dialRemoteClaimProducers`) and EXIT
 NON-ZERO if any is unreachable. An in-process producer exposed via the
 harness's `WithHostPortAccess` option races the reverse-SSH host-port
 tunnel against rimsky's startup dial — under load the tunnel loses,

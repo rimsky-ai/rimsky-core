@@ -9,7 +9,7 @@ aliases:
 
 ## Definition
 
-A frame is one cascade resolution. It is a persisted frame row carrying a triggering-message reference and a lifecycle state (`queued`, `running`, `completed`, or `failed`). Every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame begins only when a message lands in the message ledger and the next frame boundary picks it up — operator-emitted, publisher-emitted, or cascade-emitted by a message-emitter node, all converging on the same delivery path. Resuming a parked node — park-wake, via async callback or snooze timer — does not begin a frame; it resumes the still-running frame the parked node belongs to. The frame ends when every node_run in the frame is resolved; a `parked` node_run holds its frame open.
+A frame is one cascade resolution. It is a persisted frame row carrying a triggering-message reference and a lifecycle state drawn from the frame lifecycle-state family. Every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame begins only when a message lands in the message ledger and the next frame boundary picks it up — operator-emitted, publisher-emitted, or cascade-emitted by a message-emitter node, all converging on the same delivery path. Resuming a parked node — park-wake, via async callback or snooze timer — does not begin a frame; it resumes the still-running frame the parked node belongs to. The frame ends when every node_run in the frame is resolved; a parked node_run holds its frame open.
 
 Frames are serial per instance: at most one running frame, queued frames dispatched in arrival order.
 
@@ -33,7 +33,7 @@ Owns: the per-instance concurrency rule (≤1 running frame), the serial-per-ins
 - Every frame row carries a non-null triggering-message reference. There is no path that creates a frame without a triggering message.
 - Every dispatched run row carries a non-null frame reference.
 - Frames are processed in arrival order per instance; cross-instance ordering is independent.
-- The frame timeout is purely advisory: when the last-progress timestamp falls outside the window, the scheduler emits a single `frame.stuck.observed` warning and takes no destructive action.
+- The frame timeout is purely advisory: when the last-progress timestamp falls outside the window, the scheduler emits a single stuck-frame warning event and takes no destructive action.
 
 ## Common pitfalls
 

@@ -58,6 +58,8 @@ func WakeParkedNode(ctx context.Context, args WakeParkedArgs, reason WakeReason)
 	return wakeParkedNode(ctx, args, target, reason)
 }
 
+// @concept: parked-state
+// @story: resume-preserves-snapshot
 func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistence.NodeRow, reason WakeReason) error {
 	if target.RunScopeID == nil {
 		return nil
@@ -83,10 +85,10 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 			return nil
 		}
 		if err := args.Persist.Nodes().UpdateState(ctx, target.ID, targetRunScopeID,
-			cascade.NodeStateStale, cascade.ReasonHandlerResume, nil, tx); err != nil {
+			cascade.NodeStateResuming, cascade.ReasonDeadlineResume, nil, tx); err != nil {
 			return err
 		}
-		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &target.ID, InstanceID: &target.InstanceID,
 			Kind: events.KindParkedResumeStarted(),
 			Payload: map[string]any{
@@ -94,16 +96,7 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 				"supervisor_id": args.SupervisorID,
 				"prior_reason":  parked.Reason,
 			},
-		}, tx); err != nil {
-			return err
-		}
-		//	@concept: cascade
-		//	@concept: wait-set
-		if target.FrameID == nil {
-			return nil
-		}
-		return walkCascadeForInvalidatedNode(ctx, args.Persist, args.Queue, tx,
-			args.Logger, target.ID, target.InstanceID, *target.FrameID)
+		}, tx)
 	})
 }
 

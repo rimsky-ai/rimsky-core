@@ -33,7 +33,7 @@ nodes:
       SubScopeDescriptor per upstream item, carrying that item's
       payload bytes. Each child substitutes its own sub-claim payload
       via {{claim.fs_queue.payload.v}}.
-    stores:
+    claim_producers:
       - name: fs-store
         selector: "@seed-queue"
         intent: rw

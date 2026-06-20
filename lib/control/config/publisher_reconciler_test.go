@@ -124,7 +124,7 @@ func TestStartPublisherSubscriptions_InsertsMountingNoInlineRPC(t *testing.T) {
 	}
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.StartPublisherSubscriptionsForInstance(ctx, deps, tx, instanceID, nil, []spec.PublisherSpec{
-			{Name: "pub-a", Kind: "object_store", Config: json.RawMessage(`{"bucket":"b"}`), TargetNode: "ingest", MessageType: "fixture/ping"},
+			{Name: "pub-a", Kind: "object_store", Config: json.RawMessage(`{"bucket":"b"}`), MessageType: "fixture/ping"},
 		})
 	})
 	if err != nil {
@@ -165,7 +165,7 @@ func TestStartPublisherSubscriptions_UnknownPublisherFailsWithReason(t *testing.
 	}
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.StartPublisherSubscriptionsForInstance(ctx, deps, tx, instanceID, nil, []spec.PublisherSpec{
-			{Name: "no-such-publisher", Kind: "object_store", Config: json.RawMessage(`{}`), TargetNode: "ingest", MessageType: "fixture/ping"},
+			{Name: "no-such-publisher", Kind: "object_store", Config: json.RawMessage(`{}`), MessageType: "fixture/ping"},
 		})
 	})
 	if err != nil {
@@ -202,9 +202,9 @@ func TestPublisherSubscriptionReconciler_RetriesPastBudgetThenActivates(t *testi
 			PublisherName:  "pub-a",
 			Kind:           "object_store",
 			ResolvedConfig: json.RawMessage(`{"bucket":"b"}`),
-			TargetNode:     "ingest",
-			State:          persistence.PublisherSubscriptionStateMounting,
-			StartedAt:      time.Now().UTC(),
+
+			State:     persistence.PublisherSubscriptionStateMounting,
+			StartedAt: time.Now().UTC(),
 		})
 	}); err != nil {
 		t.Fatalf("seed mounting row: %v", err)

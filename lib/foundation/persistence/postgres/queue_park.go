@@ -315,7 +315,7 @@ func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	if stores == nil {
 		stores = []string{}
 	}
-	r.RequiredStores = stores
+	r.RequiredClaimProducers = stores
 	if resumeAt.Valid {
 		t := resumeAt.Time
 		r.ResumeAt = &t

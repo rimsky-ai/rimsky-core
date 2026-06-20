@@ -35,11 +35,11 @@ type RunArgs struct {
 	StoreRegistry  *locks.Registry
 	NamedLocks     locks.NamedLocksConfig
 
-	Clock             shared.Clock
-	Logger            shared.Logger
-	SupervisorID      string
-	AcceptedExecutors []string
-	AcceptedStores    []string
+	Clock                  shared.Clock
+	Logger                 shared.Logger
+	SupervisorID           string
+	AcceptedExecutors      []string
+	AcceptedClaimProducers []string
 
 	Pool        *executor.ClientPool
 	Resolver    executor.Resolver
@@ -173,16 +173,29 @@ func RunNode(
 		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
 	}
 
-	resolvedAttrs, attrSchema, err := resolveAttributes(ctx, args, &acq)
-	if err != nil {
-		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
-			applyAttributeFailure(ctx, args, &acq, err)
-	}
-
-	if err := upsertAttributesPreDispatch(ctx, args, acq.DispatchID, acq.NodeID, resolvedAttrs); err != nil {
-		log.Warn("runner: upsert attributes pre-dispatch failed",
-			"run_id", acq.DispatchID.String(),
-			"node_id", acq.NodeID.String(), "error", err.Error())
+	var (
+		resolvedAttrs map[string]any
+		attrSchema    map[string]any
+	)
+	if acq.IsResume {
+		// @concept: parked-state
+		// @story: resume-preserves-snapshot
+		resolvedAttrs, attrSchema, err = loadResumeAttributes(ctx, args, &acq)
+		if err != nil {
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
+				applyAttributeFailure(ctx, args, &acq, err)
+		}
+	} else {
+		resolvedAttrs, attrSchema, err = resolveAttributes(ctx, args, &acq)
+		if err != nil {
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
+				applyAttributeFailure(ctx, args, &acq, err)
+		}
+		if err := upsertAttributesPreDispatch(ctx, args, acq.DispatchID, acq.NodeID, resolvedAttrs); err != nil {
+			log.Warn("runner: upsert attributes pre-dispatch failed",
+				"run_id", acq.DispatchID.String(),
+				"node_id", acq.NodeID.String(), "error", err.Error())
+		}
 	}
 	dispatchAttrs := resolvedAttrs
 

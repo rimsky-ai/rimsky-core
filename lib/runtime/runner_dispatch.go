@@ -100,14 +100,6 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	}()
 	metrics.IncDispatch(acq.Executor, "started")
 
-	if acq.NodeDef != nil && acq.NodeDef.EmitsMessage != "" {
-		// @concept: message-emitter-node
-		return terminalEvent{
-			Kind:          terminalKindComplete,
-			Changed:       true,
-			ChangeSummary: "emits_message:" + acq.NodeDef.EmitsMessage,
-		}, nil, nil
-	}
 	if acq.Executor == "" {
 		summary := "pure_cascade"
 		for _, lk := range acq.Locks {
@@ -164,6 +156,17 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		ctx, cancel = context.WithTimeout(ctx, deadline)
 		defer cancel()
 	}
+	// @concept: message-emitter-node
+	emitMessageType := ""
+	if acq.NodeDef != nil {
+		emitMessageType = acq.NodeDef.EmitsMessage
+	}
+	ctx = executor.WithDispatchExtras(ctx, executor.DispatchExtras{
+		InstanceID:      acq.InstanceID,
+		NodeID:          acq.NodeID,
+		FrameID:         acq.FrameID,
+		EmitMessageType: emitMessageType,
+	})
 	outcome, err := client.Execute(ctx, req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -462,6 +465,51 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 			"error", err.Error())
 	}
 	return resolved, schema, nil
+}
+
+// @concept: parked-state
+// @story: resume-preserves-snapshot
+func loadResumeAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
+	if acq.NodeDef == nil || acq.NodeDef.Attributes == nil {
+		return map[string]any{}, nil, nil
+	}
+	schema, _, _ := computeEffectiveAttributeSchema(args, acq)
+	var resumed map[string]any
+	if args.Persist == nil {
+		return nil, schema, fmt.Errorf("loadResumeAttributes: persist required")
+	}
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		row, err := args.Persist.NodeAttributes().GetByRun(ctx, acq.DispatchID, tx)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			return fmt.Errorf("loadResumeAttributes: no persisted bag for dispatch %s", acq.DispatchID)
+		}
+		resumed = row.Data
+		return nil
+	}); err != nil {
+		return nil, schema, err
+	}
+	if resumed == nil {
+		resumed = map[string]any{}
+	}
+	acq.MergedAttributes = resumed
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: events.KindAttributesSubstituted(),
+			Payload: map[string]any{
+				"resume":             true,
+				"substituted_fields": fieldNames(resumed),
+			},
+		}, tx)
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("loadResumeAttributes: append attributes_substituted event failed",
+			"node_id", acq.NodeID.String(),
+			"error", err.Error())
+	}
+	return resumed, schema, nil
 }
 
 // @concept: breakpoint
@@ -821,7 +869,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		}
 	}
 
-	stores, err := buildStoreHandles(acq)
+	claimProducers, err := buildClaimProducerHandles(acq)
 	if err != nil {
 		return nil, err
 	}
@@ -835,7 +883,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		NodeType:         acq.NodeType,
 		Attributes:       attrStruct,
 		AttributesSchema: schemaStruct,
-		Stores:           stores,
+		ClaimProducers:   claimProducers,
 		CallbackUrl:      dctx.Args.CallbackURL,
 		CancelToken:      cancelToken,
 		DispatchId:       acq.DispatchID.String(),
@@ -854,8 +902,8 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 }
 
 // @concept: claim-co-holdership
-func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) {
-	out := make(map[string]*genv1.StoreHandle, len(acq.Locks)+len(acq.HeldClaims))
+func buildClaimProducerHandles(acq *acquisition) (map[string]*genv1.ClaimProducerHandle, error) {
+	out := make(map[string]*genv1.ClaimProducerHandle, len(acq.Locks)+len(acq.HeldClaims))
 	for _, lk := range acq.Locks {
 		spec, ok := lk.Spec.(claimproducer.ClaimSpec)
 		if !ok {
@@ -884,8 +932,8 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 	return out, nil
 }
 
-func makeHeldClaimHandle(alias string, claim claimproducer.ClaimResult) (*genv1.StoreHandle, error) {
-	out := &genv1.StoreHandle{}
+func makeHeldClaimHandle(alias string, claim claimproducer.ClaimResult) (*genv1.ClaimProducerHandle, error) {
+	out := &genv1.ClaimProducerHandle{}
 	fields := map[string]any{"alias": alias}
 	if len(claim.Address) > 0 {
 		var addrAny any
@@ -909,8 +957,8 @@ func makeHeldClaimHandle(alias string, claim claimproducer.ClaimResult) (*genv1.
 	return out, nil
 }
 
-func makeClaimHandle(lk AcquiredLock, spec claimproducer.ClaimSpec) (*genv1.StoreHandle, error) {
-	out := &genv1.StoreHandle{}
+func makeClaimHandle(lk AcquiredLock, spec claimproducer.ClaimSpec) (*genv1.ClaimProducerHandle, error) {
+	out := &genv1.ClaimProducerHandle{}
 	if lk.Producer != nil {
 		out.Kind = lk.Producer.Name()
 	}

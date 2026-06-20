@@ -19,9 +19,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 type reaperRaceFixture struct {
@@ -104,7 +104,7 @@ func (f *reaperRaceFixture) releaseTerminal(t *testing.T, ctx context.Context) e
 			ClaimHandleID: f.chID,
 			SupervisorID:  f.owner,
 			Source:        runtime.ActiveTerminal,
-			Outcome:       runtime.AggregateCommit,
+			Outcome:       runtime.OutcomeCommit,
 			Producer:      f.producer,
 			Scope:         []byte(`"@thing"`),
 			Address:       []byte(`"@thing"`),

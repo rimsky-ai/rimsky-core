@@ -30,9 +30,9 @@ type PartitionDescriptor struct {
 }
 
 type ChildRunSpec struct {
-	NodeID         shared.UUID
-	Executor       string
-	RequiredStores []string
+	NodeID                 shared.UUID
+	Executor               string
+	RequiredClaimProducers []string
 }
 
 type ChildExecutionInput struct {
@@ -102,7 +102,7 @@ func DispatchChildren(
 			runID, err := CreateChildRun(
 				ctx, tx, args.Persist.RunTree(), args.Queue,
 				c.NodeID, in.FrameID, childScopeID,
-				c.Executor, c.RequiredStores, in.AggregationPolicy)
+				c.Executor, c.RequiredClaimProducers, in.AggregationPolicy)
 			if err != nil {
 				return nil, fmt.Errorf("DispatchChildren: child run (partition %q, node %s): %w",
 					p.PartitionKey, c.NodeID, err)
@@ -133,74 +133,65 @@ func DispatchChildren(
 	return out, nil
 }
 
-type ChildSettlementInput struct {
-	Policy spec.AggregationPolicy
-
+type DelegateSettlementInput struct {
 	ExitRunID     shared.UUID
 	ExitNodeID    shared.UUID
 	ExitNodeAlias string
 	InstanceID    shared.UUID
 	Writeback     json.RawMessage
+}
 
+type FanoutChildSettlementInput struct {
 	ParentClaimHandleID   shared.UUID
 	ChildClaimHandleID    shared.UUID
-	ChildOutcome          AggregateOutcome
+	ChildOutcome          TerminalOutcome
 	ChildProducerMetadata []byte
 }
 
 // @concept: child-execution
 // @concept: run-scope
-// @concept: claim-tree
-func SettleChildren(
-	ctx context.Context, args RunArgs, tx persistence.Tx, in ChildSettlementInput,
-) error {
-	if in.Policy.Kind == spec.AggregationKindCarryVerbatim {
-		return settleCarryVerbatim(ctx, args, tx, in)
-	}
-	return settleClaimChainAggregate(ctx, args, tx, in)
-}
-
-func settleCarryVerbatim(
-	ctx context.Context, args RunArgs, tx persistence.Tx, in ChildSettlementInput,
+// @concept: delegation
+func SettleFromDelegate(
+	ctx context.Context, args RunArgs, tx persistence.Tx, in DelegateSettlementInput,
 ) error {
 	if args.Persist == nil {
-		return fmt.Errorf("SettleChildren: Persist is required")
+		return fmt.Errorf("SettleFromDelegate: Persist is required")
 	}
 	rt := args.Persist.RunTree()
 	if rt == nil {
-		return fmt.Errorf("SettleChildren: RunTree is required")
+		return fmt.Errorf("SettleFromDelegate: RunTree is required")
 	}
 	scopes := args.Persist.RunScopes()
 	if scopes == nil {
-		return fmt.Errorf("SettleChildren: RunScopes is required")
+		return fmt.Errorf("SettleFromDelegate: RunScopes is required")
 	}
 	exit, err := rt.GetByID(ctx, tx, in.ExitRunID)
 	if err != nil {
-		return fmt.Errorf("SettleChildren: load exit run %s: %w", in.ExitRunID, err)
+		return fmt.Errorf("SettleFromDelegate: load exit run %s: %w", in.ExitRunID, err)
 	}
 	if exit == nil {
-		return fmt.Errorf("SettleChildren: run %s not found", in.ExitRunID)
+		return fmt.Errorf("SettleFromDelegate: run %s not found", in.ExitRunID)
 	}
 	exitScope, err := scopes.GetByID(ctx, tx, exit.RunScopeID)
 	if err != nil {
-		return fmt.Errorf("SettleChildren: load exit run scope %s: %w", exit.RunScopeID, err)
+		return fmt.Errorf("SettleFromDelegate: load exit run scope %s: %w", exit.RunScopeID, err)
 	}
 	if exitScope == nil || exitScope.ParentRunID == nil {
-		return fmt.Errorf("SettleChildren: run %s has no parent; not a sub-graph exit", in.ExitRunID)
+		return fmt.Errorf("SettleFromDelegate: run %s has no parent; not a sub-graph exit", in.ExitRunID)
 	}
 	var asMap map[string]any
 	if len(in.Writeback) > 0 {
 		if err := json.Unmarshal(in.Writeback, &asMap); err != nil {
-			return fmt.Errorf("SettleChildren: exit writeback bytes not JSON-decodable: %w", err)
+			return fmt.Errorf("SettleFromDelegate: exit writeback bytes not JSON-decodable: %w", err)
 		}
 	}
 	parentRunID := *exitScope.ParentRunID
 	parent, err := rt.GetByID(ctx, tx, parentRunID)
 	if err != nil {
-		return fmt.Errorf("SettleChildren: load parent run %s: %w", parentRunID, err)
+		return fmt.Errorf("SettleFromDelegate: load parent run %s: %w", parentRunID, err)
 	}
 	if parent == nil {
-		return fmt.Errorf("SettleChildren: parent run %s not found", parentRunID)
+		return fmt.Errorf("SettleFromDelegate: parent run %s not found", parentRunID)
 	}
 	if args.Logger != nil {
 		args.Logger.Info("subgraph: carry exit writeback to parent run",
@@ -210,18 +201,18 @@ func settleCarryVerbatim(
 			"writeback_field_count", len(asMap))
 	}
 	if args.Persist.NodeAttributes() == nil {
-		return fmt.Errorf("SettleChildren: NodeAttributes is required")
+		return fmt.Errorf("SettleFromDelegate: NodeAttributes is required")
 	}
 	if len(in.Writeback) > 0 {
 		if err := args.Persist.NodeAttributes().Upsert(
 			ctx, parent.RunID, parent.NodeID, asMap, tx,
 		); err != nil {
-			return fmt.Errorf("SettleChildren: upsert parent attributes: %w", err)
+			return fmt.Errorf("SettleFromDelegate: upsert parent attributes: %w", err)
 		}
 	}
 	// @concept: run-scope
 	if err := scopes.Close(ctx, tx, exit.RunScopeID); err != nil {
-		return fmt.Errorf("SettleChildren: close sub-graph run scope %s: %w", exit.RunScopeID, err)
+		return fmt.Errorf("SettleFromDelegate: close sub-graph run scope %s: %w", exit.RunScopeID, err)
 	}
 	if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
 		if inst, err := instTbl.Get(ctx, exitScope.InstanceID, tx); err == nil && inst != nil {
@@ -234,11 +225,11 @@ func settleCarryVerbatim(
 	}
 	// @concept: cascade
 	if args.Persist.Nodes() == nil {
-		return fmt.Errorf("SettleChildren: Nodes table is required for the parent-settlement cascade bridge")
+		return fmt.Errorf("SettleFromDelegate: Nodes table is required for the parent-settlement cascade bridge")
 	}
 	callingNodeRow, err := args.Persist.Nodes().Get(ctx, parent.NodeID, tx)
 	if err != nil {
-		return fmt.Errorf("SettleChildren: load calling node: %w", err)
+		return fmt.Errorf("SettleFromDelegate: load calling node: %w", err)
 	}
 	if callingNodeRow != nil && callingNodeRow.FrameID != nil {
 		exitBridgeSig := signalpkg.Signal{
@@ -252,14 +243,14 @@ func settleCarryVerbatim(
 		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
 			parent.NodeID, callingNodeRow.NodeType, parent.RunID,
 			in.InstanceID, *callingNodeRow.FrameID, exitBridgeSig); err != nil {
-			return fmt.Errorf("SettleChildren: cascade subscribers of calling node: %w", err)
+			return fmt.Errorf("SettleFromDelegate: cascade subscribers of calling node: %w", err)
 		}
 		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, *callingNodeRow.FrameID, parent.RunID, tx); err != nil {
-			return fmt.Errorf("SettleChildren: drain wait-set for calling node: %w", err)
+			return fmt.Errorf("SettleFromDelegate: drain wait-set for calling node: %w", err)
 		}
 	}
 	if args.Persist.Events() == nil {
-		return fmt.Errorf("SettleChildren: Events table is required for the exit-carry forensics record")
+		return fmt.Errorf("SettleFromDelegate: Events table is required for the exit-carry forensics record")
 	}
 	nodeID := in.ExitNodeID
 	instanceID := in.InstanceID
@@ -276,8 +267,11 @@ func settleCarryVerbatim(
 	}, tx)
 }
 
-func settleClaimChainAggregate(
-	ctx context.Context, args RunArgs, tx persistence.Tx, in ChildSettlementInput,
+// @concept: child-execution
+// @concept: fan-out
+// @concept: claim-tree
+func SettleFromFanoutChild(
+	ctx context.Context, args RunArgs, tx persistence.Tx, in FanoutChildSettlementInput,
 ) error {
 	parent, err := args.ClaimHandles.LockForUpdate(ctx, in.ParentClaimHandleID, tx)
 	if err != nil {
@@ -287,28 +281,28 @@ func settleClaimChainAggregate(
 		return nil
 	}
 	if err := recordChildCommitMetadata(ctx, args, tx, in, parent); err != nil {
-		return fmt.Errorf("SettleChildren: record child producer_metadata: %w", err)
+		return fmt.Errorf("SettleFromFanoutChild: record child producer_metadata: %w", err)
 	}
 	if parent.HolderSupervisorID == nil || parent.State != spec.ClaimHandleStateActive {
 		return nil
 	}
 	outcomeKey := "commit"
-	if in.ChildOutcome == AggregateAbandon {
+	if in.ChildOutcome.IsAbandon() {
 		outcomeKey = "abandon"
 	}
 	if err := args.ClaimHandles.BumpChildOutcomeCount(ctx, in.ParentClaimHandleID, *parent.HolderSupervisorID, outcomeKey, 1, tx); err != nil {
-		return fmt.Errorf("SettleChildren: BumpChildOutcomeCount: %w", err)
+		return fmt.Errorf("SettleFromFanoutChild: BumpChildOutcomeCount: %w", err)
 	}
 	// @concept: cancel-siblings
-	if in.ChildOutcome == AggregateAbandon {
+	if in.ChildOutcome.IsAbandon() {
 		if err := cancelInFlightSiblings(ctx, args, tx, in.ParentClaimHandleID, in.ChildClaimHandleID); err != nil {
-			return fmt.Errorf("SettleChildren: cancelInFlightSiblings: %w", err)
+			return fmt.Errorf("SettleFromFanoutChild: cancelInFlightSiblings: %w", err)
 		}
 	}
 	{
 		refreshed, err := args.ClaimHandles.Get(ctx, in.ParentClaimHandleID, tx)
 		if err != nil {
-			return fmt.Errorf("SettleChildren: re-read parent: %w", err)
+			return fmt.Errorf("SettleFromFanoutChild: re-read parent: %w", err)
 		}
 		if refreshed == nil || refreshed.HolderSupervisorID == nil || refreshed.State != spec.ClaimHandleStateActive {
 			return nil
@@ -317,7 +311,7 @@ func settleClaimChainAggregate(
 	}
 	holders, err := args.Persist.ClaimHolders().ListByClaimHandleID(ctx, in.ParentClaimHandleID, tx)
 	if err != nil {
-		return fmt.Errorf("SettleChildren: ListByClaimHandleID: %w", err)
+		return fmt.Errorf("SettleFromFanoutChild: ListByClaimHandleID: %w", err)
 	}
 	for _, h := range holders {
 		if h.State == persistence.ClaimHolderStateActive {
@@ -326,7 +320,7 @@ func settleClaimChainAggregate(
 	}
 	children, err := args.ClaimHandles.ListChildClaimHandles(ctx, in.ParentClaimHandleID, tx)
 	if err != nil {
-		return fmt.Errorf("SettleChildren: ListChildClaimHandles: %w", err)
+		return fmt.Errorf("SettleFromFanoutChild: ListChildClaimHandles: %w", err)
 	}
 	for _, c := range children {
 		if c.State == spec.ClaimHandleStateActive {
@@ -342,20 +336,20 @@ func settleClaimChainAggregate(
 			}
 			childRun, err := args.Persist.RunTree().GetByID(ctx, tx, *c.NodeRunID)
 			if err != nil {
-				return fmt.Errorf("SettleChildren: load child run %s: %w", c.NodeRunID, err)
+				return fmt.Errorf("SettleFromFanoutChild: load child run %s: %w", c.NodeRunID, err)
 			}
 			if childRun == nil {
 				continue
 			}
 			childScope, err := scopes.GetByID(ctx, tx, childRun.RunScopeID)
 			if err != nil {
-				return fmt.Errorf("SettleChildren: load child run scope %s: %w", childRun.RunScopeID, err)
+				return fmt.Errorf("SettleFromFanoutChild: load child run scope %s: %w", childRun.RunScopeID, err)
 			}
 			if childScope == nil || childScope.PartitionKey == "" {
 				continue
 			}
 			if err := scopes.Close(ctx, tx, childRun.RunScopeID); err != nil {
-				return fmt.Errorf("SettleChildren: close partition scope %s: %w", childRun.RunScopeID, err)
+				return fmt.Errorf("SettleFromFanoutChild: close partition scope %s: %w", childRun.RunScopeID, err)
 			}
 			if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
 				if inst, err := instTbl.Get(ctx, childScope.InstanceID, tx); err == nil && inst != nil {
@@ -375,7 +369,7 @@ func settleClaimChainAggregate(
 	}
 	producer, ok := args.StoreRegistry.Get(producerName)
 	if !ok {
-		return fmt.Errorf("SettleChildren: unknown producer %q", producerName)
+		return fmt.Errorf("SettleFromFanoutChild: unknown producer %q", producerName)
 	}
 	parentHint := ClaimLineageHint{
 		ProducerName: producerName,
@@ -395,7 +389,7 @@ func settleClaimChainAggregate(
 		if err := args.ClaimHandles.ReassignHolderSupervisor(
 			ctx, in.ParentClaimHandleID, *parent.HolderSupervisorID, args.SupervisorID, tx,
 		); err != nil {
-			return fmt.Errorf("SettleChildren: settlement takeover of parent %s (holder %s → %s): %w",
+			return fmt.Errorf("SettleFromFanoutChild: settlement takeover of parent %s (holder %s → %s): %w",
 				in.ParentClaimHandleID, *parent.HolderSupervisorID, args.SupervisorID, err)
 		}
 	}
@@ -420,9 +414,9 @@ func settleClaimChainAggregate(
 
 func recordChildCommitMetadata(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	in ChildSettlementInput, parent *persistence.ClaimHandleRow,
+	in FanoutChildSettlementInput, parent *persistence.ClaimHandleRow,
 ) error {
-	if in.ChildOutcome != AggregateCommit || len(in.ChildProducerMetadata) == 0 {
+	if in.ChildOutcome != OutcomeCommit || len(in.ChildProducerMetadata) == 0 {
 		return nil
 	}
 	if parent.NodeRunID == nil {
@@ -484,7 +478,7 @@ func childPartitionWritebackKey(
 	return scope.PartitionKey, nil
 }
 
-func aggregateParentOutcome(parent *persistence.ClaimHandleRow, seedOutcome AggregateOutcome) AggregateOutcome {
+func aggregateParentOutcome(parent *persistence.ClaimHandleRow, seedOutcome TerminalOutcome) TerminalOutcome {
 	if parent == nil {
 		return seedOutcome
 	}
@@ -492,7 +486,7 @@ func aggregateParentOutcome(parent *persistence.ClaimHandleRow, seedOutcome Aggr
 		return seedOutcome
 	}
 	policy, err := persistence.UnmarshalAggregationPolicy(parent.AggregationPolicy)
-	if err != nil || policy.Kind == "" {
+	if err != nil {
 		policy = spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	}
 	committed := parent.CommittedChildrenCount
@@ -500,23 +494,23 @@ func aggregateParentOutcome(parent *persistence.ClaimHandleRow, seedOutcome Aggr
 	switch policy.Kind {
 	case spec.AggregationKindStrict:
 		if abandoned > 0 {
-			return AggregateAbandon
+			return OutcomeAbandon
 		}
-		return AggregateCommit
+		return OutcomeCommit
 	case spec.AggregationKindThreshold:
 		if abandoned > policy.MaxFailures {
-			return AggregateAbandon
+			return OutcomeAbandon
 		}
-		return AggregateCommit
+		return OutcomeCommit
 	case spec.AggregationKindBestEffort, spec.AggregationKindFirst:
 		if committed > 0 {
-			return AggregateCommit
+			return OutcomeCommit
 		}
-		return AggregateAbandon
+		return OutcomeAbandon
 	default:
 		if abandoned > 0 {
-			return AggregateAbandon
+			return OutcomeAbandon
 		}
-		return AggregateCommit
+		return OutcomeCommit
 	}
 }

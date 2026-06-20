@@ -127,9 +127,9 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		EntryAbsorbed:     false,
 		Partitions:        FanOutPartitions(acq.SubClaims),
 		Children: []ChildRunSpec{{
-			NodeID:         acq.NodeID,
-			Executor:       acq.Executor,
-			RequiredStores: requiredStoresForAcq(acq),
+			NodeID:                 acq.NodeID,
+			Executor:               acq.Executor,
+			RequiredClaimProducers: requiredClaimProducersForAcq(acq),
 		}},
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

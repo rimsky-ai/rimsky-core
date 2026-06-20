@@ -64,7 +64,7 @@ type HarnessOpts struct {
 
 	Clock shared.Clock
 
-	Stores config.RemoteStoresConfig
+	ClaimProducers config.RemoteClaimProducersConfig
 
 	NamedLocks locks.NamedLocksConfig
 
@@ -163,7 +163,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			Logger:                shared.SilentLogger{},
 			TickInterval:          schedulerTick,
 			MaxQuietPeriodDefault: maxQuietPeriod,
-			Stores:                opts.Stores,
+			ClaimProducers:        opts.ClaimProducers,
 			NamedLocks:            opts.NamedLocks,
 			SupervisorID:          "scenario-scheduler",
 		})
@@ -224,7 +224,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			LivenessInterval:            livenessInterval,
 			ClaimPollInterval:           100 * time.Millisecond,
 			Resolver:                    resolver,
-			Stores:                      opts.Stores,
+			ClaimProducers:              opts.ClaimProducers,
 			NamedLocks:                  opts.NamedLocks,
 			CallbackHost:                "127.0.0.1",
 			CallbackPort:                0,
@@ -251,7 +251,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		Logger:                 shared.SilentLogger{},
 		Host:                   "127.0.0.1",
 		Port:                   0,
-		Stores:                 opts.Stores,
+		ClaimProducers:         opts.ClaimProducers,
 		NamedLocks:             opts.NamedLocks,
 		Executors:              executorsCfg,
 		LateBindServiceProxies: opts.LateBindServiceProxies,
@@ -575,9 +575,8 @@ func (h *Harness) templateHasStructuralRoot(templateHash string) bool {
 	if err != nil || tmplSpec == nil {
 		return true
 	}
-	subRefs := node.ExtractSubstitutionRefsFromTemplate(tmplSpec.Spec)
 	msgRefs := node.ExtractMessageRefsFromTemplate(tmplSpec.Spec)
-	edges, err := node.BuildSubscriptionEdges(tmplSpec.Spec, subRefs, msgRefs)
+	edges, err := node.BuildSubscriptionEdges(tmplSpec.Spec, msgRefs)
 	if err != nil || edges == nil {
 		return true
 	}
@@ -631,11 +630,11 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 			continue
 		}
 		_ = h.Queue.Enqueue(h.Ctx, persistence.DispatchRequest{
-			NodeID:         n.ID,
-			ExecutorName:   n.Executor,
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now(),
-			FrameID:        *n.FrameID,
+			NodeID:                 n.ID,
+			ExecutorName:           n.Executor,
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now(),
+			FrameID:                *n.FrameID,
 		})
 	}
 }
@@ -883,12 +882,12 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 		}
 		nd["subscribes"] = subs
 	}
-	if len(n.Stores) > 0 {
-		stores := make([]map[string]any, 0, len(n.Stores))
-		for _, s := range n.Stores {
-			stores = append(stores, storeRefToJSON(s))
+	if len(n.ClaimProducers) > 0 {
+		stores := make([]map[string]any, 0, len(n.ClaimProducers))
+		for _, s := range n.ClaimProducers {
+			stores = append(stores, claimProducerRefToJSON(s))
 		}
-		nd["stores"] = stores
+		nd["claim_producers"] = stores
 	}
 	if len(n.Locks) > 0 {
 		locks := make([]map[string]any, 0, len(n.Locks))
@@ -981,7 +980,7 @@ func fanOutSpecToJSON(fo *node.FanOutSpec) map[string]any {
 	return out
 }
 
-func storeRefToJSON(s node.NodeStoreRef) map[string]any {
+func claimProducerRefToJSON(s node.NodeClaimProducerRef) map[string]any {
 	item := map[string]any{
 		"name":     s.Name,
 		"selector": s.Selector,
@@ -996,9 +995,9 @@ func storeRefToJSON(s node.NodeStoreRef) map[string]any {
 	return item
 }
 
-func withStores(refs ...node.NodeStoreRef) func(*node.TemplateNodeDef) {
+func withClaimProducers(refs ...node.NodeClaimProducerRef) func(*node.TemplateNodeDef) {
 	return func(n *node.TemplateNodeDef) {
-		n.Stores = append(n.Stores, refs...)
+		n.ClaimProducers = append(n.ClaimProducers, refs...)
 	}
 }
 
@@ -1059,8 +1058,8 @@ func MakeNode(base node.TemplateNodeDef, opts ...func(*node.TemplateNodeDef)) no
 	return n
 }
 
-func WithStores(refs ...node.NodeStoreRef) func(*node.TemplateNodeDef) {
-	return withStores(refs...)
+func WithClaimProducers(refs ...node.NodeClaimProducerRef) func(*node.TemplateNodeDef) {
+	return withClaimProducers(refs...)
 }
 
 func WithLocks(refs ...node.NodeLockRef) func(*node.TemplateNodeDef) {

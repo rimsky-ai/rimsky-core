@@ -49,7 +49,7 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 		raw, _ := json.Marshal(cfg)
 		if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 			PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-			TargetNode: "tick", MessageType: "invalidate",
+			MessageType: "invalidate",
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -62,8 +62,8 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 		if len(bodies) != 1 {
 			t.Fatalf("envelopes POSTed: got %d, want exactly 1 per fire window", len(bodies))
 		}
-		if bodies[0]["sender_kind"] != "publisher" {
-			t.Errorf("envelope.sender_kind: got %v, want \"publisher\"", bodies[0]["sender_kind"])
+		if sub, _ := bodies[0]["publisher_subscription_id"].(string); sub == "" {
+			t.Errorf("envelope.publisher_subscription_id: missing or empty (auth path discriminator)")
 		}
 	})
 
@@ -73,8 +73,8 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 			raw, _ := io.ReadAll(r.Body)
 			var body map[string]any
 			_ = json.Unmarshal(raw, &body)
-			if body["sender_kind"] != "publisher" {
-				t.Errorf("envelope.sender_kind: got %v, want \"publisher\"", body["sender_kind"])
+			if sub, _ := body["publisher_subscription_id"].(string); sub == "" {
+				t.Errorf("envelope.publisher_subscription_id: missing or empty (auth path discriminator)")
 			}
 			atomic.AddInt64(&fireCount, 1)
 			w.WriteHeader(http.StatusCreated)
@@ -91,7 +91,7 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 			s.clock = func() time.Time { return registerTime }
 			if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 				PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-				TargetNode: "tick", MessageType: "invalidate",
+				MessageType: "invalidate",
 			}); err != nil {
 				t.Fatal(err)
 			}

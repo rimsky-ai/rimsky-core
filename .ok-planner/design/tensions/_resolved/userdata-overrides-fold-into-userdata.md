@@ -16,7 +16,7 @@ resolution:
     existence (exists only to mutate userdata); userdata's Boundaries
     already claimed the merge mechanism. The subsection covers
     routing-key shape, merge order, validation discipline preserving
-    @blessed-invariant 11, platform-extensions provenance.
+    userdata byte-opacity, platform-extensions provenance.
 ---
 
 # `userdata-overrides` is a thin sub-mechanism of `userdata`, not a separable concept
@@ -25,7 +25,7 @@ resolution:
 
 `concepts/userdata.md` Boundaries already claims ownership of "the per-instance override merge mechanism, the routing-key validation." `concepts/userdata-overrides.md` then independently documents the same mechanism with its own Invariants and Purpose. The two concepts have non-trivial content overlap; the split is partial-already-folded.
 
-The override mechanism has no independent existence — it exists only to mutate userdata. Its routing-key shape (`by_executor`, `by_node`), merge order (`template → by_executor → by_node`), and routing-key-only validation discipline (preserves `@blessed-invariant 11`) are non-trivial, but structurally they are sub-aspects of "how userdata reaches the executor."
+The override mechanism has no independent existence — it exists only to mutate userdata. Its routing-key shape (`by_executor`, `by_node`), merge order (`template → by_executor → by_node`), and routing-key-only validation discipline (preserves userdata byte-opacity) are non-trivial, but structurally they are sub-aspects of "how userdata reaches the executor."
 
 ## Why it matters
 

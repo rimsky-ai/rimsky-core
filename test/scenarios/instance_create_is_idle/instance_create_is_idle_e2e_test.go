@@ -37,8 +37,8 @@ func TestStory_InstanceCreateIsIdle(t *testing.T) {
 	t.Cleanup(fake.stop)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"idle-create-lifecycle": {
 					Endpoint: "grpc://" + fake.addr,
 					Capabilities: claimproducer.Capabilities{
@@ -61,7 +61,7 @@ func TestStory_InstanceCreateIsIdle(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "root",
 					Executor: "stub",
-					Stores: []node.NodeStoreRef{{
+					ClaimProducers: []node.NodeClaimProducerRef{{
 						Name: "idle-create-lifecycle", Selector: "x", Intent: "r",
 					}},
 				},

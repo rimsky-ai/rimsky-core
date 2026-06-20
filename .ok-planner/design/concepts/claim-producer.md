@@ -9,13 +9,13 @@ aliases:
 
 ## What it is
 
-A claim producer is an out-of-process service that implements the gRPC claim-producer protocol — 4 verbs (open / commit / abandon / release) plus the capabilities startup handshake. Production-side reference implementations (filesystem, postgres) ship as standalone binaries on the consumption side, outside the platform; an in-rimsky stub carve-out stays as test infrastructure. The only in-rimsky concrete implementation of the claim-producer protocol is the gRPC peer client.
+A claim producer is an out-of-process service implementing the claim-producer protocol — four verbs plus a capabilities startup handshake.
 
 The protocol carries three optional methods, each advertised in the capabilities handshake:
 
-- **Split-scope** — partitions a claim's claim scope into sub-scopes for fan-out. Advertised via a split-scope capability flag. Rimsky opens one sub-claim per sub-scope at parent-acquisition time. SplitScope's SubScopeDescriptor carries the same substrate-meaningful claim fields a regular Open's Acquired carries — `claim_scope_data`, `address`, `payload` — plus the per-partition discriminators `partition_key` and `producer_metadata`. A sub-claim is a claim; substitution paths over a sub-claim resolve identically to those over a regular claim.
-- **Scopes-conflict** — a producer-aware overlap predicate over two claim scopes. Advertised via a scopes-conflict capability flag. Producers that don't advertise default to byte-equal comparison (`@blessed-invariant 4b`).
-- **Validation (mix-in)** — the same validate request/response RPC any service can advertise via the validation protocol. Validates a node's userdata at template-registration time against the producer's domain (claim bindings, scopes). Inert `userdata` per `@blessed-invariant 11` — rimsky forwards opaque bytes; receives a verdict. See `concept:validation`.
+- **Split-scope** — partitions a claim's claim scope into sub-scopes for fan-out. Advertised via a split-scope capability flag. Rimsky opens one sub-claim per sub-scope at parent-acquisition time. Each sub-scope descriptor carries the same substrate-meaningful claim content a regular open returns (scope, address, payload) plus per-partition discriminators identifying the sub-scope within its parent. A sub-claim is a claim; substitution paths over a sub-claim resolve identically to those over a regular claim.
+- **Scopes-conflict** — a producer-aware overlap predicate over two claim scopes. Advertised via a scopes-conflict capability flag. Producers that don't advertise default to byte-equal comparison (invariant 4b).
+- **Validation (mix-in)** — the same validate request/response any service can advertise via the validation protocol. Validates a node's userdata at template-registration time against the producer's domain (claim bindings, scopes). Inert userdata per invariant 11 — rimsky forwards opaque bytes; receives a verdict. See `concept:validation`.
 
 A fourth optional mix-in, the **data-processing protocol**, is the control-plane surface for typed-data version lifecycle: begin / commit / abandon a candidate, plus list-versions / list-partitions / get-version-schema. Data motion stays substrate-direct via the acquired result's address; the protocol carries control-plane only. See `concept:data-processing`.
 
@@ -25,13 +25,13 @@ Out-of-process producers let rimsky stay project-agnostic: the producer knows wh
 
 ## Boundaries
 
-Owns: the producer-side resource state (filesystem stagings, items-table flips, MVCC transactions), the canonical claim-scope-bytes emission, the realized write-semantics per claim. Does NOT own: lock state ledger (lives in `claim-handle`), the conflict predicate (lives in rimsky). Adjacent: `claim`, `claim-handle`, `claim-scope`, `write-semantics`, `auto-terminal`, `lifecycle-subscriber` (sibling opt-in protocol on the same service).
+Owns: the producer-side resource state, the canonical claim-scope-bytes emission, the realized write-semantics per claim. Does NOT own: lock state ledger (lives in `claim-handle`), the conflict predicate (lives in rimsky). Adjacent: `claim`, `claim-handle`, `claim-scope`, `write-semantics`, `auto-terminal`, `lifecycle-subscriber` (sibling opt-in protocol on the same service).
 
-The bundled SQL-based postgres store additionally registers the executor protocol to support verification of its own staged content; see `concept:executor`. The same binary plays both roles via separate gRPC service registrations on a single endpoint. Other SQL-substrate stores can use the same dual-role pattern.
+A producer may register the executor protocol alongside the claim-producer protocol on the same endpoint to support verification of its own staged content; see `concept:executor`.
 
 ## Invariants
 
-- The 4-verb protocol (open / commit / abandon / release) plus the capabilities startup handshake is the only contract. Type assertions to a concrete producer from any rimsky package are forbidden — rimsky depends on the protocol only.
-- Producers do not persist lock state (`@blessed-invariant 9a`) and do not internally serialize on lock-shaped predicates (`@blessed-invariant 9b`).
+- The claim-producer protocol — its verbs and capabilities handshake — is the only contract. Rimsky depends on the protocol; no concrete-producer dependency is permitted.
+- Producers do not persist lock state (invariant 9a) and do not internally serialize on lock-shaped predicates (invariant 9b).
 - Producers MUST satisfy byte-equal-claim-scope uniformity: two open calls returning byte-equal claim scope MUST also return the same realized write semantics.
 - Terminal verbs (commit/abandon/release) must be idempotent in the claim identifier so the verb-then-transaction-fail leak path is recoverable.

@@ -37,8 +37,8 @@ func operatorSenderSubject(ident auth.Identity) string {
 	return ""
 }
 
-func dedupSenderKind(wireSenderKind string, ident auth.Identity) string {
-	if wireSenderKind == "publisher" {
+func dedupSenderKind(senderKind string, ident auth.Identity) string {
+	if senderKind == "publisher" {
 		return "publisher"
 	}
 	if ident.Kind == auth.IdentityAnonymous {
@@ -57,7 +57,6 @@ type postMessageRequest struct {
 	Type                    string          `json:"type"`
 	Payload                 json.RawMessage `json:"payload,omitempty"`
 	Sender                  string          `json:"sender,omitempty"`
-	SenderKind              string          `json:"sender_kind,omitempty"`
 	PublisherSubscriptionID string          `json:"publisher_subscription_id,omitempty"`
 }
 
@@ -123,17 +122,9 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid JSON body: "+err.Error())
 			return
 		}
-		senderKind := body.SenderKind
-		if senderKind == "" {
-			senderKind = "operator"
-		}
-		if senderKind != "operator" && senderKind != "publisher" {
-			badRequest(w, "sender_kind must be 'operator' or 'publisher'")
-			return
-		}
-		if senderKind == "publisher" && body.PublisherSubscriptionID == "" {
-			badRequest(w, "publisher_subscription_id required for sender_kind=publisher")
-			return
+		senderKind := "operator"
+		if body.PublisherSubscriptionID != "" {
+			senderKind = "publisher"
 		}
 		sender := "operator"
 		idempotencyKey := strings.TrimSpace(req.Header.Get("Idempotency-Key"))

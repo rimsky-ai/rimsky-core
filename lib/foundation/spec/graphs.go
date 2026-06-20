@@ -40,6 +40,5 @@ type PublisherSpec struct {
 	Name        string          `yaml:"name" json:"name"`
 	Kind        string          `yaml:"kind" json:"kind"`
 	Config      json.RawMessage `yaml:"config" json:"config"`
-	TargetNode  string          `yaml:"target_node" json:"target_node"`
 	MessageType string          `yaml:"message_type,omitempty" json:"message_type,omitempty"`
 }

@@ -33,8 +33,8 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{
 		NoSupervisor: true,
 		NoScheduler:  true,
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"canary-lifecycle": {
 					Endpoint:     "grpc://" + fake.addr,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -52,7 +52,7 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{{
 			Type:     "n1",
 			Executor: "stub",
-			Stores: []node.NodeStoreRef{{
+			ClaimProducers: []node.NodeClaimProducerRef{{
 				Name:     "canary-lifecycle",
 				Selector: "x",
 				Intent:   "r",

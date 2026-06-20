@@ -9,14 +9,14 @@ kind: invariant
 
 A supervisor heartbeats via `rimsky_worker_request.last_heartbeat_at` (refreshed during active dispatch) and the corresponding claim-handle row. A crashed supervisor stops heartbeating. The orphan reaper sweeps rows whose heartbeat is older than the cutoff and the supervisor that owned them is presumed dead.
 
-`@blessed-invariant 6` (annotated at `foundation/integration/conductor.go:30-50` and `foundation/integration/orphan_reaper.go`): the orphan-claim cutoff is `5 × heartbeat_interval`. The same cutoff applies to both row types:
+The orphan-claim cutoff invariant (annotated at `foundation/integration/conductor.go:30-50` and `foundation/integration/orphan_reaper.go`) sets the cutoff at `5 × heartbeat_interval`. The same cutoff applies to both row types:
 
 - `rimsky_worker_request` rows with `phase='active'` and `last_heartbeat_at < now() - (5 × heartbeat_interval)`.
 - `rimsky_claim_handle` rows with `expires_at < now()` where `expires_at = last_heartbeat_at + (5 × heartbeat_interval)`.
 
 The `5 ×` multiplier is the timing argument: a single missed heartbeat could be a transient hiccup (GC pause, network blip, brief scheduler stutter); five misses in a row is strong evidence of supervisor death. Pre-v1, this is a tunable but the multiplier is consistent across the two row types.
 
-The cutoff scheduling lives in `foundation/integration/conductor.go`; the actual sweep is in `foundation/integration/orphan_reaper.go`. The sweep is claimant-guarded (`@blessed-invariant 4`): the DELETE includes `AND holder_supervisor_id = $1` so even if the cutoff timing is wrong (clock skew, scheduler precision), the live owner's identity prevents the clobber.
+The cutoff scheduling lives in `foundation/integration/conductor.go`; the actual sweep is in `foundation/integration/orphan_reaper.go`. The sweep is claimant-guarded: the DELETE includes `AND holder_supervisor_id = $1` so even if the cutoff timing is wrong (clock skew, scheduler precision), the live owner's identity prevents the clobber.
 
 `modeling/scheduler/scheduler.go:151` has the corroborating annotation: "orphan-claim cutoff default = 5 × heartbeat_timeout."
 
@@ -30,7 +30,7 @@ The held-claim subgraph mechanism is orthogonal: held claim handles persist past
 
 ## Code surface
 
-- `foundation/integration/conductor.go:30-50` — invariant 6 annotation + scheduling.
+- `foundation/integration/conductor.go:30-50` — orphan-claim cutoff annotation + scheduling.
 - `foundation/integration/orphan_reaper.go` — entire file; `SweepStaleHeartbeats`, `SweepOrphanedClaims`, `SweepClaimHandles`, `SweepReady`, `SweepLockHolders`.
 - `foundation/persistence/postgres/queue.go:229-265` — `ReapStaleHeartbeats` SQL.
 - `foundation/persistence/postgres/claim_handles.go` — claim-handle sweep SQL.
@@ -53,7 +53,7 @@ The held-claim subgraph mechanism is orthogonal: held claim handles persist past
 
 ## Observations
 
-- The `5 ×` multiplier is a configuration constant in code; CLAUDE.md "Non-obvious gotchas" makes it a blessed invariant rather than a knob. A future tuning that wanted (say) `3 ×` would have to argue for the new tolerance against the existing "transient hiccup vs death" calibration.
+- The `5 ×` multiplier is a configuration constant in code; CLAUDE.md "Non-obvious gotchas" makes it a fixed cutoff rather than a knob. A future tuning that wanted (say) `3 ×` would have to argue for the new tolerance against the existing "transient hiccup vs death" calibration.
 - The cutoff is symmetric across row types but the sweep is asymmetric: `rimsky_worker_request` uses `last_heartbeat_at < now() - 5*hb`; `rimsky_claim_handle` uses `expires_at < now()`. The latter is a computed column; the heartbeat-refresh path updates `expires_at` at the same time it updates `last_heartbeat_at`.
 - Five sweeps (`SweepStaleHeartbeats`, `SweepOrphanedClaims`, `SweepClaimHandles`, `SweepReady`, `SweepLockHolders` per CLAUDE.md "What this repo is") all coordinate around the cutoff — separate functions for separate row types but the same timing.
 - The orphan-reaper-runs-every-tick cadence is the scheduler-tick frequency; the actual `interval` between sweeps is determined by `conductor.go`. A tick that doesn't run (because the advisory tick lock is held by another scheduler replica) means the sweep doesn't fire that tick — but the next tick catches up.

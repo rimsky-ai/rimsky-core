@@ -35,7 +35,7 @@ const (
 // variants — Success / Error / Park / AwaitAsyncCallback — three of which
 // settle the dispatch directly and the fourth of which defers the verdict
 // to a later HTTP POST callback. See concept:executor for the full
-// contract (transports, async handoff, attributes, stores, deadlines,
+// contract (transports, async handoff, attributes, claim_producers, deadlines,
 // auth).
 type ExecutorClient interface {
 	// Execute is called by the rimsky supervisor when dispatching a node.
@@ -74,7 +74,7 @@ func (c *executorClient) Execute(ctx context.Context, in *ExecuteRequest, opts .
 // variants — Success / Error / Park / AwaitAsyncCallback — three of which
 // settle the dispatch directly and the fourth of which defers the verdict
 // to a later HTTP POST callback. See concept:executor for the full
-// contract (transports, async handoff, attributes, stores, deadlines,
+// contract (transports, async handoff, attributes, claim_producers, deadlines,
 // auth).
 type ExecutorServer interface {
 	// Execute is called by the rimsky supervisor when dispatching a node.

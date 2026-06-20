@@ -10,22 +10,22 @@ import (
 )
 
 type SupervisorRow struct {
-	ID                string    `json:"id"`
-	AcceptedExecutors []string  `json:"accepted_executors"`
-	AcceptedStores    []string  `json:"accepted_stores"`
-	Concurrency       int       `json:"concurrency"`
-	CallbackHost      string    `json:"callback_host"`
-	CallbackPort      int       `json:"callback_port"`
-	RegisteredAt      time.Time `json:"registered_at"`
+	ID                     string    `json:"id"`
+	AcceptedExecutors      []string  `json:"accepted_executors"`
+	AcceptedClaimProducers []string  `json:"accepted_stores"`
+	Concurrency            int       `json:"concurrency"`
+	CallbackHost           string    `json:"callback_host"`
+	CallbackPort           int       `json:"callback_port"`
+	RegisteredAt           time.Time `json:"registered_at"`
 }
 
 type SupervisorRegisterInput struct {
-	ID                string
-	AcceptedExecutors []string
-	AcceptedStores    []string
-	Concurrency       int
-	CallbackHost      string
-	CallbackPort      int
+	ID                     string
+	AcceptedExecutors      []string
+	AcceptedClaimProducers []string
+	Concurrency            int
+	CallbackHost           string
+	CallbackPort           int
 }
 
 type SupervisorTable interface {

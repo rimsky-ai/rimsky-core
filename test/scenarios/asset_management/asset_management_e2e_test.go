@@ -27,9 +27,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 func TestStory_AssetManagement_ObservationSurface(t *testing.T) {
@@ -43,8 +43,8 @@ func TestStory_AssetManagement_ObservationSurface(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"content": {
 					Endpoint: "grpc://" + endpoint,
 					Protocols: []string{
@@ -66,7 +66,7 @@ func TestStory_AssetManagement_ObservationSurface(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "producer", Executor: "stub"},
-				scenario.WithStores(node.NodeStoreRef{
+				scenario.WithClaimProducers(node.NodeClaimProducerRef{
 					Name:     "content",
 					Selector: "/asset-management/observation",
 					Intent:   "rw",
@@ -158,8 +158,8 @@ func TestStory_AssetManagement_ReMaterializationViaMessage(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"content": {
 					Endpoint: "grpc://" + endpoint,
 					Protocols: []string{
@@ -180,7 +180,7 @@ func TestStory_AssetManagement_ReMaterializationViaMessage(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "producer", Executor: "stub"},
-				scenario.WithStores(node.NodeStoreRef{
+				scenario.WithClaimProducers(node.NodeClaimProducerRef{
 					Name:     "content",
 					Selector: "/asset-management/rematerialize",
 					Intent:   "rw",

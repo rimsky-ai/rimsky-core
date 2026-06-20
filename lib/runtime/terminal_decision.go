@@ -27,23 +27,31 @@ const (
 	OwnershipBail
 )
 
-type AggregateOutcome int
+type TerminalOutcome string
 
 const (
-	AggregateCommit AggregateOutcome = iota
+	OutcomeCommit TerminalOutcome = "commit"
 
-	AggregateAbandon
+	OutcomeAbandon TerminalOutcome = "abandon"
+
+	OutcomeAbandonSiblingCancel TerminalOutcome = "abandon_sibling_cancel"
+
+	OutcomeAbandonDescendantCancel TerminalOutcome = "abandon_descendant_cancel"
 )
 
-type TerminalCause string
+func (o TerminalOutcome) IsAbandon() bool { return o != OutcomeCommit }
 
-const (
-	TerminalCauseNatural TerminalCause = "natural"
-
-	TerminalCauseSiblingCancel TerminalCause = "sibling_cancel"
-
-	TerminalCauseDescendantCancel TerminalCause = "descendant_cancel"
-)
+func (o TerminalOutcome) CauseString() string {
+	switch o {
+	case OutcomeAbandon:
+		return "natural"
+	case OutcomeAbandonSiblingCancel:
+		return "sibling_cancel"
+	case OutcomeAbandonDescendantCancel:
+		return "descendant_cancel"
+	}
+	return ""
+}
 
 type TerminalDecision struct {
 	ClaimHandleID shared.UUID
@@ -52,7 +60,7 @@ type TerminalDecision struct {
 
 	Source TerminalSource
 
-	Outcome AggregateOutcome
+	Outcome TerminalOutcome
 
 	Producer locks.ClaimProducer
 
@@ -69,8 +77,6 @@ type TerminalDecision struct {
 	LineageHint ClaimLineageHint
 
 	ParentClaimHandleID *shared.UUID
-
-	Cause TerminalCause
 }
 
 type ClaimLineageHint struct {
@@ -97,14 +103,14 @@ func ResolveClaimHandleTerminal(
 	if err != nil {
 		return err
 	}
-	if td.Outcome == AggregateCommit && commitRes.VersionID != "" {
+	if td.Outcome == OutcomeCommit && commitRes.VersionID != "" {
 		if err := args.ClaimHandles.SetVersionID(ctx, td.ClaimHandleID, td.SupervisorID, commitRes.VersionID, tx); err != nil {
 			return fmt.Errorf("ResolveClaimHandleTerminal: SetVersionID (base Commit response): %w", err)
 		}
 		versionID = commitRes.VersionID
 	}
 	emitTerminalForensics(ctx, args, tx, td, versionID)
-	if td.Outcome == AggregateAbandon {
+	if td.Outcome.IsAbandon() {
 		if err := cancelDescendantClaims(ctx, args, tx, td.ClaimHandleID); err != nil {
 			return fmt.Errorf("ResolveClaimHandleTerminal: cancelDescendantClaims: %w", err)
 		}
@@ -121,7 +127,7 @@ func ResolveClaimHandleTerminal(
 	if td.ParentClaimHandleID == nil {
 		return nil
 	}
-	if err := SettleChildren(ctx, args, tx, ChildSettlementInput{
+	if err := SettleFromFanoutChild(ctx, args, tx, FanoutChildSettlementInput{
 		ParentClaimHandleID:   *td.ParentClaimHandleID,
 		ChildClaimHandleID:    td.ClaimHandleID,
 		ChildOutcome:          td.Outcome,
@@ -142,8 +148,7 @@ func dispatchDataProcessingTerminal(
 	if !ok {
 		return "", nil
 	}
-	switch td.Outcome {
-	case AggregateCommit:
+	if td.Outcome == OutcomeCommit {
 		cOut, cErr := dp.CommitCandidate(ctx, CommitCandidateInput{
 			ProducerName:    td.ProducerName,
 			ClaimHandleID:   td.ClaimHandleID.String(),
@@ -159,7 +164,8 @@ func dispatchDataProcessingTerminal(
 			}
 		}
 		return cOut.VersionID, nil
-	case AggregateAbandon:
+	}
+	if td.Outcome.IsAbandon() {
 		if err := dp.AbandonCandidate(ctx, AbandonCandidateInput{
 			ProducerName:    td.ProducerName,
 			ClaimHandleID:   td.ClaimHandleID.String(),
@@ -181,10 +187,10 @@ func fireProducerVerb(ctx context.Context, td TerminalDecision) (claimproducer.C
 	ctx = peer.WithServiceName(ctx, producerName)
 	var commitRes claimproducer.CommitResult
 	var verbErr error
-	switch td.Outcome {
-	case AggregateCommit:
+	switch {
+	case td.Outcome == OutcomeCommit:
 		commitRes, verbErr = td.Producer.Commit(ctx, claimID, td.Scope, td.Address)
-	case AggregateAbandon:
+	case td.Outcome.IsAbandon():
 		verbErr = abandonOpenedClaim(ctx, td.Producer, td.ClaimHandleID, td.Scope, td.Address)
 	default:
 		return claimproducer.CommitResult{}, fmt.Errorf("ResolveClaimHandleTerminal: unknown outcome %v", td.Outcome)
@@ -200,7 +206,7 @@ func promoteHandleState(
 	ctx context.Context, args RunArgs, tx persistence.Tx, td TerminalDecision,
 ) error {
 	promoteState := spec.ClaimHandleStateCommitted
-	if td.Outcome == AggregateAbandon {
+	if td.Outcome.IsAbandon() {
 		promoteState = spec.ClaimHandleStateAbandoned
 	}
 	err := args.ClaimHandles.Promote(ctx, td.ClaimHandleID, td.SupervisorID, promoteState, tx)

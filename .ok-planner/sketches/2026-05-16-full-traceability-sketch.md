@@ -223,11 +223,11 @@ The existing surfaces gain trace context awareness:
 
 Spans carry attributes. Attributes MUST NOT contain:
 
-- userdata (`@blessed-invariant 11`)
-- claim content — addresses, payloads, scopes (`@blessed-invariant 20`)
-- claim candidate handles — opaque producer bytes (covered by 20)
-- message payloads (`@blessed-invariant 21`)
-- blob bytes (`@blessed-invariant 21`)
+- userdata (validation byte-opacity)
+- claim content — addresses, payloads, scopes (claim content inert)
+- claim candidate handles — opaque producer bytes (claim content inert)
+- message payloads (inertness)
+- blob bytes (inertness)
 
 Allowed attribute keys: rimsky-side identifiers (run_id, frame_id,
 claim_handle_id, instance_id, node_id, template_hash, producer_name,

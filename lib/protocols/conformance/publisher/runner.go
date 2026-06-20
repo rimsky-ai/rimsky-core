@@ -26,7 +26,6 @@ type RunOpts struct {
 	MessageReceiver *MessageReceiver
 	SubscriptionID  string
 	InstanceID      string
-	TargetNode      string
 	MessageType     string
 	MessageTimeout  time.Duration
 }
@@ -37,9 +36,6 @@ func Run(ctx context.Context, c genv1.PublisherClient, opts RunOpts) []CheckResu
 	}
 	if opts.InstanceID == "" {
 		opts.InstanceID = "conformance-instance"
-	}
-	if opts.TargetNode == "" {
-		opts.TargetNode = "tick"
 	}
 	if opts.MessageType == "" {
 		opts.MessageType = "system/conformance"
@@ -90,7 +86,6 @@ func checkSubscribe(ctx context.Context, c genv1.PublisherClient, opts RunOpts) 
 		InstanceId:              opts.InstanceID,
 		Kind:                    opts.Kind,
 		ResolvedConfig:          opts.ResolvedConfig,
-		TargetNode:              opts.TargetNode,
 		MessageType:             opts.MessageType,
 	}); err != nil {
 		return CheckResult{Name: "Subscribe", Err: err}
@@ -132,7 +127,6 @@ func checkSubscribeIdempotent(ctx context.Context, c genv1.PublisherClient, opts
 		InstanceId:              opts.InstanceID,
 		Kind:                    opts.Kind,
 		ResolvedConfig:          opts.ResolvedConfig,
-		TargetNode:              opts.TargetNode,
 		MessageType:             opts.MessageType,
 	}); err != nil {
 		return CheckResult{Name: "SubscribeIdempotent", Err: err}

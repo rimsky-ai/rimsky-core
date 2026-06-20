@@ -5,7 +5,7 @@
 - Spec, 2026-05-02.
 - Outcome of the 2026-05-02 brainstorm covering observability surfaces and a reference dashboard implementation.
 - Foundational dependencies:
-  - `docs/history/2026-04-27-stores-redesign-v3-design.md` — store contract and blessed invariants this spec must respect (especially invariant 20: claim content inert in Rimsky core).
+  - `docs/history/2026-04-27-stores-redesign-v3-design.md` — store contract and load-bearing invariants this spec must respect (especially claim content inert in Rimsky core).
   - `docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md` — control-plane v1 and the existing `rimsky.yml` handshake this spec extends.
   - `docs/history/2026-05-01-auth-and-multitenancy.md` — auth-blind v1 stance the dashboard inherits.
 - Pre-v1; per `.claude/rules/rules.md`, no backwards-compat constraints on protocols, schema, or config shape.
@@ -123,7 +123,7 @@ The `kind` filter is open-ended — the dashboard treats the kind enum as **opaq
 
 Lock-holder detail responses **MUST NOT** include claim payload or address bytes. They include `claim_id` and `region_data` (the latter is already in `rimsky_lock_holders` and is part of Rimsky's conflict-detection surface, not opaque claim content).
 
-To view claim payload/address, the dashboard follows `claim_id` to the store's observability protocol (§3), which returns whatever the store has chosen to expose. This preserves blessed invariant 20 in Rimsky-side code paths: payload/address bytes are never read or logged by Rimsky-core endpoints.
+To view claim payload/address, the dashboard follows `claim_id` to the store's observability protocol (§3), which returns whatever the store has chosen to expose. This preserves claim-content inertness in Rimsky-side code paths: payload/address bytes are never read or logged by Rimsky-core endpoints.
 
 ### 1.4 Cascade graph
 
@@ -223,7 +223,7 @@ enum EmbedMode {
 
 Topology of who serves the custom UI is the operator's call; the protocol just defines the URL contract.
 
-`dispatch_url_template` substitution markers are a fixed enumeration. For executors: `{dispatch_id}`, `{instance_id}`, `{node_type}`. For stores: `{claim_id}`, `{store_name}` (declared in §3.5). Spec enumerates allowed markers per template type. This substitution syntax is **explicitly distinct** from Rimsky's `{{...}}` attribute substitution (blessed invariant 11) — different token shape, different semantics, no overlap.
+`dispatch_url_template` substitution markers are a fixed enumeration. For executors: `{dispatch_id}`, `{instance_id}`, `{node_type}`. For stores: `{claim_id}`, `{store_name}` (declared in §3.5). Spec enumerates allowed markers per template type. This substitution syntax is **explicitly distinct** from Rimsky's `{{...}}` attribute substitution (validation byte-opacity) — different token shape, different semantics, no overlap.
 
 ### 2.3 TraceEvent shape
 
@@ -299,7 +299,7 @@ During the active window (the dispatch has not yet terminal-ed), retention is re
 
 ### 2.7 Inert-userdata invariant
 
-The executor's trace is not constrained by blessed invariant 11. The executor knows what its own `userdata` means; it MAY include parsed `userdata`-derived information in trace event attributes if it wants to. Rimsky never sees this trace data — it is fetched by the dashboard from the executor directly, never proxied through Rimsky core.
+The executor's trace is not constrained by Rimsky's validation byte-opacity rule. The executor knows what its own `userdata` means; it MAY include parsed `userdata`-derived information in trace event attributes if it wants to. Rimsky never sees this trace data — it is fetched by the dashboard from the executor directly, never proxied through Rimsky core.
 
 ---
 

@@ -128,19 +128,19 @@ func seedClaimedGuardRun(ctx context.Context, t *testing.T, d persistence.Databa
 	var dispatchID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         fix.NodeID,
-			ExecutorName:   "test-executor",
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now().Add(-1 * time.Second),
-			FrameID:        fix.FrameID,
-			RunScopeID:     fix.MainRunScopeID,
+			NodeID:                 fix.NodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                fix.FrameID,
+			RunScopeID:             fix.MainRunScopeID,
 		}, tx); err != nil {
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"test-executor"},
-			AcceptedStores:    []string{},
-			Limit:             10,
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  10,
 		})
 		if err != nil {
 			return err

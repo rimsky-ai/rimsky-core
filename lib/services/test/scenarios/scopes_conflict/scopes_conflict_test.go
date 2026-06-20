@@ -57,7 +57,7 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 				{
 					"type":     "acquirer",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{
 							"name":     overlapProducerName,
 							"selector": "tenant/a",
@@ -80,7 +80,7 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 				{
 					"type":     "contender",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{
 							"name":     overlapProducerName,
 							"selector": "tenant/a/x",
@@ -127,7 +127,7 @@ func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEn
 				{
 					"type":     "fan-parent",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{
 							"name":     overlapProducerName,
 							"selector": "tenant",

@@ -28,12 +28,12 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	rollbackErr := errors.New("rollback enqueue")
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         fix.NodeID,
-			ExecutorName:   "test-executor",
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now().Add(-1 * time.Second),
-			FrameID:        fix.FrameID,
-			RunScopeID:     fix.MainRunScopeID,
+			NodeID:                 fix.NodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                fix.FrameID,
+			RunScopeID:             fix.MainRunScopeID,
 		}, tx); err != nil {
 			return err
 		}
@@ -48,12 +48,12 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         fix.NodeID,
-			ExecutorName:   "test-executor",
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now().Add(-1 * time.Second),
-			FrameID:        fix.FrameID,
-			RunScopeID:     fix.MainRunScopeID,
+			NodeID:                 fix.NodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                fix.FrameID,
+			RunScopeID:             fix.MainRunScopeID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("EnqueueInTx commit: %v", err)
@@ -158,12 +158,12 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         fix.NodeID,
-			ExecutorName:   "test-executor",
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now().Add(-1 * time.Second),
-			FrameID:        fix.FrameID,
-			RunScopeID:     fix.MainRunScopeID,
+			NodeID:                 fix.NodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                fix.FrameID,
+			RunScopeID:             fix.MainRunScopeID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("EnqueueInTx after retire: %v", err)
@@ -181,9 +181,9 @@ func selectCandidateIDForNode(ctx context.Context, t *testing.T,
 	var found shared.UUID
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"test-executor"},
-			AcceptedStores:    []string{},
-			Limit:             100,
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  100,
 		})
 		if err != nil {
 			return err

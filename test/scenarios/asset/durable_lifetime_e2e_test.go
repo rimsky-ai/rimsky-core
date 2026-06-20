@@ -242,19 +242,19 @@ func seedRunForNodeAsset(
 	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         nodeID,
-			ExecutorName:   "stub",
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now().Add(-1 * time.Second),
-			FrameID:        frameID,
-			RunScopeID:     scopeID,
+			NodeID:                 nodeID,
+			ExecutorName:           "stub",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                frameID,
+			RunScopeID:             scopeID,
 		}, tx); err != nil {
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"stub"},
-			AcceptedStores:    []string{},
-			Limit:             16,
+			AcceptedExecutors:      []string{"stub"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  16,
 		})
 		if err != nil {
 			return err

@@ -62,13 +62,11 @@ func TestDispatchUnary_Publisher_SubscribeReachesSpawnedChild(t *testing.T) {
 	const (
 		subID      = "pub-sub-unit-1"
 		instanceID = "inst-unit-1"
-		targetNode = "receiver"
 	)
 	reqBytes, err := proto.Marshal(&genv1.SubscribeRequest{
 		PublisherSubscriptionId: subID,
 		InstanceId:              instanceID,
 		Kind:                    "cron",
-		TargetNode:              targetNode,
 	})
 	if err != nil {
 		t.Fatalf("marshal subscribe: %v", err)
@@ -84,7 +82,7 @@ func TestDispatchUnary_Publisher_SubscribeReachesSpawnedChild(t *testing.T) {
 		t.Fatalf("response payload must decode as SubscribeResponse: %v", err)
 	}
 
-	want := strings.Join([]string{subID, instanceID, targetNode}, " ")
+	want := strings.Join([]string{subID, instanceID, ""}, " ")
 	logBytes, err := os.ReadFile(publishLog)
 	if err != nil {
 		t.Fatalf("stub must have written publish log: %v", err)

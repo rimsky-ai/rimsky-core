@@ -24,19 +24,19 @@ func seedClaimedRunForNode(
 	var dispatchID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         nodeID,
-			ExecutorName:   "test-executor",
-			RequiredStores: []string{},
-			EnqueuedAt:     time.Now().Add(-1 * time.Second),
-			FrameID:        fix.FrameID,
-			RunScopeID:     fix.MainRunScopeID,
+			NodeID:                 nodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                fix.FrameID,
+			RunScopeID:             fix.MainRunScopeID,
 		}, tx); err != nil {
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"test-executor"},
-			AcceptedStores:    []string{},
-			Limit:             32,
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  32,
 		})
 		if err != nil {
 			return err
@@ -357,9 +357,9 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	}
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"test-executor"},
-			AcceptedStores:    []string{},
-			Limit:             32,
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  32,
 		})
 		if err != nil {
 			return err

@@ -67,7 +67,7 @@ func TestSubscribe_MountsRouteAndForwards(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "webhook", ResolvedConfig: raw,
-		TargetNode: "ingest", MessageType: "invalidate",
+		MessageType: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -88,8 +88,8 @@ func TestSubscribe_MountsRouteAndForwards(t *testing.T) {
 		t.Fatalf("messages: %d", len(obsBody))
 	}
 	body := obsBody[0]
-	if body["sender_kind"] != "publisher" {
-		t.Errorf("sender_kind: %v", body["sender_kind"])
+	if sub, _ := body["publisher_subscription_id"].(string); sub == "" {
+		t.Errorf("publisher_subscription_id: missing or empty (auth path discriminator)")
 	}
 	if _, present := body["target"]; present {
 		t.Errorf("target unexpectedly present: %v", body["target"])

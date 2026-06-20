@@ -126,7 +126,7 @@ error messages. Inertness is not minimalism; it is what keeps rimsky
 out of the consumer's domain. Once the platform reads bytes for
 meaning, it becomes a partial participant in the domain and inherits
 bug surface and security surface that belongs to the consumer. Three
-blessed invariants lock this in source — userdata opaque, claim content
+invariants lock this in source — userdata opaque, claim content
 inert, blob content inert — and removing them would unwind the design.
 
 No domain helpers ship. Reference service implementations are

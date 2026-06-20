@@ -133,7 +133,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		return args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                      target.ID,
 			ExecutorName:                target.Executor,
-			RequiredStores:              []string{},
+			RequiredClaimProducers:      []string{},
 			EnqueuedAt:                  args.Clock.Now(),
 			FrameID:                     *target.FrameID,
 			RunScopeID:                  runScopeID,

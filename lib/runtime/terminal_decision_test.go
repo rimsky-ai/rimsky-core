@@ -10,49 +10,51 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-func TestTerminalOutcomeKey_CommitAlwaysCommitted(t *testing.T) {
+func TestTerminalOutcomeKey_MapsEachOutcome(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name  string
-		cause TerminalCause
+		name    string
+		outcome TerminalOutcome
+		wantKey string
 	}{
-		{"empty", ""},
-		{"natural", TerminalCauseNatural},
-		{"sibling", TerminalCauseSiblingCancel},
-		{"descendant", TerminalCauseDescendantCancel},
+		{"commit", OutcomeCommit, persistence.LineageOutcomeCommitted},
+		{"abandon", OutcomeAbandon, persistence.LineageOutcomeAbandoned},
+		{"abandon_sibling_cancel", OutcomeAbandonSiblingCancel, persistence.LineageOutcomeForceCancelled},
+		{"abandon_descendant_cancel", OutcomeAbandonDescendantCancel, persistence.LineageOutcomeForceCancelled},
 	}
 	for _, c := range cases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got := terminalOutcomeKey(TerminalDecision{Outcome: AggregateCommit, Cause: c.cause})
-			if got != persistence.LineageOutcomeCommitted {
-				t.Errorf("Commit + cause=%q → %q (want %q)",
-					c.cause, got, persistence.LineageOutcomeCommitted)
+			got := terminalOutcomeKey(TerminalDecision{Outcome: c.outcome})
+			if got != c.wantKey {
+				t.Errorf("%v → %q (want %q)", c.outcome, got, c.wantKey)
 			}
 		})
 	}
 }
 
-func TestTerminalOutcomeKey_AbandonDiscriminatesCause(t *testing.T) {
+func TestTerminalOutcome_IsAbandonAndCauseString(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name    string
-		cause   TerminalCause
-		wantKey string
+		outcome   TerminalOutcome
+		isAbandon bool
+		cause     string
 	}{
-		{"empty_is_natural", "", persistence.LineageOutcomeAbandoned},
-		{"natural", TerminalCauseNatural, persistence.LineageOutcomeAbandoned},
-		{"sibling_cancel", TerminalCauseSiblingCancel, persistence.LineageOutcomeForceCancelled},
-		{"descendant_cancel", TerminalCauseDescendantCancel, persistence.LineageOutcomeForceCancelled},
+		{OutcomeCommit, false, ""},
+		{OutcomeAbandon, true, "natural"},
+		{OutcomeAbandonSiblingCancel, true, "sibling_cancel"},
+		{OutcomeAbandonDescendantCancel, true, "descendant_cancel"},
 	}
 	for _, c := range cases {
 		c := c
-		t.Run(c.name, func(t *testing.T) {
+		t.Run(string(c.outcome), func(t *testing.T) {
 			t.Parallel()
-			got := terminalOutcomeKey(TerminalDecision{Outcome: AggregateAbandon, Cause: c.cause})
-			if got != c.wantKey {
-				t.Errorf("Abandon + cause=%q → %q (want %q)", c.cause, got, c.wantKey)
+			if got := c.outcome.IsAbandon(); got != c.isAbandon {
+				t.Errorf("%v.IsAbandon() = %t (want %t)", c.outcome, got, c.isAbandon)
+			}
+			if got := c.outcome.CauseString(); got != c.cause {
+				t.Errorf("%v.CauseString() = %q (want %q)", c.outcome, got, c.cause)
 			}
 		})
 	}

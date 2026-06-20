@@ -12,7 +12,7 @@ import (
 )
 
 func TestBuildSubscriptionEdges_Empty(t *testing.T) {
-	out, err := BuildSubscriptionEdges(spec.TemplateSpec{}, nil, nil)
+	out, err := BuildSubscriptionEdges(spec.TemplateSpec{}, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestBuildSubscriptionEdges_ExplicitDirect(t *testing.T) {
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestBuildSubscriptionEdges_CrossCutting(t *testing.T) {
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -95,8 +95,7 @@ func TestBuildSubscriptionEdges_NoImplicitEdgeFromSubstitutionRef(t *testing.T) 
 				},
 			}}},
 	}}
-	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
-	out, err := BuildSubscriptionEdges(tmpl, refs, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -116,8 +115,7 @@ func TestBuildSubscriptionEdges_Dedup(t *testing.T) {
 			},
 		},
 	}}
-	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
-	out, err := BuildSubscriptionEdges(tmpl, refs, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -138,7 +136,7 @@ func TestBuildSubscriptionEdges_FlagsDistinguishEdges(t *testing.T) {
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -167,7 +165,7 @@ func TestBuildSubscriptionEdges_CrossCuttingAndPerNodeBothMatch(t *testing.T) {
 		},
 		{Type: "y", Executor: "stub"},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -202,7 +200,7 @@ func TestBuildSubscriptionEdges_StructuralRootInjection(t *testing.T) {
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -234,7 +232,7 @@ func TestBuildSubscriptionEdges_StructuralRootInjection_CrossCuttingOnly(t *test
 		},
 		{Type: "root", Executor: "stub"},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -273,7 +271,7 @@ func TestBuildSubscriptionEdges_StructuralRootInjection_AttributeRef(t *testing.
 				},
 			}}},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -296,7 +294,7 @@ func TestSubscriptionEdgeMap_Match_StructuralRootDisambiguation(t *testing.T) {
 		{Type: "root", Executor: "stub"},
 		{Type: "executor-foo", Executor: "stub"},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -341,7 +339,7 @@ func TestSubscriptionEdgeMap_PrefixWildcardMatch(t *testing.T) {
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	out, err := BuildSubscriptionEdges(tmpl, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}

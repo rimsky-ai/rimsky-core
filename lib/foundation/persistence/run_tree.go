@@ -28,23 +28,23 @@ type RunTreeRow struct {
 }
 
 type CreateRootRunInput struct {
-	RunID             shared.UUID
-	NodeID            shared.UUID
-	FrameID           shared.UUID
-	RunScopeID        shared.UUID
-	AggregationPolicy spec.AggregationPolicy
-	ExecutorName      string
-	RequiredStores    []string
+	RunID                  shared.UUID
+	NodeID                 shared.UUID
+	FrameID                shared.UUID
+	RunScopeID             shared.UUID
+	AggregationPolicy      spec.AggregationPolicy
+	ExecutorName           string
+	RequiredClaimProducers []string
 }
 
 type CreateChildRunInput struct {
-	RunID             shared.UUID
-	NodeID            shared.UUID
-	FrameID           shared.UUID
-	RunScopeID        shared.UUID
-	ExecutorName      string
-	RequiredStores    []string
-	AggregationPolicy spec.AggregationPolicy
+	RunID                  shared.UUID
+	NodeID                 shared.UUID
+	FrameID                shared.UUID
+	RunScopeID             shared.UUID
+	ExecutorName           string
+	RequiredClaimProducers []string
+	AggregationPolicy      spec.AggregationPolicy
 }
 
 type RunTreeTable interface {

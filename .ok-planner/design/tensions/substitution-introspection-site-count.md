@@ -11,7 +11,7 @@ affects:
 
 ## What is muddy
 
-`graph/attribute/substitution.go` and the casual reading of `@blessed-invariant 20` can suggest there is exactly one sanctioned site where rimsky reads opaque bytes. The actual count is three:
+`graph/attribute/substitution.go` and a casual reading of the claim-inertness rule can suggest there is exactly one sanctioned site where rimsky reads opaque bytes. The actual count is three:
 
 - `walkPath` (`graph/attribute/substitution.go`) — substitution leaf.
 - `stringifyRaw` (`graph/attribute/substitution.go`) — top-level address/scope flattening.

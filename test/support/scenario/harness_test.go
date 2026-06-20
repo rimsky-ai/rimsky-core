@@ -58,7 +58,7 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			MakeNode(
 				node.TemplateNodeDef{Type: "consume", Executor: "stub"},
-				WithStores(
+				WithClaimProducers(
 					WriteClaimRef("inbound", "@queue"),
 					ClaimRef("output", "region-A"),
 				),
@@ -84,7 +84,7 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	require.Equal(t, "consume", n["type"])
 	require.Equal(t, "stub", n["executor"])
 
-	require.Contains(t, n, "stores")
+	require.Contains(t, n, "claim_producers")
 	require.Contains(t, n, "locks")
 	require.Contains(t, n, "attributes")
 
@@ -94,7 +94,7 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	require.NotContains(t, n, "reads_resources")
 	require.NotContains(t, n, "restore_version")
 
-	stores := n["stores"].([]map[string]any)
+	stores := n["claim_producers"].([]map[string]any)
 	require.Len(t, stores, 2)
 	require.Equal(t, "inbound", stores[0]["name"])
 	require.Equal(t, "@queue", stores[0]["selector"])

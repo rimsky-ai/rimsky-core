@@ -50,7 +50,7 @@ on_event:
 
 ## Boundaries
 
-Owns: the three slots and the `on_event` map; the resolve verdicts per slot; the unconditional `invalidate` slot. Does NOT own: error-types policy chain (see `error-policy`), cascade firing (see `cascade`, `last-outcome`), claim release (see `auto-terminal`; the claimant-guarded release discipline per `@blessed-invariant 4` governs every `rimsky_claim_handles` delete and node-run `claimed_by` null), the end-to-end stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `cascade`, `last-outcome`, `error-policy`, `on-event-handler`, `invalidate`, `terminal-resolution`.
+Owns: the three slots and the `on_event` map; the resolve verdicts per slot; the unconditional `invalidate` slot. Does NOT own: error-types policy chain (see `error-policy`), cascade firing (see `cascade`, `last-outcome`), claim release (see `auto-terminal`; the claimant-guarded release discipline per invariant 4 governs every `rimsky_claim_handles` delete and node-run `claimed_by` null), the end-to-end stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `cascade`, `last-outcome`, `error-policy`, `on-event-handler`, `invalidate`, `terminal-resolution`.
 
 Per `spec:2026-05-12-nomenclature-resolution` Group E.2, the `on_executor_blocked` slot is retired alongside the wire-level `Blocked` event collapse into `Error{error_class}`. All error variants now route through `on_executor_errored`; the `error_types:` policy map discriminates by `error_class`. Templates that previously declared `on_executor_blocked` migrate to `on_executor_errored` with an explicit `error_types: { executor_blocked: ... }` entry.
 

@@ -43,9 +43,7 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 	count := 0
 	for _, n := range ready {
 		def := lookupTemplateNodeDef(ctx, sb, n)
-		// @story: cascade-emit
-		// @concept: message-emitter-node
-		if hasClaimStore(def) || isEmitMessage(def) {
+		if acquiresClaims(def) {
 			if err := enqueueNativeClaimOnly(ctx, args, n, def); err != nil {
 				if errors.Is(err, persistence.ErrRunScopeClosed) {
 					log.Debug("ProcessPureCascade: skip native claim-only enqueue: run scope closed",
@@ -109,9 +107,8 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 		if err != nil || row == nil {
 			return err
 		}
-		subs := nodepkg.ExtractSubstitutionRefsFromTemplate(row.Spec)
 		msgs := nodepkg.ExtractMessageRefsFromTemplate(row.Spec)
-		edges, err := nodepkg.BuildSubscriptionEdges(row.Spec, subs, msgs)
+		edges, err := nodepkg.BuildSubscriptionEdges(row.Spec, msgs)
 		if err != nil {
 			return err
 		}
@@ -193,7 +190,7 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 }
 
 func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n persistence.NodeRow, def *nodepkg.TemplateNodeDef) error {
-	required := nodepkg.RequiredStores(*def)
+	required := nodepkg.RequiredClaimProducers(*def)
 	if required == nil {
 		required = []string{}
 	}
@@ -203,17 +200,12 @@ func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n persist
 	if n.RunScopeID == nil {
 		return nil
 	}
-	executorName := ""
-	if isEmitMessage(def) {
-		executorName = runtime.EmitMessageDispatchName
-	}
 	return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
-		NodeID:         n.ID,
-		ExecutorName:   executorName,
-		RequiredStores: required,
-		EnqueuedAt:     args.Clock.Now(),
-		FrameID:        *n.FrameID,
-		RunScopeID:     *n.RunScopeID,
+		NodeID:                 n.ID,
+		RequiredClaimProducers: required,
+		EnqueuedAt:             args.Clock.Now(),
+		FrameID:                *n.FrameID,
+		RunScopeID:             *n.RunScopeID,
 	})
 }
 
@@ -241,19 +233,11 @@ func lookupTemplateNodeDef(ctx context.Context, sb persistence.Tables, n persist
 	return nil
 }
 
-func hasClaimStore(def *nodepkg.TemplateNodeDef) bool {
+func acquiresClaims(def *nodepkg.TemplateNodeDef) bool {
 	if def == nil {
 		return false
 	}
-	return len(def.Stores) > 0
-}
-
-// @concept: message-emitter-node
-func isEmitMessage(def *nodepkg.TemplateNodeDef) bool {
-	if def == nil {
-		return false
-	}
-	return def.EmitsMessage != ""
+	return len(def.ClaimProducers) > 0
 }
 
 func cascadePropagateFrameID(ctx context.Context, sb persistence.Tables, queue persistence.Queue, childID shared.UUID, frameID shared.UUID, log shared.Logger) {

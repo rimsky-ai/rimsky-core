@@ -129,9 +129,6 @@ func applyTerminalComplete(
 	resolvedAttrs map[string]any, schema map[string]any,
 	t terminalEvent, tx persistence.Tx,
 ) (postCommitFn, error) {
-	if acq.NodeDef != nil && acq.NodeDef.EmitsMessage != "" && acq.NodeDef.IsSubgraphEntryAbsorbed {
-		panic(fmt.Sprintf("applyTerminalComplete: emit-node %q has IsSubgraphEntryAbsorbed=true (canonicalizer-on-emit-node bug; the EmitsMessage block would never fire)", acq.NodeDef.Type))
-	}
 	merged := mergeAttributesDelta(resolvedAttrs, t.AttributesDel)
 	if t.Changed && len(t.AttributesDel) > 0 && schema != nil {
 		if err := attributes.Validate(schema, merged, attributes.PhaseCommit); err != nil {
@@ -160,14 +157,6 @@ func applyTerminalComplete(
 	if isSubgraphExit {
 		if err := applyTerminalCompleteSubgraphExit(ctx, args, acq, merged, tx); err != nil {
 			return nil, err
-		}
-	}
-
-	// @concept: message-emitter-node
-	if acq.NodeDef != nil && acq.NodeDef.EmitsMessage != "" {
-		if _, _, err := emitCascadeMessageInTx(ctx, args.Persist, tx,
-			acq.InstanceID, acq.NodeID, acq.FrameID, acq.NodeDef.EmitsMessage, merged); err != nil {
-			return nil, fmt.Errorf("applyTerminalComplete: emit cascade message: %w", err)
 		}
 	}
 
@@ -495,22 +484,9 @@ func pullForceRefreshUpstreams(
 		}
 
 		// @concept: parked-state
-		// @concept: run-scope
 		// @concept: cascade
+		// @story: resume-preserves-snapshot
 		upstreamRunScopeID := targetRunScopeID
-		parked, err := args.Queue.GetParkedByNode(ctx, upstreamNode.ID, upstreamRunScopeID)
-		if err != nil {
-			return fmt.Errorf("cascadeSubscribersStaleInTx: get parked upstream %s: %w",
-				upstreamType, err)
-		}
-		if parked != nil {
-			if err := wakeParkedReceiverInTx(ctx, args, tx, upstreamNode, senderFrameID); err != nil {
-				return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked upstream-refresh upstream %s: %w",
-					upstreamType, err)
-			}
-		}
-
-		// @concept: cascade
 		_, hasInFlightRun, err := args.Queue.GetInFlightRunForNode(
 			ctx, tx, upstreamNode.ID, upstreamRunScopeID,
 		)

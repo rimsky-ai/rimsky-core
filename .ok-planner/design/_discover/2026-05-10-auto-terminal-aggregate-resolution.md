@@ -9,12 +9,12 @@ kind: invariant
 
 A held claim's lifetime spans more than the acquirer's run: it covers the acquirer plus every directly-declared inheritor (the "holding subgraph" — see `docs/concepts/holding-subgraph.md`). The producer verb (`Commit` / `Abandon`) must fire exactly once at the end of the subgraph's combined execution, after every member has reached a terminal state. The choice of verb depends on the aggregate outcome of every member: all-success → `Commit`; any-failure → `Abandon`.
 
-`@blessed-invariant 13` (annotated at `foundation/integration/auto_terminal.go:5-17`) implements this. The algorithm at `CheckAndFireResolution` (lines 55-123):
+The held-claim auto-terminal invariant (annotated at `foundation/integration/auto_terminal.go:5-17`) implements this. The algorithm at `CheckAndFireResolution` (lines 55-123):
 
 1. `SELECT … FOR UPDATE` on the `rimsky_claim_handle` row — race-safe against concurrent terminations of sibling members in the same subgraph.
 2. List `rimsky_claim_holders` rows for the claim_handle; if any row has `state='active'`, return (subgraph incomplete).
 3. Compute aggregate outcome: if any row is `state='failed'` → fire `Abandon`; else (all `state='completed'`) → fire `Commit`.
-4. Delegate to the unified `ResolveClaimHandleTerminal` engine (`foundation/integration/terminal_decision.go`), which calls the producer verb over gRPC and then deletes the `rimsky_claim_handle` row claimant-guarded (`AND holder_supervisor_id = $1` per `@blessed-invariant 4`).
+4. Delegate to the unified `ResolveClaimHandleTerminal` engine (`foundation/integration/terminal_decision.go`), which calls the producer verb over gRPC and then deletes the `rimsky_claim_handle` row claimant-guarded (`AND holder_supervisor_id = $1`).
 
 `rimsky_claim_holders` is the per-(claim_handle, holder_node) state ledger (`foundation/persistence/postgres/migrations/001-initial.sql:221-232`). The acquirer plus inheritors are inserted as `rimsky_claim_holders` rows at acquire time (`foundation/integration/runner_acquire.go:706-743`); each member updates its row at its own terminal. The FK column is `claim_handle_id` (renamed from the legacy `lock_holder_id`).
 
@@ -22,7 +22,7 @@ The producer verb fires **before** the surrounding rimsky tx commits. This means
 
 The aggregate-outcome rule is deliberately simple. `docs/concepts/holding-subgraph.md` is explicit: "Rimsky does not orchestrate partial commits, partial rollbacks, or first-delete-wins reconciliations. The aggregate-outcome rule is the rule." Producers decide what `Commit` and `Abandon` mean for their own state (atomic flip of an items-table row, deletion of a staging directory, MVCC commit, etc.) — rimsky's job is to tell them which one fired and when.
 
-`docs/concepts/parked.md` notes that the held-claim auto-terminal mechanism continues to fire correctly across the park boundary: a parked node remains an `active` row in `rimsky_claim_holders` and the resolution waits for it to complete or fail. The orphan-claim reaper (`@blessed-invariant 6`) skips `phase='parked'` rows, so a long-parked node doesn't accidentally trigger resolution by aging.
+`docs/concepts/parked.md` notes that the held-claim auto-terminal mechanism continues to fire correctly across the park boundary: a parked node remains an `active` row in `rimsky_claim_holders` and the resolution waits for it to complete or fail. The orphan-claim reaper skips `phase='parked'` rows, so a long-parked node doesn't accidentally trigger resolution by aging.
 
 ## Code surface
 

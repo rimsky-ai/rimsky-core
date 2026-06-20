@@ -9,7 +9,7 @@ aliases:
 
 ## What it is
 
-A template is the static artifact a consumer registers: node definitions, attribute schemas, claim/lock declarations, frame-resolution policy, handler declarations, quality rules. Persisted as a template record keyed by a content-hash identifier (a stable digest-prefix plus the hex-encoded digest) computed over the canonicalized spec bytes. Lifecycle states: `registered | deployed | undeployed | deregistered`.
+A template is the static artifact a consumer registers: node definitions, attribute schemas, claim/lock declarations, frame-resolution policy, handler declarations, quality rules. Persisted as a template record keyed by a content-hash identifier computed over the canonicalized spec bytes. Templates pass through a small lifecycle from initial registration through deployment, undeployment, and final deregistration.
 
 ## Purpose
 
@@ -23,6 +23,6 @@ Owns: the spec bytes, the canonical hash, the lifecycle states, the registration
 
 - The template id is a stable digest-prefix plus the hex-encoded digest, computed over the canonicalized spec bytes.
 - The canonicalization-library version is pinned — a transitive bump that changes canonicalization output invalidates every existing template id.
-- Instances bind to a specific `template_hash` at creation; tag movement does not migrate live instances.
-- A top-level `late_bind_services` list names services whose registration-time existence and schema validation are bypassed (their actual schema comes from the spawned binary's Capabilities handshake at dispatch). The list is stored inside the canonical spec bytes, so it participates in the canonicalized template hash — changing the list reregisters the template under a new hash, preserving the content-addressing invariant. Names absent from the list are subject to strict registration-time checks. See `concept:host-agent-proxy`.
-- Reference and schema validation is **optional at registration** under an operator-set mode (`all` default / `available` / `none`); a relaxed mode skips refs whose target services are not yet provisioned (mode `available` makes the soft-fail uniform across the executor / store / lock / schema legs).
+- Instances bind to a specific template-hash identity at creation; tag movement does not migrate live instances.
+- A template-level late-bind list names services whose registration-time existence and schema validation are bypassed (their actual schema comes from the spawned binary's capabilities handshake at dispatch). The list is part of the canonical spec bytes, so it participates in the canonicalized template hash — changing the list reregisters the template under a new hash, preserving the content-addressing invariant. Names absent from the list are subject to strict registration-time checks. See `concept:host-agent-proxy`.
+- Reference and schema validation is **optional at registration** under an operator-set reference-validation mode with three settings: full validation (the default — every referenced service must exist and validate), available-only validation (skip refs whose target services are not yet provisioned, uniformly across the executor / store / lock / schema legs), and no reference validation at all.

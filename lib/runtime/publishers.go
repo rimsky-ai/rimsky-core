@@ -55,7 +55,6 @@ func StartPublisherSubscriptionsForInstance(
 			PublisherName:  p.Name,
 			Kind:           p.Kind,
 			ResolvedConfig: resolvedConfig,
-			TargetNode:     p.TargetNode,
 			MessageType:    p.MessageType,
 			State:          persistence.PublisherSubscriptionStateMounting,
 			StartedAt:      now,
@@ -171,7 +170,6 @@ func reconcileMountingSubscriptionsOnce(ctx context.Context, deps PublisherLifec
 			InstanceID:              s.InstanceID,
 			Kind:                    s.Kind,
 			ResolvedConfig:          s.ResolvedConfig,
-			TargetNode:              s.TargetNode,
 			MessageType:             s.MessageType,
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
@@ -379,7 +377,6 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 				InstanceID:              fresh.InstanceID,
 				Kind:                    fresh.Kind,
 				ResolvedConfig:          fresh.ResolvedConfig,
-				TargetNode:              fresh.TargetNode,
 				MessageType:             fresh.MessageType,
 			}
 			if err := callSubscribeWithRetry(ctx, client, req, deps.Logger); err != nil {

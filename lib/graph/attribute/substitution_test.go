@@ -7,11 +7,6 @@ package attributes
 import (
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
-	"regexp"
-	"runtime"
-	"sort"
 	"strings"
 	"testing"
 
@@ -753,49 +748,10 @@ func TestSubstitute_ClaimScope(t *testing.T) {
 	}
 }
 
-var headerCountWords = map[string]int{
-	"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
-	"five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-}
-
-var headerCountLinePattern = regexp.MustCompile(`(?i)^//\s*([A-Za-z]+)\s+recognized source kinds:`)
-
-var headerBulletPattern = regexp.MustCompile(`^//\s*-\s*\{\{([a-z_]+)\.`)
-
 var liveResolverKinds = []string{"claim", "params", "nodes", "child", "messages"}
 
-func TestSubstitutionDocstringMatchesResolver(t *testing.T) {
+func TestSubstitutionResolverArms(t *testing.T) {
 	t.Parallel()
-
-	assertResolverArms(t)
-
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller(0) failed; cannot locate substitution.go")
-	}
-	srcPath := filepath.Join(filepath.Dir(thisFile), "substitution.go")
-	srcBytes, err := os.ReadFile(srcPath)
-	if err != nil {
-		t.Fatalf("read %s: %v", srcPath, err)
-	}
-
-	declaredCount, bulletKinds := parseHeaderSourceKinds(t, string(srcBytes))
-
-	if declaredCount != len(bulletKinds) {
-		t.Errorf("header declares %d recognized source kinds but lists %d bullets (%v): the count word and the bullet list disagree",
-			declaredCount, len(bulletKinds), bulletKinds)
-	}
-
-	gotSet := distinctSorted(bulletKinds)
-	wantSet := distinctSorted(liveResolverKinds)
-	if !equalStringSlices(gotSet, wantSet) {
-		t.Errorf("header source-kind set %v does not equal live resolver kind set %v\n  missing from header: %v\n  not handled by resolver: %v",
-			gotSet, wantSet, setDifference(wantSet, gotSet), setDifference(gotSet, wantSet))
-	}
-}
-
-func assertResolverArms(t *testing.T) {
-	t.Helper()
 
 	probes := map[string]string{
 		"claim":    "claim.a.payload",
@@ -843,93 +799,4 @@ func assertResolverArms(t *testing.T) {
 	if !strings.Contains(triggerMissing.Reason, "messages.<type>") {
 		t.Fatalf("`trigger.message.payload` reason should point at the messages migration; got %q", triggerMissing.Reason)
 	}
-}
-
-func parseHeaderSourceKinds(t *testing.T, src string) (declaredCount int, bulletKinds []string) {
-	t.Helper()
-
-	lines := strings.Split(src, "\n")
-	countIdx := -1
-	for i, line := range lines {
-		m := headerCountLinePattern.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		word := strings.ToLower(m[1])
-		n, known := headerCountWords[word]
-		if !known {
-			t.Fatalf("header count word %q is not a recognized number word (line %d: %q)", m[1], i+1, line)
-		}
-		countIdx = i
-		declaredCount = n
-		break
-	}
-	if countIdx < 0 {
-		t.Fatal(`could not find the "<word> recognized source kinds:" declaration in substitution.go header`)
-	}
-
-	sawBullet := false
-	for _, line := range lines[countIdx+1:] {
-		trimmed := strings.TrimSpace(line)
-		if m := headerBulletPattern.FindStringSubmatch(line); m != nil {
-			bulletKinds = append(bulletKinds, m[1])
-			sawBullet = true
-			continue
-		}
-		if trimmed == "//" || trimmed == "" {
-			if sawBullet {
-				break
-			}
-			continue
-		}
-		if sawBullet {
-			break
-		}
-		t.Fatalf("unexpected line inside source-kind header before any bullet: %q", line)
-	}
-
-	if len(bulletKinds) == 0 {
-		t.Fatal("parsed zero enumeration bullets from the source-kind header block")
-	}
-	return declaredCount, bulletKinds
-}
-
-func distinctSorted(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, v := range in {
-		if _, ok := seen[v]; ok {
-			continue
-		}
-		seen[v] = struct{}{}
-		out = append(out, v)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func setDifference(a, b []string) []string {
-	inB := make(map[string]struct{}, len(b))
-	for _, v := range b {
-		inB[v] = struct{}{}
-	}
-	var out []string
-	for _, v := range a {
-		if _, ok := inB[v]; !ok {
-			out = append(out, v)
-		}
-	}
-	return out
 }

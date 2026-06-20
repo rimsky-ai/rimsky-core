@@ -25,7 +25,6 @@ type SubscribeRequest struct {
 	InstanceID              shared.UUID
 	Kind                    string
 	ResolvedConfig          []byte
-	TargetNode              string
 	MessageType             string
 }
 
@@ -33,7 +32,6 @@ type ListedPublisherSubscription struct {
 	PublisherSubscriptionID shared.UUID
 	InstanceID              shared.UUID
 	Kind                    string
-	TargetNode              string
 	MessageType             string
 }
 

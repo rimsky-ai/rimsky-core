@@ -8,7 +8,7 @@
 #
 # Stack prerequisites (operator-side):
 #   - rimsky stack reachable at RIMSKY_ENDPOINT
-#   - bundled `rimsky-store-postgres` registered as claim producer
+#   - bundled `rimsky-claim-producer-postgres` registered as claim producer
 #     `pg-store` advertising supports_split_scope=true and a pick
 #     policy `@items-queue` over a `pgfanout_items` table (see
 #     store-config.yml in this directory for the wiring shape)
@@ -44,7 +44,7 @@ nodes:
       operator-posted `fanout_seed.items` array. The postgres store's
       SplitScope decodes the `{"list": [...]}` shape and emits one
       SubScopeDescriptor per element.
-    stores:
+    claim_producers:
       - name: pg-store
         selector: "@items-queue"
         intent: rw

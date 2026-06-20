@@ -112,8 +112,8 @@ Published under `docker.io/rimskyai/`:
 | `rimsky-all-in-one` | `dockerfiles/Dockerfile.all-in-one` — zero-config SQLite stack |
 | `rimsky-host-agent-proxy` | `dockerfiles/Dockerfile.go-base` |
 | `rimsky-conformance` | `dockerfiles/Dockerfile.conformance` — protocol conformance runners |
-| `rimsky-store-filesystem` | `lib/services/stores/filesystem/Dockerfile.filesystem` |
-| `rimsky-store-postgres` | `lib/services/stores/postgres/Dockerfile.postgres` |
+| `rimsky-claim-producer-filesystem` | `lib/services/claim_producers/filesystem/Dockerfile.filesystem` |
+| `rimsky-claim-producer-postgres` | `lib/services/claim_producers/postgres/Dockerfile.postgres` |
 | `rimsky-sensor-cron` | `lib/services/sensors/sensor-cron/Dockerfile.sensor-cron` |
 | `rimsky-sensor-http` | `lib/services/sensors/sensor-http/Dockerfile.sensor-http` |
 | `rimsky-sensor-object-store` | `lib/services/sensors/sensor-object-store/Dockerfile.sensor-object-store` |

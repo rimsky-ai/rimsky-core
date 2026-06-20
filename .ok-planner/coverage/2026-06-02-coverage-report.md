@@ -113,7 +113,7 @@ scenario becomes the spec's acceptance scenario when taken into `brainstorm` /
   commit and dispatch produces `orphaned_claim_lost_race` and **no** Execute.
   This is a **named load-bearing safety property** (README §1, §3).
 - **Source claim** — README §1 ("verify-before-run" in the stable-safety list),
-  §3; `concept:supervisor`, `@blessed-invariant 5`.
+  §3; `concept:supervisor`, verify-before-run.
 - **Value-delivering component** — the supervisor's post-commit verify-read
   guard (orchestration).
 - **Proposed acceptance scenario** — Two concurrent `RunNode` callers race the

@@ -93,7 +93,6 @@ func TestIdempotencyMatrix(t *testing.T) {
 			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"type":                      "system/invalidate",
-				"sender_kind":               "publisher",
 				"publisher_subscription_id": subID,
 			},
 			map[string]string{"Idempotency-Key": key})
@@ -122,12 +121,11 @@ func TestIdempotencyMatrix(t *testing.T) {
 			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"type":                      "system/invalidate",
-				"sender_kind":               "publisher",
 				"publisher_subscription_id": subID,
 			},
 			map[string]string{"Idempotency-Key": key})
 		require.Equal(t, http.StatusCreated, publisher.status,
-			"publisher named \"operator\" + same key must NOT replay the operator emit — sender_kind discriminator must hold")
+			"publisher named \"operator\" + same key must NOT replay the operator emit — the persistence-layer sender_kind discriminator must hold across the two auth paths")
 		publisherID, _ := publisher.body["message_id"].(string)
 		require.NotEqual(t, operatorID, publisherID,
 			"distinct sender_kind → distinct message ids; publisher named \"operator\" must not inherit the operator's dedup row")
@@ -143,7 +141,6 @@ func TestIdempotencyMatrix(t *testing.T) {
 			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"type":                      "system/invalidate",
-				"sender_kind":               "publisher",
 				"publisher_subscription_id": subID,
 			},
 			map[string]string{"Idempotency-Key": "active-" + uuid.NewString()})
@@ -158,7 +155,6 @@ func TestIdempotencyMatrix(t *testing.T) {
 			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"type":                      "system/invalidate",
-				"sender_kind":               "publisher",
 				"publisher_subscription_id": subID,
 			},
 			map[string]string{"Idempotency-Key": "stopped-" + uuid.NewString()})
@@ -172,7 +168,6 @@ func TestIdempotencyMatrix(t *testing.T) {
 			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"type":                      "system/invalidate",
-				"sender_kind":               "publisher",
 				"publisher_subscription_id": uuid.NewString(),
 			},
 			map[string]string{"Idempotency-Key": "unknown-" + uuid.NewString()})
@@ -188,7 +183,6 @@ func TestIdempotencyMatrix(t *testing.T) {
 			fmt.Sprintf("/v1/instances/%s/messages", instB),
 			map[string]any{
 				"type":                      "system/invalidate",
-				"sender_kind":               "publisher",
 				"publisher_subscription_id": subForA,
 			},
 			map[string]string{"Idempotency-Key": "wrong-" + uuid.NewString()})
@@ -196,19 +190,4 @@ func TestIdempotencyMatrix(t *testing.T) {
 		require.Equal(t, 0, messageCount(t, instB), "a rejected emit persists no envelope in instance B")
 	})
 
-	t.Run("missing_sub_id_400", func(t *testing.T) {
-		instID := newInstanceForMessages(t, h, "missing-sub-id")
-		resp := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/v1/instances/%s/messages", instID),
-			map[string]any{
-				"type":        "system/invalidate",
-				"sender_kind": "publisher",
-			},
-			map[string]string{"Idempotency-Key": "missing-sub-" + uuid.NewString()})
-		require.Equal(t, http.StatusBadRequest, resp.status, resp.body)
-		errMsg, _ := resp.body["error"].(string)
-		require.Contains(t, strings.ToLower(errMsg), "publisher_subscription_id",
-			"the rejection diagnostic must name the required field")
-		require.Equal(t, 0, messageCount(t, instID), "a rejected emit persists no envelope")
-	})
 }

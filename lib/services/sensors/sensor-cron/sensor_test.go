@@ -49,8 +49,8 @@ func TestSubscribe_ParsesAndComputesNextFire(t *testing.T) {
 		InstanceId:              "i1",
 		Kind:                    "cron",
 		ResolvedConfig:          raw,
-		TargetNode:              "tick",
-		MessageType:             "invalidate",
+
+		MessageType: "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestSubscribe_ParsesAndComputesNextFire(t *testing.T) {
 	if !w.NextFireAt.Equal(time.Date(2026, 1, 1, 0, 5, 0, 0, time.UTC)) {
 		t.Errorf("next_fire_at: %s", w.NextFireAt)
 	}
-	if w.TargetNode != "tick" || w.MessageType != "invalidate" {
+	if w.MessageType != "invalidate" {
 		t.Errorf("routing fields: %+v", w)
 	}
 }
@@ -139,9 +139,6 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 		raw, _ := io.ReadAll(r.Body)
 		var body map[string]any
 		_ = json.Unmarshal(raw, &body)
-		if body["sender_kind"] != "publisher" {
-			t.Errorf("body.sender_kind: %v", body["sender_kind"])
-		}
 		if body["publisher_subscription_id"] != "w1" {
 			t.Errorf("body.publisher_subscription_id: %v", body["publisher_subscription_id"])
 		}
@@ -165,7 +162,7 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-		TargetNode: "tick", MessageType: "system/invalidate",
+		MessageType: "system/invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}

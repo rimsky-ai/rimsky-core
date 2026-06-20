@@ -51,8 +51,8 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 		"sup-PM", "postmortem-store", 4,
 		spec.AggregationPolicy{Kind: spec.AggregationKindThreshold, MaxFailures: 1})
 
-	commitOutcomes := []runtime.AggregateOutcome{
-		runtime.AggregateCommit, runtime.AggregateCommit, runtime.AggregateCommit, runtime.AggregateAbandon,
+	commitOutcomes := []runtime.TerminalOutcome{
+		runtime.OutcomeCommit, runtime.OutcomeCommit, runtime.OutcomeCommit, runtime.OutcomeAbandon,
 	}
 	for i, outcome := range commitOutcomes {
 		i, outcome := i, outcome

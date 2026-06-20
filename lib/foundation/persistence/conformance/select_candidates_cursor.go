@@ -38,12 +38,12 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 				return err
 			}
 			return q.EnqueueInTx(ctx, persistence.DispatchRequest{
-				NodeID:         nodeID,
-				ExecutorName:   "test-executor",
-				RequiredStores: []string{},
-				EnqueuedAt:     at,
-				FrameID:        fix.FrameID,
-				RunScopeID:     fix.MainRunScopeID,
+				NodeID:                 nodeID,
+				ExecutorName:           "test-executor",
+				RequiredClaimProducers: []string{},
+				EnqueuedAt:             at,
+				FrameID:                fix.FrameID,
+				RunScopeID:             fix.MainRunScopeID,
 			}, tx)
 		}); err != nil {
 			t.Fatalf("seed cursor row at %v: %v", at, err)
@@ -56,11 +56,11 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 		var out []persistence.Candidate
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-				AcceptedExecutors:     []string{"test-executor"},
-				AcceptedStores:        []string{},
-				Limit:                 limit,
-				CursorEnqueuedAfter:   curAt,
-				CursorAfterDispatchID: curID,
+				AcceptedExecutors:      []string{"test-executor"},
+				AcceptedClaimProducers: []string{},
+				Limit:                  limit,
+				CursorEnqueuedAfter:    curAt,
+				CursorAfterDispatchID:  curID,
 			})
 			if err != nil {
 				return err

@@ -109,7 +109,7 @@ func startAgent(t *testing.T, proxyAddr, ownerKeyID string) (context.CancelFunc,
 type fixtureOpts struct {
 	withAgent  bool
 	blindProxy bool
-	stores     config.RemoteStoresConfig
+	stores     config.RemoteClaimProducersConfig
 	anonymous  bool
 }
 
@@ -129,7 +129,7 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		},
 		LateBindServiceProxies: map[string]string{"executor": proxyExecutorName},
 		ExecutorProtocols:      map[string][]string{proxyExecutorName: execProtocols},
-		Stores:                 opts.stores,
+		ClaimProducers:         opts.stores,
 	})
 
 	var adminKey, ownerKeyID, agentRoutingKey string

@@ -9,7 +9,7 @@ kind: invariant
 
 A state machine of the form `NextState(current, reason) → (next, error)` admits an "ergonomic" optimization: if `current == requested`, return `current` without error. That makes `running → running` a no-op rather than an error. It also creates a double-execute hazard: if two supervisors both believe they've claimed the same node and both call the transition, the no-op branch silently approves the second one.
 
-`@blessed-invariant 1` (and `@blessed-invariant (§17)` at `foundation/cascade/state.go:103-108`) is documented as never short-circuiting when `current == requested`. Specifically `running → running` under `dispatch_claimed` returns `ErrIllegalTransition`. The annotation:
+The no-self-loop rule (annotated at `foundation/cascade/state.go:103-108`) is documented as never short-circuiting when `current == requested`. Specifically `running → running` under `dispatch_claimed` returns `ErrIllegalTransition`. The annotation:
 
 > This is the load-bearing guard against double-execute. Any Go implementation that adds an idempotency optimization for "ergonomics" breaks the invariant.
 
@@ -27,7 +27,7 @@ The reserved `ReasonHandlerError` sentinel (`foundation/cascade/state.go:55-71`)
 
 CLAUDE.md "Blessed invariants" §1: "State machine rejects illegal transitions. `running → running` under reason `dispatch_claimed` errors — it is **not** silently idempotent."
 
-A future cleanup that "normalizes" the state machine to be idempotent is automatically a breaking change of the invariant test. The verify-before-run guard (`@blessed-invariant 5`) is the runtime-side complement: it catches the double-execute case at the row-read level before the state-machine transition is even attempted.
+A future cleanup that "normalizes" the state machine to be idempotent is automatically a breaking change of the invariant test. The verify-before-run guard is the runtime-side complement: it catches the double-execute case at the row-read level before the state-machine transition is even attempted.
 
 ## Code surface
 

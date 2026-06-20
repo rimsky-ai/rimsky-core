@@ -166,7 +166,7 @@ func TestTemplateRegister_Idempotent(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	body := templateWithStoresAndLocks("idem-" + uuid.NewString())
+	body := templateWithClaimProducersAndLocks("idem-" + uuid.NewString())
 	status1, out1 := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status1, out1)
 
@@ -401,12 +401,12 @@ func newRefModeHarness(t *testing.T, mode node.RefValidationMode) (*harness, fun
 
 	capLog := shared.NewCapturingLogger()
 	app := NewApp(AppDeps{
-		Persist:       d.Tables(),
-		Queue:         d.Queue(),
-		Clock:         shared.SystemClock{},
-		Logger:        capLog,
-		Stores:        reg,
-		LifecycleSubs: lcReg,
+		Persist:        d.Tables(),
+		Queue:          d.Queue(),
+		Clock:          shared.SystemClock{},
+		Logger:         capLog,
+		ClaimProducers: reg,
+		LifecycleSubs:  lcReg,
 		Executors: map[string]ExecutorEntry{
 			"constrained": {Transport: "grpc", Endpoint: "localhost:0"},
 		},
@@ -540,7 +540,7 @@ func storesTemplateWithoutAcquirePolicy(name string) map[string]any {
 				{
 					"type":     "claim-topic",
 					"executor": "worker",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{"name": "topics-ring", "selector": "@queue", "intent": "rw"},
 					},
 				},

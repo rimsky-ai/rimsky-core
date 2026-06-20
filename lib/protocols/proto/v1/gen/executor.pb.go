@@ -97,7 +97,7 @@ func (PriorDispatchDisposition) EnumDescriptor() ([]byte, []int) {
 // endpoint, the rimsky `parked list --reason=` flag, and the
 // Prometheus rimsky_parked_nodes_by_reason gauge label.
 //
-// @blessed-invariant: ParkReason is a closed two-value set
+// ParkReason is a closed two-value set
 // (PARK_REASON_AWAIT_CALLBACK, PARK_REASON_SNOOZE). The proto wire
 // layer rejects any other value at decode. No UNSPECIFIED, no
 // OTHER, no fallback. Storage CHECK on
@@ -173,8 +173,8 @@ type ExecuteRequest struct {
 	// rimsky validates at dispatch (substitution) and at commit (writeback)
 	// regardless.
 	AttributesSchema *structpb.Struct `protobuf:"bytes,6,opt,name=attributes_schema,json=attributesSchema,proto3" json:"attributes_schema,omitempty"`
-	// Handles for each store the node references. Keyed by store-config name.
-	Stores map[string]*StoreHandle `protobuf:"bytes,7,rep,name=stores,proto3" json:"stores,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Handles for each claim_producer the node references. Keyed by claim_producer-config name.
+	ClaimProducers map[string]*ClaimProducerHandle `protobuf:"bytes,7,rep,name=claim_producers,json=claimProducers,proto3" json:"claim_producers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// HTTP+JSON callback URL the executor may POST to for async handoff,
 	// incremental attribute writes, scratch writes, and keepalive bumps.
 	// Populated by the supervisor; empty string if the supervisor did not
@@ -219,7 +219,7 @@ type ExecuteRequest struct {
 	// the supervisor materializes spilled scratch via the configured
 	// BlobBackend before populating this field.
 	//
-	// Inert in rimsky per @blessed-invariant 21 / concept:inertness. The
+	// Inert in rimsky per concept:inertness. The
 	// executor writes scratch back via the Success / Error / Park outcome
 	// variants (terminal-final) or via the
 	// POST {callback_url}/v1/runs/{run_id}/scratch callback (mid-dispatch).
@@ -293,9 +293,9 @@ func (x *ExecuteRequest) GetAttributesSchema() *structpb.Struct {
 	return nil
 }
 
-func (x *ExecuteRequest) GetStores() map[string]*StoreHandle {
+func (x *ExecuteRequest) GetClaimProducers() map[string]*ClaimProducerHandle {
 	if x != nil {
-		return x.Stores
+		return x.ClaimProducers
 	}
 	return nil
 }
@@ -349,11 +349,11 @@ func (x *ExecuteRequest) GetScratch() []byte {
 	return nil
 }
 
-// StoreHandle is the per-store reference handed to the executor at
+// ClaimProducerHandle is the per-claim_producer reference handed to the executor at
 // dispatch. `handle` carries the producer-supplied Address bytes
 // returned by ClaimProducer.Open — opaque to Rimsky, decoded by
-// the executor per its store-specific knowledge.
-type StoreHandle struct {
+// the executor per its producer-specific knowledge.
+type ClaimProducerHandle struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Operator-configured producer kind (e.g. "filesystem", "postgres",
 	// or a producer's own canonical kind name). Conventionally
@@ -362,32 +362,32 @@ type StoreHandle struct {
 	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
 	// Producer-supplied Address bytes returned by ClaimProducer.Open,
 	// wrapped as a google.protobuf.Struct so JSON-shaped addresses
-	// round-trip cleanly. Inert to Rimsky per @blessed-invariant 20.
+	// round-trip cleanly. Inert to Rimsky.
 	Handle *structpb.Struct `protobuf:"bytes,2,opt,name=handle,proto3" json:"handle,omitempty"`
 	// candidate_handle is set by the supervisor for
 	// DataProcessing-capable claims at fan-out leaf dispatch. Opaque to
 	// rimsky; the executor passes this back to its own writes against
 	// the producer. Empty for non-DataProcessing claims and non-fan-out
-	// claims. Per @blessed-invariant 20 the bytes are inert in rimsky.
+	// claims. The bytes are inert in rimsky.
 	CandidateHandle []byte `protobuf:"bytes,6,opt,name=candidate_handle,json=candidateHandle,proto3" json:"candidate_handle,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *StoreHandle) Reset() {
-	*x = StoreHandle{}
+func (x *ClaimProducerHandle) Reset() {
+	*x = ClaimProducerHandle{}
 	mi := &file_executor_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *StoreHandle) String() string {
+func (x *ClaimProducerHandle) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*StoreHandle) ProtoMessage() {}
+func (*ClaimProducerHandle) ProtoMessage() {}
 
-func (x *StoreHandle) ProtoReflect() protoreflect.Message {
+func (x *ClaimProducerHandle) ProtoReflect() protoreflect.Message {
 	mi := &file_executor_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -399,26 +399,26 @@ func (x *StoreHandle) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use StoreHandle.ProtoReflect.Descriptor instead.
-func (*StoreHandle) Descriptor() ([]byte, []int) {
+// Deprecated: Use ClaimProducerHandle.ProtoReflect.Descriptor instead.
+func (*ClaimProducerHandle) Descriptor() ([]byte, []int) {
 	return file_executor_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *StoreHandle) GetKind() string {
+func (x *ClaimProducerHandle) GetKind() string {
 	if x != nil {
 		return x.Kind
 	}
 	return ""
 }
 
-func (x *StoreHandle) GetHandle() *structpb.Struct {
+func (x *ClaimProducerHandle) GetHandle() *structpb.Struct {
 	if x != nil {
 		return x.Handle
 	}
 	return nil
 }
 
-func (x *StoreHandle) GetCandidateHandle() []byte {
+func (x *ClaimProducerHandle) GetCandidateHandle() []byte {
 	if x != nil {
 		return x.CandidateHandle
 	}
@@ -556,7 +556,7 @@ type Success struct {
 	ChangeSummary   string                 `protobuf:"bytes,2,opt,name=change_summary,json=changeSummary,proto3" json:"change_summary,omitempty"`
 	AttributesDelta *structpb.Struct       `protobuf:"bytes,3,opt,name=attributes_delta,json=attributesDelta,proto3" json:"attributes_delta,omitempty"`
 	// Executor-attached opaque bytes the supervisor persists onto the
-	// dispatch row at terminal time. Inert in rimsky per @blessed-invariant 21.
+	// dispatch row at terminal time. Inert in rimsky.
 	Scratch []byte `protobuf:"bytes,4,opt,name=scratch,proto3" json:"scratch,omitempty"`
 	// Set semantics: duplicates are collapsed at decode and order is the
 	// first-appearance order from the wire. Each tag must appear in the
@@ -643,7 +643,7 @@ type Error struct {
 	ErrorClass string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
 	Payload    *structpb.Struct       `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
 	// Executor-attached opaque bytes the supervisor persists onto the
-	// dispatch row at terminal time. Inert in rimsky per @blessed-invariant 21.
+	// dispatch row at terminal time. Inert in rimsky.
 	Scratch         []byte           `protobuf:"bytes,3,opt,name=scratch,proto3" json:"scratch,omitempty"`
 	AttributesDelta *structpb.Struct `protobuf:"bytes,4,opt,name=attributes_delta,json=attributesDelta,proto3" json:"attributes_delta,omitempty"`
 	// Set semantics — same rules as Success.tags.
@@ -744,7 +744,7 @@ type Park struct {
 	// col:rimsky_node_runs.parked_reason_label.
 	ReasonLabel string `protobuf:"bytes,6,opt,name=reason_label,json=reasonLabel,proto3" json:"reason_label,omitempty"`
 	// Executor-attached opaque bytes the supervisor persists onto the
-	// dispatch row at terminal time. Inert in rimsky per @blessed-invariant 21.
+	// dispatch row at terminal time. Inert in rimsky.
 	Scratch         []byte           `protobuf:"bytes,7,opt,name=scratch,proto3" json:"scratch,omitempty"`
 	AttributesDelta *structpb.Struct `protobuf:"bytes,8,opt,name=attributes_delta,json=attributesDelta,proto3" json:"attributes_delta,omitempty"`
 	// Set semantics — same rules as Success.tags.
@@ -1006,7 +1006,7 @@ var File_executor_proto protoreflect.FileDescriptor
 
 const file_executor_proto_rawDesc = "" +
 	"\n" +
-	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb1\x06\n" +
+	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xda\x06\n" +
 	"\x0eExecuteRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
@@ -1015,8 +1015,8 @@ const file_executor_proto_rawDesc = "" +
 	"\n" +
 	"attributes\x18\x05 \x01(\v2\x17.google.protobuf.StructR\n" +
 	"attributes\x12D\n" +
-	"\x11attributes_schema\x18\x06 \x01(\v2\x17.google.protobuf.StructR\x10attributesSchema\x12=\n" +
-	"\x06stores\x18\a \x03(\v2%.rimsky.v1.ExecuteRequest.StoresEntryR\x06stores\x12!\n" +
+	"\x11attributes_schema\x18\x06 \x01(\v2\x17.google.protobuf.StructR\x10attributesSchema\x12V\n" +
+	"\x0fclaim_producers\x18\a \x03(\v2-.rimsky.v1.ExecuteRequest.ClaimProducersEntryR\x0eclaimProducers\x12!\n" +
 	"\fcallback_url\x18\b \x01(\tR\vcallbackUrl\x12!\n" +
 	"\fcancel_token\x18\t \x01(\tR\vcancelToken\x12\x1f\n" +
 	"\vdispatch_id\x18\f \x01(\tR\n" +
@@ -1025,14 +1025,14 @@ const file_executor_proto_rawDesc = "" +
 	"\x1aprior_dispatch_disposition\x18\x0f \x01(\x0e2#.rimsky.v1.PriorDispatchDispositionH\x01R\x18priorDispatchDisposition\x88\x01\x01\x12 \n" +
 	"\frun_scope_id\x18\x10 \x01(\tR\n" +
 	"runScopeId\x12\x18\n" +
-	"\ascratch\x18\x11 \x01(\fR\ascratch\x1aQ\n" +
-	"\vStoresEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.rimsky.v1.StoreHandleR\x05value:\x028\x01B\x14\n" +
+	"\ascratch\x18\x11 \x01(\fR\ascratch\x1aa\n" +
+	"\x13ClaimProducersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x124\n" +
+	"\x05value\x18\x02 \x01(\v2\x1e.rimsky.v1.ClaimProducerHandleR\x05value:\x028\x01B\x14\n" +
 	"\x12_prior_dispatch_idB\x1d\n" +
 	"\x1b_prior_dispatch_dispositionJ\x04\b\x04\x10\x05J\x04\b\n" +
-	"\x10\vJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\buserdataR\aresumedR\vrun_attemptR\x0eresume_context\"\xb5\x01\n" +
-	"\vStoreHandle\x12\x12\n" +
+	"\x10\vJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\buserdataR\aresumedR\vrun_attemptR\x0eresume_context\"\xbd\x01\n" +
+	"\x13ClaimProducerHandle\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12/\n" +
 	"\x06handle\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06handle\x12)\n" +
 	"\x10candidate_handle\x18\x06 \x01(\fR\x0fcandidateHandleJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\rwrite_regionsR\fread_regionsR\aresumed\"\xd7\x01\n" +
@@ -1105,23 +1105,23 @@ var file_executor_proto_goTypes = []any{
 	(PriorDispatchDisposition)(0), // 0: rimsky.v1.PriorDispatchDisposition
 	(ParkReason)(0),               // 1: rimsky.v1.ParkReason
 	(*ExecuteRequest)(nil),        // 2: rimsky.v1.ExecuteRequest
-	(*StoreHandle)(nil),           // 3: rimsky.v1.StoreHandle
+	(*ClaimProducerHandle)(nil),   // 3: rimsky.v1.ClaimProducerHandle
 	(*Outcome)(nil),               // 4: rimsky.v1.Outcome
 	(*Success)(nil),               // 5: rimsky.v1.Success
 	(*Error)(nil),                 // 6: rimsky.v1.Error
 	(*Park)(nil),                  // 7: rimsky.v1.Park
 	(*AwaitAsyncCallback)(nil),    // 8: rimsky.v1.AwaitAsyncCallback
 	(*AsyncCallbackBody)(nil),     // 9: rimsky.v1.AsyncCallbackBody
-	nil,                           // 10: rimsky.v1.ExecuteRequest.StoresEntry
+	nil,                           // 10: rimsky.v1.ExecuteRequest.ClaimProducersEntry
 	(*structpb.Struct)(nil),       // 11: google.protobuf.Struct
 	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
 }
 var file_executor_proto_depIdxs = []int32{
 	11, // 0: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
 	11, // 1: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
-	10, // 2: rimsky.v1.ExecuteRequest.stores:type_name -> rimsky.v1.ExecuteRequest.StoresEntry
+	10, // 2: rimsky.v1.ExecuteRequest.claim_producers:type_name -> rimsky.v1.ExecuteRequest.ClaimProducersEntry
 	0,  // 3: rimsky.v1.ExecuteRequest.prior_dispatch_disposition:type_name -> rimsky.v1.PriorDispatchDisposition
-	11, // 4: rimsky.v1.StoreHandle.handle:type_name -> google.protobuf.Struct
+	11, // 4: rimsky.v1.ClaimProducerHandle.handle:type_name -> google.protobuf.Struct
 	5,  // 5: rimsky.v1.Outcome.success:type_name -> rimsky.v1.Success
 	6,  // 6: rimsky.v1.Outcome.error:type_name -> rimsky.v1.Error
 	7,  // 7: rimsky.v1.Outcome.park:type_name -> rimsky.v1.Park
@@ -1135,7 +1135,7 @@ var file_executor_proto_depIdxs = []int32{
 	5,  // 15: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
 	6,  // 16: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
 	7,  // 17: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
-	3,  // 18: rimsky.v1.ExecuteRequest.StoresEntry.value:type_name -> rimsky.v1.StoreHandle
+	3,  // 18: rimsky.v1.ExecuteRequest.ClaimProducersEntry.value:type_name -> rimsky.v1.ClaimProducerHandle
 	2,  // 19: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
 	4,  // 20: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.Outcome
 	20, // [20:21] is the sub-list for method output_type

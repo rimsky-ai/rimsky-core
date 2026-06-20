@@ -167,9 +167,10 @@ func (x *PublisherKindCapability) GetConfigSchema() []byte {
 	return nil
 }
 
-// SubscribeRequest carries the publisher-subscription routing fields
-// inline (no on-observation substruct). The publisher uses target_node
-// and message_type to build the message envelope at publish time.
+// SubscribeRequest carries the publisher-subscription identity and
+// routing fields. The publisher copies `message_type` onto each emitted
+// envelope; rimsky's runtime routes delivery purely by message type
+// against node-subscription edges.
 type SubscribeRequest struct {
 	state                   protoimpl.MessageState `protogen:"open.v1"`
 	PublisherSubscriptionId string                 `protobuf:"bytes,1,opt,name=publisher_subscription_id,json=publisherSubscriptionId,proto3" json:"publisher_subscription_id,omitempty"`
@@ -180,19 +181,10 @@ type SubscribeRequest struct {
 	// Substituted by rimsky from the template `publishers:` block before
 	// dispatch.
 	ResolvedConfig []byte `protobuf:"bytes,4,opt,name=resolved_config,json=resolvedConfig,proto3" json:"resolved_config,omitempty"`
-	// target_node is the receiver node alias on the instance side. It is
-	// used by rimsky for subscription routing only; the publisher does NOT
-	// copy it onto each message envelope as a wire field (the
-	// `rimsky_messages.target` column was retired in the 2026-06-14
-	// message-schema-layer reshape, and the receipt handler has no `target`
-	// field on `postMessageRequest`).
-	TargetNode string `protobuf:"bytes,5,opt,name=target_node,json=targetNode,proto3" json:"target_node,omitempty"`
 	// message_type is the wire-level message type-path declared in the
 	// target instance's template `messages:` registry. The publisher
 	// copies this onto each message envelope as `type`. No default —
-	// an empty value is rejected at the receipt-time registry gate. The
-	// legacy `"invalidate"` default retired in the 2026-06-14 message-
-	// schema-layer reshape (templates declare their accepted types).
+	// an empty value is rejected at the receipt-time registry gate.
 	MessageType   string `protobuf:"bytes,6,opt,name=message_type,json=messageType,proto3" json:"message_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -254,13 +246,6 @@ func (x *SubscribeRequest) GetResolvedConfig() []byte {
 		return x.ResolvedConfig
 	}
 	return nil
-}
-
-func (x *SubscribeRequest) GetTargetNode() string {
-	if x != nil {
-		return x.TargetNode
-	}
-	return ""
 }
 
 func (x *SubscribeRequest) GetMessageType() string {
@@ -436,7 +421,6 @@ type PublisherSubscriptionDescriptor struct {
 	InstanceId              string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	Kind                    string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
 	ResolvedConfig          []byte                 `protobuf:"bytes,4,opt,name=resolved_config,json=resolvedConfig,proto3" json:"resolved_config,omitempty"`
-	TargetNode              string                 `protobuf:"bytes,5,opt,name=target_node,json=targetNode,proto3" json:"target_node,omitempty"`
 	MessageType             string                 `protobuf:"bytes,6,opt,name=message_type,json=messageType,proto3" json:"message_type,omitempty"`
 	StartedAt               *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	unknownFields           protoimpl.UnknownFields
@@ -501,13 +485,6 @@ func (x *PublisherSubscriptionDescriptor) GetResolvedConfig() []byte {
 	return nil
 }
 
-func (x *PublisherSubscriptionDescriptor) GetTargetNode() string {
-	if x != nil {
-		return x.TargetNode
-	}
-	return ""
-}
-
 func (x *PublisherSubscriptionDescriptor) GetMessageType() string {
 	if x != nil {
 		return x.MessageType
@@ -533,30 +510,26 @@ const file_publisher_proto_rawDesc = "" +
 	"\x1avalidation_supported_roles\x18\x03 \x03(\tR\x18validationSupportedRoles\"R\n" +
 	"\x17PublisherKindCapability\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12#\n" +
-	"\rconfig_schema\x18\x02 \x01(\fR\fconfigSchema\"\xf0\x01\n" +
+	"\rconfig_schema\x18\x02 \x01(\fR\fconfigSchema\"\xcf\x01\n" +
 	"\x10SubscribeRequest\x12:\n" +
 	"\x19publisher_subscription_id\x18\x01 \x01(\tR\x17publisherSubscriptionId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
 	"instanceId\x12\x12\n" +
 	"\x04kind\x18\x03 \x01(\tR\x04kind\x12'\n" +
-	"\x0fresolved_config\x18\x04 \x01(\fR\x0eresolvedConfig\x12\x1f\n" +
-	"\vtarget_node\x18\x05 \x01(\tR\n" +
-	"targetNode\x12!\n" +
+	"\x0fresolved_config\x18\x04 \x01(\fR\x0eresolvedConfig\x12!\n" +
 	"\fmessage_type\x18\x06 \x01(\tR\vmessageType\"\x13\n" +
 	"\x11SubscribeResponse\"P\n" +
 	"\x12UnsubscribeRequest\x12:\n" +
 	"\x19publisher_subscription_id\x18\x01 \x01(\tR\x17publisherSubscriptionId\"\x15\n" +
 	"\x13UnsubscribeResponse\"m\n" +
 	"\x19ListSubscriptionsResponse\x12P\n" +
-	"\rsubscriptions\x18\x01 \x03(\v2*.rimsky.v1.PublisherSubscriptionDescriptorR\rsubscriptions\"\xba\x02\n" +
+	"\rsubscriptions\x18\x01 \x03(\v2*.rimsky.v1.PublisherSubscriptionDescriptorR\rsubscriptions\"\x99\x02\n" +
 	"\x1fPublisherSubscriptionDescriptor\x12:\n" +
 	"\x19publisher_subscription_id\x18\x01 \x01(\tR\x17publisherSubscriptionId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
 	"instanceId\x12\x12\n" +
 	"\x04kind\x18\x03 \x01(\tR\x04kind\x12'\n" +
-	"\x0fresolved_config\x18\x04 \x01(\fR\x0eresolvedConfig\x12\x1f\n" +
-	"\vtarget_node\x18\x05 \x01(\tR\n" +
-	"targetNode\x12!\n" +
+	"\x0fresolved_config\x18\x04 \x01(\fR\x0eresolvedConfig\x12!\n" +
 	"\fmessage_type\x18\x06 \x01(\tR\vmessageType\x129\n" +
 	"\n" +
 	"started_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt2\xbe\x02\n" +

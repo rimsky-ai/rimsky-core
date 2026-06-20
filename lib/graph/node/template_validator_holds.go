@@ -50,7 +50,7 @@ func validateHolds(n TemplateNodeDef, base string, spec *TemplateSpec, declared 
 }
 
 func storeAliasDeclared(n TemplateNodeDef, alias string) bool {
-	for _, s := range n.Stores {
+	for _, s := range n.ClaimProducers {
 		if s.AliasOf() == alias {
 			return true
 		}
@@ -83,7 +83,7 @@ func validateFanOut(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 	}
 	var producerName string
 	if storeAliasDeclared(n, claim) {
-		for _, s := range n.Stores {
+		for _, s := range n.ClaimProducers {
 			if s.AliasOf() == claim {
 				producerName = s.Name
 				break
@@ -100,12 +100,12 @@ func validateFanOut(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 		return
 	}
 
-	if producerName != "" && hooks.StoreAdvertisesSplitScope != nil {
-		if !hooks.StoreAdvertisesSplitScope(producerName) {
+	if producerName != "" && hooks.ClaimProducerAdvertisesSplitScope != nil {
+		if !hooks.ClaimProducerAdvertisesSplitScope(producerName) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: fbase + ".claim",
 				Msg: fmt.Sprintf(
-					"fan_out requires store %q to advertise supports_split_scope",
+					"fan_out requires claim_producer %q to advertise supports_split_scope",
 					producerName),
 			})
 		}

@@ -26,7 +26,7 @@ type SupervisorConfig struct {
 	LivenessInterval      time.Duration
 	ClaimPollInterval     time.Duration
 	Resolver              executor.Resolver
-	Stores                RemoteStoresConfig
+	ClaimProducers        RemoteClaimProducersConfig
 	NamedLocks            locks.NamedLocksConfig
 	CallbackHost          string
 	CallbackPort          int
@@ -72,17 +72,17 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if persistStore == nil {
 		return nil, fmt.Errorf("StartSupervisor: Database.Tables() returned nil — driver did not initialize the Tables accessor")
 	}
-	registry, err := dialRemoteStores(context.Background(), cfg.Stores, persistStore, cfg.LateBindServiceProxies)
+	registry, err := dialRemoteClaimProducers(context.Background(), cfg.ClaimProducers, persistStore, cfg.LateBindServiceProxies)
 	if err != nil {
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
 	}
-	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.Stores, cfg.Executors)
+	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors)
 	if err != nil {
 		registry.Close()
 		return nil, fmt.Errorf("StartSupervisor: dial lifecycle subscribers: %w", err)
 	}
 	_, _, dataProcessors, dpClosers, err := DialPublisherAndValidationRegistries(
-		context.Background(), cfg.Stores, cfg.Executors, RemotePublishersConfig{})
+		context.Background(), cfg.ClaimProducers, cfg.Executors, RemotePublishersConfig{})
 	if err != nil {
 		registry.Close()
 		lifecycleSubs.Close()

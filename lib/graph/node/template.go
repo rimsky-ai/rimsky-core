@@ -7,12 +7,12 @@ package node
 import "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 
 type (
-	TemplateSpec      = spec.TemplateSpec
-	TemplateNodeDef   = spec.TemplateNodeDef
-	NodeStoreRef      = spec.NodeStoreRef
-	NodeLockRef       = spec.NodeLockRef
-	NodeAttributesDef = spec.NodeAttributesDef
-	SubscriptionEntry = spec.SubscriptionEntry
+	TemplateSpec         = spec.TemplateSpec
+	TemplateNodeDef      = spec.TemplateNodeDef
+	NodeClaimProducerRef = spec.NodeClaimProducerRef
+	NodeLockRef          = spec.NodeLockRef
+	NodeAttributesDef    = spec.NodeAttributesDef
+	SubscriptionEntry    = spec.SubscriptionEntry
 
 	GraphSpec         = spec.GraphSpec
 	HoldsBinding      = spec.HoldsBinding
@@ -39,13 +39,13 @@ const (
 	SelfTarget = spec.SelfTarget
 )
 
-func RequiredStores(node TemplateNodeDef) []string {
-	if len(node.Stores) == 0 {
+func RequiredClaimProducers(node TemplateNodeDef) []string {
+	if len(node.ClaimProducers) == 0 {
 		return nil
 	}
-	seen := make(map[string]struct{}, len(node.Stores))
-	out := make([]string, 0, len(node.Stores))
-	for _, s := range node.Stores {
+	seen := make(map[string]struct{}, len(node.ClaimProducers))
+	out := make([]string, 0, len(node.ClaimProducers))
+	for _, s := range node.ClaimProducers {
 		if s.Name == "" {
 			continue
 		}

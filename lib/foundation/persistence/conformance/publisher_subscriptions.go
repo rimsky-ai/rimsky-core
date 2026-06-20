@@ -42,7 +42,6 @@ func testPublisherSubscriptionLifecycle(t *testing.T, d persistence.Database) {
 			PublisherName:  "sensor-alpha",
 			Kind:           "http",
 			ResolvedConfig: []byte(`{"url":"https://example.invalid"}`),
-			TargetNode:     "root",
 			StartedAt:      time.Now().UTC(),
 		})
 	}); err != nil {
@@ -97,7 +96,6 @@ func testPublisherSubscriptionLifecycle(t *testing.T, d persistence.Database) {
 			PublisherName:  "sensor-beta",
 			Kind:           "http",
 			ResolvedConfig: []byte(`{}`),
-			TargetNode:     "root",
 			StartedAt:      time.Now().UTC(),
 		})
 	}); err != nil {

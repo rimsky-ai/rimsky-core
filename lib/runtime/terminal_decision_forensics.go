@@ -12,11 +12,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-func outcomeVerbName(o AggregateOutcome) string {
-	switch o {
-	case AggregateCommit:
+func outcomeVerbName(o TerminalOutcome) string {
+	if o == OutcomeCommit {
 		return "Commit"
-	case AggregateAbandon:
+	}
+	if o.IsAbandon() {
 		return "Abandon"
 	}
 	return "Unknown"
@@ -62,8 +62,9 @@ func emitTerminalForensics(
 		VersionID:           preferVersionID(versionID, td.LineageHint.VersionID),
 		Outcome:             outcome,
 	}
-	if td.Outcome == AggregateAbandon && td.Cause != "" && td.Cause != TerminalCauseNatural {
-		rec.Cause = string(td.Cause)
+	switch td.Outcome {
+	case OutcomeAbandonSiblingCancel, OutcomeAbandonDescendantCancel:
+		rec.Cause = td.Outcome.CauseString()
 	}
 	if lt := args.Persist.Lineage(); lt != nil {
 		if err := WriteClaimTerminalLineage(ctx, tx, lt,
@@ -87,13 +88,9 @@ func emitTerminalForensics(
 	if td.ParentClaimHandleID != nil {
 		payload["parent_claim_handle_id"] = td.ParentClaimHandleID.String()
 	}
-	if td.Outcome == AggregateAbandon {
+	if td.Outcome.IsAbandon() {
 		kind = events.KindClaimResolutionAbandon()
-		cause := td.Cause
-		if cause == "" {
-			cause = TerminalCauseNatural
-		}
-		payload["cause"] = string(cause)
+		payload["cause"] = td.Outcome.CauseString()
 		if rec.VersionID == "" {
 			delete(payload, "version_id")
 		}
@@ -114,15 +111,13 @@ func emitTerminalForensics(
 }
 
 func terminalOutcomeKey(td TerminalDecision) string {
-	if td.Outcome == AggregateCommit {
+	switch td.Outcome {
+	case OutcomeCommit:
 		return persistence.LineageOutcomeCommitted
-	}
-	switch td.Cause {
-	case TerminalCauseSiblingCancel, TerminalCauseDescendantCancel:
+	case OutcomeAbandonSiblingCancel, OutcomeAbandonDescendantCancel:
 		return persistence.LineageOutcomeForceCancelled
-	default:
-		return persistence.LineageOutcomeAbandoned
 	}
+	return persistence.LineageOutcomeAbandoned
 }
 
 func preferVersionID(fromVerb, fromHint string) string {

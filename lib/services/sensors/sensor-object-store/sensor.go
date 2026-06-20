@@ -41,7 +41,6 @@ type Watch struct {
 	Prefix         string
 	PollInterval   time.Duration
 	WatermarkField string
-	TargetNode     string
 	MessageType    string
 
 	LastPollAt    time.Time
@@ -87,7 +86,6 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 			Prefix:         r.Prefix,
 			PollInterval:   interval,
 			WatermarkField: r.WatermarkField,
-			TargetNode:     r.TargetNode,
 			MessageType:    r.MessageType,
 			WatermarkName:  r.WatermarkName,
 		}
@@ -219,7 +217,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		Prefix:         cfg.Prefix,
 		PollInterval:   interval,
 		WatermarkField: cfg.WatermarkField,
-		TargetNode:     req.GetTargetNode(),
 		MessageType:    messageType,
 	}
 	s.mu.Lock()
@@ -285,7 +282,6 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			PublisherSubscriptionId: w.SubscriptionID,
 			InstanceId:              w.InstanceID,
 			Kind:                    "object-store",
-			TargetNode:              w.TargetNode,
 			MessageType:             w.MessageType,
 			StartedAt:               timestamppb.New(s.clock()),
 		})
@@ -405,7 +401,6 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 		"type":                      w.MessageType,
 		"payload":                   json.RawMessage(payloadBytes),
 		"sender":                    "sensor-object-store",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": w.SubscriptionID,
 	}
 	raw, err := publisherkit.MarshalEnvelope(envelope)
@@ -417,7 +412,7 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 		URL:            url,
 		Envelope:       raw,
 		IdempotencyKey: idempotencyKey,
-		SensorName:     "sensor-object-store",
+		PublisherName:  "sensor-object-store",
 		SubscriptionID: w.SubscriptionID,
 	})
 	return res.Err

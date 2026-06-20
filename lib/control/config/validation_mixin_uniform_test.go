@@ -88,7 +88,7 @@ func TestValidationMixinUniformAcrossPeerKinds(t *testing.T) {
 		genv1.RegisterValidationServer(s, stubValidationService{})
 	})
 
-	stores := RemoteStoresConfig{Stores: map[string]StoreEntry{
+	stores := RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
 		"producer-peer": {
 			Endpoint:  "grpc://" + cpEndpoint,
 			Protocols: []string{ProtocolClaimProducer, claimproducer.ProtocolValidation},

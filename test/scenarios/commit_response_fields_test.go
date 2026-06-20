@@ -17,9 +17,9 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 const commitResponseStampedVersion = "v-base-commit-7"
@@ -37,8 +37,8 @@ func TestCommitResponseFields_PlainNode_VersionIDPersisted(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"cr-store": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -62,7 +62,7 @@ func TestCommitResponseFields_PlainNode_VersionIDPersisted(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "plain-commit", Executor: "stub"},
 				openAttrs,
-				scenario.WithStores(scenario.AliasedClaimRef("cr-store", "items", "rw", "data")),
+				scenario.WithClaimProducers(scenario.AliasedClaimRef("cr-store", "items", "rw", "data")),
 			),
 		},
 	})
@@ -109,8 +109,8 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"cr-fanout-store": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -142,7 +142,7 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 					},
 				},
 				openAttrs,
-				scenario.WithStores(scenario.AliasedClaimRef("cr-fanout-store", "data", "rw", "data")),
+				scenario.WithClaimProducers(scenario.AliasedClaimRef("cr-fanout-store", "data", "rw", "data")),
 			),
 		},
 	})

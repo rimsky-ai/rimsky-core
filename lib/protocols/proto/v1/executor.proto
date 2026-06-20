@@ -16,7 +16,7 @@ option go_package = "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen
 // variants — Success / Error / Park / AwaitAsyncCallback — three of which
 // settle the dispatch directly and the fourth of which defers the verdict
 // to a later HTTP POST callback. See concept:executor for the full
-// contract (transports, async handoff, attributes, stores, deadlines,
+// contract (transports, async handoff, attributes, claim_producers, deadlines,
 // auth).
 service Executor {
   // Execute is called by the rimsky supervisor when dispatching a node.
@@ -56,8 +56,8 @@ message ExecuteRequest {
   // regardless.
   google.protobuf.Struct attributes_schema = 6;
 
-  // Handles for each store the node references. Keyed by store-config name.
-  map<string, StoreHandle> stores = 7;
+  // Handles for each claim_producer the node references. Keyed by claim_producer-config name.
+  map<string, ClaimProducerHandle> claim_producers = 7;
 
   // HTTP+JSON callback URL the executor may POST to for async handoff,
   // incremental attribute writes, scratch writes, and keepalive bumps.
@@ -130,7 +130,7 @@ message ExecuteRequest {
   // the supervisor materializes spilled scratch via the configured
   // BlobBackend before populating this field.
   //
-  // Inert in rimsky per @blessed-invariant 21 / concept:inertness. The
+  // Inert in rimsky per concept:inertness. The
   // executor writes scratch back via the Success / Error / Park outcome
   // variants (terminal-final) or via the
   // POST {callback_url}/v1/runs/{run_id}/scratch callback (mid-dispatch).
@@ -156,11 +156,11 @@ enum PriorDispatchDisposition {
   PRIOR_RECALCULATE       = 3;
 }
 
-// StoreHandle is the per-store reference handed to the executor at
+// ClaimProducerHandle is the per-claim_producer reference handed to the executor at
 // dispatch. `handle` carries the producer-supplied Address bytes
 // returned by ClaimProducer.Open — opaque to Rimsky, decoded by
-// the executor per its store-specific knowledge.
-message StoreHandle {
+// the executor per its producer-specific knowledge.
+message ClaimProducerHandle {
   // Operator-configured producer kind (e.g. "filesystem", "postgres",
   // or a producer's own canonical kind name). Conventionally
   // informational — the executor knows its producer's kind from the
@@ -168,7 +168,7 @@ message StoreHandle {
   string kind = 1;
   // Producer-supplied Address bytes returned by ClaimProducer.Open,
   // wrapped as a google.protobuf.Struct so JSON-shaped addresses
-  // round-trip cleanly. Inert to Rimsky per @blessed-invariant 20.
+  // round-trip cleanly. Inert to Rimsky.
   google.protobuf.Struct handle = 2;
   // Reserved field numbers (legacy `write_regions`, `read_regions`,
   // `resumed`).
@@ -178,7 +178,7 @@ message StoreHandle {
   // DataProcessing-capable claims at fan-out leaf dispatch. Opaque to
   // rimsky; the executor passes this back to its own writes against
   // the producer. Empty for non-DataProcessing claims and non-fan-out
-  // claims. Per @blessed-invariant 20 the bytes are inert in rimsky.
+  // claims. The bytes are inert in rimsky.
   bytes candidate_handle = 6;
 }
 
@@ -207,7 +207,7 @@ message Success {
   string change_summary = 2;
   google.protobuf.Struct attributes_delta = 3;
   // Executor-attached opaque bytes the supervisor persists onto the
-  // dispatch row at terminal time. Inert in rimsky per @blessed-invariant 21.
+  // dispatch row at terminal time. Inert in rimsky.
   bytes scratch = 4;
   // Set semantics: duplicates are collapsed at decode and order is the
   // first-appearance order from the wire. Each tag must appear in the
@@ -226,7 +226,7 @@ message Error {
   string error_class = 1;
   google.protobuf.Struct payload = 2;
   // Executor-attached opaque bytes the supervisor persists onto the
-  // dispatch row at terminal time. Inert in rimsky per @blessed-invariant 21.
+  // dispatch row at terminal time. Inert in rimsky.
   bytes scratch = 3;
   google.protobuf.Struct attributes_delta = 4;
   // Set semantics — same rules as Success.tags.
@@ -240,7 +240,7 @@ message Error {
 // endpoint, the rimsky `parked list --reason=` flag, and the
 // Prometheus rimsky_parked_nodes_by_reason gauge label.
 //
-// @blessed-invariant: ParkReason is a closed two-value set
+// ParkReason is a closed two-value set
 // (PARK_REASON_AWAIT_CALLBACK, PARK_REASON_SNOOZE). The proto wire
 // layer rejects any other value at decode. No UNSPECIFIED, no
 // OTHER, no fallback. Storage CHECK on
@@ -292,7 +292,7 @@ message Park {
   // col:rimsky_node_runs.parked_reason_label.
   string reason_label = 6;
   // Executor-attached opaque bytes the supervisor persists onto the
-  // dispatch row at terminal time. Inert in rimsky per @blessed-invariant 21.
+  // dispatch row at terminal time. Inert in rimsky.
   bytes scratch = 7;
   google.protobuf.Struct attributes_delta = 8;
   // Set semantics — same rules as Success.tags.

@@ -352,7 +352,6 @@ func deployObjectStoreSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 					"name":         objectStorePublisherName,
 					"kind":         "object-store",
 					"config":       json.RawMessage(configBytes),
-					"target_node":  objectStoreReactorNode,
 					"message_type": objectStoreMessageType,
 				},
 			},

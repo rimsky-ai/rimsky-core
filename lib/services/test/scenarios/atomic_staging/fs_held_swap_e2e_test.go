@@ -120,7 +120,7 @@ func deployHeldSwapTemplate(t *testing.T, ep harness.RimskyEndpoint, name, selec
 				{
 					"type":     "acquirer",
 					"executor": "ok",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{
 							"name":     "content",
 							"selector": selector,

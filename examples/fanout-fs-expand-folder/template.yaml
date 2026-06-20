@@ -15,7 +15,7 @@
 #
 # Stack prerequisites (operator-side):
 #   - rimsky stack reachable at RIMSKY_ENDPOINT
-#   - bundled `rimsky-store-filesystem` registered as claim producer
+#   - bundled `rimsky-claim-producer-filesystem` registered as claim producer
 #     `fs-store` advertising supports_split_scope=true with pick policy
 #     `@folder-queue` rooted at the seed/queue/ directory shipped with
 #     this example. The seeded folder `example-folder/` contains
@@ -47,7 +47,7 @@ nodes:
       `@folder-queue` pick policy. partition_request asks the store to
       expand the folder's `*.json` files. Each child sees its file's
       absolute path through {{claim.folder.address}}.
-    stores:
+    claim_producers:
       - name: fs-store
         selector: "@folder-queue"
         intent: rw

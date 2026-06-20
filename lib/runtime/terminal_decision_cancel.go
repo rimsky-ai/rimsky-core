@@ -91,7 +91,7 @@ func cancelInFlightSiblings(
 			ClaimHandleID:       sib.ID,
 			SupervisorID:        args.SupervisorID,
 			Source:              HeldTerminal,
-			Outcome:             AggregateAbandon,
+			Outcome:             OutcomeAbandonSiblingCancel,
 			Producer:            producer,
 			Scope:               []byte(sib.ClaimScopeData),
 			Address:             []byte(sib.Address),
@@ -100,7 +100,6 @@ func cancelInFlightSiblings(
 			ProducerName:        producerName,
 			LineageHint:         hint,
 			ParentClaimHandleID: sib.ParentClaimHandleID,
-			Cause:               TerminalCauseSiblingCancel,
 		}); err != nil {
 			return fmt.Errorf("cancelInFlightSiblings: force-Abandon sibling %s: %w",
 				sib.ID, err)
@@ -162,7 +161,7 @@ func cancelDescendantClaims(
 			ClaimHandleID:       d.ID,
 			SupervisorID:        args.SupervisorID,
 			Source:              HeldTerminal,
-			Outcome:             AggregateAbandon,
+			Outcome:             OutcomeAbandonDescendantCancel,
 			Producer:            producer,
 			Scope:               []byte(d.ClaimScopeData),
 			Address:             []byte(d.Address),
@@ -171,7 +170,6 @@ func cancelDescendantClaims(
 			ProducerName:        producerName,
 			LineageHint:         hint,
 			ParentClaimHandleID: nil,
-			Cause:               TerminalCauseDescendantCancel,
 		}); err != nil {
 			return fmt.Errorf("cancelDescendantClaims: force-Abandon descendant %s: %w",
 				d.ID, err)

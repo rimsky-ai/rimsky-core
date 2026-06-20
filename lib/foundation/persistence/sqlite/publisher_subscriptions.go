@@ -30,8 +30,8 @@ func (b *publisherSubscriptionsImpl) q(tx persistence.Tx) querier {
 const sqliteInsertPublisherSubscriptionSQL = `
 INSERT INTO rimsky_publisher_subscriptions (
     id, instance_id, publisher_name, kind, resolved_config,
-    target_node, message_type, started_at, state, failure_reason
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`
+    message_type, started_at, state, failure_reason
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`
 
 func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.Tx, row persistence.PublisherSubscriptionRow) error {
 	if row.State == "" {
@@ -39,7 +39,7 @@ func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.
 	}
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertPublisherSubscriptionSQL,
 		row.ID.String(), row.InstanceID.String(), row.PublisherName, row.Kind,
-		row.ResolvedConfig, row.TargetNode, row.MessageType,
+		row.ResolvedConfig, row.MessageType,
 		formatTime(row.StartedAt), row.State, row.FailureReason)
 	if err != nil {
 		return fmt.Errorf("sqlite.PublisherSubscriptions.Insert: %w", err)
@@ -58,7 +58,7 @@ func (b *publisherSubscriptionsImpl) Delete(ctx context.Context, tx persistence.
 
 const sqliteListPublisherSubscriptionsByInstanceSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_type, started_at, state,
+       message_type, started_at, state,
        COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE instance_id = ?
@@ -75,7 +75,7 @@ func (b *publisherSubscriptionsImpl) ListByInstance(ctx context.Context, instanc
 
 const sqliteListPublisherSubscriptionsByStateSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_type, started_at, state,
+       message_type, started_at, state,
        COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE state = ?`
@@ -91,7 +91,7 @@ func (b *publisherSubscriptionsImpl) ListByState(ctx context.Context, state stri
 
 const sqliteGetPublisherSubscriptionSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_type, started_at, state,
+       message_type, started_at, state,
        COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE id = ?`
@@ -138,7 +138,7 @@ func scanPublisherSubscriptions(rows *sql.Rows) ([]persistence.PublisherSubscrip
 		var startedAtStr sql.NullString
 		if err := rows.Scan(
 			&idStr, &instanceStr, &w.PublisherName, &w.Kind,
-			&w.ResolvedConfig, &w.TargetNode, &w.MessageType,
+			&w.ResolvedConfig, &w.MessageType,
 			&startedAtStr, &w.State, &w.FailureReason,
 		); err != nil {
 			return nil, err

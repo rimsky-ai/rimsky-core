@@ -27,8 +27,8 @@ func TestSubscribe_RestartReplay_PreloadsLastIdempotency(t *testing.T) {
 		InstanceID:        "inst-2",
 		PathPrefix:        "/wh/restart",
 		IdempotencyHeader: "X-Idem",
-		TargetNode:        "ingest",
-		MessageType:       "invalidate",
+
+		MessageType: "invalidate",
 	}
 	if err := s1.UpsertSubscription(ctx, w); err != nil {
 		t.Fatalf("UpsertSubscription: %v", err)
@@ -75,8 +75,8 @@ func TestStateDB_PersistsAcrossRestart(t *testing.T) {
 		InstanceID:        "inst-1",
 		PathPrefix:        "/wh/abc",
 		IdempotencyHeader: "X-Idem",
-		TargetNode:        "ingest",
-		MessageType:       "invalidate",
+
+		MessageType: "invalidate",
 	}
 	if err := s1.UpsertSubscription(ctx, w); err != nil {
 		t.Fatalf("UpsertSubscription: %v", err)

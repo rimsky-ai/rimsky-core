@@ -139,12 +139,12 @@ func SweepReady(ctx context.Context, args ConductorArgs) error {
 			continue
 		}
 		if err := args.Queue.Enqueue(ctx, persistence.DispatchRequest{
-			NodeID:         n.ID,
-			ExecutorName:   n.Executor,
-			RequiredStores: []string{},
-			EnqueuedAt:     args.Clock.Now(),
-			FrameID:        *n.FrameID,
-			RunScopeID:     *n.RunScopeID,
+			NodeID:                 n.ID,
+			ExecutorName:           n.Executor,
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             args.Clock.Now(),
+			FrameID:                *n.FrameID,
+			RunScopeID:             *n.RunScopeID,
 		}); err != nil {
 			// @concept: run-scope
 			if errors.Is(err, persistence.ErrRunScopeClosed) {

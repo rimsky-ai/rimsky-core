@@ -22,7 +22,7 @@ type SchedulerConfig struct {
 	Logger                  shared.Logger
 	TickInterval            time.Duration
 	MaxQuietPeriodDefault   time.Duration
-	Stores                  RemoteStoresConfig
+	ClaimProducers          RemoteClaimProducersConfig
 	NamedLocks              locks.NamedLocksConfig
 	SupervisorID            string
 	Blob                    persistence.BlobBackend
@@ -46,7 +46,7 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 	if persistStore == nil {
 		return nil, fmt.Errorf("StartScheduler: Database.Tables() returned nil — driver did not initialize the Tables accessor")
 	}
-	registry, err := dialRemoteStores(context.Background(), cfg.Stores, persistStore, nil)
+	registry, err := dialRemoteClaimProducers(context.Background(), cfg.ClaimProducers, persistStore, nil)
 	if err != nil {
 		return nil, fmt.Errorf("StartScheduler: %w", err)
 	}

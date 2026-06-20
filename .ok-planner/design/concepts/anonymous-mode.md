@@ -33,11 +33,11 @@ Owns: the active-key-count predicate over the API-key ledger, the synthetic-iden
 
 1. Operator deploys rimsky; migration runs; the API-key ledger is empty.
 2. Control-api starts; predicate is true; banner WARN fires.
-3. Operator runs the auth-init command. The CLI posts to the key-mint endpoint with the bundled `admin` role expansion; no bearer token.
+3. Operator runs the bootstrap key-mint command via the unauthenticated endpoint; no bearer token.
 4. Server admits the request via the synthetic admin identity; mints the key; returns the plaintext exactly once.
 5. Operator captures the plaintext (env var or flag) for subsequent commands.
 6. Anonymous mode ends — subsequent unauthenticated requests are rejected as unauthorized.
 
 ## Break-glass: lost admin key
 
-If all keys are lost: the operator connects to the database directly and either deletes the key rows or marks them all revoked. With no active key remaining, anonymous mode resumes and the auth-init command works again. Documented as operator-recoverable; no CLI verb required (by definition the operator has DB access).
+If all keys are lost: the operator connects to the database directly and either deletes the key rows or marks them all revoked. With no active key remaining, anonymous mode resumes and the bootstrap key-mint flow works again. Operators with database access can return the deployment to anonymous mode.

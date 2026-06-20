@@ -21,9 +21,9 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
-	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 func TestLineageExploration(t *testing.T) {
@@ -39,8 +39,8 @@ func TestLineageExploration(t *testing.T) {
 	const producerName = "lineage-store"
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		Stores: config.RemoteStoresConfig{
-			Stores: map[string]config.StoreEntry{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
 				producerName: {
 					Endpoint: "grpc://" + endpoint,
 					Capabilities: claimproducer.Capabilities{
@@ -74,7 +74,7 @@ func TestLineageExploration(t *testing.T) {
 						"ok": map[string]any{"type": "boolean", "readOnly": true},
 					},
 				}),
-				scenario.WithStores(scenario.AliasedClaimRef(producerName, "/data/root", "rw", claimAlias)),
+				scenario.WithClaimProducers(scenario.AliasedClaimRef(producerName, "/data/root", "rw", claimAlias)),
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{

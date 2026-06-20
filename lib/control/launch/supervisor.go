@@ -63,7 +63,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
 		return nil, nil, err
 	}
-	storesCfg := rimskyCfg.Stores
+	storesCfg := rimskyCfg.ClaimProducers
 	namedLocksCfg := rimskyCfg.NamedLocks
 
 	supID := cfg.SupervisorID
@@ -174,7 +174,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		LivenessInterval:            time.Duration(livenessMs) * time.Millisecond,
 		ClaimPollInterval:           time.Duration(claimPollMs) * time.Millisecond,
 		Resolver:                    resolver,
-		Stores:                      storesCfg,
+		ClaimProducers:              storesCfg,
 		NamedLocks:                  namedLocksCfg,
 		CallbackHost:                callbackHost,
 		CallbackPort:                callbackPort,

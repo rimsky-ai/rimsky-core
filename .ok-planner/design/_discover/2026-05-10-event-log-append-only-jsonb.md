@@ -36,12 +36,12 @@ occurred_at        TIMESTAMPTZ,
 seq                BIGINT
 ```
 
-with indexes that support the substitution-side `LatestByName DESC` lookup (`foundation/persistence/node_events.go:16-50`). Per `@blessed-invariant 21` (annotated at the file head), payload bytes flow through this file inert — they're never logged, normalized, or transformed beyond schema gates, and large payloads spill via `BlobBackend`.
+with indexes that support the substitution-side `LatestByName DESC` lookup (`foundation/persistence/node_events.go:16-50`). Per the blob-inertness invariant (annotated at the file head), payload bytes flow through this file inert — they're never logged, normalized, or transformed beyond schema gates, and large payloads spill via `BlobBackend`.
 
 The split is deliberate. Rimsky-internal audit (`rimsky_events`) and externally-emitted event payloads (`rimsky_node_events`) differ in:
 
 - **Origin**: rimsky writes the first; an executor writes the second.
-- **Opacity**: `rimsky_events.payload` is rimsky's own JSONB so rimsky can read it back for the dashboard. `rimsky_node_events.payload_*` is opaque per invariant 21 and 20.
+- **Opacity**: `rimsky_events.payload` is rimsky's own JSONB so rimsky can read it back for the dashboard. `rimsky_node_events.payload_*` is opaque per the blob-inertness and claim-inertness invariants.
 - **Spill**: only `rimsky_node_events` has the inline/handle pair for large payloads.
 - **Read pattern**: `rimsky_events` is paged by `(instance_id, occurred_at)` for timelines; `rimsky_node_events` is queried by `(node_id, event_name) ORDER BY seq DESC LIMIT 1` for substitution.
 
@@ -67,7 +67,7 @@ The `kind` column on `rimsky_events` is a free-form string (no enum CHECK). New 
 
 ## Adjacent topics
 
-- `2026-05-10-opacity-of-userdata-claim-blob` — invariant 21 / 20 / 11 govern payload bytes here.
+- `2026-05-10-opacity-of-userdata-claim-blob` — the blob-inertness, claim-inertness, and userdata-opacity invariants govern payload bytes here.
 - `2026-05-10-blob-spill-pluggable-backends` — `rimsky_node_events` spills via BlobBackend.
 - `2026-05-10-attribute-substitution-grammar` — `{{nodes.<emitter>.event.<name>.<path>}}` reads this table.
 - `named-events-and-on-event-handlers` — emission side from executors.

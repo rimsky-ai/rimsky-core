@@ -176,7 +176,7 @@ func evaluateClaimScopeConflict(
 			holderIntent = claimproducer.Intent(*h.Intent)
 		}
 		holderRWS := claimproducer.WriteSemantics(h.RealizedWriteSemantics)
-		if !locks.ModeCoexists(spec.Intent, holderRWS, holderIntent, holderRWS) {
+		if !locks.ModeCoexists(spec.Intent, holderIntent, holderRWS) {
 			sawConflict = true
 			if h.State == fspec.ClaimHandleStateCommitted && h.Lifetime == fspec.ClaimLifetimeDurable {
 				sawDurableCommittedConf = true

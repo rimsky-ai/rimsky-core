@@ -32,7 +32,7 @@ type ControlAPIConfig struct {
 	Logger                 shared.Logger
 	Host                   string
 	Port                   int
-	Stores                 RemoteStoresConfig
+	ClaimProducers         RemoteClaimProducersConfig
 	NamedLocks             locks.NamedLocksConfig
 	Executors              ExecutorsConfig
 	Publishers             RemotePublishersConfig
@@ -107,11 +107,11 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if persistQueue == nil {
 		return nil, fmt.Errorf("StartControlAPI: Driver.Queue() returned nil")
 	}
-	registry, err := dialRemoteStores(context.Background(), cfg.Stores, persistStore, cfg.LateBindServiceProxies)
+	registry, err := dialRemoteClaimProducers(context.Background(), cfg.ClaimProducers, persistStore, cfg.LateBindServiceProxies)
 	if err != nil {
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
 	}
-	lifecycleReg, err := DialLifecycleSubscribers(context.Background(), cfg.Stores, cfg.Executors)
+	lifecycleReg, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors)
 	if err != nil {
 		registry.Close()
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
@@ -143,8 +143,8 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			TLS:                   e.TLS,
 		})
 	}
-	storePeers := make([]observability.PeerSpec, 0, len(cfg.Stores.Stores))
-	for name, e := range cfg.Stores.Stores {
+	storePeers := make([]observability.PeerSpec, 0, len(cfg.ClaimProducers.ClaimProducers))
+	for name, e := range cfg.ClaimProducers.ClaimProducers {
 		storePeers = append(storePeers, observability.PeerSpec{
 			Name:                  name,
 			Endpoint:              e.Endpoint,
@@ -156,7 +156,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	disc := observability.RunHandshake(context.Background(), observability.NewGRPCProber(), execPeers, storePeers, obsLogger)
 	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
 	go disc.RefreshLoop(discoveryCtx, ObservabilityRefreshInterval(), obsLogger)
-	publisherReg, validationReg, dataProcessorReg, peerClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.Stores, cfg.Executors, cfg.Publishers)
+	publisherReg, validationReg, dataProcessorReg, peerClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
 	if err != nil {
 		cancelDiscovery()
 		registry.Close()
@@ -171,15 +171,15 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}
 	_ = runtime.RegisterAuthMutationHook(authState.OnAuthMutation)
 	deps := controlapi.AppDeps{
-		Persist:       persistStore,
-		Queue:         persistQueue,
-		Clock:         cfg.Clock,
-		Logger:        cfg.Logger,
-		AuthState:     authState,
-		Stores:        registry,
-		LifecycleSubs: lifecycleReg,
-		NamedLocks:    cfg.NamedLocks,
-		Executors:     executorsByName,
+		Persist:        persistStore,
+		Queue:          persistQueue,
+		Clock:          cfg.Clock,
+		Logger:         cfg.Logger,
+		AuthState:      authState,
+		ClaimProducers: registry,
+		LifecycleSubs:  lifecycleReg,
+		NamedLocks:     cfg.NamedLocks,
+		Executors:      executorsByName,
 		ExecutorCapabilities: func(executorName string) ([]string, []string, []byte, bool) {
 			peer, ok := disc.GetExecutor(executorName)
 			if !ok || peer.Capabilities == nil {
@@ -199,12 +199,12 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		},
 		Observability: func(r chi.Router) {
 			observability.Routes(r, observability.Deps{
-				Tables:    persistStore,
-				Queue:     persistQueue,
-				Driver:    cfg.Driver,
-				Executors: execPeers,
-				Stores:    storePeers,
-				Discovery: disc,
+				Tables:         persistStore,
+				Queue:          persistQueue,
+				Driver:         cfg.Driver,
+				Executors:      execPeers,
+				ClaimProducers: storePeers,
+				Discovery:      disc,
 			})
 		},
 		Metrics:                cfg.Metrics,

@@ -212,7 +212,7 @@ func (s *stubPublisher) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv
 
 var publishLogMu sync.Mutex
 
-func recordPublish(subID, instanceID, targetNode string) {
+func recordPublish(subID, instanceID, messageType string) {
 	path := os.Getenv("STUBCHILD_PUBLISH_LOG")
 	if path == "" {
 		return
@@ -224,11 +224,11 @@ func recordPublish(subID, instanceID, targetNode string) {
 		return
 	}
 	defer f.Close()
-	_, _ = fmt.Fprintf(f, "%s %s %s\n", subID, instanceID, targetNode)
+	_, _ = fmt.Fprintf(f, "%s %s %s\n", subID, instanceID, messageType)
 }
 
 func (s *stubPublisher) Subscribe(_ context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
-	recordPublish(req.GetPublisherSubscriptionId(), req.GetInstanceId(), req.GetTargetNode())
+	recordPublish(req.GetPublisherSubscriptionId(), req.GetInstanceId(), req.GetMessageType())
 	return &genv1.SubscribeResponse{}, nil
 }
 

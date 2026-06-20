@@ -25,7 +25,6 @@ type Watch struct {
 	SubscriptionID string
 	InstanceID     string
 	CronExpr       string
-	TargetNode     string
 	MessageType    string
 	NextFireAt     time.Time
 	StartedAt      time.Time
@@ -62,7 +61,6 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 			SubscriptionID: r.SubscriptionID,
 			InstanceID:     r.InstanceID,
 			CronExpr:       r.CronExpr,
-			TargetNode:     r.TargetNode,
 			MessageType:    r.MessageType,
 			NextFireAt:     r.NextFireAt,
 			StartedAt:      r.StartedAt,
@@ -132,7 +130,6 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 		SubscriptionID: req.GetPublisherSubscriptionId(),
 		InstanceID:     req.GetInstanceId(),
 		CronExpr:       cfg.Cron,
-		TargetNode:     req.GetTargetNode(),
 		MessageType:    messageType,
 		NextFireAt:     sched.Next(now),
 		StartedAt:      now,
@@ -184,7 +181,6 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			PublisherSubscriptionId: w.SubscriptionID,
 			InstanceId:              w.InstanceID,
 			Kind:                    "cron",
-			TargetNode:              w.TargetNode,
 			MessageType:             w.MessageType,
 			StartedAt:               timestamppb.New(w.StartedAt),
 		})
@@ -256,7 +252,6 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 		"type":                      w.MessageType,
 		"payload":                   json.RawMessage(payloadBytes),
 		"sender":                    "sensor-cron",
-		"sender_kind":               "publisher",
 		"publisher_subscription_id": w.SubscriptionID,
 	}
 	raw, err := publisherkit.MarshalEnvelope(envelope)
@@ -268,7 +263,7 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 		URL:            url,
 		Envelope:       raw,
 		IdempotencyKey: idempotencyKey,
-		SensorName:     "sensor-cron",
+		PublisherName:  "sensor-cron",
 		SubscriptionID: w.SubscriptionID,
 	})
 	return res.Err

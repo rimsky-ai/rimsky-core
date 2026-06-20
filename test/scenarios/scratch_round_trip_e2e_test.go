@@ -196,7 +196,7 @@ func runDispositionVariant(t *testing.T, disposition string) {
 		return harness.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                      n.ID,
 			ExecutorName:                url,
-			RequiredStores:              []string{},
+			RequiredClaimProducers:      []string{},
 			EnqueuedAt:                  time.Now().Add(-time.Second),
 			FrameID:                     frameID,
 			RunScopeID:                  runScopeID,

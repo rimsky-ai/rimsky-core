@@ -34,7 +34,7 @@ covers each protocol surface:
   this once per fan-out sub-claim inside the rimsky-side acquisition
   transaction and persists the returned bytes on
   `col:rimsky_claim_handles.producer_candidate_handle`; the leaf
-  dispatch reads them back onto `ExecuteRequest.StoreHandle.candidate_handle`
+  dispatch reads them back onto `ExecuteRequest.ClaimProducers[<name>].CandidateHandle`
   so the leaf executor knows which staging area to write into.
 - **CommitCandidate.** Moves the staged entry into the per-claim
   version list with a fresh monotonic `version_id`, the wall-clock
@@ -96,7 +96,7 @@ claim_producers:
 ```
 
 A template node references the producer through the standard
-`stores:` list. For the fan-out path the example targets, the node
+`claim_producers:` list. For the fan-out path the example targets, the node
 also declares a `fan_out:` block whose claim names the store alias
 and whose `partition_request` carries the partition selector the
 producer's `SplitScope` will decode:
@@ -112,7 +112,7 @@ nodes:
       partition_request: '{"partition_keys":["2026-01","2026-02","2026-03"]}'
       error_policy:
         kind: best_effort
-    stores:
+    claim_producers:
       - name: example
         selector: r1            # opaque to rimsky; the producer parses it
         intent: rw              # the example advertises sync, so rw is OK
@@ -149,7 +149,7 @@ protocols block.
 The cross-stack rimsky-side fan-out path (the supervisor calling
 `BeginCandidate` once per sub-claim inside the acquisition
 transaction and threading the returned handle onto the leaf's
-`ExecuteRequest.StoreHandle.candidate_handle`) is already exhibited
+`ExecuteRequest.ClaimProducers[<name>].CandidateHandle`) is already exhibited
 end-to-end against a real `rimsky-all-in-one` stack by
 `test/scenarios/leaf_candidate_handle_e2e_test.go`, which declares a
 fan-out node referencing a remote stub store whose DataProcessing

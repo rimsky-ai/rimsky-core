@@ -95,8 +95,7 @@ assignment.
   (no logic copied between sites; `@source:` annotations only mark
   intentionally divergent mirrors), every constraint backed by a lint
   rule, test, or type, and comments only where they carry a structured
-  tag (`@constraint:`, `@deliberate:`, `@agent-contract`,
-  `@blessed-invariant:`, ...).
+  tag (`@constraint:`, `@deliberate:`, `@agent-contract`, ...).
 - **Run `make license-lint` locally** before submitting. The license-check
   binary verifies that no Apache-classified package imports an
   AGPL-classified package and that every source file carries the correct

@@ -27,7 +27,6 @@ type PublisherSubscriptionRow struct {
 	PublisherName  string
 	Kind           string
 	ResolvedConfig json.RawMessage
-	TargetNode     string
 	MessageType    string
 	StartedAt      time.Time
 	State          string

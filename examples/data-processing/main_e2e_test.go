@@ -91,7 +91,7 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 	if len(beginOut.CandidateHandle) == 0 {
 		t.Fatal("BeginCandidate returned an empty candidate_handle — rimsky persists this on " +
 			"col:rimsky_claim_handles.producer_candidate_handle and the leaf dispatch reads it " +
-			"back on StoreHandle.candidate_handle; an empty handle would make the leaf dispatch " +
+			"back on ClaimProducerHandle.candidate_handle; an empty handle would make the leaf dispatch " +
 			"with no producer cursor, the falsifier for \"BeginCandidate is never called on a " +
 			"fan-out partition\" in canned-handler form")
 	}

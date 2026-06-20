@@ -965,9 +965,8 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 				action: "message:send", method: "POST",
 				path: "/v1/instances/00000000-0000-0000-0000-000000000000/messages",
 				body: map[string]any{
-					"kind":        "ping",
-					"sender_kind": "operator",
-					"sender":      "gate6-test",
+					"kind":   "ping",
+					"sender": "gate6-test",
 				},
 				headerKey: "Idempotency-Key", headerVal: "gate6-publisher-send",
 			},

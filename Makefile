@@ -183,8 +183,8 @@ core-images:
 # workspace, with no published-tag pin). Each image is tagged $(VERSION) +
 # latest, with a `rimsky-` prefix matching the core-image naming.
 service-images:
-	docker build -f lib/services/stores/filesystem/Dockerfile.filesystem -t rimsky-store-filesystem:$(VERSION) -t rimsky-store-filesystem:latest .
-	docker build -f lib/services/stores/postgres/Dockerfile.postgres -t rimsky-store-postgres:$(VERSION) -t rimsky-store-postgres:latest .
+	docker build -f lib/services/claim_producers/filesystem/Dockerfile.filesystem -t rimsky-claim-producer-filesystem:$(VERSION) -t rimsky-claim-producer-filesystem:latest .
+	docker build -f lib/services/claim_producers/postgres/Dockerfile.postgres -t rimsky-claim-producer-postgres:$(VERSION) -t rimsky-claim-producer-postgres:latest .
 	docker build -f lib/services/sensors/sensor-cron/Dockerfile.sensor-cron -t rimsky-sensor-cron:$(VERSION) -t rimsky-sensor-cron:latest .
 	docker build -f lib/services/sensors/sensor-http/Dockerfile.sensor-http -t rimsky-sensor-http:$(VERSION) -t rimsky-sensor-http:latest .
 	docker build -f lib/services/sensors/sensor-object-store/Dockerfile.sensor-object-store -t rimsky-sensor-object-store:$(VERSION) -t rimsky-sensor-object-store:latest .
@@ -200,7 +200,7 @@ service-images:
 # `rimsky` is the base for `rimsky-all-in-one`, so it must be pushed first.
 IMAGES := \
     rimsky rimsky-all-in-one rimsky-host-agent-proxy rimsky-conformance \
-    rimsky-store-filesystem rimsky-store-postgres \
+    rimsky-claim-producer-filesystem rimsky-claim-producer-postgres \
     rimsky-sensor-cron rimsky-sensor-http rimsky-sensor-object-store rimsky-sensor-webhook \
     rimsky-subscriber-openlineage \
     rimsky-executor-http-node rimsky-executor-verifier-http rimsky-executor-verifier-shape-checks rimsky-executor-claude-agent
@@ -274,10 +274,10 @@ push-images: check-clean buildx-builder
 	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.conformance \
 	  -t $(REGISTRY)/rimsky-conformance:$(VERSION) -t $(REGISTRY)/rimsky-conformance:$(LATEST_TAG) .
 	# Bundled-service images.
-	$(BUILDX_PUSH) -f lib/services/stores/filesystem/Dockerfile.filesystem \
-	  -t $(REGISTRY)/rimsky-store-filesystem:$(VERSION) -t $(REGISTRY)/rimsky-store-filesystem:$(LATEST_TAG) .
-	$(BUILDX_PUSH) -f lib/services/stores/postgres/Dockerfile.postgres \
-	  -t $(REGISTRY)/rimsky-store-postgres:$(VERSION) -t $(REGISTRY)/rimsky-store-postgres:$(LATEST_TAG) .
+	$(BUILDX_PUSH) -f lib/services/claim_producers/filesystem/Dockerfile.filesystem \
+	  -t $(REGISTRY)/rimsky-claim-producer-filesystem:$(VERSION) -t $(REGISTRY)/rimsky-claim-producer-filesystem:$(LATEST_TAG) .
+	$(BUILDX_PUSH) -f lib/services/claim_producers/postgres/Dockerfile.postgres \
+	  -t $(REGISTRY)/rimsky-claim-producer-postgres:$(VERSION) -t $(REGISTRY)/rimsky-claim-producer-postgres:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/sensors/sensor-cron/Dockerfile.sensor-cron \
 	  -t $(REGISTRY)/rimsky-sensor-cron:$(VERSION) -t $(REGISTRY)/rimsky-sensor-cron:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/sensors/sensor-http/Dockerfile.sensor-http \

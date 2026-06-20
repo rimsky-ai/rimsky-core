@@ -60,7 +60,7 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 			ClaimHandleID: claimHandleID,
 			SupervisorID:  args.SupervisorID,
 			Source:        runtime.ActiveTerminal,
-			Outcome:       runtime.AggregateAbandon,
+			Outcome:       runtime.OutcomeAbandon,
 			Producer:      store,
 			Scope:         []byte(`"abandon-scope"`),
 			Address:       []byte(`"abandon-addr"`),

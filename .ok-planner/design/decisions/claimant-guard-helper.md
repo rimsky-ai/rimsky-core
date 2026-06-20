@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Each persistence driver (Postgres, SQLite) routes its claimant-guarded mutations through one internal helper that appends the guard predicate; no hand-written copies of the predicate exist outside the helper (see `@blessed-invariant: 4`).
+Each persistence driver (Postgres, SQLite) routes its claimant-guarded mutations through one internal helper that appends the guard predicate; no hand-written copies of the predicate exist outside the helper (see `concept:claim-handle` — claimant-guarded release).
 
 ## Rationale
 

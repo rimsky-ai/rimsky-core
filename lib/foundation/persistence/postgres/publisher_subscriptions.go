@@ -27,8 +27,8 @@ func (b *publisherSubscriptionsImpl) q(tx persistence.Tx) querier { return (*tab
 const insertPublisherSubscriptionSQL = `
 INSERT INTO rimsky_publisher_subscriptions (
     id, instance_id, publisher_name, kind, resolved_config,
-    target_node, message_type, started_at, state, failure_reason
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''))`
+    message_type, started_at, state, failure_reason
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''))`
 
 func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.Tx, row persistence.PublisherSubscriptionRow) error {
 	if row.State == "" {
@@ -36,7 +36,7 @@ func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.
 	}
 	_, err := b.q(tx).Exec(ctx, insertPublisherSubscriptionSQL,
 		row.ID, row.InstanceID, row.PublisherName, row.Kind,
-		row.ResolvedConfig, row.TargetNode, row.MessageType,
+		row.ResolvedConfig, row.MessageType,
 		row.StartedAt, row.State, row.FailureReason)
 	if err != nil {
 		return fmt.Errorf("postgres.PublisherSubscriptions.Insert: %w", err)
@@ -55,7 +55,7 @@ func (b *publisherSubscriptionsImpl) Delete(ctx context.Context, tx persistence.
 
 const listPublisherSubscriptionsByInstanceSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_type, started_at, state,
+       message_type, started_at, state,
        COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE instance_id = $1
@@ -72,7 +72,7 @@ func (b *publisherSubscriptionsImpl) ListByInstance(ctx context.Context, instanc
 
 const listPublisherSubscriptionsByStateSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_type, started_at, state,
+       message_type, started_at, state,
        COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE state = $1`
@@ -88,7 +88,7 @@ func (b *publisherSubscriptionsImpl) ListByState(ctx context.Context, state stri
 
 const getPublisherSubscriptionSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_type, started_at, state,
+       message_type, started_at, state,
        COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE id = $1`
@@ -129,7 +129,7 @@ func collectPublisherSubscriptions(rows pgx.Rows) ([]persistence.PublisherSubscr
 		var w persistence.PublisherSubscriptionRow
 		if err := rows.Scan(
 			&w.ID, &w.InstanceID, &w.PublisherName, &w.Kind,
-			&w.ResolvedConfig, &w.TargetNode, &w.MessageType,
+			&w.ResolvedConfig, &w.MessageType,
 			&w.StartedAt, &w.State, &w.FailureReason,
 		); err != nil {
 			return nil, err

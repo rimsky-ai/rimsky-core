@@ -95,7 +95,7 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 		Clock:                   shared.SystemClock{},
 		Logger:                  log,
 		TickInterval:            time.Duration(tickMs) * time.Millisecond,
-		Stores:                  rimskyCfg.Stores,
+		ClaimProducers:          rimskyCfg.ClaimProducers,
 		NamedLocks:              rimskyCfg.NamedLocks,
 		SupervisorID:            supervisorID,
 		Blob:                    blobBackend,

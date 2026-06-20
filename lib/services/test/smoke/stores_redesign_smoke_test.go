@@ -15,7 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-func TestStoresRedesignSmoke(t *testing.T) {
+func TestClaimProducersRedesignSmoke(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	netName := harness.NewNetwork(ctx, t)
@@ -51,7 +51,7 @@ func TestStoresRedesignSmoke(t *testing.T) {
 				{
 					"type":     "claim-acquirer",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{"name": "docs", "selector": "@docs-ring", "intent": "rw"},
 					},
 				},

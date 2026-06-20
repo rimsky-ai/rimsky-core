@@ -100,8 +100,8 @@ all.
 
 | Service | Path | Purpose |
 | --- | --- | --- |
-| store-filesystem | `lib/services/stores/filesystem/` | Filesystem-backed claim producer (atomic stage-then-swap). |
-| store-postgres | `lib/services/stores/postgres/` | Postgres-backed claim producer. |
+| store-filesystem | `lib/services/claim_producers/filesystem/` | Filesystem-backed claim producer (atomic stage-then-swap). |
+| store-postgres | `lib/services/claim_producers/postgres/` | Postgres-backed claim producer. |
 | sensor-cron | `lib/services/sensors/sensor-cron/` | Cron-schedule sensor: emits messages on a cron firing. |
 | sensor-http | `lib/services/sensors/sensor-http/` | HTTP-poll sensor: polls a URL and emits on changed body / status. |
 | sensor-object-store | `lib/services/sensors/sensor-object-store/` | Object-store sensor: emits on new/changed objects under a prefix. |
@@ -118,13 +118,13 @@ Test-infrastructure carve-outs and in-rimsky testfixture wrappers
 that stay in the root module (separate from the production-side
 services under `lib/services/`).
 
-### Claim producers (`test/support/stores/`)
+### Claim producers (`test/support/claim_producers/`)
 
 | Producer | Path | Purpose |
 | --- | --- | --- |
-| stub | `test/support/stores/stub/` | In-memory test fixture. Stays in rimsky as test infrastructure. |
-| filesystem/testfixture | `test/support/stores/filesystem/testfixture/` | Test-fixture wrapper around `test/support/stores/stub`; preserves the public `Start` + `Config` surface for in-rimsky scenario tests. |
-| postgres/testfixture | `test/support/stores/postgres/testfixture/` | Test-fixture wrapper around `test/support/stores/stub`; preserves the public surface for in-rimsky scenario tests. |
+| stub | `test/support/claim_producers/stub/` | In-memory test fixture. Stays in rimsky as test infrastructure. |
+| filesystem/testfixture | `test/support/claim_producers/filesystem/testfixture/` | Test-fixture wrapper around `test/support/claim_producers/stub`; preserves the public `Start` + `Config` surface for in-rimsky scenario tests. |
+| postgres/testfixture | `test/support/claim_producers/postgres/testfixture/` | Test-fixture wrapper around `test/support/claim_producers/stub`; preserves the public surface for in-rimsky scenario tests. |
 
 ### Executors (`test/support/executors/`)
 
@@ -162,7 +162,7 @@ The `examples/` directory is a standalone Apache-2.0 Go module of minimal copy-a
 
 | Suite | Path | Depends on | Purpose |
 | --- | --- | --- | --- |
-| scenarios | `test/scenarios/` | full stack | End-to-end scenario tests pinning the @blessed-invariant set (locks, stores, claim_stores, frame_resolution, lifecycle, asset). Each scenario boots the supervisor + producer-services against testcontainers Postgres. |
+| scenarios | `test/scenarios/` | full stack | End-to-end scenario tests exercising load-bearing invariants (locks, stores, claim_handle_aggregate, frame_resolution, lifecycle, asset). Each scenario boots the supervisor + producer-services against testcontainers Postgres. |
 | smoke | `test/smoke/` | full stack | Reference smoke fixture (boots producer-services on ephemeral ports, drives a sustained dispatch loop) used to harden new invariant coverage. |
 | support/scenario | `test/support/scenario/` | full stack | End-to-end scenario test harness (boots scheduler + supervisor + control-api against testcontainers Postgres). Moved out of the graph layer in the 2026-05-27 root-folder reorg. |
 | support/testpg | `test/support/testpg/` | (test-only, testcontainers) | Postgres-testcontainer helper. Demoted from a standalone Go module to a plain package under `test/support/` in the 2026-05-27 reorg; consumed by `test/support/pgmigrate`. |

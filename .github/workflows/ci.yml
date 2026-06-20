@@ -30,7 +30,7 @@ jobs:
   # scenario/storage tests can spin up Postgres etc. The `services` shard is
   # the only one that additionally needs the locally-built rimsky images that
   # the lib/services/test/... integration harness consumes via testcontainers
-  # (rimsky:latest, rimsky-all-in-one:latest, rimsky-store-filesystem:latest);
+  # (rimsky:latest, rimsky-all-in-one:latest, rimsky-claim-producer-filesystem:latest);
   # the other shards skip that image build to keep their critical path short.
   go:
     runs-on: ubuntu-latest
@@ -53,7 +53,7 @@ jobs:
         # LOCALLY-BUILT image tags via testcontainers — nothing is fetched
         # from a registry. `rimsky-all-in-one:latest` (the harness's rimsky
         # stack, built FROM rimsky:latest so the rimsky image must build
-        # first) and `rimsky-store-filesystem:latest` (the filesystem-store
+        # first) and `rimsky-claim-producer-filesystem:latest` (the filesystem-store
         # peer) must exist locally or those tests fail at container start.
         # See CLAUDE.md ("Services integration harness consumes locally-built
         # images"). Build the minimal set the harness needs rather than the
@@ -62,8 +62,8 @@ jobs:
           docker build -f dockerfiles/Dockerfile.rimsky -t rimsky:latest .
           docker build -f dockerfiles/Dockerfile.all-in-one --build-arg RIMSKY_BASE=rimsky:latest \
             -t rimsky-all-in-one:latest .
-          docker build -f lib/services/stores/filesystem/Dockerfile.filesystem \
-            -t rimsky-store-filesystem:latest .
+          docker build -f lib/services/claim_producers/filesystem/Dockerfile.filesystem \
+            -t rimsky-claim-producer-filesystem:latest .
       - name: Test ${{ matrix.module }}
         run: make test-${{ matrix.module }}
 

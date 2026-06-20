@@ -46,13 +46,13 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 
 // @concept: run-scope
 func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
-	stores := req.RequiredStores
+	stores := req.RequiredClaimProducers
 	if stores == nil {
 		stores = []string{}
 	}
 	executor := nullableText(req.ExecutorName)
 	if req.FrameID == (shared.UUID{}) {
-		return fmt.Errorf("postgres.Enqueue: frame_id required (per blessed-invariant 19) for node %s", req.NodeID)
+		return fmt.Errorf("postgres.Enqueue: frame_id required for node %s", req.NodeID)
 	}
 	if req.RunScopeID == (shared.UUID{}) {
 		return fmt.Errorf("postgres.Enqueue: run_scope_id required for node %s", req.NodeID)
@@ -116,9 +116,9 @@ func (q *queueImpl) SelectCandidates(
 	if limit <= 0 {
 		limit = defaultCandidateLimit
 	}
-	acceptedStores := req.AcceptedStores
-	if acceptedStores == nil {
-		acceptedStores = []string{}
+	acceptedClaimProducers := req.AcceptedClaimProducers
+	if acceptedClaimProducers == nil {
+		acceptedClaimProducers = []string{}
 	}
 	acceptedExecutors := req.AcceptedExecutors
 	if acceptedExecutors == nil {
@@ -127,7 +127,7 @@ func (q *queueImpl) SelectCandidates(
 
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
-		        d.prior_dispatch_id, d.prior_dispatch_disposition
+		        d.prior_dispatch_id, d.prior_dispatch_disposition, d.state
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		   JOIN rimsky_instances i ON i.id = n.instance_id
@@ -161,7 +161,7 @@ func (q *queueImpl) SelectCandidates(
 		  ORDER BY d.enqueued_at, d.id
 		  LIMIT $3
 		  FOR UPDATE OF d SKIP LOCKED`,
-		acceptedStores, acceptedExecutors, limit, req.LateBindExecutorProxy, req.LateBindClaimProducerProxy,
+		acceptedClaimProducers, acceptedExecutors, limit, req.LateBindExecutorProxy, req.LateBindClaimProducerProxy,
 		req.CursorEnqueuedAfter, req.CursorAfterDispatchID,
 	)
 	if err != nil {
@@ -176,23 +176,27 @@ func (q *queueImpl) SelectCandidates(
 			executorName     *string
 			priorID          *shared.UUID
 			priorDisposition *string
+			preClaimState    *string
 		)
 		if err := rows.Scan(
 			&c.DispatchID, &c.NodeID, &c.NodeType,
-			&executorName, &c.RequiredStores, &c.EnqueuedAt, &c.FrameID,
-			&priorID, &priorDisposition,
+			&executorName, &c.RequiredClaimProducers, &c.EnqueuedAt, &c.FrameID,
+			&priorID, &priorDisposition, &preClaimState,
 		); err != nil {
 			return nil, fmt.Errorf("postgres.SelectCandidates: scan: %w", err)
 		}
 		if executorName != nil {
 			c.ExecutorName = *executorName
 		}
-		if c.RequiredStores == nil {
-			c.RequiredStores = []string{}
+		if c.RequiredClaimProducers == nil {
+			c.RequiredClaimProducers = []string{}
 		}
 		c.PriorDispatchID = priorID
 		if priorDisposition != nil {
 			c.PriorDispatchDisposition = *priorDisposition
+		}
+		if preClaimState != nil {
+			c.PreClaimState = *preClaimState
 		}
 		out = append(out, c)
 	}
@@ -298,15 +302,15 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 	for rows.Next() {
 		var r persistence.DispatchRow
 		if err := rows.Scan(
-			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
+			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredClaimProducers,
 			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 			&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 			&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
 		); err != nil {
 			return nil, err
 		}
-		if r.RequiredStores == nil {
-			r.RequiredStores = []string{}
+		if r.RequiredClaimProducers == nil {
+			r.RequiredClaimProducers = []string{}
 		}
 		out = append(out, r)
 	}
@@ -389,7 +393,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 	)
 	var r persistence.DispatchRow
 	if err := row.Scan(
-		&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
+		&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredClaimProducers,
 		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 		&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 		&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
@@ -399,8 +403,8 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 		}
 		return nil, fmt.Errorf("postgres.LookupRunByAsyncAckID: %w", err)
 	}
-	if r.RequiredStores == nil {
-		r.RequiredStores = []string{}
+	if r.RequiredClaimProducers == nil {
+		r.RequiredClaimProducers = []string{}
 	}
 	return &r, nil
 }
@@ -516,15 +520,15 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	for rows.Next() {
 		var r persistence.DispatchRow
 		if err := rows.Scan(
-			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
+			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredClaimProducers,
 			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 			&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 			&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
 		); err != nil {
 			return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 		}
-		if r.RequiredStores == nil {
-			r.RequiredStores = []string{}
+		if r.RequiredClaimProducers == nil {
+			r.RequiredClaimProducers = []string{}
 		}
 		out = append(out, r)
 	}
@@ -603,7 +607,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 	)
 	var r persistence.DispatchRow
 	if err := row.Scan(
-		&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
+		&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredClaimProducers,
 		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 		&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 		&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
@@ -613,8 +617,8 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		}
 		return nil, err
 	}
-	if r.RequiredStores == nil {
-		r.RequiredStores = []string{}
+	if r.RequiredClaimProducers == nil {
+		r.RequiredClaimProducers = []string{}
 	}
 	return &r, nil
 }

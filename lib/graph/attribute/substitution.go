@@ -169,12 +169,10 @@ func resolveDirectiveValueRaw(directive string, ctx ResolveContext) (any, error)
 		return resolveClaimValue(directive, parts[1:], ctx.Claim)
 	case "params":
 		return resolveParamsValue(directive, parts[1:], ctx.Params)
-	case "nodes":
-		return resolveNodesValue(directive, parts[1:], ctx)
+	case "nodes", "messages":
+		return resolveSubstitutionValue(directive, parts[0], parts[1:], ctx)
 	case "child":
 		return resolveChildValue(directive, parts[1:], ctx)
-	case "messages":
-		return resolveMessagesValue(directive, parts[1:], ctx)
 	default:
 		return nil, &ErrMissingSource{Directive: directive, Reason: "unknown source kind " + parts[0]}
 	}
@@ -217,33 +215,43 @@ func stringifyAny(v any) string {
 }
 
 // @concept: message-schema
-func resolveMessagesValue(directive string, rest []string, ctx ResolveContext) (any, error) {
+// @concept: node-subscription
+func resolveSubstitutionValue(directive, prefix string, rest []string, ctx ResolveContext) (any, error) {
 	if len(rest) < 1 {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "messages directive needs messages.<type>[.<field>]"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: prefix + " directive needs <type>[.<field>]"}
 	}
-	declaredType := rest[0]
-	if declaredType == "" {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "messages directive has an empty <type>"}
+	typeName := rest[0]
+	if typeName == "" {
+		return nil, &ErrMissingSource{Directive: directive, Reason: prefix + " directive has an empty <type>"}
 	}
-	if ctx.RegistryDeclaredTypes != nil {
-		if _, ok := ctx.RegistryDeclaredTypes[declaredType]; !ok {
+	fieldStart := 1
+	if prefix == "nodes" {
+		if len(rest) < 2 || rest[1] != "attribute" {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive second segment must be 'attribute'"}
+		}
+		fieldStart = 2
+	}
+	if prefix == "messages" && ctx.RegistryDeclaredTypes != nil {
+		if _, ok := ctx.RegistryDeclaredTypes[typeName]; !ok {
 			return nil, &ErrMissingSource{
 				Directive: directive,
 				Reason:    "messages directive names a type not in the template's messages registry",
 			}
 		}
 	}
-	data, ok := ctx.Deps[declaredType]
+	data, ok := ctx.Deps[typeName]
 	if !ok {
-		return nil, &ErrMissingSource{
-			Directive: directive,
-			Reason:    "no delivered message of type " + declaredType + " bound to this frame",
+		if prefix == "messages" {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "no delivered message of type " + typeName + " bound to this frame"}
 		}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "no upstream node " + typeName}
 	}
-	fieldPath := rest[1:]
-	val, ok := walkPath(data, fieldPath)
+	val, ok := walkPath(data, rest[fieldStart:])
 	if !ok {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "message body field path not found"}
+		if prefix == "messages" {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "message body field path not found"}
+		}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "attribute field path not found"}
 	}
 	return val, nil
 }
@@ -256,27 +264,6 @@ func resolveChildValue(directive string, rest []string, ctx ResolveContext) (any
 		return nil, &ErrMissingSource{Directive: directive, Reason: "no partition_key bound (fan-out leaf dispatch context only)"}
 	}
 	return ctx.ChildPartitionKey, nil
-}
-
-func resolveNodesValue(directive string, rest []string, ctx ResolveContext) (any, error) {
-	if len(rest) < 2 {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.attribute[.<field>]"}
-	}
-	nodeName := rest[0]
-	kind := rest[1]
-	if kind != "attribute" {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive second segment must be 'attribute'"}
-	}
-	fieldPath := rest[2:]
-	data, ok := ctx.Deps[nodeName]
-	if !ok {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "no upstream node " + nodeName}
-	}
-	val, ok := walkPath(data, fieldPath)
-	if !ok {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "attribute field path not found"}
-	}
-	return val, nil
 }
 
 func resolveClaimValue(directive string, rest []string, claims map[string]claimproducer.ClaimResult) (any, error) {

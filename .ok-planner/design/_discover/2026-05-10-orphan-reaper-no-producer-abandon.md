@@ -13,7 +13,7 @@ Rimsky's reaper takes the second path. `SweepClaimHandles` (`foundation/integrat
 
 The bail path in `handleOrphanedClaim` (`foundation/integration/runner_acquire.go:776-810`) is the deliberate exception: it DOES call `Abandon` because the supervisor knows what it just opened — it just lost the verify-before-run race against another supervisor. Annotated explicitly at `runner_acquire.go:781-784`: "The two paths are deliberately distinct: the bail path fires Abandon because the supervisor knows what it just did; the reaper does NOT fire Abandon because it can't distinguish a crashed-supervisor state from any other."
 
-The 5×heartbeat_interval cutoff (`@blessed-invariant 6` at `foundation/integration/conductor.go:30-50`) governs when a row becomes orphan. A crashed-supervisor's claim-handle row is gone within `5 × heartbeat_interval` regardless of producer state.
+The 5×heartbeat_interval cutoff (at `foundation/integration/conductor.go:30-50`) governs when a row becomes orphan. A crashed-supervisor's claim-handle row is gone within `5 × heartbeat_interval` regardless of producer state.
 
 A reaper that fired `Abandon` on every expired row would call producer verbs in cases where the producer never had any state to abandon (e.g. an `Open` call that returned `Unavailable` just before the row expired). Idempotency in `claim_id` would handle that semantically, but the call still costs a round trip and obscures the operational signal "this supervisor crashed and we don't know what it had open." Producers expose their own TTL because they're the only ones who can decide whether their internal state needs explicit cleanup or is already self-cleaning (filesystem stagings are explicit; MVCC transactions auto-rollback on idle).
 
@@ -25,7 +25,7 @@ The third path (no reaper at all) is rejected because `rimsky_claim_handle` rows
 
 - `foundation/integration/orphan_reaper.go` — entire file (~150 lines).
 - `foundation/integration/runner_acquire.go:776-810` — `handleOrphanedClaim` (the bail path that DOES fire `Abandon`).
-- `foundation/integration/conductor.go:30-50` — invariant 6 cutoff.
+- `foundation/integration/conductor.go:30-50` — 5× heartbeat cutoff.
 - `foundation/integration/sweep_parked.go` — separate sweep for `phase='parked'` (which orphan reaper skips).
 - `foundation/integration/orphan_blobs.go` — separate orphan sweep for blob handles.
 

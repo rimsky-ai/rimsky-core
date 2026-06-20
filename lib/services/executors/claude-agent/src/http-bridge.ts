@@ -47,7 +47,7 @@ interface ExecuteBody {
   dispatch_id?: string;
   attributes?: unknown;
   attributes_schema?: unknown;
-  stores?: Record<string, unknown>;
+  claim_producers?: Record<string, unknown>;
   callback_url?: string;
   cancel_token?: string;
   resume_context?: {
@@ -139,7 +139,7 @@ async function runAndCallback(
       userPrompt: stringOr(attributes.user_prompt, ""),
       attributesSchema: body.attributes_schema ?? {},
       attributes,
-      stores: unwrapStores(body.stores ?? {}),
+      claimProducers: unwrapClaimProducers(body.claim_producers ?? {}),
       cwdFromStore: stringOrUndefined(attributes.cwd_from_store),
       cwdOverride: stringOrUndefined(attributes.cwd),
       cliConfig: parseCliConfig(attributes.cli),
@@ -314,9 +314,9 @@ function toRecord(v: unknown): Record<string, unknown> {
   return v as Record<string, unknown>;
 }
 
-function unwrapStores(stores: Record<string, unknown>): Record<string, unknown> {
+function unwrapClaimProducers(claimProducers: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(stores)) {
+  for (const [k, v] of Object.entries(claimProducers)) {
     if (!v || typeof v !== "object") {
       out[k] = v;
       continue;

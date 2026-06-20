@@ -33,9 +33,8 @@ func TemplateHasStructuralRoot(ctx context.Context, c *Client, hash string) (boo
 	if uerr := json.Unmarshal(raw, &ts); uerr != nil {
 		return true, nil
 	}
-	subRefs := node.ExtractSubstitutionRefsFromTemplate(ts)
 	msgRefs := node.ExtractMessageRefsFromTemplate(ts)
-	edges, err := node.BuildSubscriptionEdges(ts, subRefs, msgRefs)
+	edges, err := node.BuildSubscriptionEdges(ts, msgRefs)
 	if err != nil || edges == nil {
 		return true, nil
 	}

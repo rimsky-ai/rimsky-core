@@ -64,10 +64,10 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		t.Logf("instance %d=%s reached commit in producer ledger", i, instanceID)
 	}
 
-	peerEntry := pollGetStorePeer(t, ep, "docs", 30*time.Second)
+	peerEntry := pollGetClaimProducerPeer(t, ep, "docs", 30*time.Second)
 
 	if peerEntry.HTTPBridgeURL == "" {
-		t.Fatalf("dashboard /v1/observability/stores/docs returned empty http_bridge_url; "+
+		t.Fatalf("dashboard /v1/observability/claim-producers/docs returned empty http_bridge_url; "+
 			"the rimsky dashboard surface must expose the producer's bridge URL so the "+
 			"operator's browser can reach it. Full peer: %+v", peerEntry)
 	}
@@ -254,18 +254,18 @@ type peerAdminView struct {
 	Description string `json:"description,omitempty"`
 }
 
-func pollGetStorePeer(t *testing.T, ep harness.RimskyEndpoint, name string, deadline time.Duration) peerJSON {
+func pollGetClaimProducerPeer(t *testing.T, ep harness.RimskyEndpoint, name string, deadline time.Duration) peerJSON {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var last peerJSON
 	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t, "/v1/observability/stores/"+name, "")
+		status, raw := ep.GetJSON(t, "/v1/observability/claim-producers/"+name, "")
 		if status == http.StatusOK {
 			var body struct {
 				Peer peerJSON `json:"peer"`
 			}
 			if err := json.Unmarshal(raw, &body); err != nil {
-				t.Fatalf("decode /v1/observability/stores/%s: %v; raw=%s", name, err, string(raw))
+				t.Fatalf("decode /v1/observability/claim-producers/%s: %v; raw=%s", name, err, string(raw))
 			}
 			last = body.Peer
 			if last.Reachability == "reachable" && last.HTTPBridgeURL != "" && last.Capabilities != nil {
@@ -274,7 +274,7 @@ func pollGetStorePeer(t *testing.T, ep harness.RimskyEndpoint, name string, dead
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("dashboard /v1/observability/stores/%s never converged to reachable+http_bridge_url within %v; last=%+v",
+	t.Fatalf("dashboard /v1/observability/claim-producers/%s never converged to reachable+http_bridge_url within %v; last=%+v",
 		name, deadline, last)
 	return last
 }
@@ -474,7 +474,7 @@ func deployObsTemplate(t *testing.T, ep harness.RimskyEndpoint, name string) str
 				{
 					"type":     "worker",
 					"executor": "stub",
-					"stores": []map[string]any{
+					"claim_producers": []map[string]any{
 						{"name": "docs", "selector": "@docs", "intent": "rw"},
 					},
 				},

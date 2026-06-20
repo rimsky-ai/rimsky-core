@@ -15,11 +15,11 @@ import (
 var ErrRunRowMissing = errors.New("persistence: rimsky_node_runs row not found")
 
 type DispatchRequest struct {
-	NodeID         shared.UUID
-	ExecutorName   string
-	RequiredStores []string
-	EnqueuedAt     time.Time
-	FrameID        shared.UUID
+	NodeID                 shared.UUID
+	ExecutorName           string
+	RequiredClaimProducers []string
+	EnqueuedAt             time.Time
+	FrameID                shared.UUID
 	// @concept: run-scope
 	RunScopeID shared.UUID
 
@@ -38,7 +38,7 @@ type DispatchRequest struct {
 type SelectCandidatesRequest struct {
 	AcceptedExecutors []string
 
-	AcceptedStores []string
+	AcceptedClaimProducers []string
 
 	Limit int
 
@@ -51,18 +51,21 @@ type SelectCandidatesRequest struct {
 }
 
 type Candidate struct {
-	DispatchID     shared.UUID
-	NodeID         shared.UUID
-	NodeType       string
-	ExecutorName   string
-	RequiredStores []string
-	EnqueuedAt     time.Time
-	FrameID        shared.UUID
+	DispatchID             shared.UUID
+	NodeID                 shared.UUID
+	NodeType               string
+	ExecutorName           string
+	RequiredClaimProducers []string
+	EnqueuedAt             time.Time
+	FrameID                shared.UUID
 
 	// @concept: run-scope
 	PriorDispatchID *shared.UUID
 	// @concept: run-scope
 	PriorDispatchDisposition string
+
+	// @concept: parked-state
+	PreClaimState string
 }
 
 type ClaimOwnership struct {
@@ -178,7 +181,7 @@ type ParkedRow struct {
 	DispatchID               shared.UUID
 	NodeID                   shared.UUID
 	ExecutorName             string
-	RequiredStores           []string
+	RequiredClaimProducers   []string
 	FrameID                  shared.UUID
 	ParkedAt                 time.Time
 	ResumeAt                 *time.Time

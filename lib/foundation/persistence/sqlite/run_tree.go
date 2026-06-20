@@ -39,7 +39,7 @@ func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in p
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.CreateRootRun: marshal policy: %w", err)
 	}
-	stores := in.RequiredStores
+	stores := in.RequiredClaimProducers
 	if stores == nil {
 		stores = []string{}
 	}
@@ -74,7 +74,7 @@ func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in 
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.CreateChildRun: marshal policy: %w", err)
 	}
-	stores := in.RequiredStores
+	stores := in.RequiredClaimProducers
 	if stores == nil {
 		stores = []string{}
 	}

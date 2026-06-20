@@ -24,7 +24,7 @@ At dispatch time, `applyUserdataOverrides` (`foundation/integration/userdata_ove
 
 The validator at `modeling/controlapi/userdata_overrides.go:44-100` inspects **only** the routing keys — top-level `by_executor`/`by_node`, plus the executor names and node names — never the fragment values. The comment is explicit:
 
-> The fragment values themselves are NOT inspected — they're userdata per @blessed-invariant 11. This validator only inspects keys and container shapes.
+> The fragment values themselves are NOT inspected — they're userdata per the userdata-opacity rule. This validator only inspects keys and container shapes.
 
 The validator rejects:
 
@@ -40,9 +40,9 @@ It does NOT validate:
 
 The merge at `foundation/integration/userdata_overrides.go:32-50` is "shape-blind": rimsky inspects only the routing-keys, never the userdata fragments themselves. The deep-merge walks JSON objects and arrays without knowing what's inside — the merge contract is that a more-specific override fragment replaces (objects merge by key, scalars/arrays replace by position).
 
-`@blessed-invariant 11` (userdata is opaque) is preserved. The full per-node JSON Schema validation alternative is structurally rejected: it would violate invariant 11. The "shape-validate but not key-validate" alternative is rejected because typo'd executor names would silently no-op.
+Userdata opacity is preserved. The full per-node JSON Schema validation alternative is structurally rejected: it would violate userdata opacity. The "shape-validate but not key-validate" alternative is rejected because typo'd executor names would silently no-op.
 
-CLAUDE.md "Non-obvious gotchas" notes: "Per-instance userdata overrides exist. POST /instances accepts a userdata_overrides blob shaped { by_executor: {...}, by_node: {...} } that rimsky deep-merges into per-node userdata at dispatch time, ordered template → by_executor → by_node (most-specific wins). Validation at create-time inspects only routing-key names (executor / node) — never the fragment values, preserving invariant 11."
+CLAUDE.md "Non-obvious gotchas" notes: "Per-instance userdata overrides exist. POST /instances accepts a userdata_overrides blob shaped { by_executor: {...}, by_node: {...} } that rimsky deep-merges into per-node userdata at dispatch time, ordered template → by_executor → by_node (most-specific wins). Validation at create-time inspects only routing-key names (executor / node) — never the fragment values, preserving userdata opacity."
 
 Use cases live executor-side: synthetic-blocker scenarios (inject a special value the executor recognizes), per-run trace artifacts, ad-hoc tuning. A future feature wanting to validate or transform override fragment values is structurally invariant-violating.
 
@@ -62,7 +62,7 @@ Use cases live executor-side: synthetic-blocker scenarios (inject a special valu
 
 ## Adjacent topics
 
-- `2026-05-10-opacity-of-userdata-claim-blob` — invariant 11 governs this.
+- `2026-05-10-opacity-of-userdata-claim-blob` — the userdata-opacity rule governs this.
 - `2026-05-10-attribute-substitution-grammar` — overrides do NOT pass through substitution (userdata is opaque).
 - `2026-05-10-content-addressed-templates` — overrides are per-instance, not per-template.
 
