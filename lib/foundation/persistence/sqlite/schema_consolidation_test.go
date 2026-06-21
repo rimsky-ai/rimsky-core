@@ -56,6 +56,7 @@ var expectedSqliteHitColumns = []string{
 }
 
 func TestSqliteSchemaConsolidation_FreshDB(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	d, err := persistence.Open(ctx, persistence.Config{
@@ -78,6 +79,7 @@ func TestSqliteSchemaConsolidation_FreshDB(t *testing.T) {
 }
 
 func TestSqliteSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	d, err := persistence.Open(ctx, persistence.Config{

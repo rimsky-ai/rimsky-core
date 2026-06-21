@@ -140,6 +140,7 @@ func forceExpired(t *testing.T, ctx context.Context, d persistence.Database, bpI
 }
 
 func TestSQLiteBreakpoints_CreateGetRoundTrip(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -188,6 +189,7 @@ func TestSQLiteBreakpoints_CreateGetRoundTrip(t *testing.T) {
 }
 
 func TestSQLiteBreakpoints_GetNotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -205,6 +207,7 @@ func TestSQLiteBreakpoints_GetNotFound(t *testing.T) {
 }
 
 func TestSQLiteBreakpoints_ListForInstance_IncludeExpired(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -247,6 +250,7 @@ func TestSQLiteBreakpoints_ListForInstance_IncludeExpired(t *testing.T) {
 }
 
 func TestSQLiteBreakpoints_IncrementDroppedMonotonic(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -274,6 +278,7 @@ func TestSQLiteBreakpoints_IncrementDroppedMonotonic(t *testing.T) {
 }
 
 func TestSQLiteBreakpoints_SweepExpired(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -316,6 +321,7 @@ func TestSQLiteBreakpoints_SweepExpired(t *testing.T) {
 }
 
 func TestSQLiteBreakpointHits_CreateReturnsIDAndMonotonicSeq(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -346,6 +352,7 @@ func TestSQLiteBreakpointHits_CreateReturnsIDAndMonotonicSeq(t *testing.T) {
 }
 
 func TestSQLiteBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -413,6 +420,7 @@ func TestSQLiteBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
 }
 
 func TestSQLiteBreakpointHits_ListUnresumedFilters(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -460,6 +468,7 @@ func TestSQLiteBreakpointHits_ListUnresumedFilters(t *testing.T) {
 }
 
 func TestSQLiteBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -528,6 +537,7 @@ func TestSQLiteBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 }
 
 func TestSQLiteBreakpointHits_AutoResumeStale(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -610,6 +620,7 @@ func TestSQLiteBreakpointHits_AutoResumeStale(t *testing.T) {
 }
 
 func TestSQLiteBreakpointHits_DropOldest(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -654,6 +665,7 @@ func TestSQLiteBreakpointHits_DropOldest(t *testing.T) {
 }
 
 func TestSQLiteBreakpointHits_UnresumedCount(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()
@@ -694,6 +706,7 @@ func TestSQLiteBreakpointHits_UnresumedCount(t *testing.T) {
 }
 
 func TestSQLiteBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
 	store := d.Tables()

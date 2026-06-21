@@ -14,6 +14,7 @@ import (
 )
 
 func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
+	t.Parallel()
 	d := openSQLite(t)
 	ctx := context.Background()
 	rawDB := sqlitedrv.DBFromDatabase(d)

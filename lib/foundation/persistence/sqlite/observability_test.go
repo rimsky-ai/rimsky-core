@@ -36,6 +36,7 @@ func openSQLite(t *testing.T) persistence.Database {
 }
 
 func TestSQLite_EventListFilter_KindIn(t *testing.T) {
+	t.Parallel()
 	d := openSQLite(t)
 	ctx := context.Background()
 	store := d.Tables()
@@ -69,6 +70,7 @@ func TestSQLite_EventListFilter_KindIn(t *testing.T) {
 }
 
 func TestSQLite_QueueListLive_Empty(t *testing.T) {
+	t.Parallel()
 	d := openSQLite(t)
 	ctx := context.Background()
 	res, err := d.Queue().ListLive(ctx, persistence.DispatchListFilter{}, persistence.ListPagination{Limit: 10})
@@ -88,6 +90,7 @@ func TestSQLite_QueueListLive_Empty(t *testing.T) {
 }
 
 func TestSQLite_InstanceCountByActive_Empty(t *testing.T) {
+	t.Parallel()
 	d := openSQLite(t)
 	var active, terminated int
 	if err := d.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
@@ -103,6 +106,7 @@ func TestSQLite_InstanceCountByActive_Empty(t *testing.T) {
 }
 
 func TestSQLite_FrameListForObservability_Empty(t *testing.T) {
+	t.Parallel()
 	d := openSQLite(t)
 	var res persistence.PaginatedListResult[persistence.FrameRow]
 	if err := d.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
@@ -119,6 +123,7 @@ func TestSQLite_FrameListForObservability_Empty(t *testing.T) {
 }
 
 func TestSQLite_FrameGetForObservability_NotFound(t *testing.T) {
+	t.Parallel()
 	d := openSQLite(t)
 	var row *persistence.FrameRow
 	if err := d.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {

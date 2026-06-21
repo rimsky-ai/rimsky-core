@@ -91,6 +91,7 @@ func seedFrameParkedFixture(
 }
 
 func TestPGParkedNodeRunHoldsFrameOpen(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -113,6 +114,7 @@ func TestPGParkedNodeRunHoldsFrameOpen(t *testing.T) {
 }
 
 func TestPGMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -228,6 +230,7 @@ func markTerminatedAndGetPG(
 }
 
 func TestPGMarkInstanceTerminatedIfDoneFiresForTerminateAfterRun(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	instanceID := seedResolvedFrameInstancePG(t, ctx, d, true)
@@ -239,6 +242,7 @@ func TestPGMarkInstanceTerminatedIfDoneFiresForTerminateAfterRun(t *testing.T) {
 }
 
 func TestPGMarkInstanceTerminatedIfDoneSkipsDurableDefault(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	instanceID := seedResolvedFrameInstancePG(t, ctx, d, false)

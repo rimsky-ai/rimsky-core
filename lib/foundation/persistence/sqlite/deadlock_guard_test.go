@@ -96,6 +96,7 @@ func seedDispatchInstance(t *testing.T, ctx context.Context, d persistence.Datab
 
 // @concept: executor
 func TestQueue_BumpLastProgressAt_NoDeadlockUnderContention(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		concurrency int
@@ -150,6 +151,7 @@ func TestQueue_BumpLastProgressAt_NoDeadlockUnderContention(t *testing.T) {
 
 // @concept: orphan-reaper
 func TestQueue_BumpAndSweepConcurrent_NoDeadlock(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
 	runID, _ := seedDispatchInstance(t, ctx, d)
@@ -220,6 +222,7 @@ func TestQueue_BumpAndSweepConcurrent_NoDeadlock(t *testing.T) {
 }
 
 func TestQueue_PoolWidthDoesNotStarveLockFreeRead(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
 	runID, _ := seedDispatchInstance(t, ctx, d)
@@ -255,6 +258,7 @@ func TestQueue_PoolWidthDoesNotStarveLockFreeRead(t *testing.T) {
 
 // @decision: async-callback-persistent-registry
 func TestQueue_RegisterAsyncAckAndLookupRoundTrip(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
 	runID, _ := seedDispatchInstance(t, ctx, d)

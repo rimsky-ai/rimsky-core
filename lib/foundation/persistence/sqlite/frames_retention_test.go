@@ -19,6 +19,7 @@ import (
 )
 
 func TestPruneTraceForRetention_NoTxPanic(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	d, err := persistence.Open(ctx, persistence.Config{

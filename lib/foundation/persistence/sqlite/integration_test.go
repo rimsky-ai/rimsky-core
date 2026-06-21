@@ -19,6 +19,7 @@ import (
 )
 
 func TestSQLiteForeignKeysEnabled(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "fk.db")
 	d, err := persistence.Open(context.Background(), persistence.Config{
@@ -41,6 +42,7 @@ func TestSQLiteForeignKeysEnabled(t *testing.T) {
 }
 
 func TestSQLiteWALMode(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "wal.db")
 	d, err := persistence.Open(context.Background(), persistence.Config{

@@ -16,6 +16,7 @@ import (
 )
 
 func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
+	t.Parallel()
 	d := openSQLite(t)
 	ctx := context.Background()
 
@@ -200,6 +201,7 @@ func markTerminatedAndGet(t *testing.T, ctx context.Context, d persistence.Datab
 }
 
 func TestMarkInstanceTerminatedIfDoneFiresForTerminateAfterRun(t *testing.T) {
+	t.Parallel()
 	d := openSQLite(t)
 	ctx := context.Background()
 	instanceID := seedResolvedFrameInstance(t, ctx, d, true)
@@ -211,6 +213,7 @@ func TestMarkInstanceTerminatedIfDoneFiresForTerminateAfterRun(t *testing.T) {
 }
 
 func TestMarkInstanceTerminatedIfDoneSkipsDurableDefault(t *testing.T) {
+	t.Parallel()
 	d := openSQLite(t)
 	ctx := context.Background()
 	instanceID := seedResolvedFrameInstance(t, ctx, d, false)

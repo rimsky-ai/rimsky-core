@@ -15,6 +15,7 @@ import (
 )
 
 func TestSQLiteMigrationApplies(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	d, err := persistence.Open(context.Background(), persistence.Config{
 		Driver: "sqlite",
@@ -34,6 +35,7 @@ func TestSQLiteMigrationApplies(t *testing.T) {
 }
 
 func TestSQLiteMigration002Tags(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	d, err := persistence.Open(ctx, persistence.Config{

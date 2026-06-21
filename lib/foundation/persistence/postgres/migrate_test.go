@@ -17,8 +17,9 @@ import (
 )
 
 func TestMigrateAgainstTestcontainers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	dsn, terminate := pgtest.StartFreshPostgresDSN(ctx, t)
+	dsn, terminate := pgtest.StartUnmigratedPostgresDSN(ctx, t)
 	t.Cleanup(terminate)
 
 	d, err := persistence.Open(ctx, persistence.Config{
@@ -39,8 +40,9 @@ func TestMigrateAgainstTestcontainers(t *testing.T) {
 }
 
 func TestMigration002Tags(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	dsn, terminate := pgtest.StartFreshPostgresDSN(ctx, t)
+	dsn, terminate := pgtest.StartUnmigratedPostgresDSN(ctx, t)
 	t.Cleanup(terminate)
 
 	d, err := persistence.Open(ctx, persistence.Config{

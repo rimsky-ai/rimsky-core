@@ -17,6 +17,7 @@ import (
 
 // @decision: persistence-driver
 func TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	d, err := persistence.Open(context.Background(), persistence.Config{
 		Driver: "sqlite",

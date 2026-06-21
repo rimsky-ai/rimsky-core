@@ -12,7 +12,6 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	pgpersist "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/test/support/testpg"
 )
 
@@ -113,9 +112,5 @@ func OpenDriver(ctx context.Context, t *testing.T) persistence.Database {
 		t.Fatalf("pgmigrate: open driver: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
-		t.Fatalf("pgmigrate: migrate: %v", err)
-	}
 	return d
 }

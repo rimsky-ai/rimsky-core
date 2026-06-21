@@ -15,6 +15,7 @@ import (
 )
 
 func TestPGEvents_TypedKindRoundTrip(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -62,6 +63,7 @@ func TestPGEvents_TypedKindRoundTrip(t *testing.T) {
 }
 
 func TestPGEvents_AppendRefusesZeroKind(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -74,6 +76,7 @@ func TestPGEvents_AppendRefusesZeroKind(t *testing.T) {
 }
 
 func TestPGEvents_UnmarshalRejectsCorruptKind(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()

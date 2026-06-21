@@ -15,6 +15,7 @@ import (
 )
 
 func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
+	t.Parallel()
 	d := openSQLite(t)
 	ctx := context.Background()
 

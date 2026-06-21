@@ -84,6 +84,7 @@ func newBreakpoint(instanceID shared.UUID, customise func(*persistence.Breakpoin
 }
 
 func TestPGBreakpoints_CreateGetRoundTrip(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -155,6 +156,7 @@ func TestPGBreakpoints_CreateGetRoundTrip(t *testing.T) {
 }
 
 func TestPGBreakpoints_GetNotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -172,6 +174,7 @@ func TestPGBreakpoints_GetNotFound(t *testing.T) {
 }
 
 func TestPGBreakpoints_ListForInstance_IncludeExpired(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -236,6 +239,7 @@ func TestPGBreakpoints_ListForInstance_IncludeExpired(t *testing.T) {
 }
 
 func TestPGBreakpoints_IncrementDroppedMonotonic(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -273,6 +277,7 @@ func TestPGBreakpoints_IncrementDroppedMonotonic(t *testing.T) {
 }
 
 func TestPGBreakpoints_SweepExpired(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -364,6 +369,7 @@ func createBreakpoint(t *testing.T, ctx context.Context, store persistence.Table
 }
 
 func TestPGBreakpointHits_CreateReturnsIDAndMonotonicSeq(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -394,6 +400,7 @@ func TestPGBreakpointHits_CreateReturnsIDAndMonotonicSeq(t *testing.T) {
 }
 
 func TestPGBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -462,6 +469,7 @@ func TestPGBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
 }
 
 func TestPGBreakpointHits_ListUnresumedFilters(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -509,6 +517,7 @@ func TestPGBreakpointHits_ListUnresumedFilters(t *testing.T) {
 }
 
 func TestPGBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -577,6 +586,7 @@ func TestPGBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 }
 
 func TestPGBreakpointHits_AutoResumeStale(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -646,6 +656,7 @@ func TestPGBreakpointHits_AutoResumeStale(t *testing.T) {
 }
 
 func TestPGBreakpointHits_DropOldest(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -703,6 +714,7 @@ func TestPGBreakpointHits_DropOldest(t *testing.T) {
 }
 
 func TestPGBreakpointHits_UnresumedCount(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
@@ -743,6 +755,7 @@ func TestPGBreakpointHits_UnresumedCount(t *testing.T) {
 }
 
 func TestPGBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()

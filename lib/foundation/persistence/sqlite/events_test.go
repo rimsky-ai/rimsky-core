@@ -36,6 +36,7 @@ func openSQLiteForEvents(t *testing.T) persistence.Database {
 }
 
 func TestSQLiteEvents_TypedKindRoundTrip(t *testing.T) {
+	t.Parallel()
 	d := openSQLiteForEvents(t)
 	ctx := context.Background()
 	store := d.Tables()
@@ -83,6 +84,7 @@ func TestSQLiteEvents_TypedKindRoundTrip(t *testing.T) {
 }
 
 func TestSQLiteEvents_AppendRefusesZeroKind(t *testing.T) {
+	t.Parallel()
 	d := openSQLiteForEvents(t)
 	ctx := context.Background()
 	store := d.Tables()
@@ -95,6 +97,7 @@ func TestSQLiteEvents_AppendRefusesZeroKind(t *testing.T) {
 }
 
 func TestSQLiteEvents_UnmarshalRejectsCorruptKind(t *testing.T) {
+	t.Parallel()
 	d := openSQLiteForEvents(t)
 	ctx := context.Background()
 	store := d.Tables()

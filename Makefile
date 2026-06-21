@@ -74,11 +74,16 @@ test-all:
 
 # Full race-detection gate over the race-sensitive packages: -count=3 to
 # shake out scheduling-order-dependent races that a single run can miss.
-# Required by the `release` chain. The persistence packages spin up real
-# Postgres via testcontainers — Docker must be running.
+# Required by the `release` chain.
+#
+# Scope is the load-bearing race surface — runtime + scheduler. The
+# persistence packages are deliberately omitted from the -count=3 slice:
+# their race surface is mostly contention against the underlying driver,
+# not Go data races, and `test-all` already covers them with
+# -race -count=1, which catches the common races on every run without
+# tripling testcontainer boot cost in the release gate.
 test-race:
 	go test -race -count=3 ./lib/runtime/... ./lib/graph/scheduler/...
-	cd lib/foundation && go test -race -count=3 ./persistence/postgres/... ./persistence/sqlite/...
 
 build-all:
 	go build ./...

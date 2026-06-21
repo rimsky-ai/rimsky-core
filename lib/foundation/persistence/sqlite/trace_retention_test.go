@@ -188,6 +188,7 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 
 // @concept: frame
 func TestSQLite_FrameRetention_PrunesOldTerminalFramesAndCascadesNodeRuns(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
 	rawDB := sqlitedrv.DBFromDatabase(d)
@@ -243,6 +244,7 @@ func TestSQLite_FrameRetention_PrunesOldTerminalFramesAndCascadesNodeRuns(t *tes
 
 // @concept: event-log
 func TestSQLite_EventRetention_DeleteOlderThan(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
 	rawDB := sqlitedrv.DBFromDatabase(d)
@@ -276,6 +278,7 @@ func TestSQLite_EventRetention_DeleteOlderThan(t *testing.T) {
 
 // @concept: event-log
 func TestSQLite_EventTimeRoundTripThroughProductionPaths(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
 	rawDB := sqlitedrv.DBFromDatabase(d)
@@ -324,6 +327,7 @@ func TestSQLite_EventTimeRoundTripThroughProductionPaths(t *testing.T) {
 // @concept: frame
 // @concept: orphan-reaper
 func TestSQLite_RetentionSweepRespectsWriterSerializationUnderContention(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
 	f := seedTraceFixture(t, ctx, d, 5)

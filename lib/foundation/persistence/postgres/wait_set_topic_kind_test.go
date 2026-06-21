@@ -88,6 +88,7 @@ func seedWaitSetParentsPG(
 }
 
 func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	frameID, receiverRunID, senderRunID := seedWaitSetParentsPG(t, ctx, d)

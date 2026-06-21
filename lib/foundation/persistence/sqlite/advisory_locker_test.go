@@ -12,6 +12,7 @@ import (
 )
 
 func TestTrySchedulerTick_ExcludesAcrossLockerInstances(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
 	lockerA := newAdvisoryLocker(dbPath)
 	lockerB := newAdvisoryLocker(dbPath)
@@ -51,6 +52,7 @@ func TestTrySchedulerTick_ExcludesAcrossLockerInstances(t *testing.T) {
 }
 
 func TestAcquireMigrationLock_BlocksAcrossLockerInstances(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
 	lockerA := newAdvisoryLocker(dbPath)
 	lockerB := newAdvisoryLocker(dbPath)
@@ -98,6 +100,7 @@ func TestAcquireMigrationLock_BlocksAcrossLockerInstances(t *testing.T) {
 }
 
 func TestAcquireMigrationLock_HonorsContextCancel(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
 	lockerA := newAdvisoryLocker(dbPath)
 	lockerB := newAdvisoryLocker(dbPath)
