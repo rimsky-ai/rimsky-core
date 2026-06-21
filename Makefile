@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images push-images publish-protocols check-clean smoke-all test-all test-race build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images push-images publish-protocols check-clean smoke-all test-all test-race test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -54,23 +54,64 @@ tidy:
 # build filter additionally drops packages with no non-test Go files,
 # because passing explicit paths to `go build` (unlike `./...`) turns
 # the "no non-test Go files" notice into an error.
-test-all:
-	# Subscription mounting is asynchronous (instance-create returns 201
-	# with rows in `mounting`; a reconciler drives Subscribe to `active`),
-	# and the docker-stack tests wait on that observable state instead of
-	# a wall-clock budget — so no -parallel cap is needed to keep the
-	# old synchronous-Subscribe flake from biting under load.
+# Per-module test targets — exposed so CI can shard the test run as a matrix
+# over the four workspace modules (plus examples), with each job running its
+# own module's slice in parallel. `test-all` composes them for local runs.
+#
+# The thin -race -count=1 slice rides on the owning module's target:
+# root owns lib/runtime + lib/graph/scheduler; foundation owns its persistence
+# packages. The full -count=3 treatment lives in `test-race` (release-gate
+# only).
+#
+# Subscription mounting is asynchronous (instance-create returns 201 with
+# rows in `mounting`; a reconciler drives Subscribe to `active`), and the
+# docker-stack tests wait on that observable state instead of a wall-clock
+# budget — so no -parallel cap is needed to keep the old synchronous-Subscribe
+# flake from biting under load.
+test-root:
 	go test ./...
-	cd lib/foundation && go test ./...
-	cd lib/protocols && go test ./...
-	cd lib/services && go test $$(go list ./... | grep -v /node_modules/)
-	cd examples && go test ./...
-	# Thin race slice over the race-sensitive packages (queue, supervisor,
-	# scheduler, persistence). One -race pass at -count=1 catches the common
-	# data races on every test-all run; the full -count=3 treatment lives in
-	# the `test-race` target, required by the release chain.
 	go test -race -count=1 ./lib/runtime/... ./lib/graph/scheduler/...
+
+test-foundation:
+	cd lib/foundation && go test ./...
 	cd lib/foundation && go test -race -count=1 ./persistence/postgres/... ./persistence/sqlite/...
+
+test-protocols:
+	cd lib/protocols && go test ./...
+
+test-services:
+	cd lib/services && go test $$(go list ./... | grep -v /node_modules/)
+
+test-examples:
+	cd examples && go test ./...
+
+test-all: test-root test-foundation test-protocols test-services test-examples
+
+# Local test-speed observability. Runs every Go test across all modules under
+# gotestsum, then prints the slowest tests across the whole run. Continues
+# through failures so the timing picture is complete even if a test fails.
+#
+# Requires gotestsum on PATH:
+#   go install gotest.tools/gotestsum@latest
+#
+# Output:
+#   - Per-package elapsed times during the run (gotestsum --format pkgname)
+#   - A final "Slowest tests" table (threshold tunable via SLOW_THRESHOLD,
+#     top-N tunable via SLOW_NUM)
+SLOW_THRESHOLD ?= 500ms
+SLOW_NUM ?= 50
+test-report:
+	@command -v gotestsum >/dev/null || { echo "gotestsum not on PATH; install: go install gotest.tools/gotestsum@latest"; exit 1; }
+	@mkdir -p .test-report
+	-gotestsum --format pkgname --jsonfile=.test-report/root.json -- -count=1 ./...
+	-cd lib/foundation && gotestsum --format pkgname --jsonfile=../../.test-report/foundation.json -- -count=1 ./...
+	-cd lib/protocols && gotestsum --format pkgname --jsonfile=../../.test-report/protocols.json -- -count=1 ./...
+	-cd lib/services && gotestsum --format pkgname --jsonfile=../../.test-report/services.json -- -count=1 $$(go list ./... | grep -v /node_modules/)
+	-cd examples && gotestsum --format pkgname --jsonfile=../../.test-report/examples.json -- -count=1 ./...
+	@cat .test-report/root.json .test-report/foundation.json .test-report/protocols.json .test-report/services.json .test-report/examples.json > .test-report/all.json
+	@echo
+	@echo "==== Slowest tests (threshold $(SLOW_THRESHOLD), top $(SLOW_NUM)) ===="
+	@gotestsum tool slowest --jsonfile .test-report/all.json --threshold=$(SLOW_THRESHOLD) --num=$(SLOW_NUM)
 
 # Full race-detection gate over the race-sensitive packages: -count=3 to
 # shake out scheduling-order-dependent races that a single run can miss.

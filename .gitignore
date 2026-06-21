@@ -84,3 +84,6 @@ lib/services/stubexecutor
 coverage.out
 coverage.html
 .claude/scheduled_tasks.lock
+
+# make test-report (gotestsum jsonfile drops + combined manifest)
+/.test-report/

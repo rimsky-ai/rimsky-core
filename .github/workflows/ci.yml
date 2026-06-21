@@ -21,12 +21,23 @@ permissions:
   contents: read
 
 jobs:
-  # Build + test all four Go modules tied together by go.work. We use the
-  # Makefile's build-all / test-all targets rather than a bare `go build ./...`
-  # because a root-only invocation under go.work silently skips the foundation,
-  # protocols, and services submodules — those targets cd into each module.
+  # Build + test the four Go modules (plus examples) tied together by go.work.
+  # Sharded as a matrix over the per-module Makefile targets so each module's
+  # test slice runs in parallel on its own runner — wall-clock is bounded by
+  # the slowest single module rather than the sum across all five.
+  #
+  # ubuntu-latest ships a running Docker daemon, so the testcontainers-backed
+  # scenario/storage tests can spin up Postgres etc. The `services` shard is
+  # the only one that additionally needs the locally-built rimsky images that
+  # the lib/services/test/... integration harness consumes via testcontainers
+  # (rimsky:latest, rimsky-all-in-one:latest, rimsky-store-filesystem:latest);
+  # the other shards skip that image build to keep their critical path short.
   go:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [root, foundation, protocols, services, examples]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -35,9 +46,8 @@ jobs:
           # the module's declared toolchain.
           go-version-file: go.mod
           cache: false
-      - name: Build all modules
-        run: make build-all
       - name: Build images the services integration harness consumes
+        if: matrix.module == 'services'
         # The lib/services/test/... integration tests (harness, scenarios,
         # smoke) run unconditionally under `go test ./...` and pull
         # LOCALLY-BUILT image tags via testcontainers — nothing is fetched
@@ -54,10 +64,8 @@ jobs:
             -t rimsky-all-in-one:latest .
           docker build -f lib/services/stores/filesystem/Dockerfile.filesystem \
             -t rimsky-store-filesystem:latest .
-      - name: Test all modules
-        # ubuntu-latest ships a running Docker daemon, so the testcontainers
-        # scenario/storage tests can spin up Postgres etc.
-        run: make test-all
+      - name: Test ${{ matrix.module }}
+        run: make test-${{ matrix.module }}
 
   lint:
     runs-on: ubuntu-latest

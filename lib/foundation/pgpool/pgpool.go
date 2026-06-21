@@ -111,6 +111,11 @@ func (p *Pool) boot(ctx context.Context) error {
 			pgmodule.WithDatabase(p.cfg.Database),
 			pgmodule.WithUsername(p.cfg.User),
 			pgmodule.WithPassword(p.cfg.Password),
+			testcontainers.WithCmdArgs(
+				"-c", "synchronous_commit=off",
+				"-c", "full_page_writes=off",
+				"-c", "autovacuum=off",
+			),
 			testcontainers.WithWaitStrategy(
 				wait.ForAll(
 					wait.ForLog("database system is ready to accept connections").
