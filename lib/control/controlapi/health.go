@@ -37,6 +37,7 @@ func handleHealth(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var sups []persistence.SupervisorRow
 		var counts map[cascade.NodeState]int
+		runningPerSup := map[string]int{}
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			s, err := deps.Persist.Supervisors().List(ctx, tx)
 			if err != nil {
@@ -44,8 +45,20 @@ func handleHealth(deps AppDeps) http.HandlerFunc {
 			}
 			sups = s
 			c, err := deps.Persist.Nodes().CountByState(ctx, tx)
+			if err != nil {
+				return err
+			}
 			counts = c
-			return err
+			running, err := deps.Persist.Nodes().ListRunning(ctx, tx)
+			if err != nil {
+				return err
+			}
+			for _, r := range running {
+				if r.AssignedSupervisorID != "" {
+					runningPerSup[r.AssignedSupervisorID]++
+				}
+			}
+			return nil
 		}); err != nil {
 			writeError(w, err)
 			return
@@ -56,7 +69,7 @@ func handleHealth(deps AppDeps) http.HandlerFunc {
 				ID:                s.ID,
 				AcceptedExecutors: s.AcceptedExecutors,
 				Concurrency:       s.Concurrency,
-				ActiveNodeCount:   s.ActiveNodeCount,
+				ActiveNodeCount:   runningPerSup[s.ID],
 				RegisteredAt:      s.RegisteredAt,
 			})
 		}

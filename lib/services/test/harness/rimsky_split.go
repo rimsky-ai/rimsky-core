@@ -194,8 +194,7 @@ func startSplitRole(ctx context.Context, t testing.TB, cb *configBuilder, spec s
 func renderSplitSupervisorYAML(advertiseHost string) string {
 	var b strings.Builder
 	b.WriteString("concurrency: 8\n")
-	b.WriteString("heartbeat_interval_ms: 5000\n")
-	b.WriteString("claim_poll_interval_ms: 1000\n")
+	b.WriteString("claim_poll_interval_ms: 200\n")
 	b.WriteString("callback:\n")
 	b.WriteString("  host: 0.0.0.0\n")
 	b.WriteString("  port: 9100\n")

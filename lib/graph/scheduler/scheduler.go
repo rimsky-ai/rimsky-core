@@ -64,7 +64,7 @@ func Start(cfg Config) *Handle {
 		panic("scheduler.Start: Config.Persist is required (frame engine and invalidate path dereference it)")
 	}
 	if cfg.TickInterval == 0 {
-		cfg.TickInterval = 1500 * time.Millisecond
+		cfg.TickInterval = 250 * time.Millisecond
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = shared.SilentLogger{}

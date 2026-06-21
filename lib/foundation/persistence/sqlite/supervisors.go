@@ -14,7 +14,7 @@ import (
 
 const supervisorCols = `
   id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port,
-  active_node_count, registered_at
+  registered_at
 `
 
 func (s *supervisorsImpl) Register(ctx context.Context, in persistence.SupervisorRegisterInput, tx persistence.Tx) error {
@@ -36,18 +36,9 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 		       accepted_stores    = excluded.accepted_stores,
 		       concurrency        = excluded.concurrency,
 		       callback_host      = excluded.callback_host,
-		       callback_port      = excluded.callback_port,
-		       active_node_count  = 0`,
+		       callback_port      = excluded.callback_port`,
 		in.ID, marshalStringArray(accepts), marshalStringArray(stores), in.Concurrency,
 		nullableString(in.CallbackHost), nullableInt(in.CallbackPort), now,
-	)
-	return err
-}
-
-func (s *supervisorsImpl) UpdateActiveNodeCount(ctx context.Context, id string, activeNodeCount int, tx persistence.Tx) error {
-	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_supervisors SET active_node_count = ? WHERE id = ?`,
-		activeNodeCount, id,
 	)
 	return err
 }
@@ -93,7 +84,7 @@ func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 	if err := sc.Scan(
 		&r.ID, &acceptedExecutorsStr, &acceptedStoresStr, &r.Concurrency,
 		&callbackHost, &callbackPort,
-		&r.ActiveNodeCount, &registeredAtStr,
+		&registeredAtStr,
 	); err != nil {
 		return persistence.SupervisorRow{}, err
 	}

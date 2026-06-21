@@ -64,7 +64,7 @@ func (f *failureReporter) Close() {
 }
 
 func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig) (StopFunc, <-chan error, error) {
-	tickMs := atoiDefault(os.Getenv("RIMSKY_SCHEDULER_TICK_MS"), 1500)
+	tickMs := atoiDefault(os.Getenv("RIMSKY_SCHEDULER_TICK_MS"), 250)
 	log := shared.NewSlogLogger(logger)
 
 	metricsPort, err := metricsPortFor("scheduler")

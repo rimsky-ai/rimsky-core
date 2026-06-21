@@ -16,7 +16,6 @@ type SupervisorRow struct {
 	Concurrency       int       `json:"concurrency"`
 	CallbackHost      string    `json:"callback_host"`
 	CallbackPort      int       `json:"callback_port"`
-	ActiveNodeCount   int       `json:"active_node_count"`
 	RegisteredAt      time.Time `json:"registered_at"`
 }
 
@@ -31,7 +30,6 @@ type SupervisorRegisterInput struct {
 
 type SupervisorTable interface {
 	Register(ctx context.Context, in SupervisorRegisterInput, tx Tx) error
-	UpdateActiveNodeCount(ctx context.Context, id string, activeNodeCount int, tx Tx) error
 	Get(ctx context.Context, id string, tx Tx) (*SupervisorRow, error)
 	List(ctx context.Context, tx Tx) ([]SupervisorRow, error)
 	Unregister(ctx context.Context, id string, tx Tx) error

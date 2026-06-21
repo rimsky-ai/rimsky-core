@@ -95,7 +95,7 @@ func Start(cfg Config) (*Handle, error) {
 		cfg.LivenessInterval = 5 * time.Second
 	}
 	if cfg.ClaimPollInterval == 0 {
-		cfg.ClaimPollInterval = 1 * time.Second
+		cfg.ClaimPollInterval = 200 * time.Millisecond
 	}
 	if cfg.Concurrency < 1 {
 		cfg.Concurrency = 1
@@ -300,35 +300,8 @@ func runLoop(
 	var activeMu sync.Mutex
 	activeCount := 0
 
-	livenessTick := time.NewTicker(cfg.LivenessInterval)
-	defer livenessTick.Stop()
 	claimTick := time.NewTicker(cfg.ClaimPollInterval)
 	defer claimTick.Stop()
-
-	tickLiveness := func() {
-		tickCtx := context.Background()
-		var running int
-		if err := cfg.Persist.Transaction(tickCtx, func(ctx context.Context, tx persistence.Tx) error {
-			rows, err := cfg.Persist.Nodes().ListRunning(ctx, tx)
-			if err != nil {
-				return err
-			}
-			for _, r := range rows {
-				if r.AssignedSupervisorID == cfg.SupervisorID {
-					running++
-				}
-			}
-			return nil
-		}); err != nil {
-			cfg.Logger.Warn("supervisor: list running nodes failed", "error", err.Error())
-			running = 0
-		}
-		if err := cfg.Persist.Transaction(tickCtx, func(ctx context.Context, tx persistence.Tx) error {
-			return cfg.Persist.Supervisors().UpdateActiveNodeCount(ctx, cfg.SupervisorID, running, tx)
-		}); err != nil {
-			cfg.Logger.Warn("supervisor: supervisors.UpdateActiveNodeCount failed", "error", err.Error())
-		}
-	}
 
 	tryClaim := func() {
 		activeMu.Lock()
@@ -420,8 +393,6 @@ func runLoop(
 			_ = pool.Close()
 			cfg.Logger.Info("supervisor stopped", "supervisor_id", cfg.SupervisorID)
 			return
-		case <-livenessTick.C:
-			tickLiveness()
 		case <-claimTick.C:
 			tryClaim()
 		}

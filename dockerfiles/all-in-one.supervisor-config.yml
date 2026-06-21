@@ -11,8 +11,7 @@
 # container (or mount your own file at /etc/rimsky/supervisor-config.yml).
 
 concurrency: 8
-heartbeat_interval_ms: 5000
-claim_poll_interval_ms: 1000
+claim_poll_interval_ms: 200
 callback:
   host: 0.0.0.0
   port: 9100
