@@ -17,6 +17,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 type ValidationError struct {
@@ -291,10 +292,10 @@ func ApplyFrameResolutionDefaults(spec *TemplateSpec) {
 // @concept: signal
 func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks RegistryHooks, res *ValidationResult) {
 	validActions := map[string]bool{
-		"pass":                      true,
-		"give_up":                   true,
-		"retry":                     true,
-		"discard_claims_then_retry": true,
+		spec.ActionPass:              true,
+		spec.ActionGiveUp:            true,
+		spec.ActionRetry:             true,
+		spec.ActionReleaseAndRequeue: true,
 	}
 	executorForClasses := effectiveExecutor(n, hooks)
 	var executorClasses []string
@@ -315,13 +316,10 @@ func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks 
 		}
 	}
 	for className, policy := range n.ErrorTypes {
-		for ai, action := range policy.Policy {
-			if validActions[action.Action] {
-				continue
-			}
+		if !validActions[policy.Action] {
 			res.Errors = append(res.Errors, ValidationError{
-				Path: fmt.Sprintf("%s.error_types[%s].policy[%d].action", base, className, ai),
-				Msg:  fmt.Sprintf("unknown action %q; valid actions are: pass | give_up | retry | discard_claims_then_retry", action.Action),
+				Path: fmt.Sprintf("%s.error_types[%s].action", base, className),
+				Msg:  fmt.Sprintf("unknown action %q; valid actions are: pass | give_up | retry | release_and_requeue", policy.Action),
 			})
 		}
 		if !vocabularyKnown {

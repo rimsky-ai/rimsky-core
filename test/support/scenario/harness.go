@@ -76,11 +76,20 @@ type HarnessOpts struct {
 
 	// @concept: executor
 	ExtraInprocHandlers map[string]executor.InProcessHandler
+
+	Deadline time.Duration
 }
+
+const defaultHarnessDeadline = 90 * time.Second
 
 func Start(t testing.TB, opts HarnessOpts) *Harness {
 	t.Helper()
-	ctx := context.Background()
+	deadline := opts.Deadline
+	if deadline <= 0 {
+		deadline = defaultHarnessDeadline
+	}
+	ctx, cancelDeadline := context.WithTimeout(context.Background(), deadline)
+	t.Cleanup(cancelDeadline)
 
 	tT, ok := t.(*testing.T)
 	if !ok {
@@ -946,38 +955,35 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	if len(n.ErrorTypes) > 0 {
 		ets := map[string]any{}
 		for cls, etp := range n.ErrorTypes {
-			actions := make([]map[string]any, 0, len(etp.Policy))
-			for _, a := range etp.Policy {
-				act := map[string]any{"action": a.Action}
-				if a.Count != 0 {
-					act["count"] = a.Count
-				}
-				if a.Backoff != "" {
-					act["backoff"] = string(a.Backoff)
-				}
-				if a.Jitter != "" {
-					act["jitter"] = string(a.Jitter)
-				}
-				if a.BaseDelayMs != 0 {
-					act["base_delay_ms"] = a.BaseDelayMs
-				}
-				if a.MaxDelayMs != 0 {
-					act["max_delay_ms"] = a.MaxDelayMs
-				}
-				if a.ReasonTemplate != "" {
-					act["reason_template"] = a.ReasonTemplate
-				}
-				actions = append(actions, act)
+			entry := map[string]any{"action": etp.Action}
+			if etp.ReasonTemplate != "" {
+				entry["reason_template"] = etp.ReasonTemplate
 			}
-			ets[cls] = map[string]any{"policy": actions}
+			ets[cls] = entry
 		}
 		nd["error_types"] = ets
 	}
 	if n.MaxParkDuration != "" {
 		nd["max_park_duration"] = n.MaxParkDuration
 	}
-	if n.MaxRetriesWithoutProgress != nil {
-		nd["max_retries_without_progress"] = *n.MaxRetriesWithoutProgress
+	if n.MaxRetries != nil {
+		nd["max_retries"] = *n.MaxRetries
+	}
+	if n.RetryBackoff != nil {
+		rb := map[string]any{}
+		if n.RetryBackoff.Kind != "" {
+			rb["kind"] = string(n.RetryBackoff.Kind)
+		}
+		if n.RetryBackoff.Jitter != "" {
+			rb["jitter"] = string(n.RetryBackoff.Jitter)
+		}
+		if n.RetryBackoff.BaseDelayMs != 0 {
+			rb["base_delay_ms"] = n.RetryBackoff.BaseDelayMs
+		}
+		if n.RetryBackoff.MaxDelayMs != 0 {
+			rb["max_delay_ms"] = n.RetryBackoff.MaxDelayMs
+		}
+		nd["retry_backoff"] = rb
 	}
 	if n.FanOut != nil {
 		nd["fan_out"] = fanOutSpecToJSON(n.FanOut)

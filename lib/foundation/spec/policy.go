@@ -11,23 +11,21 @@ import (
 )
 
 type ErrorTypePolicy struct {
-	Policy []PolicyAction `yaml:"policy" json:"policy"`
+	Action         string `yaml:"action" json:"action"`
+	ReasonTemplate string `yaml:"reason_template,omitempty" json:"reason_template,omitempty"`
 }
 
-type PolicyAction struct {
-	Action         string      `yaml:"action" json:"action"`
-	Count          int         `yaml:"count,omitempty" json:"count,omitempty"`
-	Backoff        BackoffKind `yaml:"backoff,omitempty" json:"backoff,omitempty"`
-	Jitter         JitterKind  `yaml:"jitter,omitempty" json:"jitter,omitempty"`
-	BaseDelayMs    int         `yaml:"base_delay_ms,omitempty" json:"base_delay_ms,omitempty"`
-	MaxDelayMs     int         `yaml:"max_delay_ms,omitempty" json:"max_delay_ms,omitempty"`
-	ReasonTemplate string      `yaml:"reason_template,omitempty" json:"reason_template,omitempty"`
+type PolicyAction = ErrorTypePolicy
+
+type RetryBackoffConfig struct {
+	Kind        BackoffKind `yaml:"kind,omitempty" json:"kind,omitempty"`
+	Jitter      JitterKind  `yaml:"jitter,omitempty" json:"jitter,omitempty"`
+	BaseDelayMs int         `yaml:"base_delay_ms,omitempty" json:"base_delay_ms,omitempty"`
+	MaxDelayMs  int         `yaml:"max_delay_ms,omitempty" json:"max_delay_ms,omitempty"`
 }
 
 type EvaluatorState struct {
-	ActionIndex       int
-	RetryCounter      int
-	CurrentErrorClass string
+	RetryCounter int
 }
 
 type ResolvedAction struct {
@@ -36,6 +34,13 @@ type ResolvedAction struct {
 	Reason   string
 	NewState EvaluatorState
 }
+
+const (
+	ActionRetry             = "retry"
+	ActionGiveUp            = "give_up"
+	ActionPass              = "pass"
+	ActionReleaseAndRequeue = "release_and_requeue"
+)
 
 // @concept: error-policy
 type DispatchDisposition string

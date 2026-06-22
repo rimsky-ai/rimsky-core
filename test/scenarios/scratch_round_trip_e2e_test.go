@@ -103,14 +103,12 @@ func TestScratchRoundTripE2E_RetryAfterError(t *testing.T) {
 		Name: "scratch-retry-after-error", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:     "worker",
-				Executor: url,
+				Type:         "worker",
+				Executor:     url,
+				MaxRetries:   node.IntPtr(1),
+				RetryBackoff: &node.RetryBackoffConfig{BaseDelayMs: 50, Kind: "linear"},
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"executor_runtime_error": {
-						Policy: []node.PolicyAction{
-							{Action: "retry", Count: 1, BaseDelayMs: 50, Backoff: "linear"},
-						},
-					},
+					"executor_runtime_error": {Action: "retry"},
 				},
 			}),
 		},

@@ -68,7 +68,9 @@ type TemplateNodeDef struct {
 
 	MaxParkDuration string `yaml:"max_park_duration,omitempty" json:"max_park_duration,omitempty"`
 
-	MaxRetriesWithoutProgress *int `yaml:"max_retries_without_progress,omitempty" json:"max_retries_without_progress,omitempty"`
+	MaxRetries *int `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`
+
+	RetryBackoff *RetryBackoffConfig `yaml:"retry_backoff,omitempty" json:"retry_backoff,omitempty"`
 
 	// @decision: three-dispatch-deadlines
 	SyncRPCDeadline string `yaml:"sync_rpc_deadline,omitempty" json:"sync_rpc_deadline,omitempty"`

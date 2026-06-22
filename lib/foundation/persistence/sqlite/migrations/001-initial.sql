@@ -255,9 +255,7 @@ CREATE TABLE rimsky_node_runs (
     prior_dispatch_disposition          TEXT NULL
                                         CHECK (prior_dispatch_disposition IS NULL
                                                OR prior_dispatch_disposition IN ('stale_recovery','recalculate')),
-    current_error_class                 TEXT,
     retry_counter                       INTEGER NOT NULL DEFAULT 0,
-    action_index                        INTEGER NOT NULL DEFAULT 0,
     settling_signal_type                TEXT,
     scratch_inline                      BLOB,
     scratch_handle                      TEXT,

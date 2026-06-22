@@ -52,8 +52,6 @@ type RunArgs struct {
 	Blob               persistence.BlobBackend
 	BlobSpillThreshold int
 
-	MaxRetriesWithoutProgressDefault int
-
 	SyncRPCDeadlineDefault time.Duration
 
 	MaxQuietPeriodDefault time.Duration
@@ -206,9 +204,13 @@ func RunNode(
 		if err := runApplyTerminal(ctx, args, &acq, dispatchAttrs, attrSchema, terminal, nil); err != nil {
 			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
 		}
+		if acq.RetryDecision != nil && acq.RetryDecision.IsReleaseAndRequeue() {
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
+		}
 		if acq.RetryDecision == nil || !acq.RetryDecision.IsRetry() {
 			break
 		}
+		acq.Scratch = terminal.Scratch
 		if delay := time.Duration(acq.RetryDecision.DelayMs) * time.Millisecond; delay > 0 {
 			select {
 			case <-ctx.Done():

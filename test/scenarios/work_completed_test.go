@@ -81,7 +81,7 @@ func TestWorkCompletedPairsWorkStartedOnErrored(t *testing.T) {
 				Type: "flaky", Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
 					"stub/my_err": {
-						Policy: []node.PolicyAction{{Action: "give_up"}},
+						Action: "give_up",
 					},
 				},
 			}),

@@ -11,86 +11,70 @@ import (
 )
 
 type (
-	ErrorTypePolicy = spec.ErrorTypePolicy
-	PolicyAction    = spec.PolicyAction
-	EvaluatorState  = spec.EvaluatorState
-	ResolvedAction  = spec.ResolvedAction
+	ErrorTypePolicy    = spec.ErrorTypePolicy
+	PolicyAction       = spec.PolicyAction
+	EvaluatorState     = spec.EvaluatorState
+	ResolvedAction     = spec.ResolvedAction
+	RetryBackoffConfig = spec.RetryBackoffConfig
 )
 
-func Evaluate(policy *ErrorTypePolicy, state EvaluatorState, errorClass string, rng func() float64) ResolvedAction {
+func Evaluate(
+	policy *ErrorTypePolicy,
+	state EvaluatorState,
+	errorClass string,
+	maxRetries int,
+	backoff BackoffConfig,
+	rng func() float64,
+) ResolvedAction {
 	if rng == nil {
 		rng = rand.Float64
 	}
 	if policy == nil {
 		return ResolvedAction{
-			Kind:   "give_up",
-			Reason: "unknown_error_class",
-			NewState: EvaluatorState{
-				ActionIndex: 0, RetryCounter: 0, CurrentErrorClass: errorClass,
-			},
+			Kind:     spec.ActionGiveUp,
+			Reason:   "unknown_error_class",
+			NewState: state,
 		}
 	}
-	working := state
-	if working.CurrentErrorClass != errorClass {
-		working = EvaluatorState{ActionIndex: 0, RetryCounter: 0, CurrentErrorClass: errorClass}
-	}
-	return step(policy.Policy, working, errorClass, rng)
-}
-
-func step(chain []PolicyAction, state EvaluatorState, errorClass string, rng func() float64) ResolvedAction {
-	if state.ActionIndex >= len(chain) {
-		return ResolvedAction{
-			Kind:   "give_up",
-			Reason: "policy_exhausted",
-			NewState: EvaluatorState{
-				ActionIndex: state.ActionIndex, RetryCounter: 0, CurrentErrorClass: errorClass,
-			},
-		}
-	}
-	action := chain[state.ActionIndex]
-	switch action.Action {
-	case "retry", "discard_claims_then_retry":
-		if state.RetryCounter < action.Count {
-			newCounter := state.RetryCounter + 1
-			delay := ComputeDelay(BackoffConfig{
-				Kind:        action.Backoff,
-				BaseDelayMs: action.BaseDelayMs,
-				Jitter:      action.Jitter,
-				MaxDelayMs:  action.MaxDelayMs,
-			}, newCounter-1, rng)
+	switch policy.Action {
+	case spec.ActionRetry:
+		if maxRetries > 0 && state.RetryCounter >= maxRetries {
 			return ResolvedAction{
-				Kind:    action.Action,
-				DelayMs: delay,
-				NewState: EvaluatorState{
-					ActionIndex: state.ActionIndex, RetryCounter: newCounter, CurrentErrorClass: errorClass,
-				},
+				Kind:     spec.ActionGiveUp,
+				Reason:   "max_retries_exhausted",
+				NewState: state,
 			}
 		}
-		return step(chain, EvaluatorState{
-			ActionIndex: state.ActionIndex + 1, RetryCounter: 0, CurrentErrorClass: errorClass,
-		}, errorClass, rng)
-	case "pass":
+		newCounter := state.RetryCounter + 1
+		delay := ComputeDelay(backoff, newCounter-1, rng)
 		return ResolvedAction{
-			Kind: "pass",
-			NewState: EvaluatorState{
-				ActionIndex: state.ActionIndex + 1, RetryCounter: 0, CurrentErrorClass: errorClass,
-			},
+			Kind:     spec.ActionRetry,
+			DelayMs:  delay,
+			NewState: EvaluatorState{RetryCounter: newCounter},
 		}
-	case "give_up":
-		reason := action.ReasonTemplate
+	case spec.ActionReleaseAndRequeue:
+		return ResolvedAction{
+			Kind:     spec.ActionReleaseAndRequeue,
+			NewState: state,
+		}
+	case spec.ActionPass:
+		return ResolvedAction{
+			Kind:     spec.ActionPass,
+			NewState: state,
+		}
+	case spec.ActionGiveUp:
+		reason := policy.ReasonTemplate
 		if reason == "" {
-			reason = "give_up"
+			reason = spec.ActionGiveUp
 		}
 		return ResolvedAction{
-			Kind:   "give_up",
-			Reason: reason,
-			NewState: EvaluatorState{
-				ActionIndex: state.ActionIndex, RetryCounter: 0, CurrentErrorClass: errorClass,
-			},
+			Kind:     spec.ActionGiveUp,
+			Reason:   reason,
+			NewState: state,
 		}
 	default:
 		return ResolvedAction{
-			Kind:     "give_up",
+			Kind:     spec.ActionGiveUp,
 			Reason:   "unknown_action_type",
 			NewState: state,
 		}

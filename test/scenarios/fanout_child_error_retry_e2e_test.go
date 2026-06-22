@@ -59,8 +59,9 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 						PartitionRequest: `{"partition_keys":["a"]}`,
 						ErrorPolicy:      tmplspec.AggregationPolicy{Kind: tmplspec.AggregationKindBestEffort},
 					},
+					MaxRetries: node.IntPtr(2),
 					ErrorTypes: map[string]node.ErrorTypePolicy{
-						"stub/flaky": {Policy: []node.PolicyAction{{Action: "retry", Count: 2}}},
+						"stub/flaky": {Action: "retry"},
 					},
 				},
 				openAttrs,

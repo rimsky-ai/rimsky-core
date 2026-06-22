@@ -175,7 +175,7 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"acquire/unavailable": {
-							Policy: []node.PolicyAction{{Action: "give_up"}},
+							Action: "give_up",
 						},
 					},
 				},
@@ -289,7 +289,7 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"acquire/unavailable": {
-							Policy: []node.PolicyAction{{Action: "give_up"}},
+							Action: "give_up",
 						},
 					},
 				},

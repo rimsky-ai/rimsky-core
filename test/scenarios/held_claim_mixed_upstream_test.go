@@ -58,7 +58,7 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"acquire/unavailable": {
-							Policy: []node.PolicyAction{{Action: "pass"}},
+							Action: "pass",
 						},
 					},
 				},
@@ -71,7 +71,7 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"template_resolution_failed": {
-							Policy: []node.PolicyAction{{Action: "give_up"}},
+							Action: "give_up",
 						},
 					},
 					Holds: map[string]node.HoldsBinding{

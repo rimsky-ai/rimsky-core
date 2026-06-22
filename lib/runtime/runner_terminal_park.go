@@ -47,8 +47,8 @@ func applyTerminalPark(
 		}
 	}
 	var maxRetries *int
-	if acq.NodeDef != nil && acq.NodeDef.MaxRetriesWithoutProgress != nil {
-		v := *acq.NodeDef.MaxRetriesWithoutProgress
+	if acq.NodeDef != nil && acq.NodeDef.MaxRetries != nil {
+		v := *acq.NodeDef.MaxRetries
 		maxRetries = &v
 	}
 
@@ -156,12 +156,3 @@ func parkTerminalSignal(t terminalEvent) signalpkg.Signal {
 	}
 }
 
-func resolveMaxRetriesCap(args RunArgs, override *int) int {
-	if override != nil {
-		return *override
-	}
-	if args.MaxRetriesWithoutProgressDefault > 0 {
-		return args.MaxRetriesWithoutProgressDefault
-	}
-	return 100
-}

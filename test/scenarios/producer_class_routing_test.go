@@ -67,9 +67,11 @@ func driveProducerClassifiedRetry(
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
-					Type:       "worker",
-					Executor:   "stub",
-					ErrorTypes: errorTypes,
+					Type:         "worker",
+					Executor:     "stub",
+					MaxRetries:   node.IntPtr(1000),
+					RetryBackoff: &node.RetryBackoffConfig{BaseDelayMs: 100},
+					ErrorTypes:   errorTypes,
 				},
 				scenario.WithClaimProducers(scenario.WriteClaimRef("queue-store", "@queue")),
 			),
@@ -112,12 +114,7 @@ func TestProducerClassRouting_ExactMatch(t *testing.T) {
 	driveProducerClassifiedRetry(t, h, sub,
 		"producer-class-exact", "ck-producer-class-exact",
 		map[string]node.ErrorTypePolicy{
-			producerClassUnavailable: {
-				Policy: []node.PolicyAction{
-					{Action: "retry", Count: 1000, BaseDelayMs: 100},
-					{Action: "give_up"},
-				},
-			},
+			producerClassUnavailable: {Action: "retry"},
 		})
 }
 
@@ -127,11 +124,6 @@ func TestProducerClassRouting_PrefixFallback(t *testing.T) {
 	driveProducerClassifiedRetry(t, h, sub,
 		"producer-class-fallback", "ck-producer-class-fallback",
 		map[string]node.ErrorTypePolicy{
-			"acquire/unavailable": {
-				Policy: []node.PolicyAction{
-					{Action: "retry", Count: 1000, BaseDelayMs: 100},
-					{Action: "give_up"},
-				},
-			},
+			"acquire/unavailable": {Action: "retry"},
 		})
 }

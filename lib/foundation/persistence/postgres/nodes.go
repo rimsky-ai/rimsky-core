@@ -426,34 +426,25 @@ func (s *nodesImpl) enforceAndUpdate(
 func (s *nodesImpl) UpdateRunEvaluatorState(ctx context.Context, runID foundationshared.UUID, es spec.EvaluatorState, tx persistence.Tx) error {
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
-		   SET action_index = $2,
-		       retry_counter = $3,
-		       current_error_class = $4
+		   SET retry_counter = $2
 		 WHERE id = $1`,
-		runID, es.ActionIndex, es.RetryCounter, nullableString(es.CurrentErrorClass),
+		runID, es.RetryCounter,
 	)
 	return err
 }
 
 // @concept: error-policy
 func (s *nodesImpl) GetRunEvaluatorState(ctx context.Context, runID foundationshared.UUID, tx persistence.Tx) (spec.EvaluatorState, error) {
-	var (
-		es              spec.EvaluatorState
-		currentErrClass *string
-	)
+	var es spec.EvaluatorState
 	err := s.q(tx).QueryRow(ctx,
-		`SELECT action_index, retry_counter, current_error_class
-		   FROM rimsky_node_runs WHERE id = $1`,
+		`SELECT retry_counter FROM rimsky_node_runs WHERE id = $1`,
 		runID,
-	).Scan(&es.ActionIndex, &es.RetryCounter, &currentErrClass)
+	).Scan(&es.RetryCounter)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return spec.EvaluatorState{}, nil
 		}
 		return spec.EvaluatorState{}, err
-	}
-	if currentErrClass != nil {
-		es.CurrentErrorClass = *currentErrClass
 	}
 	return es, nil
 }

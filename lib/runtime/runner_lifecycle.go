@@ -34,6 +34,17 @@ func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition
 	if acq.UnavailableClass != "" {
 		primaryClass = acq.UnavailableClass
 	}
+	if _, declared := acq.NodeDef.ErrorTypes[primaryClass]; !declared {
+		if _, fallback := acq.NodeDef.ErrorTypes[acquireUnavailableSyntheticClass]; !fallback {
+			if err := args.Queue.ReleaseClaim(ctx, cand.DispatchID, args.SupervisorID); err != nil {
+				args.Logger.Warn("handleAcquireUnavailable: ReleaseClaim failed; row may stay claimed until liveness sweep",
+					"node_id", cand.NodeID.String(),
+					"dispatch_id", cand.DispatchID.String(),
+					"error", err.Error())
+			}
+			return nil
+		}
+	}
 	effectiveClass := resolveErrorPolicyClass(acq.NodeDef, primaryClass, acquireUnavailableSyntheticClass)
 	payload := map[string]any{
 		"source":        "acquire_unavailable",

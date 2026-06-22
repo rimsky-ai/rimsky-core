@@ -136,7 +136,7 @@ func testClaimHandoffAbandonPath(t *testing.T) {
 		coHolderError: "forced",
 		coHolderErrorTypes: map[string]node.ErrorTypePolicy{
 			"stub/forced": {
-				Policy: []node.PolicyAction{{Action: "give_up"}},
+				Action: "give_up",
 			},
 		},
 	})

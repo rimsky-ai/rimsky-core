@@ -64,13 +64,11 @@ func TestSignalEmission_TerminalErrorWithRetryThenGiveUp(t *testing.T) {
 		Name: "signal-retry-then-give-up", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:     "worker",
-				Executor: "stub",
+				Type:       "worker",
+				Executor:   "stub",
+				MaxRetries: node.IntPtr(1),
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/foo": {Policy: []node.PolicyAction{
-						{Action: "retry", Count: 1},
-						{Action: "give_up"},
-					}},
+					"stub/foo": {Action: "retry"},
 				},
 			}),
 		},

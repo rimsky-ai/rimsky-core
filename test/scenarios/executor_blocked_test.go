@@ -31,11 +31,7 @@ func TestExecutorBlocked(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "gated", Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/executor_blocked": {
-						Policy: []node.PolicyAction{
-							{Action: "give_up"},
-						},
-					},
+					"stub/executor_blocked": {Action: "give_up"},
 				},
 			}),
 		},

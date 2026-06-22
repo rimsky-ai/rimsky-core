@@ -65,7 +65,7 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"stub/executor_blocked": {
-							Policy: []node.PolicyAction{{Action: "pass"}},
+							Action: "pass",
 						},
 					},
 				},

@@ -69,12 +69,12 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
 			),
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:     "transient_sender",
-				Executor: "stub",
+				Type:         "transient_sender",
+				Executor:     "stub",
+				MaxRetries:   node.IntPtr(100),
+				RetryBackoff: &node.RetryBackoffConfig{BaseDelayMs: 500},
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/flaky": {Policy: []node.PolicyAction{
-						{Action: "retry", Count: 100, BaseDelayMs: 500},
-					}},
+					"stub/flaky": {Action: "retry"},
 				},
 			}),
 			scenario.MakeNode(

@@ -24,7 +24,11 @@ type policyDecision struct {
 }
 
 func (d policyDecision) IsRetry() bool {
-	return d.Kind == "retry" || d.Kind == "discard_claims_then_retry"
+	return d.Kind == spec.ActionRetry
+}
+
+func (d policyDecision) IsReleaseAndRequeue() bool {
+	return d.Kind == spec.ActionReleaseAndRequeue
 }
 
 func applyErrorPolicy(
@@ -43,29 +47,13 @@ func applyErrorPolicyWithScratch(
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, scratch); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
-	if errorClass != "retry_loop_no_progress" {
-		if shouldForceRetryLoopGiveUp(ctx, args, acq) {
-			args.Logger.Warn("applyErrorPolicy: retry_loop_no_progress cap reached; forcing give_up",
-				"node_id", acq.NodeID.String(),
-				"original_error_class", errorClass)
-			origErrorClass := errorClass
-			origPayload := payload
-			errorClass = "retry_loop_no_progress"
-			payload = map[string]any{
-				"original_error_class": origErrorClass,
-				"original_payload":     origPayload,
-			}
-		}
-	}
-	policy, err := lookupPolicyForNode(ctx, args, acq, errorClass)
-	if err != nil {
-		return nil, err
-	}
+	policy := lookupPolicyForNode(acq, errorClass)
 	state, err := args.Persist.Nodes().GetRunEvaluatorState(ctx, acq.DispatchID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: load evaluator state: %w", err)
 	}
-	resolved := node.Evaluate(policy, state, errorClass, nil)
+	maxRetries, backoff := resolveRetryConfig(acq.NodeDef)
+	resolved := node.Evaluate(policy, state, errorClass, maxRetries, backoff, nil)
 	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.DispatchID, resolved.NewState, tx); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: persist evaluator state: %w", err)
 	}
@@ -77,25 +65,40 @@ func applyErrorPolicyWithScratch(
 			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
 			return nil, fmt.Errorf("applyErrorPolicy: emit retry signal: %w", err)
 		}
-		priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
-		if err := args.Queue.SetRetryNoProgressForRunInTx(ctx, tx, acq.DispatchID, priorCount+1); err != nil {
-			return nil, fmt.Errorf("applyErrorPolicy: bump retry counter: %w", err)
-		}
 		acq.RetryDecision = &decision
 		return nil, nil
 	}
 
-	dispatchID := acq.DispatchID
-	successOutcome := false
-	if resolved.Kind == "pass" {
-		successOutcome = true
+	if decision.IsReleaseAndRequeue() {
+		if err := emitSignalInTxOnce(ctx, args, tx,
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
+			return nil, fmt.Errorf("applyErrorPolicy: emit release signal: %w", err)
+		}
+		releasePC, err := releaseLocksInTx(ctx, args, tx, acq, false, false)
+		if err != nil {
+			return nil, fmt.Errorf("applyErrorPolicy: release locks: %w", err)
+		}
+		acq.RetryDecision = &decision
+		dispatchID := acq.DispatchID
+		supID := args.SupervisorID
+		logger := args.Logger
+		requeuePC := func(ctx context.Context) {
+			if err := args.Queue.ReleaseClaim(ctx, dispatchID, supID); err != nil && logger != nil {
+				logger.Warn("applyErrorPolicy: ReleaseClaim failed; row may stay claimed until liveness sweep",
+					"dispatch_id", dispatchID.String(), "error", err.Error())
+			}
+		}
+		return chainPostCommit(releasePC, requeuePC), nil
 	}
+
+	dispatchID := acq.DispatchID
+	successOutcome := resolved.Kind == spec.ActionPass
 	releasePC, err := releaseLocksInTx(ctx, args, tx, acq, successOutcome, false)
 	if err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
 	settlingSig := string(sig.Type)
-	if resolved.Kind == "pass" {
+	if resolved.Kind == spec.ActionPass {
 		latest, lerr := args.Persist.Nodes().GetLatestRunInScope(ctx, tx, acq.NodeID, acq.RunScopeID)
 		if lerr != nil {
 			return nil, fmt.Errorf("applyErrorPolicy: latest run lookup: %w", lerr)
@@ -140,7 +143,7 @@ func applyErrorPolicyWithScratch(
 	}
 
 	post := func(ctx context.Context) {
-		if resolved.Kind == "give_up" {
+		if resolved.Kind == spec.ActionGiveUp {
 			scope := resolveAcqScope(ctx, args, acq)
 			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 				InstanceID:         acq.InstanceID,
@@ -172,6 +175,8 @@ func applyErrorPolicyWithScratch(
 	return chainPostCommit(releasePC, post), nil
 }
 
+const defaultInfraRetryCap = 10
+
 // @concept: executor
 func applyTerminalInfraError(
 	ctx context.Context, args RunArgs, acq *acquisition,
@@ -183,16 +188,20 @@ func applyTerminalInfraError(
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, scratch); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
-	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
-	if err := args.Queue.SetRetryNoProgressForRunInTx(ctx, tx, acq.DispatchID, priorCount+1); err != nil {
-		return nil, fmt.Errorf("applyTerminalInfraError: bump retry counter: %w", err)
+	state, err := args.Persist.Nodes().GetRunEvaluatorState(ctx, acq.DispatchID, tx)
+	if err != nil {
+		return nil, fmt.Errorf("applyTerminalInfraError: load evaluator state: %w", err)
 	}
-	maxRetries := resolveMaxRetriesCap(args, nil)
-	if acq.NodeDef != nil && acq.NodeDef.MaxRetriesWithoutProgress != nil {
-		maxRetries = *acq.NodeDef.MaxRetriesWithoutProgress
+	maxRetries, _ := resolveRetryConfig(acq.NodeDef)
+	if maxRetries <= 0 {
+		maxRetries = defaultInfraRetryCap
 	}
-	if priorCount+1 >= maxRetries && maxRetries > 0 {
+	if state.RetryCounter >= maxRetries {
 		return applyInfraGiveUp(ctx, args, acq, errorClass, payload, tx)
+	}
+	state.RetryCounter++
+	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.DispatchID, state, tx); err != nil {
+		return nil, fmt.Errorf("applyTerminalInfraError: persist evaluator state: %w", err)
 	}
 	infraSig := signalpkg.Signal{
 		Type: signalpkg.TypePath("transient/infra/" + errorClass),
@@ -205,7 +214,7 @@ func applyTerminalInfraError(
 		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, infraSig); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: emit signal: %w", err)
 	}
-	acq.RetryDecision = &policyDecision{Kind: "retry", DelayMs: 0, Signal: infraSig}
+	acq.RetryDecision = &policyDecision{Kind: spec.ActionRetry, DelayMs: 0, Signal: infraSig}
 	return nil, nil
 }
 
@@ -258,22 +267,20 @@ func applyInfraGiveUp(
 		}
 		_ = dispatchID
 	}
-	acq.RetryDecision = &policyDecision{Kind: "give_up", Signal: sig}
+	acq.RetryDecision = &policyDecision{Kind: spec.ActionGiveUp, Signal: sig}
 	return chainPostCommit(releasePC, post), nil
 }
 
-func lookupPolicyForNode(
-	_ context.Context, _ RunArgs, acq *acquisition, errorClass string,
-) (*node.ErrorTypePolicy, error) {
+func lookupPolicyForNode(acq *acquisition, errorClass string) *node.ErrorTypePolicy {
 	if acq.NodeDef == nil {
-		return nil, nil
+		return nil
 	}
 	p, ok := acq.NodeDef.ErrorTypes[errorClass]
 	if !ok {
-		return nil, nil
+		return nil
 	}
 	cp := p
-	return &cp, nil
+	return &cp
 }
 
 func resolveErrorPolicyClass(nd *node.TemplateNodeDef, primary, fallback string) string {
@@ -291,6 +298,23 @@ func resolveErrorPolicyClass(nd *node.TemplateNodeDef, primary, fallback string)
 	return primary
 }
 
+func resolveRetryConfig(nd *node.TemplateNodeDef) (int, node.BackoffConfig) {
+	maxRetries := 0
+	if nd != nil && nd.MaxRetries != nil {
+		maxRetries = *nd.MaxRetries
+	}
+	var backoff node.BackoffConfig
+	if nd != nil && nd.RetryBackoff != nil {
+		backoff = node.BackoffConfig{
+			Kind:        nd.RetryBackoff.Kind,
+			Jitter:      nd.RetryBackoff.Jitter,
+			BaseDelayMs: nd.RetryBackoff.BaseDelayMs,
+			MaxDelayMs:  nd.RetryBackoff.MaxDelayMs,
+		}
+	}
+	return maxRetries, backoff
+}
+
 func requiredClaimProducersForAcq(acq *acquisition) []string {
 	if acq == nil || acq.NodeDef == nil {
 		return nil
@@ -301,16 +325,24 @@ func requiredClaimProducersForAcq(acq *acquisition) []string {
 // @concept: signal
 func errorPolicySignal(errorClass string, errorPayload map[string]any, tags []string, resolvedKind string, retriesSoFar int, delayMs int) signalpkg.Signal {
 	switch resolvedKind {
-	case "retry", "discard_claims_then_retry":
+	case spec.ActionRetry:
 		typ := signalpkg.TypePath(fmt.Sprintf("transient/retry/%d/%s", retriesSoFar, errorClass))
 		return signalpkg.Signal{
 			Type: typ,
 			Payload: map[string]any{
-				"attempt":          retriesSoFar,
-				"error_class":      errorClass,
-				"discarded_claims": resolvedKind == "discard_claims_then_retry",
-				"delay_ms":         delayMs,
-				"error_payload":    errorPayload,
+				"attempt":       retriesSoFar,
+				"error_class":   errorClass,
+				"delay_ms":      delayMs,
+				"error_payload": errorPayload,
+			},
+		}
+	case spec.ActionReleaseAndRequeue:
+		typ := signalpkg.TypePath("transient/release_and_requeue/" + errorClass)
+		return signalpkg.Signal{
+			Type: typ,
+			Payload: map[string]any{
+				"error_class":   errorClass,
+				"error_payload": errorPayload,
 			},
 		}
 	default:
@@ -327,23 +359,3 @@ func errorPolicySignal(errorClass string, errorPayload map[string]any, tags []st
 		}
 	}
 }
-
-func shouldForceRetryLoopGiveUp(ctx context.Context, args RunArgs, acq *acquisition) bool {
-	count, override, err := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
-	if err != nil {
-		return false
-	}
-	if override == nil && acq.NodeDef != nil && acq.NodeDef.MaxRetriesWithoutProgress != nil {
-		override = acq.NodeDef.MaxRetriesWithoutProgress
-	}
-	if override != nil && *override == 0 {
-		return false
-	}
-	maxRetries := resolveMaxRetriesCap(args, override)
-	if maxRetries <= 0 {
-		return false
-	}
-	return count >= maxRetries
-}
-
-var _ = spec.EvaluatorState{}

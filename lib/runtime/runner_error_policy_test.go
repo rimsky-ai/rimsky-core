@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func TestErrorPolicySignal_RetryShape(t *testing.T) {
-	got := errorPolicySignal("foo", map[string]any{"k": "v"}, nil, "retry", 1, 500)
+	got := errorPolicySignal("foo", map[string]any{"k": "v"}, nil, spec.ActionRetry, 1, 500)
 	if got.Type != signalpkg.TypePath("transient/retry/1/foo") {
 		t.Fatalf("retry type: got %q want transient/retry/1/foo", got.Type)
 	}
@@ -21,26 +22,23 @@ func TestErrorPolicySignal_RetryShape(t *testing.T) {
 	if got.Payload["error_class"].(string) != "foo" {
 		t.Fatalf("error_class: got %v want foo", got.Payload["error_class"])
 	}
-	if got.Payload["discarded_claims"].(bool) {
-		t.Fatalf("retry: discarded_claims should be false")
-	}
 	if got.Payload["delay_ms"].(int) != 500 {
 		t.Fatalf("delay_ms: got %v want 500", got.Payload["delay_ms"])
 	}
 }
 
-func TestErrorPolicySignal_DiscardClaimsThenRetryShape(t *testing.T) {
-	got := errorPolicySignal("foo", nil, nil, "discard_claims_then_retry", 2, 0)
-	if got.Type != signalpkg.TypePath("transient/retry/2/foo") {
-		t.Fatalf("type: got %q", got.Type)
+func TestErrorPolicySignal_ReleaseAndRequeueShape(t *testing.T) {
+	got := errorPolicySignal("acquire/unavailable", nil, nil, spec.ActionReleaseAndRequeue, 0, 0)
+	if got.Type != signalpkg.TypePath("transient/release_and_requeue/acquire/unavailable") {
+		t.Fatalf("release_and_requeue type: got %q", got.Type)
 	}
-	if !got.Payload["discarded_claims"].(bool) {
-		t.Fatalf("discard_claims_then_retry: discarded_claims should be true")
+	if got.Payload["error_class"].(string) != "acquire/unavailable" {
+		t.Fatalf("error_class: got %v", got.Payload["error_class"])
 	}
 }
 
 func TestErrorPolicySignal_GiveUpShape(t *testing.T) {
-	got := errorPolicySignal("http/timeout", map[string]any{"status": 504}, nil, "give_up", 0, 0)
+	got := errorPolicySignal("http/timeout", map[string]any{"status": 504}, nil, spec.ActionGiveUp, 0, 0)
 	if got.Type != signalpkg.TypePath("terminal/error/http/timeout") {
 		t.Fatalf("give_up type: got %q want terminal/error/http/timeout", got.Type)
 	}
@@ -50,7 +48,7 @@ func TestErrorPolicySignal_GiveUpShape(t *testing.T) {
 }
 
 func TestErrorPolicySignal_PassShape(t *testing.T) {
-	got := errorPolicySignal("foo", nil, nil, "pass", 0, 0)
+	got := errorPolicySignal("foo", nil, nil, spec.ActionPass, 0, 0)
 	if got.Type != signalpkg.TypePath("terminal/error/foo") {
 		t.Fatalf("pass type: got %q", got.Type)
 	}

@@ -135,7 +135,7 @@ func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 				Type:     "sender",
 				Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/giveup_class": {Policy: []node.PolicyAction{{Action: "give_up"}}},
+					"stub/giveup_class": {Action: "give_up"},
 				},
 			}),
 			scenario.MakeNode(
@@ -175,7 +175,7 @@ func testCascadeTerminalErrorGiveUpCrossCutting(t *testing.T) {
 				Type:     "sender",
 				Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/giveup_class_cc": {Policy: []node.PolicyAction{{Action: "give_up"}}},
+					"stub/giveup_class_cc": {Action: "give_up"},
 				},
 			}),
 			scenario.MakeNode(
@@ -216,7 +216,7 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 				Type:     "sender",
 				Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/pass_class": {Policy: []node.PolicyAction{{Action: "pass"}}},
+					"stub/pass_class": {Action: "pass"},
 				},
 			}),
 			scenario.MakeNode(

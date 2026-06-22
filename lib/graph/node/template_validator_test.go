@@ -397,7 +397,7 @@ func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
 				},
 				ErrorTypes: map[string]ErrorTypePolicy{
 					"acquire/unavailable": {
-						Policy: []PolicyAction{{Action: "give_up"}},
+						Action: "give_up",
 					},
 				},
 			}},
@@ -427,11 +427,11 @@ func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
 }
 
 func TestValidateErrorTypes_RejectsUnknown(t *testing.T) {
-	const sep = "_then_"
 	retiredNames := []string{
 		"invalidate",
-		"resume" + sep + "retry",
-		"discard" + sep + "retry",
+		"resume_then_retry",
+		"discard_then_retry",
+		"discard_claims_then_retry",
 		"foo",
 	}
 	for _, action := range retiredNames {
@@ -441,36 +441,32 @@ func TestValidateErrorTypes_RejectsUnknown(t *testing.T) {
 				Nodes: []TemplateNodeDef{
 					{Type: "a", Executor: "h"},
 					{Type: "b", Executor: "h", ErrorTypes: map[string]ErrorTypePolicy{
-						"some_error": {Policy: []PolicyAction{
-							{Action: action},
-						}},
+						"some_error": {Action: action},
 					}},
 				},
 			}
 			res := ValidateTemplate(spec, RegistryHooks{})
 			require.False(t, res.Ok())
-			hasErrorAt(t, res, "nodes[1].error_types[some_error].policy[0].action")
+			hasErrorAt(t, res, "nodes[1].error_types[some_error].action")
 		})
 	}
 }
 
 func TestValidateErrorTypes_AcceptsCanonical(t *testing.T) {
-	for _, action := range []string{"pass", "give_up", "retry", "discard_claims_then_retry"} {
+	for _, action := range []string{"pass", "give_up", "retry", "release_and_requeue"} {
 		t.Run(action, func(t *testing.T) {
 			spec := &TemplateSpec{
 				Name: "demo", Version: "1",
 				Nodes: []TemplateNodeDef{
 					{Type: "a", Executor: "h"},
 					{Type: "b", Executor: "h", ErrorTypes: map[string]ErrorTypePolicy{
-						"some_error": {Policy: []PolicyAction{
-							{Action: action, Count: 1},
-						}},
+						"some_error": {Action: action},
 					}},
 				},
 			}
 			res := ValidateTemplate(spec, RegistryHooks{})
 			for _, e := range res.Errors {
-				if e.Path == "nodes[1].error_types[some_error].policy[0].action" {
+				if e.Path == "nodes[1].error_types[some_error].action" {
 					t.Fatalf("unexpected action-vocabulary error for %q: %s", action, e.Msg)
 				}
 			}
@@ -484,7 +480,7 @@ func TestValidateErrorTypes_AcceptsDeclaredHttpClass(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
-				"http/timeout": {Policy: []PolicyAction{{Action: "give_up"}}},
+				"http/timeout": {Action: "give_up"},
 			}},
 		},
 	}
@@ -506,7 +502,7 @@ func TestValidateErrorTypes_AcceptsDeclaredWildcardClass(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
-				"http/server_error/500": {Policy: []PolicyAction{{Action: "retry", Count: 1}}},
+				"http/server_error/500": {Action: "retry"},
 			}},
 		},
 	}
@@ -528,7 +524,7 @@ func TestValidateErrorTypes_AcceptsUndeclaredWhenHookUnavailable(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
-				"foo": {Policy: []PolicyAction{{Action: "give_up"}}},
+				"foo": {Action: "give_up"},
 			}},
 		},
 	}
@@ -550,7 +546,7 @@ func TestValidateErrorTypes_WarnsUndeclaredWhenHookAvailable(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
-				"foo": {Policy: []PolicyAction{{Action: "give_up"}}},
+				"foo": {Action: "give_up"},
 			}},
 		},
 	}
@@ -582,7 +578,7 @@ func TestValidateErrorTypes_AcceptsProducerDeclaredClass(t *testing.T) {
 			{Type: "b", Executor: "http",
 				ClaimProducers: []NodeClaimProducerRef{{Name: "items-store", Alias: "items", Intent: "rw", Selector: "items?category=alpha"}},
 				ErrorTypes: map[string]ErrorTypePolicy{
-					"pg/claim_unavailable": {Policy: []PolicyAction{{Action: "retry", Count: 3}}},
+					"pg/claim_unavailable": {Action: "retry"},
 				}},
 		},
 	}
@@ -612,7 +608,7 @@ func TestValidateErrorTypes_ProducerClassUnreachableFromNode(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
-				"pg/claim_unavailable": {Policy: []PolicyAction{{Action: "retry", Count: 3}}},
+				"pg/claim_unavailable": {Action: "retry"},
 			}},
 		},
 	}

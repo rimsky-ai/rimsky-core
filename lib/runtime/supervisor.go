@@ -39,9 +39,8 @@ type Config struct {
 	CallbackAdvertiseHost string
 	CallbackAdvertisePort int
 
-	Blob                             persistence.BlobBackend
-	BlobSpillThreshold               int
-	MaxRetriesWithoutProgressDefault int
+	Blob               persistence.BlobBackend
+	BlobSpillThreshold int
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	// @concept: node
@@ -147,11 +146,10 @@ func Start(cfg Config) (*Handle, error) {
 		ClaimHandles:                     lockHolders,
 		Clock:                            cfg.Clock,
 		Logger:                           cfg.Logger,
-		SupervisorID:                     cfg.SupervisorID,
-		Blob:                             cfg.Blob,
-		BlobSpillThreshold:               cfg.BlobSpillThreshold,
-		MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
-		ExpectedAttributesSchemaFor:      cfg.ExpectedAttributesSchemaFor,
+		SupervisorID:                cfg.SupervisorID,
+		Blob:                        cfg.Blob,
+		BlobSpillThreshold:          cfg.BlobSpillThreshold,
+		ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
 		Metrics:                          cfg.Metrics,
 		LifecycleSubs:                    cfg.LifecycleSubs,
 		LifecyclePeersForSpec:            cfg.LifecyclePeersForSpec,
@@ -337,14 +335,13 @@ func runLoop(
 				Resolver:                         cfg.Resolver,
 				StoreRegistry:                    cfg.StoreRegistry,
 				NamedLocks:                       cfg.NamedLocks,
-				CallbackURL:                      h.advertisedURL,
-				LivenessInterval:                 cfg.LivenessInterval,
-				Blob:                             cfg.Blob,
-				BlobSpillThreshold:               cfg.BlobSpillThreshold,
-				MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
-				ExpectedAttributesSchemaFor:      cfg.ExpectedAttributesSchemaFor,
-				DeclaredTagsFor:                  cfg.DeclaredTagsFor,
-				Metrics:                          cfg.Metrics,
+				CallbackURL:                 h.advertisedURL,
+				LivenessInterval:            cfg.LivenessInterval,
+				Blob:                        cfg.Blob,
+				BlobSpillThreshold:          cfg.BlobSpillThreshold,
+				ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
+				DeclaredTagsFor:             cfg.DeclaredTagsFor,
+				Metrics:                     cfg.Metrics,
 				LifecycleSubs:                    cfg.LifecycleSubs,
 				LifecyclePeersForSpec:            cfg.LifecyclePeersForSpec,
 				LateBindServiceProxies:           cfg.LateBindServiceProxies,

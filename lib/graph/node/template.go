@@ -27,6 +27,7 @@ type (
 )
 
 var BoolPtr = spec.BoolPtr
+var IntPtr = spec.IntPtr
 
 const (
 	FrameTimeoutDefaultMs = spec.FrameTimeoutDefaultMs

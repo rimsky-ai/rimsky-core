@@ -201,7 +201,7 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 				Type:     "a",
 				Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/fatal": {Policy: []node.PolicyAction{{Action: "give_up"}}},
+					"stub/fatal": {Action: "give_up"},
 				},
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{
@@ -262,7 +262,7 @@ func TestExecutorBlockedPassResolution_NewShape(t *testing.T) {
 				Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
 					"stub/executor_blocked": {
-						Policy: []node.PolicyAction{{Action: "pass"}},
+						Action: "pass",
 					},
 				},
 			}),
@@ -298,7 +298,7 @@ func TestExecutorErroredPassResolution_NewShape(t *testing.T) {
 				Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
 					"stub/any_class": {
-						Policy: []node.PolicyAction{{Action: "pass"}},
+						Action: "pass",
 					},
 				},
 			}),

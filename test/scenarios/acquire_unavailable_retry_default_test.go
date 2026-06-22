@@ -55,13 +55,10 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "worker",
 					Executor: "stub",
+					MaxRetries:   node.IntPtr(1000),
+					RetryBackoff: &node.RetryBackoffConfig{BaseDelayMs: 100},
 					ErrorTypes: map[string]node.ErrorTypePolicy{
-						"acquire/unavailable": {
-							Policy: []node.PolicyAction{
-								{Action: "retry", Count: 1000, BaseDelayMs: 100},
-								{Action: "give_up"},
-							},
-						},
+						"acquire/unavailable": {Action: "retry"},
 					},
 				},
 				scenario.WithClaimProducers(scenario.WriteClaimRef("queue-store", "@queue")),

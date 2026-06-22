@@ -54,19 +54,14 @@ func TestAcceptance_NodeAdmin_GetAndReset(t *testing.T) {
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "flaky", Executor: "stub",
+				MaxRetries: node.IntPtr(2),
+				RetryBackoff: &node.RetryBackoffConfig{
+					Kind:        graphshared.BackoffExponential,
+					BaseDelayMs: 50,
+					MaxDelayMs:  200,
+				},
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/my_err": {
-						Policy: []node.PolicyAction{
-							{
-								Action:      "retry",
-								Count:       2,
-								Backoff:     graphshared.BackoffExponential,
-								BaseDelayMs: 50,
-								MaxDelayMs:  200,
-							},
-							{Action: "give_up"},
-						},
-					},
+					"stub/my_err": {Action: "retry"},
 				},
 			}),
 		},

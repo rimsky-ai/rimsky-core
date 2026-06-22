@@ -183,7 +183,7 @@ func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
 				Type:     "worker",
 				Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/rate_limited": {Policy: []node.PolicyAction{{Action: "give_up"}}},
+					"stub/rate_limited": {Action: "give_up"},
 				},
 			}),
 			scenario.MakeNode(

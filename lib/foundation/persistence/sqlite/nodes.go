@@ -443,35 +443,24 @@ func (s *nodesImpl) enforceAndUpdate(
 // @concept: error-policy
 func (s *nodesImpl) UpdateRunEvaluatorState(ctx context.Context, runID foundationshared.UUID, es spec.EvaluatorState, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		   SET action_index = ?,
-		       retry_counter = ?,
-		       current_error_class = ?
-		 WHERE id = ?`,
-		es.ActionIndex, es.RetryCounter, nullableString(es.CurrentErrorClass), runID.String(),
+		`UPDATE rimsky_node_runs SET retry_counter = ? WHERE id = ?`,
+		es.RetryCounter, runID.String(),
 	)
 	return err
 }
 
 // @concept: error-policy
 func (s *nodesImpl) GetRunEvaluatorState(ctx context.Context, runID foundationshared.UUID, tx persistence.Tx) (spec.EvaluatorState, error) {
-	var (
-		es              spec.EvaluatorState
-		currentErrClass sql.NullString
-	)
+	var es spec.EvaluatorState
 	err := s.q(tx).QueryRowContext(ctx,
-		`SELECT action_index, retry_counter, current_error_class
-		   FROM rimsky_node_runs WHERE id = ?`,
+		`SELECT retry_counter FROM rimsky_node_runs WHERE id = ?`,
 		runID.String(),
-	).Scan(&es.ActionIndex, &es.RetryCounter, &currentErrClass)
+	).Scan(&es.RetryCounter)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return spec.EvaluatorState{}, nil
 		}
 		return spec.EvaluatorState{}, err
-	}
-	if currentErrClass.Valid {
-		es.CurrentErrorClass = currentErrClass.String
 	}
 	return es, nil
 }

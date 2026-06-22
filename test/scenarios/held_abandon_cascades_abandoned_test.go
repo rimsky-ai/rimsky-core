@@ -63,7 +63,7 @@ func TestHeldAbandonCascadesAbandoned(t *testing.T) {
 					},
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"stub/forced": {
-							Policy: []node.PolicyAction{{Action: "give_up"}},
+							Action: "give_up",
 						},
 					},
 				},

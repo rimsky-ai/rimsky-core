@@ -82,11 +82,10 @@ type CallbackServer struct {
 	Clock                            shared.Clock
 	Logger                           shared.Logger
 	SupervisorID                     string
-	ResumeGrace                      time.Duration
-	Blob                             persistence.BlobBackend
-	BlobSpillThreshold               int
-	MaxRetriesWithoutProgressDefault int
-	ExpectedAttributesSchemaFor      func(executorName string) (schema []byte, ok bool)
+	ResumeGrace                 time.Duration
+	Blob                        persistence.BlobBackend
+	BlobSpillThreshold          int
+	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	Metrics                          MetricsHook
 	LifecycleSubs                    *locks.LifecycleRegistry
 	LifecyclePeersForSpec            func(tplSpec node.TemplateSpec) []string
@@ -420,11 +419,10 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		Clock:                            c.Clock,
 		Logger:                           c.Logger,
 		SupervisorID:                     ac.SupervisorID,
-		ResumeGrace:                      c.ResumeGrace,
-		Blob:                             c.Blob,
-		BlobSpillThreshold:               c.BlobSpillThreshold,
-		MaxRetriesWithoutProgressDefault: c.MaxRetriesWithoutProgressDefault,
-		ExpectedAttributesSchemaFor:      c.ExpectedAttributesSchemaFor,
+		ResumeGrace:                 c.ResumeGrace,
+		Blob:                        c.Blob,
+		BlobSpillThreshold:          c.BlobSpillThreshold,
+		ExpectedAttributesSchemaFor: c.ExpectedAttributesSchemaFor,
 		Metrics:                          c.Metrics,
 		LifecycleSubs:                    c.LifecycleSubs,
 		LifecyclePeersForSpec:            c.LifecyclePeersForSpec,

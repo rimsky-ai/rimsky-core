@@ -42,7 +42,7 @@ func TestSignalTypeFilter(t *testing.T) {
 					Type:     "err_worker",
 					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
-						"stub/boom": {Policy: []node.PolicyAction{{Action: "give_up"}}},
+						"stub/boom": {Action: "give_up"},
 					},
 				},
 			),

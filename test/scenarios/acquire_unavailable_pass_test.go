@@ -56,7 +56,7 @@ func TestAcquireUnavailablePass(t *testing.T) {
 					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"acquire/unavailable": {
-							Policy: []node.PolicyAction{{Action: "pass"}},
+							Action: "pass",
 						},
 					},
 				},

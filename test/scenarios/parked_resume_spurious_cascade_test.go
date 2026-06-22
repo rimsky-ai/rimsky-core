@@ -41,7 +41,7 @@ func TestParkedResumeDoesNotSpuriouslyCascadeSuccessSubscriberOnError(t *testing
 					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"stub/boom": {
-							Policy: []node.PolicyAction{{Action: "give_up"}},
+							Action: "give_up",
 						},
 					},
 				},
