@@ -193,6 +193,25 @@ func buildResolvedBagAtGateEvalCarry(
 	if err != nil {
 		return nil, err
 	}
+	if args.Persist.Messages() != nil {
+		msgs, msgErr := args.Persist.Messages().ListDeliveredForFrame(ctx, tx, row.FrameID)
+		if msgErr != nil {
+			return nil, fmt.Errorf("list delivered messages: %w", msgErr)
+		}
+		for _, m := range msgs {
+			if m.IsEmptyWake() {
+				continue
+			}
+			if _, present := deps[m.Type]; present {
+				continue
+			}
+			if len(m.Payload) == 0 {
+				deps[m.Type] = json.RawMessage(`{}`)
+				continue
+			}
+			deps[m.Type] = m.Payload
+		}
+	}
 	inst, err := args.Persist.Instances().Get(ctx, receiverNode.InstanceID, tx)
 	if err != nil {
 		return nil, err

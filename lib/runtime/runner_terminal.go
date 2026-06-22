@@ -156,7 +156,7 @@ func applyTerminalComplete(
 					"error", appendErr.Error())
 			}
 			// @concept: executor
-			return applyErrorPolicyWithScratch(ctx, args, acq, "attributes_schema_failed",
+			return applyErrorPolicyWithScratch(ctx, args, acq, "attributes_schema_failed", "",
 				map[string]any{"error": err.Error()}, t.Tags, t.Scratch, tx)
 		}
 	}

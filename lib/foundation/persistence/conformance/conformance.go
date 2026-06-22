@@ -101,6 +101,7 @@ func Suite(
 		t.Run("HandleDeleteIfExpired", func(t *testing.T) { testClaimantGuardHandleDeleteIfExpired(t, factory(t)) })
 		t.Run("HolderRelease", func(t *testing.T) { testClaimantGuardHolderRelease(t, factory(t)) })
 		t.Run("RunClaimSteal", func(t *testing.T) { testClaimantGuardRunClaimSteal(t, factory(t)) })
+		t.Run("RunClaimSelfIdempotent", func(t *testing.T) { testClaimantGuardRunClaimSelfIdempotent(t, factory(t)) })
 		t.Run("RunReleaseClaim", func(t *testing.T) { testClaimantGuardRunReleaseClaim(t, factory(t)) })
 		t.Run("RunComplete", func(t *testing.T) { testClaimantGuardRunComplete(t, factory(t)) })
 		t.Run("RunRemoveForNode", func(t *testing.T) { testClaimantGuardRunRemoveForNode(t, factory(t)) })

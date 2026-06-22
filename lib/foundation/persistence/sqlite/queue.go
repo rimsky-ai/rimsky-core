@@ -197,7 +197,7 @@ func (q *queueImpl) SelectCandidates(
 
 	executorAccepted := func(executor string, required []string) bool {
 		if executor == "" {
-			return len(required) > 0
+			return true
 		}
 		for _, a := range acceptedExecutors {
 			if a == executor {
@@ -309,7 +309,7 @@ func (q *queueImpl) ClaimDispatchRow(
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = ?, claimed_at = ?, last_progress_at = ?
-		  WHERE id = ? AND claimed_by IS NULL AND state = 'stale'
+		  WHERE id = ? AND (claimed_by IS NULL OR claimed_by = ?) AND state = 'stale'
 		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_node_runs other
 		       WHERE other.node_id = rimsky_node_runs.node_id
@@ -317,7 +317,7 @@ func (q *queueImpl) ClaimDispatchRow(
 		         AND other.id <> rimsky_node_runs.id
 		         AND (other.claimed_by IS NOT NULL OR other.state IN ('held','parked'))
 		    )`,
-		supervisorID, now, now, dispatchID.String(),
+		supervisorID, now, now, dispatchID.String(), supervisorID,
 	)
 	if err != nil {
 		return false, fmt.Errorf("sqlite.ClaimDispatchRow: %w", err)

@@ -579,6 +579,65 @@ func testClaimantGuardRunClaimSteal(t *testing.T, d persistence.Database) {
 	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "ClaimDispatchRow")
 }
 
+func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	q := d.Queue()
+	var dispatchID shared.UUID
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:                 fix.NodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                fix.FrameID,
+			RunScopeID:             fix.MainRunScopeID,
+		}, tx); err != nil {
+			return err
+		}
+		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  10,
+		})
+		if err != nil {
+			return err
+		}
+		for _, c := range cands {
+			if c.NodeID != fix.NodeID {
+				continue
+			}
+			ok, err := q.ClaimDispatchRow(ctx, tx, c.DispatchID, guardSupA)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				t.Fatalf("seed: first claim must succeed")
+			}
+			dispatchID = c.DispatchID
+			return nil
+		}
+		t.Fatalf("seed: candidate not surfaced for node %s", fix.NodeID)
+		return nil
+	}); err != nil {
+		t.Fatalf("seed tx: %v", err)
+	}
+
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		ok, err := q.ClaimDispatchRow(ctx, tx, dispatchID, guardSupA)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			t.Fatalf("same-supervisor re-claim must return ok=true (in-place retry path requires self-idempotency: row stays stale + claimed-by-self between Open retries)")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("self-reclaim tx: %v", err)
+	}
+	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "ClaimDispatchRow self-reclaim")
+}
+
 func testClaimantGuardRunReleaseClaim(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)

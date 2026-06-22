@@ -209,4 +209,3 @@ func testTemplateErrorPolicyRetry(t *testing.T) {
 		retryCount, retryEventCount)
 
 }
-

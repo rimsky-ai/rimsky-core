@@ -74,21 +74,21 @@ func (r *CallbackRegistry) Pop(ackID string) (AsyncContext, bool) {
 }
 
 type CallbackServer struct {
-	Registry                         *CallbackRegistry
-	Persist                          persistence.Tables
-	Queue                            persistence.Queue
-	AdvisoryLocker                   persistence.AdvisoryLocker
-	ClaimHandles                     persistence.ClaimHandleTable
-	Clock                            shared.Clock
-	Logger                           shared.Logger
-	SupervisorID                     string
+	Registry                    *CallbackRegistry
+	Persist                     persistence.Tables
+	Queue                       persistence.Queue
+	AdvisoryLocker              persistence.AdvisoryLocker
+	ClaimHandles                persistence.ClaimHandleTable
+	Clock                       shared.Clock
+	Logger                      shared.Logger
+	SupervisorID                string
 	ResumeGrace                 time.Duration
 	Blob                        persistence.BlobBackend
 	BlobSpillThreshold          int
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
-	Metrics                          MetricsHook
-	LifecycleSubs                    *locks.LifecycleRegistry
-	LifecyclePeersForSpec            func(tplSpec node.TemplateSpec) []string
+	Metrics                     MetricsHook
+	LifecycleSubs               *locks.LifecycleRegistry
+	LifecyclePeersForSpec       func(tplSpec node.TemplateSpec) []string
 	// @concept: data-processing
 	DataProcessors DataProcessingRegistry
 	addr           string
@@ -411,22 +411,22 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 
 func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t terminalEvent) error {
 	args := RunArgs{
-		Persist:                          c.Persist,
-		Queue:                            c.Queue,
-		AdvisoryLocker:                   c.AdvisoryLocker,
-		ClaimHandles:                     c.ClaimHandles,
-		StoreRegistry:                    ac.StoreRegistry,
-		Clock:                            c.Clock,
-		Logger:                           c.Logger,
-		SupervisorID:                     ac.SupervisorID,
+		Persist:                     c.Persist,
+		Queue:                       c.Queue,
+		AdvisoryLocker:              c.AdvisoryLocker,
+		ClaimHandles:                c.ClaimHandles,
+		StoreRegistry:               ac.StoreRegistry,
+		Clock:                       c.Clock,
+		Logger:                      c.Logger,
+		SupervisorID:                ac.SupervisorID,
 		ResumeGrace:                 c.ResumeGrace,
 		Blob:                        c.Blob,
 		BlobSpillThreshold:          c.BlobSpillThreshold,
 		ExpectedAttributesSchemaFor: c.ExpectedAttributesSchemaFor,
-		Metrics:                          c.Metrics,
-		LifecycleSubs:                    c.LifecycleSubs,
-		LifecyclePeersForSpec:            c.LifecyclePeersForSpec,
-		DataProcessors:                   c.DataProcessors,
+		Metrics:                     c.Metrics,
+		LifecycleSubs:               c.LifecycleSubs,
+		LifecyclePeersForSpec:       c.LifecyclePeersForSpec,
+		DataProcessors:              c.DataProcessors,
 	}
 	acq := &acquisition{
 		DispatchID:     ac.DispatchID,

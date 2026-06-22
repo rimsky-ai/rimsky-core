@@ -35,19 +35,20 @@ func applyErrorPolicy(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any, tx persistence.Tx,
 ) (postCommitFn, error) {
-	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, payload, nil, nil, tx)
+	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, "", payload, nil, nil, tx)
 }
 
 // @concept: executor
 // @concept: error-policy
 func applyErrorPolicyWithScratch(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	errorClass string, payload map[string]any, tags []string, scratch []byte, tx persistence.Tx,
+	errorClass string, fallbackClass string,
+	payload map[string]any, tags []string, scratch []byte, tx persistence.Tx,
 ) (postCommitFn, error) {
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, scratch); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
-	policy := lookupPolicyForNode(acq, errorClass)
+	policy := lookupPolicyForNodeWithFallback(acq, errorClass, fallbackClass)
 	state, err := args.Persist.Nodes().GetRunEvaluatorState(ctx, acq.DispatchID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: load evaluator state: %w", err)
@@ -283,19 +284,14 @@ func lookupPolicyForNode(acq *acquisition, errorClass string) *node.ErrorTypePol
 	return &cp
 }
 
-func resolveErrorPolicyClass(nd *node.TemplateNodeDef, primary, fallback string) string {
-	if nd == nil {
-		return primary
-	}
-	if _, ok := nd.ErrorTypes[primary]; ok {
-		return primary
+func lookupPolicyForNodeWithFallback(acq *acquisition, primary, fallback string) *node.ErrorTypePolicy {
+	if p := lookupPolicyForNode(acq, primary); p != nil {
+		return p
 	}
 	if fallback != "" && fallback != primary {
-		if _, ok := nd.ErrorTypes[fallback]; ok {
-			return fallback
-		}
+		return lookupPolicyForNode(acq, fallback)
 	}
-	return primary
+	return nil
 }
 
 func resolveRetryConfig(nd *node.TemplateNodeDef) (int, node.BackoffConfig) {

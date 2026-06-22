@@ -155,4 +155,3 @@ func parkTerminalSignal(t terminalEvent) signalpkg.Signal {
 		Payload: payload,
 	}
 }
-

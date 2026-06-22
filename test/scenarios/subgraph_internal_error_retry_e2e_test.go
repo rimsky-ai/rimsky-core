@@ -12,7 +12,6 @@ import (
 
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -78,24 +77,24 @@ func TestSubgraphInternalErrorRetryE2E(t *testing.T) {
 	innerMidNode := h.FindNode(iid, "inner-mid")
 	require.NotNil(t, innerMidNode, "inner-mid node missing")
 
-	retrySeen := false
+	const retryCount = 2
 	deadline := time.Now().Add(60 * time.Second)
+	var dispatchCount int
 	for time.Now().Before(deadline) {
+		dispatchCount = 0
 		for _, o := range h.Stub.Observed() {
-			if o.NodeType == "inner-mid" &&
-				o.PriorDispatchID != "" &&
-				o.PriorDispatchDisposition == genv1.PriorDispatchDisposition_PRIOR_RETRY_AFTER_ERROR {
-				retrySeen = true
-				break
+			if o.NodeType == "inner-mid" {
+				dispatchCount++
 			}
 		}
-		if retrySeen {
+		if dispatchCount >= retryCount+1 {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	require.True(t, retrySeen,
-		"inner-mid retry dispatch should carry PRIOR_RETRY_AFTER_ERROR")
+	require.GreaterOrEqual(t, dispatchCount, retryCount+1,
+		"in-place retry must produce at least %d inner-mid dispatches (initial + %d retries); got %d",
+		retryCount+1, retryCount, dispatchCount)
 
 	var distinctScopes, totalRuns int
 	h.QueryRowSQL(`
@@ -107,7 +106,16 @@ func TestSubgraphInternalErrorRetryE2E(t *testing.T) {
 	`, []any{innerMidNode.ID}, &distinctScopes, &totalRuns)
 	require.Equal(t, 1, distinctScopes,
 		"retry dispatches must stay within the same sub-graph RunScope")
-	require.GreaterOrEqual(t, totalRuns, 2,
-		"retry should produce at least two rimsky_node_runs rows for inner-mid")
+	require.Equal(t, 1, totalRuns,
+		"in-place retry must reuse a single rimsky_node_runs row for inner-mid; multiple rows means the runtime regressed to fresh-row retry")
 
+	var retryEventCount int
+	h.QueryRowSQL(
+		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind LIKE 'transient/retry/%'`,
+		[]any{innerMidNode.ID},
+		&retryEventCount,
+	)
+	require.GreaterOrEqual(t, retryEventCount, retryCount,
+		"each retry must emit a transient/retry/<n>/<class> audit row; expected at least %d, got %d",
+		retryCount, retryEventCount)
 }

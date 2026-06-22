@@ -53,8 +53,8 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
-					Type:     "worker",
-					Executor: "stub",
+					Type:         "worker",
+					Executor:     "stub",
 					MaxRetries:   node.IntPtr(1000),
 					RetryBackoff: &node.RetryBackoffConfig{BaseDelayMs: 100},
 					ErrorTypes: map[string]node.ErrorTypePolicy{

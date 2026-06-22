@@ -34,18 +34,6 @@ func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition
 	if acq.UnavailableClass != "" {
 		primaryClass = acq.UnavailableClass
 	}
-	if _, declared := acq.NodeDef.ErrorTypes[primaryClass]; !declared {
-		if _, fallback := acq.NodeDef.ErrorTypes[acquireUnavailableSyntheticClass]; !fallback {
-			if err := args.Queue.ReleaseClaim(ctx, cand.DispatchID, args.SupervisorID); err != nil {
-				args.Logger.Warn("handleAcquireUnavailable: ReleaseClaim failed; row may stay claimed until liveness sweep",
-					"node_id", cand.NodeID.String(),
-					"dispatch_id", cand.DispatchID.String(),
-					"error", err.Error())
-			}
-			return nil
-		}
-	}
-	effectiveClass := resolveErrorPolicyClass(acq.NodeDef, primaryClass, acquireUnavailableSyntheticClass)
 	payload := map[string]any{
 		"source":        "acquire_unavailable",
 		"unavailable":   producerNameForSpec(acq.UnavailableSpec),
@@ -54,7 +42,7 @@ func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition
 		"node_id":       cand.NodeID.String(),
 		"node_type":     acq.NodeType,
 	}
-	return runAcquireErrorPolicy(ctx, args, &acq, effectiveClass, payload, "handleAcquireUnavailable")
+	return runAcquireErrorPolicy(ctx, args, &acq, primaryClass, acquireUnavailableSyntheticClass, payload, "handleAcquireUnavailable")
 }
 
 // @concept: error-policy
@@ -73,7 +61,6 @@ func handleAcquireProducerError(ctx context.Context, args RunArgs, acq acquisiti
 	if primaryClass == "" {
 		primaryClass = producerAcquireErrorFallbackClass
 	}
-	effectiveClass := resolveErrorPolicyClass(acq.NodeDef, primaryClass, producerAcquireErrorFallbackClass)
 	payload := map[string]any{
 		"source":        "acquire_producer_error",
 		"producer":      producerNameForSpec(acq.ErroredSpec),
@@ -82,16 +69,16 @@ func handleAcquireProducerError(ctx context.Context, args RunArgs, acq acquisiti
 		"node_id":       cand.NodeID.String(),
 		"node_type":     acq.NodeType,
 	}
-	return runAcquireErrorPolicy(ctx, args, &acq, effectiveClass, payload, "handleAcquireProducerError")
+	return runAcquireErrorPolicy(ctx, args, &acq, primaryClass, producerAcquireErrorFallbackClass, payload, "handleAcquireProducerError")
 }
 
 func runAcquireErrorPolicy(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	errorClass string, payload map[string]any, site string,
+	errorClass, fallbackClass string, payload map[string]any, site string,
 ) *policyDecision {
 	var post postCommitFn
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, err := applyErrorPolicy(ctx, args, acq, errorClass, payload, tx)
+		p, err := applyErrorPolicyWithScratch(ctx, args, acq, errorClass, fallbackClass, payload, nil, nil, tx)
 		post = p
 		return err
 	}); err != nil {

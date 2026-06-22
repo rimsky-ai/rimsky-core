@@ -14,7 +14,6 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -74,32 +73,24 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 	parentNode := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parentNode, "fan-parent node missing")
 
-	var retryObs *scenarioStubObservedRetry
+	const retryCount = 2
 	deadline := time.Now().Add(60 * time.Second)
+	var dispatchCount int
 	for time.Now().Before(deadline) {
-		dispatches := 0
+		dispatchCount = 0
 		for _, o := range h.Stub.Observed() {
 			if o.NodeType == "fan-parent" {
-				dispatches++
-			}
-			if o.PriorDispatchID != "" && o.PriorDispatchDisposition == genv1.PriorDispatchDisposition_PRIOR_RETRY_AFTER_ERROR {
-				retryObs = &scenarioStubObservedRetry{
-					DispatchID:  o.DispatchID,
-					PriorID:     o.PriorDispatchID,
-					Disposition: o.PriorDispatchDisposition,
-				}
-				break
+				dispatchCount++
 			}
 		}
-		if retryObs != nil && dispatches >= 2 {
+		if dispatchCount >= retryCount+1 {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	require.NotNil(t, retryObs,
-		"a retry dispatch should carry prior_dispatch_id + PRIOR_RETRY_AFTER_ERROR")
-	require.NotEqual(t, retryObs.DispatchID, retryObs.PriorID,
-		"retry dispatch id must differ from prior dispatch id")
+	require.GreaterOrEqual(t, dispatchCount, retryCount+1,
+		"in-place retry must produce at least %d fan-parent dispatches (initial + %d retries); got %d",
+		retryCount+1, retryCount, dispatchCount)
 
 	var distinctScopes int
 	h.QueryRowSQL(`
@@ -120,12 +111,16 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 		 WHERE r.node_id = $1
 		   AND rs.partition_key <> ''
 	`, []any{parentNode.ID}, &totalRuns)
-	require.GreaterOrEqual(t, totalRuns, 2,
-		"retry should produce at least two rimsky_node_runs rows for the partition child")
-}
+	require.Equal(t, 1, totalRuns,
+		"in-place retry must reuse a single rimsky_node_runs row for the partition child")
 
-type scenarioStubObservedRetry struct {
-	DispatchID  string
-	PriorID     string
-	Disposition genv1.PriorDispatchDisposition
+	var retryEventCount int
+	h.QueryRowSQL(
+		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind LIKE 'transient/retry/%'`,
+		[]any{parentNode.ID},
+		&retryEventCount,
+	)
+	require.GreaterOrEqual(t, retryEventCount, retryCount,
+		"each retry must emit a transient/retry/<n>/<class> audit row; expected at least %d, got %d",
+		retryCount, retryEventCount)
 }

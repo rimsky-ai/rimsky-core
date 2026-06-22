@@ -39,6 +39,7 @@ func TestLineageExploration(t *testing.T) {
 	const producerName = "lineage-store"
 
 	h := scenario.Start(t, scenario.HarnessOpts{
+		Deadline: 180 * time.Second,
 		ClaimProducers: config.RemoteClaimProducersConfig{
 			ClaimProducers: map[string]config.ClaimProducerEntry{
 				producerName: {

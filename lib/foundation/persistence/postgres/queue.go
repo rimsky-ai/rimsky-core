@@ -163,7 +163,7 @@ func (q *queueImpl) SelectCandidates(
 		    )
 		    AND (
 		      d.executor_name = ANY($2::text[])
-		      OR (d.executor_name IS NULL AND COALESCE(array_length(d.required_stores, 1), 0) > 0)
+		      OR d.executor_name IS NULL
 		      OR (
 		        $4 <> ''
 		        AND $4 = ANY($2::text[])
@@ -241,7 +241,7 @@ func (q *queueImpl) ClaimDispatchRow(
 	cmd, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = $1, claimed_at = NOW(), last_progress_at = NOW()
-		  WHERE id = $2 AND claimed_by IS NULL AND state = 'stale'
+		  WHERE id = $2 AND (claimed_by IS NULL OR claimed_by = $1) AND state = 'stale'
 		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_node_runs other
 		       WHERE other.node_id = rimsky_node_runs.node_id

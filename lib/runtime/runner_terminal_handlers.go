@@ -27,5 +27,5 @@ func applyTerminalError(
 			return nil, fmt.Errorf("applyTerminalError: upsert attributes_delta: %w", err)
 		}
 	}
-	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, payload, tags, scratch, tx)
+	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, "", payload, tags, scratch, tx)
 }
