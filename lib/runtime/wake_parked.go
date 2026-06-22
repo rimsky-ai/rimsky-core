@@ -18,8 +18,7 @@ import (
 type WakeReason string
 
 const (
-	WakeDeadlineElapsed    WakeReason = "deadline_elapsed"
-	WakeExternalInvalidate WakeReason = "external_invalidate"
+	WakeDeadlineElapsed WakeReason = "deadline_elapsed"
 )
 
 type WakeParkedArgs struct {
@@ -31,6 +30,7 @@ type WakeParkedArgs struct {
 }
 
 // @concept: parked-state
+// @decision: walker-rule-per-sender-node
 func WakeParkedNode(ctx context.Context, args WakeParkedArgs, reason WakeReason) error {
 	if args.Persist == nil {
 		return errors.New("WakeParkedNode: Persist required")
@@ -52,19 +52,28 @@ func WakeParkedNode(ctx context.Context, args WakeParkedArgs, reason WakeReason)
 		}
 		return nil
 	}
-	if target.State != cascade.NodeStateParked {
-		return nil
-	}
 	return wakeParkedNode(ctx, args, target, reason)
 }
 
 // @concept: parked-state
 // @story: resume-preserves-snapshot
 func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistence.NodeRow, reason WakeReason) error {
-	if target.RunScopeID == nil {
+	var targetRunScopeID shared.UUID
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		latest, err := args.Persist.Nodes().GetLatestRunForNode(ctx, tx, target.ID)
+		if err != nil {
+			return err
+		}
+		if latest != nil {
+			targetRunScopeID = latest.RunScopeID
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("wakeParkedNode: latest run lookup: %w", err)
+	}
+	if targetRunScopeID == (shared.UUID{}) {
 		return nil
 	}
-	targetRunScopeID := *target.RunScopeID
 	parked, err := args.Queue.GetParkedByNode(ctx, target.ID, targetRunScopeID)
 	if err != nil {
 		return fmt.Errorf("wakeParkedNode: GetParkedByNode: %w", err)
@@ -85,7 +94,7 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 			return nil
 		}
 		if err := args.Persist.Nodes().UpdateState(ctx, target.ID, targetRunScopeID,
-			cascade.NodeStateResuming, cascade.ReasonDeadlineResume, nil, tx); err != nil {
+			cascade.NodeStateStale, cascade.ReasonDeadlineResume, nil, tx); err != nil {
 			return err
 		}
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -98,61 +107,6 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 			},
 		}, tx)
 	})
-}
-
-// @concept: parked-state
-// @concept: cascade
-func wakeParkedReceiverInTx(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	receiver persistence.NodeRow, frameID shared.UUID,
-) error {
-	return wakeParkedReceiverWithDepsInTx(ctx, args.Persist, args.Queue, tx, receiver, frameID)
-}
-
-// @concept: parked-state
-// @concept: cascade
-func wakeParkedReceiverWithDepsInTx(
-	ctx context.Context, persist persistence.Tables, queue persistence.Queue, tx persistence.Tx,
-	receiver persistence.NodeRow, frameID shared.UUID,
-) error {
-	if receiver.RunScopeID == nil {
-		return nil
-	}
-	receiverRunScopeID := *receiver.RunScopeID
-	parked, err := queue.GetParkedByNode(ctx, receiver.ID, receiverRunScopeID)
-	if err != nil {
-		return fmt.Errorf("wakeParkedReceiverInTx: GetParkedByNode: %w", err)
-	}
-	if parked == nil {
-		return nil
-	}
-	resumed, err := queue.ResumeParkedInTx(ctx, tx, parked.DispatchID)
-	if err != nil {
-		return fmt.Errorf("wakeParkedReceiverInTx: ResumeParkedInTx: %w", err)
-	}
-	if err := persist.Nodes().SetFrameID(ctx, receiver.ID, &frameID, tx); err != nil {
-		return fmt.Errorf("wakeParkedReceiverInTx: stamp node.frame_id: %w", err)
-	}
-	if err := queue.RebindRunFrameInTx(ctx, tx, parked.DispatchID, frameID); err != nil {
-		if resumed || !errors.Is(err, persistence.ErrRunRowMissing) {
-			return fmt.Errorf("wakeParkedReceiverInTx: rebind run frame: %w", err)
-		}
-	}
-	if !resumed {
-		return nil
-	}
-	if err := persist.Nodes().UpdateState(ctx, receiver.ID, receiverRunScopeID,
-		cascade.NodeStateStale, cascade.ReasonHandlerResume, nil, tx); err != nil {
-		return fmt.Errorf("wakeParkedReceiverInTx: UpdateState: %w", err)
-	}
-	return persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &receiver.ID, InstanceID: &receiver.InstanceID,
-		Kind: events.KindParkedResumeStarted(),
-		Payload: map[string]any{
-			"resume_reason": "cascade_wake",
-			"prior_reason":  parked.Reason,
-		},
-	}, tx)
 }
 
 func loadTargetNode(ctx context.Context, persist persistence.Tables, id shared.UUID) (*persistence.NodeRow, error) {

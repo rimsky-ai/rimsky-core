@@ -513,20 +513,24 @@ func (c *Client) ListBreakpointHits(ctx context.Context, idOrKey string, since i
 	return &out, nil
 }
 
+// @concept: node
+type NodeRunSummary struct {
+	ActiveCount  int `json:"active_count"`
+	PendingCount int `json:"pending_count"`
+	FreshCount   int `json:"fresh_count"`
+	FailedCount  int `json:"failed_count"`
+}
+
+// @concept: node
 type Node struct {
-	ID                   string `json:"id"`
-	InstanceID           string `json:"instance_id"`
-	NodeType             string `json:"node_type"`
-	Executor             string `json:"executor,omitempty"`
-	State                string `json:"state"`
-	SettlingSignalType   string `json:"settling_signal_type,omitempty"`
-	CurrentErrorClass    string `json:"current_error_class,omitempty"`
-	RetryCounter         int    `json:"retry_counter"`
-	ActionIndex          int    `json:"action_index"`
-	AssignedSupervisorID string `json:"assigned_supervisor_id,omitempty"`
-	FrameID              string `json:"frame_id,omitempty"`
-	CreatedAt            string `json:"created_at"`
-	UpdatedAt            string `json:"updated_at"`
+	ID         string          `json:"id"`
+	InstanceID string          `json:"instance_id"`
+	NodeType   string          `json:"node_type"`
+	Executor   string          `json:"executor,omitempty"`
+	FrameID    string          `json:"frame_id,omitempty"`
+	CreatedAt  string          `json:"created_at"`
+	UpdatedAt  string          `json:"updated_at"`
+	RunSummary *NodeRunSummary `json:"run_summary,omitempty"`
 }
 
 // @concept: parked-state

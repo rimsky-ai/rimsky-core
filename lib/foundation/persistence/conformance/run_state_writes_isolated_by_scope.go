@@ -36,13 +36,13 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 
 	scopeA := fix.MainRunScopeID
 
-	parentRun := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+	runA := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	scopeB := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               scopeB,
 			ParentRunScopeID: &scopeA,
-			ParentRunID:      &parentRun,
+			ParentRunID:      &runA,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "scope-b",
@@ -51,16 +51,9 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 		t.Fatalf("Create scope B: %v", err)
 	}
 
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, scopeA, fix.FrameID, tx); err != nil {
-			return err
-		}
-		return store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, scopeB, fix.FrameID, tx)
-	}); err != nil {
-		t.Fatalf("Affirm A and B: %v", err)
-	}
+	runB := seedConformanceRunForScope(ctx, t, d, fix.NodeID, fix.FrameID, scopeB)
 
-	var runA, runB shared.UUID
+	var inFlightA, inFlightB shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		idA, foundA, err := q.GetInFlightRunForNode(ctx, tx, fix.NodeID, scopeA)
 		if err != nil {
@@ -69,7 +62,7 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 		if !foundA {
 			t.Fatalf("seedTwoScopeRuns: scope A in-flight not found")
 		}
-		runA = idA
+		inFlightA = idA
 		idB, foundB, err := q.GetInFlightRunForNode(ctx, tx, fix.NodeID, scopeB)
 		if err != nil {
 			return err
@@ -77,13 +70,16 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 		if !foundB {
 			t.Fatalf("seedTwoScopeRuns: scope B in-flight not found")
 		}
-		runB = idB
+		inFlightB = idB
 		return nil
 	}); err != nil {
 		t.Fatalf("Resolve run ids: %v", err)
 	}
-	if runA == runB {
-		t.Fatalf("seedTwoScopeRuns: scope A and B resolved to the same run id %v", runA)
+	if inFlightA != runA {
+		t.Fatalf("seedTwoScopeRuns: scope A in-flight %v != seed runA %v", inFlightA, runA)
+	}
+	if inFlightB != runB {
+		t.Fatalf("seedTwoScopeRuns: scope B in-flight %v != seed runB %v", inFlightB, runB)
 	}
 
 	return twoScopeFixture{fix: fix, scopeA: scopeA, scopeB: scopeB, runA: runA, runB: runB}
@@ -286,16 +282,22 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 		if !ok {
 			t.Fatalf("seed park B: ClaimDispatchRow returned !ok for runB")
 		}
-		return q.ParkActiveInTx(ctx, tx, persistence.ParkActiveInput{
+		if _, err := q.PromoteClaimedToRunning(ctx, tx, f.runB, "sup-B"); err != nil {
+			return err
+		}
+		if err := q.ParkActiveInTx(ctx, tx, persistence.ParkActiveInput{
 			DispatchID:        f.runB,
 			ExpectedClaimedBy: "sup-B",
 			ParkedAt:          time.Now(),
 			Reason:            "snooze",
-		})
+		}); err != nil {
+			return err
+		}
+		return d.Tables().Nodes().UpdateState(ctx, f.fix.NodeID, f.scopeB,
+			cascade.NodeStateParked, cascade.ReasonHandlerPark, nil, tx)
 	}); err != nil {
 		t.Fatalf("seed park B: %v", err)
 	}
-	_ = cascade.NodeStateRunning
 
 	parkedA, err := q.GetParkedByNode(ctx, f.fix.NodeID, f.scopeA)
 	if err != nil {

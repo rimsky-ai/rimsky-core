@@ -53,8 +53,8 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 	mainScopeID := h.GetMainRunScopeID(iid)
 	h.ExecSQL(`
 		INSERT INTO rimsky_node_runs
-		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2, $3)
+		    (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'stale', 'cascade', 1, $2, $3)
 	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
 
 	var progressBuf bytes.Buffer

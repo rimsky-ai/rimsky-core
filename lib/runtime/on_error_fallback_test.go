@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -138,11 +139,7 @@ func seedFallbackNodeWithErrorTypes(
 				break
 			}
 		}
-		if err := store.Nodes().SetFrameID(ctx, nodeID, &frameID, tx); err != nil {
-			return err
-		}
-		return store.Nodes().UpdateState(ctx, nodeID, mainRunScopeID,
-			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
+		return store.Nodes().SetFrameID(ctx, nodeID, &frameID, tx)
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -153,11 +150,12 @@ func nodeState(t *testing.T, ctx context.Context, store persistence.Tables, node
 	t.Helper()
 	var st cascade.NodeState
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		n, err := store.Nodes().Get(ctx, nodeID, tx)
+		latest, err := store.Nodes().GetLatestRunForNode(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
-		st = n.State
+		require.NotNil(t, latest, "no run found for node %s", nodeID)
+		st = latest.State
 		return nil
 	}); err != nil {
 		t.Fatalf("read node: %v", err)

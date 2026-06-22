@@ -28,11 +28,7 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
           AND NOT EXISTS (
               SELECT 1 FROM rimsky_node_runs r
               WHERE r.frame_id = f.frame_id
-                AND (
-                     (r.phase IN ('pending','active','held') AND r.state IN ('stale','running','resuming'))
-                  OR r.phase = 'parked'
-                  OR r.state = 'parked'
-                )
+                AND r.state IN ('pending','stale','running','held','parked')
           )
     `)
 	if err != nil {
@@ -158,11 +154,7 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
               SELECT 1 FROM rimsky_node_runs r
               JOIN rimsky_nodes n ON n.id = r.node_id
               WHERE n.instance_id = rimsky_instances.id
-                AND (
-                     (r.phase IN ('pending','active','held') AND r.state IN ('stale','running','resuming'))
-                  OR r.phase = 'parked'
-                  OR r.state = 'parked'
-                )
+                AND r.state IN ('pending','stale','running','held','parked')
           )
     `, nowUTC(), instanceID.String())
 	if err != nil {
@@ -271,7 +263,7 @@ func (s *framesImpl) MarkSourceNodeStale(
 	// @concept: run-scope
 	res, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
         SELECT ?, n.id, n.executor,
                COALESCE((
                  SELECT json_group_array(json_extract(store.value, '$.name'))
@@ -282,21 +274,19 @@ func (s *framesImpl) MarkSourceNodeStale(
                   WHERE i.id = n.instance_id
                     AND json_extract(nd.value, '$.type') = n.node_type
                ), '[]'),
-               ?, 'pending', 'stale', ?, inst.main_run_scope_id
+               ?, 'stale', 'cascade',
+               COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = inst.main_run_scope_id), 0) + 1,
+               ?, inst.main_run_scope_id
           FROM rimsky_nodes n
           JOIN rimsky_instances inst ON inst.id = n.instance_id
          WHERE n.id = ?
            AND n.instance_id = ?
            AND NOT EXISTS (
-             -- in-flight guard: counts parked. A node with any in-flight
-             -- run (including parked) must not get a second stale run row;
-             -- the partial unique index enforces one in-flight row per
-             -- node, so parked belongs in this set.
              SELECT 1 FROM rimsky_node_runs r
               WHERE r.node_id = ?
-                AND r.phase IN ('pending','active','held','parked')
+                AND r.state IN ('pending','stale','running','held','parked')
            )
-    `, uuid.New().String(), nowUTC(), frameID.String(), nodeID.String(), instanceID.String(), nodeID.String())
+    `, uuid.New().String(), nowUTC(), nodeID.String(), frameID.String(), nodeID.String(), instanceID.String(), nodeID.String())
 	if err != nil {
 		return false, fmt.Errorf("frames.MarkSourceNodeStale: insert run row: %w", err)
 	}
@@ -312,7 +302,6 @@ func (s *framesImpl) MarkSourceNodeStale(
         SELECT EXISTS (
             SELECT 1 FROM rimsky_node_runs r
              WHERE r.node_id = ?
-               AND r.phase = 'pending'
                AND r.state = 'stale'
                AND r.frame_id = ?
         )
@@ -341,8 +330,7 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
               SELECT 1 FROM rimsky_node_runs r
               JOIN rimsky_nodes n ON n.id = r.node_id
               WHERE n.instance_id = f.instance_id
-                AND r.phase IN ('pending','active','held')
-                AND r.state IN ('stale','running','resuming')
+                AND r.state IN ('pending','stale','running','held')
           )
     `)
 	if err != nil {
@@ -598,7 +586,7 @@ func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (in
 		`SELECT COUNT(DISTINCT f.frame_id)
 		   FROM rimsky_frames f
 		   JOIN rimsky_node_runs d ON d.frame_id = f.frame_id
-		  WHERE f.state = 'running' AND d.phase = 'parked'`,
+		  WHERE f.state = 'running' AND d.state = 'parked'`,
 	).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("frames.CountHeldFrames: %w", err)

@@ -23,4 +23,16 @@ type NodeAttributeTable interface {
 	GetLatestByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx Tx) (*NodeAttributesRow, error)
 	Upsert(ctx context.Context, runID, nodeID shared.UUID, data map[string]any, tx Tx) error
 	MergeDelta(ctx context.Context, runID shared.UUID, delta map[string]any, tx Tx) error
+
+	// @concept: cascade
+	// @decision: mode-default-most-recent
+	SetDispatchInputBag(ctx context.Context, tx Tx, runID, nodeID shared.UUID, bag map[string]any) error
+
+	// @concept: cascade
+	GetDispatchInputBag(ctx context.Context, tx Tx, runID shared.UUID) (map[string]any, error)
+
+	// @concept: cascade
+	// @decision: non-cascade-direct-to-stale
+	// @story: resume-preserves-snapshot
+	SnapshotBagForNewRun(ctx context.Context, tx Tx, newRunID, nodeID, runScopeID shared.UUID) error
 }

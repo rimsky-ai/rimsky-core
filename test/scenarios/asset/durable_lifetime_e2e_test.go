@@ -112,9 +112,15 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-E2E",
 	}
+	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		post = pc
+		return err
 	}))
+	if post != nil {
+		post(ctx)
+	}
 
 	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

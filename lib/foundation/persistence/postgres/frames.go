@@ -27,11 +27,7 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
           AND NOT EXISTS (
               SELECT 1 FROM rimsky_node_runs r
               WHERE r.frame_id = f.frame_id
-                AND (
-                     (r.phase IN ('pending','active','held') AND r.state IN ('stale','running','resuming'))
-                  OR r.phase = 'parked'
-                  OR r.state = 'parked'
-                )
+                AND r.state IN ('pending','stale','running','held','parked')
           )
     `)
 	if err != nil {
@@ -102,11 +98,7 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
               SELECT 1 FROM rimsky_node_runs r
               JOIN rimsky_nodes n ON n.id = r.node_id
               WHERE n.instance_id = i.id
-                AND (
-                     (r.phase IN ('pending','active','held') AND r.state IN ('stale','running','resuming'))
-                  OR r.phase = 'parked'
-                  OR r.state = 'parked'
-                )
+                AND r.state IN ('pending','stale','running','held','parked')
           )
     `, instanceID)
 	if err != nil {
@@ -187,7 +179,7 @@ func (s *framesImpl) MarkSourceNodeStale(
 	// @concept: run-scope
 	tag, err := s.q(tx).Exec(ctx, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
         SELECT gen_random_uuid(), n.id, n.executor,
                COALESCE((
                  SELECT array_agg(store->>'name')
@@ -199,19 +191,17 @@ func (s *framesImpl) MarkSourceNodeStale(
                     AND nd->>'type' = n.node_type
                     AND store IS NOT NULL
                ), ARRAY[]::text[]) AS required_stores,
-               NOW(), 'pending', 'stale', $1, inst.main_run_scope_id
+               NOW(), 'stale', 'cascade',
+               COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = $2 AND run_scope_id = inst.main_run_scope_id), 0) + 1,
+               $1, inst.main_run_scope_id
           FROM rimsky_nodes n
           JOIN rimsky_instances inst ON inst.id = n.instance_id
          WHERE n.id = $2
            AND n.instance_id = $3
            AND NOT EXISTS (
-             -- in-flight guard: counts parked. A node with any in-flight
-             -- run (including parked) must not get a second stale run row;
-             -- the partial unique index enforces one in-flight row per
-             -- node, so parked belongs in this set.
              SELECT 1 FROM rimsky_node_runs r
               WHERE r.node_id = $2
-                AND r.phase IN ('pending','active','held','parked')
+                AND r.state IN ('pending','stale','running','held','parked')
            )
     `, frameID, nodeID, instanceID)
 	if err != nil {
@@ -225,7 +215,6 @@ func (s *framesImpl) MarkSourceNodeStale(
         SELECT EXISTS (
             SELECT 1 FROM rimsky_node_runs r
              WHERE r.node_id = $1
-               AND r.phase = 'pending'
                AND r.state = 'stale'
                AND r.frame_id = $2
         )
@@ -254,8 +243,7 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
               SELECT 1 FROM rimsky_node_runs r
               JOIN rimsky_nodes n ON n.id = r.node_id
               WHERE n.instance_id = f.instance_id
-                AND r.phase IN ('pending','active','held')
-                AND r.state IN ('stale','running','resuming')
+                AND r.state IN ('pending','stale','running','held')
           )
     `)
 	if err != nil {
@@ -481,7 +469,7 @@ func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (in
 		`SELECT COUNT(DISTINCT f.frame_id)
 		   FROM rimsky_frames f
 		   JOIN rimsky_node_runs d ON d.frame_id = f.frame_id
-		  WHERE f.state = 'running' AND d.phase = 'parked'`,
+		  WHERE f.state = 'running' AND d.state = 'parked'`,
 	).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("frames.CountHeldFrames: %w", err)

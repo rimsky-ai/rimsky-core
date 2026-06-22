@@ -72,13 +72,14 @@ func TestAcquireUnavailablePass(t *testing.T) {
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
 		"worker should record settling_signal_type=terminal/error/acquire/unavailable under error_types: { acquire/unavailable: [pass] }")
 
-	var wRow *persistence.NodeRow
+	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		wRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		wLatest = r
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFresh, wRow.State,
+	require.NotNil(t, wLatest)
+	require.Equal(t, cascade.NodeStateFresh, wLatest.State,
 		"worker should be fresh after resolve=pass")
 
 	var sawOpen bool

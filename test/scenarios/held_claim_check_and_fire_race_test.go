@@ -77,9 +77,9 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	acqRunID := uuid.New()
 	inhRunID := uuid.New()
 	h.ExecSQL(
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, phase)
-		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '10 seconds', $3, $4, 'completed'),
-		        ($5, $6, 'stub', '{}', NOW() - INTERVAL '10 seconds', $3, $4, 'completed')`,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, state, creation_reason, sequence)
+		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '10 seconds', $3, $4, 'fresh', 'cascade', 1),
+		        ($5, $6, 'stub', '{}', NOW() - INTERVAL '10 seconds', $3, $4, 'fresh', 'cascade', 1)`,
 		acqRunID, acq.ID, frameID, mainScopeID, inhRunID, inh.ID,
 	)
 	chID := uuid.New()
@@ -122,9 +122,15 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	)
 	runB := func() {
 		defer close(bDone)
+		var post func(context.Context)
 		bErr = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return runtime.CheckAndFireResolution(ctx, baseArgs, tx, chID)
+			pc, err := runtime.CheckAndFireResolution(ctx, baseArgs, tx, chID)
+			post = pc
+			return err
 		})
+		if bErr == nil && post != nil {
+			post(h.Ctx)
+		}
 	}
 
 	waitForBlockedContender := func(ctx context.Context) bool {
@@ -155,9 +161,15 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 			"contender B must be observably blocked on the claim-handle row lock inside A's check→fire window")
 	}
 
+	var postA func(context.Context)
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.CheckAndFireResolution(ctx, argsA, tx, chID)
+		pc, err := runtime.CheckAndFireResolution(ctx, argsA, tx, chID)
+		postA = pc
+		return err
 	}))
+	if postA != nil {
+		postA(h.Ctx)
+	}
 	require.True(t, hookFired, "the CheckAndFireHook seam must have fired")
 
 	select {

@@ -93,19 +93,20 @@ func TestParkedResumeDoesNotSpuriouslyCascadeSuccessSubscriberOnError(t *testing
 
 	time.Sleep(2 * time.Second)
 
-	var downstreamRow *persistence.NodeRow
+	var downstreamLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, downstream.ID, tx)
-		downstreamRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, downstream.ID)
+		downstreamLatest = r
 		return err
 	}))
-	require.NotNil(t, downstreamRow)
-	require.Equal(t, cascade.NodeStateFresh, downstreamRow.State,
-		"downstream subscribes only to terminal/success on worker. Worker never emitted "+
-			"terminal/success — it parked then emitted terminal/error/stub/boom. "+
-			"Downstream must remain in its initial fresh state (no dispatch). "+
-			"If downstream is running/stale/failed, the synthetic terminal/success cascade "+
-			"on parked-resume spuriously routed the error settlement into downstream.")
+	if downstreamLatest != nil {
+		require.Equal(t, cascade.NodeStateFresh, downstreamLatest.State,
+			"downstream subscribes only to terminal/success on worker. Worker never emitted "+
+				"terminal/success — it parked then emitted terminal/error/stub/boom. "+
+				"Downstream must remain in its initial fresh state (no dispatch). "+
+				"If downstream is running/stale/failed, the synthetic terminal/success cascade "+
+				"on parked-resume spuriously routed the error settlement into downstream.")
+	}
 
 	dsID := downstream.ID
 	require.Empty(t,

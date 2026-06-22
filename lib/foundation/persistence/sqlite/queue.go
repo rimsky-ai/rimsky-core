@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -24,10 +25,13 @@ import (
 const defaultCandidateLimit = 100
 
 type queueImpl struct {
-	db *sql.DB
+	db     *sql.DB
+	tables *tablesImpl
 }
 
 func newQueue(db *sql.DB) *queueImpl { return &queueImpl{db: db} }
+
+func (q *queueImpl) setTables(t *tablesImpl) { q.tables = t }
 
 var _ persistence.Queue = (*queueImpl)(nil)
 
@@ -67,6 +71,7 @@ func (q *queueImpl) inTx(ctx context.Context, fn func(tx persistence.Tx) error) 
 }
 
 // @concept: run-scope
+// @decision: non-cascade-direct-to-stale
 func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
 	stores := req.RequiredClaimProducers
 	if stores == nil {
@@ -78,6 +83,9 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if req.RunScopeID == (shared.UUID{}) {
 		return fmt.Errorf("sqlite.Enqueue: run_scope_id required for node %s", req.NodeID)
 	}
+	if q.tables == nil {
+		return fmt.Errorf("sqlite.Enqueue: queue not wired with tables (cannot snapshot dispatch_input_bag)")
+	}
 	var priorDispatchID any
 	if req.PriorDispatchID != nil {
 		priorDispatchID = req.PriorDispatchID.String()
@@ -88,25 +96,27 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if len(req.InitialScratchInline) > 0 {
 		scratchInlineArg = req.InitialScratchInline
 	}
+	creationReason := req.CreationReason
+	if creationReason == "" {
+		creationReason = cascade.CreationReasonCascade
+	}
+	newRunID := uuid.New()
 	res, err := q.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
-		 SELECT ?, ?, ?, ?, ?, 'pending', ?, rs.id, ?, ?, ?, ?, ?
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
+		 SELECT ?, ?, ?, ?, ?, 'stale', ?,
+		        COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = ?), 0) + 1,
+		        ?, rs.id, ?, ?, ?, ?, ?
 		   FROM rimsky_run_scopes rs
 		  WHERE rs.id = ?
-		    AND rs.closed_at IS NULL
-		    AND NOT EXISTS (
-		      SELECT 1 FROM rimsky_node_runs
-		       WHERE node_id = ?
-		         AND run_scope_id = ?
-		         AND phase IN ('pending','active','held','parked')
-		    )`,
-		uuid.New().String(), req.NodeID.String(),
+		    AND rs.closed_at IS NULL`,
+		newRunID.String(), req.NodeID.String(),
 		nullableString(req.ExecutorName), marshalStringArray(stores),
-		formatTime(req.EnqueuedAt), req.FrameID.String(),
+		formatTime(req.EnqueuedAt), string(creationReason),
+		req.NodeID.String(), req.RunScopeID.String(),
+		req.FrameID.String(),
 		priorDispatchID, priorDisposition,
 		scratchInlineArg, nullableString(req.InitialScratchHandle), nullableString(req.InitialScratchHandleBackend),
 		req.RunScopeID.String(),
-		req.NodeID.String(), req.RunScopeID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.Enqueue: %w", err)
@@ -115,22 +125,25 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if err != nil {
 		return fmt.Errorf("sqlite.Enqueue: rows affected: %w", err)
 	}
-	if affected > 0 {
-		return nil
+	if affected == 0 {
+		var closedAt sql.NullString
+		err = q.q(tx).QueryRowContext(ctx,
+			`SELECT closed_at FROM rimsky_run_scopes WHERE id = ?`,
+			req.RunScopeID.String(),
+		).Scan(&closedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("sqlite.Enqueue: run scope %s not found", req.RunScopeID)
+		}
+		if err != nil {
+			return fmt.Errorf("sqlite.Enqueue: lookup run scope: %w", err)
+		}
+		if closedAt.Valid {
+			return persistence.ErrRunScopeClosed
+		}
+		return fmt.Errorf("sqlite.Enqueue: insert returned no rows")
 	}
-	var closedAt sql.NullString
-	err = q.q(tx).QueryRowContext(ctx,
-		`SELECT closed_at FROM rimsky_run_scopes WHERE id = ?`,
-		req.RunScopeID.String(),
-	).Scan(&closedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("sqlite.Enqueue: run scope %s not found", req.RunScopeID)
-	}
-	if err != nil {
-		return fmt.Errorf("sqlite.Enqueue: lookup run scope: %w", err)
-	}
-	if closedAt.Valid {
-		return persistence.ErrRunScopeClosed
+	if err := (*nodeAttributesImpl)(q.tables).SnapshotBagForNewRun(ctx, tx, shared.UUID(newRunID), req.NodeID, req.RunScopeID); err != nil {
+		return fmt.Errorf("sqlite.Enqueue: snapshot bag: %w", err)
 	}
 	return nil
 }
@@ -164,15 +177,17 @@ func (q *queueImpl) SelectCandidates(
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		   JOIN rimsky_instances i ON i.id = n.instance_id
 		  WHERE d.claimed_by IS NULL
-		    AND d.phase = 'pending'
+		    AND d.state = 'stale'
 		    AND i.paused = 0
 		    AND d.enqueued_at <= ?
 		    AND NOT EXISTS (
-		      SELECT 1 FROM rimsky_wait_set w
-		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
-		        AND w.drained_at IS NULL
+		      SELECT 1 FROM rimsky_node_runs other
+		       WHERE other.node_id = d.node_id
+		         AND other.run_scope_id = d.run_scope_id
+		         AND other.id <> d.id
+		         AND (other.claimed_by IS NOT NULL OR other.state IN ('held','parked'))
 		    )
-		  ORDER BY d.enqueued_at, d.id`,
+		  ORDER BY d.enqueued_at, d.sequence, d.id`,
 		nowUTC(),
 	)
 	if err != nil {
@@ -293,12 +308,42 @@ func (q *queueImpl) ClaimDispatchRow(
 	now := nowUTC()
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
-		    SET claimed_by = ?, claimed_at = ?, last_progress_at = ?, phase = 'active'
-		  WHERE id = ? AND claimed_by IS NULL AND phase = 'pending'`,
+		    SET claimed_by = ?, claimed_at = ?, last_progress_at = ?
+		  WHERE id = ? AND claimed_by IS NULL AND state = 'stale'
+		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_node_runs other
+		       WHERE other.node_id = rimsky_node_runs.node_id
+		         AND other.run_scope_id = rimsky_node_runs.run_scope_id
+		         AND other.id <> rimsky_node_runs.id
+		         AND (other.claimed_by IS NOT NULL OR other.state IN ('held','parked'))
+		    )`,
 		supervisorID, now, now, dispatchID.String(),
 	)
 	if err != nil {
 		return false, fmt.Errorf("sqlite.ClaimDispatchRow: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+func (q *queueImpl) PromoteClaimedToRunning(
+	ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, supervisorID string,
+) (bool, error) {
+	if tx == nil {
+		return false, errors.New("sqlite.PromoteClaimedToRunning: tx required")
+	}
+	now := nowUTC()
+	res, err := q.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_node_runs
+		    SET state = 'running', last_progress_at = ?
+		  WHERE id = ? AND claimed_by = ? AND state = 'stale'`,
+		now, dispatchID.String(), supervisorID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("sqlite.PromoteClaimedToRunning: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
@@ -312,23 +357,19 @@ func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expect
 	if expectedClaimedBy != "" {
 		_, err := q.db.ExecContext(ctx,
 			`UPDATE rimsky_node_runs
-			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
-			        claimed_by = NULL,
+			    SET claimed_by = NULL,
 			        active_terminal_at = ?
 			  WHERE id = ?
-			    AND claimed_by = ?
-			    AND phase IN ('pending','active','held','parked')`,
+			    AND claimed_by = ?`,
 			now, dispatchID.String(), expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.db.ExecContext(ctx,
 		`UPDATE rimsky_node_runs
-		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
-		        claimed_by = NULL,
+		    SET claimed_by = NULL,
 		        active_terminal_at = ?
-		  WHERE id = ?
-		    AND phase IN ('pending','active','held','parked')`,
+		  WHERE id = ?`,
 		now, dispatchID.String(),
 	)
 	return err
@@ -344,25 +385,22 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 	if expectedClaimedBy != "" {
 		_, err := q.q(tx).ExecContext(ctx,
 			`UPDATE rimsky_node_runs
-			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
-			        claimed_by = NULL,
+			    SET claimed_by = NULL,
 			        active_terminal_at = ?
 			  WHERE node_id = ?
 			    AND run_scope_id = ?
-			    AND claimed_by = ?
-			    AND phase IN ('pending','active','held','parked')`,
+			    AND claimed_by = ?`,
 			now, nodeID.String(), runScopeID.String(), expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
-		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
-		        claimed_by = NULL,
+		    SET claimed_by = NULL,
 		        active_terminal_at = ?
 		  WHERE node_id = ?
 		    AND run_scope_id = ?
-		    AND phase IN ('pending','active','held','parked')`,
+		    AND claimed_by IS NOT NULL`,
 		now, nodeID.String(), runScopeID.String(),
 	)
 	return err
@@ -398,7 +436,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 	if expectedClaimedBy != "" {
 		_, err := q.db.ExecContext(ctx,
 			`UPDATE rimsky_node_runs
-			    SET claimed_by = NULL, claimed_at = NULL, phase = 'pending'
+			    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
 			  WHERE id = ? AND claimed_by = ?`,
 			dispatchID.String(), expectedClaimedBy,
 		)
@@ -406,7 +444,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 	}
 	_, err := q.db.ExecContext(ctx,
 		`UPDATE rimsky_node_runs
-		    SET claimed_by = NULL, claimed_at = NULL, phase = 'pending'
+		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
 		  WHERE id = ?`,
 		dispatchID.String(),
 	)
@@ -556,7 +594,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
 	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-	  WHERE d.phase IN ('pending','active','held','parked')` +
+	  WHERE d.state IN ('pending','stale','running','held','parked')` +
 		stateClause +
 		` AND (? IS NULL OR d.executor_name = ?)
 	    AND (? IS NULL OR n.instance_id = ?)` +
@@ -592,7 +630,7 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 	q1 := `SELECT COUNT(*)
 	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-	  WHERE d.phase IN ('pending','active','held','parked')` +
+	  WHERE d.state IN ('pending','stale','running','held','parked')` +
 		stateClause +
 		` AND (? IS NULL OR d.executor_name = ?)
 	    AND (? IS NULL OR n.instance_id = ?)`
@@ -608,7 +646,7 @@ func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, er
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT COALESCE(parked_reason, ''), COUNT(*)
 		   FROM rimsky_node_runs
-		  WHERE phase = 'parked'
+		  WHERE state = 'parked'
 		  GROUP BY COALESCE(parked_reason, '')`)
 	if err != nil {
 		return nil, err
@@ -634,7 +672,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
 		   FROM rimsky_node_runs d
 		  WHERE d.id = ?
-		    AND d.phase IN ('pending','active','held','parked')`, id.String(),
+		    AND d.state IN ('pending','stale','running','held','parked')`, id.String(),
 	)
 	r, err := scanDispatchRow(row)
 	if err != nil {
@@ -651,7 +689,7 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 	row := q.q(tx).QueryRowContext(ctx,
 		`SELECT id FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ?
-		    AND phase IN ('pending','active','held','parked')
+		    AND state IN ('pending','stale','running','held','parked')
 		  LIMIT 1`,
 		nodeID.String(), runScopeID.String())
 	var idStr string
@@ -692,7 +730,7 @@ func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persi
 
 // @concept: wait-set
 // @concept: cascade
-func (q *queueImpl) ListInFlightRunPhases(
+func (q *queueImpl) ListInFlightRunStates(
 	ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID,
 ) (map[shared.UUID][]string, error) {
 	out := map[shared.UUID][]string{}
@@ -700,7 +738,7 @@ func (q *queueImpl) ListInFlightRunPhases(
 		return out, nil
 	}
 	if tx == nil {
-		return nil, errors.New("sqlite.ListInFlightRunPhases: tx required")
+		return nil, errors.New("sqlite.ListInFlightRunStates: tx required")
 	}
 	placeholders := make([]string, len(nodeIDs))
 	args := make([]any, 0, len(nodeIDs)+2)
@@ -710,29 +748,29 @@ func (q *queueImpl) ListInFlightRunPhases(
 	}
 	args = append(args, frameID.String(), runScopeID.String())
 	rows, err := q.q(tx).QueryContext(ctx,
-		`SELECT DISTINCT node_id, phase FROM rimsky_node_runs
+		`SELECT DISTINCT node_id, state FROM rimsky_node_runs
 		  WHERE node_id IN (`+strings.Join(placeholders, ",")+`)
 		    AND frame_id = ?
 		    AND run_scope_id = ?
-		    AND phase IN ('pending','active','held','parked')`,
+		    AND state IN ('pending','stale','running','held','parked')`,
 		args...)
 	if err != nil {
-		return nil, fmt.Errorf("sqlite.ListInFlightRunPhases: %w", err)
+		return nil, fmt.Errorf("sqlite.ListInFlightRunStates: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var nodeIDStr, phase string
-		if err := rows.Scan(&nodeIDStr, &phase); err != nil {
-			return nil, fmt.Errorf("sqlite.ListInFlightRunPhases: scan: %w", err)
+		var nodeIDStr, state string
+		if err := rows.Scan(&nodeIDStr, &state); err != nil {
+			return nil, fmt.Errorf("sqlite.ListInFlightRunStates: scan: %w", err)
 		}
 		nodeID, err := uuid.Parse(nodeIDStr)
 		if err != nil {
-			return nil, fmt.Errorf("sqlite.ListInFlightRunPhases: parse node_id: %w", err)
+			return nil, fmt.Errorf("sqlite.ListInFlightRunStates: parse node_id: %w", err)
 		}
-		out[shared.UUID(nodeID)] = append(out[shared.UUID(nodeID)], phase)
+		out[shared.UUID(nodeID)] = append(out[shared.UUID(nodeID)], state)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite.ListInFlightRunPhases: rows: %w", err)
+		return nil, fmt.Errorf("sqlite.ListInFlightRunStates: rows: %w", err)
 	}
 	return out, nil
 }

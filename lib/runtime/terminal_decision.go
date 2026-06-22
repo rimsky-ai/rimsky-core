@@ -91,51 +91,63 @@ type ClaimLineageHint struct {
 func ResolveClaimHandleTerminal(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	td TerminalDecision,
-) error {
+) (postCommitFn, error) {
 	if td.Producer == nil {
-		return fmt.Errorf("ResolveClaimHandleTerminal: producer is nil for claim_handle %s", td.ClaimHandleID)
+		return nil, fmt.Errorf("ResolveClaimHandleTerminal: producer is nil for claim_handle %s", td.ClaimHandleID)
 	}
 	versionID, err := dispatchDataProcessingTerminal(ctx, args, tx, td)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	commitRes, err := fireProducerVerb(ctx, td)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if td.Outcome == OutcomeCommit && commitRes.VersionID != "" {
 		if err := args.ClaimHandles.SetVersionID(ctx, td.ClaimHandleID, td.SupervisorID, commitRes.VersionID, tx); err != nil {
-			return fmt.Errorf("ResolveClaimHandleTerminal: SetVersionID (base Commit response): %w", err)
+			return nil, fmt.Errorf("ResolveClaimHandleTerminal: SetVersionID (base Commit response): %w", err)
 		}
 		versionID = commitRes.VersionID
 	}
 	emitTerminalForensics(ctx, args, tx, td, versionID)
+	var post postCommitFn
 	if td.Outcome.IsAbandon() {
-		if err := cancelDescendantClaims(ctx, args, tx, td.ClaimHandleID); err != nil {
-			return fmt.Errorf("ResolveClaimHandleTerminal: cancelDescendantClaims: %w", err)
+		pc, err := cancelDescendantClaims(ctx, args, tx, td.ClaimHandleID)
+		if err != nil {
+			return nil, fmt.Errorf("ResolveClaimHandleTerminal: cancelDescendantClaims: %w", err)
 		}
+		post = chainPostCommit(post, pc)
 	}
 	if td.Source == OwnershipBail {
 		if err := args.ClaimHandles.Delete(ctx, td.ClaimHandleID, td.SupervisorID, tx); err != nil {
-			return fmt.Errorf("ResolveClaimHandleTerminal: ownership-bail Delete: %w", err)
+			return nil, fmt.Errorf("ResolveClaimHandleTerminal: ownership-bail Delete: %w", err)
 		}
 	} else if err := promoteHandleState(ctx, args, tx, td); err != nil {
-		return err
+		return nil, err
 	}
+	// @concept: claim-handle
+	// @decision: held-as-state-not-phase
+	heldPC, err := emitDeferredHeldCascade(ctx, args, tx, td)
+	if err != nil {
+		return nil, fmt.Errorf("ResolveClaimHandleTerminal: deferred held cascade: %w", err)
+	}
+	post = chainPostCommit(post, heldPC)
 	// @concept: claim-tree
 	// @concept: cancel-siblings
 	if td.ParentClaimHandleID == nil {
-		return nil
+		return post, nil
 	}
-	if err := SettleFromFanoutChild(ctx, args, tx, FanoutChildSettlementInput{
+	settlePC, err := SettleFromFanoutChild(ctx, args, tx, FanoutChildSettlementInput{
 		ParentClaimHandleID:   *td.ParentClaimHandleID,
 		ChildClaimHandleID:    td.ClaimHandleID,
 		ChildOutcome:          td.Outcome,
 		ChildProducerMetadata: commitRes.ProducerMetadata,
-	}); err != nil {
-		return fmt.Errorf("ResolveClaimHandleTerminal: settle children: %w", err)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ResolveClaimHandleTerminal: settle children: %w", err)
 	}
-	return nil
+	post = chainPostCommit(post, settlePC)
+	return post, nil
 }
 
 func dispatchDataProcessingTerminal(

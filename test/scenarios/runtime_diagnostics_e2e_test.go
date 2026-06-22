@@ -107,12 +107,12 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 
 	var phase string
 	h.QueryRowSQL(
-		`SELECT phase FROM rimsky_node_runs WHERE node_id = $1 ORDER BY enqueued_at DESC LIMIT 1`,
+		`SELECT state FROM rimsky_node_runs WHERE node_id = $1 ORDER BY enqueued_at DESC LIMIT 1`,
 		[]any{acq.ID},
 		&phase,
 	)
 	require.Equal(t, "parked", phase,
-		"the supervisor's actual phase for the acquirer must be 'parked' — "+
+		"the supervisor's actual state for the acquirer must be 'parked' — "+
 			"the parked surface lying would falsify the story")
 
 	require.True(t, parkedSurfaceContainsNodeWithReason(t, h, acq.ID.String(), "await_callback"),

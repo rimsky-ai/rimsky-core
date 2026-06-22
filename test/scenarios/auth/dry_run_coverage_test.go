@@ -216,14 +216,20 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			}
 		}
 	}
-	nodeStateIs := func(id, want string) func(t *testing.T) {
+	// @concept: node
+	nodeHasFailedRun := func(id string) func(t *testing.T) {
 		return func(t *testing.T) {
 			code, resp := f.request(t, "GET", "/v1/nodes/"+id, adminKey, nil)
 			if code != 200 {
 				t.Fatalf("node re-fetch: %d %+v", code, resp)
 			}
-			if st, _ := resp["state"].(string); st != want {
-				t.Fatalf("node %s state changed under dry-run: got %q want %q", id, st, want)
+			summary, _ := resp["run_summary"].(map[string]any)
+			if summary == nil {
+				t.Fatalf("node %s missing run_summary on response", id)
+			}
+			failed, _ := summary["failed_count"].(float64)
+			if int(failed) < 1 {
+				t.Fatalf("node %s lost its failed terminal run under dry-run: run_summary=%+v", id, summary)
 			}
 		}
 	}
@@ -341,7 +347,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 
 		"node:reset": {
 			method: "POST", path: "/v1/nodes/" + resetNodeID + "/reset" + dr,
-			wouldHaveKey: "would_have_reset", verifyNoMutation: nodeStateIs(resetNodeID, "failed"),
+			wouldHaveKey: "would_have_reset", verifyNoMutation: nodeHasFailedRun(resetNodeID),
 		},
 
 		"message:send": {

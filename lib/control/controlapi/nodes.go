@@ -12,31 +12,28 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
+// @concept: node
+// @decision: node-state-retired-from-operator-api
 type nodeResponse struct {
-	ID                   string         `json:"id"`
-	InstanceID           string         `json:"instance_id"`
-	NodeType             string         `json:"node_type"`
-	Executor             string         `json:"executor,omitempty"`
-	State                string         `json:"state"`
-	SettlingSignalType   string         `json:"settling_signal_type,omitempty"`
-	CurrentErrorClass    string         `json:"current_error_class,omitempty"`
-	RetryCounter         int            `json:"retry_counter"`
-	ActionIndex          int            `json:"action_index"`
-	AssignedSupervisorID string         `json:"assigned_supervisor_id,omitempty"`
-	FrameID              string         `json:"frame_id,omitempty"`
-	Tags                 []string       `json:"tags"`
-	CreatedAt            time.Time      `json:"created_at"`
-	UpdatedAt            time.Time      `json:"updated_at"`
-	LatestAttributes     map[string]any `json:"latest_attributes,omitempty"`
+	ID               string                      `json:"id"`
+	InstanceID       string                      `json:"instance_id"`
+	NodeType         string                      `json:"node_type"`
+	Executor         string                      `json:"executor,omitempty"`
+	FrameID          string                      `json:"frame_id,omitempty"`
+	Tags             []string                    `json:"tags"`
+	CascadeMode      string                      `json:"cascade_mode"`
+	CreatedAt        time.Time                   `json:"created_at"`
+	UpdatedAt        time.Time                   `json:"updated_at"`
+	LatestAttributes map[string]any              `json:"latest_attributes,omitempty"`
+	RunSummary       *persistence.NodeRunSummary `json:"run_summary,omitempty"`
 }
 
+// @concept: node
 func toNodeResponse(n persistence.NodeRow) nodeResponse {
 	frameID := ""
 	if n.FrameID != nil {
@@ -46,26 +43,25 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 	if tags == nil {
 		tags = []string{}
 	}
-	settlingSig := ""
-	if n.SettlingSignalType != nil {
-		settlingSig = *n.SettlingSignalType
-	}
 	return nodeResponse{
-		ID:                   n.ID.String(),
-		InstanceID:           n.InstanceID.String(),
-		NodeType:             n.NodeType,
-		Executor:             n.Executor,
-		State:                string(n.State),
-		SettlingSignalType:   settlingSig,
-		CurrentErrorClass:    n.CurrentErrorClass,
-		RetryCounter:         n.RetryCounter,
-		ActionIndex:          n.ActionIndex,
-		AssignedSupervisorID: n.AssignedSupervisorID,
-		FrameID:              frameID,
-		Tags:                 tags,
-		CreatedAt:            n.CreatedAt,
-		UpdatedAt:            n.UpdatedAt,
+		ID:          n.ID.String(),
+		InstanceID:  n.InstanceID.String(),
+		NodeType:    n.NodeType,
+		Executor:    n.Executor,
+		FrameID:     frameID,
+		Tags:        tags,
+		CascadeMode: string(n.CascadeMode),
+		CreatedAt:   n.CreatedAt,
+		UpdatedAt:   n.UpdatedAt,
 	}
+}
+
+// @concept: node
+func toNodeResponseWithSummary(n persistence.NodeRow, summary persistence.NodeRunSummary) nodeResponse {
+	out := toNodeResponse(n)
+	s := summary
+	out.RunSummary = &s
+	return out
 }
 
 func registerNodesRoutes(r chi.Router, deps AppDeps) {
@@ -81,8 +77,11 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid id")
 			return
 		}
-		var row *persistence.NodeRow
-		var latestBag map[string]any
+		var (
+			row       *persistence.NodeRow
+			latestBag map[string]any
+			summary   persistence.NodeRunSummary
+		)
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := deps.Persist.Nodes().Get(ctx, id, tx)
 			if err != nil {
@@ -106,6 +105,11 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			if attrs != nil {
 				latestBag = attrs.Data
 			}
+			s, err := deps.Persist.Nodes().GetRunSummary(ctx, row.ID, tx)
+			if err != nil {
+				return err
+			}
+			summary = s
 			return nil
 		}); err != nil {
 			writeError(w, err)
@@ -115,12 +119,13 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrNodeNotFound.Error())
 			return
 		}
-		resp := toNodeResponse(*row)
+		resp := toNodeResponseWithSummary(*row, summary)
 		resp.LatestAttributes = latestBag
 		writeJSON(w, http.StatusOK, resp)
 	}
 }
 
+// @decision: node-state-retired-from-operator-api
 func handleResetNode(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(req, "id"))
@@ -128,11 +133,25 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid id")
 			return
 		}
-		var row *persistence.NodeRow
+		var (
+			row           *persistence.NodeRow
+			failedScopeID *shared.UUID
+		)
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := deps.Persist.Nodes().Get(ctx, id, tx)
+			if err != nil {
+				return err
+			}
 			row = r
-			return err
+			if r == nil {
+				return nil
+			}
+			sid, err := deps.Persist.Nodes().GetFailedTerminalRunScopeID(ctx, id, tx)
+			if err != nil {
+				return err
+			}
+			failedScopeID = sid
+			return nil
 		}); err != nil {
 			writeError(w, err)
 			return
@@ -141,10 +160,9 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrNodeNotFound.Error())
 			return
 		}
-		if row.State != cascade.NodeStateFailed {
+		if failedScopeID == nil {
 			writeJSON(w, http.StatusConflict, map[string]any{
-				"error": "reset only valid from state=failed",
-				"state": string(row.State),
+				"error": "reset only valid when node has a failed terminal run in some scope",
 			})
 			return
 		}
@@ -154,17 +172,8 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			if err := deps.Persist.Nodes().UpdateError(ctx, id, node.EvaluatorState{}, tx); err != nil {
+			if err := deps.Persist.Nodes().ResetFailedTerminalSettlingSignalType(ctx, id, *failedScopeID, tx); err != nil {
 				return err
-			}
-			scopeID, err := deps.Persist.Nodes().GetFailedTerminalRunScopeID(ctx, id, tx)
-			if err != nil {
-				return err
-			}
-			if scopeID != nil {
-				if err := deps.Persist.Nodes().ResetFailedTerminalSettlingSignalType(ctx, id, *scopeID, tx); err != nil {
-					return err
-				}
 			}
 			return deps.Persist.Nodes().SetFrameID(ctx, id, nil, tx)
 		}); err != nil {
@@ -207,19 +216,30 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 		limit := parseLimit(req, 100)
 		tagFilter := req.URL.Query().Get("tag")
 		var page persistence.PaginatedListResult[persistence.NodeRow]
+		summaryByID := map[shared.UUID]persistence.NodeRunSummary{}
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			p, err := deps.Persist.Nodes().ListByInstancePagedFiltered(ctx, inst.ID,
 				persistence.ListPagination{Limit: limit, Cursor: cursor},
 				persistence.NodeListFilter{Tag: tagFilter}, tx)
+			if err != nil {
+				return err
+			}
 			page = p
-			return err
+			for _, n := range page.Rows {
+				s, err := deps.Persist.Nodes().GetRunSummary(ctx, n.ID, tx)
+				if err != nil {
+					return err
+				}
+				summaryByID[n.ID] = s
+			}
+			return nil
 		}); err != nil {
 			writeError(w, err)
 			return
 		}
 		out := make([]nodeResponse, 0, len(page.Rows))
 		for _, n := range page.Rows {
-			out = append(out, toNodeResponse(n))
+			out = append(out, toNodeResponseWithSummary(n, summaryByID[n.ID]))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"nodes":       out,

@@ -15,6 +15,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 )
 
@@ -159,6 +160,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateAttributesSchema(n, base, declared, spec, hooks, &res)
 		validateAcquireUnavailablePolicyAdvised(n, base, &res)
 		validateMaxParkDuration(n, base, &res)
+		validateCascadeMode(n, base, &res)
 		validateDispatchDeadlines(n, base, &res)
 		validateHolds(n, base, spec, declared, &res)
 		validateFanOut(n, base, hooks, &res)
@@ -1627,6 +1629,30 @@ func validateMaxParkDuration(n TemplateNodeDef, base string, res *ValidationResu
 			Msg:  fmt.Sprintf("invalid duration %q: %v", n.MaxParkDuration, err),
 		})
 	}
+}
+
+func validateCascadeMode(n TemplateNodeDef, base string, res *ValidationResult) {
+	if n.CascadeMode == "" {
+		return
+	}
+	switch cascade.CascadeMode(n.CascadeMode) {
+	case cascade.CascadeModeMostRecent,
+		cascade.CascadeModeSequenced,
+		cascade.CascadeModeIdempotentQueue,
+		cascade.CascadeModeIdempotentSettled:
+		return
+	}
+	res.Errors = append(res.Errors, ValidationError{
+		Path: base + ".cascade_mode",
+		Msg: fmt.Sprintf(
+			"unknown cascade_mode %q: must be one of %q, %q, %q, %q",
+			n.CascadeMode,
+			cascade.CascadeModeMostRecent,
+			cascade.CascadeModeSequenced,
+			cascade.CascadeModeIdempotentQueue,
+			cascade.CascadeModeIdempotentSettled,
+		),
+	})
 }
 
 // @decision: three-dispatch-deadlines

@@ -26,10 +26,27 @@ func emitSignalInTx(
 	sig signalpkg.Signal,
 	visited map[foundationshared.UUID]struct{},
 ) error {
+	return emitSignalInTxWithFilter(ctx, args, tx, senderID, senderNodeType, senderRunID,
+		instanceID, senderFrameID, sig, visited, nil)
+}
+
+// @concept: cascade
+// @decision: held-as-state-not-phase
+func emitSignalInTxWithFilter(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	senderID foundationshared.UUID,
+	senderNodeType string,
+	senderRunID foundationshared.UUID,
+	instanceID foundationshared.UUID,
+	senderFrameID foundationshared.UUID,
+	sig signalpkg.Signal,
+	visited map[foundationshared.UUID]struct{},
+	filter receiverFilter,
+) error {
 	var zeroUUID foundationshared.UUID
 	if senderRunID != zeroUUID && senderFrameID != zeroUUID {
 		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
-			senderID, senderNodeType, senderRunID, instanceID, senderFrameID, sig, visited); err != nil {
+			senderID, senderNodeType, senderRunID, instanceID, senderFrameID, sig, visited, filter); err != nil {
 			return err
 		}
 	}

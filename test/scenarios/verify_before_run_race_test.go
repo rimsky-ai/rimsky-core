@@ -42,8 +42,8 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	dispatchID := uuid.New()
 	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, frame_id, run_scope_id)
-		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), $3, $4)`,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, frame_id, run_scope_id, sequence)
+		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), $3, $4, 1)`,
 		dispatchID, n.ID, *n.FrameID, mainScopeID,
 	)
 	require.NoError(t, err)
@@ -72,13 +72,14 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	require.False(t, out.Ran,
 		"runner should not execute when another supervisor holds the claim")
 
-	var got *persistence.NodeRow
+	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, n.ID, tx)
-		got = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, n.ID)
+		latest = r
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateStale, got.State)
+	require.NotNil(t, latest)
+	require.Equal(t, cascade.NodeStateStale, latest.State)
 
 	own, err := h.Queue.GetClaimedBy(h.Ctx, dispatchID)
 	require.NoError(t, err)

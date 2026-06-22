@@ -43,15 +43,15 @@ func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 60*time.Second),
 		"worker should land in failed once retry-loop cap is reached")
 
-	var row *persistence.NodeRow
+	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		row = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		latest = r
 		return err
 	}))
-	require.NotNil(t, row)
-	require.NotNil(t, row.SettlingSignalType)
-	require.Contains(t, *row.SettlingSignalType, "terminal/error/",
+	require.NotNil(t, latest)
+	require.NotNil(t, latest.SettlingSignalType)
+	require.Contains(t, *latest.SettlingSignalType, "terminal/error/",
 		"give_up should record settling_signal_type=terminal/error/<class>")
 }
 

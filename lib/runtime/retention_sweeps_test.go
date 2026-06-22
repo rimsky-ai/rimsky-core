@@ -99,8 +99,8 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 		}
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_node_runs
-			   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-			 VALUES (?, ?, 'stub', '[]', ?, 'completed', 'failed', ?, ?)`,
+			   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+			 VALUES (?, ?, 'stub', '[]', ?, 'failed', 'cascade', 1, ?, ?)`,
 			runID, nodeID, rfc(endedAt), frameID, scopeID,
 		); err != nil {
 			t.Fatalf("seed node_run: %v", err)

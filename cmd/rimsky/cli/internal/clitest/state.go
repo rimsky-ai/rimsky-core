@@ -383,12 +383,14 @@ func (s *InMemoryState) GetNode(id string) (cli.Node, bool) {
 	return cli.Node{}, false
 }
 
-func (s *InMemoryState) SetNodeState(id, state string) {
+// @concept: node
+func (s *InMemoryState) SetNodeRunSummary(id string, summary cli.NodeRunSummary) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, m := range s.nodes {
 		if n, ok := m[id]; ok {
-			n.State = state
+			sc := summary
+			n.RunSummary = &sc
 			return
 		}
 	}

@@ -279,7 +279,8 @@ func PropagateIfChildAfterTerminal(
 				return fmt.Errorf("PropagateIfChildAfterTerminal: cascade parent %s: %w", s.ParentRunID, err)
 			}
 			// @concept: wait-set
-			if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, s.FrameID, s.ParentRunID, tx); err != nil {
+			// @decision: walker-rule-per-sender-node
+			if err := drainWaitSetOnSettled(ctx, args, tx, s.FrameID, s.ParentRunID); err != nil {
 				return fmt.Errorf("PropagateIfChildAfterTerminal: drain wait-set for parent %s: %w", s.ParentRunID, err)
 			}
 		}

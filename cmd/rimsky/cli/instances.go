@@ -338,11 +338,11 @@ func printInstanceStatus(status *InstanceStatus) {
 	nodeRows := make([][]string, 0, len(status.Nodes))
 	for _, n := range status.Nodes {
 		nodeRows = append(nodeRows, []string{
-			n.ID, n.NodeType, n.State, n.CurrentErrorClass,
-			fmt.Sprintf("%d", n.RetryCounter),
+			n.ID, n.NodeType,
+			formatNodeRunCounts(n.RunSummary),
 		})
 	}
-	EmitTable(os.Stdout, []string{"ID", "TYPE", "STATE", "ERROR_CLASS", "RETRIES"}, nodeRows)
+	EmitTable(os.Stdout, []string{"ID", "TYPE", "RUNS"}, nodeRows)
 
 	fmt.Fprintln(os.Stdout, "\nRecent events:")
 	eventRows := make([][]string, 0, len(status.RecentEvents))
@@ -386,10 +386,19 @@ func RunInstanceNodes(ctx context.Context, args []string) int {
 	}
 	rows := make([][]string, 0, len(resp.Nodes))
 	for _, n := range resp.Nodes {
-		rows = append(rows, []string{n.ID, n.NodeType, n.State, n.Executor})
+		rows = append(rows, []string{n.ID, n.NodeType, formatNodeRunCounts(n.RunSummary), n.Executor})
 	}
-	EmitTable(os.Stdout, []string{"ID", "TYPE", "STATE", "EXECUTOR"}, rows)
+	EmitTable(os.Stdout, []string{"ID", "TYPE", "RUNS", "EXECUTOR"}, rows)
 	return 0
+}
+
+// @concept: node
+func formatNodeRunCounts(s *NodeRunSummary) string {
+	if s == nil {
+		return "active=0 pending=0 fresh=0 failed=0"
+	}
+	return fmt.Sprintf("active=%d pending=%d fresh=%d failed=%d",
+		s.ActiveCount, s.PendingCount, s.FreshCount, s.FailedCount)
 }
 
 func RunInstanceEvents(ctx context.Context, args []string) int {

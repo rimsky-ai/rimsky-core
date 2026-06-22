@@ -55,7 +55,7 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	err = h.Pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM rimsky_node_runs
 		WHERE state IN ('stale','running')
-		  AND phase IN ('pending','active','held','parked')
+		  AND state IN ('pending','stale','running','held','parked')
 		  AND frame_id IS NULL
 	`).Scan(&nullNodes)
 	require.NoError(t, err)
@@ -71,7 +71,7 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 			   FROM rimsky_nodes n
 			   LEFT JOIN rimsky_node_runs r
 			          ON r.node_id = n.id
-			         AND r.phase IN ('pending','active','held','parked')
+			         AND r.state IN ('pending','stale','running','held','parked')
 			  WHERE n.id = $1`,
 			uuid.UUID(nID)).Scan(&state, &frameID)
 		require.NoError(t, err)

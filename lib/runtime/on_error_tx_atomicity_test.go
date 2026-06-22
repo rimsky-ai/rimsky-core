@@ -42,9 +42,10 @@ func (q *txTrackingQueue) EnqueueInTx(ctx context.Context, req persistence.Dispa
 
 type txTrackingNodes struct {
 	persistence.NodeTable
-	mu              sync.Mutex
-	updateStateTxs  []persistence.Tx
-	updateStateArgs []cascade.NodeState
+	mu                       sync.Mutex
+	updateStateTxs           []persistence.Tx
+	updateStateArgs          []cascade.NodeState
+	createNonCascadeStaleTxs []persistence.Tx
 }
 
 func (n *txTrackingNodes) UpdateState(ctx context.Context, id shared.UUID, runScopeID shared.UUID, state cascade.NodeState, reason cascade.TransitionReason, settlingSignalType *string, tx persistence.Tx) error {
@@ -53,6 +54,13 @@ func (n *txTrackingNodes) UpdateState(ctx context.Context, id shared.UUID, runSc
 	n.updateStateArgs = append(n.updateStateArgs, state)
 	n.mu.Unlock()
 	return n.NodeTable.UpdateState(ctx, id, runScopeID, state, reason, settlingSignalType, tx)
+}
+
+func (n *txTrackingNodes) CreateNonCascadeStale(ctx context.Context, tx persistence.Tx, in persistence.NonCascadeStaleInput) (shared.UUID, error) {
+	n.mu.Lock()
+	n.createNonCascadeStaleTxs = append(n.createNonCascadeStaleTxs, tx)
+	n.mu.Unlock()
+	return n.NodeTable.CreateNonCascadeStale(ctx, tx, in)
 }
 
 type nodeTrackingTables struct {
@@ -222,11 +230,7 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 				break
 			}
 		}
-		if err := store.Nodes().SetFrameID(ctx, nodeID, &frameID, tx); err != nil {
-			return err
-		}
-		return store.Nodes().UpdateState(ctx, nodeID, mainRunScopeID,
-			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
+		return store.Nodes().SetFrameID(ctx, nodeID, &frameID, tx)
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -253,14 +257,14 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 	var retryStateTx persistence.Tx
 	found := false
 	for i, st := range trackedNodes.updateStateArgs {
-		if st == cascade.NodeStateStale {
+		if st == cascade.NodeStateFailed {
 			retryStateTx = trackedNodes.updateStateTxs[i]
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("retry path UpdateState(stale) not observed; calls: %v", trackedNodes.updateStateArgs)
+		t.Fatalf("retry path UpdateState(failed) not observed; calls: %v", trackedNodes.updateStateArgs)
 	}
 
 	if len(trackedQueue.removeForNodes) == 0 {
@@ -272,12 +276,12 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 			retryStateTx, trackedQueue.removeForNodes[0])
 	}
 
-	if len(trackedQueue.enqueueInTxs) == 0 {
-		t.Fatalf("retry path did not call Queue.EnqueueInTx")
+	if len(trackedNodes.createNonCascadeStaleTxs) == 0 {
+		t.Fatalf("retry path did not call Nodes.CreateNonCascadeStale")
 	}
-	if trackedQueue.enqueueInTxs[0] != retryStateTx {
-		t.Fatalf("retry path opened a new tx between UpdateState/Remove and EnqueueInTx: "+
-			"state tx=%p, enqueue tx=%p — must be the same tx",
-			retryStateTx, trackedQueue.enqueueInTxs[0])
+	if trackedNodes.createNonCascadeStaleTxs[0] != retryStateTx {
+		t.Fatalf("retry path opened a new tx between UpdateState/Remove and CreateNonCascadeStale: "+
+			"state tx=%p, create tx=%p — must be the same tx",
+			retryStateTx, trackedNodes.createNonCascadeStaleTxs[0])
 	}
 }

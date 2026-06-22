@@ -16,10 +16,22 @@ import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
 type postCommitFn func(ctx context.Context)
+
+func chainPostCommit(a, b postCommitFn) postCommitFn {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	return func(ctx context.Context) {
+		a(ctx)
+		b(ctx)
+	}
+}
 
 func applyTerminal(
 	ctx context.Context, args RunArgs, acq *acquisition,
@@ -163,7 +175,15 @@ func applyTerminalComplete(
 	successType := string(signalpkg.TypePath("terminal/success"))
 	settlingSignalType := &successType
 
-	if err := releaseLocksInTx(ctx, args, tx, acq, true, false); err != nil {
+	// @concept: claim-handle
+	// @decision: held-as-state-not-phase
+	heldBeforeRelease, err := runHasActiveHeldClaims(ctx, args, tx, acq.DispatchID)
+	if err != nil {
+		return nil, fmt.Errorf("applyTerminalComplete: held probe (pre-release): %w", err)
+	}
+
+	releasePC, err := releaseLocksInTx(ctx, args, tx, acq, true, false)
+	if err != nil {
 		return nil, err
 	}
 	if !isSubgraphExit {
@@ -175,8 +195,113 @@ func applyTerminalComplete(
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, t.Scratch); err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: %w", err)
 	}
-	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, node.EvaluatorState{}, tx); err != nil {
-		return nil, fmt.Errorf("applyTerminalComplete: clear error state: %w", err)
+	if heldBeforeRelease {
+		// @concept: claim-handle
+		// @decision: held-as-state-not-phase
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+			cascade.NodeStateHeld, cascade.ReasonHandlerHeld, settlingSignalType, tx); err != nil {
+			return nil, err
+		}
+		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
+			return nil, fmt.Errorf("applyTerminalComplete: remove for node (held): %w", err)
+		}
+		tmplSpec, terr := loadTemplateSpec(ctx, args, tx, acq.InstanceID)
+		if terr != nil {
+			return nil, fmt.Errorf("applyTerminalComplete: load template for held filter: %w", terr)
+		}
+		heldFilter := subgraphMemberFilter(tmplSpec, acq.NodeType)
+		visited := map[foundationshared.UUID]struct{}{}
+		successSig := signalpkg.Signal{
+			Type: "terminal/success",
+			Payload: map[string]any{
+				"changed":          t.Changed,
+				"attributes_delta": orEmptyMap(t.AttributesDel),
+				"change_summary":   t.ChangeSummary,
+				"tags":             t.Tags,
+			},
+		}
+		if err := emitSignalInTxWithFilter(ctx, args, tx,
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+			successSig, visited, heldFilter); err != nil {
+			return nil, err
+		}
+		for key, value := range merged {
+			attrSig := signalpkg.Signal{
+				Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
+				Payload: map[string]any{
+					"key":   key,
+					"value": value,
+				},
+			}
+			if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
+				acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+				attrSig, visited, heldFilter); err != nil {
+				return nil, err
+			}
+		}
+		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+			return nil, err
+		}
+		// @decision: held-as-state-not-phase
+		transitionPC, err := transitionThisHolderIfFullyResolved(ctx, args, tx, acq)
+		if err != nil {
+			return nil, err
+		}
+		dispatchID := acq.DispatchID
+		post := func(ctx context.Context) {
+			if len(t.AttributesDel) > 0 {
+				if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+					for key, value := range t.AttributesDel {
+						attrSig := signalpkg.Signal{
+							Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
+							Payload: map[string]any{
+								"key":   key,
+								"value": value,
+							},
+						}
+						if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
+							acq.InstanceID, acq.NodeID, attrSig, args.Clock.Now(), tx); err != nil {
+							return err
+						}
+					}
+					return nil
+				}); err != nil && args.Logger != nil {
+					args.Logger.Warn("runner_terminal: append attribute signal rows failed (held)",
+						"node_id", acq.NodeID.String(),
+						"error", err.Error())
+				}
+			}
+			fanoutRecalculate(ctx, args, acq)
+			scope := resolveAcqScope(ctx, args, acq)
+			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+				InstanceID:       acq.InstanceID,
+				FrameID:          acq.FrameID,
+				RunID:            dispatchID,
+				NodeID:           acq.NodeID,
+				State:            string(cascade.NodeStateHeld),
+				Changed:          t.Changed,
+				TerminalKind:     "complete",
+				NodeAlias:        acq.NodeType,
+				ExecutorName:     acq.Executor,
+				TemplateHash:     acq.TemplateHash,
+				Params:           acq.InstanceParams,
+				AttributesMerged: acq.MergedAttributes,
+				HeldClaims:       HeldClaimsForLineage(acq),
+				ParentRunID:      scope.ParentRunID,
+				ChildKey:         scope.PartitionKey,
+				SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+			})
+		}
+		return chainPostCommit(chainPostCommit(releasePC, transitionPC), post), nil
+	}
+	// @concept: claim-handle
+	// @decision: held-as-state-not-phase
+	portfolio, err := evaluateHolderPortfolio(ctx, args, tx, acq.DispatchID)
+	if err != nil {
+		return nil, fmt.Errorf("applyTerminalComplete: portfolio probe: %w", err)
+	}
+	if portfolio.Poisoned {
+		return applyTerminalCompletePoisoned(ctx, args, acq, t, tx)
 	}
 	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
 		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, settlingSignalType, tx); err != nil {
@@ -213,7 +338,8 @@ func applyTerminalComplete(
 			},
 		}
 		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, attrSig, visited); err != nil {
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+			attrSig, visited, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -273,6 +399,76 @@ func applyTerminalComplete(
 				"run_id", dispatchID.String(), "error", err.Error())
 		}
 	}
+	return chainPostCommit(releasePC, post), nil
+}
+
+// @concept: claim-handle
+// @decision: held-as-state-not-phase
+// @decision: terminal-error-abandoned-as-error-class
+func applyTerminalCompletePoisoned(
+	ctx context.Context, args RunArgs, acq *acquisition,
+	t terminalEvent, tx persistence.Tx,
+) (postCommitFn, error) {
+	abandonedType := string(signalpkg.TypePath("terminal/error/abandoned"))
+	settlingSignalType := &abandonedType
+	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+		cascade.NodeStateFailed, cascade.ReasonAutoTerminalAbandon, settlingSignalType, tx); err != nil {
+		return nil, err
+	}
+	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
+		return nil, fmt.Errorf("applyTerminalCompletePoisoned: remove for node: %w", err)
+	}
+	tmplSpec, terr := loadTemplateSpec(ctx, args, tx, acq.InstanceID)
+	if terr != nil {
+		return nil, fmt.Errorf("applyTerminalCompletePoisoned: load template: %w", terr)
+	}
+	nonMemberFilter := subgraphNonMemberFilter(tmplSpec, acq.NodeType)
+	visited := map[foundationshared.UUID]struct{}{}
+	abandonedSig := signalpkg.Signal{
+		Type: signalpkg.TypePath(abandonedType),
+		Payload: map[string]any{
+			"error_class":    "abandoned",
+			"change_summary": t.ChangeSummary,
+			"tags":           t.Tags,
+		},
+	}
+	if err := emitSignalInTxWithFilter(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		abandonedSig, visited, nonMemberFilter); err != nil {
+		return nil, err
+	}
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+		return nil, err
+	}
+	dispatchID := acq.DispatchID
+	post := func(ctx context.Context) {
+		scope := resolveAcqScope(ctx, args, acq)
+		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			InstanceID:         acq.InstanceID,
+			FrameID:            acq.FrameID,
+			RunID:              dispatchID,
+			NodeID:             acq.NodeID,
+			State:              string(cascade.NodeStateFailed),
+			SettlingSignalType: *settlingSignalType,
+			Changed:            t.Changed,
+			TerminalKind:       "errored",
+			ErrorClass:         "abandoned",
+			NodeAlias:          acq.NodeType,
+			ExecutorName:       acq.Executor,
+			TemplateHash:       acq.TemplateHash,
+			Params:             acq.InstanceParams,
+			AttributesMerged:   acq.MergedAttributes,
+			HeldClaims:         HeldClaimsForLineage(acq),
+			ParentRunID:        scope.ParentRunID,
+			ChildKey:           scope.PartitionKey,
+			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
+		})
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
+			cascade.NodeStateFailed, settlingSignalType); err != nil {
+			args.Logger.Warn("applyTerminalCompletePoisoned: run-tree propagation failed",
+				"run_id", dispatchID.String(), "error", err.Error())
+		}
+	}
 	return post, nil
 }
 
@@ -290,8 +486,12 @@ func cascadeSubscribersStaleInTx(
 ) error {
 	return cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
 		senderID, senderNodeType, senderRunID, instanceID, senderFrameID, sig,
-		map[foundationshared.UUID]struct{}{})
+		map[foundationshared.UUID]struct{}{}, nil)
 }
+
+// @concept: cascade
+// @decision: held-as-state-not-phase
+type receiverFilter func(receiverNodeType string) bool
 
 func cascadeSubscribersStaleInTxWithVisited(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
@@ -302,6 +502,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 	senderFrameID foundationshared.UUID,
 	sig signalpkg.Signal,
 	visitedReceivers map[foundationshared.UUID]struct{},
+	filter receiverFilter,
 ) error {
 	inst, err := args.Persist.Instances().Get(ctx, instanceID, tx)
 	if err != nil {
@@ -347,103 +548,53 @@ func cascadeSubscribersStaleInTxWithVisited(
 	if len(candidateEdges) == 0 {
 		return nil
 	}
-	type walkItem struct {
-		nodeID   foundationshared.UUID
-		nodeType string
-		runID    foundationshared.UUID
-	}
-	cur := walkItem{nodeID: senderID, nodeType: senderNodeType, runID: senderRunID}
-	visited := map[foundationshared.UUID]struct{}{senderID: {}}
-	{
-		for _, edge := range candidateEdges {
-			if edge.WhenExpr != nil {
-				ok, _ := edge.WhenExpr.Eval(sig)
-				if !ok {
+	for _, edge := range candidateEdges {
+		if edge.WhenExpr != nil {
+			ok, _ := edge.WhenExpr.Eval(sig)
+			if !ok {
+				continue
+			}
+		}
+		if filter != nil && !filter(edge.ReceiverNodeType) {
+			continue
+		}
+		receivers := byType[edge.ReceiverNodeType]
+		for _, r := range receivers {
+			// @concept: run-scope
+			receiverRunScopeID := senderRunScopeID
+			if !senderScopeIsMain {
+				existingID, existingOK, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
+				if err != nil {
+					return fmt.Errorf("cascadeSubscribersStaleInTx: probe receiver run %s: %w", r.ID, err)
+				}
+				if !existingOK {
 					continue
 				}
+				_ = existingID
 			}
-			receivers := byType[edge.ReceiverNodeType]
-			for _, r := range receivers {
-				// @concept: cascade
-				// @concept: node-subscription
-				// @concept: parked-state
-				// @concept: run-scope
-				receiverRunScopeID := senderRunScopeID
-				if !senderScopeIsMain {
-					existingID, existingOK, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
-					if err != nil {
-						return fmt.Errorf("cascadeSubscribersStaleInTx: probe receiver run %s: %w", r.ID, err)
-					}
-					if !existingOK {
-						continue
-					}
-					_ = existingID
-				}
-				// @decision: wake-on-change-wait-set-only
-				skipAffirm := false
-				if !edge.WakeOnChange {
-					skipAffirm = true
-				} else if _, seen := visitedReceivers[r.ID]; seen {
-					skipAffirm = true
-				} else {
-					visitedReceivers[r.ID] = struct{}{}
-					if r.ID != senderID {
-						settled, err := args.Persist.Nodes().HasRunForNodeInFrame(ctx, r.ID, senderFrameID, tx)
-						if err != nil {
-							return fmt.Errorf("cascadeSubscribersStaleInTx: probe receiver frame %s: %w", r.ID, err)
-						}
-						if settled {
-							skipAffirm = true
-						}
-					}
-				}
-				var receiverRunID foundationshared.UUID
-				if skipAffirm {
-					existingID, hasInFlight, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
-					if err != nil {
-						return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver run (skip-affirm) %s: %w", r.ID, err)
-					}
-					if !hasInFlight {
-						continue
-					}
-					receiverRunID = existingID
-				} else {
-					if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, r.ID, receiverRunScopeID, senderFrameID, tx); err != nil {
-						if errors.Is(err, persistence.ErrRunScopeClosed) {
-							continue
-						}
-						return fmt.Errorf("cascadeSubscribersStaleInTx: affirm receiver run %s: %w", r.ID, err)
-					}
-					resolvedID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
-					if err != nil {
-						return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver run %s: %w", r.ID, err)
-					}
-					if !ok {
-						continue
-					}
-					receiverRunID = resolvedID
-					if r.State == cascade.NodeStateParked {
-						if err := wakeParkedReceiverInTx(ctx, args, tx, r, senderFrameID); err != nil {
-							return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked %s: %w", r.ID, err)
-						}
-					} else {
-						if err := args.Persist.Nodes().MarkStaleForCascade(ctx, receiverRunID, senderFrameID, tx); err != nil {
-							return fmt.Errorf("cascadeSubscribersStaleInTx: mark stale %s: %w", r.ID, err)
-						}
-					}
-				}
-				if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
-					FrameID:           senderFrameID,
-					ReceiverRunID:     receiverRunID,
-					SenderRunID:       cur.runID,
-					TopicKind:         waitSetTopicKindFor(edge.TypePattern),
-					SubscriptionScope: edge.SubscriptionScope,
-				}, tx); err != nil {
-					return fmt.Errorf("cascadeSubscribersStaleInTx: wait-set insert: %w", err)
-				}
-				if err := pullForceRefreshUpstreams(ctx, args, tx, r, byType, receiverRunID, receiverRunScopeID, senderFrameID, inst.TemplateHash, visited); err != nil {
-					return err
-				}
+			receiverRunID, hasReceiver, err := resolveReceiverRunForCascade(
+				ctx, args, tx,
+				r.ID, receiverRunScopeID, senderFrameID, senderID, senderRunID,
+				edge.WakeOnChange, visitedReceivers,
+			)
+			if err != nil {
+				return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver %s: %w", r.ID, err)
+			}
+			if !hasReceiver {
+				continue
+			}
+			if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
+				FrameID:           senderFrameID,
+				ReceiverRunID:     receiverRunID,
+				SenderRunID:       senderRunID,
+				TopicKind:         waitSetTopicKindFor(edge.TypePattern),
+				SubscriptionScope: edge.SubscriptionScope,
+			}, tx); err != nil {
+				return fmt.Errorf("cascadeSubscribersStaleInTx: wait-set insert: %w", err)
+			}
+			pullVisited := map[foundationshared.UUID]struct{}{r.ID: {}, senderID: {}}
+			if err := pullForceRefreshUpstreams(ctx, args, tx, r, byType, receiverRunID, receiverRunScopeID, senderFrameID, inst.TemplateHash, pullVisited); err != nil {
+				return err
 			}
 		}
 	}
@@ -464,12 +615,9 @@ func pullForceRefreshUpstreams(
 ) error {
 	refreshEdges, err := hardDepEdgesForTemplate(ctx, args, templateHash, tx)
 	if err != nil {
-		return fmt.Errorf("cascadeSubscribersStaleInTx: upstream-refresh edges: %w", err)
+		return fmt.Errorf("pullForceRefreshUpstreams: upstream-refresh edges: %w", err)
 	}
-	if len(refreshEdges) == 0 {
-		return nil
-	}
-	if len(refreshEdges[receiver.NodeType]) == 0 {
+	if len(refreshEdges) == 0 || len(refreshEdges[receiver.NodeType]) == 0 {
 		return nil
 	}
 	for _, upstreamType := range refreshEdges[receiver.NodeType] {
@@ -478,73 +626,39 @@ func pullForceRefreshUpstreams(
 			continue
 		}
 		upstreamNode := upstreamNodes[0]
-
 		if _, seen := visited[upstreamNode.ID]; seen {
 			continue
 		}
-
-		// @concept: parked-state
-		// @concept: cascade
-		// @story: resume-preserves-snapshot
+		visited[upstreamNode.ID] = struct{}{}
 		upstreamRunScopeID := targetRunScopeID
-		_, hasInFlightRun, err := args.Queue.GetInFlightRunForNode(
+		upstreamRunID, hasInFlight, err := args.Queue.GetInFlightRunForNode(
 			ctx, tx, upstreamNode.ID, upstreamRunScopeID,
 		)
 		if err != nil {
-			return fmt.Errorf("cascadeSubscribersStaleInTx: probe in-flight upstream-refresh upstream %s: %w",
-				upstreamType, err)
+			return fmt.Errorf("pullForceRefreshUpstreams: probe upstream %s: %w", upstreamType, err)
 		}
-		if !hasInFlightRun {
+		if !hasInFlight {
 			settledThisFrame, err := args.Persist.Nodes().HasRunForNodeInFrame(
 				ctx, upstreamNode.ID, senderFrameID, tx,
 			)
 			if err != nil {
-				return fmt.Errorf("cascadeSubscribersStaleInTx: probe settled upstream-refresh upstream %s: %w",
-					upstreamType, err)
+				return fmt.Errorf("pullForceRefreshUpstreams: probe settled upstream %s: %w", upstreamType, err)
 			}
 			if settledThisFrame {
-				visited[upstreamNode.ID] = struct{}{}
 				continue
 			}
-		}
-
-		// @concept: run-scope
-		if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, upstreamNode.ID, upstreamRunScopeID, senderFrameID, tx); err != nil {
-			if errors.Is(err, persistence.ErrRunScopeClosed) {
-				continue
-			}
-			return fmt.Errorf("cascadeSubscribersStaleInTx: affirm upstream %s: %w", upstreamType, err)
-		}
-		upstreamRunID, hasRun, err := args.Queue.GetInFlightRunForNode(
-			ctx, tx, upstreamNode.ID, upstreamRunScopeID,
-		)
-		if err != nil {
-			return fmt.Errorf("cascadeSubscribersStaleInTx: get in-flight upstream %s: %w",
-				upstreamType, err)
-		}
-
-		if !hasRun {
-			if err := stalemarkAndEnqueueInFrame(
-				ctx, args, tx, &upstreamNode, upstreamRunScopeID, senderFrameID,
-			); err != nil {
-				return fmt.Errorf("cascadeSubscribersStaleInTx: stale-mark upstream %s: %w",
-					upstreamType, err)
-			}
-			upstreamRunID, hasRun, err = args.Queue.GetInFlightRunForNode(
-				ctx, tx, upstreamNode.ID, upstreamRunScopeID,
-			)
+			newID, err := args.Persist.Nodes().CreateCascadePending(ctx, tx, upstreamNode.ID, upstreamRunScopeID, senderFrameID)
 			if err != nil {
-				return fmt.Errorf("cascadeSubscribersStaleInTx: re-fetch in-flight upstream %s after stale-mark: %w",
-					upstreamType, err)
+				if errors.Is(err, persistence.ErrRunScopeClosed) {
+					continue
+				}
+				return fmt.Errorf("pullForceRefreshUpstreams: create pending upstream %s: %w", upstreamType, err)
 			}
-			if !hasRun {
-				return fmt.Errorf("cascadeSubscribersStaleInTx: upstream %s not in-flight after stale-mark",
-					upstreamType)
+			upstreamRunID = newID
+			if err := evaluateOneGate(ctx, args, tx, newID); err != nil {
+				return fmt.Errorf("pullForceRefreshUpstreams: evaluate gate for upstream %s: %w", upstreamType, err)
 			}
 		}
-
-		visited[upstreamNode.ID] = struct{}{}
-
 		if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID:           senderFrameID,
 			ReceiverRunID:     receiverRunID,
@@ -552,20 +666,27 @@ func pullForceRefreshUpstreams(
 			TopicKind:         "attribute",
 			SubscriptionScope: "direct",
 		}, tx); err != nil {
-			return fmt.Errorf("cascadeSubscribersStaleInTx: insert upstream-refresh wait-set: %w", err)
+			return fmt.Errorf("pullForceRefreshUpstreams: insert wait-set: %w", err)
 		}
 	}
 	return nil
 }
 
 // @concept: wait-set
+// @concept: cascade
 func drainWaitSetOnSettled(
 	ctx context.Context, args RunArgs, tx persistence.Tx, frameID, senderRunID foundationshared.UUID,
 ) error {
-	return args.Persist.WaitSet().MarkDrainedBySender(ctx, frameID, senderRunID, tx)
+	if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, frameID, senderRunID, tx); err != nil {
+		return err
+	}
+	return evaluateGatesAfterDrain(ctx, args, tx, frameID, senderRunID)
 }
 
 func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
+	if !IsFanOutNode(acq.NodeDef) {
+		return
+	}
 	var receivers []persistence.NodeRow
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		inst, err := args.Persist.Instances().Get(ctx, acq.InstanceID, tx)

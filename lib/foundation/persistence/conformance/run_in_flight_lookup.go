@@ -26,7 +26,10 @@ func testInFlightLookup_SingleRowPerScopePerNode(t *testing.T, d persistence.Dat
 	q := d.Queue()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
+		return func() error {
+			_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+			return err
+		}()
 	}); err != nil {
 		t.Fatalf("Affirm: %v", err)
 	}
@@ -72,13 +75,15 @@ func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.
 
 	scopeA := fix.MainRunScopeID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, scopeA, fix.FrameID, tx)
+		_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, scopeA, fix.FrameID)
+		return err
 	}); err != nil {
 		t.Fatalf("Affirm A: %v", err)
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, scopeB, fix.FrameID, tx)
+		_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, scopeB, fix.FrameID)
+		return err
 	}); err != nil {
 		t.Fatalf("Affirm B: %v", err)
 	}

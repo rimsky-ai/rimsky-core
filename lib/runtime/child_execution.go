@@ -117,11 +117,6 @@ func DispatchChildren(
 						p.SubClaimHandleID, p.PartitionKey, err)
 				}
 			}
-			if in.EntryAbsorbed {
-				if err := args.Persist.Nodes().MarkStaleForCascade(ctx, runID, in.FrameID, tx); err != nil {
-					return nil, fmt.Errorf("DispatchChildren: stale-mark run %s: %w", runID, err)
-				}
-			}
 			out = append(out, DispatchedChild{
 				RunID:        runID,
 				RunScopeID:   childScopeID,
@@ -272,59 +267,62 @@ func SettleFromDelegate(
 // @concept: claim-tree
 func SettleFromFanoutChild(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in FanoutChildSettlementInput,
-) error {
+) (postCommitFn, error) {
 	parent, err := args.ClaimHandles.LockForUpdate(ctx, in.ParentClaimHandleID, tx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if parent == nil {
-		return nil
+		return nil, nil
 	}
 	if err := recordChildCommitMetadata(ctx, args, tx, in, parent); err != nil {
-		return fmt.Errorf("SettleFromFanoutChild: record child producer_metadata: %w", err)
+		return nil, fmt.Errorf("SettleFromFanoutChild: record child producer_metadata: %w", err)
 	}
 	if parent.HolderSupervisorID == nil || parent.State != spec.ClaimHandleStateActive {
-		return nil
+		return nil, nil
 	}
 	outcomeKey := "commit"
 	if in.ChildOutcome.IsAbandon() {
 		outcomeKey = "abandon"
 	}
 	if err := args.ClaimHandles.BumpChildOutcomeCount(ctx, in.ParentClaimHandleID, *parent.HolderSupervisorID, outcomeKey, 1, tx); err != nil {
-		return fmt.Errorf("SettleFromFanoutChild: BumpChildOutcomeCount: %w", err)
+		return nil, fmt.Errorf("SettleFromFanoutChild: BumpChildOutcomeCount: %w", err)
 	}
+	var post postCommitFn
 	// @concept: cancel-siblings
 	if in.ChildOutcome.IsAbandon() {
-		if err := cancelInFlightSiblings(ctx, args, tx, in.ParentClaimHandleID, in.ChildClaimHandleID); err != nil {
-			return fmt.Errorf("SettleFromFanoutChild: cancelInFlightSiblings: %w", err)
+		pc, err := cancelInFlightSiblings(ctx, args, tx, in.ParentClaimHandleID, in.ChildClaimHandleID)
+		if err != nil {
+			return nil, fmt.Errorf("SettleFromFanoutChild: cancelInFlightSiblings: %w", err)
 		}
+		post = chainPostCommit(post, pc)
 	}
 	{
 		refreshed, err := args.ClaimHandles.Get(ctx, in.ParentClaimHandleID, tx)
 		if err != nil {
-			return fmt.Errorf("SettleFromFanoutChild: re-read parent: %w", err)
+			return nil, fmt.Errorf("SettleFromFanoutChild: re-read parent: %w", err)
 		}
 		if refreshed == nil || refreshed.HolderSupervisorID == nil || refreshed.State != spec.ClaimHandleStateActive {
-			return nil
+			return post, nil
 		}
 		parent = refreshed
 	}
 	holders, err := args.Persist.ClaimHolders().ListByClaimHandleID(ctx, in.ParentClaimHandleID, tx)
 	if err != nil {
-		return fmt.Errorf("SettleFromFanoutChild: ListByClaimHandleID: %w", err)
+		return nil, fmt.Errorf("SettleFromFanoutChild: ListByClaimHandleID: %w", err)
 	}
 	for _, h := range holders {
 		if h.State == persistence.ClaimHolderStateActive {
-			return nil
+			return post, nil
 		}
 	}
 	children, err := args.ClaimHandles.ListChildClaimHandles(ctx, in.ParentClaimHandleID, tx)
 	if err != nil {
-		return fmt.Errorf("SettleFromFanoutChild: ListChildClaimHandles: %w", err)
+		return nil, fmt.Errorf("SettleFromFanoutChild: ListChildClaimHandles: %w", err)
 	}
 	for _, c := range children {
 		if c.State == spec.ClaimHandleStateActive {
-			return nil
+			return post, nil
 		}
 	}
 	// @concept: child-execution
@@ -336,20 +334,20 @@ func SettleFromFanoutChild(
 			}
 			childRun, err := args.Persist.RunTree().GetByID(ctx, tx, *c.NodeRunID)
 			if err != nil {
-				return fmt.Errorf("SettleFromFanoutChild: load child run %s: %w", c.NodeRunID, err)
+				return nil, fmt.Errorf("SettleFromFanoutChild: load child run %s: %w", c.NodeRunID, err)
 			}
 			if childRun == nil {
 				continue
 			}
 			childScope, err := scopes.GetByID(ctx, tx, childRun.RunScopeID)
 			if err != nil {
-				return fmt.Errorf("SettleFromFanoutChild: load child run scope %s: %w", childRun.RunScopeID, err)
+				return nil, fmt.Errorf("SettleFromFanoutChild: load child run scope %s: %w", childRun.RunScopeID, err)
 			}
 			if childScope == nil || childScope.PartitionKey == "" {
 				continue
 			}
 			if err := scopes.Close(ctx, tx, childRun.RunScopeID); err != nil {
-				return fmt.Errorf("SettleFromFanoutChild: close partition scope %s: %w", childRun.RunScopeID, err)
+				return nil, fmt.Errorf("SettleFromFanoutChild: close partition scope %s: %w", childRun.RunScopeID, err)
 			}
 			if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
 				if inst, err := instTbl.Get(ctx, childScope.InstanceID, tx); err == nil && inst != nil {
@@ -369,7 +367,7 @@ func SettleFromFanoutChild(
 	}
 	producer, ok := args.StoreRegistry.Get(producerName)
 	if !ok {
-		return fmt.Errorf("SettleFromFanoutChild: unknown producer %q", producerName)
+		return nil, fmt.Errorf("SettleFromFanoutChild: unknown producer %q", producerName)
 	}
 	parentHint := ClaimLineageHint{
 		ProducerName: producerName,
@@ -389,11 +387,11 @@ func SettleFromFanoutChild(
 		if err := args.ClaimHandles.ReassignHolderSupervisor(
 			ctx, in.ParentClaimHandleID, *parent.HolderSupervisorID, args.SupervisorID, tx,
 		); err != nil {
-			return fmt.Errorf("SettleFromFanoutChild: settlement takeover of parent %s (holder %s → %s): %w",
+			return nil, fmt.Errorf("SettleFromFanoutChild: settlement takeover of parent %s (holder %s → %s): %w",
 				in.ParentClaimHandleID, *parent.HolderSupervisorID, args.SupervisorID, err)
 		}
 	}
-	if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+	pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
 		ClaimHandleID:       in.ParentClaimHandleID,
 		SupervisorID:        args.SupervisorID,
 		Source:              HeldTerminal,
@@ -406,10 +404,12 @@ func SettleFromFanoutChild(
 		ProducerName:        producerName,
 		LineageHint:         parentHint,
 		ParentClaimHandleID: parent.ParentClaimHandleID,
-	}); err != nil {
-		return err
+	})
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	post = chainPostCommit(post, pc)
+	return post, nil
 }
 
 func recordChildCommitMetadata(

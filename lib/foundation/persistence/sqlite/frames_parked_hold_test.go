@@ -79,8 +79,8 @@ func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'parked', 'parked', ?, ?)`,
+		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'parked', 'cascade', 1, ?, ?)`,
 		dispatchID.String(), nodeID.String(), frameID.String(), scopeID,
 	); err != nil {
 		t.Fatalf("seed parked node-run: %v", err)

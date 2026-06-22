@@ -52,8 +52,9 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 		"sup-FC", "cancel-store", 3,
 		spec.AggregationPolicy{Kind: spec.AggregationKindStrict, CancelSiblings: true})
 
+	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
 			ClaimHandleID:       subIDs[0],
 			SupervisorID:        args.SupervisorID,
 			Source:              runtime.ActiveTerminal,
@@ -72,7 +73,12 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 				ProducerName: "cancel-store",
 			},
 		})
+		post = pc
+		return err
 	}))
+	if post != nil {
+		post(ctx)
+	}
 
 	for i, sid := range subIDs {
 		require.Equal(t, 1, countCallsOnID(store.Calls(), sid.String(), "abandon"),

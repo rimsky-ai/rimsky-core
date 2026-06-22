@@ -236,9 +236,15 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-A",
 	}
+	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.CheckAndFireResolution(ctx, args, tx, lockHolderID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, lockHolderID)
+		post = pc
+		return err
 	}))
+	if post != nil {
+		post(ctx)
+	}
 
 	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -333,9 +339,15 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-D",
 	}
+	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		post = pc
+		return err
 	}))
+	if post != nil {
+		post(ctx)
+	}
 
 	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -357,9 +369,15 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	}
 	require.Equal(t, 1, commitCount)
 
+	var post2 func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		post2 = pc
+		return err
 	}))
+	if post2 != nil {
+		post2(ctx)
+	}
 	postReEntryCommitCount := 0
 	for _, c := range stubStore.Calls() {
 		if c.Verb == "commit" {
@@ -443,8 +461,9 @@ func resolveSubclaimWithLifetime(
 ) {
 	t.Helper()
 	pname := producer.Name()
+	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
 			ClaimHandleID:       subID,
 			SupervisorID:        args.SupervisorID,
 			Source:              runtime.ActiveTerminal,
@@ -456,7 +475,12 @@ func resolveSubclaimWithLifetime(
 			ProducerName:        pname,
 			ParentClaimHandleID: &parentID,
 		})
+		post = pc
+		return err
 	}))
+	if post != nil {
+		post(ctx)
+	}
 }
 
 func countCallsOnID(calls []storetest.FakeCall, claimID string, verb string) int {
@@ -717,9 +741,15 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 			ctx, parentID, coRunID, persistence.ClaimHolderStateCompleted, tx,
 		)
 	}))
+	var postCo func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.CheckAndFireResolution(ctx, args, tx, parentID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, parentID)
+		postCo = pc
+		return err
 	}))
+	if postCo != nil {
+		postCo(ctx)
+	}
 
 	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "commit"),
 		"parent must Commit once the last co-holder completes (issue D)")
@@ -786,9 +816,15 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 		)
 	}))
 
+	var postCq func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.CheckAndFireResolution(ctx, args, tx, parentID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, parentID)
+		postCq = pc
+		return err
 	}))
+	if postCq != nil {
+		postCq(ctx)
+	}
 
 	require.Equal(t, 0, countCallsOnID(store.Calls(), parentID.String(), "commit"),
 		"cycle-6 guard must defer parent Commit while children quorum is not met")
@@ -892,9 +928,15 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-G",
 	}
+	var postG func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.CheckAndFireResolution(ctx, args, tx, lockHolderID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, lockHolderID)
+		postG = pc
+		return err
 	}))
+	if postG != nil {
+		postG(ctx)
+	}
 
 	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

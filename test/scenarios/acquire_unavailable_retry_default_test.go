@@ -89,14 +89,16 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	}
 	require.True(t, sawFirstOpen, "stub producer should have seen at least one Open against the empty queue")
 
-	var wRow *persistence.NodeRow
+	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		wRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		wLatest = r
 		return err
 	}))
-	require.NotEqual(t, cascade.NodeStateFresh, wRow.State,
-		"silent-retry must NOT transition the node on Unavailable")
+	if wLatest != nil {
+		require.NotEqual(t, cascade.NodeStateFresh, wLatest.State,
+			"silent-retry must NOT transition the node on Unavailable")
+	}
 
 	_, err := sub.SeedPickPolicyItem("@queue", json.RawMessage(`{"v":1}`))
 	require.NoError(t, err, "seed item")

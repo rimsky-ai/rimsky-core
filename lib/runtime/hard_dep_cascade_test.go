@@ -18,7 +18,8 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
+// @decision: held-as-state-not-phase
+func TestPullHardDepUpstreams_DoesNotWakeParkedUpstream(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -82,8 +83,8 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-        VALUES ($1, $2, $3, ARRAY[]::text[], NOW(), 'active', 'running', $4, $5)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+        VALUES ($1, $2, $3, ARRAY[]::text[], NOW(), 'running', 100, 'cascade', $4, $5)
     `, aRunID, aN.ID, "stub", frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, aN.ID)
@@ -91,8 +92,8 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	bParkedRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, parked_at, parked_reason, run_scope_id)
-        VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'parked', 'parked', $3, NOW(), 'await_callback', $4)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, parked_at, parked_reason, run_scope_id)
+        VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'parked', 100, 'cascade', $3, NOW(), 'await_callback', $4)
     `, bParkedRunID, bN.ID, earlierFrameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, earlierFrameID, bN.ID)
@@ -113,16 +114,18 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 		events = r
 		return err
 	}))
-	wokeUp := false
 	for _, e := range events.Events {
-		if e.KindRaw == "parked_resume_started" {
-			wokeUp = true
-			break
-		}
+		require.NotEqualf(t, "parked_resume_started", e.KindRaw,
+			"cascade walker must NOT wake b's parked run (parked is in-flight/sealed); events: %+v",
+			events.Events)
 	}
-	require.True(t, wokeUp,
-		"pullForceRefreshUpstreams must wake b's parked run and emit parked_resume_started; events: %+v",
-		events.Events)
+
+	var parkedRunState string
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT state FROM rimsky_node_runs WHERE id = $1`,
+		[]any{bParkedRunID}, &parkedRunState)
+	require.Equal(t, "parked", parkedRunState,
+		"b's parked run must remain parked after cascade walker visits it")
 	_ = cN
 }
 
@@ -184,8 +187,8 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-        VALUES ($1, $2, $3, ARRAY[]::text[], NOW(), 'active', 'running', $4, $5)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+        VALUES ($1, $2, $3, ARRAY[]::text[], NOW(), 'running', 100, 'cascade', $4, $5)
     `, aRunID, aN.ID, "stub", frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, aN.ID)
@@ -193,8 +196,8 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	bRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-        VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'pending', 'stale', $3, $4)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+        VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'stale', 100, 'cascade', $3, $4)
     `, bRunID, bN.ID, frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, bN.ID)

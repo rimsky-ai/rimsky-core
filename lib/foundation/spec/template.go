@@ -91,6 +91,10 @@ type TemplateNodeDef struct {
 	IsSubgraphEntryAbsorbed bool `yaml:"is_subgraph_entry_absorbed,omitempty" json:"is_subgraph_entry_absorbed,omitempty"`
 
 	IsSubgraphExit bool `yaml:"is_subgraph_exit,omitempty" json:"is_subgraph_exit,omitempty"`
+
+	// @concept: cascade
+	// @decision: mode-default-most-recent
+	CascadeMode string `yaml:"cascade_mode,omitempty" json:"cascade_mode,omitempty"`
 }
 
 const (

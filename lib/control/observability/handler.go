@@ -440,6 +440,7 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 			return err
 		})
 		var latestBag map[string]any
+		var summary persistence.NodeRunSummary
 		_ = inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
 			inst, err := deps.Tables.Instances().Get(ctx, id, tx)
 			if err != nil {
@@ -455,6 +456,11 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 			if attrs != nil {
 				latestBag = attrs.Data
 			}
+			s, err := deps.Tables.Nodes().GetRunSummary(ctx, match.ID, tx)
+			if err != nil {
+				return err
+			}
+			summary = s
 			return nil
 		})
 		if latestBag == nil {
@@ -462,6 +468,7 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"node":              match,
+			"run_summary":       summary,
 			"events":            eventRes.Events,
 			"holdings":          holdings,
 			"latest_attributes": latestBag,
@@ -750,7 +757,7 @@ func handleSystemHealth(deps Deps) http.HandlerFunc {
 func handleSystemSummary(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var counts map[cascade.NodeState]int
-		var active, terminated int
+		var active, terminated, nodesTotal, nodesWithRuns int
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
 			c, err := deps.Tables.Nodes().CountByState(ctx, tx)
 			if err != nil {
@@ -758,17 +765,42 @@ func handleSystemSummary(deps Deps) http.HandlerFunc {
 			}
 			counts = c
 			a, t, err := deps.Tables.Instances().CountByActive(ctx, tx)
+			if err != nil {
+				return err
+			}
 			active, terminated = a, t
-			return err
+			n, err := deps.Tables.Nodes().CountAllNodes(ctx, tx)
+			if err != nil {
+				return err
+			}
+			nodesTotal = n
+			wr, err := deps.Tables.Nodes().CountDistinctNodesWithRuns(ctx, tx)
+			if err != nil {
+				return err
+			}
+			nodesWithRuns = wr
+			return nil
 		}); err != nil {
 			internalErr(w, err)
 			return
 		}
+		runsTotal := counts[cascade.NodeStateFresh] + counts[cascade.NodeStateStale] +
+			counts[cascade.NodeStateRunning] + counts[cascade.NodeStatePending] +
+			counts[cascade.NodeStateHeld] + counts[cascade.NodeStateParked] +
+			counts[cascade.NodeStateFailed]
+		nodesWithoutRuns := nodesTotal - nodesWithRuns
+		if nodesWithoutRuns < 0 {
+			nodesWithoutRuns = 0
+		}
 		nodeCounts := map[string]int{
 			string(cascade.NodeStateFresh):   counts[cascade.NodeStateFresh],
+			string(cascade.NodeStatePending): counts[cascade.NodeStatePending],
 			string(cascade.NodeStateStale):   counts[cascade.NodeStateStale],
 			string(cascade.NodeStateRunning): counts[cascade.NodeStateRunning],
+			string(cascade.NodeStateHeld):    counts[cascade.NodeStateHeld],
+			string(cascade.NodeStateParked):  counts[cascade.NodeStateParked],
 			string(cascade.NodeStateFailed):  counts[cascade.NodeStateFailed],
+			"no_runs":                        nodesWithoutRuns,
 		}
 		dispatchClaimed, err := deps.Queue.CountLive(r.Context(), persistence.DispatchListFilter{State: "claimed"})
 		if err != nil {
@@ -782,6 +814,8 @@ func handleSystemSummary(deps Deps) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"node_counts":          nodeCounts,
+			"nodes_total":          nodesTotal,
+			"node_runs_total":      runsTotal,
 			"instances_active":     active,
 			"instances_terminated": terminated,
 			"node_runs_claimed":    dispatchClaimed,

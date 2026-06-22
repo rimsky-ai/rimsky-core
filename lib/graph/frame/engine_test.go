@@ -42,24 +42,15 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 	if frameID == nil {
 		t.Fatalf("seedNode: state=%q requires a non-nil frame_id (rimsky_node_runs.frame_id NOT NULL)", state)
 	}
-	phase := "pending"
-	switch state {
-	case "running":
-		phase = "active"
-	case "failed":
-		phase = "failed"
-	case "parked":
-		phase = "parked"
-	}
 	var mainScopeID uuid.UUID
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
 		[]any{instanceID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-        VALUES (gen_random_uuid(), $1, NULL, ARRAY[]::text[], NOW(), $2, $3, $4, $5)
-    `, nodeID, phase, state, frameID, mainScopeID)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+        VALUES (gen_random_uuid(), $1, NULL, ARRAY[]::text[], NOW(), $2, 1, 'cascade', $3, $4)
+    `, nodeID, state, frameID, mainScopeID)
 }
 
 func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
@@ -99,8 +90,8 @@ func seedDispatch(t *testing.T, ctx context.Context, d persistence.Database,
     `, []any{nodeID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, claimed_by, frame_id, run_scope_id)
-        VALUES ($1, $2, NULL, '{}', $3, $4, $5)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, claimed_by, frame_id, run_scope_id)
+        VALUES ($1, $2, NULL, '{}', NOW(), 'running', 1, 'cascade', $3, $4, $5)
     `, uuid.New(), nodeID, claimedByPtr, frameID, mainScopeID)
 }
 
@@ -203,7 +194,7 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 		   FROM rimsky_nodes n
 		   LEFT JOIN rimsky_node_runs r
 		          ON r.node_id = n.id
-		         AND r.phase IN ('pending','active','held','parked')
+		         AND r.state IN ('pending','stale','running','held','parked')
 		  WHERE n.id = $1`, []any{src}, &nState)
 	require.Equal(t, "running", fState,
 		"frame must stay running after stuck-frame observation; warning is non-destructive")

@@ -134,7 +134,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 			SELECT COUNT(*)
 			  FROM rimsky_node_runs r
 			  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
-			 WHERE r.phase IN ('completed','failed')
+			 WHERE r.state IN ('fresh','failed')
 			   AND rs.instance_id = $1
 			   AND rs.partition_key <> ''
 			   AND r.node_id = $2
@@ -272,10 +272,10 @@ func parentNodeState(t *testing.T, h *scenario.Harness, nodeID shared.UUID) casc
 		SELECT COALESCE(r.state, 'fresh')
 		  FROM rimsky_nodes n
 		  LEFT JOIN LATERAL (
-		    SELECT state, phase, active_terminal_at, enqueued_at
+		    SELECT state, active_terminal_at, enqueued_at
 		      FROM rimsky_node_runs
 		     WHERE node_id = n.id
-		     ORDER BY CASE WHEN phase IN ('pending','active','held','parked') THEN 0 ELSE 1 END,
+		     ORDER BY CASE WHEN state IN ('pending','stale','running','held','parked') THEN 0 ELSE 1 END,
 		              COALESCE(active_terminal_at, enqueued_at) DESC
 		     LIMIT 1
 		  ) r ON TRUE

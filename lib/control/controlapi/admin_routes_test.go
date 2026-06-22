@@ -146,11 +146,10 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 	pgtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_nodes (
 		   id, instance_id, node_type, executor,
-		   current_error_class, retry_counter, action_index,
 		   created_at, updated_at
 		 ) VALUES (
 		   $1, $2, 'root', 'worker',
-		   '', 0, 0, now(), now()
+		   now(), now()
 		 )`,
 		nodeID, instID,
 	)

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
@@ -357,69 +358,41 @@ func validateTags(_ context.Context, dctx dispatchContext, t terminalEvent) term
 	return t
 }
 
+// @decision: walker-rule-per-sender-node
+// @story: resume-preserves-snapshot
 func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
-	if acq.NodeDef == nil || acq.NodeDef.Attributes == nil {
-		empty := map[string]any{}
-		bp, err := evaluateBeforeDispatchBreakpoints(ctx, args, acq, "", empty, nil)
-		if err != nil {
-			return nil, nil, err
+	if acq.Executor != "" && acq.NodeDef != nil && acq.NodeDef.Attributes != nil {
+		schema, _, execSchemaVisible := computeEffectiveAttributeSchema(args, acq)
+		if !execSchemaVisible {
+			return nil, schema, &executorSchemaUnavailableError{Executor: acq.Executor}
 		}
-		return bp, nil, nil
 	}
-	schema, execSchema, execSchemaVisible := computeEffectiveAttributeSchema(args, acq)
-	if schema == nil {
-		empty := map[string]any{}
-		bp, err := evaluateBeforeDispatchBreakpoints(ctx, args, acq, "", empty, nil)
-		if err != nil {
-			return nil, nil, err
+	snapshot, schema, err := loadDispatchBag(ctx, args, acq)
+	if err != nil {
+		return nil, schema, err
+	}
+	claims := claimsMapFromAcq(acq)
+	var paramsRaw json.RawMessage
+	if len(acq.InstanceParams) > 0 {
+		b, mErr := json.Marshal(acq.InstanceParams)
+		if mErr != nil {
+			return nil, schema, mErr
 		}
-		return bp, nil, nil
-	}
-	if acq.Executor != "" && !execSchemaVisible {
-		return nil, schema, &executorSchemaUnavailableError{Executor: acq.Executor}
-	}
-	if errs := node.CheckEffectiveAttributesSchema(
-		schema,
-		acq.NodeDef.Attributes.Schema,
-		execSchema,
-		extractReadOnlyPropsLocal(execSchema),
-		execSchemaVisible,
-	); len(errs) > 0 {
-		first := errs[0]
-		return nil, schema, &attributeValidationError{
-			Reason: fmt.Sprintf("attributes_schema_invalid: %s: %s", first.Path, first.Msg),
-		}
+		paramsRaw = b
 	}
 	scope := resolveAcqScope(ctx, args, acq)
-	rctx, err := buildResolveContextForDispatch(ctx, args, acq, scope.PartitionKey)
+	rctx := attributes.ResolveContext{
+		Claim:             claims,
+		Params:            paramsRaw,
+		ChildPartitionKey: scope.PartitionKey,
+	}
+	filled, err := fillClaimRefs(schema, rctx, snapshot)
 	if err != nil {
 		return nil, schema, err
 	}
-	// @concept: attribute
-	var carryForward map[string]any
-	if args.Persist != nil {
-		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			priorRow, err := args.Persist.NodeAttributes().GetLatestByNode(ctx, acq.NodeID, acq.RunScopeID, tx)
-			if err != nil {
-				return err
-			}
-			if priorRow != nil {
-				carryForward = priorRow.Data
-			}
-			return nil
-		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("resolveAttributes: carry-forward lookup failed; proceeding with empty bag",
-				"node_id", acq.NodeID.String(),
-				"run_scope_id", acq.RunScopeID.String(),
-				"error", err.Error())
-		}
-	}
-	resolved, err := substituteAttributesSchema(schema, rctx, carryForward)
-	if err != nil {
-		return nil, schema, err
-	}
+	filled = mergeSchemaDefaultsForDispatch(schema, filled)
 	merged, matched := applyAttributeOverrides(
-		resolved,
+		filled,
 		acq.InstanceAttributeOverrides,
 		acq.Executor,
 		acq.NodeType,
@@ -427,89 +400,31 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 		scope.PartitionKey,
 		args.Logger,
 	)
-	resolved = merged
-	acq.MergedAttributes = resolved
+	filled = merged
+	acq.MergedAttributes = filled
 	incrementMatchCountersAfterMerge(ctx, args.Persist, args.Logger, acq.InstanceID, matched)
-
-	bpResolved, bpErr := evaluateBeforeDispatchBreakpoints(ctx, args, acq, scope.PartitionKey, resolved, schema)
+	bpFilled, bpErr := evaluateBeforeDispatchBreakpoints(ctx, args, acq, scope.PartitionKey, filled, schema)
 	if bpErr != nil {
 		return nil, schema, bpErr
 	}
-	resolved = bpResolved
-	acq.MergedAttributes = resolved
-
-	dispatchSchema := relaxRequiredToSourceDriven(schema)
-	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
-		return nil, schema, &attributeValidationError{Reason: "dispatch_bag_invalid", Cause: err}
-	}
-	if execSchema != nil {
-		execSchemaForDispatch := relaxRequiredForExecutorWritten(execSchema)
-		if err := attributes.Validate(execSchemaForDispatch, resolved, attributes.PhaseDispatch); err != nil {
-			return nil, schema, &attributeValidationError{
-				Reason: "dispatch_bag_violates_executor_schema",
-				Cause:  err,
-			}
+	filled = bpFilled
+	acq.MergedAttributes = filled
+	if args.Persist != nil {
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+				Kind: events.KindAttributesSubstituted(),
+				Payload: map[string]any{
+					"substituted_fields": fieldNames(filled),
+				},
+			}, tx)
+		}); err != nil && args.Logger != nil {
+			args.Logger.Warn("runner_dispatch: append attributes_substituted event failed",
+				"node_id", acq.NodeID.String(),
+				"error", err.Error())
 		}
 	}
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: events.KindAttributesSubstituted(),
-			Payload: map[string]any{
-				"substituted_fields": fieldNames(resolved),
-			},
-		}, tx)
-	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("runner_dispatch: append attributes_substituted event failed",
-			"node_id", acq.NodeID.String(),
-			"error", err.Error())
-	}
-	return resolved, schema, nil
-}
-
-// @concept: parked-state
-// @story: resume-preserves-snapshot
-func loadResumeAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
-	if acq.NodeDef == nil || acq.NodeDef.Attributes == nil {
-		return map[string]any{}, nil, nil
-	}
-	schema, _, _ := computeEffectiveAttributeSchema(args, acq)
-	var resumed map[string]any
-	if args.Persist == nil {
-		return nil, schema, fmt.Errorf("loadResumeAttributes: persist required")
-	}
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := args.Persist.NodeAttributes().GetByRun(ctx, acq.DispatchID, tx)
-		if err != nil {
-			return err
-		}
-		if row == nil {
-			return fmt.Errorf("loadResumeAttributes: no persisted bag for dispatch %s", acq.DispatchID)
-		}
-		resumed = row.Data
-		return nil
-	}); err != nil {
-		return nil, schema, err
-	}
-	if resumed == nil {
-		resumed = map[string]any{}
-	}
-	acq.MergedAttributes = resumed
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: events.KindAttributesSubstituted(),
-			Payload: map[string]any{
-				"resume":             true,
-				"substituted_fields": fieldNames(resumed),
-			},
-		}, tx)
-	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("loadResumeAttributes: append attributes_substituted event failed",
-			"node_id", acq.NodeID.String(),
-			"error", err.Error())
-	}
-	return resumed, schema, nil
+	return filled, schema, nil
 }
 
 // @concept: breakpoint
@@ -554,10 +469,8 @@ func evaluateBeforeDispatchBreakpoints(
 	return bpResolved, nil
 }
 
-func buildResolveContextForDispatch(
-	ctx context.Context, args RunArgs, acq *acquisition, partitionKey string,
-) (attributes.ResolveContext, error) {
-	deps := loadSubscribedNodeAttributesByID(ctx, args, acq)
+// @concept: attribute
+func claimsMapFromAcq(acq *acquisition) map[string]claimproducer.ClaimResult {
 	claims := map[string]claimproducer.ClaimResult{}
 	for _, lk := range acq.Locks {
 		if lk.Alias == "" {
@@ -572,22 +485,7 @@ func buildResolveContextForDispatch(
 		}
 		claims[alias] = held
 	}
-	var paramsRaw json.RawMessage
-	if len(acq.InstanceParams) > 0 {
-		b, err := json.Marshal(acq.InstanceParams)
-		if err != nil {
-			return attributes.ResolveContext{}, err
-		}
-		paramsRaw = b
-	}
-	registryTypes := declaredMessageTypesForTemplate(ctx, args, acq.TemplateHash, nil)
-	return attributes.ResolveContext{
-		Deps:                  deps,
-		Claim:                 claims,
-		Params:                paramsRaw,
-		ChildPartitionKey:     partitionKey,
-		RegistryDeclaredTypes: registryTypes,
-	}, nil
+	return claims
 }
 
 // @concept: attribute
@@ -642,6 +540,14 @@ func extractReadOnlyPropsLocal(schema map[string]any) map[string]bool {
 func substituteAttributesSchema(
 	schema map[string]any, rctx attributes.ResolveContext, carryForward map[string]any,
 ) (map[string]any, error) {
+	return substituteAttributesSchemaWith(schema, rctx, carryForward, false)
+}
+
+// @concept: attribute
+func substituteAttributesSchemaWith(
+	schema map[string]any, rctx attributes.ResolveContext, carryForward map[string]any,
+	deferClaimRefs bool,
+) (map[string]any, error) {
 	out := map[string]any{}
 	if schema == nil {
 		return out, nil
@@ -668,6 +574,9 @@ func substituteAttributesSchema(
 			}
 			val, err := attributes.SubstituteValue(source, rctx)
 			if err != nil {
+				if deferClaimRefs && attributes.IsMissingSource(err) && sourceReferencesLateBound(source) {
+					continue
+				}
 				return nil, err
 			}
 			if val == nil {
@@ -682,6 +591,83 @@ func substituteAttributesSchema(
 		}
 	}
 	return out, nil
+}
+
+// @concept: attribute
+func sourceReferencesLateBound(source string) bool {
+	return strings.Contains(source, "claim.") || strings.Contains(source, "child.")
+}
+
+// @concept: attribute
+func fillClaimRefs(
+	schema map[string]any, rctx attributes.ResolveContext, partial map[string]any,
+) (map[string]any, error) {
+	out := map[string]any{}
+	for k, v := range partial {
+		out[k] = v
+	}
+	if schema == nil {
+		return out, nil
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if props == nil {
+		return out, nil
+	}
+	for name, propAny := range props {
+		if _, present := out[name]; present {
+			continue
+		}
+		prop, _ := propAny.(map[string]any)
+		if prop == nil {
+			continue
+		}
+		srcRaw, hasSource := prop["source"]
+		if !hasSource {
+			continue
+		}
+		source, _ := srcRaw.(string)
+		if source == "" || !sourceReferencesLateBound(source) {
+			continue
+		}
+		val, err := attributes.SubstituteValue(source, rctx)
+		if err != nil {
+			return nil, err
+		}
+		if val == nil {
+			out[name] = emptyValueForSchemaProperty(prop)
+			continue
+		}
+		out[name] = val
+	}
+	return out, nil
+}
+
+// @concept: attribute
+func mergeSchemaDefaultsForDispatch(schema map[string]any, bag map[string]any) map[string]any {
+	if schema == nil {
+		return bag
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if props == nil {
+		return bag
+	}
+	out := bag
+	if out == nil {
+		out = map[string]any{}
+	}
+	for name, propAny := range props {
+		if _, present := out[name]; present {
+			continue
+		}
+		prop, _ := propAny.(map[string]any)
+		if prop == nil {
+			continue
+		}
+		if defaultVal, hasDefault := prop["default"]; hasDefault {
+			out[name] = defaultVal
+		}
+	}
+	return out
 }
 
 // @concept: attribute
@@ -806,21 +792,28 @@ func fieldNames(m map[string]any) []string {
 
 // @concept: node-subscription
 // @concept: attribute
-func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]json.RawMessage {
-	var out map[string]json.RawMessage
+// @decision: walker-rule-per-sender-node
+// @story: resume-preserves-snapshot
+func loadDispatchBag(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
+	schema, _, _ := computeEffectiveAttributeSchema(args, acq)
+	if args.Persist == nil {
+		return nil, schema, fmt.Errorf("loadDispatchBag: nil persist (invariant: dispatched run must have a snapshot bag)")
+	}
+	var bag map[string]any
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		deps, err := BuildAttributeDeps(ctx, tx, args, acq.DispatchID, acq.FrameID)
+		raw, err := args.Persist.NodeAttributes().GetDispatchInputBag(ctx, tx, acq.DispatchID)
 		if err != nil {
 			return err
 		}
-		out = deps
+		bag = raw
 		return nil
-	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("loadSubscribedNodeAttributesByID: tx failed",
-			"run_id", acq.DispatchID.String(),
-			"error", err.Error())
+	}); err != nil {
+		return nil, schema, err
 	}
-	return out
+	if bag == nil {
+		return nil, schema, fmt.Errorf("loadDispatchBag: dispatch_input_bag missing for run %s (invariant: every dispatched run must carry a snapshot bag)", acq.DispatchID)
+	}
+	return bag, schema, nil
 }
 
 // @concept: run-scope

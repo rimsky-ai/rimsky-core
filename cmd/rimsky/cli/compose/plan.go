@@ -369,13 +369,21 @@ func classifyRestart(ctx context.Context, c *cli.Client, inst cli.Instance, poli
 	return false, true, outcome, nil
 }
 
+// @concept: node
 func aggregateOutcome(ctx context.Context, c *cli.Client, instanceID string) (string, error) {
 	resp, err := c.ListInstanceNodes(ctx, instanceID)
 	if err != nil {
 		return "", err
 	}
 	for _, n := range resp.Nodes {
-		if n.State != "fresh" {
+		s := n.RunSummary
+		if s == nil {
+			return "failure", nil
+		}
+		if s.FailedCount > 0 || s.ActiveCount > 0 || s.PendingCount > 0 {
+			return "failure", nil
+		}
+		if s.FreshCount == 0 {
 			return "failure", nil
 		}
 	}

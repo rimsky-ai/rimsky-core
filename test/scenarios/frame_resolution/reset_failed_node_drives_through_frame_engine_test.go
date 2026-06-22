@@ -76,7 +76,7 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	var failedRowSettlingSig *string
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT settling_signal_type FROM rimsky_node_runs
-		   WHERE node_id = $1 AND phase = 'failed'
+		   WHERE node_id = $1 AND state = 'failed'
 		   ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC
 		   LIMIT 1`,
 		uuid.UUID(worker.ID)).Scan(&failedRowSettlingSig))

@@ -193,13 +193,14 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 	).Scan(&lhCount))
 	require.Zero(t, lhCount, "no claim-handle rows may survive the abandoned acquisition")
 
-	var failedRow *persistence.NodeRow
+	var failedLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, gerr := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		failedRow = r
+		r, gerr := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		failedLatest = r
 		return gerr
 	}))
-	require.Equal(t, cascade.NodeStateFailed, failedRow.State,
+	require.NotNil(t, failedLatest)
+	require.Equal(t, cascade.NodeStateFailed, failedLatest.State,
 		"give_up on acquire/unavailable must land the node in failed")
 
 	var sigCount int

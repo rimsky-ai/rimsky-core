@@ -56,6 +56,14 @@ func TestUnresolvedExecutor(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		latest, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, n.ID)
+		if err != nil {
+			return err
+		}
+		return h.Persist.NodeAttributes().SetDispatchInputBag(h.Ctx, tx, latest.RunID, n.ID, map[string]any{})
+	}))
+
 	args := runtime.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
@@ -75,13 +83,14 @@ func TestUnresolvedExecutor(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, out.Ran, "runner should commit acquisition for the candidate")
 
-	var got *persistence.NodeRow
+	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, n.ID, tx)
-		got = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, n.ID)
+		latest = r
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFailed, got.State)
+	require.NotNil(t, latest)
+	require.Equal(t, cascade.NodeStateFailed, latest.State)
 
 	nid := n.ID
 	var evs persistence.EventListResult

@@ -166,7 +166,8 @@ func testRunScopeAffirmAfterClose_ErrRunScopeClosed(t *testing.T, d persistence.
 	}
 
 	err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, scopeID, fix.FrameID, tx)
+		_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, scopeID, fix.FrameID)
+		return err
 	})
 	if !errors.Is(err, persistence.ErrRunScopeClosed) {
 		t.Fatalf("Affirm-after-close: err = %v, want ErrRunScopeClosed", err)

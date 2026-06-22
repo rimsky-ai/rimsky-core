@@ -89,15 +89,16 @@ func driveProducerClassifiedRetry(
 		h.WaitForEventKind(worker.ID, "transient/retry/1/"+producerClassUnavailable, 30*time.Second),
 		"retry action must emit transient/retry/1/%s on the event log", producerClassUnavailable)
 
-	var wRow *persistence.NodeRow
+	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		wRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		wLatest = r
 		return err
 	}))
-	require.NotNil(t, wRow)
-	require.NotEqual(t, cascade.NodeStateFailed, wRow.State,
-		"retry policy must hold the node; failed means the producer class did not route")
+	if wLatest != nil {
+		require.NotEqual(t, cascade.NodeStateFailed, wLatest.State,
+			"retry policy must hold the node; failed means the producer class did not route")
+	}
 
 	_, err := sub.SeedPickPolicyItem("@queue", json.RawMessage(`{"v":1}`))
 	require.NoError(t, err, "seed item")

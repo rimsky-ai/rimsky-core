@@ -112,14 +112,15 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 	require.True(t, h.WaitForNodeState(bNode.ID, cascade.NodeStateFailed, 30*time.Second),
 		"b should land in failed via template_resolution_failed → give_up")
 
-	var bRow *persistence.NodeRow
+	var bLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, bNode.ID, tx)
-		bRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, bNode.ID)
+		bLatest = r
 		return err
 	}))
-	require.NotNil(t, bRow.SettlingSignalType,
+	require.NotNil(t, bLatest)
+	require.NotNil(t, bLatest.SettlingSignalType,
 		"b should have a settling_signal_type after give_up")
-	require.Contains(t, *bRow.SettlingSignalType, "terminal/error/",
+	require.Contains(t, *bLatest.SettlingSignalType, "terminal/error/",
 		"b's give_up should record a terminal/error/<class> settling_signal_type")
 }

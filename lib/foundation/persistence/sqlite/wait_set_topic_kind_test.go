@@ -82,12 +82,12 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 		{receiverRunID, receiverNodeID},
 		{senderRunID, senderNodeID},
 	}
-	for _, r := range runs {
+	for i, r := range runs {
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_node_runs
-			   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-			 VALUES (?, ?, 'stub', '[]', datetime('now'), 'active', 'running', ?, ?)`,
-			r.runID, r.nodeID, frameID, scopeID,
+			   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+			 VALUES (?, ?, 'stub', '[]', datetime('now'), 'running', 'cascade', ?, ?, ?)`,
+			r.runID, r.nodeID, i+1, frameID, scopeID,
 		); err != nil {
 			t.Fatalf("seed node-run %s: %v", r.runID, err)
 		}

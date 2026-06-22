@@ -173,29 +173,10 @@ func RunNode(
 		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
 	}
 
-	var (
-		resolvedAttrs map[string]any
-		attrSchema    map[string]any
-	)
-	if acq.IsResume {
-		// @concept: parked-state
-		// @story: resume-preserves-snapshot
-		resolvedAttrs, attrSchema, err = loadResumeAttributes(ctx, args, &acq)
-		if err != nil {
-			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
-				applyAttributeFailure(ctx, args, &acq, err)
-		}
-	} else {
-		resolvedAttrs, attrSchema, err = resolveAttributes(ctx, args, &acq)
-		if err != nil {
-			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
-				applyAttributeFailure(ctx, args, &acq, err)
-		}
-		if err := upsertAttributesPreDispatch(ctx, args, acq.DispatchID, acq.NodeID, resolvedAttrs); err != nil {
-			log.Warn("runner: upsert attributes pre-dispatch failed",
-				"run_id", acq.DispatchID.String(),
-				"node_id", acq.NodeID.String(), "error", err.Error())
-		}
+	resolvedAttrs, attrSchema, err := resolveAttributes(ctx, args, &acq)
+	if err != nil {
+		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
+			applyAttributeFailure(ctx, args, &acq, err)
 	}
 	dispatchAttrs := resolvedAttrs
 
@@ -208,16 +189,33 @@ func RunNode(
 		Log:              log,
 		RegisterAsync:    registerAsync,
 	}
-	terminal, asyncResult, err := dispatch(ctx, dctx)
-	if err != nil {
-		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
-	}
-	if asyncResult != nil {
-		return *asyncResult, nil
-	}
-
-	if err := runApplyTerminal(ctx, args, &acq, dispatchAttrs, attrSchema, terminal, nil); err != nil {
-		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
+	// @concept: error-policy
+	var (
+		terminal    terminalEvent
+		asyncResult *RunnerResult
+	)
+	for {
+		acq.RetryDecision = nil
+		terminal, asyncResult, err = dispatch(ctx, dctx)
+		if err != nil {
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
+		}
+		if asyncResult != nil {
+			return *asyncResult, nil
+		}
+		if err := runApplyTerminal(ctx, args, &acq, dispatchAttrs, attrSchema, terminal, nil); err != nil {
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
+		}
+		if acq.RetryDecision == nil || !acq.RetryDecision.IsRetry() {
+			break
+		}
+		if delay := time.Duration(acq.RetryDecision.DelayMs) * time.Millisecond; delay > 0 {
+			select {
+			case <-ctx.Done():
+				return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
 	}
 
 	scope := resolveAcqScope(ctx, args, &acq)
@@ -271,17 +269,6 @@ func validateRunArgs(args RunArgs) error {
 		return errors.New("supervisor.RunNode: Pool (executor.ClientPool) is required")
 	}
 	return nil
-}
-
-func upsertAttributesPreDispatch(
-	ctx context.Context,
-	args RunArgs,
-	runID, nodeID shared.UUID,
-	resolvedAttrs map[string]any,
-) error {
-	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return args.Persist.NodeAttributes().Upsert(ctx, runID, nodeID, resolvedAttrs, tx)
-	})
 }
 
 func emitAttributeFailureEvent(

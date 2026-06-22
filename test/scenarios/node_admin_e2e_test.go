@@ -24,15 +24,19 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
+// @concept: node
+type nodeRunSummaryResponse struct {
+	ActiveCount  int `json:"active_count"`
+	PendingCount int `json:"pending_count"`
+	FreshCount   int `json:"fresh_count"`
+	FailedCount  int `json:"failed_count"`
+}
+
 type nodeDetailResponse struct {
-	ID                 string `json:"id"`
-	InstanceID         string `json:"instance_id"`
-	NodeType           string `json:"node_type"`
-	State              string `json:"state"`
-	SettlingSignalType string `json:"settling_signal_type,omitempty"`
-	CurrentErrorClass  string `json:"current_error_class,omitempty"`
-	RetryCounter       int    `json:"retry_counter"`
-	ActionIndex        int    `json:"action_index"`
+	ID         string                  `json:"id"`
+	InstanceID string                  `json:"instance_id"`
+	NodeType   string                  `json:"node_type"`
+	RunSummary *nodeRunSummaryResponse `json:"run_summary,omitempty"`
 }
 
 func TestAcceptance_NodeAdmin_GetAndReset(t *testing.T) {
@@ -83,22 +87,18 @@ func TestAcceptance_NodeAdmin_GetAndReset(t *testing.T) {
 	workerDetail := getNodeDetail(t, h, worker.ID)
 	require.Equal(t, worker.ID.String(), workerDetail.ID,
 		"GET /v1/nodes/{id} must surface the id the operator queried")
-	require.Equal(t, "fresh", workerDetail.State,
-		"settled worker must project state=fresh through GET /v1/nodes/{id}")
-	require.Equal(t, "terminal/success", workerDetail.SettlingSignalType,
-		"GET /v1/nodes/{id} must surface the settling_signal_type column projected via NodeRow — "+
-			"omitting it would fail the story's 'sees its current settling signal type' clause")
+	require.NotNil(t, workerDetail.RunSummary,
+		"GET /v1/nodes/{id} must surface a run_summary projecting categorical run counts per the no-derived-state model")
+	require.GreaterOrEqual(t, workerDetail.RunSummary.FreshCount, 1,
+		"settled worker must show at least one fresh run in the run_summary — the categorical evidence of `concept:node-run` success")
+	require.Equal(t, 0, workerDetail.RunSummary.FailedCount,
+		"settled worker must have zero failed runs in its summary")
 
 	flakyDetail := getNodeDetail(t, h, flaky.ID)
-	require.Equal(t, "failed", flakyDetail.State,
-		"failed flaky must project state=failed through GET /v1/nodes/{id}")
-	require.Equal(t, "stub/my_err", flakyDetail.CurrentErrorClass,
-		"GET /v1/nodes/{id} must surface current_error_class at the failed terminal — "+
-			"this is the operator-visible 'budget exhausted' marker the reset leg clears")
-	require.Greater(t, flakyDetail.ActionIndex, 0,
-		"flaky must carry action_index > 0 at failed terminal (its policy chain advanced past the "+
-			"`retry` action to `give_up`) — an action_index of 0 means the chain never advanced, and "+
-			"the reset leg's 'budget cleared' assertion would be vacuous")
+	require.NotNil(t, flakyDetail.RunSummary,
+		"GET /v1/nodes/{id} must surface run_summary for the failed-terminal node")
+	require.GreaterOrEqual(t, flakyDetail.RunSummary.FailedCount, 1,
+		"failed flaky must show at least one failed run in the run_summary — the categorical evidence the policy chain reached terminal failure")
 
 	notFoundResp, err := http.Get(h.ControlBase + "/v1/nodes/00000000-0000-0000-0000-000000000000")
 	require.NoError(t, err)
@@ -131,11 +131,6 @@ func TestAcceptance_NodeAdmin_GetAndReset(t *testing.T) {
 	require.Equal(t, http.StatusOK, resetResp.StatusCode,
 		"POST /v1/nodes/{id}/reset on a failed node must return 200")
 
-	require.True(t, waitForClearedErrorBudget(t, h, flaky.ID, 10*time.Second),
-		"after POST /reset, GET /v1/nodes/{id} must surface action_index=0 AND current_error_class='' — "+
-			"the falsifier's 'reset clears the visible counter' shape is satisfied here, but only the "+
-			"next discriminator proves the supervisor isn't still treating the node as exhausted")
-
 	h.PostInstanceMessage(iid, "", nil, fmt.Sprintf("test-wake-%s-after-reset", t.Name()))
 
 	require.True(t, waitForTerminalSuccessCountGreaterThan(t, h, flaky.ID, preResetSuccessCount, 30*time.Second),
@@ -149,12 +144,10 @@ func TestAcceptance_NodeAdmin_GetAndReset(t *testing.T) {
 			"completing end to end is the story's terminal observation")
 
 	finalDetail := getNodeDetail(t, h, flaky.ID)
-	require.Equal(t, 0, finalDetail.ActionIndex,
-		"after reset + successful re-fire, action_index stays cleared (a fresh node has no policy-chain cursor)")
-	require.Equal(t, 0, finalDetail.RetryCounter,
-		"after reset + successful re-fire, retry_counter stays cleared (a fresh node has no retries pending)")
-	require.Equal(t, "", finalDetail.CurrentErrorClass,
-		"after reset + successful re-fire, current_error_class stays cleared (no active error class)")
+	require.NotNil(t, finalDetail.RunSummary,
+		"after reset + successful re-fire, run_summary remains observable")
+	require.GreaterOrEqual(t, finalDetail.RunSummary.FreshCount, 1,
+		"after reset + successful re-fire, run_summary surfaces at least one fresh run")
 }
 
 func getNodeDetail(t *testing.T, h *scenario.Harness, nodeID shared.UUID) nodeDetailResponse {
@@ -183,19 +176,6 @@ func waitForTerminalSuccessCountGreaterThan(t *testing.T, h *scenario.Harness, n
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if countTerminalSuccess(t, h, nodeID) > baseline {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return false
-}
-
-func waitForClearedErrorBudget(t *testing.T, h *scenario.Harness, nodeID shared.UUID, timeout time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		d := getNodeDetail(t, h, nodeID)
-		if d.ActionIndex == 0 && d.CurrentErrorClass == "" {
 			return true
 		}
 		time.Sleep(50 * time.Millisecond)

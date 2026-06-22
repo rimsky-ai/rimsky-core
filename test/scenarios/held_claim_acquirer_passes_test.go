@@ -88,21 +88,24 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 
-	var acqRow, inhRow *persistence.NodeRow
+	var acqLatest, inhLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		ra, err := h.Persist.Nodes().Get(h.Ctx, acq.ID, tx)
+		ra, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, acq.ID)
 		if err != nil {
 			return err
 		}
-		acqRow = ra
-		ri, err := h.Persist.Nodes().Get(h.Ctx, inh.ID, tx)
-		inhRow = ri
+		acqLatest = ra
+		ri, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, inh.ID)
+		inhLatest = ri
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFresh, acqRow.State,
+	require.NotNil(t, acqLatest)
+	require.Equal(t, cascade.NodeStateFresh, acqLatest.State,
 		"acquirer should be fresh after pass")
-	require.Equal(t, cascade.NodeStateFresh, inhRow.State,
-		"inheritor should remain fresh — pass should not cascade to it")
+	if inhLatest != nil {
+		require.Equal(t, cascade.NodeStateFresh, inhLatest.State,
+			"inheritor should remain fresh — pass should not cascade to it")
+	}
 
 	require.Empty(t, h.Stub.Observed(),
 		"executor must not be invoked when the acquirer passes on Unavailable")

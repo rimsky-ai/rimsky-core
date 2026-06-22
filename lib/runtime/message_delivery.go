@@ -105,36 +105,115 @@ func deliverForRunningFrame(
 		if len(delivered.Messages) == 0 {
 			return nil
 		}
-		signalsByMessageID := make(map[shared.UUID]signalpkg.Signal, len(delivered.Messages))
+		emptyMessages := make([]persistence.MessageRow, 0)
+		namedMessages := make([]persistence.MessageRow, 0)
 		for _, msg := range delivered.Messages {
-			msgSig := messageVirtualNodeSettleSignal(msg)
-			signalsByMessageID[msg.ID] = msgSig
-			if err := signalaudit.EmitSignal(ctx, persist.Events(),
-				instanceID, shared.UUID{}, msgSig, now, tx); err != nil {
-				return fmt.Errorf("emit message signal: %w", err)
+			if msg.Type == "" {
+				emptyMessages = append(emptyMessages, msg)
+				continue
+			}
+			namedMessages = append(namedMessages, msg)
+		}
+		if len(emptyMessages) > 0 {
+			signalsByMessageID := make(map[shared.UUID]signalpkg.Signal, len(emptyMessages))
+			for _, msg := range emptyMessages {
+				msgSig := emptyMessageWakeSignal(msg)
+				signalsByMessageID[msg.ID] = msgSig
+				if err := signalaudit.EmitSignal(ctx, persist.Events(),
+					instanceID, shared.UUID{}, msgSig, now, tx); err != nil {
+					return fmt.Errorf("emit empty-message wake signal: %w", err)
+				}
+			}
+			if err := cascadeEmptyMessageWakeInTx(ctx, persist, queue, logger, tx,
+				instanceID, frameID, emptyMessages, signalsByMessageID, inst.TemplateHash,
+				inst.MainRunScopeID); err != nil {
+				return err
 			}
 		}
-		return cascadeMessageVirtualNodeSettleInTx(ctx, persist, queue, logger, tx,
-			instanceID, frameID, delivered.Messages, signalsByMessageID, inst.TemplateHash,
-			inst.MainRunScopeID)
+		for _, msg := range namedMessages {
+			if err := deliverNamedMessageInTx(ctx, persist, logger, tx,
+				instanceID, frameID, msg, inst.MainRunScopeID, now); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
 // @concept: message
-// @concept: signal
-func messageVirtualNodeSettleSignal(msg persistence.MessageRow) signalpkg.Signal {
-	// @decision: empty-message-as-root-trigger
-	// @story: empty-message-wakes-roots
-	summaryTail := msg.Type
-	if summaryTail == "" {
-		summaryTail = "empty-wake"
+// @concept: node-run
+func deliverNamedMessageInTx(
+	ctx context.Context, persist persistence.Tables,
+	logger shared.Logger,
+	tx persistence.Tx,
+	instanceID, frameID shared.UUID,
+	msg persistence.MessageRow,
+	instanceMainRunScopeID shared.UUID,
+	now time.Time,
+) error {
+	receiver, err := findMessageReceiverNode(ctx, persist, tx, instanceID, msg.Type)
+	if err != nil {
+		return fmt.Errorf("deliverNamedMessageInTx: find message-receiver-node for %q: %w", msg.Type, err)
 	}
+	if receiver == nil {
+		if logger != nil {
+			logger.Warn("deliverNamedMessageInTx: no message-receiver-node found; message delivered as dead letter",
+				"instance_id", instanceID.String(),
+				"message_type", msg.Type,
+				"message_id", msg.ID.String())
+		}
+		return nil
+	}
+	runID, err := persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+		NodeID:         receiver.ID,
+		RunScopeID:     instanceMainRunScopeID,
+		FrameID:        frameID,
+		ExecutorName:   "",
+		EnqueuedAt:     now,
+		CreationReason: cascade.CreationReasonMessageDelivery,
+	})
+	if err != nil {
+		return fmt.Errorf("deliverNamedMessageInTx: create message-receiver run for %q: %w", msg.Type, err)
+	}
+	body := messagePayloadAsMap(msg.Payload)
+	if err := persist.NodeAttributes().Upsert(ctx, runID, receiver.ID, body, tx); err != nil {
+		return fmt.Errorf("deliverNamedMessageInTx: upsert message body bag for %q: %w", msg.Type, err)
+	}
+	if err := persist.NodeAttributes().SetDispatchInputBag(ctx, tx, runID, receiver.ID, body); err != nil {
+		return fmt.Errorf("deliverNamedMessageInTx: persist dispatch input bag for %q: %w", msg.Type, err)
+	}
+	return nil
+}
+
+// @concept: message
+// @concept: node
+func findMessageReceiverNode(
+	ctx context.Context, persist persistence.Tables, tx persistence.Tx,
+	instanceID shared.UUID, messageType string,
+) (*persistence.NodeRow, error) {
+	nodes, err := persist.Nodes().ListByInstance(ctx, instanceID, tx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range nodes {
+		if nodes[i].NodeType == messageType {
+			return &nodes[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// @concept: message
+// @concept: signal
+// @decision: empty-message-as-root-trigger
+// @story: empty-message-wakes-roots
+func emptyMessageWakeSignal(msg persistence.MessageRow) signalpkg.Signal {
 	return signalpkg.Signal{
 		Type: signalpkg.TypePath("terminal/success"),
 		Payload: map[string]any{
 			"changed":          true,
 			"attributes_delta": messagePayloadAsMap(msg.Payload),
-			"change_summary":   "message-virtual-node:" + summaryTail,
+			"change_summary":   "empty-message-wake",
 		},
 	}
 }
@@ -154,7 +233,7 @@ func messagePayloadAsMap(payload []byte) map[string]any {
 // @concept: message
 // @concept: cascade
 // @concept: signal
-func cascadeMessageVirtualNodeSettleInTx(
+func cascadeEmptyMessageWakeInTx(
 	ctx context.Context, persist persistence.Tables, queue persistence.Queue,
 	logger shared.Logger,
 	tx persistence.Tx,
@@ -168,7 +247,7 @@ func cascadeMessageVirtualNodeSettleInTx(
 	}
 	tmpl, err := persist.Templates().GetByHash(ctx, templateHash, tx)
 	if err != nil {
-		return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: get template: %w", err)
+		return fmt.Errorf("cascadeEmptyMessageWakeInTx: get template: %w", err)
 	}
 	if tmpl == nil {
 		return nil
@@ -176,26 +255,29 @@ func cascadeMessageVirtualNodeSettleInTx(
 	msgRefs := node.ExtractMessageRefsFromTemplate(tmpl.Spec)
 	edges, err := node.BuildSubscriptionEdges(tmpl.Spec, msgRefs)
 	if err != nil {
-		return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: build edges: %w", err)
+		return fmt.Errorf("cascadeEmptyMessageWakeInTx: build edges: %w", err)
 	}
 	if edges == nil {
 		return nil
 	}
 	instNodes, err := persist.Nodes().ListByInstance(ctx, instanceID, tx)
 	if err != nil {
-		return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: list nodes: %w", err)
+		return fmt.Errorf("cascadeEmptyMessageWakeInTx: list nodes: %w", err)
 	}
 	byType := make(map[string][]persistence.NodeRow, len(instNodes))
 	for _, n := range instNodes {
 		byType[n.NodeType] = append(byType[n.NodeType], n)
 	}
 	successType := signalpkg.TypePath("terminal/success")
+	args := RunArgs{Persist: persist, Queue: queue, Logger: logger, Clock: shared.SystemClock{}}
+	touchedReceiverRuns := map[shared.UUID]struct{}{}
 	for _, msg := range messages {
 		msgSig, ok := signalsByMessageID[msg.ID]
 		if !ok {
-			msgSig = messageVirtualNodeSettleSignal(msg)
+			msgSig = emptyMessageWakeSignal(msg)
 		}
 		matched := edges.Match(msg.Type, successType)
+		visitedReceivers := map[shared.UUID]struct{}{}
 		for _, e := range matched {
 			if e.WhenExpr != nil {
 				ok, _ := e.WhenExpr.Eval(msgSig)
@@ -209,47 +291,41 @@ func cascadeMessageVirtualNodeSettleInTx(
 				if !e.WakeOnChange {
 					continue
 				}
-				var receiverScopeID shared.UUID
-				if r.RunScopeID != nil {
-					receiverScopeID = *r.RunScopeID
-				} else {
-					receiverScopeID = instanceMainRunScopeID
+				// @concept: parked-state
+				receiverScopeID := instanceMainRunScopeID
+				if latest, err := persist.Nodes().GetLatestRunForNode(ctx, tx, r.ID); err != nil {
+					return fmt.Errorf("cascadeEmptyMessageWakeInTx: latest run for receiver %s: %w", r.ID, err)
+				} else if latest != nil {
+					receiverScopeID = latest.RunScopeID
 				}
-				if err := persist.Nodes().AffirmNodeRunRow(ctx, r.ID, receiverScopeID, frameID, tx); err != nil {
-					// @concept: run-scope
-					if errors.Is(err, persistence.ErrRunScopeClosed) {
-						continue
-					}
-					return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: affirm receiver run %s: %w", r.ID, err)
-				}
-				runID, ok, err := queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverScopeID)
+				receiverRunID, hasReceiver, err := resolveReceiverRunForCascade(
+					ctx, args, tx,
+					r.ID, receiverScopeID, frameID, shared.UUID{}, shared.UUID{},
+					e.WakeOnChange, visitedReceivers,
+				)
 				if err != nil {
-					return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: resolve receiver run %s: %w", r.ID, err)
+					return fmt.Errorf("cascadeEmptyMessageWakeInTx: resolve receiver %s: %w", r.ID, err)
 				}
-				if !ok {
+				if !hasReceiver {
 					continue
 				}
-				if r.State == cascade.NodeStateParked {
-					if err := wakeParkedReceiverWithDepsInTx(ctx, persist, queue, tx, r, frameID); err != nil {
-						return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: wake parked %s: %w", r.ID, err)
-					}
-				} else {
-					if err := persist.Nodes().MarkStaleForCascade(ctx, runID, frameID, tx); err != nil {
-						return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: mark stale %s: %w", r.ID, err)
-					}
-				}
+				touchedReceiverRuns[receiverRunID] = struct{}{}
 				// @story: upstream-pull-on-invalidate
 				// @concept: cascade
-				// @decision: synthetic-envelope-mechanism-retired
 				if !e.SenderBoundToEmpty {
 					if err := pullForceRefreshUpstreamsForMessageReceiver(
-						ctx, persist, queue, logger, tx, r, runID, receiverScopeID, frameID,
+						ctx, persist, queue, logger, tx, r, receiverRunID, receiverScopeID, frameID,
 						templateHash, byType,
 					); err != nil {
-						return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: pull upstream-refresh for %s: %w", r.ID, err)
+						return fmt.Errorf("cascadeEmptyMessageWakeInTx: pull upstream-refresh for %s: %w", r.ID, err)
 					}
 				}
 			}
+		}
+	}
+	for receiverRunID := range touchedReceiverRuns {
+		if err := evaluateOneGate(ctx, args, tx, receiverRunID); err != nil {
+			return fmt.Errorf("cascadeEmptyMessageWakeInTx: evaluate gate %s: %w", receiverRunID, err)
 		}
 	}
 	return nil
@@ -269,7 +345,7 @@ func pullForceRefreshUpstreamsForMessageReceiver(
 	if logger == nil {
 		logger = shared.SilentLogger{}
 	}
-	args := RunArgs{Persist: persist, Queue: queue, Logger: logger}
+	args := RunArgs{Persist: persist, Queue: queue, Logger: logger, Clock: shared.SystemClock{}}
 	visited := map[shared.UUID]struct{}{receiver.ID: {}}
 	return pullForceRefreshUpstreams(
 		ctx, args, tx, receiver, byType,

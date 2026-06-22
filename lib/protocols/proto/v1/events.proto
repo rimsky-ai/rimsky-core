@@ -188,8 +188,7 @@ message StateTransitionPayload {
 message ErrorPayload {
   string error_class = 1;
   google.protobuf.Struct details = 2;
-  string action_taken = 3;     // "retry" | "invalidate" | "give_up"
-  int32 action_index = 4;
+  string action_taken = 3;
   int64 delay_ms = 5;
 }
 

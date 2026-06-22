@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -155,6 +156,9 @@ func seedClaimedGuardRun(ctx context.Context, t *testing.T, d persistence.Databa
 			}
 			if !ok {
 				t.Fatalf("seedClaimedGuardRun: claim was not successful")
+			}
+			if _, err := q.PromoteClaimedToRunning(ctx, tx, c.DispatchID, supID); err != nil {
+				return err
 			}
 			dispatchID = c.DispatchID
 			return nil
@@ -621,23 +625,16 @@ func testClaimantGuardRunComplete(t *testing.T, d persistence.Database) {
 		t.Fatalf("wrong-claimant Complete: %v", err)
 	}
 	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "Complete")
-	row, err := q.GetByID(ctx, dispatchID)
-	if err != nil {
-		t.Fatalf("GetByID after wrong-claimant Complete: %v", err)
-	}
-	if row == nil {
-		t.Fatalf("wrong-claimant Complete retired the row")
-	}
 
 	if err := q.Complete(ctx, dispatchID, guardSupA); err != nil {
 		t.Fatalf("owner Complete: %v", err)
 	}
-	row, err = q.GetByID(ctx, dispatchID)
+	owner, err := q.GetClaimedBy(ctx, dispatchID)
 	if err != nil {
-		t.Fatalf("GetByID after owner Complete: %v", err)
+		t.Fatalf("GetClaimedBy after owner Complete: %v", err)
 	}
-	if row != nil {
-		t.Fatalf("owner Complete did not retire the row")
+	if owner.Kind != "unclaimed" {
+		t.Fatalf("owner Complete did not release claim: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 }
 
@@ -653,23 +650,16 @@ func testClaimantGuardRunRemoveForNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("wrong-claimant RemoveForNodeInTx: %v", err)
 	}
 	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "RemoveForNodeInTx")
-	row, err := q.GetByID(ctx, dispatchID)
-	if err != nil {
-		t.Fatalf("GetByID after wrong-claimant remove: %v", err)
-	}
-	if row == nil {
-		t.Fatalf("wrong-claimant RemoveForNodeInTx retired the row")
-	}
 
 	if err := q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, guardSupA); err != nil {
 		t.Fatalf("owner RemoveForNode: %v", err)
 	}
-	row, err = q.GetByID(ctx, dispatchID)
+	owner, err := q.GetClaimedBy(ctx, dispatchID)
 	if err != nil {
-		t.Fatalf("GetByID after owner remove: %v", err)
+		t.Fatalf("GetClaimedBy after owner remove: %v", err)
 	}
-	if row != nil {
-		t.Fatalf("owner RemoveForNode did not retire the row")
+	if owner.Kind != "unclaimed" {
+		t.Fatalf("owner RemoveForNode did not release claim: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 }
 
@@ -704,11 +694,7 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 		t.Fatalf("wrong-claimant ParkActiveInTx parked the row")
 	}
 
-	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.ParkActiveInTx(ctx, tx, parkInput(guardSupA))
-	}); err != nil {
-		t.Fatalf("owner ParkActiveInTx: %v", err)
-	}
+	parkRun(ctx, t, d, parkInput(guardSupA))
 	parked, perr = q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)
 	if perr != nil {
 		t.Fatalf("GetParkedByNode after owner park: %v", perr)
@@ -750,19 +736,26 @@ func testClaimantGuardRunEmptyClaimantCarveOut(t *testing.T, d persistence.Datab
 		if !ok {
 			t.Fatalf("re-claim as A failed")
 		}
-		return nil
+		_, err = q.PromoteClaimedToRunning(ctx, tx, dispatchID, guardSupA)
+		return err
 	}); err != nil {
 		t.Fatalf("re-claim tx: %v", err)
 	}
 	if err := q.Complete(ctx, dispatchID, ""); err != nil {
 		t.Fatalf("empty-claimant Complete: %v", err)
 	}
-	row, err := q.GetByID(ctx, dispatchID)
+	cowner, err := q.GetClaimedBy(ctx, dispatchID)
 	if err != nil {
-		t.Fatalf("GetByID after empty Complete: %v", err)
+		t.Fatalf("GetClaimedBy after empty Complete: %v", err)
 	}
-	if row != nil {
-		t.Fatalf("empty-claimant Complete did not retire A's row")
+	if cowner.Kind != "unclaimed" {
+		t.Fatalf("empty-claimant Complete did not release A's row: %s/%s", cowner.Kind, cowner.SupervisorID)
+	}
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return d.Tables().Nodes().UpdateState(ctx, fix.NodeID, fix.MainRunScopeID,
+			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx)
+	}); err != nil {
+		t.Fatalf("settle row after empty Complete: %v", err)
 	}
 
 	dispatchID2 := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
@@ -771,12 +764,12 @@ func testClaimantGuardRunEmptyClaimantCarveOut(t *testing.T, d persistence.Datab
 	}); err != nil {
 		t.Fatalf("empty-claimant RemoveForNodeInTx: %v", err)
 	}
-	row, err = q.GetByID(ctx, dispatchID2)
+	rowner, err := q.GetClaimedBy(ctx, dispatchID2)
 	if err != nil {
-		t.Fatalf("GetByID after empty remove: %v", err)
+		t.Fatalf("GetClaimedBy after empty remove: %v", err)
 	}
-	if row != nil {
-		t.Fatalf("empty-claimant RemoveForNodeInTx did not retire A's row")
+	if rowner.Kind != "unclaimed" {
+		t.Fatalf("empty-claimant RemoveForNodeInTx did not release A's row: %s/%s", rowner.Kind, rowner.SupervisorID)
 	}
 }
 

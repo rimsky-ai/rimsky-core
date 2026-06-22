@@ -107,18 +107,13 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
 	n.FrameID = &frameID
-	runPhase := "pending"
-	if state == cascade.NodeStateRunning {
-		runPhase = "active"
-	}
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
 		                               enqueued_at, claimed_by, claimed_at,
-		                               phase, state, frame_id, run_scope_id)
+		                               state, sequence, creation_reason, frame_id, run_scope_id)
 		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), NULL, NULL,
-		         $3, $4, $5, $6)`,
-		n.ID, executor, runPhase, string(state), frameID, f.instance.MainRunScopeID)
-	n.State = state
+		         $3, 1, 'cascade', $4, $5)`,
+		n.ID, executor, string(state), frameID, f.instance.MainRunScopeID)
 	return n
 }
 
@@ -288,15 +283,15 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 	}
 
 	var (
-		phase     string
+		runState  string
 		claimedBy sql.NullString
 	)
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT phase, claimed_by FROM rimsky_node_runs
+		`SELECT state, claimed_by FROM rimsky_node_runs
 		   WHERE node_id = $1
-		     AND phase IN ('pending','active','held','parked')`,
-		[]any{target.ID}, &phase, &claimedBy)
-	assert.Equal(t, "pending", phase, "tick should have skipped (run row not claimed) under advisory-lock contention")
+		     AND state IN ('pending','stale','running','held','parked')`,
+		[]any{target.ID}, &runState, &claimedBy)
+	assert.Equal(t, "stale", runState, "tick should have skipped (run row not claimed) under advisory-lock contention")
 	assert.False(t, claimedBy.Valid, "run row should not be claimed under advisory-lock contention")
 }
 
@@ -327,15 +322,15 @@ func TestScheduler_AdvisoryLockErrorSkipsSweepPass(t *testing.T) {
 		"tick should attempt the lock exactly once")
 
 	var (
-		phase     string
+		runState  string
 		claimedBy sql.NullString
 	)
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT phase, claimed_by FROM rimsky_node_runs
+		`SELECT state, claimed_by FROM rimsky_node_runs
 		   WHERE node_id = $1
-		     AND phase IN ('pending','active','held','parked')`,
-		[]any{target.ID}, &phase, &claimedBy)
-	assert.Equal(t, "pending", phase,
+		     AND state IN ('pending','stale','running','held','parked')`,
+		[]any{target.ID}, &runState, &claimedBy)
+	assert.Equal(t, "stale", runState,
 		"sweep pass must be skipped (run row untouched) when the lock attempt errors")
 	assert.False(t, claimedBy.Valid,
 		"run row must stay unclaimed when the lock attempt errors")

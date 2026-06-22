@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
@@ -72,6 +73,29 @@ func declaredMessageTypesForTemplate(
 // @concept: cascade
 // @concept: node-subscription
 var templateHardDepEdges sync.Map
+
+// @concept: claim-handle
+// @decision: held-as-state-not-phase
+func loadTemplateSpec(
+	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
+) (*node.TemplateSpec, error) {
+	inst, err := args.Persist.Instances().Get(ctx, instanceID, tx)
+	if err != nil {
+		return nil, fmt.Errorf("loadTemplateSpec: instance: %w", err)
+	}
+	if inst == nil {
+		return nil, fmt.Errorf("loadTemplateSpec: instance %s not found", instanceID)
+	}
+	tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+	if err != nil {
+		return nil, fmt.Errorf("loadTemplateSpec: template: %w", err)
+	}
+	if tmpl == nil {
+		return nil, fmt.Errorf("loadTemplateSpec: template %s not found", inst.TemplateHash)
+	}
+	spec := tmpl.Spec
+	return &spec, nil
+}
 
 func hardDepEdgesForTemplate(
 	ctx context.Context, args RunArgs, templateHash string, tx persistence.Tx,

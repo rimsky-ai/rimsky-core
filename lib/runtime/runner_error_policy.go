@@ -6,9 +6,7 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -18,6 +16,17 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
+// @concept: error-policy
+type policyDecision struct {
+	Kind    string
+	DelayMs int
+	Signal  signalpkg.Signal
+}
+
+func (d policyDecision) IsRetry() bool {
+	return d.Kind == "retry" || d.Kind == "discard_claims_then_retry"
+}
+
 func applyErrorPolicy(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any, tx persistence.Tx,
@@ -26,6 +35,7 @@ func applyErrorPolicy(
 }
 
 // @concept: executor
+// @concept: error-policy
 func applyErrorPolicyWithScratch(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any, tags []string, scratch []byte, tx persistence.Tx,
@@ -51,48 +61,84 @@ func applyErrorPolicyWithScratch(
 	if err != nil {
 		return nil, err
 	}
-	state := node.EvaluatorState{}
-	prior, perr := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
-	if perr != nil && args.Logger != nil {
-		args.Logger.Warn("applyErrorPolicy: load prior node row failed; using zero EvaluatorState",
-			"node_id", acq.NodeID.String(),
-			"error", perr.Error())
-	}
-	if prior != nil {
-		state = node.EvaluatorState{
-			ActionIndex:       prior.ActionIndex,
-			RetryCounter:      prior.RetryCounter,
-			CurrentErrorClass: prior.CurrentErrorClass,
-		}
+	state, err := args.Persist.Nodes().GetRunEvaluatorState(ctx, acq.DispatchID, tx)
+	if err != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: load evaluator state: %w", err)
 	}
 	resolved := node.Evaluate(policy, state, errorClass, nil)
-	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
-	var carryForwardCount int
-	if isRetryKind(resolved.Kind) {
-		carryForwardCount = priorCount + 1
-	} else {
-		carryForwardCount = 0
+	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.DispatchID, resolved.NewState, tx); err != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: persist evaluator state: %w", err)
 	}
+	sig := errorPolicySignal(errorClass, payload, tags, resolved.Kind, resolved.NewState.RetryCounter, resolved.DelayMs)
+	decision := policyDecision{Kind: resolved.Kind, DelayMs: resolved.DelayMs, Signal: sig}
 
-	resolution := buildResolution(resolved, errorClass, payload, tags, carryForwardCount)
-
-	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, resolved.NewState, tx); err != nil {
-		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
-	}
-	if err := releaseLocksInTx(ctx, args, tx, acq, false, isRetryKind(resolved.Kind)); err != nil {
-		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
-	}
-	if err := applyResolvedAction(ctx, args, tx, acq, prior, resolved, resolution); err != nil {
-		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
-	}
-	if isRetryKind(resolved.Kind) {
-		if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, carryForwardCount); err != nil {
-			return nil, fmt.Errorf("applyErrorPolicy: %w", err)
+	if decision.IsRetry() {
+		if err := emitSignalInTxOnce(ctx, args, tx,
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
+			return nil, fmt.Errorf("applyErrorPolicy: emit retry signal: %w", err)
 		}
+		priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
+		if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, priorCount+1); err != nil {
+			return nil, fmt.Errorf("applyErrorPolicy: bump retry counter: %w", err)
+		}
+		acq.RetryDecision = &decision
+		return nil, nil
 	}
 
 	dispatchID := acq.DispatchID
-	resSig := resolution.Signal
+	successOutcome := false
+	if resolved.Kind == "pass" {
+		successOutcome = true
+	}
+	releasePC, err := releaseLocksInTx(ctx, args, tx, acq, successOutcome, false)
+	if err != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
+	}
+	settlingSig := string(sig.Type)
+	if resolved.Kind == "pass" {
+		latest, lerr := args.Persist.Nodes().GetLatestRunInScope(ctx, tx, acq.NodeID, acq.RunScopeID)
+		if lerr != nil {
+			return nil, fmt.Errorf("applyErrorPolicy: latest run lookup: %w", lerr)
+		}
+		var curState cascade.NodeState
+		if latest != nil {
+			curState = latest.State
+		}
+		switch curState {
+		case cascade.NodeStateRunning:
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+				cascade.NodeStateFresh, cascade.ReasonHandlerPass, &settlingSig, tx); err != nil {
+				return nil, err
+			}
+		case cascade.NodeStateStale:
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+				cascade.NodeStateFresh, cascade.ReasonAcquirePass, &settlingSig, tx); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		latest, lerr := args.Persist.Nodes().GetLatestRunInScope(ctx, tx, acq.NodeID, acq.RunScopeID)
+		if lerr != nil {
+			return nil, fmt.Errorf("applyErrorPolicy: latest run lookup: %w", lerr)
+		}
+		if latest != nil && (latest.State == cascade.NodeStateRunning || latest.State == cascade.NodeStateStale) {
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+				cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := emitSignalInTxOnce(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
+		return nil, err
+	}
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+		return nil, err
+	}
+	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
+		return nil, err
+	}
+
 	post := func(ctx context.Context) {
 		if resolved.Kind == "give_up" {
 			scope := resolveAcqScope(ctx, args, acq)
@@ -102,7 +148,7 @@ func applyErrorPolicyWithScratch(
 				RunID:              dispatchID,
 				NodeID:             acq.NodeID,
 				State:              string(cascade.NodeStateFailed),
-				SettlingSignalType: string(resSig.Type),
+				SettlingSignalType: settlingSig,
 				ErrorClass:         errorClass,
 				TerminalKind:       "errored",
 				NodeAlias:          acq.NodeType,
@@ -115,7 +161,6 @@ func applyErrorPolicyWithScratch(
 				ChildKey:           scope.PartitionKey,
 				SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 			})
-			settlingSig := string(resSig.Type)
 			if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
 				cascade.NodeStateFailed, &settlingSig); err != nil {
 				args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
@@ -123,184 +168,98 @@ func applyErrorPolicyWithScratch(
 			}
 		}
 	}
-	return post, nil
+	acq.RetryDecision = &decision
+	return chainPostCommit(releasePC, post), nil
 }
 
-func isRetryKind(kind string) bool {
-	return kind == "retry" || kind == "discard_claims_then_retry"
-}
-
-// @concept: wait-set
-func applyResolvedAction(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	acq *acquisition, prior *persistence.NodeRow, resolved node.ResolvedAction,
-	resolution spec.Resolution,
-) error {
-	switch resolution.DispatchDisposition {
-	case spec.DispositionRetry:
-		if prior != nil && prior.State == cascade.NodeStateRunning {
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-				cascade.NodeStateStale, cascade.ReasonPolicyRetry, nil, tx); err != nil {
-				return err
-			}
-		}
-		// @concept: signal
-		if err := emitSignalInTxOnce(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
-			resolution.Signal); err != nil {
-			return err
-		}
-		priorID := acq.DispatchID
-		// @concept: executor
-		scratchInline, scratchHandle, scratchBackend, lerr := args.Queue.LoadScratchInTx(ctx, tx, priorID)
-		if lerr != nil {
-			return fmt.Errorf("load prior scratch: %w", lerr)
-		}
-		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
-			return err
-		}
-		if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:                      acq.NodeID,
-			ExecutorName:                acq.Executor,
-			RequiredClaimProducers:      requiredClaimProducersForAcq(acq),
-			EnqueuedAt:                  args.Clock.Now().Add(time.Duration(resolution.RetryDelayMs) * time.Millisecond),
-			FrameID:                     acq.FrameID,
-			RunScopeID:                  acq.RunScopeID,
-			PriorDispatchID:             &priorID,
-			PriorDispatchDisposition:    "retry_after_error",
-			InitialScratchInline:        scratchInline,
-			InitialScratchHandle:        scratchHandle,
-			InitialScratchHandleBackend: scratchBackend,
-		}, tx); err != nil {
-			// @concept: run-scope
-			if errors.Is(err, persistence.ErrRunScopeClosed) {
-				if args.Logger != nil {
-					args.Logger.Warn("applyResolvedAction retry: skip enqueue: run scope closed",
-						"node_id", acq.NodeID.String(),
-						"run_scope_id", acq.RunScopeID.String())
-				}
-				return nil
-			}
-			return err
-		}
-		return nil
-	case spec.DispositionEnd:
-		if prior != nil && prior.State == cascade.NodeStateRunning {
-			settlingSig := string(resolution.Signal.Type)
-			switch resolution.Color {
-			case spec.ColorFailed:
-				if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-					cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
-					return err
-				}
-			case spec.ColorFresh:
-				if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-					cascade.NodeStateFresh, cascade.ReasonHandlerPass, &settlingSig, tx); err != nil {
-					return err
-				}
-			}
-		}
-		// @concept: cascade
-		// @concept: signal
-		if err := emitSignalInTxOnce(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
-			resolution.Signal); err != nil {
-			return err
-		}
-		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
-			return err
-		}
-		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx)
-	}
-	return nil
-}
-
+// @concept: executor
 func applyTerminalInfraError(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any, scratch []byte, tx persistence.Tx,
 ) (postCommitFn, error) {
-	// @concept: executor
 	if isSubgraphExitNode(acq) {
 		return nil, nil
 	}
-	// @concept: executor
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, scratch); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
-	prior, perr := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
-	if perr != nil && args.Logger != nil {
-		args.Logger.Warn("applyTerminalInfraError: load prior node row failed",
-			"node_id", acq.NodeID.String(),
-			"error", perr.Error())
-	}
 	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
-	// @concept: executor
-	priorID := acq.DispatchID
-	scratchInline, scratchHandle, scratchBackend, lerr := args.Queue.LoadScratchInTx(ctx, tx, priorID)
+	if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, priorCount+1); err != nil {
+		return nil, fmt.Errorf("applyTerminalInfraError: bump retry counter: %w", err)
+	}
+	maxRetries := resolveMaxRetriesCap(args, nil)
+	if acq.NodeDef != nil && acq.NodeDef.MaxRetriesWithoutProgress != nil {
+		maxRetries = *acq.NodeDef.MaxRetriesWithoutProgress
+	}
+	if priorCount+1 >= maxRetries && maxRetries > 0 {
+		return applyInfraGiveUp(ctx, args, acq, errorClass, payload, tx)
+	}
+	infraSig := signalpkg.Signal{
+		Type: signalpkg.TypePath("transient/infra/" + errorClass),
+		Payload: map[string]any{
+			"reason":  errorClass,
+			"details": payload,
+		},
+	}
+	if err := emitSignalInTxOnce(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, infraSig); err != nil {
+		return nil, fmt.Errorf("applyTerminalInfraError: emit signal: %w", err)
+	}
+	acq.RetryDecision = &policyDecision{Kind: "retry", DelayMs: 0, Signal: infraSig}
+	return nil, nil
+}
+
+func applyInfraGiveUp(
+	ctx context.Context, args RunArgs, acq *acquisition,
+	errorClass string, payload map[string]any, tx persistence.Tx,
+) (postCommitFn, error) {
+	releasePC, err := releaseLocksInTx(ctx, args, tx, acq, false, false)
+	if err != nil {
+		return nil, fmt.Errorf("applyInfraGiveUp: %w", err)
+	}
+	settlingSig := "terminal/error/" + errorClass
+	latest, lerr := args.Persist.Nodes().GetLatestRunInScope(ctx, tx, acq.NodeID, acq.RunScopeID)
 	if lerr != nil {
-		return nil, fmt.Errorf("applyTerminalInfraError: load prior scratch: %w", lerr)
+		return nil, fmt.Errorf("applyInfraGiveUp: latest run lookup: %w", lerr)
 	}
-	if err := releaseLocksInTx(ctx, args, tx, acq, false, true); err != nil {
-		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
-	}
-	if prior != nil && prior.State == cascade.NodeStateRunning {
+	if latest != nil && (latest.State == cascade.NodeStateRunning || latest.State == cascade.NodeStateStale) {
 		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-			cascade.NodeStateStale, cascade.ReasonInfraReenqueue, nil, tx); err != nil {
-			return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
+			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
+			return nil, err
 		}
+	}
+	sig := signalpkg.Signal{
+		Type: signalpkg.TypePath(settlingSig),
+		Payload: map[string]any{
+			"reason":  errorClass,
+			"details": payload,
+		},
+	}
+	if err := emitSignalInTxOnce(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
+		return nil, err
+	}
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+		return nil, err
 	}
 	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
-		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
+		return nil, err
 	}
-	if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
-		NodeID:                      acq.NodeID,
-		ExecutorName:                acq.Executor,
-		RequiredClaimProducers:      requiredClaimProducersForAcq(acq),
-		EnqueuedAt:                  args.Clock.Now(),
-		FrameID:                     acq.FrameID,
-		RunScopeID:                  acq.RunScopeID,
-		PriorDispatchID:             &priorID,
-		PriorDispatchDisposition:    "retry_after_error",
-		InitialScratchInline:        scratchInline,
-		InitialScratchHandle:        scratchHandle,
-		InitialScratchHandleBackend: scratchBackend,
-	}, tx); err != nil {
-		// @concept: run-scope
-		if errors.Is(err, persistence.ErrRunScopeClosed) {
-			if args.Logger != nil {
-				args.Logger.Warn("applyTerminalInfraError: skip re-enqueue: run scope closed",
-					"node_id", acq.NodeID.String(),
-					"run_scope_id", acq.RunScopeID.String())
-			}
-		} else {
-			return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
-		}
-	} else {
-		if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, priorCount); err != nil {
-			return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
-		}
-	}
-
+	dispatchID := acq.DispatchID
 	post := func(ctx context.Context) {
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			// @concept: signal
-			infraSig := signalpkg.Signal{
-				Type: signalpkg.TypePath("terminal/infra/" + errorClass),
-				Payload: map[string]any{
-					"reason":  errorClass,
-					"details": payload,
-				},
-			}
 			return signalaudit.EmitSignal(ctx, args.Persist.Events(),
-				acq.InstanceID, acq.NodeID, infraSig, args.Clock.Now(), tx)
+				acq.InstanceID, acq.NodeID, sig, args.Clock.Now(), tx)
 		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("applyTerminalInfraError: emit terminal/infra signal failed",
+			args.Logger.Warn("applyInfraGiveUp: emit terminal signal failed",
 				"node_id", acq.NodeID.String(),
 				"error_class", errorClass,
 				"error", err.Error())
 		}
+		_ = dispatchID
 	}
-	return post, nil
+	acq.RetryDecision = &policyDecision{Kind: "give_up", Signal: sig}
+	return chainPostCommit(releasePC, post), nil
 }
 
 func lookupPolicyForNode(
@@ -322,46 +281,6 @@ func requiredClaimProducersForAcq(acq *acquisition) []string {
 		return nil
 	}
 	return node.RequiredClaimProducers(*acq.NodeDef)
-}
-
-// @concept: error-policy
-// @concept: signal
-func buildResolution(
-	resolved node.ResolvedAction,
-	errorClass string,
-	errorPayload map[string]any,
-	tags []string,
-	retriesSoFar int,
-) spec.Resolution {
-	sig := errorPolicySignal(errorClass, errorPayload, tags, resolved.Kind, retriesSoFar, resolved.DelayMs)
-	switch resolved.Kind {
-	case "retry":
-		return spec.Resolution{
-			Signal:              sig,
-			DispatchDisposition: spec.DispositionRetry,
-			RetryDiscardClaims:  false,
-			RetryDelayMs:        resolved.DelayMs,
-		}
-	case "discard_claims_then_retry":
-		return spec.Resolution{
-			Signal:              sig,
-			DispatchDisposition: spec.DispositionRetry,
-			RetryDiscardClaims:  true,
-			RetryDelayMs:        resolved.DelayMs,
-		}
-	case "pass":
-		return spec.Resolution{
-			Signal:              sig,
-			DispatchDisposition: spec.DispositionEnd,
-			Color:               spec.ColorFresh,
-		}
-	default:
-		return spec.Resolution{
-			Signal:              sig,
-			DispatchDisposition: spec.DispositionEnd,
-			Color:               spec.ColorFailed,
-		}
-	}
 }
 
 // @concept: signal
@@ -411,3 +330,5 @@ func shouldForceRetryLoopGiveUp(ctx context.Context, args RunArgs, acq *acquisit
 	}
 	return count >= maxRetries
 }
+
+var _ = spec.EvaluatorState{}

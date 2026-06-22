@@ -54,6 +54,10 @@ func (f *invTestQueue) ClaimDispatchRow(_ context.Context, _ persistence.Tx, _ s
 	return false, nil
 }
 
+func (f *invTestQueue) PromoteClaimedToRunning(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
+	return false, nil
+}
+
 func (f *invTestQueue) Complete(_ context.Context, _ shared.UUID, _ string) error { return nil }
 
 func (f *invTestQueue) RemoveForNode(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ string) error {
@@ -103,9 +107,9 @@ func (f *invTestQueue) GetMostRecentRunForNodeInScope(ctx context.Context, tx pe
 	return shared.UUID{}, false, nil
 }
 
-func (f *invTestQueue) ListInFlightRunPhases(ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error) {
+func (f *invTestQueue) ListInFlightRunStates(ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error) {
 	if f.real != nil {
-		return f.real.ListInFlightRunPhases(ctx, tx, nodeIDs, frameID, runScopeID)
+		return f.real.ListInFlightRunStates(ctx, tx, nodeIDs, frameID, runScopeID)
 	}
 	return map[shared.UUID][]string{}, nil
 }
@@ -240,9 +244,6 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 		n = row
 		return nil
 	}))
-	if state == cascade.NodeStateFresh {
-		return n
-	}
 	var count int
 	pgtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
@@ -271,16 +272,11 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
 	n.FrameID = &frameID
-	runPhase := "pending"
-	if state == cascade.NodeStateRunning {
-		runPhase = "active"
-	}
 	pgtest.ExecForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-        VALUES (gen_random_uuid(), $1, $2, ARRAY[]::text[], NOW(), $3, $4, $5, $6)
-    `, n.ID, executor, runPhase, string(state), frameID, f.instance.MainRunScopeID)
-	n.State = state
+            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+        VALUES (gen_random_uuid(), $1, $2, ARRAY[]::text[], NOW(), $3, 1, 'cascade', $4, $5)
+    `, n.ID, executor, string(state), frameID, f.instance.MainRunScopeID)
 	return n
 }
 
@@ -300,13 +296,14 @@ func TestRecalculateNode_FreshTarget_IsNoOp(t *testing.T) {
 	eq, _ := f.q.snapshot()
 	require.Empty(t, eq)
 
-	var after *persistence.NodeRow
+	var afterLatest *persistence.NodeRunLatest
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := f.persist.Nodes().Get(ctx, n.ID, tx)
-		after = r
+		r, err := f.persist.Nodes().GetLatestRunForNode(ctx, tx, n.ID)
+		afterLatest = r
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFresh, after.State)
+	require.NotNil(t, afterLatest)
+	require.Equal(t, cascade.NodeStateFresh, afterLatest.State)
 }
 
 func TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp(t *testing.T) {

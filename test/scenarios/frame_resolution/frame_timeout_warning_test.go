@@ -56,8 +56,8 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	mainScopeID := h.GetMainRunScopeID(iid)
 	h.ExecSQL(`
 		INSERT INTO rimsky_node_runs
-		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2, $3)
+		    (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, frame_id, run_scope_id)
+		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'stale', 1, $2, $3)
 	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
 
 	var buf bytes.Buffer
@@ -83,7 +83,7 @@ func TestFrameTimeoutWarning(t *testing.T) {
 		   FROM rimsky_nodes n
 		   LEFT JOIN rimsky_node_runs r
 		          ON r.node_id = n.id
-		         AND r.phase IN ('pending','active','held','parked')
+		         AND r.state IN ('pending','stale','running','held','parked')
 		  WHERE n.id = $1`,
 		[]any{uuid.UUID(worker.ID)}, &nodeState)
 	require.Equal(t, "stale", nodeState,

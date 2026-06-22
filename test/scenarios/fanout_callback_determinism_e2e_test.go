@@ -99,7 +99,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 		err := h.Pool.QueryRow(h.Ctx, `
 			SELECT id FROM rimsky_node_runs
 			 WHERE node_id = $1 AND run_scope_id = $2
-			   AND phase IN ('active', 'held')
+			   AND state IN ('running', 'held')
 		`, parentNode.ID, partitionScopeID).Scan(&dispatchID)
 		return err == nil
 	}, 30*time.Second, 100*time.Millisecond,
@@ -130,12 +130,12 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	require.Eventually(t, func() bool {
 		var phase string
 		err := h.Pool.QueryRow(h.Ctx, `
-			SELECT phase FROM rimsky_node_runs WHERE id = $1
+			SELECT state FROM rimsky_node_runs WHERE id = $1
 		`, dispatchID).Scan(&phase)
 		if err != nil {
 			return false
 		}
-		return phase != "active" && phase != "held"
+		return phase != "running" && phase != "held"
 	}, 30*time.Second, 100*time.Millisecond,
 		"partition-child dispatch row should leave {active, held} after first callback")
 

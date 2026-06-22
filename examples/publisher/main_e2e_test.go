@@ -312,9 +312,6 @@ func postWithHeader(t *testing.T, ep harness.RimskyEndpoint, path string, body a
 }
 
 type nodeStateResponse struct {
-	Node struct {
-		State string `json:"state"`
-	} `json:"node"`
 	Events []struct {
 		Kind string `json:"kind"`
 	} `json:"events"`

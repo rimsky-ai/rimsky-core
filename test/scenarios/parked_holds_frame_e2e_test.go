@@ -29,7 +29,8 @@ type heldFramesResponse struct {
 	} `json:"frames"`
 }
 
-func TestParkedHoldsFrame_EndToEnd(t *testing.T) {
+// @concept: parked-state
+func TestParkedHoldsFrame_TypedMessageDoesNotWake(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
@@ -80,17 +81,14 @@ func TestParkedHoldsFrame_EndToEnd(t *testing.T) {
 	require.True(t, waitForHeldFrame(t, h, iid, parker.ID, 10*time.Second),
 		"held-frames diagnostic should surface the parked node's frame")
 
-	h.Stub.WhenType("parker").Success(map[string]any{"p": 1}, true, "resumed")
-
-	// @decision: test-harness-invalidate-node-retired
 	h.PostInstanceMessage(iid, "test/wake/parker", nil,
 		fmt.Sprintf("test-wake-%s-parker", t.Name()))
 
-	require.True(t, h.WaitForNodeState(parker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"parker should reach fresh after the typed-message wake")
+	require.False(t, h.WaitForNodeState(parker.ID, cascade.NodeStateFresh, 5*time.Second),
+		"parker MUST remain parked after a typed-message cascade arrives — `concept:parked-state` invariant: cascade-driven re-invocation does NOT mutate the parked row")
 
-	require.True(t, waitForInstanceTerminated(t, h, iid, 30*time.Second),
-		"instance must terminate only after the parked work resolves and the frame ends (terminate_after_run)")
+	require.Nil(t, getInstance(t, h, iid).TerminatedAt,
+		"instance must NOT terminate while the parker stays parked, even after the typed-message cascade")
 }
 
 func waitForHeldFrame(t *testing.T, h *scenario.Harness, instanceID, nodeID shared.UUID, timeout time.Duration) bool {

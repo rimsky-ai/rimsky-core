@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -457,14 +458,14 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 				"reason", "run_not_found")
 			return true, nil
 		}
-		if row.Phase != "active" && row.Phase != "held" {
+		if row.State != cascade.NodeStateRunning && row.State != cascade.NodeStateHeld {
 			rejected = true
-			phase = row.Phase
-			ackStatus = ackStatusForPhase(row.Phase)
+			phase = string(row.State)
+			ackStatus = ackStatusForState(row.State)
 			c.Logger.Warn("callback.late_or_stale_run",
 				"dispatch_id", ac.DispatchID.String(),
-				"current_phase", row.Phase,
-				"expected_phase", "active|held")
+				"current_state", string(row.State),
+				"expected_state", "running|held")
 			return true, nil
 		}
 		acq.RunScopeID = row.RunScopeID
@@ -510,11 +511,11 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 	return nil
 }
 
-func ackStatusForPhase(phase string) string {
-	switch phase {
-	case "stale":
+func ackStatusForState(s cascade.NodeState) string {
+	switch s {
+	case cascade.NodeStateStale, cascade.NodeStatePending:
 		return ackStatusRejectedRunStale
-	case "parked":
+	case cascade.NodeStateParked:
 		return ackStatusRejectedRunParked
 	default:
 		return ackStatusRejectedRunTerminal

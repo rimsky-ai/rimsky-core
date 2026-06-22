@@ -28,8 +28,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 
 	cmd, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET phase = 'parked',
-		        claimed_by = NULL,
+		    SET claimed_by = NULL,
 		        claimed_at = NULL,
 		        parked_at = $3,
 		        resume_at = $4,
@@ -38,7 +37,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		        parked_reason_label = NULLIF($7, '')
 		  WHERE id = $1
 		    AND claimed_by = $2
-		    AND phase = 'active'`,
+		    AND state = 'running'`,
 		in.DispatchID, in.ExpectedClaimedBy, in.ParkedAt, resumeAt,
 		in.Reason, in.ReasonNote, in.ReasonLabel,
 	)
@@ -60,7 +59,7 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
-		  WHERE d.phase = 'parked'
+		  WHERE d.state = 'parked'
 		    AND d.resume_at IS NOT NULL
 		    AND d.resume_at <= $1
 		  ORDER BY d.resume_at ASC
@@ -83,7 +82,7 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
-		  WHERE d.phase = 'parked'
+		  WHERE d.state = 'parked'
 		    AND d.max_park_duration_seconds IS NOT NULL
 		    AND d.parked_at IS NOT NULL
 		    AND d.parked_at + (d.max_park_duration_seconds * INTERVAL '1 second') <= $1
@@ -112,7 +111,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-		  WHERE d.phase = 'parked'
+		  WHERE d.state = 'parked'
 		    AND ($1::text IS NULL OR d.parked_reason = $1)
 		  ORDER BY d.parked_at ASC`,
 		reasonArg,
@@ -167,7 +166,7 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, run
 		   FROM rimsky_node_runs d
 		  WHERE d.node_id = $1
 		    AND d.run_scope_id = $2
-		    AND d.phase = 'parked'`,
+		    AND d.state = 'parked'`,
 		nodeID, runScopeID,
 	)
 	r, err := scanOneParkedRow(row)
@@ -186,12 +185,11 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 	}
 	cmd, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET phase = 'pending',
-		        claimed_by = NULL,
+		    SET claimed_by = NULL,
 		        claimed_at = NULL,
 		        resume_at = NULL
 		  WHERE id = $1
-		    AND phase = 'parked'`,
+		    AND state = 'parked'`,
 		dispatchID,
 	)
 	if err != nil {
@@ -253,7 +251,7 @@ func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persis
 		    SET consecutive_retries_no_progress = $3
 		  WHERE node_id = $1
 		    AND run_scope_id = $2
-		    AND phase = 'pending'
+		    AND state = 'stale'
 		    AND claimed_by IS NULL`,
 		nodeID, runScopeID, count,
 	)

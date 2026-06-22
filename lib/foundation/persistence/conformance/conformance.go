@@ -44,21 +44,15 @@ func Suite(
 		t.Run("FanoutPartitionUniqueness", func(t *testing.T) { testRunScopeFanoutPartitionUniqueness(t, factory(t)) })
 		t.Run("ListParentChain", func(t *testing.T) { testRunScopeListParentChain(t, factory(t)) })
 	})
-	t.Run("AffirmNodeRunRow", func(t *testing.T) {
-		t.Run("InsertsWhenNoInFlight", func(t *testing.T) { testAffirmNodeRunRow_InsertsWhenNoInFlight(t, factory(t)) })
-		t.Run("Idempotent", func(t *testing.T) { testAffirmNodeRunRow_Idempotent(t, factory(t)) })
-		t.Run("ErrorsOnClosedScope", func(t *testing.T) { testAffirmNodeRunRow_ErrorsOnClosedScope(t, factory(t)) })
-		t.Run("NoReturnValueDependency", func(t *testing.T) { testAffirmNodeRunRow_NoReturnValueDependency(t, factory(t)) })
-		t.Run("AffirmThenRead", func(t *testing.T) { testAffirmThenRead(t, factory(t)) })
-	})
 	t.Run("RunInFlightLookup", func(t *testing.T) {
 		t.Run("SingleRowPerScopePerNode", func(t *testing.T) { testInFlightLookup_SingleRowPerScopePerNode(t, factory(t)) })
 		t.Run("NoFalsePositiveAcrossScopes", func(t *testing.T) { testInFlightLookup_NoFalsePositiveAcrossScopes(t, factory(t)) })
 		t.Run("ReturnsNoneWhenAbsent", func(t *testing.T) { testInFlightLookup_ReturnsNoneWhenAbsent(t, factory(t)) })
 	})
-	t.Run("ListInFlightRunPhases", func(t *testing.T) {
-		t.Run("PerNodePhases", func(t *testing.T) { testListInFlightRunPhases_PerNodePhases(t, factory(t)) })
+	t.Run("ListInFlightRunStates", func(t *testing.T) {
+		t.Run("PerNodeStates", func(t *testing.T) { testListInFlightRunStates(t, factory(t)) })
 	})
+	t.Run("ListRunsForInstanceByStates", func(t *testing.T) { testListRunsForInstanceByStates(t, factory(t)) })
 	t.Run("RunStateWritesIsolated", func(t *testing.T) {
 		t.Run("UpdateState", func(t *testing.T) { testRunStateWritesIsolated_UpdateState(t, factory(t)) })
 		t.Run("BumpLastProgressAt", func(t *testing.T) { testRunStateWritesIsolated_BumpLastProgressAt(t, factory(t)) })
@@ -146,6 +140,12 @@ func Suite(
 	t.Run("RetentionSweep", func(t *testing.T) {
 		t.Run("ClaimHandles", func(t *testing.T) { testRetentionClaimHandleSweep(t, factory(t)) })
 		t.Run("FrameTrace", func(t *testing.T) { testRetentionFrameTracePrune(t, factory(t)) })
+	})
+	t.Run("CascadeWalkerMethods", func(t *testing.T) {
+		t.Run("TwoLegClaimPromote", func(t *testing.T) { testTwoLegClaimPromoteContract(t, factory(t)) })
+		t.Run("CreateCascadePendingAndFindLatest", func(t *testing.T) { testCreateCascadePendingAndFindLatest(t, factory(t)) })
+		t.Run("LockReceiverCascadeNoDeadlock", func(t *testing.T) { testLockReceiverCascade_NoDeadlock(t, factory(t)) })
+		t.Run("CreateNonCascadeStaleCarriesForward", func(t *testing.T) { testCreateNonCascadeStaleCarriesForward(t, factory(t)) })
 	})
 	t.Run("LineageQueryByParentRunID", func(t *testing.T) { testLineageQueryByParentRunID(t, factory(t)) })
 	t.Run("LineageCountOlderThanMatchesDelete", func(t *testing.T) { testLineageCountOlderThanMatchesDelete(t, factory(t)) })

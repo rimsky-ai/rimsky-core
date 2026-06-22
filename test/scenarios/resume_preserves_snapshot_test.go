@@ -19,7 +19,6 @@ import (
 )
 
 // @story: resume-preserves-snapshot
-// @decision: parked-resume-distinct-state
 func TestResumePreservesSnapshot_DeadlineWakeReusesDispatchTimeBag(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})

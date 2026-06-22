@@ -31,7 +31,9 @@ func TablesFromPoolForTest(pool *pgxpool.Pool) persistence.Tables {
 }
 
 func QueueFromPoolForTest(pool *pgxpool.Pool) persistence.Queue {
-	return newQueue(pool)
+	q := newQueue(pool)
+	q.setTables(newTables(pool))
+	return q
 }
 
 func AdvisoryLockerFromPoolForTest(pool *pgxpool.Pool) persistence.AdvisoryLocker {

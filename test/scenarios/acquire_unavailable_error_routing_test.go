@@ -72,14 +72,15 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
 		"worker should land in failed via error_types: { acquire/unavailable: [give_up] }")
 
-	var wRow *persistence.NodeRow
+	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		wRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		wLatest = r
 		return err
 	}))
-	require.NotNil(t, wRow.SettlingSignalType)
-	require.Contains(t, *wRow.SettlingSignalType, "terminal/error/",
+	require.NotNil(t, wLatest)
+	require.NotNil(t, wLatest.SettlingSignalType)
+	require.Contains(t, *wLatest.SettlingSignalType, "terminal/error/",
 		"give_up should record settling_signal_type=terminal/error/<class>")
 
 	require.Empty(t, h.Stub.Observed(),

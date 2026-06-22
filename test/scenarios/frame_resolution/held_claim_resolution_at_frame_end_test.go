@@ -46,7 +46,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	h.QueryRowSQL(`
 		SELECT id FROM rimsky_node_runs
 		 WHERE node_id = $1 AND frame_id = $2
-		   AND phase IN ('pending','active','held','parked')
+		   AND state IN ('pending','stale','running','held','parked')
 		 ORDER BY enqueued_at DESC LIMIT 1
 	`, []any{uuid.UUID(worker.ID), frameID}, &runID)
 

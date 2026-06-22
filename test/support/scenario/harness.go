@@ -639,23 +639,66 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	}
 }
 
+// @concept: node-run
 func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
 	h.T.Helper()
 	deadline := time.Now().Add(timeout)
 	requireRun := state == cascade.NodeStateFresh
 	for time.Now().Before(deadline) {
-		var n *persistence.NodeRow
+		var latest *persistence.NodeRunLatest
 		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().Get(ctx, nodeID, tx)
-			n = r
+			l, err := h.Persist.Nodes().GetLatestRunForNode(ctx, tx, nodeID)
+			latest = l
 			return err
 		}); err != nil && h.T != nil {
-			h.T.Logf("WaitForNodeState: load node %s failed; retrying next poll: %v", nodeID.String(), err)
+			h.T.Logf("WaitForNodeState: latest-run probe for %s failed; retrying next poll: %v", nodeID.String(), err)
 		}
-		if n != nil && n.State == state {
+		if latest != nil && latest.State == state {
 			if !requireRun || h.hasRunEvent(nodeID) {
 				return true
 			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
+// @concept: node-run
+func (h *Harness) WaitForRunState(runID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
+	h.T.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var row *persistence.NodeRunForGate
+		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+			r, err := h.Persist.Nodes().GetRunForGate(ctx, tx, runID)
+			row = r
+			return err
+		}); err != nil && h.T != nil {
+			h.T.Logf("WaitForRunState: run probe for %s failed: %v", runID.String(), err)
+		}
+		if row != nil && row.State == state {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
+// @concept: node-run
+func (h *Harness) WaitForLatestRunState(nodeID, runScopeID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
+	h.T.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var latest *persistence.NodeRunLatest
+		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+			l, err := h.Persist.Nodes().GetLatestRunInScope(ctx, tx, nodeID, runScopeID)
+			latest = l
+			return err
+		}); err != nil && h.T != nil {
+			h.T.Logf("WaitForLatestRunState: probe failed for node=%s scope=%s: %v", nodeID.String(), runScopeID.String(), err)
+		}
+		if latest != nil && latest.State == state {
+			return true
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -704,7 +747,8 @@ func (h *Harness) WaitForDispatch(nodeID shared.UUID, timeout time.Duration) boo
 	return false
 }
 
-func (h *Harness) WaitForWorkerRequestDeleted(nodeID shared.UUID, timeout time.Duration) bool {
+// @concept: node-run
+func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID, timeout time.Duration) bool {
 	h.T.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -712,7 +756,7 @@ func (h *Harness) WaitForWorkerRequestDeleted(nodeID shared.UUID, timeout time.D
 		err := h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_node_runs
 			  WHERE node_id = $1
-			    AND phase IN ('pending','active','held','parked')`, nodeID,
+			    AND state IN ('pending','stale','running','held','parked')`, nodeID,
 		).Scan(&count)
 		if err == nil && count == 0 {
 			return true
@@ -954,6 +998,9 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 			holds[alias] = entry
 		}
 		nd["holds"] = holds
+	}
+	if n.CascadeMode != "" {
+		nd["cascade_mode"] = n.CascadeMode
 	}
 	return nd
 }

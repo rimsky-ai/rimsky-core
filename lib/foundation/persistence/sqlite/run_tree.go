@@ -28,7 +28,7 @@ func (s *tablesImpl) RunTree() persistence.RunTreeTable { return (*runTreeImpl)(
 func (b *runTreeImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
 const sqliteRunTreeCols = `
-  id, node_id, frame_id, run_scope_id, phase,
+  id, node_id, frame_id, run_scope_id,
   state, settling_signal_type, aggregation_policy`
 
 func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in persistence.CreateRootRunInput) error {
@@ -51,17 +51,26 @@ func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in p
 	if len(policy) > 0 {
 		policyArg = string(policy)
 	}
-	_, err = b.q(tx).ExecContext(ctx,
+	res, err := b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (
-		   id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id,
-		   run_scope_id, state, aggregation_policy
-		 ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, 'stale', ?)
+		   id, node_id, executor_name, required_stores, enqueued_at, frame_id,
+		   run_scope_id, state, creation_reason, sequence, aggregation_policy
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'stale', 'cascade',
+		   COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = ?), 0) + 1,
+		   ?)
 		 ON CONFLICT(id) DO NOTHING`,
 		in.RunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
-		formatTime(time.Now().UTC()), in.FrameID.String(), in.RunScopeID.String(), policyArg,
+		formatTime(time.Now().UTC()), in.FrameID.String(), in.RunScopeID.String(),
+		in.NodeID.String(), in.RunScopeID.String(),
+		policyArg,
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.CreateRootRun: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 1 {
+		if err := (*nodeAttributesImpl)((*tablesImpl)(b)).SnapshotBagForNewRun(ctx, tx, in.RunID, in.NodeID, in.RunScopeID); err != nil {
+			return fmt.Errorf("sqlite.run_tree.CreateRootRun: snapshot bag: %w", err)
+		}
 	}
 	return nil
 }
@@ -86,23 +95,32 @@ func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in 
 	if len(policy) > 0 {
 		policyArg = string(policy)
 	}
-	_, err = b.q(tx).ExecContext(ctx,
+	res, err := b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (
-		   id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id,
-		   run_scope_id, state, aggregation_policy
+		   id, node_id, executor_name, required_stores, enqueued_at, frame_id,
+		   run_scope_id, state, creation_reason, sequence, aggregation_policy
 		 )
-		 SELECT ?, ?, ?, ?, ?, 'pending', ?, ?, 'stale', ?
+		 SELECT ?, ?, ?, ?, ?, ?, ?, 'stale', 'cascade',
+		   COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = ?), 0) + 1,
+		   ?
 		  WHERE NOT EXISTS (
 		    SELECT 1 FROM rimsky_node_runs
 		     WHERE node_id = ? AND run_scope_id = ?
-		       AND phase IN ('pending','active','held','parked')
+		       AND state IN ('running','held','parked')
 		  )`,
 		in.RunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
-		formatTime(time.Now().UTC()), in.FrameID.String(), in.RunScopeID.String(), policyArg,
+		formatTime(time.Now().UTC()), in.FrameID.String(), in.RunScopeID.String(),
+		in.NodeID.String(), in.RunScopeID.String(),
+		policyArg,
 		in.NodeID.String(), in.RunScopeID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.CreateChildRun: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 1 {
+		if err := (*nodeAttributesImpl)((*tablesImpl)(b)).SnapshotBagForNewRun(ctx, tx, in.RunID, in.NodeID, in.RunScopeID); err != nil {
+			return fmt.Errorf("sqlite.run_tree.CreateChildRun: snapshot bag: %w", err)
+		}
 	}
 	return nil
 }
@@ -128,7 +146,7 @@ func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, 
 
 func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
-		`SELECT nr.id, nr.node_id, nr.frame_id, nr.run_scope_id, nr.phase,
+		`SELECT nr.id, nr.node_id, nr.frame_id, nr.run_scope_id,
 		        nr.state, nr.settling_signal_type, nr.aggregation_policy
 		   FROM rimsky_node_runs nr
 		   JOIN rimsky_run_scopes rs ON rs.id = nr.run_scope_id
@@ -197,16 +215,14 @@ func (b *runTreeImpl) UpdateAggregationPolicy(
 func scanSqliteRunTreeRow(s scannable) (*persistence.RunTreeRow, error) {
 	var (
 		idStr, nodeIDStr, frameIDStr, runScopeIDStr string
-		phase                                       string
 		state                                       string
 		settlingSignal                              sql.NullString
 		policyText                                  sql.NullString
 	)
-	if err := s.Scan(&idStr, &nodeIDStr, &frameIDStr, &runScopeIDStr, &phase, &state, &settlingSignal, &policyText); err != nil {
+	if err := s.Scan(&idStr, &nodeIDStr, &frameIDStr, &runScopeIDStr, &state, &settlingSignal, &policyText); err != nil {
 		return nil, err
 	}
 	out := &persistence.RunTreeRow{
-		Phase: phase,
 		State: cascade.NodeState(state),
 	}
 	if settlingSignal.Valid {

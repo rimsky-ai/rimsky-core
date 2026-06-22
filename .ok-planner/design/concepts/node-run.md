@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-The node-run row is the parent row for one execution of one node within a frame. It carries a lifecycle phase across the dispatch arc (pending, active, held, parked, completed), a supervisor binding populated only while the run is actively dispatched, a non-null frame reference, the required-stores list, and the parked-reason metadata when applicable.
+The node-run row is the parent row for one execution of one node within a frame. Its state machine is a single seven-state column (no separate phase column): `pending`, `stale`, `running`, `held`, `parked`, `fresh`, `failed`. The row carries a supervisor binding populated only while the run is actively dispatched, a non-null frame reference, the required-claim-producers list, and the parked-reason metadata when applicable.
 
 The row carries liveness and async-callback fields covering the run's last-progress timestamp and the async-acknowledgement identity. The progress timestamp is bumped by attribute writeback callbacks and by keepalive notifications; the async-acknowledgement identity is populated when the executor returns an await-callback outcome and is consulted by the callback handler to correlate inbound notifications back to the dispatch row.
 
@@ -20,9 +20,56 @@ The row carries the run-tree extension and all state-bearing fields for the node
 
 - A non-null run-scope reference (per `concept:run-scope`). All scoping — parent/child relationship for fan-out, sub-graph membership for delegation — is expressed through this reference chain.
 - An aggregation-policy snapshot — snapshotted from the template-node spec at run creation time; encodes the failure policy for parent-run aggregation.
-- A state field — the node-run's lifecycle state lives entirely here.
+- A state field — the node-run's single unified lifecycle state (see "Seven-state state machine" below).
+- A sequence field — monotonic per (node_id, run_scope_id), assigned at row creation. Drives dispatcher claim order (lowest unblocked sequence wins), the gate evaluator's predecessor lookup for bag composition, and the latest-run lookup that operator surfaces project into the per-state categorical summary (the per-scope monotonicity makes "the latest run for this node in this scope" well-defined across frames — there is no per-frame ordering artifact at this layer).
+- A creation-reason field — `cascade | operator_invalidate | recalculate | message_delivery`. Determines whether the row participates in cascade-walker accumulation (cascade only), goes through `pending` (cascade only), and is subject to per-template `cascade_mode` rules (cascade only). Non-cascade rows are created directly in state `stale` with the carry-forward bag (see `decision:non-cascade-direct-to-stale`). The `message_delivery` reason marks a row created when a named message is delivered to its message-receiver-node; the bag is the message body (not carry-forward), and the run dispatches via the empty-executor `pure_cascade` settle path (see `concept:message`). Policy retry is in-place on the existing row (see `decision:in-place-retry`) — no new row created.
 - A last-outcome field — the gate for cascade-firing.
 - Parked-reason metadata — parked-state taxonomy (see `concept:parked-state`).
+- Policy-evaluation cursor — action-index, retry-counter, and current-error-class fields that hold the per-run error-policy walk state (see `concept:error-policy` and `decision:in-place-retry`). Initialized to zero at row creation; mutated only during executor retry loops on this row.
+
+## Seven-state state machine
+
+| State | Meaning | Bag persisted? | Dispatch-eligible? |
+|---|---|---|---|
+| `pending` | created by cascade walker, waiting for upstream cascades to settle (wait-set draining) | no | no |
+| `stale` | gates cleared, bag built and persisted, ready to dispatch | yes (frozen) | yes (subject to dispatcher serialization gate) |
+| `running` | claimed by dispatcher, executor in flight (includes async-callback wait) | yes (frozen) | no (in-flight) |
+| `held` | executor returned with held=true claim; cascade paused awaiting auto-terminal commit/abandon | yes (frozen) | no (in-flight via held) |
+| `parked` | executor returned park terminal | yes (frozen) | no (in-flight via park) |
+| `fresh` | settled successfully — TERMINAL, no outgoing transitions | yes (final) | no (settled) |
+| `failed` | settled with terminal/error or auto_terminal_abandon — TERMINAL, no outgoing transitions | yes (final) | no (settled) |
+
+Transitions:
+
+```
+pending → stale      (gate_cleared: wait-set drained + no in-flight subscribed upstream)
+pending → failed     (instance_killed)
+
+stale → running      (dispatch_claimed — second leg of the split claim, after the re-read confirms ownership)
+stale → fresh        (pure_cascade, acquire_pass)
+stale → failed       (dispatch_impossible, policy_give_up, instance_killed)
+
+running → fresh      (handler_complete with no active claim participation; handler_pass)
+running → held       (handler_complete or handler_error with active claim participation; fanout_dispatched — fan-out parent has yielded its synchronous dispatch phase and is acquirer of an active claim handle awaiting child aggregation, per `decision:held-as-state-not-phase`)
+running → parked     (handler_park)
+running → failed     (policy_give_up, instance_killed)
+running → running    (policy_retry — in-place loop on this row, claims and bag preserved; see `decision:in-place-retry`)
+
+held → fresh         (auto_terminal_commit — at this moment cascade fires terminal/success)
+held → failed        (auto_terminal_abandon — at this moment cascade fires terminal/error/abandoned)
+held → failed        (instance_killed)
+
+parked → stale       (deadline_resume — bag preserved on the same row, re-eligible for dispatch)
+parked → failed      (park_timeout, instance_killed)
+```
+
+The dispatcher's claim is a two-leg operation: the first leg stamps a non-null claim on the row while leaving state at `stale`; the second leg re-reads the claim out-of-band, then transitions `stale → running` only if the row is still owned by this supervisor. The serialization-gate predicate covers any row with a non-null claim plus all rows in `{held, parked}`, so a stale-with-claim row blocks concurrent claims for the same (node, scope) — there is no "orphan window" where a row is `running` without a claim.
+
+`fresh` and `failed` are terminal — no outgoing transitions. Cascade events targeting a settled (or in-flight) node-run create a NEW node-run instead; they never mutate the existing row.
+
+The in-flight set is `{pending, stale, running, held, parked}`; runs in these states are sealed against cascade-driven mutation per `concept:cascade`'s in-flight-sealed invariant. The dispatcher's serialization gate refuses to claim a stale row if another run for the same (node, run-scope) is in `{running, held, parked}` — `stale` is intentionally excluded, since multiple stales (cascade-driven + non-cascade queued) may coexist and the dispatcher serializes them by `sequence`.
+
+Every dispatch loads its persisted attribute bag (per `concept:attribute`) from its own row (no rebuild-at-dispatch branch). The bag is built at exactly one moment per row: either at the gate evaluator's pending→stale transition (cascade-driven rows; carry-forward + wait-set overlay), or at row creation (non-cascade rows; carry-forward only). The deadline-wake from `parked` reuses the bag that was persisted at the original dispatch — no special "resuming" state, since there is no rebuild branch to gate.
 
 ## Purpose
 
@@ -32,10 +79,16 @@ One queryable lifecycle row per node-run means every cross-process question ("is
 
 ## Boundaries
 
-Owns: the node-run lifecycle phase, candidate-selection inputs, liveness fields (the run's last-progress timestamp and the async-acknowledgement identity), park fields, the node-run's state, and last-outcome; executor-attached opaque scratch bytes per dispatch; the predecessor-dispatch linkage across re-dispatches of the same node. Does NOT own: per-claim ledger rows (see `claim-handle`), per-holder subgraph state (see `claim-handle`), the parent-child run relationship (lives on the run-scope record per `concept:run-scope`). Adjacent: `claim-handle`, `frame`, `supervisor`, `parked-state`, `run-scope`, `terminal-tag`.
+Owns: the seven-state machine and transitions, candidate-selection inputs, liveness fields (the run's last-progress timestamp and the async-acknowledgement identity), park fields, sequence + creation-reason columns; executor-attached opaque scratch bytes per dispatch; the predecessor-dispatch linkage across re-dispatches of the same node. Does NOT own: per-claim ledger rows (see `claim-handle`), per-holder subgraph state (see `claim-handle`), the parent-child run relationship (lives on the run-scope record per `concept:run-scope`), the cascade walker's accumulate-or-queue decision (lives in `concept:cascade`), the gate evaluator's pending→stale transition (lives in `concept:wait-set`), the dispatcher's serialization gate (lives at the dispatcher; conceptually anchored here by the in-flight state set). Adjacent: `claim-handle`, `frame`, `supervisor`, `parked-state`, `run-scope`, `terminal-tag`, `cascade`, `wait-set`.
 
 ## Invariants
 
 - The frame reference is non-null — every node-run carries its frame (frames are the unit of cascade resolution).
 - The supervisor binding is non-null only while the run is actively dispatched.
-- Orphan reaper covers only actively-dispatched rows; parked rows skipped explicitly (settled with respect to liveness). For active rows the orphan signal is the supervisor's dispatch-channel connection state (sync dispatches) or quiet-period exceeded plus absolute-deadline exceeded, each enforced only when the corresponding deadline is non-zero.
+- Orphan reaper covers only actively-dispatched rows; parked, held, and pending rows are skipped explicitly (settled with respect to liveness). For active (running) rows the orphan signal is the supervisor's dispatch-channel connection state (sync dispatches) or quiet-period exceeded plus absolute-deadline exceeded, each enforced only when the corresponding deadline is non-zero.
+- The state column is the single source of truth for lifecycle. No parallel phase column exists.
+- The sequence column is monotonic per (node_id, run_scope_id) and is assigned exactly once at row creation; never rewritten. The latest run for a node within a scope is well-defined across frames.
+- The creation-reason column is set at row creation and never rewritten. It governs whether the row participates in cascade-walker accumulation, goes through pending, and is subject to mode rules.
+- In-flight states (`pending`, `stale`, `running`, `held`, `parked`) are sealed against cascade-driven mutation per `concept:cascade`. Cascade events targeting an in-flight run create a new node-run; never mutate the existing one.
+- Every row's persisted attribute bag (per `concept:attribute`) is built at exactly one moment: at the gate evaluator's pending→stale transition for cascade-driven rows, or at row creation for non-cascade rows. The bag is the executor's input on every invocation of the row, including deadline-wake from `parked` and in-place policy retry.
+- The policy-evaluation cursor (action-index, retry-counter, current-error-class) is per-run state: initialized to zero at row creation and mutated only by error-policy evaluation within the runner loop on this row. A new node-run for the same node starts with a fresh cursor (see `decision:in-place-retry`).

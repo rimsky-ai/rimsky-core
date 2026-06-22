@@ -258,7 +258,7 @@ func (b *breakpointHitsImpl) HasUnresumedPauseHitForInstance(ctx context.Context
 		      AND h.mode = $2
 		      AND h.resumed_at IS NULL
 		      AND h.node_run_id IS NOT NULL
-		      AND r.phase IN ('pending','active','held','parked')
+		      AND r.state IN ('pending','stale','running','held','parked')
 		 )`, instanceID, string(persistence.BreakpointModePause)).Scan(&exists); err != nil {
 		return false, fmt.Errorf("breakpointHits.hasUnresumedPauseHitForInstance: %w", err)
 	}

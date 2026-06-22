@@ -7,7 +7,6 @@ package runtime
 import (
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -79,9 +78,9 @@ func TestSubgraphInternalCascade_RejectsEmptyDelegate(t *testing.T) {
 	}
 }
 
-func TestSubgraphParentSuccessCascade_ReturnsCascadeReason(t *testing.T) {
+func TestSubgraphParentSuccessCascade_ReturnsInternals(t *testing.T) {
 	tmpl := makeSubgraphTemplate("staging-pipeline")
-	internals, reason, err := SubgraphParentSuccessCascade(SubgraphInternalCascadeArgs{
+	internals, err := SubgraphParentSuccessCascade(SubgraphInternalCascadeArgs{
 		Template:          tmpl,
 		DelegateGraphName: "staging-pipeline",
 	})
@@ -90,9 +89,6 @@ func TestSubgraphParentSuccessCascade_ReturnsCascadeReason(t *testing.T) {
 	}
 	if len(internals) != 2 {
 		t.Errorf("internals: %d (want 2)", len(internals))
-	}
-	if reason.Kind != cascade.ReasonSubGraphInternalCascadeFired.Kind {
-		t.Errorf("reason: %+v (want subgraph_internal_cascade_fired)", reason)
 	}
 }
 
@@ -132,12 +128,5 @@ func TestIsSubgraphExit(t *testing.T) {
 	}
 	if IsSubgraphExit(nil, "anything") {
 		t.Errorf("nil tmpl returns false")
-	}
-}
-
-func TestSubgraphParentSuccessCascade_StateMachineTransition(t *testing.T) {
-	_, err := cascade.NextStateParent(cascade.NodeStateRunning, cascade.ReasonSubGraphInternalCascadeFired)
-	if err != nil && !cascade.IsParentAggregateOK(err) {
-		t.Fatalf("state machine rejected running→running under subgraph_internal_cascade_fired: %v", err)
 	}
 }

@@ -921,8 +921,7 @@ type ErrorPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ErrorClass    string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
 	Details       *structpb.Struct       `protobuf:"bytes,2,opt,name=details,proto3" json:"details,omitempty"`
-	ActionTaken   string                 `protobuf:"bytes,3,opt,name=action_taken,json=actionTaken,proto3" json:"action_taken,omitempty"` // "retry" | "invalidate" | "give_up"
-	ActionIndex   int32                  `protobuf:"varint,4,opt,name=action_index,json=actionIndex,proto3" json:"action_index,omitempty"`
+	ActionTaken   string                 `protobuf:"bytes,3,opt,name=action_taken,json=actionTaken,proto3" json:"action_taken,omitempty"`
 	DelayMs       int64                  `protobuf:"varint,5,opt,name=delay_ms,json=delayMs,proto3" json:"delay_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -977,13 +976,6 @@ func (x *ErrorPayload) GetActionTaken() string {
 		return x.ActionTaken
 	}
 	return ""
-}
-
-func (x *ErrorPayload) GetActionIndex() int32 {
-	if x != nil {
-		return x.ActionIndex
-	}
-	return 0
 }
 
 func (x *ErrorPayload) GetDelayMs() int64 {
@@ -2291,13 +2283,12 @@ const file_events_proto_rawDesc = "" +
 	"\x16StateTransitionPayload\x12\x12\n" +
 	"\x04from\x18\x01 \x01(\tR\x04from\x12\x0e\n" +
 	"\x02to\x18\x02 \x01(\tR\x02to\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xc3\x01\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xa0\x01\n" +
 	"\fErrorPayload\x12\x1f\n" +
 	"\verror_class\x18\x01 \x01(\tR\n" +
 	"errorClass\x121\n" +
 	"\adetails\x18\x02 \x01(\v2\x17.google.protobuf.StructR\adetails\x12!\n" +
-	"\faction_taken\x18\x03 \x01(\tR\vactionTaken\x12!\n" +
-	"\faction_index\x18\x04 \x01(\x05R\vactionIndex\x12\x19\n" +
+	"\faction_taken\x18\x03 \x01(\tR\vactionTaken\x12\x19\n" +
 	"\bdelay_ms\x18\x05 \x01(\x03R\adelayMs\"9\n" +
 	"\x12WorkStartedPayload\x12#\n" +
 	"\rsupervisor_id\x18\x01 \x01(\tR\fsupervisorId\"0\n" +

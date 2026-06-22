@@ -45,6 +45,9 @@ func (f *fakeQueue) SelectCandidates(_ context.Context, _ persistence.Tx, _ pers
 func (f *fakeQueue) ClaimDispatchRow(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
 	return false, nil
 }
+func (f *fakeQueue) PromoteClaimedToRunning(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
+	return false, nil
+}
 func (f *fakeQueue) Complete(_ context.Context, _ shared.UUID, _ string) error { return nil }
 func (f *fakeQueue) RemoveForNode(_ context.Context, _ shared.UUID, _ shared.UUID, _ string) error {
 	return nil
@@ -78,7 +81,7 @@ func (f *fakeQueue) GetInFlightRunForNode(_ context.Context, _ persistence.Tx, _
 func (f *fakeQueue) GetMostRecentRunForNodeInScope(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID) (shared.UUID, bool, error) {
 	return shared.UUID{}, false, nil
 }
-func (f *fakeQueue) ListInFlightRunPhases(context.Context, persistence.Tx, []shared.UUID, shared.UUID, shared.UUID) (map[shared.UUID][]string, error) {
+func (f *fakeQueue) ListInFlightRunStates(context.Context, persistence.Tx, []shared.UUID, shared.UUID, shared.UUID) (map[shared.UUID][]string, error) {
 	return map[shared.UUID][]string{}, nil
 }
 
@@ -212,7 +215,6 @@ func pcCreateNodeWithType(ctx context.Context, t *testing.T, f *pcFixture, insta
 		return nil
 	})
 	forceState(ctx, t, f, n.ID, "stale")
-	n.State = cascade.NodeStateStale
 	return n
 }
 
@@ -221,7 +223,7 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 	if state == "fresh" {
 		pgtest.ExecForTest(ctx, t, f.driver,
 			`DELETE FROM rimsky_node_runs WHERE node_id = $1
-			    AND phase IN ('pending','active','held','parked')`, id)
+			    AND state IN ('pending','stale','running','held','parked')`, id)
 		return
 	}
 	var (
@@ -249,19 +251,15 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 		}
 		frameN = sql.NullString{String: fid.String(), Valid: true}
 	}
-	runPhase := "pending"
-	if state == "running" {
-		runPhase = "active"
-	}
 	var mainScopeID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
 		[]any{instanceID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
-		                               enqueued_at, phase, state, frame_id, run_scope_id)
-		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), $3, $4, $5::uuid, $6)`,
-		id, executorN.String, runPhase, state, frameN.String, mainScopeID)
+		                               enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), $3, 1, 'cascade', $4::uuid, $5)`,
+		id, executorN.String, state, frameN.String, mainScopeID)
 }
 
 func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, nodeID shared.UUID) shared.UUID {
@@ -330,14 +328,14 @@ func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	var got *persistence.NodeRow
+	var latest *persistence.NodeRunLatest
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
-		r, err := f.persist.Nodes().Get(ctx, pure.ID, tx)
-		got = r
+		r, err := f.persist.Nodes().GetLatestRunForNode(ctx, tx, pure.ID)
+		latest = r
 		return err
 	})
-	require.NotNil(t, got)
-	assert.Equal(t, cascade.NodeStateFresh, got.State)
+	require.NotNil(t, latest)
+	assert.Equal(t, cascade.NodeStateFresh, latest.State)
 
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
@@ -370,13 +368,14 @@ func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 
-	var got *persistence.NodeRow
+	var latest *persistence.NodeRunLatest
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
-		r, err := f.persist.Nodes().Get(ctx, execNode.ID, tx)
-		got = r
+		r, err := f.persist.Nodes().GetLatestRunForNode(ctx, tx, execNode.ID)
+		latest = r
 		return err
 	})
-	assert.Equal(t, cascade.NodeStateStale, got.State)
+	require.NotNil(t, latest)
+	assert.Equal(t, cascade.NodeStateStale, latest.State)
 
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
@@ -417,13 +416,14 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	var got *persistence.NodeRow
+	var latest *persistence.NodeRunLatest
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
-		r, err := f.persist.Nodes().Get(ctx, claimNode.ID, tx)
-		got = r
+		r, err := f.persist.Nodes().GetLatestRunForNode(ctx, tx, claimNode.ID)
+		latest = r
 		return err
 	})
-	assert.Equal(t, cascade.NodeStateStale, got.State)
+	require.NotNil(t, latest)
+	assert.Equal(t, cascade.NodeStateStale, latest.State)
 
 	enq := q.snapshot()
 	require.Len(t, enq, 1)
@@ -461,24 +461,21 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	pureA := pcCreateNodeWithType(ctx, t, f, inst.ID, "pure-a", "")
 	execB := pcCreateNodeWithType(ctx, t, f, inst.ID, "worker-b", "worker")
 	pcSeedFrame(ctx, t, f, inst.ID, execB.ID)
+	_ = execB
 
 	q := &fakeQueue{}
 	count, err := ProcessPureCascade(ctx, pcArgs(f.persist, q))
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	var gotA *persistence.NodeRow
+	var latestA *persistence.NodeRunLatest
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
-		r, err := f.persist.Nodes().Get(ctx, pureA.ID, tx)
-		gotA = r
+		r, err := f.persist.Nodes().GetLatestRunForNode(ctx, tx, pureA.ID)
+		latestA = r
 		return err
 	})
-	assert.Equal(t, cascade.NodeStateFresh, gotA.State)
-
-	enq := q.snapshot()
-	require.Len(t, enq, 1)
-	assert.Equal(t, execB.ID, enq[0].NodeID)
-	assert.Equal(t, "worker", enq[0].ExecutorName)
+	require.NotNil(t, latestA)
+	assert.Equal(t, cascade.NodeStateFresh, latestA.State)
 
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {

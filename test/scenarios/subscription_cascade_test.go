@@ -138,8 +138,8 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 			h.QueryRowSQL(
 				`SELECT COUNT(*) FROM rimsky_node_runs
 				  WHERE node_id = $1
-				    AND phase IN ('pending','active','held','parked')
-				    AND (claimed_by IS NOT NULL OR phase <> 'pending')`,
+				    AND state IN ('pending','stale','running','held','parked')
+				    AND (claimed_by IS NOT NULL OR state <> 'pending')`,
 				[]any{r.ID}, &ineligibleRowViolations)
 			require.Zerof(t, ineligibleRowViolations,
 				"%s: r's run row was claimed or transitioned out of pending while a subscribed upstream was in-flight", midpoint)
@@ -264,7 +264,7 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 			   FROM rimsky_nodes n
 			   LEFT JOIN rimsky_node_runs r
 			          ON r.node_id = n.id
-			         AND r.phase IN ('pending','active','held','parked')
+			         AND r.state IN ('pending','stale','running','held','parked')
 			  WHERE n.id = $1`, monitor.ID).Scan(&state)
 		require.NoError(t, err)
 		if state != cascade.NodeStateFresh {

@@ -6,7 +6,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
@@ -24,7 +23,6 @@ type ConductorArgs struct {
 	MaxRuntimeDefault     time.Duration
 }
 
-// @decision: three-dispatch-deadlines
 // @decision: three-dispatch-deadlines
 func SweepExecutorDeadlines(ctx context.Context, args ConductorArgs) error {
 	log := args.Logger
@@ -112,50 +110,4 @@ func decideExecutorDeadlineRelease(o persistence.DispatchRow, now time.Time) (st
 		}
 	}
 	return "", lastProgress, ""
-}
-
-func SweepReady(ctx context.Context, args ConductorArgs) error {
-	log := args.Logger
-	if log == nil {
-		log = shared.SilentLogger{}
-	}
-	var ready []persistence.NodeRow
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := args.Persist.Nodes().ListReadyForDispatch(ctx, tx)
-		ready = rows
-		return err
-	}); err != nil {
-		return err
-	}
-	for _, n := range ready {
-		if n.FrameID == nil {
-			log.Debug("tick: ready-sweep skip: node frame_id is nil",
-				"node_id", n.ID.String())
-			continue
-		}
-		if n.RunScopeID == nil {
-			log.Debug("tick: ready-sweep skip: node has no in-flight RunScope",
-				"node_id", n.ID.String())
-			continue
-		}
-		if err := args.Queue.Enqueue(ctx, persistence.DispatchRequest{
-			NodeID:                 n.ID,
-			ExecutorName:           n.Executor,
-			RequiredClaimProducers: []string{},
-			EnqueuedAt:             args.Clock.Now(),
-			FrameID:                *n.FrameID,
-			RunScopeID:             *n.RunScopeID,
-		}); err != nil {
-			// @concept: run-scope
-			if errors.Is(err, persistence.ErrRunScopeClosed) {
-				log.Debug("tick: ready-sweep skip: run scope closed",
-					"node_id", n.ID.String(),
-					"run_scope_id", n.RunScopeID.String())
-				continue
-			}
-			log.Warn("tick: ready-sweep enqueue failed",
-				"node_id", n.ID.String(), "error", err.Error())
-		}
-	}
-	return nil
 }

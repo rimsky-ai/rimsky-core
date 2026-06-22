@@ -32,6 +32,7 @@ Adjacent: `concept:supervisor`, `concept:control-api`, `concept:attribute`, `con
 - The L6 resume overlay applies only to the single dispatch that hit the breakpoint; it never persists into the instance's stored attribute-overrides.
 - An L6 resume overlay on a post-terminal hit is rejected at the resume API as an invalid-overlay error — the dispatch the breakpoint observed has already committed, so the overlay can never feed back into the run; accepting it would silently no-op.
 - Cascade-deletion of a breakpoint (the hit rows are deleted with their parent breakpoint) unblocks any paused runner waiting on a hit of that breakpoint, treating the missing-row case as auto-resume with no overlay.
+- The pre-dispatch checkpoint fires exactly once per dispatch attempt, regardless of how the dispatch's attribute bag was sourced (sealed bag built earlier per `concept:node-run`, full substitution at dispatch, or a schema-less dispatch with no bag at all). Every branch of the dispatcher's attribute-resolution path reaches the checkpoint before the executor invocation.
 
 ## Policy differences from `by_match`
 

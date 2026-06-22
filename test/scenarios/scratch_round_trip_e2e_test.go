@@ -172,7 +172,7 @@ func runDispositionVariant(t *testing.T, disposition string) {
 	harness.QueryRowSQL(`
 		SELECT id::text, frame_id::text, run_scope_id::text
 		  FROM rimsky_node_runs
-		 WHERE node_id = $1 AND phase = 'completed'
+		 WHERE node_id = $1 AND state = 'fresh'
 		 ORDER BY enqueued_at DESC
 		 LIMIT 1`,
 		[]any{n.ID}, &dispatchIDText, &frameIDText, &runScopeIDText)

@@ -19,36 +19,47 @@ import (
 func releaseLocksInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition,
 	success bool, retainLinkedSubClaims bool,
-) error {
+) (postCommitFn, error) {
+	var post postCommitFn
 	for _, lk := range acq.Locks {
-		if err := releaseAcquiredLock(ctx, args, tx, acq, lk, success); err != nil {
-			return err
+		pc, err := releaseAcquiredLock(ctx, args, tx, acq, lk, success)
+		if err != nil {
+			return nil, err
 		}
+		post = chainPostCommit(post, pc)
 	}
 	if !retainLinkedSubClaims {
-		if err := resolveLinkedSubClaimsInTx(ctx, args, tx, acq, success); err != nil {
-			return err
+		pc, err := resolveLinkedSubClaimsInTx(ctx, args, tx, acq, success)
+		if err != nil {
+			return nil, err
 		}
+		post = chainPostCommit(post, pc)
 	}
-	return releaseInheritedClaimsInTx(ctx, args, tx, acq, success)
+	pc, err := releaseInheritedClaimsInTx(ctx, args, tx, acq, success)
+	if err != nil {
+		return nil, err
+	}
+	post = chainPostCommit(post, pc)
+	return post, nil
 }
 
 // @concept: claim-tree
 // @concept: fan-out
 func resolveLinkedSubClaimsInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, success bool,
-) error {
+) (postCommitFn, error) {
 	if args.ClaimHandles == nil {
-		return nil
+		return nil, nil
 	}
 	rows, err := args.ClaimHandles.ListByNodeRun(ctx, acq.DispatchID, tx)
 	if err != nil {
-		return fmt.Errorf("resolveLinkedSubClaims: ListByNodeRun: %w", err)
+		return nil, fmt.Errorf("resolveLinkedSubClaims: ListByNodeRun: %w", err)
 	}
 	released := make(map[shared.UUID]bool, len(acq.Locks))
 	for _, lk := range acq.Locks {
 		released[lk.ClaimHandleID] = true
 	}
+	var post postCommitFn
 	for i := range rows {
 		row := rows[i]
 		if row.ParentClaimHandleID == nil || released[row.ID] {
@@ -63,7 +74,7 @@ func resolveLinkedSubClaimsInTx(
 		}
 		producer, ok := args.StoreRegistry.Get(producerName)
 		if !ok {
-			return fmt.Errorf("resolveLinkedSubClaims: unknown producer %q for sub-claim %s", producerName, row.ID)
+			return nil, fmt.Errorf("resolveLinkedSubClaims: unknown producer %q for sub-claim %s", producerName, row.ID)
 		}
 		outcome := OutcomeCommit
 		if !success {
@@ -77,7 +88,7 @@ func resolveLinkedSubClaimsInTx(
 			ProducerName: producerName,
 			VersionID:    row.VersionID,
 		}
-		if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
 			ClaimHandleID:       row.ID,
 			SupervisorID:        args.SupervisorID,
 			Source:              ActiveTerminal,
@@ -90,52 +101,58 @@ func resolveLinkedSubClaimsInTx(
 			ProducerName:        producerName,
 			LineageHint:         hint,
 			ParentClaimHandleID: row.ParentClaimHandleID,
-		}); err != nil {
-			return fmt.Errorf("resolveLinkedSubClaims: sub-claim %s: %w", row.ID, err)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("resolveLinkedSubClaims: sub-claim %s: %w", row.ID, err)
 		}
+		post = chainPostCommit(post, pc)
 	}
-	return nil
+	return post, nil
 }
 
 func releaseAcquiredLock(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	acq *acquisition, lk AcquiredLock, success bool,
-) error {
+) (postCommitFn, error) {
 	switch sp := lk.Spec.(type) {
 	case locks.NamedLockSpec:
 		_ = sp
 		if err := args.ClaimHandles.Delete(ctx, lk.ClaimHandleID, args.SupervisorID, tx); err != nil {
-			return fmt.Errorf("releaseAcquiredLock: named Delete: %w", err)
+			return nil, fmt.Errorf("releaseAcquiredLock: named Delete: %w", err)
 		}
-		return emitLockReleased(ctx, args, tx, acq, lk, releaseActionString(success))
+		return nil, emitLockReleased(ctx, args, tx, acq, lk, releaseActionString(success))
 	case claimproducer.ClaimSpec:
 		return releaseClaim(ctx, args, tx, acq, lk, sp, success)
 	}
-	return fmt.Errorf("releaseAcquiredLock: unknown spec %T", lk.Spec)
+	return nil, fmt.Errorf("releaseAcquiredLock: unknown spec %T", lk.Spec)
 }
 
 func releaseClaim(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	acq *acquisition, lk AcquiredLock, claimSpec claimproducer.ClaimSpec, success bool,
-) error {
+) (postCommitFn, error) {
 	held := isAliasHeld(acq.HeldSubgraphs, acq.NodeType, claimSpec.Alias)
 	if held {
 		if err := markClaimHolderForRun(ctx, args, tx, lk.ClaimHandleID, acq.DispatchID, success); err != nil {
-			return err
+			return nil, err
 		}
 		if !success {
 			if err := args.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, lk.ClaimHandleID, args.SupervisorID, tx); err != nil {
-				return fmt.Errorf("releaseClaim: fail inheritors: %w", err)
+				return nil, fmt.Errorf("releaseClaim: fail inheritors: %w", err)
 			}
 		}
-		if err := CheckAndFireResolution(ctx, args, tx, lk.ClaimHandleID); err != nil {
-			return err
+		pc, err := CheckAndFireResolution(ctx, args, tx, lk.ClaimHandleID)
+		if err != nil {
+			return nil, err
 		}
-		return emitLockReleased(ctx, args, tx, acq, lk, "held_marked")
+		if err := emitLockReleased(ctx, args, tx, acq, lk, "held_marked"); err != nil {
+			return nil, err
+		}
+		return pc, nil
 	}
 	row, err := args.ClaimHandles.Get(ctx, lk.ClaimHandleID, tx)
 	if err != nil {
-		return fmt.Errorf("releaseClaim: load scope/address: %w", err)
+		return nil, fmt.Errorf("releaseClaim: load scope/address: %w", err)
 	}
 	var (
 		scope   []byte
@@ -174,7 +191,7 @@ func releaseClaim(
 		}
 		parentClaimHandleID = row.ParentClaimHandleID
 	}
-	if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+	pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
 		ClaimHandleID:       lk.ClaimHandleID,
 		SupervisorID:        args.SupervisorID,
 		Source:              ActiveTerminal,
@@ -187,28 +204,35 @@ func releaseClaim(
 		ProducerName:        producerName,
 		LineageHint:         hint,
 		ParentClaimHandleID: parentClaimHandleID,
-	}); err != nil {
-		return fmt.Errorf("releaseClaim: %w", err)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("releaseClaim: %w", err)
 	}
-	return emitLockReleased(ctx, args, tx, acq, lk, verbAction)
+	if err := emitLockReleased(ctx, args, tx, acq, lk, verbAction); err != nil {
+		return nil, err
+	}
+	return pc, nil
 }
 
 func releaseInheritedClaimsInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, success bool,
-) error {
+) (postCommitFn, error) {
 	inherited, err := findInheritedAliasesForRun(ctx, args, tx, acq.HeldSubgraphs, acq.NodeType, acq.DispatchID, acq.InstanceID)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var post postCommitFn
 	for _, ia := range inherited {
 		if err := markClaimHolderForRun(ctx, args, tx, ia.ClaimHandleID, acq.DispatchID, success); err != nil {
-			return err
+			return nil, err
 		}
-		if err := CheckAndFireResolution(ctx, args, tx, ia.ClaimHandleID); err != nil {
-			return err
+		pc, err := CheckAndFireResolution(ctx, args, tx, ia.ClaimHandleID)
+		if err != nil {
+			return nil, err
 		}
+		post = chainPostCommit(post, pc)
 	}
-	return nil
+	return post, nil
 }
 
 func releaseActionString(success bool) string {

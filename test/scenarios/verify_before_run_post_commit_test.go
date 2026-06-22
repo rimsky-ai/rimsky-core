@@ -43,8 +43,8 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	dispatchID := uuid.New()
 	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id)
-		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', $3, $4)`,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, sequence)
+		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', $3, $4, 1)`,
 		dispatchID, n.ID, *n.FrameID, mainScopeID,
 	)
 	require.NoError(t, err)
@@ -87,13 +87,14 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	require.False(t, out.Ran,
 		"verify-before-run must bail (Ran=false) when the claim was stolen between commit and the verify-read")
 
-	var got *persistence.NodeRow
+	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, gerr := h.Persist.Nodes().Get(h.Ctx, n.ID, tx)
-		got = r
+		r, gerr := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, n.ID)
+		latest = r
 		return gerr
 	}))
-	require.Equal(t, cascade.NodeStateStale, got.State,
+	require.NotNil(t, latest)
+	require.Equal(t, cascade.NodeStateStale, latest.State,
 		"node must remain stale — the verify bail fired before the running transition / dispatch")
 
 	var terminalCount int

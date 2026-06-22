@@ -37,11 +37,25 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		sourceStr = args.SourceNodeID.String()
 	}
 
-	var target *persistence.NodeRow
+	var (
+		target *persistence.NodeRow
+		latest *persistence.NodeRunLatest
+	)
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		t, err := sb.Nodes().Get(ctx, args.TargetNodeID, tx)
+		if err != nil {
+			return err
+		}
 		target = t
-		return err
+		if t == nil {
+			return nil
+		}
+		l, err := sb.Nodes().GetLatestRunForNode(ctx, tx, args.TargetNodeID)
+		if err != nil {
+			return err
+		}
+		latest = l
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -61,20 +75,17 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			},
 		}, tx)
 	})
-	if target.State != cascade.NodeStateStale {
+	if latest == nil || latest.State != cascade.NodeStateStale {
 		return nil
 	}
 
 	if target.FrameID == nil {
 		return nil
 	}
+	runScopeID := latest.RunScopeID
 	var pending int
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if target.RunScopeID == nil {
-			pending = 0
-			return nil
-		}
-		runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, target.ID, *target.RunScopeID)
+		runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, target.ID, runScopeID)
 		if err != nil {
 			return err
 		}
@@ -98,19 +109,17 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	if target.Executor == "" {
 		return nil
 	}
-	if target.FrameID == nil {
-		log.Debug("RecalculateNode: skip enqueue: target frame_id is nil",
-			"node_id", target.ID.String())
-		return nil
-	}
-	var runScopeID shared.UUID
-	if target.RunScopeID != nil {
-		runScopeID = *target.RunScopeID
-	}
 	// @concept: executor
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		priorDispatchID := target.InFlightRunID
-		inFlightTarget := target.InFlightRunID != nil
+		var priorDispatchID *shared.UUID
+		inFlightTarget := false
+		if inFlightID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, target.ID, runScopeID); err != nil {
+			return err
+		} else if ok {
+			idCopy := inFlightID
+			priorDispatchID = &idCopy
+			inFlightTarget = true
+		}
 		if priorDispatchID == nil {
 			recentID, ok, err := args.Queue.GetMostRecentRunForNodeInScope(ctx, tx, target.ID, runScopeID)
 			if err != nil {
@@ -142,6 +151,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			InitialScratchInline:        scratchInline,
 			InitialScratchHandle:        scratchHandle,
 			InitialScratchHandleBackend: scratchBackend,
+			CreationReason:              cascade.CreationReasonRecalculate,
 		}, tx)
 	}); err != nil {
 		if errors.Is(err, persistence.ErrRunScopeClosed) {

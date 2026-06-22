@@ -101,6 +101,102 @@ func (b *waitSetImpl) ListDrainedAttributeRowsForReceiver(
 	return collectWaitSetRows(rows)
 }
 
+// @concept: cascade
+// @decision: walker-rule-per-sender-node
+func (b *waitSetImpl) ListSenderNodesForReceiver(
+	ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx,
+) ([]shared.UUID, error) {
+	rows, err := b.q(tx).QueryContext(ctx,
+		`SELECT DISTINCT r.node_id
+		   FROM rimsky_wait_set w
+		   JOIN rimsky_node_runs r ON r.id = w.sender_run_id
+		  WHERE w.frame_id = ? AND w.receiver_run_id = ?`,
+		frameID, receiverRunID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ListSenderNodesForReceiver: %w", err)
+	}
+	defer rows.Close()
+	var out []shared.UUID
+	for rows.Next() {
+		var idStr string
+		if err := rows.Scan(&idStr); err != nil {
+			return nil, fmt.Errorf("ListSenderNodesForReceiver: scan: %w", err)
+		}
+		id, err := parseUUID(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("ListSenderNodesForReceiver: parse: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// @concept: cascade
+// @decision: walker-rule-per-sender-node
+func (b *waitSetImpl) HasRowForSenderRun(
+	ctx context.Context, frameID, receiverRunID, senderRunID shared.UUID, tx persistence.Tx,
+) (bool, error) {
+	var n int
+	err := b.q(tx).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM rimsky_wait_set
+		  WHERE frame_id = ? AND receiver_run_id = ? AND sender_run_id = ?`,
+		frameID, receiverRunID, senderRunID,
+	).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("HasRowForSenderRun: %w", err)
+	}
+	return n > 0, nil
+}
+
+// @concept: cascade
+func (b *waitSetImpl) ListPendingReceiversForDrainedSender(
+	ctx context.Context, frameID, senderRunID shared.UUID, tx persistence.Tx,
+) ([]shared.UUID, error) {
+	rows, err := b.q(tx).QueryContext(ctx,
+		`SELECT DISTINCT w.receiver_run_id
+		   FROM rimsky_wait_set w
+		   JOIN rimsky_node_runs r ON r.id = w.receiver_run_id
+		  WHERE w.frame_id = ? AND w.sender_run_id = ?
+		    AND r.state = 'pending'
+		    AND r.creation_reason = 'cascade'`,
+		frameID, senderRunID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ListPendingReceiversForDrainedSender: %w", err)
+	}
+	defer rows.Close()
+	var out []shared.UUID
+	for rows.Next() {
+		var idStr string
+		if err := rows.Scan(&idStr); err != nil {
+			return nil, fmt.Errorf("ListPendingReceiversForDrainedSender: scan: %w", err)
+		}
+		id, err := parseUUID(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("ListPendingReceiversForDrainedSender: parse: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// @concept: cascade
+func (b *waitSetImpl) HasUndrainedRowsForReceiver(
+	ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx,
+) (bool, error) {
+	var n int
+	err := b.q(tx).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM rimsky_wait_set
+		  WHERE frame_id = ? AND receiver_run_id = ? AND drained_at IS NULL`,
+		frameID, receiverRunID,
+	).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("HasUndrainedRowsForReceiver: %w", err)
+	}
+	return n > 0, nil
+}
+
 func collectWaitSetRows(rows *sql.Rows) ([]persistence.WaitSetRow, error) {
 	out := []persistence.WaitSetRow{}
 	for rows.Next() {

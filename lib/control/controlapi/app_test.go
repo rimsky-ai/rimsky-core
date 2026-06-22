@@ -447,13 +447,22 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	status, _ = h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusOK, status)
 
-	var loaded *persistence.NodeRow
+	var (
+		loaded *persistence.NodeRow
+		latest *persistence.NodeRunLatest
+	)
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := h.persist.Nodes().Get(ctx, nodeRow.ID, tx)
+		if err != nil {
+			return err
+		}
 		loaded = r
+		l, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, nodeRow.ID)
+		latest = l
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFailed, loaded.State)
+	require.NotNil(t, latest)
+	require.Equal(t, cascade.NodeStateFailed, latest.State)
 	require.Nil(t, loaded.FrameID)
 
 	// @story: node-admin

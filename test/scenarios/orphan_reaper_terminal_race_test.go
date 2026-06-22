@@ -59,8 +59,8 @@ func startReaperRaceFixture(t *testing.T) *reaperRaceFixture {
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE node_id = $1`, worker.ID)
 	runID := uuid.New()
 	h.ExecSQL(
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, phase)
-		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '10 minutes', $3, $4, 'completed')`,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, state, creation_reason, sequence)
+		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '10 minutes', $3, $4, 'fresh', 'cascade', 1)`,
 		runID, worker.ID, *worker.FrameID, mainScopeID,
 	)
 	chID := uuid.New()
@@ -99,8 +99,9 @@ func startReaperRaceFixture(t *testing.T) *reaperRaceFixture {
 
 func (f *reaperRaceFixture) releaseTerminal(t *testing.T, ctx context.Context) error {
 	t.Helper()
-	return f.h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.ResolveClaimHandleTerminal(ctx, f.args, tx, runtime.TerminalDecision{
+	var post func(context.Context)
+	if err := f.h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, f.args, tx, runtime.TerminalDecision{
 			ClaimHandleID: f.chID,
 			SupervisorID:  f.owner,
 			Source:        runtime.ActiveTerminal,
@@ -110,7 +111,15 @@ func (f *reaperRaceFixture) releaseTerminal(t *testing.T, ctx context.Context) e
 			Address:       []byte(`"@thing"`),
 			ProducerName:  "reap-store",
 		})
-	})
+		post = pc
+		return err
+	}); err != nil {
+		return err
+	}
+	if post != nil {
+		post(ctx)
+	}
+	return nil
 }
 
 func (f *reaperRaceFixture) countStoreVerb(verb string) int {

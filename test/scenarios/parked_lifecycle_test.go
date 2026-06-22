@@ -50,11 +50,11 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	var phase string
 	var resumeAtStored *time.Time
 	h.QueryRowSQL(
-		`SELECT phase, resume_at FROM rimsky_node_runs WHERE node_id = $1`,
+		`SELECT state, resume_at FROM rimsky_node_runs WHERE node_id = $1`,
 		[]any{worker.ID},
 		&phase, &resumeAtStored,
 	)
-	require.Equal(t, "parked", phase, "node-run should be in parked phase")
+	require.Equal(t, "parked", phase, "node-run should be in parked state")
 	require.NotNil(t, resumeAtStored, "resume_at should be persisted")
 	t.Logf("parked row: phase=%s resume_at=%v (now=%v, resume_at-now=%v)",
 		phase, *resumeAtStored, time.Now(), time.Until(*resumeAtStored))
@@ -166,11 +166,11 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	var phase string
 	var parkedReason *string
 	h.QueryRowSQL(
-		`SELECT phase, parked_reason FROM rimsky_node_runs WHERE node_id = $1`,
+		`SELECT state, parked_reason FROM rimsky_node_runs WHERE node_id = $1`,
 		[]any{acq.ID},
 		&phase, &parkedReason,
 	)
-	require.Equal(t, "parked", phase, "node-run must be in parked phase")
+	require.Equal(t, "parked", phase, "node-run must be in parked state")
 	require.NotNil(t, parkedReason, "parked_reason must survive parked transition")
 	require.Equal(t, "snooze", *parkedReason,
 		"parked_reason should store the enum form (snake_case); TIME_WAIT collapsed to SNOOZE per the 2026-05-22 ParkReason collapse")
@@ -191,10 +191,10 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.True(t, h.WaitForNodeState(inh.ID, cascade.NodeStateFresh, 30*time.Second),
 		"inheritor should reach fresh after acquirer commits")
 
-	require.True(t, h.WaitForWorkerRequestDeleted(acq.ID, 30*time.Second),
-		"acquirer node-run should be deleted after resume completes")
-	require.True(t, h.WaitForWorkerRequestDeleted(inh.ID, 30*time.Second),
-		"inheritor node-run should be deleted after completion")
+	require.True(t, h.WaitForAllRunsTerminal(acq.ID, 30*time.Second),
+		"acquirer node-runs should all reach a terminal state after resume completes")
+	require.True(t, h.WaitForAllRunsTerminal(inh.ID, 30*time.Second),
+		"inheritor node-runs should all reach a terminal state after completion")
 
 	var activeCount int
 	deadline := time.Now().Add(30 * time.Second)
@@ -277,8 +277,8 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 		"watchdog should fire park_timeout")
 	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateFailed, 30*time.Second),
 		"acquirer should land in failed after park_timeout")
-	require.True(t, h.WaitForWorkerRequestDeleted(acq.ID, 30*time.Second),
-		"node-run should be deleted after timeout abandon")
+	require.True(t, h.WaitForAllRunsTerminal(acq.ID, 30*time.Second),
+		"all acquirer node-runs should reach a terminal state after timeout abandon")
 
 	var abandonedCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,

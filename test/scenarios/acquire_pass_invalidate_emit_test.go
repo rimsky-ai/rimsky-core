@@ -94,11 +94,12 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 	require.Equal(t, 0, workerObserved,
 		"worker's executor must not be invoked when error_types: { acquire/unavailable: [pass] } fires")
 
-	var wRow *persistence.NodeRow
+	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		wRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		wLatest = r
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFresh, wRow.State)
+	require.NotNil(t, wLatest)
+	require.Equal(t, cascade.NodeStateFresh, wLatest.State)
 }

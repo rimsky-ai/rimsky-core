@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -96,7 +97,8 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		if !ok {
 			t.Errorf("ClaimDispatchRow returned !ok on unclaimed row")
 		}
-		return nil
+		_, err = q.PromoteClaimedToRunning(ctx, tx, dispatchID, supID)
+		return err
 	}); err != nil {
 		t.Fatalf("claim tx: %v", err)
 	}
@@ -145,6 +147,10 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := store.Nodes().UpdateState(ctx, fix.NodeID, fix.MainRunScopeID,
+			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx); err != nil {
+			return err
+		}
 		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, supID, tx)
 	}); err != nil {
 		t.Fatalf("RemoveForNodeInTx commit: %v", err)

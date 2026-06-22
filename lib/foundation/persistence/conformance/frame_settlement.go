@@ -42,6 +42,12 @@ func framePendingForInstance(
 
 func completeRunAdmin(ctx context.Context, t *testing.T, d persistence.Database, runID shared.UUID) {
 	t.Helper()
+	store := d.Tables()
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return forceRunStateToFresh(ctx, tx, store, runID)
+	}); err != nil {
+		t.Fatalf("completeRunAdmin: forceRunStateToFresh(%s): %v", runID, err)
+	}
 	if err := d.Queue().Complete(ctx, runID, ""); err != nil {
 		t.Fatalf("Queue.Complete(%s): %v", runID, err)
 	}
@@ -70,7 +76,8 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 		if !ok {
 			t.Fatalf("claim for park failed")
 		}
-		return nil
+		_, err = q.PromoteClaimedToRunning(ctx, tx, runID, frameSettlementSup)
+		return err
 	}); err != nil {
 		t.Fatalf("claim tx: %v", err)
 	}
@@ -84,7 +91,7 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		resumed, err := q.ResumeParkedInTx(ctx, tx, runID)
+		resumed, err := resumeRunInTx(ctx, d, tx, runID)
 		if err != nil {
 			return err
 		}
@@ -107,10 +114,6 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 	nodeB := seedExtraNode(ctx, t, d, fix, "settlement-node-b")
 	runB := seedClaimedRunForNode(ctx, t, d, fix, nodeB, frameSettlementSup)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.Nodes().UpdateState(ctx, nodeB, fix.MainRunScopeID,
-			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx); err != nil {
-			return err
-		}
 		return store.Nodes().UpdateState(ctx, nodeB, fix.MainRunScopeID,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx)
 	}); err != nil {
@@ -142,16 +145,7 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 
 	_ = seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, frameSettlementSup)
 	if hasFailed(fix.FrameID) {
-		t.Fatalf("HasFailedNode = true with only a claimed stale run")
-	}
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().UpdateState(ctx, fix.NodeID, fix.MainRunScopeID,
-			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
-	}); err != nil {
-		t.Fatalf("UpdateState(running): %v", err)
-	}
-	if hasFailed(fix.FrameID) {
-		t.Fatalf("HasFailedNode = true with only a running run")
+		t.Fatalf("HasFailedNode = true with only a claimed running run")
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -232,7 +226,6 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 	frames := store.Frames()
-	q := d.Queue()
 
 	markIfDone := func(instanceID shared.UUID) {
 		t.Helper()
@@ -292,7 +285,7 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 		t.Fatalf("InsertFrame(queued): %v", err)
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := q.ResumeParkedInTx(ctx, tx, runID)
+		_, err := resumeRunInTx(ctx, d, tx, runID)
 		return err
 	}); err != nil {
 		t.Fatalf("ResumeParkedInTx: %v", err)
@@ -399,7 +392,8 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 		if !ok {
 			t.Fatalf("claim failed")
 		}
-		return nil
+		_, err = q.PromoteClaimedToRunning(ctx, tx, runID, frameSettlementSup)
+		return err
 	}); err != nil {
 		t.Fatalf("claim tx: %v", err)
 	}
@@ -469,7 +463,8 @@ func testFrameSettlementStuckFrames(
 		if !ok {
 			t.Fatalf("claim failed")
 		}
-		return nil
+		_, err = q.PromoteClaimedToRunning(ctx, tx, runID, frameSettlementSup)
+		return err
 	}); err != nil {
 		t.Fatalf("claim tx: %v", err)
 	}

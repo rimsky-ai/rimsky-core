@@ -17,28 +17,28 @@ import (
 func CheckAndFireResolution(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	claimHandleID shared.UUID,
-) error {
+) (postCommitFn, error) {
 	row, err := args.ClaimHandles.LockForUpdate(ctx, claimHandleID, tx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if row == nil {
-		return nil
+		return nil, nil
 	}
 	if row.HolderSupervisorID == nil || *row.HolderSupervisorID != args.SupervisorID {
-		return nil
+		return nil, nil
 	}
 	// @concept: claim-handle
 	if row.State != spec.ClaimHandleStateActive {
-		return nil
+		return nil, nil
 	}
 
 	holders, err := args.Persist.ClaimHolders().ListByClaimHandleID(ctx, claimHandleID, tx)
 	if err != nil {
-		return fmt.Errorf("CheckAndFireResolution: ListByClaimHandleID: %w", err)
+		return nil, fmt.Errorf("CheckAndFireResolution: ListByClaimHandleID: %w", err)
 	}
 	if len(holders) == 0 {
-		return nil
+		return nil, nil
 	}
 	anyActive, anyFailed := false, false
 	for _, h := range holders {
@@ -50,15 +50,15 @@ func CheckAndFireResolution(
 		}
 	}
 	if anyActive {
-		return nil
+		return nil, nil
 	}
 	if !anyFailed {
 		expectedMissing, err := expectedInheritorsMissing(ctx, args, tx, row, holders)
 		if err != nil {
-			return fmt.Errorf("CheckAndFireResolution: expected-inheritor check: %w", err)
+			return nil, fmt.Errorf("CheckAndFireResolution: expected-inheritor check: %w", err)
 		}
 		if expectedMissing {
-			return nil
+			return nil, nil
 		}
 	}
 
@@ -68,7 +68,7 @@ func CheckAndFireResolution(
 	}
 	producer, ok := args.StoreRegistry.Get(producerName)
 	if !ok {
-		return fmt.Errorf("CheckAndFireResolution: unknown producer %q", producerName)
+		return nil, fmt.Errorf("CheckAndFireResolution: unknown producer %q", producerName)
 	}
 	outcome := OutcomeCommit
 	if anyFailed {
@@ -77,7 +77,7 @@ func CheckAndFireResolution(
 	if row.ExpectedChildrenCount > 0 && !anyFailed {
 		resolved := row.CommittedChildrenCount + row.AbandonedChildrenCount
 		if resolved < row.ExpectedChildrenCount {
-			return nil
+			return nil, nil
 		}
 		outcome = aggregateParentOutcome(row, outcome)
 	}
@@ -112,17 +112,18 @@ func CheckAndFireResolution(
 		LineageHint:         hint,
 		ParentClaimHandleID: row.ParentClaimHandleID,
 	}
-	if err := ResolveClaimHandleTerminal(ctx, args, tx, td); err != nil {
+	pc, err := ResolveClaimHandleTerminal(ctx, args, tx, td)
+	if err != nil {
 		// @concept: error-policy
 		if cls := producerErrorClassOf(err); cls != "" {
 			if rerr := routeHeldClaimVerbError(ctx, args, tx, row, td, cls); rerr != nil {
-				return fmt.Errorf("CheckAndFireResolution: route verb error: %w", rerr)
+				return nil, fmt.Errorf("CheckAndFireResolution: route verb error: %w", rerr)
 			}
-			return nil
+			return nil, nil
 		}
-		return fmt.Errorf("CheckAndFireResolution: %w", err)
+		return nil, fmt.Errorf("CheckAndFireResolution: %w", err)
 	}
-	return nil
+	return pc, nil
 }
 
 // @concept: error-policy

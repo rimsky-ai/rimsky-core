@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -58,9 +57,6 @@ type acquisition struct {
 	// @concept: run-scope
 	PriorDispatchDisposition string
 
-	// @concept: parked-state
-	IsResume bool
-
 	FrameID                    shared.UUID
 	Locks                      []AcquiredLock
 	NodeDef                    *node.TemplateNodeDef
@@ -78,6 +74,9 @@ type acquisition struct {
 
 	ErroredSpec        claimproducer.ClaimSpec
 	ProducerErrorClass string
+
+	// @concept: error-policy
+	RetryDecision *policyDecision
 
 	SubClaims []SubClaim
 
@@ -179,7 +178,15 @@ func tryAcquireBatch(
 			handleOrphanedClaim(ctx, args, acq)
 			return acquisition{}, false, nil
 		}
-		if err := transitionToRunning(ctx, args, acq); err != nil {
+		var promoted bool
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			p, err := args.Queue.PromoteClaimedToRunning(ctx, tx, acq.DispatchID, args.SupervisorID)
+			promoted = p
+			return err
+		}); err != nil {
+			return acquisition{}, false, fmt.Errorf("tryAcquire: PromoteClaimedToRunning: %w", err)
+		}
+		if !promoted {
 			handleOrphanedClaim(ctx, args, acq)
 			return acquisition{}, false, nil
 		}
@@ -322,13 +329,7 @@ func tryAcquire(
 		}
 		runScopeID = row.RunScopeID
 	}
-	gated, err := candidateGatedByInFlightUpstream(ctx, args, tx, nd, inst, cand, runScopeID)
-	if err != nil {
-		return acquisition{}, false, fmt.Errorf("tryAcquire: upstream gate: %w", err)
-	}
-	if gated {
-		return acquisition{}, false, nil
-	}
+	// @decision: walker-rule-per-sender-node
 	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst, cand.DispatchID, cand.FrameID, runScopeID)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
@@ -428,7 +429,6 @@ func tryAcquire(
 		RunScopeID:                runScopeID,
 		PriorDispatchID:           cand.PriorDispatchID,
 		PriorDispatchDisposition:  cand.PriorDispatchDisposition,
-		IsResume:                  cand.PreClaimState == string(cascade.NodeStateResuming),
 		FrameID:                   cand.FrameID,
 		Locks:                     acquiredLocks,
 		NodeDef:                   nodeDef,

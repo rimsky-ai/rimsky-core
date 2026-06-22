@@ -89,10 +89,10 @@ func (nopPrinter) Finalize()                                                    
 
 func TestWaitForInstancesTerminal_ReturnsOnAllTerminal(t *testing.T) {
 	client := newFakeClient()
-	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", State: "running"}}})
-	client.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "a-n1", State: "success"}}})
-	client.script("b", fakeFrame{inst: cli.Instance{ID: "b"}, nodes: []cli.Node{{ID: "b-n1", State: "running"}}})
-	client.script("b", fakeFrame{inst: cli.Instance{ID: "b", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "b-n1", State: "success"}}})
+	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}}}})
+	client.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{FreshCount: 1}}}})
+	client.script("b", fakeFrame{inst: cli.Instance{ID: "b"}, nodes: []cli.Node{{ID: "b-n1", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}}}})
+	client.script("b", fakeFrame{inst: cli.Instance{ID: "b", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "b-n1", RunSummary: &cli.NodeRunSummary{FreshCount: 1}}}})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -111,8 +111,8 @@ func TestWaitForInstancesTerminal_ReturnsOnAllTerminal(t *testing.T) {
 
 func TestWaitForInstancesTerminal_CallsPrinter(t *testing.T) {
 	client := newFakeClient()
-	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", State: "running"}}})
-	client.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "a-n1", State: "failed", CurrentErrorClass: "boom"}}})
+	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}}}})
+	client.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{FailedCount: 1}}}})
 
 	var buf bytes.Buffer
 	printer := newDefaultPrinter(&buf)
@@ -140,7 +140,7 @@ func TestWaitForInstancesTerminal_CallsPrinter(t *testing.T) {
 
 func TestWaitForInstancesTerminal_ContextCancelExits(t *testing.T) {
 	client := newFakeClient()
-	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", State: "running"}}})
+	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}}}})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -199,8 +199,8 @@ func (c *transientNodesErrorClient) ListInstanceNodes(ctx context.Context, id st
 
 func TestWaitForInstancesTerminal_TransientNodesErrorPreservesOutcome(t *testing.T) {
 	base := newFakeClient()
-	base.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", State: "running"}}})
-	base.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "a-n1", State: "failed", CurrentErrorClass: "boom"}}})
+	base.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}}}})
+	base.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{FailedCount: 1}}}})
 
 	client := &transientNodesErrorClient{
 		fakeInstanceClient: base,
@@ -225,9 +225,6 @@ func TestAnyOutcomeFailed(t *testing.T) {
 	}
 	if !AnyOutcomeFailed(map[string]string{"a": OutcomeSuccess, "b": OutcomeFailure}) {
 		t.Error("any-failure map should be failed")
-	}
-	if !AnyOutcomeFailed(map[string]string{"a": OutcomeParkedTimeout}) {
-		t.Error("parked-timeout should count as failed")
 	}
 }
 

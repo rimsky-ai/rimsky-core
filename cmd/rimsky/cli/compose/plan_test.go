@@ -191,7 +191,7 @@ instances:
 	srv.State.SetTemplateState(hash, "deployed")
 	key := "compose:p:hello"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "failed"})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FailedCount: 1}})
 	now := time.Now()
 	srv.State.SetInstanceTerminated(inst.ID, &now)
 
@@ -365,7 +365,7 @@ instances:
 	srv.State.SetTemplateState(hash, "deployed")
 	key := "compose:p:hello"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "running"})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}})
 	now := time.Now()
 	srv.State.SetInstanceTerminated(inst.ID, &now)
 

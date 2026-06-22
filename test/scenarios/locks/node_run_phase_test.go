@@ -19,7 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-func TestNodeRunPhaseAdvancesOnClaim(t *testing.T) {
+func TestNodeRunStateAdvancesOnClaim(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
@@ -55,8 +55,8 @@ func TestNodeRunPhaseAdvancesOnClaim(t *testing.T) {
 
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
-	require.True(t, h.WaitForWorkerRequestDeleted(n.ID, 5*time.Second),
-		"node-run row must be deleted at terminal (phase='completed' equivalent)")
+	require.True(t, h.WaitForAllRunsTerminal(n.ID, 5*time.Second),
+		"all node-runs must reach a terminal state (fresh or failed) after the claim resolves")
 }
 
 func TestClaimHandleIsHeldColumnPopulated(t *testing.T) {

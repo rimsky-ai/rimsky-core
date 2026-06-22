@@ -14,6 +14,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -66,14 +67,27 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_node_runs
-		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'active', 'running', $2, $3)
+		    (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, frame_id, run_scope_id)
+		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'running', 1, $2, $3)
 	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
 	require.NoError(t, err)
 
+	// @decision: non-cascade-direct-to-stale
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		return h.Persist.Nodes().UpdateState(h.Ctx,
-			worker.ID, h.GetMainRunScopeID(iid), "stale", cascade.ReasonPolicyRetry, nil, tx)
+		if err := h.Persist.Nodes().UpdateState(h.Ctx,
+			worker.ID, h.GetMainRunScopeID(iid), cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx); err != nil {
+			return err
+		}
+		_, err := h.Persist.Nodes().CreateNonCascadeStale(h.Ctx, tx, persistence.NonCascadeStaleInput{
+			NodeID:                 worker.ID,
+			RunScopeID:             h.GetMainRunScopeID(iid),
+			FrameID:                shared.UUID(frameID),
+			ExecutorName:           "stub",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now(),
+			CreationReason:         cascade.CreationReasonOperatorInvalidate,
+		})
+		return err
 	}))
 
 	var preservedFrameID *uuid.UUID
@@ -87,7 +101,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 		SELECT count(*) FROM rimsky_node_runs r
 		JOIN rimsky_frames f ON f.frame_id = r.frame_id
 		WHERE f.state = 'running'
-		  AND r.phase IN ('pending','active','held','parked')
+		  AND r.state IN ('pending','stale','running','held','parked')
 		  AND r.state IN ('stale','running')
 	`).Scan(&inflight))
 	require.Equal(t, 1, inflight,

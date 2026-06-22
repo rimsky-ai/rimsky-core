@@ -49,14 +49,12 @@ func handleHealth(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			counts = c
-			running, err := deps.Persist.Nodes().ListRunning(ctx, tx)
-			if err != nil {
-				return err
-			}
-			for _, r := range running {
-				if r.AssignedSupervisorID != "" {
-					runningPerSup[r.AssignedSupervisorID]++
+			for _, sup := range sups {
+				n, err := deps.Persist.Nodes().CountRunningForSupervisor(ctx, sup.ID, tx)
+				if err != nil {
+					return err
 				}
+				runningPerSup[sup.ID] = n
 			}
 			return nil
 		}); err != nil {

@@ -836,26 +836,6 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 	return fx
 }
 
-func seedPriorWriteback(
-	t *testing.T, ctx context.Context, fx carryForwardFixture,
-	scopeID shared.UUID, data map[string]any,
-) shared.UUID {
-	t.Helper()
-	runID := shared.UUID(uuid.New())
-	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := fx.tables.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
-			RunID: runID, NodeID: fx.nodeID, FrameID: fx.frameID,
-			RunScopeID: scopeID,
-		}); err != nil {
-			return err
-		}
-		return fx.tables.NodeAttributes().Upsert(ctx, runID, fx.nodeID, data, tx)
-	}); err != nil {
-		t.Fatalf("seedPriorWriteback: %v", err)
-	}
-	return runID
-}
-
 func makeStatefulCounterAcq(fx carryForwardFixture, scopeID shared.UUID) *acquisition {
 	return &acquisition{
 		DispatchID: shared.UUID(uuid.New()),
@@ -889,15 +869,31 @@ func makeStatefulCounterAcq(fx carryForwardFixture, scopeID shared.UUID) *acquis
 
 // @story: attribute-carry-forward
 // @concept: attribute
-func TestResolveAttributes_CarryForward_SameScope(t *testing.T) {
+// Carry-forward semantics are now snapshotted at run-row creation by
+// SnapshotBagForNewRun (driven by Queue.EnqueueInTx and
+// Nodes.CreateNonCascadeStale). The conformance suite
+// testCreateNonCascadeStaleCarriesForward is the authoritative test for
+// same-scope carry-forward and cross-scope isolation; resolveAttributes
+// now simply loads the snapshot and fills claim refs.
+//
+// @decision: walker-rule-per-sender-node
+// @decision: non-cascade-direct-to-stale
+func TestResolveAttributes_LoadsSnapshotBag(t *testing.T) {
 	ctx := context.Background()
 	fx := seedCarryForwardFixture(t, ctx)
-	queue := fx.db.Queue()
-	run1 := seedPriorWriteback(t, ctx, fx, fx.mainScopeID, map[string]any{"count": float64(1)})
-	if err := queue.Complete(ctx, run1, ""); err != nil {
-		t.Fatalf("complete prior run: %v", err)
+	dispatchID := shared.UUID(uuid.New())
+	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := fx.tables.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
+			RunID: dispatchID, NodeID: fx.nodeID, FrameID: fx.frameID,
+			RunScopeID: fx.mainScopeID,
+		}); err != nil {
+			return err
+		}
+		return fx.tables.NodeAttributes().SetDispatchInputBag(ctx, tx, dispatchID, fx.nodeID,
+			map[string]any{"count": float64(7)})
+	}); err != nil {
+		t.Fatalf("seed dispatch row: %v", err)
 	}
-	_ = seedPriorWriteback(t, ctx, fx, fx.mainScopeID, map[string]any{"count": float64(2)})
 
 	args := RunArgs{
 		Persist:      fx.tables,
@@ -906,6 +902,7 @@ func TestResolveAttributes_CarryForward_SameScope(t *testing.T) {
 		SupervisorID: "sup-carry-forward",
 	}
 	acq := makeStatefulCounterAcq(fx, fx.mainScopeID)
+	acq.DispatchID = dispatchID
 	resolved, schema, err := resolveAttributes(ctx, args, acq)
 	if err != nil {
 		t.Fatalf("resolveAttributes: %v", err)
@@ -913,20 +910,20 @@ func TestResolveAttributes_CarryForward_SameScope(t *testing.T) {
 	if schema == nil {
 		t.Fatalf("expected non-nil schema, got nil")
 	}
-	if got := resolved["count"]; got != float64(2) {
-		t.Fatalf("count: want carry-forward 2, got %v", got)
-	}
-	if got := resolved["max"]; got != float64(3) {
-		t.Fatalf("max (no carry-forward): want default 3, got %v", got)
+	if got := resolved["count"]; got != float64(7) {
+		t.Fatalf("count: want snapshot value 7, got %v", got)
 	}
 }
 
 // @story: attribute-carry-forward
 // @concept: attribute
-func TestResolveAttributes_CarryForward_CrossRunScope_Empty(t *testing.T) {
+// resolveAttributes refuses to dispatch when no snapshot bag exists for
+// the run id — the runtime invariant is that gate-eval (cascade) or
+// row-creation (non-cascade) must have populated it before the
+// dispatcher claims the row.
+func TestResolveAttributes_MissingSnapshotIsInvariantViolation(t *testing.T) {
 	ctx := context.Background()
 	fx := seedCarryForwardFixture(t, ctx)
-	_ = seedPriorWriteback(t, ctx, fx, fx.mainScopeID, map[string]any{"count": float64(5)})
 
 	args := RunArgs{
 		Persist:      fx.tables,
@@ -934,12 +931,12 @@ func TestResolveAttributes_CarryForward_CrossRunScope_Empty(t *testing.T) {
 		Clock:        shared.SystemClock{},
 		SupervisorID: "sup-carry-forward",
 	}
-	acq := makeStatefulCounterAcq(fx, fx.subScopeID)
-	resolved, _, err := resolveAttributes(ctx, args, acq)
-	if err != nil {
-		t.Fatalf("resolveAttributes: %v", err)
+	acq := makeStatefulCounterAcq(fx, fx.mainScopeID)
+	_, _, err := resolveAttributes(ctx, args, acq)
+	if err == nil {
+		t.Fatalf("expected invariant-violation error when no dispatch_input_bag is present; got nil")
 	}
-	if got := resolved["count"]; got != float64(0) {
-		t.Fatalf("cross-RunScope hydration LEAK: count carried from main scope; want default 0, got %v", got)
+	if !strings.Contains(err.Error(), "dispatch_input_bag missing") {
+		t.Fatalf("expected `dispatch_input_bag missing` error, got %v", err)
 	}
 }

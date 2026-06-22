@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -22,10 +23,13 @@ import (
 const defaultCandidateLimit = 100
 
 type queueImpl struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	tables *tablesImpl
 }
 
 func newQueue(pool *pgxpool.Pool) *queueImpl { return &queueImpl{pool: pool} }
+
+func (q *queueImpl) setTables(t *tablesImpl) { q.tables = t }
 
 var _ persistence.Queue = (*queueImpl)(nil)
 
@@ -41,10 +45,16 @@ func (q *queueImpl) q(tx persistence.Tx) querier {
 }
 
 func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest) error {
-	return q.EnqueueInTx(ctx, req, nil)
+	if q.tables == nil {
+		return fmt.Errorf("postgres.Enqueue: queue not wired with tables")
+	}
+	return q.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return q.EnqueueInTx(ctx, req, tx)
+	})
 }
 
 // @concept: run-scope
+// @decision: non-cascade-direct-to-stale
 func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
 	stores := req.RequiredClaimProducers
 	if stores == nil {
@@ -57,47 +67,56 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if req.RunScopeID == (shared.UUID{}) {
 		return fmt.Errorf("postgres.Enqueue: run_scope_id required for node %s", req.NodeID)
 	}
+	if q.tables == nil {
+		return fmt.Errorf("postgres.Enqueue: queue not wired with tables (cannot snapshot dispatch_input_bag)")
+	}
 	var priorID any
 	if req.PriorDispatchID != nil {
 		priorID = *req.PriorDispatchID
 	}
 	priorDisposition := nullableText(req.PriorDispatchDisposition)
+	creationReason := req.CreationReason
+	if creationReason == "" {
+		creationReason = cascade.CreationReasonCascade
+	}
 	// @concept: executor
-	tag, err := q.q(tx).Exec(ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
-		 SELECT gen_random_uuid(), $1, $2, $3, $4, 'pending', $5, rs.id, $7, $8, $9, $10, $11
+	var newRunID shared.UUID
+	err := q.q(tx).QueryRow(ctx,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
+		 SELECT gen_random_uuid(), $1, $2, $3, $4, 'stale', $7,
+		        COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = $1 AND run_scope_id = $6), 0) + 1,
+		        $5, rs.id, $8, $9, $10, $11, $12
 		   FROM rimsky_run_scopes rs
 		  WHERE rs.id = $6
 		    AND rs.closed_at IS NULL
-		    AND NOT EXISTS (
-		      SELECT 1 FROM rimsky_node_runs
-		       WHERE node_id = $1
-		         AND run_scope_id = $6
-		         AND phase IN ('pending','active','held','parked')
-		    )`,
+		 RETURNING id`,
 		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID, req.RunScopeID,
+		string(creationReason),
 		priorID, priorDisposition,
 		nilIfEmpty(req.InitialScratchInline), nilIfEmptyStr(req.InitialScratchHandle), nilIfEmptyStr(req.InitialScratchHandleBackend),
-	)
+	).Scan(&newRunID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var closedAt *time.Time
+		serr := q.q(tx).QueryRow(ctx,
+			`SELECT closed_at FROM rimsky_run_scopes WHERE id = $1`,
+			req.RunScopeID,
+		).Scan(&closedAt)
+		if errors.Is(serr, pgx.ErrNoRows) {
+			return fmt.Errorf("postgres.Enqueue: run scope %s not found", req.RunScopeID)
+		}
+		if serr != nil {
+			return fmt.Errorf("postgres.Enqueue: lookup run scope: %w", serr)
+		}
+		if closedAt != nil {
+			return persistence.ErrRunScopeClosed
+		}
+		return fmt.Errorf("postgres.Enqueue: insert returned no rows")
+	}
 	if err != nil {
 		return fmt.Errorf("postgres.Enqueue: %w", err)
 	}
-	if tag.RowsAffected() > 0 {
-		return nil
-	}
-	var closedAt *time.Time
-	err = q.q(tx).QueryRow(ctx,
-		`SELECT closed_at FROM rimsky_run_scopes WHERE id = $1`,
-		req.RunScopeID,
-	).Scan(&closedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("postgres.Enqueue: run scope %s not found", req.RunScopeID)
-	}
-	if err != nil {
-		return fmt.Errorf("postgres.Enqueue: lookup run scope: %w", err)
-	}
-	if closedAt != nil {
-		return persistence.ErrRunScopeClosed
+	if err := (*nodeAttributesImpl)(q.tables).SnapshotBagForNewRun(ctx, tx, newRunID, req.NodeID, req.RunScopeID); err != nil {
+		return fmt.Errorf("postgres.Enqueue: snapshot bag: %w", err)
 	}
 	return nil
 }
@@ -132,7 +151,7 @@ func (q *queueImpl) SelectCandidates(
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		   JOIN rimsky_instances i ON i.id = n.instance_id
 		  WHERE d.claimed_by IS NULL
-		    AND d.phase = 'pending'
+		    AND d.state = 'stale'
 		    AND i.paused = false
 		    AND (
 		      d.required_stores <@ $1::text[]
@@ -154,11 +173,18 @@ func (q *queueImpl) SelectCandidates(
 		    AND d.enqueued_at <= NOW()
 		    AND (d.enqueued_at > $6 OR (d.enqueued_at = $6 AND d.id > $7))
 		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_node_runs other
+		       WHERE other.node_id = d.node_id
+		         AND other.run_scope_id = d.run_scope_id
+		         AND other.id <> d.id
+		         AND (other.claimed_by IS NOT NULL OR other.state IN ('held','parked'))
+		    )
+		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_wait_set w
 		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
 		        AND w.drained_at IS NULL
 		    )
-		  ORDER BY d.enqueued_at, d.id
+		  ORDER BY d.enqueued_at, d.sequence, d.id
 		  LIMIT $3
 		  FOR UPDATE OF d SKIP LOCKED`,
 		acceptedClaimProducers, acceptedExecutors, limit, req.LateBindExecutorProxy, req.LateBindClaimProducerProxy,
@@ -214,8 +240,15 @@ func (q *queueImpl) ClaimDispatchRow(
 	}
 	cmd, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET claimed_by = $1, claimed_at = NOW(), last_progress_at = NOW(), phase = 'active'
-		  WHERE id = $2 AND claimed_by IS NULL AND phase = 'pending'`,
+		    SET claimed_by = $1, claimed_at = NOW(), last_progress_at = NOW()
+		  WHERE id = $2 AND claimed_by IS NULL AND state = 'stale'
+		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_node_runs other
+		       WHERE other.node_id = rimsky_node_runs.node_id
+		         AND other.run_scope_id = rimsky_node_runs.run_scope_id
+		         AND other.id <> rimsky_node_runs.id
+		         AND (other.claimed_by IS NOT NULL OR other.state IN ('held','parked'))
+		    )`,
 		supervisorID, dispatchID,
 	)
 	if err != nil {
@@ -224,27 +257,41 @@ func (q *queueImpl) ClaimDispatchRow(
 	return cmd.RowsAffected() == 1, nil
 }
 
+func (q *queueImpl) PromoteClaimedToRunning(
+	ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, supervisorID string,
+) (bool, error) {
+	if tx == nil {
+		return false, errors.New("postgres.PromoteClaimedToRunning: tx required")
+	}
+	cmd, err := q.q(tx).Exec(ctx,
+		`UPDATE rimsky_node_runs
+		    SET state = 'running', last_progress_at = NOW()
+		  WHERE id = $1 AND claimed_by = $2 AND state = 'stale'`,
+		dispatchID, supervisorID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("postgres.PromoteClaimedToRunning: %w", err)
+	}
+	return cmd.RowsAffected() == 1, nil
+}
+
 func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.pool.Exec(ctx,
 			`UPDATE rimsky_node_runs
-			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
-			        claimed_by = NULL,
+			    SET claimed_by = NULL,
 			        active_terminal_at = NOW()
 			  WHERE id = $1
-			    AND claimed_by = $2
-			    AND phase IN ('pending','active','held','parked')`,
+			    AND claimed_by = $2`,
 			dispatchID, expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.pool.Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
-		        claimed_by = NULL,
+		    SET claimed_by = NULL,
 		        active_terminal_at = NOW()
-		  WHERE id = $1
-		    AND phase IN ('pending','active','held','parked')`,
+		  WHERE id = $1`,
 		dispatchID,
 	)
 	return err
@@ -259,25 +306,22 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 	if expectedClaimedBy != "" {
 		_, err := q.q(tx).Exec(ctx,
 			`UPDATE rimsky_node_runs
-			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
-			        claimed_by = NULL,
+			    SET claimed_by = NULL,
 			        active_terminal_at = NOW()
 			  WHERE node_id = $1
 			    AND run_scope_id = $2
-			    AND claimed_by = $3
-			    AND phase IN ('pending','active','held','parked')`,
+			    AND claimed_by = $3`,
 			nodeID, runScopeID, expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
-		        claimed_by = NULL,
+		    SET claimed_by = NULL,
 		        active_terminal_at = NOW()
 		  WHERE node_id = $1
 		    AND run_scope_id = $2
-		    AND phase IN ('pending','active','held','parked')`,
+		    AND claimed_by IS NOT NULL`,
 		nodeID, runScopeID,
 	)
 	return err
@@ -324,7 +368,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 	if expectedClaimedBy != "" {
 		_, err := q.pool.Exec(ctx,
 			`UPDATE rimsky_node_runs
-			    SET claimed_by = NULL, claimed_at = NULL, phase = 'pending'
+			    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
 			  WHERE id = $1 AND claimed_by = $2`,
 			dispatchID, expectedClaimedBy,
 		)
@@ -332,7 +376,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 	}
 	_, err := q.pool.Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET claimed_by = NULL, claimed_at = NULL, phase = 'pending'
+		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
 		  WHERE id = $1`,
 		dispatchID,
 	)
@@ -501,7 +545,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-		  WHERE d.phase IN ('pending','active','held','parked')
+		  WHERE d.state IN ('pending','stale','running','held','parked')
 		    AND ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
 		    AND ($2::text IS NULL OR d.executor_name = $2)
 		    AND ($3::uuid IS NULL OR n.instance_id = $3)
@@ -561,7 +605,7 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 		`SELECT COUNT(*)
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-		  WHERE d.phase IN ('pending','active','held','parked')
+		  WHERE d.state IN ('pending','stale','running','held','parked')
 		    AND ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
 		    AND ($2::text IS NULL OR d.executor_name = $2)
 		    AND ($3::uuid IS NULL OR n.instance_id = $3)`,
@@ -577,7 +621,7 @@ func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, er
 	rows, err := q.pool.Query(ctx,
 		`SELECT COALESCE(parked_reason, ''), COUNT(*)
 		   FROM rimsky_node_runs
-		  WHERE phase = 'parked'
+		  WHERE state = 'parked'
 		  GROUP BY COALESCE(parked_reason, '')`)
 	if err != nil {
 		return nil, err
@@ -603,7 +647,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
 		   FROM rimsky_node_runs d
 		  WHERE d.id = $1
-		    AND d.phase IN ('pending','active','held','parked')`, id,
+		    AND d.state IN ('pending','stale','running','held','parked')`, id,
 	)
 	var r persistence.DispatchRow
 	if err := row.Scan(
@@ -630,7 +674,7 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 	err := ex.QueryRow(ctx,
 		`SELECT id FROM rimsky_node_runs
 		  WHERE node_id = $1 AND run_scope_id = $2
-		    AND phase IN ('pending','active','held','parked')
+		    AND state IN ('pending','stale','running','held','parked')
 		  LIMIT 1`,
 		nodeID, runScopeID).Scan(&id)
 	if err != nil {
@@ -663,7 +707,7 @@ func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persi
 
 // @concept: wait-set
 // @concept: cascade
-func (q *queueImpl) ListInFlightRunPhases(
+func (q *queueImpl) ListInFlightRunStates(
 	ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID,
 ) (map[shared.UUID][]string, error) {
 	out := map[shared.UUID][]string{}
@@ -671,29 +715,29 @@ func (q *queueImpl) ListInFlightRunPhases(
 		return out, nil
 	}
 	if tx == nil {
-		return nil, errors.New("postgres.ListInFlightRunPhases: tx required")
+		return nil, errors.New("postgres.ListInFlightRunStates: tx required")
 	}
 	rows, err := q.q(tx).Query(ctx,
-		`SELECT DISTINCT node_id, phase FROM rimsky_node_runs
+		`SELECT DISTINCT node_id, state FROM rimsky_node_runs
 		  WHERE node_id = ANY($1)
 		    AND frame_id = $2
 		    AND run_scope_id = $3
-		    AND phase IN ('pending','active','held','parked')`,
+		    AND state IN ('pending','stale','running','held','parked')`,
 		nodeIDs, frameID, runScopeID)
 	if err != nil {
-		return nil, fmt.Errorf("postgres.ListInFlightRunPhases: %w", err)
+		return nil, fmt.Errorf("postgres.ListInFlightRunStates: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var nodeID shared.UUID
-		var phase string
-		if err := rows.Scan(&nodeID, &phase); err != nil {
-			return nil, fmt.Errorf("postgres.ListInFlightRunPhases: scan: %w", err)
+		var state string
+		if err := rows.Scan(&nodeID, &state); err != nil {
+			return nil, fmt.Errorf("postgres.ListInFlightRunStates: scan: %w", err)
 		}
-		out[nodeID] = append(out[nodeID], phase)
+		out[nodeID] = append(out[nodeID], state)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("postgres.ListInFlightRunPhases: rows: %w", err)
+		return nil, fmt.Errorf("postgres.ListInFlightRunStates: rows: %w", err)
 	}
 	return out, nil
 }

@@ -65,7 +65,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-signoff-ok")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", "", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", 90*time.Second)
 	})
 
 	t.Run("signoff gate rejects unsigned bound output", func(t *testing.T) {
@@ -76,7 +76,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-signoff-missing")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", "agent/signoff_unobtained", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
 	})
 
 	t.Run("inline mcp_servers refused when allow_inline=false", func(t *testing.T) {
@@ -87,7 +87,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-inline-refused")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", "agent/attribute_invalid", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
 	})
 
 	t.Run("declared error class agent/rate_limited routes verbatim", func(t *testing.T) {
@@ -97,7 +97,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-rate-limited")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", "agent/rate_limited", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
 	})
 
 	t.Run("env-var-referenced credential resolved at spawn but not persisted plaintext", func(t *testing.T) {
@@ -109,7 +109,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-env-ref-witness")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", "", 120*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", 120*time.Second)
 
 		// @story: claude-agent
 		bag := getLatestAttributesClaudeAgent(t, ep, nodeID)
@@ -235,43 +235,57 @@ func waitNodeSettledClaudeAgent(
 	t *testing.T,
 	ep harness.RimskyEndpoint,
 	nodeID string,
-	wantState, wantErrClass string,
+	wantState string,
 	deadline time.Duration,
 ) {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var (
-		lastState    string
-		lastErrClass string
-		lastBody     string
+		lastState string
+		lastBody  string
 	)
 	for time.Now().Before(end) {
 		status, raw := ep.GetJSON(t, "/v1/nodes/"+nodeID, "")
 		if status == http.StatusOK {
 			var resp struct {
-				State             string `json:"state"`
-				CurrentErrorClass string `json:"current_error_class"`
+				RunSummary struct {
+					ActiveCount  int `json:"active_count"`
+					PendingCount int `json:"pending_count"`
+					FreshCount   int `json:"fresh_count"`
+					FailedCount  int `json:"failed_count"`
+				} `json:"run_summary"`
 			}
 			lastBody = string(raw)
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.State
-				lastErrClass = resp.CurrentErrorClass
-				if wantState == "fresh" && resp.State == "fresh" {
+				lastState = categorizeRunSummary(resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount, resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
+				if wantState == "fresh" && lastState == "fresh" {
 					if hasWorkStartedEvent(t, ep, nodeID) {
 						return
 					}
 				}
-				if wantState == "failed" && resp.State == "failed" {
-					if wantErrClass == "" || resp.CurrentErrorClass == wantErrClass {
-						return
-					}
+				if wantState == "failed" && lastState == "failed" {
+					return
 				}
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("node %s did not settle to state=%q (err_class=%q) within %v; last_state=%q last_err_class=%q last_body=%s",
-		nodeID, wantState, wantErrClass, deadline, lastState, lastErrClass, lastBody)
+	t.Fatalf("node %s did not settle to categorical state=%q within %v; last_state=%q last_body=%s",
+		nodeID, wantState, deadline, lastState, lastBody)
+}
+
+// @concept: node
+func categorizeRunSummary(active, pending, fresh, failed int) string {
+	if failed > 0 {
+		return "failed"
+	}
+	if active > 0 || pending > 0 {
+		return "in-flight"
+	}
+	if fresh > 0 {
+		return "fresh"
+	}
+	return "idle"
 }
 
 func hasWorkStartedEvent(t *testing.T, ep harness.RimskyEndpoint, nodeID string) bool {

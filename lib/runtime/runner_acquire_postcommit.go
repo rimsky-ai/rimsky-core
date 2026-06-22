@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -26,6 +25,7 @@ func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 }
 
 // @concept: terminal-resolution
+// @decision: walker-rule-per-sender-node
 func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 	for _, lk := range acq.Locks {
 		if err := bailAcquiredLock(ctx, args, lk); err != nil && args.Logger != nil {
@@ -35,6 +35,12 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 				"dispatch_id", acq.DispatchID.String(),
 				"error", err.Error())
 		}
+	}
+	if err := args.Queue.ReleaseClaim(ctx, acq.DispatchID, args.SupervisorID); err != nil && args.Logger != nil {
+		args.Logger.Warn("handleOrphanedClaim: release claim failed",
+			"dispatch_id", acq.DispatchID.String(),
+			"supervisor_id", args.SupervisorID,
+			"error", err.Error())
 	}
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -55,11 +61,12 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 
 // @concept: terminal-resolution
 func bailAcquiredLock(ctx context.Context, args RunArgs, lk AcquiredLock) error {
-	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	var post postCommitFn
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if lk.Producer == nil {
 			return args.ClaimHandles.Delete(ctx, lk.ClaimHandleID, args.SupervisorID, tx)
 		}
-		return ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
 			ClaimHandleID: lk.ClaimHandleID,
 			SupervisorID:  args.SupervisorID,
 			Source:        OwnershipBail,
@@ -68,14 +75,18 @@ func bailAcquiredLock(ctx context.Context, args RunArgs, lk AcquiredLock) error 
 			Scope:         claimScope(lk),
 			Address:       claimAddress(lk),
 		})
-	})
-}
-
-func transitionToRunning(ctx context.Context, args RunArgs, acq acquisition) error {
-	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
-	})
+		if err != nil {
+			return err
+		}
+		post = pc
+		return nil
+	}); err != nil {
+		return err
+	}
+	if post != nil {
+		post(ctx)
+	}
+	return nil
 }
 
 func emitLockAcquired(

@@ -212,6 +212,106 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, 
 	return nil
 }
 
+// @concept: cascade
+// @decision: mode-default-most-recent
+func (s *nodeAttributesImpl) SetDispatchInputBag(
+	ctx context.Context, tx persistence.Tx, runID, nodeID shared.UUID, bag map[string]any,
+) error {
+	if bag == nil {
+		bag = map[string]any{}
+	}
+	raw, err := json.Marshal(bag)
+	if err != nil {
+		return fmt.Errorf("node_attributes.SetDispatchInputBag: marshal: %w", err)
+	}
+	_, err = s.q(tx).Exec(ctx,
+		`INSERT INTO rimsky_node_attributes (node_run_id, node_id, data, dispatch_input_bag, updated_at)
+		 VALUES ($1, $2, '{}'::jsonb, $3::jsonb, now())
+		 ON CONFLICT (node_run_id) DO UPDATE
+		   SET dispatch_input_bag = EXCLUDED.dispatch_input_bag,
+		       updated_at         = now()`,
+		runID, nodeID, raw,
+	)
+	if err != nil {
+		return fmt.Errorf("node_attributes.SetDispatchInputBag: %w", err)
+	}
+	return nil
+}
+
+// @concept: cascade
+func (s *nodeAttributesImpl) GetDispatchInputBag(
+	ctx context.Context, tx persistence.Tx, runID shared.UUID,
+) (map[string]any, error) {
+	var raw []byte
+	err := s.q(tx).QueryRow(ctx,
+		`SELECT dispatch_input_bag FROM rimsky_node_attributes WHERE node_run_id = $1`, runID,
+	).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("node_attributes.GetDispatchInputBag: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("node_attributes.GetDispatchInputBag: unmarshal: %w", err)
+	}
+	return out, nil
+}
+
+// @concept: cascade
+// @decision: non-cascade-direct-to-stale
+// @story: resume-preserves-snapshot
+func (s *nodeAttributesImpl) SnapshotBagForNewRun(
+	ctx context.Context, tx persistence.Tx,
+	newRunID, nodeID, runScopeID shared.UUID,
+) error {
+	var (
+		priorData          []byte
+		priorHandle        *string
+		priorHandleBackend *string
+	)
+	err := s.q(tx).QueryRow(ctx,
+		`SELECT a.data, a.value_handle, a.value_handle_backend
+		   FROM rimsky_node_attributes a
+		   JOIN rimsky_node_runs r ON r.id = a.node_run_id
+		  WHERE a.node_id = $1
+		    AND r.run_scope_id = $2
+		    AND r.id <> $3
+		  ORDER BY r.sequence DESC
+		  LIMIT 1`,
+		nodeID, runScopeID, newRunID,
+	).Scan(&priorData, &priorHandle, &priorHandleBackend)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, err := s.q(tx).Exec(ctx,
+			`INSERT INTO rimsky_node_attributes
+			   (node_run_id, node_id, data, dispatch_input_bag, updated_at)
+			 VALUES ($1, $2, '{}'::jsonb, '{}'::jsonb, NOW())
+			 ON CONFLICT (node_run_id) DO NOTHING`,
+			newRunID, nodeID,
+		); err != nil {
+			return fmt.Errorf("node_attributes.SnapshotBagForNewRun: insert empty: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("node_attributes.SnapshotBagForNewRun: load prior: %w", err)
+	}
+	if _, err := s.q(tx).Exec(ctx,
+		`INSERT INTO rimsky_node_attributes
+		   (node_run_id, node_id, data, dispatch_input_bag, value_handle, value_handle_backend, updated_at)
+		 VALUES ($1, $2, $3::jsonb, $3::jsonb, $4, $5, NOW())
+		 ON CONFLICT (node_run_id) DO NOTHING`,
+		newRunID, nodeID, priorData, priorHandle, priorHandleBackend,
+	); err != nil {
+		return fmt.Errorf("node_attributes.SnapshotBagForNewRun: insert carry-forward: %w", err)
+	}
+	return nil
+}
+
 func readPriorBlobHandle(ctx context.Context, q querier, runID shared.UUID) (string, string, error) {
 	row := q.QueryRow(ctx,
 		`SELECT value_handle, value_handle_backend

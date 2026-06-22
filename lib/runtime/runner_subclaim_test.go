@@ -326,8 +326,9 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	}
 
 	candidateHandle0 := subClaims[0].ProducerCandidateHandle
+	var post0 func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
 			ClaimHandleID:       subClaims[0].ClaimHandleID,
 			SupervisorID:        "sup-FAN",
 			Source:              runtime.ActiveTerminal,
@@ -340,11 +341,17 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			ProducerName:        storeName,
 			ParentClaimHandleID: &parentClaimID,
 		})
+		post0 = pc
+		return err
 	}))
+	if post0 != nil {
+		post0(ctx)
+	}
 
 	candidateHandle1 := subClaims[1].ProducerCandidateHandle
+	var post1 func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
 			ClaimHandleID:       subClaims[1].ClaimHandleID,
 			SupervisorID:        "sup-FAN",
 			Source:              runtime.ActiveTerminal,
@@ -357,7 +364,12 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			ProducerName:        storeName,
 			ParentClaimHandleID: &parentClaimID,
 		})
+		post1 = pc
+		return err
 	}))
+	if post1 != nil {
+		post1(ctx)
+	}
 
 	commits := dpClient.Commits()
 	require.Len(t, commits, 1, "CommitCandidate must fire on OutcomeCommit")
@@ -509,8 +521,9 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 
 	for _, sc := range subClaims {
 		sc := sc
+		var post func(context.Context)
 		require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return runtime.ResolveClaimHandleTerminal(ctx, argsTwo, tx, runtime.TerminalDecision{
+			pc, err := runtime.ResolveClaimHandleTerminal(ctx, argsTwo, tx, runtime.TerminalDecision{
 				ClaimHandleID:       sc.ClaimHandleID,
 				SupervisorID:        supTwo,
 				Source:              runtime.ActiveTerminal,
@@ -522,7 +535,12 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 				ProducerName:        storeName,
 				ParentClaimHandleID: &parentClaimID,
 			})
+			post = pc
+			return err
 		}))
+		if post != nil {
+			post(ctx)
+		}
 	}
 
 	for _, sc := range subClaims {

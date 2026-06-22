@@ -169,7 +169,8 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 	if runScopeID == (shared.UUID{}) {
 		return fmt.Errorf("failOverdueParkedRow: no run scope for parked run %s", row.DispatchID)
 	}
-	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	var post postCommitFn
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		parkTimeoutSig := "terminal/error/park_timeout"
 		if err := args.Persist.Nodes().UpdateState(ctx, row.NodeID, runScopeID,
 			cascade.NodeStateFailed, cascade.ReasonParkTimeout, &parkTimeoutSig, tx); err != nil {
@@ -180,9 +181,11 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 			return err
 		}
 		if args.ClaimHandles != nil && args.StoreRegistry != nil {
-			if err := abandonHeldClaimsForOverdueNode(ctx, args, tx, row.NodeID, log); err != nil {
+			pc, err := abandonHeldClaimsForOverdueNode(ctx, args, tx, row.NodeID, log)
+			if err != nil {
 				return err
 			}
+			post = pc
 		}
 		if err := args.Queue.RemoveForNodeInTx(ctx, row.NodeID, runScopeID, "", tx); err != nil {
 			return err
@@ -197,16 +200,22 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 				"parked_at":                 row.ParkedAt,
 			},
 		}, tx)
-	})
+	}); err != nil {
+		return err
+	}
+	if post != nil {
+		post(ctx)
+	}
+	return nil
 }
 
 func abandonHeldClaimsForOverdueNode(
 	ctx context.Context, args ParkedSweepArgs, tx persistence.Tx,
 	nodeID shared.UUID, log shared.Logger,
-) error {
+) (postCommitFn, error) {
 	handles, err := args.ClaimHandles.ListByHolderNode(ctx, nodeID, tx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	runArgs := RunArgs{
 		Persist:        args.Persist,
@@ -218,6 +227,7 @@ func abandonHeldClaimsForOverdueNode(
 		Logger:         log,
 		SupervisorID:   args.SupervisorID,
 	}
+	var post postCommitFn
 	for _, h := range handles {
 		if !h.IsHeld {
 			continue
@@ -227,12 +237,14 @@ func abandonHeldClaimsForOverdueNode(
 		}
 		holderSupervisorID := *h.HolderSupervisorID
 		if err := args.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, h.ID, holderSupervisorID, tx); err != nil {
-			return err
+			return nil, err
 		}
 		runArgs.SupervisorID = holderSupervisorID
-		if err := CheckAndFireResolution(ctx, runArgs, tx, h.ID); err != nil {
-			return err
+		pc, err := CheckAndFireResolution(ctx, runArgs, tx, h.ID)
+		if err != nil {
+			return nil, err
 		}
+		post = chainPostCommit(post, pc)
 	}
-	return nil
+	return post, nil
 }

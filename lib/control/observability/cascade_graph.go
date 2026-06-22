@@ -7,21 +7,17 @@ package observability
 import (
 	"context"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 type CascadeNode struct {
-	NodeType          string             `json:"node_type"`
-	NodeID            shared.UUID        `json:"node_id"`
-	State             cascade.NodeState  `json:"state"`
-	CurrentErrorClass string             `json:"current_error_class,omitempty"`
-	RetryCounter      int                `json:"retry_counter"`
-	ActiveDispatchID  *shared.UUID       `json:"active_dispatch_id,omitempty"`
-	LastTerminalEvent *terminalEventView `json:"last_terminal_event,omitempty"`
-	EdgesIn           []string           `json:"edges_in"`
-	EdgesOut          []string           `json:"edges_out"`
+	NodeType          string                      `json:"node_type"`
+	NodeID            shared.UUID                 `json:"node_id"`
+	RunSummary        *persistence.NodeRunSummary `json:"run_summary,omitempty"`
+	LastTerminalEvent *terminalEventView          `json:"last_terminal_event,omitempty"`
+	EdgesIn           []string                    `json:"edges_in"`
+	EdgesOut          []string                    `json:"edges_out"`
 }
 
 type terminalEventView struct {
@@ -36,12 +32,33 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 		byType[n.NodeType] = n
 		nodeIDs = append(nodeIDs, n.ID)
 	}
-	var terminals map[shared.UUID]persistence.EventRow
+	var (
+		terminals map[shared.UUID]persistence.EventRow
+		summaries = map[shared.UUID]persistence.NodeRunSummary{}
+	)
 	_ = deps.Tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		t, err := deps.Tables.Events().LastTerminalByNodes(ctx, nodeIDs, tx)
+		if err != nil {
+			return err
+		}
 		terminals = t
-		return err
+		for _, id := range nodeIDs {
+			s, err := deps.Tables.Nodes().GetRunSummary(ctx, id, tx)
+			if err != nil {
+				return err
+			}
+			summaries[id] = s
+		}
+		return nil
 	})
+	summaryFor := func(id shared.UUID) *persistence.NodeRunSummary {
+		s, ok := summaries[id]
+		if !ok {
+			return nil
+		}
+		sc := s
+		return &sc
+	}
 	terminalView := func(id shared.UUID) *terminalEventView {
 		ev, ok := terminals[id]
 		if !ok {
@@ -69,13 +86,11 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 	if template == nil {
 		for _, n := range nodes {
 			cn := CascadeNode{
-				NodeType:          n.NodeType,
-				NodeID:            n.ID,
-				State:             n.State,
-				CurrentErrorClass: n.CurrentErrorClass,
-				RetryCounter:      n.RetryCounter,
-				EdgesIn:           []string{},
-				EdgesOut:          []string{},
+				NodeType:   n.NodeType,
+				NodeID:     n.ID,
+				RunSummary: summaryFor(n.ID),
+				EdgesIn:    []string{},
+				EdgesOut:   []string{},
 			}
 			if tev := terminalView(n.ID); tev != nil {
 				cn.LastTerminalEvent = tev
@@ -99,9 +114,7 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 		}
 		if ok {
 			cn.NodeID = row.ID
-			cn.State = row.State
-			cn.CurrentErrorClass = row.CurrentErrorClass
-			cn.RetryCounter = row.RetryCounter
+			cn.RunSummary = summaryFor(row.ID)
 			if tev := terminalView(row.ID); tev != nil {
 				cn.LastTerminalEvent = tev
 			}

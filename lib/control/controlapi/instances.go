@@ -654,13 +654,19 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}
 		reason := body.Reason
 
-		var toFail []persistence.NodeRow
+		killStates := []cascade.NodeState{
+			cascade.NodeStateRunning,
+			cascade.NodeStateParked,
+			cascade.NodeStateHeld,
+		}
+
+		var toFail []persistence.NodeRunLatest
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			nodes, err := deps.Persist.Nodes().ListByInstance(ctx, inst.ID, tx)
+			runs, err := deps.Persist.Nodes().ListRunsForInstanceByStates(ctx, tx, inst.ID, killStates)
 			if err != nil {
 				return err
 			}
-			toFail = resourceHoldingNodeRuns(nodes)
+			toFail = runs
 			return nil
 		}); err != nil {
 			writeError(w, err)
@@ -669,8 +675,8 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 
 		// @concept: dry-run
 		wouldFail := make([]string, 0, len(toFail))
-		for _, n := range toFail {
-			wouldFail = append(wouldFail, n.ID.String())
+		for _, r := range toFail {
+			wouldFail = append(wouldFail, r.NodeID.String())
 		}
 		if WriteDryRunResponse(w, req, "would_have_terminated", map[string]any{
 			"instance_id":          inst.ID.String(),
@@ -681,20 +687,20 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}
 
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			nodes, err := deps.Persist.Nodes().ListByInstance(ctx, inst.ID, tx)
+			runs, err := deps.Persist.Nodes().ListRunsForInstanceByStates(ctx, tx, inst.ID, killStates)
 			if err != nil {
 				return err
 			}
-			for _, run := range resourceHoldingNodeRuns(nodes) {
-				if run.RunScopeID == nil {
-					continue
-				}
+			for _, r := range runs {
 				sig := "terminal/error/instance_killed"
-				if err := deps.Persist.Nodes().UpdateState(ctx, run.ID, *run.RunScopeID,
+				if err := deps.Persist.Nodes().UpdateState(ctx, r.NodeID, r.RunScopeID,
 					cascade.NodeStateFailed, cascade.ReasonInstanceKilled, &sig, tx); err != nil {
 					return err
 				}
-				abandonInFlightClaims(ctx, deps, run.ID, tx)
+				if r.State == cascade.NodeStateHeld {
+					failHeldHolderClaims(ctx, deps, r.RunID, tx)
+				}
+				abandonInFlightClaims(ctx, deps, r.NodeID, tx)
 			}
 			if inst.MainRunScopeID != (foundationshared.UUID{}) {
 				if err := deps.Persist.RunScopes().Close(ctx, tx, inst.MainRunScopeID); err != nil {
@@ -755,14 +761,26 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-func resourceHoldingNodeRuns(nodes []persistence.NodeRow) []persistence.NodeRow {
-	var out []persistence.NodeRow
-	for _, n := range nodes {
-		if n.State == cascade.NodeStateRunning || n.State == cascade.NodeStateParked {
-			out = append(out, n)
+// @concept: claim-handle
+// @decision: held-as-state-not-phase
+func failHeldHolderClaims(ctx context.Context, deps AppDeps, holderRunID foundationshared.UUID, tx persistence.Tx) {
+	if deps.Persist.ClaimHolders() == nil {
+		return
+	}
+	holders, err := deps.Persist.ClaimHolders().ListByHolderRun(ctx, holderRunID, tx)
+	if err != nil {
+		if deps.Logger != nil {
+			deps.Logger.Warn("handleTerminateInstance: list claim holders for held kill failed",
+				"holder_run_id", holderRunID.String(), "error", err.Error())
+		}
+		return
+	}
+	for _, h := range holders {
+		if err := deps.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, h.ClaimHandleID, "instance-killed", tx); err != nil && deps.Logger != nil {
+			deps.Logger.Warn("handleTerminateInstance: fail active holders failed",
+				"claim_handle_id", h.ClaimHandleID.String(), "error", err.Error())
 		}
 	}
-	return out
 }
 
 func abandonInFlightClaims(ctx context.Context, deps AppDeps, nodeID foundationshared.UUID, tx persistence.Tx) {
@@ -930,13 +948,27 @@ func provisionInstanceTx(
 		}
 
 		if _, err := deps.Persist.Nodes().Create(ctx, persistence.NodeCreateInput{
-			ID:         nodeID,
-			InstanceID: inst.ID,
-			NodeType:   def.Type,
-			Executor:   def.Executor,
-			Tags:       resolvedTags,
+			ID:          nodeID,
+			InstanceID:  inst.ID,
+			NodeType:    def.Type,
+			Executor:    def.Executor,
+			Tags:        resolvedTags,
+			CascadeMode: def.CascadeMode,
 		}, tx); err != nil {
 			return createInstanceResponse{}, fmt.Errorf("instance-factory: create node %q: %w", def.Type, err)
+		}
+	}
+
+	// @concept: message
+	// @concept: message-schema
+	for _, m := range tpl.Spec.Messages {
+		if _, err := deps.Persist.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID:         foundationshared.UUID(uuid.New()),
+			InstanceID: inst.ID,
+			NodeType:   m.Type,
+			Executor:   "",
+		}, tx); err != nil {
+			return createInstanceResponse{}, fmt.Errorf("instance-factory: create message-receiver node %q: %w", m.Type, err)
 		}
 	}
 

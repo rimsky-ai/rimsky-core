@@ -57,7 +57,7 @@ func (noopNodes) Create(context.Context, persistence.NodeCreateInput, persistenc
 	return persistence.NodeRow{}, nil
 }
 func (noopNodes) Get(_ context.Context, id shared.UUID, _ persistence.Tx) (*persistence.NodeRow, error) {
-	return &persistence.NodeRow{ID: id, State: "stale"}, nil
+	return &persistence.NodeRow{ID: id}, nil
 }
 func (noopNodes) ListByInstance(context.Context, shared.UUID, persistence.Tx) ([]persistence.NodeRow, error) {
 	return nil, nil
@@ -74,13 +74,16 @@ func (noopNodes) ListReadyForDispatch(context.Context, persistence.Tx) ([]persis
 func (noopNodes) ListRunning(context.Context, persistence.Tx) ([]persistence.NodeRow, error) {
 	return nil, nil
 }
-func (noopNodes) ListRunningBySupervisor(context.Context, string, persistence.Tx) ([]persistence.NodeRow, error) {
-	return nil, nil
+func (noopNodes) CountRunningForSupervisor(context.Context, string, persistence.Tx) (int, error) {
+	return 0, nil
 }
-func (noopNodes) ListWithStaleHeartbeat(context.Context, time.Time, persistence.Tx) ([]persistence.NodeRow, error) {
-	return nil, nil
+func (noopNodes) CountAllNodes(context.Context, persistence.Tx) (int, error) {
+	return 0, nil
 }
-func (noopNodes) ListPureCascadeReady(context.Context, persistence.Tx) ([]persistence.NodeRow, error) {
+func (noopNodes) CountDistinctNodesWithRuns(context.Context, persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (noopNodes) ListPureCascadeReady(context.Context, persistence.Tx) ([]persistence.PureCascadeReadyRow, error) {
 	return nil, nil
 }
 func (noopNodes) CountByState(context.Context, persistence.Tx) (map[cascade.NodeState]int, error) {
@@ -108,17 +111,65 @@ func (noopNodes) GetFailedTerminalRunScopeID(context.Context, shared.UUID, persi
 	return nil, nil
 }
 func (noopNodes) DeleteByInstance(context.Context, shared.UUID, persistence.Tx) error { return nil }
-func (noopNodes) MarkStaleForCascade(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
-	return nil
-}
-func (noopNodes) AffirmNodeRunRow(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) error {
-	return nil
-}
 func (noopNodes) HasRunForNodeInFrame(context.Context, shared.UUID, shared.UUID, persistence.Tx) (bool, error) {
 	return false, nil
 }
 func (noopNodes) GetRunByDispatchIDForUpdate(context.Context, shared.UUID, persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	return nil, nil
+}
+func (noopNodes) GetCascadeMode(context.Context, shared.UUID, persistence.Tx) (cascade.CascadeMode, error) {
+	return cascade.CascadeModeMostRecent, nil
+}
+func (noopNodes) GetRunSummary(context.Context, shared.UUID, persistence.Tx) (persistence.NodeRunSummary, error) {
+	return persistence.NodeRunSummary{}, nil
+}
+func (noopNodes) FindLatestCascadePending(context.Context, persistence.Tx, shared.UUID, shared.UUID, shared.UUID) (*persistence.NodeRunForGate, error) {
+	return nil, nil
+}
+func (noopNodes) CreateCascadePending(context.Context, persistence.Tx, shared.UUID, shared.UUID, shared.UUID) (shared.UUID, error) {
+	return shared.UUID{}, nil
+}
+func (noopNodes) LockReceiverCascade(context.Context, persistence.Tx, shared.UUID, shared.UUID, shared.UUID) error {
+	return nil
+}
+func (noopNodes) GetLatestRunForNode(context.Context, persistence.Tx, shared.UUID) (*persistence.NodeRunLatest, error) {
+	return nil, nil
+}
+func (noopNodes) GetLatestRunInScope(context.Context, persistence.Tx, shared.UUID, shared.UUID) (*persistence.NodeRunLatest, error) {
+	return nil, nil
+}
+func (noopNodes) ListRunsForInstanceByStates(context.Context, persistence.Tx, shared.UUID, []cascade.NodeState) ([]persistence.NodeRunLatest, error) {
+	return nil, nil
+}
+func (noopNodes) GetRunForGate(context.Context, persistence.Tx, shared.UUID) (*persistence.NodeRunForGate, error) {
+	return nil, nil
+}
+func (noopNodes) GetPriorRunBySequence(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (*persistence.NodeRunForGate, error) {
+	return nil, nil
+}
+func (noopNodes) DeletePriorCascadeStales(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (int, error) {
+	return 0, nil
+}
+func (noopNodes) GetPriorCascadeStaleNotClaimed(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (*persistence.NodeRunForGate, error) {
+	return nil, nil
+}
+func (noopNodes) GetMostRecentSettledRun(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (*persistence.NodeRunForGate, error) {
+	return nil, nil
+}
+func (noopNodes) TransitionPendingToStale(context.Context, persistence.Tx, shared.UUID, time.Time) error {
+	return nil
+}
+func (noopNodes) DropPendingRun(context.Context, persistence.Tx, shared.UUID) error {
+	return nil
+}
+func (noopNodes) CreateNonCascadeStale(context.Context, persistence.Tx, persistence.NonCascadeStaleInput) (shared.UUID, error) {
+	return shared.UUID{}, nil
+}
+func (noopNodes) UpdateRunEvaluatorState(context.Context, shared.UUID, spec.EvaluatorState, persistence.Tx) error {
+	return nil
+}
+func (noopNodes) GetRunEvaluatorState(context.Context, shared.UUID, persistence.Tx) (spec.EvaluatorState, error) {
+	return spec.EvaluatorState{}, nil
 }
 
 type fakeDiagnosticQueue struct {
@@ -148,6 +199,9 @@ func (f *fakeDiagnosticQueue) SelectCandidates(context.Context, persistence.Tx, 
 	return nil, nil
 }
 func (f *fakeDiagnosticQueue) ClaimDispatchRow(context.Context, persistence.Tx, shared.UUID, string) (bool, error) {
+	return false, nil
+}
+func (f *fakeDiagnosticQueue) PromoteClaimedToRunning(context.Context, persistence.Tx, shared.UUID, string) (bool, error) {
 	return false, nil
 }
 func (f *fakeDiagnosticQueue) Complete(context.Context, shared.UUID, string) error {
@@ -190,7 +244,7 @@ func (f *fakeDiagnosticQueue) GetInFlightRunForNode(context.Context, persistence
 func (f *fakeDiagnosticQueue) GetMostRecentRunForNodeInScope(context.Context, persistence.Tx, shared.UUID, shared.UUID) (shared.UUID, bool, error) {
 	return shared.UUID{}, false, nil
 }
-func (f *fakeDiagnosticQueue) ListInFlightRunPhases(context.Context, persistence.Tx, []shared.UUID, shared.UUID, shared.UUID) (map[shared.UUID][]string, error) {
+func (f *fakeDiagnosticQueue) ListInFlightRunStates(context.Context, persistence.Tx, []shared.UUID, shared.UUID, shared.UUID) (map[shared.UUID][]string, error) {
 	return map[shared.UUID][]string{}, nil
 }
 func (f *fakeDiagnosticQueue) ParkActiveInTx(context.Context, persistence.Tx, persistence.ParkActiveInput) error {

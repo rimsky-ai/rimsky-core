@@ -67,7 +67,7 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 		if rootNodeID == (shared.UUID{}) {
 			return fmt.Errorf("seedPauseModeHitForTest: no root node on instance %s", instanceID)
 		}
-		if err := h.persist.Nodes().AffirmNodeRunRow(ctx, rootNodeID, inst.MainRunScopeID, frameID, tx); err != nil {
+		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNodeID, inst.MainRunScopeID, frameID); err != nil {
 			return err
 		}
 		fresh, err := h.persist.Nodes().Get(ctx, rootNodeID, tx)
@@ -75,9 +75,12 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 			return err
 		}
 		require.NotNil(t, fresh)
-		require.NotNil(t, fresh.InFlightRunID,
-			"seedPauseModeHitForTest: expected in-flight run row after Affirm")
-		runID := *fresh.InFlightRunID
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNodeID)
+		if err != nil {
+			return err
+		}
+		require.NotNil(t, latest, "seedPauseModeHitForTest: expected in-flight run row after Affirm")
+		runID := latest.RunID
 		_, _, err = h.persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
 			BreakpointID: bpID,
 			InstanceID:   instanceID,
@@ -266,17 +269,17 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 			return err
 		}
 		require.NotNil(t, inst)
-		if err := h.persist.Nodes().AffirmNodeRunRow(ctx, rootNode.ID, inst.MainRunScopeID, frameID, tx); err != nil {
+		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNode.ID, inst.MainRunScopeID, frameID); err != nil {
 			return err
 		}
-		fresh, err := h.persist.Nodes().Get(ctx, rootNode.ID, tx)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
 		if err != nil {
 			return err
 		}
-		if fresh == nil || fresh.InFlightRunID == nil {
+		if latest == nil {
 			return fmt.Errorf("expected in-flight run row after Affirm")
 		}
-		inFlightRunID = *fresh.InFlightRunID
+		inFlightRunID = latest.RunID
 		return nil
 	}))
 
@@ -288,14 +291,14 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 	require.GreaterOrEqual(t, int(out["runs_mutated"].(float64)), 1)
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		fresh, err := h.persist.Nodes().Get(ctx, rootNode.ID, tx)
+		_ = inFlightRunID
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
 		if err != nil {
 			return err
 		}
-		require.NotNil(t, fresh)
-		_ = inFlightRunID
-		require.Equal(t, cascade.NodeStateStale, fresh.State,
-			"invalidate_node must stale-mark the in-flight node-run")
+		require.NotNil(t, latest)
+		require.Equal(t, cascade.NodeStateStale, latest.State,
+			"invalidate_node must produce a stale node-run")
 		return nil
 	}))
 }
@@ -321,15 +324,15 @@ func TestDebugOverride_SetAttributeWritesAttribute(t *testing.T) {
 			return err
 		}
 		require.NotNil(t, inst)
-		if err := h.persist.Nodes().AffirmNodeRunRow(ctx, rootNode.ID, inst.MainRunScopeID, frameID, tx); err != nil {
+		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNode.ID, inst.MainRunScopeID, frameID); err != nil {
 			return err
 		}
-		fresh, err := h.persist.Nodes().Get(ctx, rootNode.ID, tx)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
 		if err != nil {
 			return err
 		}
-		require.NotNil(t, fresh.InFlightRunID)
-		inFlightRunID = *fresh.InFlightRunID
+		require.NotNil(t, latest)
+		inFlightRunID = latest.RunID
 		return h.persist.NodeAttributes().Upsert(ctx, inFlightRunID, rootNode.ID, map[string]any{"seed": "yes"}, tx)
 	}))
 
@@ -365,8 +368,14 @@ func TestDebugOverride_SetAttributeNoInFlightRunIsNoOp(t *testing.T) {
 	pauseInstanceForTest(t, h, instUUID)
 
 	rootNode := findNodeIDByType(t, h, instUUID, "root")
-	require.Nil(t, rootNode.InFlightRunID,
-		"test precondition: the root node must have no in-flight run")
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		if err != nil {
+			return err
+		}
+		require.Nil(t, latest, "test precondition: the root node must have no run row")
+		return nil
+	}))
 
 	status, out := h.httpJSON(t, "POST", "/v1/instances/"+instID+"/debug/override", map[string]any{
 		"action":          "set_attribute",

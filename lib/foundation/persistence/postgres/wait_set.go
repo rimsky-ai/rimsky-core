@@ -108,6 +108,97 @@ func (b *waitSetImpl) ListDrainedAttributeRowsForReceiver(
 	return collectWaitSet(rows)
 }
 
+// @concept: cascade
+// @decision: walker-rule-per-sender-node
+func (b *waitSetImpl) ListSenderNodesForReceiver(
+	ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx,
+) ([]shared.UUID, error) {
+	rows, err := b.q(tx).Query(ctx,
+		`SELECT DISTINCT r.node_id
+		   FROM rimsky_wait_set w
+		   JOIN rimsky_node_runs r ON r.id = w.sender_run_id
+		  WHERE w.frame_id = $1 AND w.receiver_run_id = $2`,
+		frameID, receiverRunID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ListSenderNodesForReceiver: %w", err)
+	}
+	defer rows.Close()
+	var out []shared.UUID
+	for rows.Next() {
+		var id shared.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("ListSenderNodesForReceiver: scan: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// @concept: cascade
+// @decision: walker-rule-per-sender-node
+func (b *waitSetImpl) HasRowForSenderRun(
+	ctx context.Context, frameID, receiverRunID, senderRunID shared.UUID, tx persistence.Tx,
+) (bool, error) {
+	var present bool
+	err := b.q(tx).QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM rimsky_wait_set
+		    WHERE frame_id = $1 AND receiver_run_id = $2 AND sender_run_id = $3
+		 )`,
+		frameID, receiverRunID, senderRunID,
+	).Scan(&present)
+	if err != nil {
+		return false, fmt.Errorf("HasRowForSenderRun: %w", err)
+	}
+	return present, nil
+}
+
+// @concept: cascade
+func (b *waitSetImpl) ListPendingReceiversForDrainedSender(
+	ctx context.Context, frameID, senderRunID shared.UUID, tx persistence.Tx,
+) ([]shared.UUID, error) {
+	rows, err := b.q(tx).Query(ctx,
+		`SELECT DISTINCT w.receiver_run_id
+		   FROM rimsky_wait_set w
+		   JOIN rimsky_node_runs r ON r.id = w.receiver_run_id
+		  WHERE w.frame_id = $1 AND w.sender_run_id = $2
+		    AND r.state = 'pending'
+		    AND r.creation_reason = 'cascade'`,
+		frameID, senderRunID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ListPendingReceiversForDrainedSender: %w", err)
+	}
+	defer rows.Close()
+	var out []shared.UUID
+	for rows.Next() {
+		var id shared.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("ListPendingReceiversForDrainedSender: scan: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// @concept: cascade
+func (b *waitSetImpl) HasUndrainedRowsForReceiver(
+	ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx,
+) (bool, error) {
+	var exists bool
+	err := b.q(tx).QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM rimsky_wait_set
+		    WHERE frame_id = $1 AND receiver_run_id = $2 AND drained_at IS NULL
+		 )`, frameID, receiverRunID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("HasUndrainedRowsForReceiver: %w", err)
+	}
+	return exists, nil
+}
+
 func collectWaitSet(rows pgx.Rows) ([]persistence.WaitSetRow, error) {
 	out := []persistence.WaitSetRow{}
 	for rows.Next() {

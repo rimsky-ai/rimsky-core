@@ -181,13 +181,14 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 	require.Equal(t, []uuid.UUID{decoyID}, survivors,
 		"the bail's own claim-handle row must be deleted (no abandoned-state residue) and the other supervisor's decoy must survive — the deletion is claimant-guarded")
 
-	var got *persistence.NodeRow
+	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, gerr := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		got = r
+		r, gerr := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		latest = r
 		return gerr
 	}))
-	require.Equal(t, cascade.NodeStateStale, got.State,
+	require.NotNil(t, latest)
+	require.Equal(t, cascade.NodeStateStale, latest.State,
 		"node must remain stale — the bail fired before the running transition / dispatch")
 
 	var signalCount int

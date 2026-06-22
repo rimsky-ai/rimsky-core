@@ -36,4 +36,18 @@ type WaitSetTable interface {
 	ListDrainedAttributeRowsForReceiver(
 		ctx context.Context, frameID, receiverRunID shared.UUID, tx Tx,
 	) ([]WaitSetRow, error)
+
+	// @concept: cascade
+	// @decision: walker-rule-per-sender-node
+	ListSenderNodesForReceiver(ctx context.Context, frameID, receiverRunID shared.UUID, tx Tx) ([]shared.UUID, error)
+
+	// @concept: cascade
+	// @decision: walker-rule-per-sender-node
+	HasRowForSenderRun(ctx context.Context, frameID, receiverRunID, senderRunID shared.UUID, tx Tx) (bool, error)
+
+	// @concept: cascade
+	ListPendingReceiversForDrainedSender(ctx context.Context, frameID, senderRunID shared.UUID, tx Tx) ([]shared.UUID, error)
+
+	// @concept: cascade
+	HasUndrainedRowsForReceiver(ctx context.Context, frameID, receiverRunID shared.UUID, tx Tx) (bool, error)
 }

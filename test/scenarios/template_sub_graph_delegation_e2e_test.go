@@ -131,14 +131,14 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 			  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
 			 WHERE rs.graph_name = 'worker'
 			   AND rs.instance_id = $1
-			   AND r.phase IN ('pending','active','held','parked')
+			   AND r.state IN ('pending','stale','running','held','parked')
 		`, []any{iid}, &inflightInternals)
 
 		var exitTerminal int
 		h.QueryRowSQL(`
 			SELECT COUNT(*) FROM rimsky_node_runs
 			 WHERE node_id = $1
-			   AND phase = 'completed'
+			   AND state = 'fresh'
 		`, []any{exitNode.ID}, &exitTerminal)
 
 		if inflightInternals >= 1 && exitTerminal == 0 {

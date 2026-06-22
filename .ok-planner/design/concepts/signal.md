@@ -31,6 +31,10 @@ The `terminal/*` leaves are `terminal/success`; `terminal/error/<error_class>` (
 
 Emitted exactly once per run, at the moment the run settles. `terminal/park/*` leaves are exactly the park-reason enum (a two-value closed set fixed on the wire executor protocol). The terminal payload carries the settling verdict's `tags` set; subscribers fire by CEL filtering over `payload.tags` (see "Payload schemas").
 
+**`terminal/error/abandoned`** is a canonical `terminal/error/<class>` leaf with `class=abandoned`, emitted by the auto-terminal handler when a held claim resolves to Abandon (per `concept:auto-terminal`). It is not a new top-level root; subscribers match it via the exact path or via the `terminal/error/*` wildcard, uniform with other error-class signals. See `decision:terminal-error-abandoned-as-error-class`.
+
+A held node-run's own `running → held` transition emits NO terminal signal — the cascade walk is deferred to the auto-terminal handler, which fires the terminal/success or terminal/error/abandoned at the moment the handle is promoted (per `decision:held-as-state-not-phase`).
+
 ### `transient/*` — mid-dispatch transitions, dispatch not yet settled
 
 The `transient/*` leaves are `transient/retry/<attempt>/<error_class>` and `transient/await_async`.
@@ -49,7 +53,7 @@ Emitted when a `concept:message` arrives at an instance. The three structured fi
 
 Each signal type's payload is a typed object. The CEL environment binds these field types at template registration so subscribers' `when:` predicates parse-check. The per-type payload schema is a property of the concept: each type-path resolves to one payload shape.
 
-`terminal/*` payloads bind a `tags: list<string>` field for CEL `in` predicates over `payload.tags`. The tag set carries the executor-emitted discriminators on the settling-Outcome's `tags` set; the audit row persists them in the `payload->tags` JSONB column and subscribers match them via the CEL `when:` filter (see `concept:terminal-tag`).
+`terminal/*` payloads bind a `tags: list<string>` field for CEL `in` predicates over `payload.tags`. The tag set carries the executor-emitted discriminators on the settling-Outcome's `tags` set; the audit row persists them on its payload tags field and subscribers match them via the CEL `when:` filter (see `concept:terminal-tag`).
 
 ### Field-naming convention
 
@@ -94,7 +98,7 @@ Adjacent: `concept:node-subscription`, `concept:error-policy`, `concept:cascade`
 - **Audit-log emission is unconditional.** Every signal writes one row to the persisted audit-event ledger regardless of whether any subscriber exists.
 - **Cascade-fire is `subscription edge match && CEL predicate evaluates true`.** No separate sender-side gate.
 - **Wildcard syntax is trailing-`*` only.** A trailing-`*` prefix matches all leaves under it; no positional wildcards; no full glob. Operators wanting more complex patterns express them via CEL.
-- **`terminal/*` leaves carry tags** (matched via CEL `when:` filter on `payload.tags`); the discriminator rides as metadata on the terminal payload — the settling-Outcome's `tags` set, persisted in the audit row's `payload->tags` JSONB column.
+- **`terminal/*` leaves carry tags** (matched via CEL `when:` filter on `payload.tags`); the discriminator rides as metadata on the terminal payload — the settling-Outcome's `tags` set, persisted on the audit row's payload tags field.
 - **CEL is the filter language; exact-type subscriptions parse-check field references against the resolved payload schema; prefix-type subscriptions bind `payload` as `dyn`.** This keeps tight checking for the common exact-type case while letting prefix subscriptions span heterogeneous payload shapes.
 - **`terminal/park/*` leaves are the closed two-value set determined by the park-reason enum.** The taxonomy is downstream of the wire park-reason enum. The await-async-callback outcome is a transient (`transient/await_async`), not a park — the node stays in `running` state during the callback wait.
 - **The wait-set `topic_kind` discriminator is a faithful projection of the signal top-level kind:** each of the four canonical kinds (terminal, transient, attribute, message) maps to its own `topic_kind` value; the message-kind row is admitted by the protocol-level signal taxonomy but not in the storage projection (see `concept:wait-set`).

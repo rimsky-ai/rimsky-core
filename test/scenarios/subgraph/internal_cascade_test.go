@@ -7,7 +7,6 @@ package subgraph
 import (
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
@@ -40,7 +39,7 @@ func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 	if res := node.ValidateTemplate(tmpl, node.RegistryHooks{}); len(res.Errors) != 0 {
 		t.Fatalf("validation errors: %v", res.Errors)
 	}
-	internals, reason, err := runtime.SubgraphParentSuccessCascade(runtime.SubgraphInternalCascadeArgs{
+	internals, err := runtime.SubgraphParentSuccessCascade(runtime.SubgraphInternalCascadeArgs{
 		Template:          tmpl,
 		DelegateGraphName: "staging",
 	})
@@ -62,9 +61,6 @@ func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 	}
 	if _, ok := seen["promote"]; !ok {
 		t.Errorf("promote (exit) must be in the internal-cascade set — exit is a child like any other internal")
-	}
-	if reason.Kind != cascade.ReasonSubGraphInternalCascadeFired.Kind {
-		t.Errorf("transition reason: %s (want subgraph_internal_cascade_fired)", reason.Kind)
 	}
 
 	byType := make(map[string]*node.TemplateNodeDef, len(tmpl.Nodes))
@@ -103,7 +99,7 @@ func TestInternalCascade_RejectsMissingGraph(t *testing.T) {
 		},
 	}
 	_ = node.ValidateTemplate(tmpl, node.RegistryHooks{})
-	_, _, err := runtime.SubgraphParentSuccessCascade(runtime.SubgraphInternalCascadeArgs{
+	_, err := runtime.SubgraphParentSuccessCascade(runtime.SubgraphInternalCascadeArgs{
 		Template:          tmpl,
 		DelegateGraphName: "missing",
 	})

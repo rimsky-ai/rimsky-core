@@ -130,10 +130,12 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 			"a 200 with runs_mutated=0 means the handler returned a status struct "+
 			"without actually mutating the graph")
 
-	require.Equal(t, cascade.NodeStateStale,
-		getRunState(t, h, *preMutateRunID),
-		"invalidate_node must transition the run row to state=stale; "+
-			"asserting at the HTTP-status layer alone would let a no-op handler pass")
+	// @decision: non-cascade-direct-to-stale
+	var newStaleCount int
+	h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND state = 'stale' AND creation_reason = 'operator_invalidate'`,
+		[]any{workerPaused.ID}, &newStaleCount)
+	require.GreaterOrEqual(t, newStaleCount, 1,
+		"invalidate_node must create at least one new stale row with creation_reason=operator_invalidate")
 
 	require.Equal(t, 1, countDebugOverrideAuditRows(t, h, iidPaused),
 		"a successful override must leave exactly one audit row of kind debug.override.applied")
@@ -339,26 +341,18 @@ func getInFlightRunID(t *testing.T, h *scenario.Harness, nodeID shared.UUID) *sh
 	t.Helper()
 	var out *shared.UUID
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := h.Persist.Nodes().Get(ctx, nodeID, tx)
+		latest, err := h.Persist.Nodes().GetLatestRunForNode(ctx, tx, nodeID)
 		if err != nil {
 			return err
 		}
-		if row == nil {
-			return fmt.Errorf("node %s not found", nodeID.String())
+		if latest == nil {
+			return nil
 		}
-		out = row.InFlightRunID
+		runID := latest.RunID
+		out = &runID
 		return nil
 	}))
 	return out
-}
-
-func getRunState(t *testing.T, h *scenario.Harness, runID shared.UUID) cascade.NodeState {
-	t.Helper()
-	var state string
-	h.QueryRowSQL(
-		`SELECT state FROM rimsky_node_runs WHERE id = $1`,
-		[]any{runID}, &state)
-	return cascade.NodeState(state)
 }
 
 func getRunAttributeValue(t *testing.T, h *scenario.Harness, runID shared.UUID, key string) any {

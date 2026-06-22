@@ -107,8 +107,8 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	`, frameID, instanceID, messageID, now)
 	dispatchID := uuid.New()
 	h.ExecSQL(`
-		INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, claimed_by, frame_id, run_scope_id)
-		VALUES ($1, $2, NULL, '{}', $3, $4, $5)
+		INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, claimed_by, frame_id, run_scope_id, sequence, state)
+		VALUES ($1, $2, NULL, '{}', $3, $4, $5, 1, 'running')
 	`, dispatchID, nodeID, claimedBy, frameID, mainScopeID)
 	return dispatchID
 }

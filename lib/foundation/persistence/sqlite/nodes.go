@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -21,24 +23,10 @@ import (
 
 const nodeCols = `
   n.id, n.instance_id, n.node_type, n.executor,
-  COALESCE(r.state, 'fresh') AS state, r.settling_signal_type,
-  n.current_error_class, n.retry_counter, n.action_index,
-  r.claimed_by AS assigned_supervisor_id,
-  n.frame_id, n.tags, n.created_at, n.updated_at,
-  CASE WHEN r.phase IN ('pending','active','held','parked') THEN r.id END AS in_flight_run_id,
-  CASE WHEN r.phase IN ('pending','active','held','parked') THEN r.run_scope_id END AS in_flight_run_scope_id
+  n.frame_id, n.tags, n.cascade_mode, n.created_at, n.updated_at
 `
 
-const nodeSelect = `FROM rimsky_nodes n
-LEFT JOIN (
-    SELECT id, node_id, state, settling_signal_type, claimed_by, frame_id, phase, run_scope_id,
-           ROW_NUMBER() OVER (
-               PARTITION BY node_id
-               ORDER BY CASE WHEN phase IN ('pending','active','held','parked') THEN 0 ELSE 1 END,
-                        COALESCE(active_terminal_at, enqueued_at) DESC
-           ) AS rk
-      FROM rimsky_node_runs
-) r ON r.node_id = n.id AND r.rk = 1`
+const nodeSelect = `FROM rimsky_nodes n`
 
 func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, tx persistence.Tx) (persistence.NodeRow, error) {
 	now := nowUTC()
@@ -46,13 +34,17 @@ func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, 
 	if terr != nil {
 		return persistence.NodeRow{}, fmt.Errorf("nodes.Create: encode tags: %w", terr)
 	}
+	cascadeMode := in.CascadeMode
+	if cascadeMode == "" {
+		cascadeMode = string(cascade.CascadeModeMostRecent)
+	}
 	if _, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (
-		   id, instance_id, node_type, executor, tags, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		   id, instance_id, node_type, executor, tags, cascade_mode, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.ID.String(), in.InstanceID.String(), in.NodeType,
 		nullableString(in.Executor),
-		tagsJSON,
+		tagsJSON, cascadeMode,
 		now, now,
 	); err != nil {
 		return persistence.NodeRow{}, err
@@ -158,16 +150,17 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 // @concept: wait-set
 func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+nodeCols+` `+nodeSelect+`
-		 WHERE n.executor IS NOT NULL AND n.executor <> ''
-		   AND r.state IN ('stale','resuming')
-		   AND r.phase = 'pending'
-		   AND NOT EXISTS (
-		     SELECT 1 FROM rimsky_wait_set w
-		     WHERE w.frame_id = n.frame_id AND w.receiver_run_id = r.id
-		       AND w.drained_at IS NULL
-		   )
-		 ORDER BY n.created_at ASC`,
+		`SELECT DISTINCT `+nodeCols+`
+		   FROM rimsky_nodes n
+		   JOIN rimsky_node_runs nr ON nr.node_id = n.id
+		  WHERE n.executor IS NOT NULL AND n.executor <> ''
+		    AND nr.state = 'stale'
+		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_wait_set w
+		       WHERE w.frame_id = nr.frame_id AND w.receiver_run_id = nr.id
+		         AND w.drained_at IS NULL
+		    )
+		  ORDER BY n.created_at ASC`,
 	)
 	if err != nil {
 		return nil, err
@@ -177,29 +170,64 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 }
 
 // @concept: wait-set
-func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
+func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx) ([]persistence.PureCascadeReadyRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+nodeCols+` `+nodeSelect+`
-		 WHERE (n.executor IS NULL OR n.executor = '')
-		   AND r.state = 'stale'
-		   AND NOT EXISTS (
-		     SELECT 1 FROM rimsky_wait_set w
-		     WHERE w.frame_id = n.frame_id AND w.receiver_run_id = r.id
-		       AND w.drained_at IS NULL
-		   )
-		 ORDER BY n.created_at ASC`,
+		`SELECT n.id, n.instance_id, n.node_type,
+		        nr.id AS run_id, nr.run_scope_id, nr.frame_id
+		   FROM rimsky_nodes n
+		   JOIN rimsky_node_runs nr ON nr.node_id = n.id
+		  WHERE (n.executor IS NULL OR n.executor = '')
+		    AND nr.state = 'stale'
+		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_wait_set w
+		       WHERE w.frame_id = nr.frame_id AND w.receiver_run_id = nr.id
+		         AND w.drained_at IS NULL
+		    )
+		  ORDER BY n.created_at ASC`,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return collectNodes(rows)
+	var out []persistence.PureCascadeReadyRow
+	for rows.Next() {
+		var (
+			r           persistence.PureCascadeReadyRow
+			nodeIDStr   string
+			instIDStr   string
+			runIDStr    string
+			runScopeStr string
+			frameIDStr  string
+		)
+		if err := rows.Scan(&nodeIDStr, &instIDStr, &r.NodeType, &runIDStr, &runScopeStr, &frameIDStr); err != nil {
+			return nil, err
+		}
+		if r.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
+			return nil, err
+		}
+		if r.InstanceID, err = uuid.Parse(instIDStr); err != nil {
+			return nil, err
+		}
+		if r.RunID, err = uuid.Parse(runIDStr); err != nil {
+			return nil, err
+		}
+		if r.RunScopeID, err = uuid.Parse(runScopeStr); err != nil {
+			return nil, err
+		}
+		if r.FrameID, err = uuid.Parse(frameIDStr); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+nodeCols+` `+nodeSelect+`
-		  WHERE r.state = 'running'
+		`SELECT DISTINCT `+nodeCols+`
+		   FROM rimsky_nodes n
+		   JOIN rimsky_node_runs nr ON nr.node_id = n.id
+		  WHERE nr.state = 'running'
 		  ORDER BY n.updated_at ASC`)
 	if err != nil {
 		return nil, err
@@ -208,22 +236,59 @@ func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persi
 	return collectNodes(rows)
 }
 
+// @concept: supervisor
+func (s *nodesImpl) CountRunningForSupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) (int, error) {
+	var n int
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT count(*) FROM rimsky_node_runs
+		  WHERE state = 'running' AND claimed_by = ?`,
+		supervisorID,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("CountRunningForSupervisor: %w", err)
+	}
+	return n, nil
+}
+
+// @concept: node
+func (s *nodesImpl) CountAllNodes(ctx context.Context, tx persistence.Tx) (int, error) {
+	var n int
+	err := s.q(tx).QueryRowContext(ctx, `SELECT count(*) FROM rimsky_nodes`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("CountAllNodes: %w", err)
+	}
+	return n, nil
+}
+
+// @concept: node
+func (s *nodesImpl) CountDistinctNodesWithRuns(ctx context.Context, tx persistence.Tx) (int, error) {
+	var n int
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT count(DISTINCT node_id) FROM rimsky_node_runs`,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("CountDistinctNodesWithRuns: %w", err)
+	}
+	return n, nil
+}
+
 func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[cascade.NodeState]int, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT COALESCE(r.state, 'fresh') AS s, count(*)
-		 `+nodeSelect+`
-		 GROUP BY COALESCE(r.state, 'fresh')`)
+		`SELECT state, count(*)
+		   FROM rimsky_node_runs
+		  GROUP BY state`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := map[cascade.NodeState]int{
-		cascade.NodeStateFresh:    0,
-		cascade.NodeStateStale:    0,
-		cascade.NodeStateRunning:  0,
-		cascade.NodeStateFailed:   0,
-		cascade.NodeStateParked:   0,
-		cascade.NodeStateResuming: 0,
+		cascade.NodeStatePending: 0,
+		cascade.NodeStateStale:   0,
+		cascade.NodeStateRunning: 0,
+		cascade.NodeStateHeld:    0,
+		cascade.NodeStateParked:  0,
+		cascade.NodeStateFresh:   0,
+		cascade.NodeStateFailed:  0,
 	}
 	for rows.Next() {
 		var state string
@@ -271,7 +336,16 @@ func (s *nodesImpl) enforceAndUpdate(
 		   FROM rimsky_node_runs
 		  WHERE node_id = ?
 		    AND run_scope_id = ?
-		    AND phase IN ('pending','active','held','parked')`,
+		    AND state IN ('pending','stale','running','held','parked')
+		  ORDER BY CASE state
+		             WHEN 'running' THEN 0
+		             WHEN 'held' THEN 1
+		             WHEN 'parked' THEN 2
+		             WHEN 'stale' THEN 3
+		             WHEN 'pending' THEN 4
+		           END,
+		           sequence ASC
+		  LIMIT 1`,
 		id.String(), runScopeID.String(),
 	).Scan(&runIDStr, &stateStr, &runFrameIDStr)
 	switch {
@@ -283,7 +357,7 @@ func (s *nodesImpl) enforceAndUpdate(
 		var failedScan sql.NullString
 		fErr := ex.QueryRowContext(ctx,
 			`SELECT state FROM rimsky_node_runs
-			  WHERE node_id = ? AND phase = 'failed'
+			  WHERE node_id = ? AND state = 'failed'
 			  ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC
 			  LIMIT 1`, id.String(),
 		).Scan(&failedScan)
@@ -345,28 +419,8 @@ func (s *nodesImpl) enforceAndUpdate(
 			return fmt.Errorf("nodes.updateState: run-row update: %w", err)
 		}
 	case state == cascade.NodeStateFresh:
-	case state == cascade.NodeStateStale && (current == cascade.NodeStateFailed || current == cascade.NodeStateFresh):
-		if nodeFrameIDStr.Valid {
-			if _, err := ex.ExecContext(ctx,
-				`INSERT INTO rimsky_node_runs
-				   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, settling_signal_type, frame_id, run_scope_id)
-				 SELECT ?, n.id, n.executor, '[]', ?, 'pending', 'stale', ?, ?, ?
-				   FROM rimsky_nodes n
-				  WHERE n.id = ?
-				    AND NOT EXISTS (
-				      SELECT 1 FROM rimsky_node_runs r
-				       WHERE r.node_id = ?
-				         AND r.run_scope_id = ?
-				         AND r.phase IN ('pending','active','held','parked')
-				    )`,
-				uuid.New().String(), nowUTC(), settlingArg,
-				nodeFrameIDStr.String, runScopeID.String(), id.String(), id.String(), runScopeID.String(),
-			); err != nil {
-				return fmt.Errorf("nodes.updateState: seed stale run-row: %w", err)
-			}
-		}
 	default:
-		return fmt.Errorf("nodes.updateState: no in-flight run row for node %s on transition to %q (reason %q)", id, state, reason.Kind)
+		return fmt.Errorf("nodes.updateState: no in-flight run row for node %s on transition to %q (reason %q); use CreateNonCascadeStale or the cascade walker to create a new run", id, state, reason.Kind)
 	}
 	var progressFrame sql.NullString
 	switch {
@@ -386,17 +440,40 @@ func (s *nodesImpl) enforceAndUpdate(
 	return nil
 }
 
-func (s *nodesImpl) UpdateError(ctx context.Context, id foundationshared.UUID, es spec.EvaluatorState, tx persistence.Tx) error {
+// @concept: error-policy
+func (s *nodesImpl) UpdateRunEvaluatorState(ctx context.Context, runID foundationshared.UUID, es spec.EvaluatorState, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_nodes
+		`UPDATE rimsky_node_runs
 		   SET action_index = ?,
 		       retry_counter = ?,
-		       current_error_class = ?,
-		       updated_at = ?
+		       current_error_class = ?
 		 WHERE id = ?`,
-		es.ActionIndex, es.RetryCounter, nullableString(es.CurrentErrorClass), nowUTC(), id.String(),
+		es.ActionIndex, es.RetryCounter, nullableString(es.CurrentErrorClass), runID.String(),
 	)
 	return err
+}
+
+// @concept: error-policy
+func (s *nodesImpl) GetRunEvaluatorState(ctx context.Context, runID foundationshared.UUID, tx persistence.Tx) (spec.EvaluatorState, error) {
+	var (
+		es              spec.EvaluatorState
+		currentErrClass sql.NullString
+	)
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT action_index, retry_counter, current_error_class
+		   FROM rimsky_node_runs WHERE id = ?`,
+		runID.String(),
+	).Scan(&es.ActionIndex, &es.RetryCounter, &currentErrClass)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return spec.EvaluatorState{}, nil
+		}
+		return spec.EvaluatorState{}, err
+	}
+	if currentErrClass.Valid {
+		es.CurrentErrorClass = currentErrClass.String
+	}
+	return es, nil
 }
 
 func (s *nodesImpl) SetFrameID(ctx context.Context, id foundationshared.UUID, frameID *foundationshared.UUID, tx persistence.Tx) error {
@@ -411,7 +488,7 @@ func (s *nodesImpl) ClearSettlingSignalType(ctx context.Context, id foundationsh
 		`UPDATE rimsky_node_runs SET settling_signal_type = NULL
 		  WHERE node_id = ?
 		    AND run_scope_id = ?
-		    AND phase IN ('pending','active','held','parked')`,
+		    AND state IN ('pending','stale','running','held','parked')`,
 		id.String(), runScopeID.String()); err != nil {
 		return err
 	}
@@ -425,7 +502,7 @@ func (s *nodesImpl) ResetFailedTerminalSettlingSignalType(ctx context.Context, i
 	var idStr string
 	err := s.q(tx).QueryRowContext(ctx,
 		`SELECT id FROM rimsky_node_runs
-		  WHERE node_id = ? AND run_scope_id = ? AND phase = 'failed'
+		  WHERE node_id = ? AND run_scope_id = ? AND state = 'failed'
 		  ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC
 		  LIMIT 1`, id.String(), runScopeID.String(),
 	).Scan(&idStr)
@@ -451,7 +528,7 @@ func (s *nodesImpl) GetFailedTerminalRunScopeID(ctx context.Context, id foundati
 	var scopeStr string
 	err := s.q(tx).QueryRowContext(ctx,
 		`SELECT run_scope_id FROM rimsky_node_runs
-		  WHERE node_id = ? AND phase = 'failed'
+		  WHERE node_id = ? AND state = 'failed'
 		  ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC
 		  LIMIT 1`, id.String(),
 	).Scan(&scopeStr)
@@ -475,89 +552,56 @@ func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundations
 }
 
 // @concept: cascade
-func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
-	res, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		   SET state = 'stale', frame_id = ?
-		 WHERE id = ?
-		   AND phase IN ('pending','active','held','parked')`,
-		frameID.String(), runID.String(),
-	)
+// @decision: mode-default-most-recent
+func (s *nodesImpl) GetCascadeMode(ctx context.Context, nodeID foundationshared.UUID, tx persistence.Tx) (cascade.CascadeMode, error) {
+	var mode string
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT cascade_mode FROM rimsky_nodes WHERE id = ?`, nodeID.String(),
+	).Scan(&mode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return cascade.CascadeModeMostRecent, nil
+	}
 	if err != nil {
-		return fmt.Errorf("nodesImpl.MarkStaleForCascade: %w", err)
+		return "", fmt.Errorf("GetCascadeMode: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
+	if mode == "" {
+		return cascade.CascadeModeMostRecent, nil
 	}
-	if n == 0 {
-		return nil
-	}
-	if _, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_nodes SET frame_id = ?, updated_at = ?
-		  WHERE id = (SELECT node_id FROM rimsky_node_runs WHERE id = ?)`,
-		frameID.String(), nowUTC(), runID.String(),
-	); err != nil {
-		return fmt.Errorf("nodesImpl.MarkStaleForCascade: bind frame: %w", err)
-	}
-	return nil
+	return cascade.CascadeMode(mode), nil
 }
 
-// @concept: run-scope
-func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshared.UUID, runScopeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
-	res, err := s.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		 SELECT ?,
-		        n.id,
-		        NULLIF(n.executor, ''),
-		        COALESCE((
-		          SELECT json_group_array(json_extract(store.value, '$.name'))
-		            FROM rimsky_instances i
-		            JOIN rimsky_templates t ON t.id = i.template_hash
-		            JOIN json_each(t.spec, '$.nodes') AS nd
-		            JOIN json_each(nd.value, '$.stores') AS store
-		           WHERE i.id = n.instance_id
-		             AND json_extract(nd.value, '$.type') = n.node_type
-		        ), '[]'),
-		        ?, 'pending', 'stale', ?, rs.id
-		   FROM rimsky_nodes n
-		   JOIN rimsky_run_scopes rs ON rs.id = ? AND rs.closed_at IS NULL
-		  WHERE n.id = ?
-		    AND NOT EXISTS (
-		      SELECT 1 FROM rimsky_node_runs r
-		       WHERE r.node_id = ?
-		         AND r.run_scope_id = ?
-		         AND r.phase IN ('pending','active','held','parked')
-		    )`,
-		uuid.New().String(), nowUTC(), frameID.String(),
-		runScopeID.String(),
-		nodeID.String(), nodeID.String(), runScopeID.String(),
+// @concept: node
+func (s *nodesImpl) GetRunSummary(ctx context.Context, nodeID foundationshared.UUID, tx persistence.Tx) (persistence.NodeRunSummary, error) {
+	var out persistence.NodeRunSummary
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT state, count(*)
+		   FROM rimsky_node_runs
+		  WHERE node_id = ?
+		  GROUP BY state`,
+		nodeID.String(),
 	)
 	if err != nil {
-		return fmt.Errorf("AffirmNodeRunRow: %w", err)
+		return out, fmt.Errorf("GetRunSummary: %w", err)
 	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("AffirmNodeRunRow: rows affected: %w", err)
+	defer rows.Close()
+	for rows.Next() {
+		var state string
+		var count int
+		if err := rows.Scan(&state, &count); err != nil {
+			return out, fmt.Errorf("GetRunSummary: scan: %w", err)
+		}
+		switch cascade.NodeState(state) {
+		case cascade.NodeStateRunning, cascade.NodeStateHeld, cascade.NodeStateParked:
+			out.ActiveCount += count
+		case cascade.NodeStatePending, cascade.NodeStateStale:
+			out.PendingCount += count
+		case cascade.NodeStateFresh:
+			out.FreshCount += count
+		case cascade.NodeStateFailed:
+			out.FailedCount += count
+		}
 	}
-	if affected > 0 {
-		return nil
-	}
-	var closedAt sql.NullString
-	err = s.q(tx).QueryRowContext(ctx,
-		`SELECT closed_at FROM rimsky_run_scopes WHERE id = ?`, runScopeID.String(),
-	).Scan(&closedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("AffirmNodeRunRow: run scope %s not found", runScopeID)
-	}
-	if err != nil {
-		return fmt.Errorf("AffirmNodeRunRow: lookup run scope: %w", err)
-	}
-	if closedAt.Valid {
-		return persistence.ErrRunScopeClosed
-	}
-	return nil
+	return out, rows.Err()
 }
 
 // @concept: signal
@@ -580,13 +624,12 @@ func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID 
 		nodeIDStr  string
 		scopeIDStr string
 		frameIDStr string
-		phase      string
 		stateStr   string
 	)
 	err := s.q(tx).QueryRowContext(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, phase, state
+		`SELECT id, node_id, run_scope_id, frame_id, state
 		   FROM rimsky_node_runs WHERE id = ?`, dispatchID.String(),
-	).Scan(&idStr, &nodeIDStr, &scopeIDStr, &frameIDStr, &phase, &stateStr)
+	).Scan(&idStr, &nodeIDStr, &scopeIDStr, &frameIDStr, &stateStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -613,42 +656,31 @@ func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID 
 	r.NodeID = nodeID
 	r.RunScopeID = scopeID
 	r.FrameID = frameID
-	r.Phase = phase
 	r.State = cascade.NodeState(stateStr)
 	return &r, nil
 }
 
 func scanNode(sc scannable) (persistence.NodeRow, error) {
 	var (
-		r                 persistence.NodeRow
-		idStr             string
-		instanceIDStr     string
-		executor          sql.NullString
-		stateStr          string
-		settlingSignalStr sql.NullString
-		currentErrClass   sql.NullString
-		assignedSup       sql.NullString
-		frameIDStr        sql.NullString
-		tagsJSON          sql.NullString
-		createdAtStr      string
-		updatedAtStr      string
-		inFlightRunIDStr  sql.NullString
-		inFlightScopeStr  sql.NullString
+		r             persistence.NodeRow
+		idStr         string
+		instanceIDStr string
+		executor      sql.NullString
+		frameIDStr    sql.NullString
+		tagsJSON      sql.NullString
+		cascadeMode   sql.NullString
+		createdAtStr  string
+		updatedAtStr  string
 	)
 	if err := sc.Scan(
 		&idStr, &instanceIDStr, &r.NodeType,
-		&executor, &stateStr, &settlingSignalStr,
-		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
-		&assignedSup, &frameIDStr,
+		&executor,
+		&frameIDStr,
 		&tagsJSON,
+		&cascadeMode,
 		&createdAtStr, &updatedAtStr,
-		&inFlightRunIDStr, &inFlightScopeStr,
 	); err != nil {
 		return persistence.NodeRow{}, err
-	}
-	if settlingSignalStr.Valid {
-		v := settlingSignalStr.String
-		r.SettlingSignalType = &v
 	}
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -668,10 +700,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	}
 	r.ID = id
 	r.InstanceID = instanceID
-	r.State = cascade.NodeState(stateStr)
 	r.Executor = executor.String
-	r.CurrentErrorClass = currentErrClass.String
-	r.AssignedSupervisorID = assignedSup.String
 	r.CreatedAt = createdAt
 	r.UpdatedAt = updatedAt
 	frameID, err := scanNullableUUID(frameIDStr)
@@ -684,16 +713,11 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		return persistence.NodeRow{}, err
 	}
 	r.Tags = tags
-	runID, err := scanNullableUUID(inFlightRunIDStr)
-	if err != nil {
-		return persistence.NodeRow{}, err
+	cm := cascadeMode.String
+	if cm == "" {
+		cm = string(cascade.CascadeModeMostRecent)
 	}
-	r.InFlightRunID = runID
-	runScope, err := scanNullableUUID(inFlightScopeStr)
-	if err != nil {
-		return persistence.NodeRow{}, err
-	}
-	r.RunScopeID = runScope
+	r.CascadeMode = cascade.CascadeMode(cm)
 	return r, nil
 }
 
@@ -732,4 +756,470 @@ func collectNodes(rows *sql.Rows) ([]persistence.NodeRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// @concept: cascade
+// @decision: walker-rule-per-sender-node
+func (s *nodesImpl) LockReceiverCascade(
+	_ context.Context, _ persistence.Tx, _, _, _ foundationshared.UUID,
+) error {
+	return nil
+}
+
+// @concept: cascade
+// @decision: walker-rule-per-sender-node
+func (s *nodesImpl) FindLatestCascadePending(
+	ctx context.Context, tx persistence.Tx, nodeID, runScopeID, frameID foundationshared.UUID,
+) (*persistence.NodeRunForGate, error) {
+	row := s.q(tx).QueryRowContext(ctx,
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		   FROM rimsky_node_runs
+		  WHERE node_id = ? AND run_scope_id = ? AND frame_id = ?
+		    AND state = 'pending'
+		    AND creation_reason = 'cascade'
+		  ORDER BY sequence DESC
+		  LIMIT 1`,
+		nodeID.String(), runScopeID.String(), frameID.String(),
+	)
+	return scanGateRow(row)
+}
+
+// @concept: cascade
+// @decision: walker-rule-per-sender-node
+func (s *nodesImpl) CreateCascadePending(
+	ctx context.Context, tx persistence.Tx, nodeID, runScopeID, frameID foundationshared.UUID,
+) (foundationshared.UUID, error) {
+	newID := uuid.New()
+	res, err := s.q(tx).ExecContext(ctx,
+		`INSERT INTO rimsky_node_runs
+		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		 SELECT ?, n.id, NULLIF(n.executor, ''), '[]', ?, 'pending', 'cascade',
+		        COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = ?), 0) + 1,
+		        ?, rs.id
+		   FROM rimsky_nodes n
+		   JOIN rimsky_run_scopes rs ON rs.id = ? AND rs.closed_at IS NULL
+		  WHERE n.id = ?`,
+		newID.String(), nowUTC(),
+		nodeID.String(), runScopeID.String(),
+		frameID.String(),
+		runScopeID.String(),
+		nodeID.String(),
+	)
+	if err != nil {
+		return foundationshared.UUID{}, fmt.Errorf("CreateCascadePending: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return foundationshared.UUID{}, fmt.Errorf("CreateCascadePending: rows affected: %w", err)
+	}
+	if affected == 0 {
+		var closedAt sql.NullString
+		serr := s.q(tx).QueryRowContext(ctx,
+			`SELECT closed_at FROM rimsky_run_scopes WHERE id = ?`, runScopeID.String(),
+		).Scan(&closedAt)
+		if errors.Is(serr, sql.ErrNoRows) {
+			return foundationshared.UUID{}, fmt.Errorf("CreateCascadePending: run scope %s not found", runScopeID)
+		}
+		if serr != nil {
+			return foundationshared.UUID{}, fmt.Errorf("CreateCascadePending: lookup run scope: %w", serr)
+		}
+		if closedAt.Valid {
+			return foundationshared.UUID{}, persistence.ErrRunScopeClosed
+		}
+		return foundationshared.UUID{}, fmt.Errorf("CreateCascadePending: node %s not found", nodeID)
+	}
+	if _, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_nodes SET frame_id = ?, updated_at = ? WHERE id = ?`,
+		frameID.String(), nowUTC(), nodeID.String(),
+	); err != nil {
+		return foundationshared.UUID{}, fmt.Errorf("CreateCascadePending: bind node frame: %w", err)
+	}
+	return newID, nil
+}
+
+// @concept: cascade
+func (s *nodesImpl) GetRunForGate(ctx context.Context, tx persistence.Tx, runID foundationshared.UUID) (*persistence.NodeRunForGate, error) {
+	row := s.q(tx).QueryRowContext(ctx,
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		   FROM rimsky_node_runs WHERE id = ?`, runID.String(),
+	)
+	return scanGateRow(row)
+}
+
+// @concept: node-run
+func (s *nodesImpl) GetLatestRunForNode(
+	ctx context.Context, tx persistence.Tx, nodeID foundationshared.UUID,
+) (*persistence.NodeRunLatest, error) {
+	row := s.q(tx).QueryRowContext(ctx,
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state,
+		        settling_signal_type, COALESCE(claimed_by, '')
+		   FROM rimsky_node_runs
+		  WHERE node_id = ?
+		  ORDER BY CASE WHEN state IN ('pending','stale','running','held','parked') THEN 0 ELSE 1 END,
+		           sequence DESC
+		  LIMIT 1`,
+		nodeID.String(),
+	)
+	return scanLatestRow(row)
+}
+
+// @concept: node-run
+func (s *nodesImpl) GetLatestRunInScope(
+	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID,
+) (*persistence.NodeRunLatest, error) {
+	row := s.q(tx).QueryRowContext(ctx,
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state,
+		        settling_signal_type, COALESCE(claimed_by, '')
+		   FROM rimsky_node_runs
+		  WHERE node_id = ? AND run_scope_id = ?
+		  ORDER BY CASE WHEN state IN ('pending','stale','running','held','parked') THEN 0 ELSE 1 END,
+		           sequence DESC
+		  LIMIT 1`,
+		nodeID.String(), runScopeID.String(),
+	)
+	return scanLatestRow(row)
+}
+
+// @concept: node-run
+func (s *nodesImpl) ListRunsForInstanceByStates(
+	ctx context.Context, tx persistence.Tx, instanceID foundationshared.UUID, states []cascade.NodeState,
+) ([]persistence.NodeRunLatest, error) {
+	if len(states) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, 0, len(states))
+	args := make([]any, 0, len(states)+1)
+	args = append(args, instanceID.String())
+	for _, st := range states {
+		placeholders = append(placeholders, "?")
+		args = append(args, string(st))
+	}
+	query := `SELECT r.id, r.node_id, r.run_scope_id, r.frame_id, r.sequence, r.state,
+	                 r.settling_signal_type, COALESCE(r.claimed_by, '')
+	            FROM rimsky_node_runs r
+	            JOIN rimsky_nodes n ON n.id = r.node_id
+	           WHERE n.instance_id = ? AND r.state IN (` + strings.Join(placeholders, ",") + `)
+	           ORDER BY r.sequence ASC`
+	rows, err := s.q(tx).QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("ListRunsForInstanceByStates: %w", err)
+	}
+	defer rows.Close()
+	out := make([]persistence.NodeRunLatest, 0)
+	for rows.Next() {
+		var (
+			r             persistence.NodeRunLatest
+			runIDStr      string
+			nodeIDStr     string
+			runScopeIDStr string
+			frameIDStr    string
+			state         string
+			sigType       sql.NullString
+			claimedBy     string
+		)
+		if err := rows.Scan(&runIDStr, &nodeIDStr, &runScopeIDStr, &frameIDStr, &r.Sequence, &state, &sigType, &claimedBy); err != nil {
+			return nil, fmt.Errorf("ListRunsForInstanceByStates: scan: %w", err)
+		}
+		if r.RunID, err = uuid.Parse(runIDStr); err != nil {
+			return nil, fmt.Errorf("ListRunsForInstanceByStates: parse run_id: %w", err)
+		}
+		if r.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
+			return nil, fmt.Errorf("ListRunsForInstanceByStates: parse node_id: %w", err)
+		}
+		if r.RunScopeID, err = uuid.Parse(runScopeIDStr); err != nil {
+			return nil, fmt.Errorf("ListRunsForInstanceByStates: parse run_scope_id: %w", err)
+		}
+		if r.FrameID, err = uuid.Parse(frameIDStr); err != nil {
+			return nil, fmt.Errorf("ListRunsForInstanceByStates: parse frame_id: %w", err)
+		}
+		r.State = cascade.NodeState(state)
+		if sigType.Valid {
+			v := sigType.String
+			r.SettlingSignalType = &v
+		}
+		r.ClaimedBy = claimedBy
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ListRunsForInstanceByStates: rows: %w", err)
+	}
+	return out, nil
+}
+
+func scanLatestRow(row *sql.Row) (*persistence.NodeRunLatest, error) {
+	var (
+		r             persistence.NodeRunLatest
+		runIDStr      string
+		nodeIDStr     string
+		runScopeIDStr string
+		frameIDStr    string
+		state         string
+		sigType       sql.NullString
+		claimedBy     string
+	)
+	err := row.Scan(&runIDStr, &nodeIDStr, &runScopeIDStr, &frameIDStr, &r.Sequence, &state, &sigType, &claimedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scanLatestRow: %w", err)
+	}
+	r.RunID, err = uuid.Parse(runIDStr)
+	if err != nil {
+		return nil, err
+	}
+	r.NodeID, err = uuid.Parse(nodeIDStr)
+	if err != nil {
+		return nil, err
+	}
+	r.RunScopeID, err = uuid.Parse(runScopeIDStr)
+	if err != nil {
+		return nil, err
+	}
+	r.FrameID, err = uuid.Parse(frameIDStr)
+	if err != nil {
+		return nil, err
+	}
+	r.State = cascade.NodeState(state)
+	if sigType.Valid {
+		v := sigType.String
+		r.SettlingSignalType = &v
+	}
+	r.ClaimedBy = claimedBy
+	return &r, nil
+}
+
+// @concept: cascade
+func (s *nodesImpl) GetPriorRunBySequence(
+	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, beforeSeq int64,
+) (*persistence.NodeRunForGate, error) {
+	row := s.q(tx).QueryRowContext(ctx,
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		   FROM rimsky_node_runs
+		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
+		  ORDER BY sequence DESC
+		  LIMIT 1`,
+		nodeID.String(), runScopeID.String(), beforeSeq,
+	)
+	return scanGateRow(row)
+}
+
+// @concept: cascade
+// @decision: mode-default-most-recent
+func (s *nodesImpl) DeletePriorCascadeStales(
+	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, beforeSeq int64,
+) (int, error) {
+	res, err := s.q(tx).ExecContext(ctx,
+		`DELETE FROM rimsky_node_runs
+		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
+		    AND state = 'stale' AND creation_reason = 'cascade' AND claimed_by IS NULL`,
+		nodeID.String(), runScopeID.String(), beforeSeq,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("DeletePriorCascadeStales: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("DeletePriorCascadeStales: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
+// @concept: cascade
+func (s *nodesImpl) GetPriorCascadeStaleNotClaimed(
+	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, beforeSeq int64,
+) (*persistence.NodeRunForGate, error) {
+	row := s.q(tx).QueryRowContext(ctx,
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		   FROM rimsky_node_runs
+		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
+		    AND state = 'stale' AND creation_reason = 'cascade' AND claimed_by IS NULL
+		  ORDER BY sequence DESC
+		  LIMIT 1`,
+		nodeID.String(), runScopeID.String(), beforeSeq,
+	)
+	return scanGateRow(row)
+}
+
+// @concept: cascade
+func (s *nodesImpl) GetMostRecentSettledRun(
+	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, beforeSeq int64,
+) (*persistence.NodeRunForGate, error) {
+	row := s.q(tx).QueryRowContext(ctx,
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		   FROM rimsky_node_runs
+		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
+		    AND state = 'fresh'
+		  ORDER BY sequence DESC
+		  LIMIT 1`,
+		nodeID.String(), runScopeID.String(), beforeSeq,
+	)
+	return scanGateRow(row)
+}
+
+// @concept: cascade
+func (s *nodesImpl) DropPendingRun(
+	ctx context.Context, tx persistence.Tx, runID foundationshared.UUID,
+) error {
+	res, err := s.q(tx).ExecContext(ctx,
+		`DELETE FROM rimsky_node_runs WHERE id = ? AND state = 'pending'`, runID.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("DropPendingRun: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("DropPendingRun: rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("DropPendingRun: run %s not in pending state", runID)
+	}
+	return nil
+}
+
+// @concept: cascade
+func (s *nodesImpl) TransitionPendingToStale(
+	ctx context.Context, tx persistence.Tx, runID foundationshared.UUID, enqueuedAt time.Time,
+) error {
+	target, err := cascade.NextState(cascade.NodeStatePending, cascade.ReasonGateCleared)
+	if err != nil {
+		return fmt.Errorf("TransitionPendingToStale: state machine: %w", err)
+	}
+	if target != cascade.NodeStateStale {
+		return fmt.Errorf("TransitionPendingToStale: unexpected target %s", target)
+	}
+	res, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_node_runs
+		    SET state = ?, enqueued_at = ?
+		  WHERE id = ? AND state = 'pending'`,
+		string(target), formatTime(enqueuedAt), runID.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("TransitionPendingToStale: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("TransitionPendingToStale: rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("TransitionPendingToStale: run %s not in pending state", runID)
+	}
+	return nil
+}
+
+// @concept: cascade
+// @decision: non-cascade-direct-to-stale
+func (s *nodesImpl) CreateNonCascadeStale(
+	ctx context.Context, tx persistence.Tx, in persistence.NonCascadeStaleInput,
+) (foundationshared.UUID, error) {
+	if in.FrameID == (foundationshared.UUID{}) {
+		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: frame_id required")
+	}
+	if in.RunScopeID == (foundationshared.UUID{}) {
+		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: run_scope_id required")
+	}
+	if in.CreationReason == "" {
+		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: creation_reason required")
+	}
+	storesJSON := marshalStringArray(in.RequiredClaimProducers)
+	var priorID any
+	if in.PriorDispatchID != nil {
+		priorID = in.PriorDispatchID.String()
+	}
+	var scratchInline any
+	if len(in.InitialScratchInline) > 0 {
+		scratchInline = in.InitialScratchInline
+	}
+	newID := uuid.New()
+	res, err := s.q(tx).ExecContext(ctx,
+		`INSERT INTO rimsky_node_runs
+		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence,
+		    frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition,
+		    scratch_inline, scratch_handle, scratch_handle_backend)
+		 SELECT ?, ?, ?, ?, ?, 'stale', ?,
+		        COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = ?), 0) + 1,
+		        ?, rs.id, ?, ?, ?, ?, ?
+		   FROM rimsky_run_scopes rs
+		  WHERE rs.id = ? AND rs.closed_at IS NULL`,
+		newID.String(), in.NodeID.String(), nullableString(in.ExecutorName), storesJSON, formatTime(in.EnqueuedAt), string(in.CreationReason),
+		in.NodeID.String(), in.RunScopeID.String(),
+		in.FrameID.String(),
+		priorID, nullableString(in.PriorDispatchDisposition),
+		scratchInline, nullableString(in.InitialScratchHandle), nullableString(in.InitialScratchHandleBackend),
+		in.RunScopeID.String(),
+	)
+	if err != nil {
+		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: rows affected: %w", err)
+	}
+	if n == 0 {
+		var closedAt sql.NullString
+		serr := s.q(tx).QueryRowContext(ctx,
+			`SELECT closed_at FROM rimsky_run_scopes WHERE id = ?`, in.RunScopeID.String(),
+		).Scan(&closedAt)
+		if errors.Is(serr, sql.ErrNoRows) {
+			return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: run scope %s not found", in.RunScopeID)
+		}
+		if serr != nil {
+			return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: lookup run scope: %w", serr)
+		}
+		if closedAt.Valid {
+			return foundationshared.UUID{}, persistence.ErrRunScopeClosed
+		}
+		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: insert affected zero rows")
+	}
+	// @decision: non-cascade-direct-to-stale
+	if err := (*nodeAttributesImpl)((*tablesImpl)(s)).SnapshotBagForNewRun(ctx, tx, newID, in.NodeID, in.RunScopeID); err != nil {
+		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: snapshot bag: %w", err)
+	}
+	return newID, nil
+}
+
+func scanGateRow(row *sql.Row) (*persistence.NodeRunForGate, error) {
+	var (
+		runIDStr     string
+		nodeIDStr    string
+		runScopeStr  string
+		frameIDStr   string
+		sequence     int64
+		stateStr     string
+		reasonStr    string
+		claimedByStr string
+	)
+	err := row.Scan(&runIDStr, &nodeIDStr, &runScopeStr, &frameIDStr, &sequence, &stateStr, &reasonStr, &claimedByStr)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scanGateRow: %w", err)
+	}
+	runID, err := parseUUID(runIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("scanGateRow: run_id: %w", err)
+	}
+	nodeID, err := parseUUID(nodeIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("scanGateRow: node_id: %w", err)
+	}
+	runScope, err := parseUUID(runScopeStr)
+	if err != nil {
+		return nil, fmt.Errorf("scanGateRow: run_scope_id: %w", err)
+	}
+	frameID, err := parseUUID(frameIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("scanGateRow: frame_id: %w", err)
+	}
+	return &persistence.NodeRunForGate{
+		RunID:          runID,
+		NodeID:         nodeID,
+		RunScopeID:     runScope,
+		FrameID:        frameID,
+		Sequence:       sequence,
+		State:          cascade.NodeState(stateStr),
+		CreationReason: cascade.CreationReason(reasonStr),
+		ClaimedBy:      claimedByStr,
+	}, nil
 }

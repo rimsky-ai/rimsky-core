@@ -193,14 +193,14 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 	require.NotNil(t, competingAcq)
 
 	if !h.WaitForNodeState(competingAcq.ID, cascade.NodeStateFailed, 30*time.Second) {
-		var compRow *persistence.NodeRow
+		var compLatest *persistence.NodeRunLatest
 		var owners []persistence.ClaimHandleRow
 		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().Get(h.Ctx, competingAcq.ID, tx)
+			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, competingAcq.ID)
 			if err != nil {
 				return err
 			}
-			compRow = r
+			compLatest = r
 			rs, err := h.Persist.ClaimHandles().ListByProducerClaimScope(h.Ctx, "queue-store", tx)
 			if err != nil {
 				return err
@@ -213,9 +213,16 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 			owSummary[i] = string(ow.State) + "/" + string(ow.Lifetime) +
 				" scope=" + string(ow.ClaimScopeData)
 		}
+		var stateStr, sigStr string
+		if compLatest != nil {
+			stateStr = string(compLatest.State)
+			if compLatest.SettlingSignalType != nil {
+				sigStr = *compLatest.SettlingSignalType
+			}
+		}
 		t.Fatalf("competing acquirer must settle failed via acquire/unavailable while durable row occupies the scope; "+
 			"got state=%s settling_signal_type=%v; conflict-set holders=%v",
-			compRow.State, compRow.SettlingSignalType, owSummary)
+			stateStr, sigStr, owSummary)
 	}
 
 	requireSettlingSignalTypePrefix(t, h, competingAcq.ID, "terminal/error/acquire/unavailable")
@@ -311,14 +318,21 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 	require.NotNil(t, thirdAcq)
 
 	if !h.WaitForNodeState(thirdAcq.ID, cascade.NodeStateFresh, 30*time.Second) {
-		var thirdRow *persistence.NodeRow
+		var thirdLatest *persistence.NodeRunLatest
 		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().Get(h.Ctx, thirdAcq.ID, tx)
-			thirdRow = r
+			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, thirdAcq.ID)
+			thirdLatest = r
 			return err
 		}))
+		var stateStr, sigStr string
+		if thirdLatest != nil {
+			stateStr = string(thirdLatest.State)
+			if thirdLatest.SettlingSignalType != nil {
+				sigStr = *thirdLatest.SettlingSignalType
+			}
+		}
 		t.Fatalf("fresh subsequent acquirer must settle fresh after the durable owner's asset is released; "+
-			"got state=%s settling_signal_type=%v", thirdRow.State, thirdRow.SettlingSignalType)
+			"got state=%s settling_signal_type=%v", stateStr, sigStr)
 	}
 }
 
@@ -609,20 +623,20 @@ func requireSubstitutedAddrEquals(t *testing.T, h *scenario.Harness, runID share
 
 func requireSettlingSignalTypePrefix(t *testing.T, h *scenario.Harness, nodeID shared.UUID, prefix string) {
 	t.Helper()
-	var row *persistence.NodeRow
+	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, nodeID, tx)
-		row = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, nodeID)
+		latest = r
 		return err
 	}))
-	require.NotNil(t, row)
-	require.NotNil(t, row.SettlingSignalType,
+	require.NotNil(t, latest, "node %s must have at least one run", nodeID)
+	require.NotNil(t, latest.SettlingSignalType,
 		"node %s must have a settling_signal_type after terminal", nodeID)
 	require.True(t,
-		len(*row.SettlingSignalType) >= len(prefix) &&
-			(*row.SettlingSignalType)[:len(prefix)] == prefix,
+		len(*latest.SettlingSignalType) >= len(prefix) &&
+			(*latest.SettlingSignalType)[:len(prefix)] == prefix,
 		"node %s settling_signal_type=%q must start with %q",
-		nodeID, *row.SettlingSignalType, prefix)
+		nodeID, *latest.SettlingSignalType, prefix)
 }
 
 func deleteAsset(t *testing.T, h *scenario.Harness, instanceID shared.UUID, assetAlias string) {

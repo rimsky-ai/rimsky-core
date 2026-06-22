@@ -56,7 +56,7 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 		   FROM rimsky_nodes n
 		   LEFT JOIN rimsky_node_runs r
 		          ON r.node_id = n.id
-		         AND r.phase IN ('pending','active','held','parked')
+		         AND r.state IN ('pending','stale','running','held','parked')
 		  WHERE n.id = $1`, uuid.UUID(leaf.ID)).Scan(&leafState)
 	require.NoError(t, err)
 	require.Equal(t, "fresh", leafState,
@@ -68,7 +68,7 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 	err = h.Pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM rimsky_node_runs
 		WHERE frame_id = $1 AND node_id = $2
-		  AND phase IN ('pending','active','held','parked')
+		  AND state IN ('pending','stale','running','held','parked')
 	`, frames[0].FrameID, uuid.UUID(leaf.ID)).Scan(&leafDispatchCount)
 	require.NoError(t, err)
 	require.Equal(t, 0, leafDispatchCount,

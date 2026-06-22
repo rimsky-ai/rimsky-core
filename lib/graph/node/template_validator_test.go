@@ -905,6 +905,35 @@ func TestValidateMaxParkDuration_Malformed(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].max_park_duration")
 }
 
+func TestValidateCascadeMode_Ok(t *testing.T) {
+	for _, mode := range []string{"", "most-recent", "sequenced", "idempotent-queue", "idempotent-settled"} {
+		t.Run(mode, func(t *testing.T) {
+			spec := &TemplateSpec{
+				Name:    "demo",
+				Version: "1.0.0",
+				Nodes: []TemplateNodeDef{{
+					Type: "a", Executor: "h", CascadeMode: mode,
+				}},
+			}
+			res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+			assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+		})
+	}
+}
+
+func TestValidateCascadeMode_Unknown(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{{
+			Type: "a", Executor: "h", CascadeMode: "bogus",
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].cascade_mode")
+}
+
 func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 	t.Run("unknown executor name is rejected", func(t *testing.T) {
 		spec := &TemplateSpec{

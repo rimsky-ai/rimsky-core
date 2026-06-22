@@ -83,9 +83,9 @@ func seedDispatchInstance(t *testing.T, ctx context.Context, d persistence.Datab
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id,
+		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id,
 		    run_scope_id, claimed_by, claimed_at, last_progress_at)
-		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'active', 'running', ?, ?,
+		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'running', 'cascade', 1, ?, ?,
 		         'sup-test', datetime('now'), datetime('now'))`,
 		runID.String(), nodeID.String(), frameID.String(), scopeID.String(),
 	); err != nil {

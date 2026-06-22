@@ -116,7 +116,7 @@ func TestRunInstanceStatus_JSONHasAllSections(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "running"})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}})
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "work_started", Payload: map[string]any{}})
 	srv.State.AddBreakpointHit(inst.ID, map[string]any{"checkpoint": "pre_dispatch", "mode": "stop"})
 
@@ -157,7 +157,7 @@ func TestRunInstanceStatus_KeyResolution(t *testing.T) {
 	hash := deployedTemplate(t, srv, "v1")
 	key := "compose:p:n"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "fresh"})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}})
 	if got := cli.RunInstanceStatus(context.Background(), []string{key}); got != 0 {
 		t.Errorf("exit %d, want 0", got)
 	}
@@ -233,7 +233,7 @@ func TestRunInstanceNodes(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "fresh"})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}})
 	if got := cli.RunInstanceNodes(context.Background(), []string{inst.ID}); got != 0 {
 		t.Errorf("exit %d", got)
 	}
@@ -315,7 +315,7 @@ func TestRunNodeGet_Found(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "fresh"})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}})
 	if got := cli.RunNodeGet(context.Background(), []string{"n1"}); got != 0 {
 		t.Errorf("exit %d", got)
 	}

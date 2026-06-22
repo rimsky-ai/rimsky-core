@@ -56,8 +56,9 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 	}
 	for i, outcome := range commitOutcomes {
 		i, outcome := i, outcome
+		var post func(context.Context)
 		require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+			pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
 				ClaimHandleID:       subIDs[i],
 				SupervisorID:        args.SupervisorID,
 				Source:              runtime.ActiveTerminal,
@@ -76,7 +77,12 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 					ProducerName: "postmortem-store",
 				},
 			})
+			post = pc
+			return err
 		}))
+		if post != nil {
+			post(ctx)
+		}
 	}
 
 	for i, sid := range subIDs {

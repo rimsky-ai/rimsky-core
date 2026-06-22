@@ -285,7 +285,7 @@ func (b *breakpointHitsImpl) HasUnresumedPauseHitForInstance(ctx context.Context
 		      AND h.mode = ?
 		      AND h.resumed_at IS NULL
 		      AND h.node_run_id IS NOT NULL
-		      AND r.phase IN ('pending','active','held','parked')
+		      AND r.state IN ('pending','stale','running','held','parked')
 		 )`, instanceID.String(), string(persistence.BreakpointModePause)).Scan(&n); err != nil {
 		return false, fmt.Errorf("sqlite.breakpointHits.hasUnresumedPauseHitForInstance: %w", err)
 	}

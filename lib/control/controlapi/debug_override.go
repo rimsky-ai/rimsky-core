@@ -13,10 +13,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -196,11 +198,25 @@ func applyDebugOverride(
 				touched = true
 			}
 		}
-		if n.InFlightRunID != nil && frameID != nil {
-			if err := deps.Persist.Nodes().MarkStaleForCascade(ctx, *n.InFlightRunID, *frameID, tx); err != nil {
+		if frameID != nil {
+			latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, n.ID)
+			if err != nil {
 				return mutated, err
 			}
-			touched = true
+			if latest != nil {
+				_, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+					NodeID:         n.ID,
+					RunScopeID:     latest.RunScopeID,
+					FrameID:        *frameID,
+					ExecutorName:   n.Executor,
+					EnqueuedAt:     time.Now().UTC(),
+					CreationReason: cascade.CreationReasonOperatorInvalidate,
+				})
+				if err != nil {
+					return mutated, err
+				}
+				touched = true
+			}
 		}
 		if touched {
 			mutated++
@@ -217,20 +233,24 @@ func setNodeAttributeForDebugOverride(
 	body DebugOverrideRequest,
 ) (bool, error) {
 	delta := map[string]any{body.AttributeKey: body.AttributeValue}
-	if n.InFlightRunID == nil {
+	latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, n.ID)
+	if err != nil {
+		return false, err
+	}
+	if latest == nil {
 		return false, nil
 	}
-	existing, err := deps.Persist.NodeAttributes().GetByRun(ctx, *n.InFlightRunID, tx)
+	existing, err := deps.Persist.NodeAttributes().GetByRun(ctx, latest.RunID, tx)
 	if err != nil {
 		return false, err
 	}
 	if existing == nil {
-		if err := deps.Persist.NodeAttributes().Upsert(ctx, *n.InFlightRunID, n.ID, delta, tx); err != nil {
+		if err := deps.Persist.NodeAttributes().Upsert(ctx, latest.RunID, n.ID, delta, tx); err != nil {
 			return false, err
 		}
 		return true, nil
 	}
-	if err := deps.Persist.NodeAttributes().MergeDelta(ctx, *n.InFlightRunID, delta, tx); err != nil {
+	if err := deps.Persist.NodeAttributes().MergeDelta(ctx, latest.RunID, delta, tx); err != nil {
 		return false, err
 	}
 	return true, nil

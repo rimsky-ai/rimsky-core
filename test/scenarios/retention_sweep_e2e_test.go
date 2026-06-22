@@ -62,8 +62,8 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 
 		runID := uuid.New()
 		h.ExecSQL(`INSERT INTO rimsky_node_runs
-		    (id, node_id, executor_name, enqueued_at, phase, state, frame_id, run_scope_id)
-		    VALUES ($1, $2, 'worker', $3, 'completed', 'failed', $4, $5)`,
+		    (id, node_id, executor_name, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		    VALUES ($1, $2, 'worker', $3, 'failed', 'cascade', 1, $4, $5)`,
 			runID, nodeID, endedAt, frameID, scopeID)
 
 		if i >= totalFrames-keepFrames {

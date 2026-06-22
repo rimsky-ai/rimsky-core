@@ -46,11 +46,6 @@ func TestAllInOneSQLite_DriveNodeToTerminal(t *testing.T) {
 	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
 }
 
-var scenarioTerminalStates = map[string]bool{
-	"fresh":  true,
-	"failed": true,
-}
-
 func deployScenarioTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/templates", body)
@@ -110,22 +105,31 @@ func waitForDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, instanceID,
 			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
 		if status == http.StatusOK {
 			var resp struct {
-				Node struct {
-					State string `json:"state"`
-				} `json:"node"`
+				RunSummary struct {
+					ActiveCount  int `json:"active_count"`
+					PendingCount int `json:"pending_count"`
+					FreshCount   int `json:"fresh_count"`
+					FailedCount  int `json:"failed_count"`
+				} `json:"run_summary"`
 				Events []struct {
 					Kind string `json:"kind"`
 				} `json:"events"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.Node.State
+				if resp.RunSummary.FailedCount > 0 {
+					lastState = "failed"
+				} else if resp.RunSummary.FreshCount > 0 && resp.RunSummary.ActiveCount == 0 && resp.RunSummary.PendingCount == 0 {
+					lastState = "fresh"
+				} else {
+					lastState = "in-flight"
+				}
 				for _, e := range resp.Events {
 					if e.Kind == "work_started" {
 						sawDispatch = true
 						break
 					}
 				}
-				if sawDispatch && scenarioTerminalStates[lastState] {
+				if sawDispatch && (lastState == "fresh" || lastState == "failed") {
 					if lastState != "fresh" {
 						t.Fatalf("node %q dispatched but settled in %q, want fresh — the stub executor returns Success, so a non-fresh terminal is an orchestration-loop defect",
 							nodeType, lastState)

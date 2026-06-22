@@ -79,9 +79,9 @@ func seedWaitSetParentsPG(
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, phase, state, frame_id, run_scope_id)
-		 VALUES ($1, $3, 'test-executor', 'active', 'running', $5, $6),
-		        ($2, $4, 'test-executor', 'active', 'running', $5, $6)`,
+		   (id, node_id, executor_name, state, sequence, creation_reason, enqueued_at, frame_id, run_scope_id)
+		 VALUES ($1, $3, 'test-executor', 'running', 1, 'cascade', NOW(), $5, $6),
+		        ($2, $4, 'test-executor', 'running', 1, 'cascade', NOW(), $5, $6)`,
 		receiver, sender, receiverNodeID, senderNodeID, frame, mainRunScopeID,
 	)
 	return shared.UUID(frame), shared.UUID(receiver), shared.UUID(sender)

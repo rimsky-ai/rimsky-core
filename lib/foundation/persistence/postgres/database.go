@@ -76,5 +76,6 @@ func open(ctx context.Context, cfg persistence.PostgresConfig) (persistence.Data
 	d.c = newAdvisoryLocker(pool)
 	d.s = newTables(pool)
 	d.q = newQueue(pool)
+	d.q.setTables(d.s)
 	return d, nil
 }

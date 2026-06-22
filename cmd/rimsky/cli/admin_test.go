@@ -17,7 +17,7 @@ func TestRunAdminReset(t *testing.T) {
 	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	srv.State.SetTemplateState(hash, "deployed")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "fresh"})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}})
 	if got := cli.RunAdminReset(context.Background(), []string{"n1"}); got != 0 {
 		t.Errorf("exit %d", got)
 	}

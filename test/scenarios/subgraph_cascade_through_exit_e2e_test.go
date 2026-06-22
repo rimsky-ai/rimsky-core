@@ -83,11 +83,11 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 	if !h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh, 60*time.Second) {
 		t.Logf("downstream did not reach fresh; dumping current state:")
 		h.QuerySQL(`
-			SELECT n.node_type, COALESCE(r.state::text, 'fresh'), COALESCE(r.phase::text, 'no-run'),
+			SELECT n.node_type, COALESCE(r.state::text, 'fresh'),
 			       r.run_scope_id::text, rs.graph_name, rs.partition_key, rs.closed_at IS NOT NULL
 			  FROM rimsky_nodes n
 			  LEFT JOIN LATERAL (
-			    SELECT state, phase, run_scope_id
+			    SELECT state, run_scope_id
 			      FROM rimsky_node_runs
 			     WHERE node_id = n.id
 			     ORDER BY enqueued_at DESC
@@ -96,13 +96,13 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 			  LEFT JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
 			 WHERE n.instance_id = $1
 		`, []any{iid}, func(scan func(...any) error) error {
-			var typ, state, phase, scopeID, graphName, pk *string
+			var typ, state, scopeID, graphName, pk *string
 			var closed bool
-			if err := scan(&typ, &state, &phase, &scopeID, &graphName, &pk, &closed); err != nil {
+			if err := scan(&typ, &state, &scopeID, &graphName, &pk, &closed); err != nil {
 				return err
 			}
-			t.Logf("  node type=%v state=%v phase=%v scope=%v graph=%v partition=%v closed=%v",
-				strDeref(typ), strDeref(state), strDeref(phase), strDeref(scopeID),
+			t.Logf("  node type=%v state=%v scope=%v graph=%v partition=%v closed=%v",
+				strDeref(typ), strDeref(state), strDeref(scopeID),
 				strDeref(graphName), strDeref(pk), closed)
 			return nil
 		})

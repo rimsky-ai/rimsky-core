@@ -27,6 +27,21 @@ func CanonicalSpecBytes(spec node.TemplateSpec) ([]byte, error) {
 	return canon, nil
 }
 
+func CanonicalBytes(m map[string]any) ([]byte, error) {
+	if m == nil {
+		m = map[string]any{}
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return nil, fmt.Errorf("marshal map: %w", err)
+	}
+	canon, err := jsoncanonicalizer.Transform(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize map: %w", err)
+	}
+	return canon, nil
+}
+
 func CanonicalSpecHash(spec node.TemplateSpec) (string, error) {
 	canon, err := CanonicalSpecBytes(spec)
 	if err != nil {

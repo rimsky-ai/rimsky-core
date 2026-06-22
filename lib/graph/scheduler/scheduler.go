@@ -199,10 +199,6 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	if err := runtime.SweepReady(ctx, conductorArgs); err != nil {
-		return err
-	}
-
 	if cfg.SupervisorID != "" {
 		if err := runtime.SweepParkedNodes(ctx, runtime.ParkedSweepArgs{
 			Persist:          cfg.Persist,

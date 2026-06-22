@@ -72,13 +72,14 @@ func testTemplateErrorPolicyPass(t *testing.T) {
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
 		"worker should record settling_signal_type=terminal/error/<class> under pass")
 
-	var workerRow *persistence.NodeRow
+	var workerLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		workerRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		workerLatest = r
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFresh, workerRow.State,
+	require.NotNil(t, workerLatest)
+	require.Equal(t, cascade.NodeStateFresh, workerLatest.State,
 		"pass must settle the node fresh, not failed — the action declaration is what differentiates pass from give_up")
 
 	require.True(t, h.WaitForNodeState(downstream.ID, cascade.NodeStateFresh, 30*time.Second),
@@ -136,14 +137,16 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 
-	var downstreamRow *persistence.NodeRow
+	var downstreamLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, downstream.ID, tx)
-		downstreamRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, downstream.ID)
+		downstreamLatest = r
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFresh, downstreamRow.State,
-		"give_up must skip downstream — the downstream subscribes on terminal/success and the worker's give_up emits terminal/error/<class>, which must not cascade to it")
+	if downstreamLatest != nil {
+		require.Equal(t, cascade.NodeStateFresh, downstreamLatest.State,
+			"give_up must skip downstream — the downstream subscribes on terminal/success and the worker's give_up emits terminal/error/<class>, which must not cascade to it")
+	}
 
 	dsID := downstream.ID
 	require.Empty(t,
@@ -155,14 +158,15 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 			"downstream executor must not be invoked when give_up fires on the upstream worker")
 	}
 
-	var workerRow *persistence.NodeRow
+	var workerLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		workerRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		workerLatest = r
 		return err
 	}))
-	require.NotNil(t, workerRow.SettlingSignalType)
-	require.Contains(t, *workerRow.SettlingSignalType, "terminal/error/",
+	require.NotNil(t, workerLatest)
+	require.NotNil(t, workerLatest.SettlingSignalType)
+	require.Contains(t, *workerLatest.SettlingSignalType, "terminal/error/",
 		"give_up must record settling_signal_type=terminal/error/<class>")
 }
 

@@ -125,20 +125,20 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 		t.Logf("rimsky_node_runs rows for this instance:")
 		h.QuerySQL(`
 			SELECT r.id::text, r.node_id::text, rs.parent_run_id::text, rs.partition_key,
-			       r.phase::text, r.state::text, r.claimed_by
+			       r.state::text, r.claimed_by
 			  FROM rimsky_node_runs r
 			  JOIN rimsky_nodes n      ON n.id  = r.node_id
 			  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
 			 WHERE n.instance_id = $1
 			 ORDER BY r.enqueued_at
 		`, []any{iid}, func(scan func(...any) error) error {
-			var id, nid, parent, ck, phase, state, claimedBy *string
-			if err := scan(&id, &nid, &parent, &ck, &phase, &state, &claimedBy); err != nil {
+			var id, nid, parent, ck, state, claimedBy *string
+			if err := scan(&id, &nid, &parent, &ck, &state, &claimedBy); err != nil {
 				return err
 			}
-			t.Logf("  run id=%v node=%v parent=%v partition_key=%v phase=%v state=%v claimed_by=%v",
+			t.Logf("  run id=%v node=%v parent=%v partition_key=%v state=%v claimed_by=%v",
 				strDeref(id), strDeref(nid), strDeref(parent), strDeref(ck),
-				strDeref(phase), strDeref(state), strDeref(claimedBy))
+				strDeref(state), strDeref(claimedBy))
 			return nil
 		})
 		t.Logf("rimsky_claim_handles rows for this instance:")

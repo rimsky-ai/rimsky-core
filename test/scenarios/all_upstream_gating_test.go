@@ -140,11 +140,10 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 		h.QueryRowSQL(
 			`SELECT COUNT(*) FROM rimsky_node_runs
 			  WHERE node_id = $1
-			    AND phase IN ('pending','active','held','parked')
-			    AND (claimed_by IS NOT NULL OR phase <> 'pending')`,
+			    AND state IN ('stale','running','held','parked')`,
 			[]any{d.ID}, &ineligibleRowViolations)
 		require.Zero(t, ineligibleRowViolations,
-			"d's run row was claimed or left pending while subscribed upstream c was in-flight in the frame")
+			"d's run row was claimed or left dispatch-eligible while subscribed upstream c was in-flight in the frame")
 		require.Equal(t, baselineDRuns, countRuns("d"),
 			"d dispatched while subscribed upstream c was still in-flight in the frame")
 		time.Sleep(50 * time.Millisecond)

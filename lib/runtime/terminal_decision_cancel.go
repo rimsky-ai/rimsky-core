@@ -19,16 +19,16 @@ import (
 func cancelInFlightSiblings(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	parentID shared.UUID, triggerID shared.UUID,
-) error {
+) (postCommitFn, error) {
 	parent, err := args.ClaimHandles.Get(ctx, parentID, tx)
 	if err != nil {
-		return fmt.Errorf("cancelInFlightSiblings: Get parent: %w", err)
+		return nil, fmt.Errorf("cancelInFlightSiblings: Get parent: %w", err)
 	}
 	if parent == nil {
-		return nil
+		return nil, nil
 	}
 	if parent.State != spec.ClaimHandleStateActive {
-		return nil
+		return nil, nil
 	}
 	policy, err := persistence.UnmarshalAggregationPolicy(parent.AggregationPolicy)
 	if err != nil {
@@ -37,15 +37,16 @@ func cancelInFlightSiblings(
 				"parent_claim_handle_id", parentID.String(),
 				"error", err.Error())
 		}
-		return nil
+		return nil, nil
 	}
 	if policy.Kind != spec.AggregationKindStrict || !policy.CancelSiblings {
-		return nil
+		return nil, nil
 	}
 	siblings, err := args.ClaimHandles.ListChildClaimHandles(ctx, parentID, tx)
 	if err != nil {
-		return fmt.Errorf("cancelInFlightSiblings: ListChildClaimHandles: %w", err)
+		return nil, fmt.Errorf("cancelInFlightSiblings: ListChildClaimHandles: %w", err)
 	}
+	var post postCommitFn
 	for _, sib := range siblings {
 		if sib.ID == triggerID {
 			continue
@@ -58,7 +59,7 @@ func cancelInFlightSiblings(
 		}
 		current, err := args.ClaimHandles.LockForUpdate(ctx, sib.ID, tx)
 		if err != nil {
-			return fmt.Errorf("cancelInFlightSiblings: LockForUpdate sibling %s: %w",
+			return nil, fmt.Errorf("cancelInFlightSiblings: LockForUpdate sibling %s: %w",
 				sib.ID, err)
 		}
 		if current == nil || current.State != spec.ClaimHandleStateActive {
@@ -70,7 +71,7 @@ func cancelInFlightSiblings(
 		}
 		producer, ok := args.StoreRegistry.Get(producerName)
 		if !ok {
-			return fmt.Errorf("cancelInFlightSiblings: unknown producer %q for sibling %s",
+			return nil, fmt.Errorf("cancelInFlightSiblings: unknown producer %q for sibling %s",
 				producerName, sib.ID)
 		}
 		hint := ClaimLineageHint{
@@ -87,7 +88,7 @@ func cancelInFlightSiblings(
 		if acquirer, aErr := args.Persist.Nodes().Get(ctx, sib.HolderNodeID, tx); aErr == nil && acquirer != nil {
 			hint.InstanceID = acquirer.InstanceID
 		}
-		if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
 			ClaimHandleID:       sib.ID,
 			SupervisorID:        args.SupervisorID,
 			Source:              HeldTerminal,
@@ -100,12 +101,14 @@ func cancelInFlightSiblings(
 			ProducerName:        producerName,
 			LineageHint:         hint,
 			ParentClaimHandleID: sib.ParentClaimHandleID,
-		}); err != nil {
-			return fmt.Errorf("cancelInFlightSiblings: force-Abandon sibling %s: %w",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("cancelInFlightSiblings: force-Abandon sibling %s: %w",
 				sib.ID, err)
 		}
+		post = chainPostCommit(post, pc)
 	}
-	return nil
+	return post, nil
 }
 
 // @concept: claim-tree
@@ -114,11 +117,12 @@ func cancelInFlightSiblings(
 func cancelDescendantClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	rowID shared.UUID,
-) error {
+) (postCommitFn, error) {
 	descendants, err := args.ClaimHandles.ListChildClaimHandles(ctx, rowID, tx)
 	if err != nil {
-		return fmt.Errorf("cancelDescendantClaims: ListChildClaimHandles: %w", err)
+		return nil, fmt.Errorf("cancelDescendantClaims: ListChildClaimHandles: %w", err)
 	}
+	var post postCommitFn
 	for _, d := range descendants {
 		if d.State != spec.ClaimHandleStateActive {
 			continue
@@ -128,7 +132,7 @@ func cancelDescendantClaims(
 		}
 		current, err := args.ClaimHandles.LockForUpdate(ctx, d.ID, tx)
 		if err != nil {
-			return fmt.Errorf("cancelDescendantClaims: LockForUpdate descendant %s: %w",
+			return nil, fmt.Errorf("cancelDescendantClaims: LockForUpdate descendant %s: %w",
 				d.ID, err)
 		}
 		if current == nil || current.State != spec.ClaimHandleStateActive {
@@ -140,7 +144,7 @@ func cancelDescendantClaims(
 		}
 		producer, ok := args.StoreRegistry.Get(producerName)
 		if !ok {
-			return fmt.Errorf("cancelDescendantClaims: unknown producer %q for descendant %s",
+			return nil, fmt.Errorf("cancelDescendantClaims: unknown producer %q for descendant %s",
 				producerName, d.ID)
 		}
 		hint := ClaimLineageHint{
@@ -157,7 +161,7 @@ func cancelDescendantClaims(
 		if acquirer, aErr := args.Persist.Nodes().Get(ctx, d.HolderNodeID, tx); aErr == nil && acquirer != nil {
 			hint.InstanceID = acquirer.InstanceID
 		}
-		if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
 			ClaimHandleID:       d.ID,
 			SupervisorID:        args.SupervisorID,
 			Source:              HeldTerminal,
@@ -170,10 +174,12 @@ func cancelDescendantClaims(
 			ProducerName:        producerName,
 			LineageHint:         hint,
 			ParentClaimHandleID: nil,
-		}); err != nil {
-			return fmt.Errorf("cancelDescendantClaims: force-Abandon descendant %s: %w",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("cancelDescendantClaims: force-Abandon descendant %s: %w",
 				d.ID, err)
 		}
+		post = chainPostCommit(post, pc)
 	}
-	return nil
+	return post, nil
 }

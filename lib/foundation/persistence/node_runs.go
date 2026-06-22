@@ -9,6 +9,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
@@ -28,6 +29,10 @@ type DispatchRequest struct {
 
 	// @concept: run-scope
 	PriorDispatchDisposition string
+
+	// @concept: node-run
+	// @decision: non-cascade-direct-to-stale
+	CreationReason cascade.CreationReason
 
 	// @concept: executor
 	InitialScratchInline        []byte
@@ -88,9 +93,11 @@ type Queue interface {
 
 	// @concept: wait-set
 	// @concept: cascade
-	ListInFlightRunPhases(ctx context.Context, tx Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error)
+	ListInFlightRunStates(ctx context.Context, tx Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error)
 
 	ClaimDispatchRow(ctx context.Context, tx Tx, dispatchID shared.UUID, supervisorID string) (claimed bool, err error)
+
+	PromoteClaimedToRunning(ctx context.Context, tx Tx, dispatchID shared.UUID, supervisorID string) (promoted bool, err error)
 
 	Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error
 

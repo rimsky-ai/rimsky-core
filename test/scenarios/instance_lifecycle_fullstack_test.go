@@ -123,7 +123,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 
 	var pendingCount int
 	h.QueryRowSQL(
-		`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND phase = 'pending' AND claimed_by IS NULL`,
+		`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND state = 'stale' AND claimed_by IS NULL`,
 		[]any{w.ID}, &pendingCount)
 	require.GreaterOrEqual(t, pendingCount, 1,
 		"under pause there must be at least one unclaimed pending dispatch row "+

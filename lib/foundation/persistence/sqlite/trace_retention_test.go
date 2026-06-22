@@ -108,8 +108,8 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 		}
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_node_runs
-			   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-			 VALUES (?, ?, 'stub', '[]', ?, 'completed', 'failed', ?, ?)`,
+			   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+			 VALUES (?, ?, 'stub', '[]', ?, 'failed', 'cascade', 1, ?, ?)`,
 			runID, nodeID, rfc(endedAt), frameID, scopeID,
 		); err != nil {
 			t.Fatalf("seed terminal node_run: %v", err)
@@ -147,8 +147,8 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		 VALUES (?, ?, 'stub', '[]', ?, 'parked', 'parked', ?, ?)`,
+		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		 VALUES (?, ?, 'stub', '[]', ?, 'parked', 'cascade', 1, ?, ?)`,
 		heldRun, heldNode, rfc(oldTime), heldFrame, scopeID,
 	); err != nil {
 		t.Fatalf("seed parked node_run: %v", err)

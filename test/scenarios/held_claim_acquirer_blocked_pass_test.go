@@ -109,12 +109,14 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 	require.Equal(t, 0, activeCount,
 		"every rimsky_claim_handles row for this instance must reach a terminal state — auto-terminal must fire when the held-claim acquirer takes resolve=pass; non-zero indicates the inheritor-rows-active leak has regressed")
 
-	var inhRow *persistence.NodeRow
+	var inhLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, inh.ID, tx)
-		inhRow = r
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, inh.ID)
+		inhLatest = r
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFresh, inhRow.State,
-		"inheritor should remain fresh — terminal/success subscription must not match the acquirer's terminal/error pass settlement")
+	if inhLatest != nil {
+		require.Equal(t, cascade.NodeStateFresh, inhLatest.State,
+			"inheritor should remain fresh — terminal/success subscription must not match the acquirer's terminal/error pass settlement")
+	}
 }

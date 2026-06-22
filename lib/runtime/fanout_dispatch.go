@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -139,6 +140,15 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		children, err := DispatchChildren(ctx, args, tx, in)
 		if err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: %w", err)
+		}
+		// @concept: fan-out
+		// @decision: held-as-state-not-phase
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+			cascade.NodeStateHeld, cascade.ReasonFanoutDispatched, nil, tx); err != nil {
+			return fmt.Errorf("dispatchFanOutChildren: parent → held: %w", err)
+		}
+		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
+			return fmt.Errorf("dispatchFanOutChildren: release parent queue claim: %w", err)
 		}
 		childKeys := make([]string, 0, len(children))
 		childIDs := make([]string, 0, len(children))

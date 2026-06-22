@@ -26,9 +26,8 @@ const waitPollBackoffAfter = 5
 
 // @decision: exit-codes
 const (
-	OutcomeSuccess       = "success"
-	OutcomeFailure       = "failure"
-	OutcomeParkedTimeout = "parked-timeout"
+	OutcomeSuccess = "success"
+	OutcomeFailure = "failure"
 )
 
 type instanceClient interface {
@@ -90,14 +89,14 @@ func WaitForInstancesTerminal(
 					name = id
 				}
 				for _, n := range nodes.Nodes {
-					if !isNodeTerminal(n.State) {
+					if !isNodeSettled(n.RunSummary) {
 						continue
 					}
 					if seenNodeTerminal[n.ID] {
 						continue
 					}
 					seenNodeTerminal[n.ID] = true
-					nodeOutcome, reason := mapNodeStateToOutcome(n)
+					nodeOutcome, reason := mapNodeSummaryToOutcome(n)
 					printer.NodeRunTerminal(project, name, n.ID, nodeOutcome, reason)
 				}
 			} else if nerr != nil && ctx.Err() != nil {
@@ -142,45 +141,33 @@ func WaitForInstancesTerminal(
 	return outcomes, nil
 }
 
+// @concept: node
 func classifyInstanceOutcome(nodes []cli.Node) (string, int) {
-	hasFailure := false
-	hasParked := false
 	for _, n := range nodes {
-		switch n.State {
-		case "failed":
-			hasFailure = true
-		case "parked":
-			hasParked = true
+		if n.RunSummary != nil && n.RunSummary.FailedCount > 0 {
+			return OutcomeFailure, len(nodes)
 		}
 	}
-	switch {
-	case hasFailure:
-		return OutcomeFailure, len(nodes)
-	case hasParked:
-		return OutcomeParkedTimeout, len(nodes)
-	default:
-		return OutcomeSuccess, len(nodes)
-	}
+	return OutcomeSuccess, len(nodes)
 }
 
-func mapNodeStateToOutcome(n cli.Node) (string, string) {
-	switch n.State {
-	case "failed":
-		return OutcomeFailure, n.CurrentErrorClass
-	case "parked":
-		return OutcomeParkedTimeout, n.CurrentErrorClass
-	default:
-		return OutcomeSuccess, ""
+// @concept: node
+func mapNodeSummaryToOutcome(n cli.Node) (string, string) {
+	if n.RunSummary != nil && n.RunSummary.FailedCount > 0 {
+		return OutcomeFailure, ""
 	}
+	return OutcomeSuccess, ""
 }
 
-func isNodeTerminal(state string) bool {
-	switch state {
-	case "success", "failed", "parked":
-		return true
-	default:
+// @concept: node
+func isNodeSettled(s *cli.NodeRunSummary) bool {
+	if s == nil {
 		return false
 	}
+	if s.ActiveCount > 0 || s.PendingCount > 0 {
+		return false
+	}
+	return s.FreshCount > 0 || s.FailedCount > 0
 }
 
 func AnyOutcomeFailed(outcomes map[string]string) bool {

@@ -25,13 +25,13 @@ import (
 func waitForNodeStateNoEvent(h *scenario.Harness, nodeID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		var n *persistence.NodeRow
+		var latest *persistence.NodeRunLatest
 		_ = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().Get(ctx, nodeID, tx)
-			n = r
+			r, err := h.Persist.Nodes().GetLatestRunForNode(ctx, tx, nodeID)
+			latest = r
 			return err
 		})
-		if n != nil && n.State == state {
+		if latest != nil && latest.State == state {
 			return true
 		}
 		time.Sleep(50 * time.Millisecond)

@@ -55,8 +55,9 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 		ProducerName: "abandon-store",
 	}
 
+	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
 			ClaimHandleID: claimHandleID,
 			SupervisorID:  args.SupervisorID,
 			Source:        runtime.ActiveTerminal,
@@ -68,7 +69,12 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 			ProducerName:  "abandon-store",
 			LineageHint:   hint,
 		})
+		post = pc
+		return err
 	}))
+	if post != nil {
+		post(ctx)
+	}
 
 	require.Equal(t, 1, countCallsOnID(store.Calls(), claimHandleID.String(), "abandon"),
 		"natural Abandon must hit Producer.Abandon once")

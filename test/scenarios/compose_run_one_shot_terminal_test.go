@@ -124,18 +124,18 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 
 	var completedCount, failedCount int
 	if qerr := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM rimsky_node_runs WHERE phase = 'completed'`).Scan(&completedCount); qerr != nil {
+		`SELECT COUNT(*) FROM rimsky_node_runs WHERE state = 'fresh'`).Scan(&completedCount); qerr != nil {
 		t.Fatalf("count completed node-runs: %v", qerr)
 	}
 	if qerr := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM rimsky_node_runs WHERE phase = 'failed'`).Scan(&failedCount); qerr != nil {
+		`SELECT COUNT(*) FROM rimsky_node_runs WHERE state = 'failed'`).Scan(&failedCount); qerr != nil {
 		t.Fatalf("count failed node-runs: %v", qerr)
 	}
 	if completedCount < 1 {
-		t.Fatalf("expected at least one rimsky_node_runs row in phase 'completed' (success leg); got %d", completedCount)
+		t.Fatalf("expected at least one rimsky_node_runs row in state 'fresh' (success leg); got %d", completedCount)
 	}
 	if failedCount < 1 {
-		t.Fatalf("expected at least one rimsky_node_runs row in phase 'failed' (failure leg); got %d", failedCount)
+		t.Fatalf("expected at least one rimsky_node_runs row in state 'failed' (failure leg); got %d", failedCount)
 	}
 
 	var workerNodeCount int

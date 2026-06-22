@@ -57,18 +57,8 @@ func SubgraphInternalCascade(in SubgraphInternalCascadeArgs) ([]node.TemplateNod
 
 func SubgraphParentSuccessCascade(
 	in SubgraphInternalCascadeArgs,
-) (internalNodes []node.TemplateNodeDef, transitionReason cascade.TransitionReason, err error) {
-	internals, err := SubgraphInternalCascade(in)
-	if err != nil {
-		return nil, cascade.TransitionReason{}, err
-	}
-	if _, err := cascade.NextStateParent(cascade.NodeStateRunning, cascade.ReasonSubGraphInternalCascadeFired); err != nil {
-		if !cascade.IsParentAggregateOK(err) {
-			return nil, cascade.TransitionReason{}, fmt.Errorf(
-				"SubgraphParentSuccessCascade: state-machine rejects running→running under subgraph_internal_cascade_fired: %w", err)
-		}
-	}
-	return internals, cascade.ReasonSubGraphInternalCascadeFired, nil
+) (internalNodes []node.TemplateNodeDef, err error) {
+	return SubgraphInternalCascade(in)
 }
 
 func IsSubgraphCaller(def *node.TemplateNodeDef) bool {
@@ -100,14 +90,6 @@ func applyTerminalCompleteSubgraphCaller(
 	merged map[string]any, t terminalEvent, tx persistence.Tx,
 ) (postCommitFn, error) {
 	settlingSig := "terminal/success"
-
-	if _, err := cascade.NextStateParent(cascade.NodeStateRunning, cascade.ReasonSubGraphInternalCascadeFired); err != nil {
-		if !cascade.IsParentAggregateOK(err) {
-			return nil, fmt.Errorf(
-				"applyTerminalCompleteSubgraphCaller: state-machine rejects running→running under subgraph_internal_cascade_fired: %w",
-				err)
-		}
-	}
 
 	var internalNodes []node.TemplateNodeDef
 	var tmplSpec *node.TemplateSpec
@@ -200,7 +182,6 @@ func applyTerminalCompleteSubgraphCaller(
 			"calling_run_id":       acq.DispatchID.String(),
 			"settling_signal_type": settlingSig,
 			"changed":              t.Changed,
-			"transition_reason":    cascade.ReasonSubGraphInternalCascadeFired.Kind,
 			"child_count":          len(internalNodes),
 		},
 	}, tx); err != nil {

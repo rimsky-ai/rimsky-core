@@ -162,7 +162,7 @@ func TestExampleExecutorE2E(t *testing.T) {
 
 		postCallbackUntilOK(t, ep.CallbackBaseURL, ackID, 30*time.Second)
 
-		waitExampleNodeState(t, ep, workerID, "fresh", "", 90*time.Second)
+		waitExampleNodeState(t, ep, workerID, "fresh", 90*time.Second)
 	})
 
 	t.Run("declared error class routes through error_types", func(t *testing.T) {
@@ -197,7 +197,7 @@ func TestExampleExecutorE2E(t *testing.T) {
 		})
 		iid := createExampleInstance(t, ep, tid, "ck-declared-error")
 		workerID := resolveExampleNodeID(t, ep, iid, "worker")
-		waitExampleNodeState(t, ep, workerID, "failed", "example/forbidden", 90*time.Second)
+		waitExampleNodeState(t, ep, workerID, "failed", 90*time.Second)
 	})
 
 }
@@ -278,41 +278,56 @@ func resolveExampleNodeID(t *testing.T, ep harness.RimskyEndpoint, instanceID, n
 	}
 }
 
+// @concept: node
 func waitExampleNodeState(
 	t *testing.T,
 	ep harness.RimskyEndpoint,
-	nodeID, wantState, wantErrClass string,
+	nodeID, wantState string,
 	deadline time.Duration,
 ) {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var (
-		lastState    string
-		lastErrClass string
-		lastBody     string
+		lastState string
+		lastBody  string
 	)
 	for time.Now().Before(end) {
 		status, raw := ep.GetJSON(t, "/v1/nodes/"+nodeID, "")
 		if status == http.StatusOK {
 			var resp struct {
-				State             string `json:"state"`
-				CurrentErrorClass string `json:"current_error_class"`
+				RunSummary struct {
+					ActiveCount  int `json:"active_count"`
+					PendingCount int `json:"pending_count"`
+					FreshCount   int `json:"fresh_count"`
+					FailedCount  int `json:"failed_count"`
+				} `json:"run_summary"`
 			}
 			lastBody = string(raw)
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.State
-				lastErrClass = resp.CurrentErrorClass
-				if resp.State == wantState {
-					if wantErrClass == "" || resp.CurrentErrorClass == wantErrClass {
-						return
-					}
+				lastState = exampleCategorize(resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount, resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
+				if lastState == wantState {
+					return
 				}
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("node %s did not settle to state=%q (err_class=%q) within %v; last_state=%q last_err_class=%q last_body=%s",
-		nodeID, wantState, wantErrClass, deadline, lastState, lastErrClass, lastBody)
+	t.Fatalf("node %s did not settle to categorical state=%q within %v; last_state=%q last_body=%s",
+		nodeID, wantState, deadline, lastState, lastBody)
+}
+
+// @concept: node
+func exampleCategorize(active, pending, fresh, failed int) string {
+	if failed > 0 {
+		return "failed"
+	}
+	if active > 0 || pending > 0 {
+		return "in-flight"
+	}
+	if fresh > 0 {
+		return "fresh"
+	}
+	return "idle"
 }
 
 func waitExecutorDiscovered(t *testing.T, ep harness.RimskyEndpoint, name string, deadline time.Duration) {

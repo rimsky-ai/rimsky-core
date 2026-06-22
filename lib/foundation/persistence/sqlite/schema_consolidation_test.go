@@ -100,20 +100,8 @@ func TestSqliteSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 		t.Fatalf("seed rimsky_migrations table: %v", err)
 	}
 	stale := []string{
-		"001-baseline.sql",
-		"002-tags.sql",
-		"003-some-other.sql",
-		"004-more.sql",
-		"005-iterations.sql",
-		"006-of.sql",
-		"007-the.sql",
-		"008-legacy.sql",
-		"009-migration.sql",
-		"010-series.sql",
-		"011-that.sql",
-		"012-no.sql",
-		"013-longer.sql",
-		"014-drop-last-outcome.sql",
+		"099-some-future-rollback.sql",
+		"100-experimental.sql",
 	}
 	for _, name := range stale {
 		if _, err := db.ExecContext(ctx,
@@ -133,20 +121,20 @@ func TestSqliteSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 
 	var n int
 	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM rimsky_migrations WHERE filename = '001-schema.sql'`,
+		`SELECT COUNT(*) FROM rimsky_migrations WHERE filename = '001-initial.sql'`,
 	).Scan(&n); err != nil {
-		t.Fatalf("query 001-schema.sql row: %v", err)
+		t.Fatalf("query 001-initial.sql row: %v", err)
 	}
 	if n != 1 {
-		t.Errorf("rimsky_migrations should record 001-schema.sql exactly once; got %d", n)
+		t.Errorf("rimsky_migrations should record 001-initial.sql exactly once; got %d", n)
 	}
 	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM rimsky_migrations WHERE filename = '001-baseline.sql'`,
+		`SELECT COUNT(*) FROM rimsky_migrations WHERE filename = '099-some-future-rollback.sql'`,
 	).Scan(&n); err != nil {
-		t.Fatalf("query 001-baseline.sql row: %v", err)
+		t.Fatalf("query unknown-row presence: %v", err)
 	}
 	if n != 1 {
-		t.Errorf("rimsky_migrations should still carry the legacy 001-baseline.sql row (inert); got %d", n)
+		t.Errorf("rimsky_migrations should preserve unknown filenames inertly; got %d", n)
 	}
 }
 

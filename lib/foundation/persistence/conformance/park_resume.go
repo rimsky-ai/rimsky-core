@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -52,6 +53,9 @@ func seedClaimedRunForNode(
 			if !ok {
 				t.Fatalf("seedClaimedRunForNode: claim was not successful")
 			}
+			if _, err := q.PromoteClaimedToRunning(ctx, tx, c.DispatchID, supID); err != nil {
+				return err
+			}
 			dispatchID = c.DispatchID
 			return nil
 		}
@@ -82,10 +86,40 @@ func seedExtraNode(ctx context.Context, t *testing.T, d persistence.Database, fi
 func parkRun(ctx context.Context, t *testing.T, d persistence.Database, in persistence.ParkActiveInput) {
 	t.Helper()
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return d.Queue().ParkActiveInTx(ctx, tx, in)
+		if err := d.Queue().ParkActiveInTx(ctx, tx, in); err != nil {
+			return err
+		}
+		row, err := d.Tables().Nodes().GetRunForGate(ctx, tx, in.DispatchID)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			return nil
+		}
+		return d.Tables().Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+			cascade.NodeStateParked, cascade.ReasonHandlerPark, nil, tx)
 	}); err != nil {
 		t.Fatalf("ParkActiveInTx(%s): %v", in.DispatchID, err)
 	}
+}
+
+func resumeRunInTx(ctx context.Context, d persistence.Database, tx persistence.Tx, dispatchID shared.UUID) (bool, error) {
+	resumed, err := d.Queue().ResumeParkedInTx(ctx, tx, dispatchID)
+	if err != nil || !resumed {
+		return resumed, err
+	}
+	row, err := d.Tables().Nodes().GetRunForGate(ctx, tx, dispatchID)
+	if err != nil {
+		return false, err
+	}
+	if row == nil {
+		return true, nil
+	}
+	if err := d.Tables().Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+		cascade.NodeStateStale, cascade.ReasonDeadlineResume, nil, tx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 const parkResumeSup = "park-resume-supervisor"
@@ -241,7 +275,6 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	q := d.Queue()
 
 	countHeld := func() int {
 		t.Helper()
@@ -283,7 +316,7 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 
 	for _, runID := range []shared.UUID{runA, runB} {
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			_, err := q.ResumeParkedInTx(ctx, tx, runID)
+			_, err := resumeRunInTx(ctx, d, tx, runID)
 			return err
 		}); err != nil {
 			t.Fatalf("ResumeParkedInTx(%s): %v", runID, err)
@@ -326,7 +359,7 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		var resumed bool
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			var err error
-			resumed, err = q.ResumeParkedInTx(ctx, tx, runID)
+			resumed, err = resumeRunInTx(ctx, d, tx, runID)
 			return err
 		}); err != nil {
 			t.Fatalf("ResumeParkedInTx: %v", err)
@@ -337,7 +370,7 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		t.Fatalf("first ResumeParkedInTx did not resume the parked row")
 	}
 	if resume() {
-		t.Fatalf("second ResumeParkedInTx resumed an already-pending row")
+		t.Fatalf("second ResumeParkedInTx resumed an already-stale row")
 	}
 
 	parked, err = q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)

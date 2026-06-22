@@ -30,13 +30,20 @@ func RunNodeGet(ctx context.Context, args []string) int {
 		_ = EmitJSON(os.Stdout, n)
 		return 0
 	}
-	EmitKV(os.Stdout, [][2]string{
+	pairs := [][2]string{
 		{"id", n.ID},
 		{"instance_id", n.InstanceID},
 		{"node_type", n.NodeType},
-		{"state", n.State},
 		{"executor", n.Executor},
-		{"retry_counter", fmt.Sprintf("%d", n.RetryCounter)},
-	})
+	}
+	if s := n.RunSummary; s != nil {
+		pairs = append(pairs,
+			[2]string{"runs_active", fmt.Sprintf("%d", s.ActiveCount)},
+			[2]string{"runs_pending", fmt.Sprintf("%d", s.PendingCount)},
+			[2]string{"runs_fresh", fmt.Sprintf("%d", s.FreshCount)},
+			[2]string{"runs_failed", fmt.Sprintf("%d", s.FailedCount)},
+		)
+	}
+	EmitKV(os.Stdout, pairs)
 	return 0
 }

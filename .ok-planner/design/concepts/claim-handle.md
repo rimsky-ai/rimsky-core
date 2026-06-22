@@ -53,13 +53,20 @@ A **held** claim is a claim whose lifetime extends past its acquirer's terminal 
 
 The holder key is the holder run (referencing the node-run ledger); holders are runs, not nodes. The acquirer's own holder row is inserted at acquire-time; co-holder rows (declared via `holds:`) are inserted at the co-holder's own acquire-time.
 
+**Held is a first-class node-run state, not just a claim-handle phase.** When a node-run's terminal includes a held=true claim, the node-run itself transitions to state `held` (one of the seven states in `concept:node-run`'s state machine) and stays there until auto-terminal Commit or Abandon resolves. The cascade walker does NOT fire downstream signals on the held node-run's terminal — the walk is deferred to the auto-terminal handler, per `decision:held-as-state-not-phase` and `concept:auto-terminal`. Downstream subscribers see `terminal/success` only at Commit and `terminal/error/abandoned` only at Abandon.
+
+While in state `held`, the node-run is in the in-flight set (`{pending, stale, running, held, parked}`) and is sealed against cascade-driven mutation per `concept:cascade`. Cascade events targeting a held node-run create a NEW cascade-driven pending row; the held row is left untouched.
+
 Held-variant invariants:
 
-- Aggregate outcome is strict: all-completed → `Commit`; any-failed → `Abandon` (invariant 13).
+- Aggregate outcome is strict: all-completed → `Commit`; any-failed → `Abandon`.
 - Auto-terminal fires exactly once per held claim, race-safe via a row-level select-for-update.
 - Held handles persist across the node-run parent's deletion (the reference nulls rather than cascading).
 - The co-holder state field forbids values outside {active, completed, failed}; once a holder is `failed`, the aggregate is `failed`; the held variant does not support discard-then-retry recovery.
-- **Held-durable claim handles persist across instance dispatches** (invariant 22). A committed-durable claim handle is not reaped by the retention sweep; released only by explicit operator action (the asset-release endpoint) or instance termination (the held-durable-release path). The orphan-claim reaper skips non-`active` rows.
+- The cascade walker fires from the auto-terminal handler at the same atomic moment the handle row is promoted: Commit → `terminal/success` walk; Abandon → `terminal/error/abandoned` walk. The held node-run's `running → held` transition itself fires no cascade.
+- **Held-durable claim handles persist across instance dispatches.** A committed-durable claim handle is not reaped by the retention sweep; released only by explicit operator action (the asset-release endpoint) or instance termination (the held-durable-release path). The orphan-claim reaper skips non-`active` rows.
+- **Poison rule (forward-propagation through abandoned claims).** Aggregate outcome resolves to `Abandon` the moment any holder reaches `failed` — not when the last holder settles. At that resolution moment, every still-active holder's co-holder row is marked `failed`; the held claim handle is promoted to `abandoned` and Abandon fires. Holders whose own execution is still in flight at this moment will, when they eventually settle, transition to node-run state `failed` with `terminal/error/abandoned` regardless of what their executor returned — their successful or failed terminal cannot un-poison the aggregate, and their outputs are treated as part of an abandoned coordinated unit. The poison rule preserves the held-claim's transactional integrity: once one part of the coordination has failed, every other part is treated as failed for cascade purposes.
+- **Member-vs-non-member cascade routing at Commit and Abandon.** The deferred cascade walks fired by the auto-terminal handler (`terminal/success` for Commit, `terminal/error/abandoned` for Abandon) deliver the resolution signal only to subscribers that are NOT themselves members of the holding subgraph for this claim. Members of the holding subgraph coordinate internally through the held machinery — their `held → fresh` or `held → failed` transition happens in the same atomic moment as the handle promotion. They do not also receive a downstream cascade from a sibling member's terminal; firing one would double-fire the receiver. Non-members (subscribers outside the holding subgraph) see the resolution signal as a single deferred event at the auto-terminal moment, and never observe a held node-run's terminal before that.
 
 ### Authoring: held vs unheld
 

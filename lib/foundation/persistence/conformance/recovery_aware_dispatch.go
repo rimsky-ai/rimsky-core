@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -100,6 +101,10 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 			t.Fatalf("ClaimDispatchRow(original) did not claim")
 		}
 		if err := q.WriteScratchInTx(ctx, tx, originalDispatchID, scratchFixture, "", ""); err != nil {
+			return err
+		}
+		if err := store.Nodes().UpdateState(ctx, childNodeID, partitionScopeID,
+			cascade.NodeStateFailed, cascade.ReasonInstanceKilled, nil, tx); err != nil {
 			return err
 		}
 		return q.RemoveForNodeInTx(ctx, childNodeID, partitionScopeID, "sup-stale", tx)

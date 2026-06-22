@@ -573,6 +573,18 @@ func (f *fakeWaitSet) ListForFrame(_ context.Context, _ shared.UUID, _ persisten
 func (f *fakeWaitSet) ListDrainedAttributeRowsForReceiver(_ context.Context, _, receiverRunID shared.UUID, _ persistence.Tx) ([]persistence.WaitSetRow, error) {
 	return f.drained[receiverRunID], nil
 }
+func (f *fakeWaitSet) ListSenderNodesForReceiver(_ context.Context, _, _ shared.UUID, _ persistence.Tx) ([]shared.UUID, error) {
+	return nil, nil
+}
+func (f *fakeWaitSet) HasRowForSenderRun(_ context.Context, _, _, _ shared.UUID, _ persistence.Tx) (bool, error) {
+	return false, nil
+}
+func (f *fakeWaitSet) ListPendingReceiversForDrainedSender(_ context.Context, _, _ shared.UUID, _ persistence.Tx) ([]shared.UUID, error) {
+	return nil, nil
+}
+func (f *fakeWaitSet) HasUndrainedRowsForReceiver(_ context.Context, _, _ shared.UUID, _ persistence.Tx) (bool, error) {
+	return false, nil
+}
 
 type fakeRunTreeDeps struct {
 	rows map[shared.UUID]*persistence.RunTreeRow
@@ -635,7 +647,16 @@ func (f *fakeNodesDeps) ListReadyForDispatch(_ context.Context, _ persistence.Tx
 func (f *fakeNodesDeps) ListRunning(_ context.Context, _ persistence.Tx) ([]persistence.NodeRow, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) ListPureCascadeReady(_ context.Context, _ persistence.Tx) ([]persistence.NodeRow, error) {
+func (f *fakeNodesDeps) CountRunningForSupervisor(_ context.Context, _ string, _ persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (f *fakeNodesDeps) CountAllNodes(_ context.Context, _ persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (f *fakeNodesDeps) CountDistinctNodesWithRuns(_ context.Context, _ persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (f *fakeNodesDeps) ListPureCascadeReady(_ context.Context, _ persistence.Tx) ([]persistence.PureCascadeReadyRow, error) {
 	return nil, nil
 }
 func (f *fakeNodesDeps) CountByState(_ context.Context, _ persistence.Tx) (map[cascade.NodeState]int, error) {
@@ -662,17 +683,65 @@ func (f *fakeNodesDeps) GetFailedTerminalRunScopeID(_ context.Context, _ shared.
 func (f *fakeNodesDeps) DeleteByInstance(_ context.Context, _ shared.UUID, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeNodesDeps) MarkStaleForCascade(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) error {
-	return nil
-}
-func (f *fakeNodesDeps) AffirmNodeRunRow(_ context.Context, _ shared.UUID, _ shared.UUID, _ shared.UUID, _ persistence.Tx) error {
-	return nil
-}
 func (f *fakeNodesDeps) HasRunForNodeInFrame(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
 func (f *fakeNodesDeps) GetRunByDispatchIDForUpdate(_ context.Context, _ shared.UUID, _ persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	return nil, nil
+}
+func (f *fakeNodesDeps) GetCascadeMode(_ context.Context, _ shared.UUID, _ persistence.Tx) (cascade.CascadeMode, error) {
+	return cascade.CascadeModeMostRecent, nil
+}
+func (f *fakeNodesDeps) GetRunSummary(_ context.Context, _ shared.UUID, _ persistence.Tx) (persistence.NodeRunSummary, error) {
+	return persistence.NodeRunSummary{}, nil
+}
+func (f *fakeNodesDeps) FindLatestCascadePending(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) (*persistence.NodeRunForGate, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) CreateCascadePending(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) (shared.UUID, error) {
+	return shared.UUID{}, nil
+}
+func (f *fakeNodesDeps) LockReceiverCascade(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) error {
+	return nil
+}
+func (f *fakeNodesDeps) GetLatestRunForNode(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.NodeRunLatest, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) GetLatestRunInScope(_ context.Context, _ persistence.Tx, _, _ shared.UUID) (*persistence.NodeRunLatest, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) ListRunsForInstanceByStates(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []cascade.NodeState) ([]persistence.NodeRunLatest, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) GetRunForGate(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.NodeRunForGate, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) GetPriorRunBySequence(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) DeletePriorCascadeStales(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (int, error) {
+	return 0, nil
+}
+func (f *fakeNodesDeps) GetPriorCascadeStaleNotClaimed(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) GetMostRecentSettledRun(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) TransitionPendingToStale(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) error {
+	return nil
+}
+func (f *fakeNodesDeps) DropPendingRun(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
+	return nil
+}
+func (f *fakeNodesDeps) CreateNonCascadeStale(_ context.Context, _ persistence.Tx, _ persistence.NonCascadeStaleInput) (shared.UUID, error) {
+	return shared.UUID{}, nil
+}
+func (f *fakeNodesDeps) UpdateRunEvaluatorState(_ context.Context, _ shared.UUID, _ spec.EvaluatorState, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodesDeps) GetRunEvaluatorState(_ context.Context, _ shared.UUID, _ persistence.Tx) (spec.EvaluatorState, error) {
+	return spec.EvaluatorState{}, nil
 }
 
 type fakeNodeAttrs struct {
@@ -694,6 +763,15 @@ func (f *fakeNodeAttrs) Upsert(_ context.Context, _, _ shared.UUID, _ map[string
 	return nil
 }
 func (f *fakeNodeAttrs) MergeDelta(_ context.Context, _ shared.UUID, _ map[string]any, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeNodeAttrs) SetDispatchInputBag(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ map[string]any) error {
+	return nil
+}
+func (f *fakeNodeAttrs) GetDispatchInputBag(_ context.Context, _ persistence.Tx, _ shared.UUID) (map[string]any, error) {
+	return nil, nil
+}
+func (f *fakeNodeAttrs) SnapshotBagForNewRun(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) error {
 	return nil
 }
 

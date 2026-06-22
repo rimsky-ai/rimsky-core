@@ -97,17 +97,27 @@ func TestStory_InstanceCreateIsIdle(t *testing.T) {
 	require.Empty(t, messages, "STORY-instance-create-is-idle falsifier (2): message ledger MUST be empty until an operator posts a message; got %d message(s)", len(messages))
 
 	nodes := getInstanceNodes(t, h, instanceID)
-	require.NotEmpty(t, nodes, "node row materialization is a create-time side effect; node list must NOT be empty (the row itself is created at instance-create and defaults to state=fresh)")
+	require.NotEmpty(t, nodes, "node row materialization is a create-time side effect; node list must NOT be empty")
 	for _, n := range nodes {
 		row, _ := n.(map[string]any)
 		require.NotNil(t, row, "node list entry must be a JSON object")
 		nodeType, _ := row["node_type"].(string)
-		state, _ := row["state"].(string)
+		_, hasState := row["state"]
+		require.False(t, hasState,
+			"STORY-instance-create-is-idle: node %q must NOT carry a synthesized `state` field on the response surface (state lives per-run, not per-node)", nodeType)
 		frameID, _ := row["frame_id"].(string)
-		require.Equal(t, "fresh", state,
-			"STORY-instance-create-is-idle falsifier (3): node %q must be in state `fresh` until an operator emits; got %q", nodeType, state)
 		require.Empty(t, frameID,
 			"STORY-instance-create-is-idle falsifier (3): node %q must have a NULL frame_id until an operator emits; got %q", nodeType, frameID)
+		summary, _ := row["run_summary"].(map[string]any)
+		require.NotNil(t, summary,
+			"STORY-instance-create-is-idle: node %q must carry a run_summary on the response (categorical run counts)", nodeType)
+		active := jsonNumberToInt(t, summary, "active_count")
+		pending := jsonNumberToInt(t, summary, "pending_count")
+		fresh := jsonNumberToInt(t, summary, "fresh_count")
+		failed := jsonNumberToInt(t, summary, "failed_count")
+		require.Equal(t, 0, active+pending+fresh+failed,
+			"STORY-instance-create-is-idle falsifier (3): node %q must have ZERO runs in every state until an operator emits; got summary active=%d pending=%d fresh=%d failed=%d",
+			nodeType, active, pending, fresh, failed)
 	}
 
 	require.Eventually(t, func() bool {
@@ -165,6 +175,24 @@ func getInstanceNodes(t *testing.T, h *scenario.Harness, instanceID string) []an
 	body := getJSONMap(t, h.ControlBase+"/v1/instances/"+instanceID+"/nodes")
 	nodes, _ := body["nodes"].([]any)
 	return nodes
+}
+
+// @concept: node
+func jsonNumberToInt(t *testing.T, m map[string]any, key string) int {
+	t.Helper()
+	raw, ok := m[key]
+	if !ok {
+		return 0
+	}
+	switch v := raw.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	default:
+		t.Fatalf("jsonNumberToInt: key %q has unexpected type %T", key, raw)
+		return 0
+	}
 }
 
 func getJSONMap(t *testing.T, url string) map[string]any {

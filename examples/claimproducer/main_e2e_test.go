@@ -300,29 +300,48 @@ func createClaimInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, in
 	return resp.InstanceID
 }
 
+// @concept: node
 func waitForNodeState(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType, want string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
-	var lastState string
+	var last string
 	for time.Now().Before(end) {
 		statusCode, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
 		if statusCode == http.StatusOK {
 			var resp struct {
-				Node struct {
-					State string `json:"state"`
-				} `json:"node"`
+				RunSummary struct {
+					ActiveCount  int `json:"active_count"`
+					PendingCount int `json:"pending_count"`
+					FreshCount   int `json:"fresh_count"`
+					FailedCount  int `json:"failed_count"`
+				} `json:"run_summary"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.Node.State
-				if lastState == want {
+				got := categorize(resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount, resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
+				last = got
+				if got == want {
 					return
 				}
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("node %q on instance %s did not reach %q within %v; last state=%q",
-		nodeType, instanceID, want, deadline, lastState)
+	t.Fatalf("node %q on instance %s did not reach %q within %v; last categorical state=%q",
+		nodeType, instanceID, want, deadline, last)
+}
+
+// @concept: node
+func categorize(active, pending, fresh, failed int) string {
+	if failed > 0 {
+		return "failed"
+	}
+	if active > 0 || pending > 0 {
+		return "in-flight"
+	}
+	if fresh > 0 {
+		return "fresh"
+	}
+	return "idle"
 }
 
 var exampleProducerBuildMu sync.Mutex

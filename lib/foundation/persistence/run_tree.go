@@ -21,7 +21,6 @@ type RunTreeRow struct {
 	NodeID             shared.UUID            `json:"node_id"`
 	FrameID            shared.UUID            `json:"frame_id"`
 	RunScopeID         shared.UUID            `json:"run_scope_id"`
-	Phase              string                 `json:"phase,omitempty"`
 	State              cascade.NodeState      `json:"state"`
 	SettlingSignalType *string                `json:"settling_signal_type,omitempty"`
 	AggregationPolicy  spec.AggregationPolicy `json:"aggregation_policy,omitempty"`

@@ -83,8 +83,8 @@ func seedFrameParkedFixture(
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, phase, state, frame_id, run_scope_id)
-		 VALUES ($1, $2, 'test-executor', 'parked', 'parked', $3, $4)`,
+		   (id, node_id, executor_name, state, sequence, creation_reason, enqueued_at, frame_id, run_scope_id)
+		 VALUES ($1, $2, 'test-executor', 'parked', 1, 'cascade', NOW(), $3, $4)`,
 		dispatchID, nodeID, frameID, mainRunScopeID,
 	)
 	return shared.UUID(instanceID), shared.UUID(frameID)

@@ -119,5 +119,6 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Databa
 	d.c = newAdvisoryLocker(cfg.Path)
 	d.s = newTables(db)
 	d.q = newQueue(db)
+	d.q.setTables(d.s)
 	return d, nil
 }

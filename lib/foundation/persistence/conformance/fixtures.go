@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -197,8 +198,72 @@ func seedConformanceRunForNode(
 	return runID
 }
 
+// @concept: run-scope
+func seedConformanceRunForScope(
+	ctx context.Context, t *testing.T, d persistence.Database,
+	nodeID, frameID, runScopeID shared.UUID,
+) shared.UUID {
+	t.Helper()
+	store := d.Tables()
+	q := d.Queue()
+
+	var runID shared.UUID
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:                 nodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                frameID,
+			RunScopeID:             runScopeID,
+		}, tx); err != nil {
+			return err
+		}
+		id, found, err := q.GetInFlightRunForNode(ctx, tx, nodeID, runScopeID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			t.Fatalf("seedConformanceRunForScope: in-flight not surfaced for %s in %s", nodeID, runScopeID)
+		}
+		runID = id
+		return nil
+	}); err != nil {
+		t.Fatalf("seedConformanceRunForScope: %v", err)
+	}
+	return runID
+}
+
 func inTx(ctx context.Context, store persistence.Tables, fn func(tx persistence.Tx) error) error {
 	return store.Transaction(ctx, func(_ context.Context, tx persistence.Tx) error {
 		return fn(tx)
 	})
+}
+
+// @concept: node-run
+func forceRunStateToFresh(
+	ctx context.Context, tx persistence.Tx, store persistence.Tables, runID shared.UUID,
+) error {
+	row, err := store.RunTree().GetByID(ctx, tx, runID)
+	if err != nil || row == nil {
+		return err
+	}
+	switch row.State {
+	case cascade.NodeStateFresh, cascade.NodeStateFailed:
+		return nil
+	case cascade.NodeStateStale:
+		if err := store.Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx); err != nil {
+			return err
+		}
+		return store.Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx)
+	case cascade.NodeStateRunning:
+		return store.Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx)
+	case cascade.NodeStateHeld:
+		return store.Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+			cascade.NodeStateFresh, cascade.ReasonAutoTerminalCommit, nil, tx)
+	}
+	return nil
 }

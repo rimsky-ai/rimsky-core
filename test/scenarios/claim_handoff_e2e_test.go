@@ -141,10 +141,10 @@ func testClaimHandoffAbandonPath(t *testing.T) {
 		},
 	})
 
-	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
-		"acquirer should settle fresh")
 	require.True(t, h.WaitForNodeState(coHolder.ID, cascade.NodeStateFailed, 30*time.Second),
 		"co-holder should settle failed (give_up on stub/forced)")
+	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFailed, 30*time.Second),
+		"acquirer must transition held → failed via auto-terminal abandon")
 
 	requireClaimHandleState(t, h, acquirer.ID, spec.ClaimHandleStateAbandoned, true)
 }
@@ -220,12 +220,12 @@ func testClaimHandoffMultiCoHolderCommit(t *testing.T) {
 	require.NotNil(t, fast)
 	require.NotNil(t, slow)
 
-	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
-		"acquirer should settle fresh")
 	require.True(t, h.WaitForNodeState(fast.ID, cascade.NodeStateFresh, 30*time.Second),
 		"fast co-holder should settle fresh first")
-
-	requireClaimHandleState(t, h, acquirer.ID, spec.ClaimHandleStateActive, true)
+	require.True(t, h.WaitForNodeState(slow.ID, cascade.NodeStateFresh, 30*time.Second),
+		"slow co-holder should settle fresh after its delay")
+	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
+		"acquirer should commit and reach fresh after both co-holders complete")
 
 	require.True(t, h.WaitForNodeState(slow.ID, cascade.NodeStateFresh, 30*time.Second),
 		"slow co-holder should eventually settle fresh")
