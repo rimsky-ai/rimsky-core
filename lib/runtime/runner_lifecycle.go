@@ -10,11 +10,16 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
+const acquireUnavailableSyntheticClass = "acquire/unavailable"
+
+const producerAcquireErrorFallbackClass = "acquire/producer_error"
+
 // @concept: terminal-resolution
 // @concept: error-policy
-func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) {
+// @decision: in-place-retry
+func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) *policyDecision {
 	if acq.NodeDef == nil {
-		return
+		return nil
 	}
 	if args.PreAcquireUnavailableHook != nil {
 		args.PreAcquireUnavailableHook(ctx)
@@ -22,86 +27,76 @@ func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition
 	abandonPartialLocks(ctx, args, acq.PartialLocks)
 
 	if !reclaimDispatchRowShortTx(ctx, args, cand, "handleAcquireUnavailable") {
-		return
+		return nil
 	}
 
-	errorClass := acquireUnavailableSyntheticClass
+	primaryClass := acquireUnavailableSyntheticClass
 	if acq.UnavailableClass != "" {
-		errorClass = acq.UnavailableClass
+		primaryClass = acq.UnavailableClass
 	}
-	if err := OnError(ctx, OnErrorArgs{
-		Persist:             args.Persist,
-		Queue:               args.Queue,
-		Clock:               args.Clock,
-		Logger:              args.Logger,
-		NodeID:              cand.NodeID,
-		RunScopeID:          acq.RunScopeID,
-		InstanceID:          acq.InstanceID,
-		SupervisorID:        args.SupervisorID,
-		ErrorClass:          errorClass,
-		PolicyFallbackClass: acquireUnavailableSyntheticClass,
-		Payload: map[string]any{
-			"source":        "acquire_unavailable",
-			"unavailable":   producerNameForSpec(acq.UnavailableSpec),
-			"partial_locks": len(acq.PartialLocks),
-			"dispatch_id":   cand.DispatchID.String(),
-			"node_id":       cand.NodeID.String(),
-			"node_type":     acq.NodeType,
-		},
-		Metrics: args.Metrics,
-	}); err != nil {
-		args.Logger.Warn("handleAcquireUnavailable: OnError failed",
-			"node_id", cand.NodeID.String(),
-			"dispatch_id", cand.DispatchID.String(),
-			"error", err.Error())
+	effectiveClass := resolveErrorPolicyClass(acq.NodeDef, primaryClass, acquireUnavailableSyntheticClass)
+	payload := map[string]any{
+		"source":        "acquire_unavailable",
+		"unavailable":   producerNameForSpec(acq.UnavailableSpec),
+		"partial_locks": len(acq.PartialLocks),
+		"dispatch_id":   cand.DispatchID.String(),
+		"node_id":       cand.NodeID.String(),
+		"node_type":     acq.NodeType,
 	}
+	return runAcquireErrorPolicy(ctx, args, &acq, effectiveClass, payload, "handleAcquireUnavailable")
 }
 
-const acquireUnavailableSyntheticClass = "acquire/unavailable"
-
-const producerAcquireErrorFallbackClass = "acquire/producer_error"
-
 // @concept: error-policy
-func handleAcquireProducerError(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) {
+// @decision: in-place-retry
+func handleAcquireProducerError(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) *policyDecision {
 	if acq.NodeDef == nil {
-		return
+		return nil
 	}
 	abandonPartialLocks(ctx, args, acq.PartialLocks)
 
 	if !reclaimDispatchRowShortTx(ctx, args, cand, "handleAcquireProducerError") {
-		return
+		return nil
 	}
 
-	errorClass := acq.ProducerErrorClass
-	if errorClass == "" {
-		errorClass = producerAcquireErrorFallbackClass
+	primaryClass := acq.ProducerErrorClass
+	if primaryClass == "" {
+		primaryClass = producerAcquireErrorFallbackClass
 	}
-	if err := OnError(ctx, OnErrorArgs{
-		Persist:             args.Persist,
-		Queue:               args.Queue,
-		Clock:               args.Clock,
-		Logger:              args.Logger,
-		NodeID:              cand.NodeID,
-		RunScopeID:          acq.RunScopeID,
-		InstanceID:          acq.InstanceID,
-		SupervisorID:        args.SupervisorID,
-		ErrorClass:          errorClass,
-		PolicyFallbackClass: producerAcquireErrorFallbackClass,
-		Payload: map[string]any{
-			"source":        "acquire_producer_error",
-			"producer":      producerNameForSpec(acq.ErroredSpec),
-			"partial_locks": len(acq.PartialLocks),
-			"dispatch_id":   cand.DispatchID.String(),
-			"node_id":       cand.NodeID.String(),
-			"node_type":     acq.NodeType,
-		},
-		Metrics: args.Metrics,
+	effectiveClass := resolveErrorPolicyClass(acq.NodeDef, primaryClass, producerAcquireErrorFallbackClass)
+	payload := map[string]any{
+		"source":        "acquire_producer_error",
+		"producer":      producerNameForSpec(acq.ErroredSpec),
+		"partial_locks": len(acq.PartialLocks),
+		"dispatch_id":   cand.DispatchID.String(),
+		"node_id":       cand.NodeID.String(),
+		"node_type":     acq.NodeType,
+	}
+	return runAcquireErrorPolicy(ctx, args, &acq, effectiveClass, payload, "handleAcquireProducerError")
+}
+
+func runAcquireErrorPolicy(
+	ctx context.Context, args RunArgs, acq *acquisition,
+	errorClass string, payload map[string]any, site string,
+) *policyDecision {
+	var post postCommitFn
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		p, err := applyErrorPolicy(ctx, args, acq, errorClass, payload, tx)
+		post = p
+		return err
 	}); err != nil {
-		args.Logger.Warn("handleAcquireProducerError: OnError failed",
-			"node_id", cand.NodeID.String(),
-			"dispatch_id", cand.DispatchID.String(),
+		args.Logger.Warn(site+": applyErrorPolicy failed",
+			"node_id", acq.NodeID.String(),
+			"dispatch_id", acq.DispatchID.String(),
 			"error", err.Error())
+		return nil
 	}
+	if post != nil {
+		post(ctx)
+	}
+	if acq.RetryDecision != nil && acq.RetryDecision.IsRetry() {
+		return acq.RetryDecision
+	}
+	return nil
 }
 
 func reclaimDispatchRowShortTx(ctx context.Context, args RunArgs, cand persistence.Candidate, site string) bool {

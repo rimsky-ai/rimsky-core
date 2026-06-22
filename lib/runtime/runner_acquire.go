@@ -150,21 +150,7 @@ func tryAcquireBatch(
 				"reason", "frame_id_null")
 			continue
 		}
-		acq, ok, err := tryAcquireWithTx(ctx, args, cand, livenessInterval)
-		if err == errAcquireUnavailable {
-			handleAcquireUnavailable(ctx, args, acq, cand)
-			continue
-		}
-		if err == errAcquireProducerErrored {
-			handleAcquireProducerError(ctx, args, acq, cand)
-			continue
-		}
-		if err == errAcquireRestampLost {
-			args.Logger.Info("tryAcquire: sub-claim holder restamp lost CAS to concurrent supervisor; skipping candidate",
-				"dispatch_id", cand.DispatchID.String(),
-				"node_id", cand.NodeID.String())
-			continue
-		}
+		acq, ok, err := acquireOneCandidateWithRetry(ctx, args, cand, livenessInterval)
 		if err != nil {
 			return acquisition{}, false, err
 		}
@@ -220,6 +206,54 @@ func tryAcquireBatch(
 		return acq, true, nil
 	}
 	return acquisition{}, false, nil
+}
+
+// @decision: in-place-retry
+func acquireOneCandidateWithRetry(
+	ctx context.Context, args RunArgs, cand persistence.Candidate,
+	livenessInterval time.Duration,
+) (acquisition, bool, error) {
+	for {
+		acq, ok, err := tryAcquireWithTx(ctx, args, cand, livenessInterval)
+		if err == errAcquireUnavailable {
+			decision := handleAcquireUnavailable(ctx, args, acq, cand)
+			if decision != nil && decision.IsRetry() {
+				if delay := time.Duration(decision.DelayMs) * time.Millisecond; delay > 0 {
+					select {
+					case <-ctx.Done():
+						return acquisition{}, false, ctx.Err()
+					case <-time.After(delay):
+					}
+				}
+				continue
+			}
+			return acquisition{}, false, nil
+		}
+		if err == errAcquireProducerErrored {
+			decision := handleAcquireProducerError(ctx, args, acq, cand)
+			if decision != nil && decision.IsRetry() {
+				if delay := time.Duration(decision.DelayMs) * time.Millisecond; delay > 0 {
+					select {
+					case <-ctx.Done():
+						return acquisition{}, false, ctx.Err()
+					case <-time.After(delay):
+					}
+				}
+				continue
+			}
+			return acquisition{}, false, nil
+		}
+		if err == errAcquireRestampLost {
+			args.Logger.Info("tryAcquire: sub-claim holder restamp lost CAS to concurrent supervisor; skipping candidate",
+				"dispatch_id", cand.DispatchID.String(),
+				"node_id", cand.NodeID.String())
+			return acquisition{}, false, nil
+		}
+		if err != nil {
+			return acquisition{}, false, err
+		}
+		return acq, ok, nil
+	}
 }
 
 func selectCandidatesShortTx(

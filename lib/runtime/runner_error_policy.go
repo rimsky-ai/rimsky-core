@@ -276,6 +276,21 @@ func lookupPolicyForNode(
 	return &cp, nil
 }
 
+func resolveErrorPolicyClass(nd *node.TemplateNodeDef, primary, fallback string) string {
+	if nd == nil {
+		return primary
+	}
+	if _, ok := nd.ErrorTypes[primary]; ok {
+		return primary
+	}
+	if fallback != "" && fallback != primary {
+		if _, ok := nd.ErrorTypes[fallback]; ok {
+			return fallback
+		}
+	}
+	return primary
+}
+
 func requiredClaimProducersForAcq(acq *acquisition) []string {
 	if acq == nil || acq.NodeDef == nil {
 		return nil
