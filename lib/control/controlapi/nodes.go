@@ -20,17 +20,18 @@ import (
 // @concept: node
 // @decision: node-state-retired-from-operator-api
 type nodeResponse struct {
-	ID               string                      `json:"id"`
-	InstanceID       string                      `json:"instance_id"`
-	NodeType         string                      `json:"node_type"`
-	Executor         string                      `json:"executor,omitempty"`
-	FrameID          string                      `json:"frame_id,omitempty"`
-	Tags             []string                    `json:"tags"`
-	CascadeMode      string                      `json:"cascade_mode"`
-	CreatedAt        time.Time                   `json:"created_at"`
-	UpdatedAt        time.Time                   `json:"updated_at"`
-	LatestAttributes map[string]any              `json:"latest_attributes,omitempty"`
-	RunSummary       *persistence.NodeRunSummary `json:"run_summary,omitempty"`
+	ID                 string                      `json:"id"`
+	InstanceID         string                      `json:"instance_id"`
+	NodeType           string                      `json:"node_type"`
+	Executor           string                      `json:"executor,omitempty"`
+	FrameID            string                      `json:"frame_id,omitempty"`
+	Tags               []string                    `json:"tags"`
+	CascadeMode        string                      `json:"cascade_mode"`
+	CreatedAt          time.Time                   `json:"created_at"`
+	UpdatedAt          time.Time                   `json:"updated_at"`
+	LatestAttributes   map[string]any              `json:"latest_attributes,omitempty"`
+	RunSummary         *persistence.NodeRunSummary `json:"run_summary,omitempty"`
+	SettlingSignalType string                      `json:"settling_signal_type,omitempty"`
 }
 
 // @concept: node
@@ -78,9 +79,10 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		var (
-			row       *persistence.NodeRow
-			latestBag map[string]any
-			summary   persistence.NodeRunSummary
+			row                *persistence.NodeRow
+			latestBag          map[string]any
+			summary            persistence.NodeRunSummary
+			settlingSignalType string
 		)
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := deps.Persist.Nodes().Get(ctx, id, tx)
@@ -110,6 +112,13 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			summary = s
+			latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, row.ID)
+			if err != nil {
+				return err
+			}
+			if latest != nil && latest.SettlingSignalType != nil {
+				settlingSignalType = *latest.SettlingSignalType
+			}
 			return nil
 		}); err != nil {
 			writeError(w, err)
@@ -121,6 +130,7 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 		}
 		resp := toNodeResponseWithSummary(*row, summary)
 		resp.LatestAttributes = latestBag
+		resp.SettlingSignalType = settlingSignalType
 		writeJSON(w, http.StatusOK, resp)
 	}
 }
@@ -217,6 +227,7 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 		tagFilter := req.URL.Query().Get("tag")
 		var page persistence.PaginatedListResult[persistence.NodeRow]
 		summaryByID := map[shared.UUID]persistence.NodeRunSummary{}
+		settlingByID := map[shared.UUID]string{}
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			p, err := deps.Persist.Nodes().ListByInstancePagedFiltered(ctx, inst.ID,
 				persistence.ListPagination{Limit: limit, Cursor: cursor},
@@ -231,6 +242,13 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 					return err
 				}
 				summaryByID[n.ID] = s
+				latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, n.ID)
+				if err != nil {
+					return err
+				}
+				if latest != nil && latest.SettlingSignalType != nil {
+					settlingByID[n.ID] = *latest.SettlingSignalType
+				}
 			}
 			return nil
 		}); err != nil {
@@ -239,7 +257,9 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 		}
 		out := make([]nodeResponse, 0, len(page.Rows))
 		for _, n := range page.Rows {
-			out = append(out, toNodeResponseWithSummary(n, summaryByID[n.ID]))
+			r := toNodeResponseWithSummary(n, summaryByID[n.ID])
+			r.SettlingSignalType = settlingByID[n.ID]
+			out = append(out, r)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"nodes":       out,

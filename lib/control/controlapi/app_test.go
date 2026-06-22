@@ -335,7 +335,7 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ := out["nodes"].([]any)
-	require.Len(t, nodes, 2)
+	require.Len(t, nodes, 3)
 
 	pgtest.ExecForTest(context.Background(), t, h.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
@@ -441,8 +441,8 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
     `, frameID, inst.ID, msgID)
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, active_terminal_at, run_scope_id)
-        VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', 'failed', $2, now(), $3)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
+        VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', $2, now(), $3, 0)
     `, nodeRow.ID, frameID, mainScopeID)
 	status, _ = h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusOK, status)

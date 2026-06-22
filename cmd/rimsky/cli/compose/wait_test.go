@@ -112,7 +112,7 @@ func TestWaitForInstancesTerminal_ReturnsOnAllTerminal(t *testing.T) {
 func TestWaitForInstancesTerminal_CallsPrinter(t *testing.T) {
 	client := newFakeClient()
 	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}}}})
-	client.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{FailedCount: 1}}}})
+	client.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{FailedCount: 1}, SettlingSignalType: "boom"}}})
 
 	var buf bytes.Buffer
 	printer := newDefaultPrinter(&buf)

@@ -154,9 +154,9 @@ func classifyInstanceOutcome(nodes []cli.Node) (string, int) {
 // @concept: node
 func mapNodeSummaryToOutcome(n cli.Node) (string, string) {
 	if n.RunSummary != nil && n.RunSummary.FailedCount > 0 {
-		return OutcomeFailure, ""
+		return OutcomeFailure, n.SettlingSignalType
 	}
-	return OutcomeSuccess, ""
+	return OutcomeSuccess, n.SettlingSignalType
 }
 
 // @concept: node

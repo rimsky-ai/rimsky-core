@@ -523,14 +523,15 @@ type NodeRunSummary struct {
 
 // @concept: node
 type Node struct {
-	ID         string          `json:"id"`
-	InstanceID string          `json:"instance_id"`
-	NodeType   string          `json:"node_type"`
-	Executor   string          `json:"executor,omitempty"`
-	FrameID    string          `json:"frame_id,omitempty"`
-	CreatedAt  string          `json:"created_at"`
-	UpdatedAt  string          `json:"updated_at"`
-	RunSummary *NodeRunSummary `json:"run_summary,omitempty"`
+	ID                 string          `json:"id"`
+	InstanceID         string          `json:"instance_id"`
+	NodeType           string          `json:"node_type"`
+	Executor           string          `json:"executor,omitempty"`
+	FrameID            string          `json:"frame_id,omitempty"`
+	CreatedAt          string          `json:"created_at"`
+	UpdatedAt          string          `json:"updated_at"`
+	RunSummary         *NodeRunSummary `json:"run_summary,omitempty"`
+	SettlingSignalType string          `json:"settling_signal_type,omitempty"`
 }
 
 // @concept: parked-state

@@ -182,8 +182,8 @@ func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID s
 	_ = nodeID
 	var runID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, h.driver,
-		`INSERT INTO rimsky_node_runs(id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		 VALUES (gen_random_uuid(), $1, 'worker', ARRAY[]::text[], now(), 'pending', 'stale', $2, $3)
+		`INSERT INTO rimsky_node_runs(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+		 VALUES (gen_random_uuid(), $1, 'worker', ARRAY[]::text[], now(), 'stale', $2, $3, 0)
 		 RETURNING id`,
 		[]any{nodeID, frameID, mainScopeID}, &runID,
 	)

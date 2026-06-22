@@ -84,8 +84,8 @@ func seedTerminalRunWithSignalType(
 	runID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, active_terminal_at, run_scope_id)
-        VALUES ($1, $2, 'stub', ARRAY[]::text[], now(), 'completed', 'fresh', $3, now(), $4)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
+        VALUES ($1, $2, 'stub', ARRAY[]::text[], now(), 'fresh', $3, now(), $4, 0)
     `, runID, nodeID, frameID, mainScopeID)
 
 	sig := signalType

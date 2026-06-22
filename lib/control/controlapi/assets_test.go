@@ -187,8 +187,8 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 	nodeRunID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_node_runs
-			(id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'completed', 'fresh', $3, $4)
+			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'fresh', $3, $4, 0)
 	`, nodeRunID, producerNodeID, frameID, mainScopeID)
 
 	claimID = uuid.New()
@@ -353,8 +353,8 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 		[]any{instID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_node_runs
-			(id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'active', 'running', $3, $4)
+			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
 	`, holderRunID, producerNodeID, frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
