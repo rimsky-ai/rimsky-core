@@ -23,7 +23,7 @@ import (
 )
 
 // @decision: persistence-driver
-const sqliteMaxOpenConns = 8
+const sqliteUnifiedStackMaxOpenConns = 8
 
 func init() {
 	persistence.RegisterSQLite(open)
@@ -98,11 +98,11 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Databa
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open: %w", err)
 	}
-	db.SetMaxOpenConns(sqliteMaxOpenConns)
-	if got := db.Stats().MaxOpenConnections; got != sqliteMaxOpenConns {
+	db.SetMaxOpenConns(sqliteUnifiedStackMaxOpenConns)
+	if got := db.Stats().MaxOpenConnections; got != sqliteUnifiedStackMaxOpenConns {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: MaxOpenConnections=%d after SetMaxOpenConns(%d) — refusing to boot",
-			got, sqliteMaxOpenConns)
+			got, sqliteUnifiedStackMaxOpenConns)
 	}
 
 	if err := db.PingContext(ctx); err != nil {

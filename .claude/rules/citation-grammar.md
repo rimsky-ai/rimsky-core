@@ -67,4 +67,4 @@ Conventions:
 
 ## Relation to in-code annotations
 
-The `@concept:`, `@source:`, `@agent-contract` annotations in source code are a different surface and keep their existing shape. They mark *where in the code* a concept is enforced or an invariant holds. This grammar is for prose citations *referring to* those things from outside the code. Do not change in-code annotations.
+The `@concept:`, `@story:`, `@decision:` citation tags in source code are a different surface and keep their existing shape. They mark *where in the code* a design artifact is realized. This grammar is for prose citations *referring to* those things from outside the code. Do not change in-code citations.

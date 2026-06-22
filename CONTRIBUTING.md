@@ -92,10 +92,12 @@ assignment.
   via `/plumbline:affirm`). The short version: organize by feature not
   layer, keep files under ~500 lines and functions under ~100, max 3
   levels of nesting, strict DRY through named searchable abstractions
-  (no logic copied between sites; `@source:` annotations only mark
-  intentionally divergent mirrors), every constraint backed by a lint
-  rule, test, or type, and comments only where they carry a structured
-  tag (`@constraint:`, `@deliberate:`, `@agent-contract`, ...).
+  (no logic copied between sites), every constraint backed by a lint
+  rule, test, or type, and no source-file comments outside the three
+  cheatsheet exemptions — machine directives, the configured citation
+  tags `@concept:` / `@story:` / `@decision:` in slug-only form, and
+  docstrings in files carrying the `@plumbline:allow-docstrings` opt-in
+  marker.
 - **Run `make license-lint` locally** before submitting. The license-check
   binary verifies that no Apache-classified package imports an
   AGPL-classified package and that every source file carries the correct

@@ -52,9 +52,9 @@ func checkSerialization9b(ctx context.Context, c claimproducer.ClaimProducer, ca
 			Name: "Serialization9b",
 			Err: fmt.Errorf(
 				"reader Open did not return within %s while a writer was open on the byte-equal scope: "+
-					"producer internally serializes reader behind writer (the reader-lease pattern "+
-					"violates invariant 9b for staged_async — honest support requires snapshot "+
-					"delegation or native MVCC pass-through)",
+					"producer internally serializes reader behind writer (the reader-lease pattern is "+
+					"forbidden for staged_async — honest support requires snapshot delegation or "+
+					"native MVCC pass-through)",
 				readerOpenTimeout),
 		}
 	}
