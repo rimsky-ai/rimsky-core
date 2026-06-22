@@ -242,21 +242,18 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 	return count, nil, nil
 }
 
-func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error {
+func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, count int) error {
 	if tx == nil {
-		return errors.New("postgres.SetRetryNoProgressForNodeInTx: tx required")
+		return errors.New("postgres.SetRetryNoProgressForRunInTx: tx required")
 	}
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET consecutive_retries_no_progress = $3
-		  WHERE node_id = $1
-		    AND run_scope_id = $2
-		    AND state = 'stale'
-		    AND claimed_by IS NULL`,
-		nodeID, runScopeID, count,
+		    SET consecutive_retries_no_progress = $2
+		  WHERE id = $1`,
+		dispatchID, count,
 	)
 	if err != nil {
-		return fmt.Errorf("postgres.SetRetryNoProgressForNodeInTx: %w", err)
+		return fmt.Errorf("postgres.SetRetryNoProgressForRunInTx: %w", err)
 	}
 	return nil
 }

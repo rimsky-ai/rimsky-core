@@ -106,7 +106,7 @@ func (f *fakeQueue) RebindRunFrameInTx(_ context.Context, _ persistence.Tx, _, _
 func (f *fakeQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
 	return 0, nil, nil
 }
-func (f *fakeQueue) SetRetryNoProgressForNodeInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID, _ int) error {
+func (f *fakeQueue) SetRetryNoProgressForRunInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ int) error {
 	return nil
 }
 func (f *fakeQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int, _ *int) error {

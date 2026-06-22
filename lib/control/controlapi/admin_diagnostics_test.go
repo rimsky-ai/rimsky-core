@@ -268,7 +268,7 @@ func (f *fakeDiagnosticQueue) RebindRunFrameInTx(context.Context, persistence.Tx
 func (f *fakeDiagnosticQueue) GetRetryNoProgress(context.Context, shared.UUID) (int, *int, error) {
 	return 0, nil, nil
 }
-func (f *fakeDiagnosticQueue) SetRetryNoProgressForNodeInTx(context.Context, persistence.Tx, shared.UUID, shared.UUID, int) error {
+func (f *fakeDiagnosticQueue) SetRetryNoProgressForRunInTx(context.Context, persistence.Tx, shared.UUID, int) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) UpdateDispatchTuningInTx(context.Context, persistence.Tx, shared.UUID, *int, *int) error {

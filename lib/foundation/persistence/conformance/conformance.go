@@ -60,7 +60,7 @@ func Suite(
 		t.Run("ResetFailedTerminalSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t, factory(t)) })
 		t.Run("RemoveForNodeInTx", func(t *testing.T) { testRunStateWritesIsolated_RemoveForNodeInTx(t, factory(t)) })
 		t.Run("GetParkedByNode", func(t *testing.T) { testRunStateWritesIsolated_GetParkedByNode(t, factory(t)) })
-		t.Run("SetRetryNoProgressForNodeInTx", func(t *testing.T) { testRunStateWritesIsolated_SetRetryNoProgressForNodeInTx(t, factory(t)) })
+		t.Run("SetRetryNoProgressForRunInTx", func(t *testing.T) { testRunStateWritesIsolated_SetRetryNoProgressForRunInTx(t, factory(t)) })
 		t.Run("NodeAttributesGetLatestByNode", func(t *testing.T) { testRunStateWritesIsolated_NodeAttributesGetLatestByNode(t, factory(t)) })
 	})
 	t.Run("RecoveryAwareDispatch", func(t *testing.T) { testRecoveryAwareDispatch(t, factory(t)) })

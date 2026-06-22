@@ -315,16 +315,24 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 	}
 }
 
-func testRunStateWritesIsolated_SetRetryNoProgressForNodeInTx(t *testing.T, d persistence.Database) {
+func testRunStateWritesIsolated_SetRetryNoProgressForRunInTx(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
 	store := d.Tables()
 	q := d.Queue()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return q.SetRetryNoProgressForNodeInTx(ctx, tx, f.fix.NodeID, f.scopeA, 5)
+		return q.SetRetryNoProgressForRunInTx(ctx, tx, f.runA, 5)
 	}); err != nil {
 		t.Fatalf("SetRetryNoProgress(A): %v", err)
+	}
+
+	countA, _, err := q.GetRetryNoProgress(ctx, f.runA)
+	if err != nil {
+		t.Fatalf("GetRetryNoProgress(A): %v", err)
+	}
+	if countA != 5 {
+		t.Fatalf("SetRetryNoProgress(A) did not persist: A counter=%d, want 5", countA)
 	}
 
 	countB, _, err := q.GetRetryNoProgress(ctx, f.runB)

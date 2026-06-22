@@ -78,7 +78,7 @@ func applyErrorPolicyWithScratch(
 			return nil, fmt.Errorf("applyErrorPolicy: emit retry signal: %w", err)
 		}
 		priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
-		if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, priorCount+1); err != nil {
+		if err := args.Queue.SetRetryNoProgressForRunInTx(ctx, tx, acq.DispatchID, priorCount+1); err != nil {
 			return nil, fmt.Errorf("applyErrorPolicy: bump retry counter: %w", err)
 		}
 		acq.RetryDecision = &decision
@@ -184,7 +184,7 @@ func applyTerminalInfraError(
 		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
 	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
-	if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, priorCount+1); err != nil {
+	if err := args.Queue.SetRetryNoProgressForRunInTx(ctx, tx, acq.DispatchID, priorCount+1); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: bump retry counter: %w", err)
 	}
 	maxRetries := resolveMaxRetriesCap(args, nil)

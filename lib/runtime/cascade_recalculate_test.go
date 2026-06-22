@@ -135,7 +135,7 @@ func (f *invTestQueue) RebindRunFrameInTx(_ context.Context, _ persistence.Tx, _
 func (f *invTestQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
 	return 0, nil, nil
 }
-func (f *invTestQueue) SetRetryNoProgressForNodeInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID, _ int) error {
+func (f *invTestQueue) SetRetryNoProgressForRunInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ int) error {
 	return nil
 }
 func (f *invTestQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int, _ *int) error {

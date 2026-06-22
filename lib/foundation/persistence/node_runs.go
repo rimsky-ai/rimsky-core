@@ -151,8 +151,7 @@ type Queue interface {
 
 	GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (count int, override *int, err error)
 
-	// @concept: run-scope
-	SetRetryNoProgressForNodeInTx(ctx context.Context, tx Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error
+	SetRetryNoProgressForRunInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, count int) error
 
 	UpdateDispatchTuningInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error
 

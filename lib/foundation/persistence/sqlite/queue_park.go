@@ -291,22 +291,18 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 	return count, nil, nil
 }
 
-// @concept: run-scope
-func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error {
+func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, count int) error {
 	if tx == nil {
-		return errors.New("sqlite.SetRetryNoProgressForNodeInTx: tx required")
+		return errors.New("sqlite.SetRetryNoProgressForRunInTx: tx required")
 	}
 	_, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
 		    SET consecutive_retries_no_progress = ?
-		  WHERE node_id = ?
-		    AND run_scope_id = ?
-		    AND state = 'stale'
-		    AND claimed_by IS NULL`,
-		count, nodeID.String(), runScopeID.String(),
+		  WHERE id = ?`,
+		count, dispatchID.String(),
 	)
 	if err != nil {
-		return fmt.Errorf("sqlite.SetRetryNoProgressForNodeInTx: %w", err)
+		return fmt.Errorf("sqlite.SetRetryNoProgressForRunInTx: %w", err)
 	}
 	return nil
 }
