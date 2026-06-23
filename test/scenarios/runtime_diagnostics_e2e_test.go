@@ -66,7 +66,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 						"held": {From: "acquirer"},
 					},
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)}),
 			),
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:         "transient_sender",
@@ -80,7 +80,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "transient_receiver", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "transient_sender", Type: "transient/retry/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "transient_sender", Type: "transient/retry/*", ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 			),
 		},

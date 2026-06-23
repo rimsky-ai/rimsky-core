@@ -54,7 +54,7 @@ func TestSubgraphInternalErrorRetryE2E(t *testing.T) {
 					),
 					scenario.MakeNode(
 						node.TemplateNodeDef{Type: "inner-mid", Executor: "stub",
-							Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-entry", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}},
+							Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-entry", Type: "terminal/*", ForceUpstreamRefresh: tmplspec.BoolPtr(false)}},
 							MaxRetries: node.IntPtr(2),
 							ErrorTypes: map[string]node.ErrorTypePolicy{
 								"stub/flaky": {Action: "retry"},
@@ -64,7 +64,7 @@ func TestSubgraphInternalErrorRetryE2E(t *testing.T) {
 					),
 					scenario.MakeNode(
 						node.TemplateNodeDef{Type: "inner-exit", Executor: "stub",
-							Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-mid", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}},
+							Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-mid", Type: "terminal/*", ForceUpstreamRefresh: tmplspec.BoolPtr(false)}},
 						},
 						openAttrs,
 					),

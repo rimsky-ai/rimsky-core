@@ -52,12 +52,10 @@ func TestParkedHoldsFrame_TypedMessageDoesNotWake(t *testing.T) {
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{
 						Node: "root", Type: "terminal/success",
-						WakeOnChange:         node.BoolPtr(true),
 						ForceUpstreamRefresh: node.BoolPtr(false),
 					},
 					node.SubscriptionEntry{
 						Node: "test/wake/parker", Type: "terminal/success",
-						WakeOnChange:         node.BoolPtr(true),
 						ForceUpstreamRefresh: node.BoolPtr(false),
 					},
 				),

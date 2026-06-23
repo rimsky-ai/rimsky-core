@@ -24,10 +24,6 @@ type SubscriptionEdge struct {
 
 	//	@concept: cascade
 	//	@concept: node-subscription
-	WakeOnChange bool
-
-	//	@concept: cascade
-	//	@concept: node-subscription
 	ForceUpstreamRefresh bool
 
 	//	@concept: node-subscription
@@ -302,7 +298,6 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 			existing.TypePattern == e.TypePattern &&
 			existing.WhenExpr == e.WhenExpr &&
 			existing.SubscriptionScope == e.SubscriptionScope &&
-			existing.WakeOnChange == e.WakeOnChange &&
 			existing.ForceUpstreamRefresh == e.ForceUpstreamRefresh &&
 			existing.SenderBoundToEmpty == e.SenderBoundToEmpty {
 			return true
@@ -372,7 +367,6 @@ func BuildSubscriptionEdges(
 			TypePattern:          signal.TypePath("terminal/success"),
 			WhenExpr:             nil,
 			SubscriptionScope:    spec.SubscriptionScopeDirect,
-			WakeOnChange:         true,
 			ForceUpstreamRefresh: false,
 			SenderBoundToEmpty:   true,
 		})
@@ -406,7 +400,6 @@ func edgeFromMessageRef(receiverType string) SubscriptionEdge {
 		TypePattern:          signal.TypePath("terminal/success"),
 		WhenExpr:             nil,
 		SubscriptionScope:    spec.SubscriptionScopeDirect,
-		WakeOnChange:         true,
 		ForceUpstreamRefresh: false,
 	}
 }
@@ -652,9 +645,6 @@ func edgeFromSubscription(s spec.SubscriptionEntry, receiverType string) (Subscr
 	if err != nil {
 		return SubscriptionEdge{}, fmt.Errorf("compile when: %w", err)
 	}
-	if s.WakeOnChange == nil {
-		return SubscriptionEdge{}, fmt.Errorf("subscription on %q to %q missing wake_on_change", receiverType, s.Type)
-	}
 	if s.ForceUpstreamRefresh == nil {
 		return SubscriptionEdge{}, fmt.Errorf("subscription on %q to %q missing force_upstream_refresh", receiverType, s.Type)
 	}
@@ -663,7 +653,6 @@ func edgeFromSubscription(s spec.SubscriptionEntry, receiverType string) (Subscr
 		TypePattern:          pattern,
 		WhenExpr:             when,
 		SubscriptionScope:    scope,
-		WakeOnChange:         *s.WakeOnChange,
 		ForceUpstreamRefresh: *s.ForceUpstreamRefresh,
 	}, nil
 }

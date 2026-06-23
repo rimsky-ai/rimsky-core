@@ -483,8 +483,8 @@ func startDurableHandoffHarness(t *testing.T, opts durableHandoffOpts) (*scenari
 					},
 				},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "acquirer", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
-					node.SubscriptionEntry{Node: wakeType, Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "acquirer", Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
+					node.SubscriptionEntry{Node: wakeType, Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
 				),
 				scenario.WithAttributes(opts.coHolderAttrs),
 			),

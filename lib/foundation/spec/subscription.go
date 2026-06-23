@@ -16,10 +16,6 @@ type SubscriptionEntry struct {
 
 	//	@concept: cascade
 	//	@concept: node-subscription
-	WakeOnChange *bool `yaml:"wake_on_change" json:"wake_on_change"`
-
-	//	@concept: cascade
-	//	@concept: node-subscription
 	ForceUpstreamRefresh *bool `yaml:"force_upstream_refresh" json:"force_upstream_refresh"`
 
 	ResolvesViaCallingNode bool `yaml:"resolves_via_calling_node,omitempty" json:"resolves_via_calling_node,omitempty"`

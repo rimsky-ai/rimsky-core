@@ -79,7 +79,6 @@ nodes:
       - instance: true
         type: message/invalidate/publisher/reactor
         frame: in
-        wake_on_change: true
         force_upstream_refresh: false
 publishers:
   - name: example

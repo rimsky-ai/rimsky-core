@@ -58,7 +58,7 @@ func TestValidateTemplate_Error_SubscribeToUnknownNode(t *testing.T) {
 			Type:     "a",
 			Executor: "handler.a",
 			Subscribes: []SubscriptionEntry{
-				{Node: "ghost", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+				{Node: "ghost", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)},
 			},
 		}},
 	}
@@ -76,7 +76,7 @@ func TestValidateTemplate_Ok_SubscribeToMessageTypeShapedNode(t *testing.T) {
 			Type:     "a",
 			Executor: "handler.a",
 			Subscribes: []SubscriptionEntry{
-				{Node: "ping/recheck", Type: "terminal/success", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+				{Node: "ping/recheck", Type: "terminal/success", ForceUpstreamRefresh: BoolPtr(false)},
 			},
 		}},
 	}
@@ -113,7 +113,7 @@ func TestValidateSubscribes_Ok_MessageVirtualNodeWhenBodyField(t *testing.T) {
 			Type:     "a",
 			Executor: "handler.a",
 			Subscribes: []SubscriptionEntry{
-				{Node: "ping/recheck", Type: "terminal/success", When: `payload.attributes_delta.pong_status == "ok"`, WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+				{Node: "ping/recheck", Type: "terminal/success", When: `payload.attributes_delta.pong_status == "ok"`, ForceUpstreamRefresh: BoolPtr(false)},
 			},
 		}},
 	}
@@ -235,7 +235,7 @@ func TestHoldingSubgraphsForTemplate_HeldChain(t *testing.T) {
 			},
 			{
 				Type:       "process",
-				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}},
+				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)}},
 				Holds: map[string]HoldsBinding{
 					"queue": {From: "pick"},
 				},
@@ -639,7 +639,7 @@ func TestValidateSubscribes_Ok(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -655,7 +655,7 @@ func TestValidateSubscribes_MutexNodeAndInstance(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Instance: true, Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "a", Instance: true, Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -670,7 +670,7 @@ func TestValidateSubscribes_SelfOK(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "drainer", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "drainer", Type: "terminal/success", When: "payload.changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "drainer", Type: "terminal/success", When: "payload.changed", ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -685,7 +685,7 @@ func TestValidateSubscribes_SelfBareOK(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "loopy", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "loopy", Type: "terminal/success", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "loopy", Type: "terminal/success", ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -700,7 +700,7 @@ func TestValidateSubscribes_SelfWithFrameInExplicitOK(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "loopy", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "loopy", Type: "terminal/success", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "loopy", Type: "terminal/success", ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -716,7 +716,7 @@ func TestValidateSubscribes_RejectsBareEvent(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "event", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "a", Type: "event", ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -732,7 +732,7 @@ func TestValidateSubscribes_RejectsUnknownType(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "garbage/foo", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "a", Type: "garbage/foo", ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -748,37 +748,13 @@ func TestValidateSubscribes_RejectsMalformedCEL(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "terminal/success", When: "payload.foo &&&", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "a", Type: "terminal/success", When: "payload.foo &&&", ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
 	require.False(t, res.Ok())
-}
-
-func TestValidateSubscribes_RejectsMissingWakeOnChange(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1",
-		Nodes: []TemplateNodeDef{
-			{Type: "a", Executor: "h"},
-			{Type: "b", Executor: "h",
-				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "terminal/success", ForceUpstreamRefresh: BoolPtr(false)},
-				},
-			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok(), "missing wake_on_change must be rejected")
-	found := false
-	for _, e := range res.Errors {
-		if strings.HasSuffix(e.Path, ".wake_on_change") && strings.Contains(e.Msg, "required") {
-			found = true
-			break
-		}
-	}
-	require.True(t, found, "expected an error whose path ends in .wake_on_change with a required message; got %+v", res.Errors)
 }
 
 func TestValidateSubscribes_RejectsMissingForceUpstreamRefresh(t *testing.T) {
@@ -788,7 +764,7 @@ func TestValidateSubscribes_RejectsMissingForceUpstreamRefresh(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "terminal/success", WakeOnChange: BoolPtr(true)},
+					{Node: "a", Type: "terminal/success"},
 				},
 			},
 		},
@@ -812,7 +788,7 @@ func TestValidateSubscribes_RejectsCrossCuttingWithForceUpstreamRefresh(t *testi
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Instance: true, Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(true)},
+					{Instance: true, Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(true)},
 				},
 			},
 		},
@@ -836,8 +812,8 @@ func TestValidateSubscribes_RejectsConflictingFlagsOnSameKey(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "attribute/x/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
-					{Node: "a", Type: "attribute/x/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(true)},
+					{Node: "a", Type: "attribute/x/changed", ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "a", Type: "attribute/x/changed", ForceUpstreamRefresh: BoolPtr(true)},
 				},
 			},
 		},
@@ -862,8 +838,8 @@ func TestValidateSubscribes_AllowsExactDuplicateFlags(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "attribute/x/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
-					{Node: "a", Type: "attribute/x/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "a", Type: "attribute/x/changed", ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "a", Type: "attribute/x/changed", ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -1079,7 +1055,7 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 					Type:     "verify",
 					Executor: "h",
 					Subscribes: []SubscriptionEntry{
-						{Node: "stage", Type: "attribute/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+						{Node: "stage", Type: "attribute/*", ForceUpstreamRefresh: BoolPtr(false)},
 					},
 					Attributes: &NodeAttributesDef{Schema: map[string]any{
 						"type": "object",
@@ -1190,7 +1166,7 @@ func TestValidator_FallbackOperator_Valid(t *testing.T) {
 				Type:     "verify",
 				Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "stage", Type: "attribute/out/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "stage", Type: "attribute/out/changed", ForceUpstreamRefresh: BoolPtr(false)},
 				},
 				Attributes: &NodeAttributesDef{Schema: map[string]any{
 					"type": "object",
@@ -1303,7 +1279,7 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 				{
 					Type: "generate", Executor: "h",
 					Subscribes: []SubscriptionEntry{
-						{Node: "verify", Type: "attribute/warnings_block/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+						{Node: "verify", Type: "attribute/warnings_block/changed", ForceUpstreamRefresh: BoolPtr(false)},
 					},
 					Attributes: &NodeAttributesDef{Schema: map[string]any{
 						"type": "object",
@@ -1341,7 +1317,7 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 				{
 					Type: "generate", Executor: "h",
 					Subscribes: []SubscriptionEntry{
-						{Node: "verify", Type: "attribute/warnings_block/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+						{Node: "verify", Type: "attribute/warnings_block/changed", ForceUpstreamRefresh: BoolPtr(false)},
 					},
 					Attributes: &NodeAttributesDef{Schema: map[string]any{
 						"type": "object",
@@ -2225,7 +2201,6 @@ func TestValidateMessageSubstitutionRef_Ok(t *testing.T) {
 				{
 					Node:                 "ping/recheck",
 					Type:                 "terminal/success",
-					WakeOnChange:         BoolPtr(true),
 					ForceUpstreamRefresh: BoolPtr(false),
 				},
 			},
@@ -2310,7 +2285,6 @@ func TestValidateMessageSubstitutionRef_Ok_BareWholeBodyPull(t *testing.T) {
 				{
 					Node:                 "ping/recheck",
 					Type:                 "terminal/success",
-					WakeOnChange:         BoolPtr(true),
 					ForceUpstreamRefresh: BoolPtr(false),
 				},
 			},

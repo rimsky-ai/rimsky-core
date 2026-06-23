@@ -64,8 +64,8 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 					Type:     "a",
 					Executor: "stub",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "loop/wake", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-						{Node: "loop/iterate", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "loop/wake", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "loop/iterate", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{
@@ -81,7 +81,7 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 					Type:     "b",
 					Executor: "stub",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "a", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "a", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{
@@ -101,11 +101,10 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 							Node:                 "b",
 							Type:                 "terminal/success",
 							When:                 `payload.attributes_delta.should_loop`,
-							WakeOnChange:         node.BoolPtr(true),
 							ForceUpstreamRefresh: node.BoolPtr(false),
 						},
-						{Node: "b", Type: "attribute/counter/changed", WakeOnChange: node.BoolPtr(false), ForceUpstreamRefresh: node.BoolPtr(false)},
-						{Node: "b", Type: "attribute/should_loop/changed", WakeOnChange: node.BoolPtr(false), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "b", Type: "attribute/counter/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "b", Type: "attribute/should_loop/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{
@@ -207,8 +206,8 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) 
 					Type:     "a",
 					Executor: "stub",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "loop/wake", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-						{Node: "loop/iterate", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "loop/wake", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "loop/iterate", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{
@@ -223,7 +222,7 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) 
 					Type:     "b",
 					Executor: "stub",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "a", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "a", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{
@@ -241,10 +240,9 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) 
 						{
 							Node:                 "b",
 							Type:                 "terminal/success",
-							WakeOnChange:         node.BoolPtr(true),
 							ForceUpstreamRefresh: node.BoolPtr(false),
 						},
-						{Node: "b", Type: "attribute/counter/changed", WakeOnChange: node.BoolPtr(false), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "b", Type: "attribute/counter/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{
@@ -349,8 +347,8 @@ func TestStoryCrossFrameCoupling_SelfDrain(t *testing.T) {
 					Type:     "worker",
 					Executor: "stub",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "drain/kick", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-						{Node: "drain/tick", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "drain/kick", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "drain/tick", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{
@@ -365,8 +363,8 @@ func TestStoryCrossFrameCoupling_SelfDrain(t *testing.T) {
 					Type:         "self-drain-emit",
 					EmitsMessage: "drain/tick",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "worker", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-						{Node: "worker", Type: "attribute/step/changed", WakeOnChange: node.BoolPtr(false), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "worker", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "worker", Type: "attribute/step/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{

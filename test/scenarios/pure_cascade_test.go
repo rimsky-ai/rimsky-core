@@ -33,7 +33,6 @@ func TestPureCascadeNode(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "hub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "test/wake/hub", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),

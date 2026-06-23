@@ -36,7 +36,6 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "test/wake/a", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 				scenario.WithAttributes(map[string]any{
@@ -60,9 +59,9 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "c", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					node.SubscriptionEntry{Node: "a", Type: "attribute/a_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
+					node.SubscriptionEntry{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "a", Type: "attribute/a_value/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", ForceUpstreamRefresh: node.BoolPtr(true)},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
@@ -164,10 +163,10 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "c", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					node.SubscriptionEntry{Node: "a", Type: "attribute/a_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
-					node.SubscriptionEntry{Node: "test/wake/c", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "a", Type: "attribute/a_value/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", ForceUpstreamRefresh: node.BoolPtr(true)},
+					node.SubscriptionEntry{Node: "test/wake/c", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",

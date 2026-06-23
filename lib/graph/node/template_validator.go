@@ -406,14 +406,7 @@ func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res
 func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int, declaredMessages map[string]struct{}, messageBodyFields map[string]map[string]struct{}, hooks RegistryHooks, tmpl *TemplateSpec, res *ValidationResult) {
 	for i, s := range n.Subscribes {
 		sbase := fmt.Sprintf("%s.subscribes[%d]", base, i)
-		wakeKnown := s.WakeOnChange != nil
 		refreshKnown := s.ForceUpstreamRefresh != nil
-		if !wakeKnown {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: sbase + ".wake_on_change",
-				Msg:  "wake_on_change is required (true or false); no default applies",
-			})
-		}
 		if !refreshKnown {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase + ".force_upstream_refresh",
@@ -556,12 +549,11 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 	}
 	type subEntry struct {
 		idx     int
-		wake    bool
 		refresh bool
 	}
 	groups := map[subKey][]subEntry{}
 	for i, s := range n.Subscribes {
-		if s.WakeOnChange == nil || s.ForceUpstreamRefresh == nil {
+		if s.ForceUpstreamRefresh == nil {
 			continue
 		}
 		k := subKey{
@@ -571,7 +563,7 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			when:     s.When,
 		}
 		groups[k] = append(groups[k], subEntry{
-			idx: i, wake: *s.WakeOnChange, refresh: *s.ForceUpstreamRefresh,
+			idx: i, refresh: *s.ForceUpstreamRefresh,
 		})
 	}
 	for k, entries := range groups {
@@ -580,7 +572,7 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 		}
 		first := entries[0]
 		for _, e := range entries[1:] {
-			if e.wake == first.wake && e.refresh == first.refresh {
+			if e.refresh == first.refresh {
 				continue
 			}
 			res.Errors = append(res.Errors, ValidationError{
@@ -588,12 +580,12 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				Msg: fmt.Sprintf(
 					"conflicting cascade-shape flags for subscription key "+
 						"(node:%q instance:%t type:%q when:%q): entry %d has "+
-						"wake_on_change=%t force_upstream_refresh=%t but entry %d has "+
-						"wake_on_change=%t force_upstream_refresh=%t — a single subscription "+
+						"force_upstream_refresh=%t but entry %d has "+
+						"force_upstream_refresh=%t — a single subscription "+
 						"key must declare one coherent cascade contract",
 					k.node, k.instance, k.typ, k.when,
-					first.idx, first.wake, first.refresh,
-					e.idx, e.wake, e.refresh),
+					first.idx, first.refresh,
+					e.idx, e.refresh),
 			})
 		}
 	}
@@ -679,11 +671,10 @@ func validateSubstitutionRefCoverage(
 				"suggested_subscribes_entry": map[string]any{
 					"node":                   ref.TypeName,
 					"type":                   suggestedType,
-					"wake_on_change":         false,
 					"force_upstream_refresh": false,
 				},
 				"suggested_subscribes_note": fmt.Sprintf(
-					"set wake_on_change: true if this ref should also fire this receiver; set force_upstream_refresh: true if %s should be re-evaluated when this receiver is invalidated",
+					"set force_upstream_refresh: true if %s should be re-evaluated when this receiver is invalidated",
 					ref.TypeName,
 				),
 			})
@@ -715,11 +706,10 @@ func validateSubstitutionRefCoverage(
 				"suggested_subscribes_entry": map[string]any{
 					"node":                   ref.TypeName,
 					"type":                   suggestedType,
-					"wake_on_change":         false,
 					"force_upstream_refresh": false,
 				},
 				"suggested_subscribes_note": fmt.Sprintf(
-					"set wake_on_change: true if this ref should also fire this receiver; set force_upstream_refresh: true if %s should be re-evaluated when this receiver is invalidated",
+					"set force_upstream_refresh: true if %s should be re-evaluated when this receiver is invalidated",
 					ref.TypeName,
 				),
 			})

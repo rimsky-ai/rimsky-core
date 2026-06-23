@@ -33,7 +33,6 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "test/wake/worker", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 				scenario.WithAttributes(map[string]any{

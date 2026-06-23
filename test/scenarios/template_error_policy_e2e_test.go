@@ -46,7 +46,6 @@ func testTemplateErrorPolicyPass(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "downstream"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "worker", Type: "terminal/*",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				})),
 		},
@@ -109,7 +108,6 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 			},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "worker", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				})),
 		},

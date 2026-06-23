@@ -23,7 +23,6 @@ nodes:
       - node: counter
         type: terminal/success
         when: '"loop" in payload.tags'
-        wake_on_change: true
         force_upstream_refresh: false
     attributes:
       schema:

@@ -71,7 +71,6 @@ func TestStory_InstanceCreateIsIdle(t *testing.T) {
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node:                 "root",
 					Type:                 "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),

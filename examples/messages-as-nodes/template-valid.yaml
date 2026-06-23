@@ -47,15 +47,12 @@ nodes:
     subscribes:
       - node: foo
         type: terminal/success
-        wake_on_change: true
         force_upstream_refresh: false
       - node: bar
         type: terminal/success
-        wake_on_change: true
         force_upstream_refresh: false
       - node: bar
         type: attribute/body/changed
-        wake_on_change: false
         force_upstream_refresh: false
     attributes:
       schema:

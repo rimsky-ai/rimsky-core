@@ -38,7 +38,7 @@ func TestIdempotentModeDedupes_QueueComparison(t *testing.T) {
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "test/wake", Type: "terminal/success",
-					WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 				scenario.WithAttributes(map[string]any{
 					"type":       "object",
@@ -51,11 +51,11 @@ func TestIdempotentModeDedupes_QueueComparison(t *testing.T) {
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{
 						Node: "a", Type: "terminal/success",
-						WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false),
+						ForceUpstreamRefresh: node.BoolPtr(false),
 					},
 					node.SubscriptionEntry{
 						Node: "a", Type: "attribute/x/changed",
-						WakeOnChange: node.BoolPtr(false), ForceUpstreamRefresh: node.BoolPtr(false),
+						ForceUpstreamRefresh: node.BoolPtr(false),
 					},
 				),
 				scenario.WithAttributes(map[string]any{

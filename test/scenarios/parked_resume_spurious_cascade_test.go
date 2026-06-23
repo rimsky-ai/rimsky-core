@@ -47,7 +47,6 @@ func TestParkedResumeDoesNotSpuriouslyCascadeSuccessSubscriberOnError(t *testing
 				},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "test/wake/worker", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
@@ -58,7 +57,6 @@ func TestParkedResumeDoesNotSpuriouslyCascadeSuccessSubscriberOnError(t *testing
 				},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "worker", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),

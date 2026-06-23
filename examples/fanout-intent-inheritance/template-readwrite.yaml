@@ -33,7 +33,6 @@ nodes:
     subscribes:
       - node: fanout_seed_rw
         type: terminal/success
-        wake_on_change: true
         force_upstream_refresh: false
     fan_out:
       claim: data

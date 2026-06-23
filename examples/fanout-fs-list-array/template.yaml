@@ -59,7 +59,6 @@ nodes:
     subscribes:
       - node: fanout_seed
         type: terminal/success
-        wake_on_change: true
         force_upstream_refresh: false
     fan_out:
       claim: fs_queue

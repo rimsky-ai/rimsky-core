@@ -140,7 +140,7 @@ func validTemplateBody(name string) map[string]any {
 			},
 			"nodes": []map[string]any{
 				{"type": "root", "executor": "worker"},
-				{"type": "child", "executor": "worker", "subscribes": []map[string]any{{"node": "root", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}}},
+				{"type": "child", "executor": "worker", "subscribes": []map[string]any{{"node": "root", "type": "terminal/*", "force_upstream_refresh": false}}},
 			},
 		},
 	}
@@ -181,7 +181,7 @@ func templateWithClaimProducersAndLocks(name string) map[string]any {
 				{
 					"type":       "review",
 					"executor":   "worker",
-					"subscribes": []map[string]any{{"node": "claim-topic", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}},
+					"subscribes": []map[string]any{{"node": "claim-topic", "type": "terminal/*", "force_upstream_refresh": false}},
 					"claim_producers": []map[string]any{
 						{"name": "content", "selector": "items/x", "intent": "r"},
 					},

@@ -35,9 +35,9 @@ func TestSubscriptionCascade_MultipleInvalidatorDrain(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "r", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					node.SubscriptionEntry{Node: "b", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					node.SubscriptionEntry{Node: "c", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "b", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "c", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 			),
 		},
@@ -67,23 +67,22 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "test/wake/a", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "b", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)}),
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "c", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)}),
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "r", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "b", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					node.SubscriptionEntry{Node: "c", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "b", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "c", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 			),
 		},
@@ -191,7 +190,6 @@ func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Instance:             true,
 					Type:                 "terminal/error/stub/rate_limited",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
@@ -224,7 +222,6 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "test/wake/worker", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
@@ -289,7 +286,7 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "r", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)}),
 			),
 		},
 	})
@@ -343,7 +340,6 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 					Node:                 "drain",
 					Type:                 "terminal/success",
 					When:                 "payload.changed",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),

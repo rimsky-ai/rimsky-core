@@ -120,7 +120,7 @@ func assetTemplateBody(name string) map[string]any {
 						{"name": "content", "selector": "items/x", "intent": "rw", "alias": "dataset"},
 					},
 				},
-				{"type": "downstream", "executor": "worker", "subscribes": []map[string]any{{"node": "producer", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}}},
+				{"type": "downstream", "executor": "worker", "subscribes": []map[string]any{{"node": "producer", "type": "terminal/*", "force_upstream_refresh": false}}},
 			},
 		},
 	}

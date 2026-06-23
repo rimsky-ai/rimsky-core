@@ -231,7 +231,6 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 						{
 							"node":                   reactorMessageType,
 							"type":                   "terminal/success",
-							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
 					},
@@ -243,7 +242,6 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 						{
 							"node":                   bystanderMessageType,
 							"type":                   "terminal/success",
-							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
 					},

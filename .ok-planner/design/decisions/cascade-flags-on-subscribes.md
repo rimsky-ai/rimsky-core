@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The cascade-behavior flags `wake_on_change` and `force_upstream_refresh` are fields of the subscription-entry shape, not of the substitution-ref shape and not of a separate block.
+Cascade-behavior flags (currently `force_upstream_refresh`) are fields of the subscription-entry shape, not of the substitution-ref shape and not of a separate block.
 
 ## Rationale
 

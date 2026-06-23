@@ -58,22 +58,8 @@ func ensureCascadePending(
 func resolveReceiverRunForCascade(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	receiverNodeID, runScopeID, frameID, senderNodeID, senderRunID foundationshared.UUID,
-	wakeOnChange bool,
 	visitedThisTurn map[foundationshared.UUID]struct{},
 ) (foundationshared.UUID, bool, error) {
-	if !wakeOnChange {
-		if err := args.Persist.Nodes().LockReceiverCascade(ctx, tx, receiverNodeID, runScopeID, frameID); err != nil {
-			return foundationshared.UUID{}, false, err
-		}
-		latest, err := args.Persist.Nodes().FindLatestCascadePending(ctx, tx, receiverNodeID, runScopeID, frameID)
-		if err != nil {
-			return foundationshared.UUID{}, false, err
-		}
-		if latest != nil {
-			return latest.RunID, true, nil
-		}
-		return foundationshared.UUID{}, false, nil
-	}
 	if _, seen := visitedThisTurn[receiverNodeID]; seen {
 		if err := args.Persist.Nodes().LockReceiverCascade(ctx, tx, receiverNodeID, runScopeID, frameID); err != nil {
 			return foundationshared.UUID{}, false, err

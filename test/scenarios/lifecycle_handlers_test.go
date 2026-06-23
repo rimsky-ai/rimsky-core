@@ -35,7 +35,7 @@ func TestAlwaysPropagateResolution_NewShape(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "b",
 				Executor: "stub",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-always", map[string]any{})
@@ -103,7 +103,6 @@ func TestNeverPropagateResolution_NewShape(t *testing.T) {
 				Node:                 "a",
 				Type:                 "terminal/success",
 				When:                 "payload.changed",
-				WakeOnChange:         node.BoolPtr(true),
 				ForceUpstreamRefresh: node.BoolPtr(false),
 			})),
 		},
@@ -147,7 +146,6 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 				Executor: "stub",
 			}, scenario.WithSubscribes(node.SubscriptionEntry{
 				Node: "a", Type: "terminal/*", When: "payload.changed",
-				WakeOnChange:         node.BoolPtr(true),
 				ForceUpstreamRefresh: node.BoolPtr(false),
 			})),
 		},
@@ -207,7 +205,7 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "b",
 				Executor: "stub",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-fail-freeze", map[string]any{})
@@ -368,7 +366,7 @@ func TestPureCascadeOutcomeColumn(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "p",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-pure-cascade", map[string]any{})

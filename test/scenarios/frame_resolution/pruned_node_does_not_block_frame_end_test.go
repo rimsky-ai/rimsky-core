@@ -29,9 +29,9 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "source", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "middle", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "source", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "source", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)})),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "leaf", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "middle", Type: "terminal/success", When: "payload.changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "middle", Type: "terminal/success", When: "payload.changed", ForceUpstreamRefresh: node.BoolPtr(false)})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-pruned", map[string]any{})

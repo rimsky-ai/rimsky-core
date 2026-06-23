@@ -517,7 +517,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 			receiverRunID, hasReceiver, err := resolveReceiverRunForCascade(
 				ctx, args, tx,
 				r.ID, receiverRunScopeID, senderFrameID, senderID, senderRunID,
-				edge.WakeOnChange, visitedReceivers,
+				visitedReceivers,
 			)
 			if err != nil {
 				return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver %s: %w", r.ID, err)

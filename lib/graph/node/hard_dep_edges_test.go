@@ -19,7 +19,6 @@ func makeNodeWithRefresh(receiverType, sender string) spec.TemplateNodeDef {
 			{
 				Node:                 sender,
 				Type:                 "attribute/foo/changed",
-				WakeOnChange:         spec.BoolPtr(true),
 				ForceUpstreamRefresh: spec.BoolPtr(true),
 			},
 		},
@@ -33,7 +32,6 @@ func TestBuildHardDepEdges_NoForceRefresh(t *testing.T) {
 			Subscribes: []spec.SubscriptionEntry{{
 				Node:                 "a",
 				Type:                 "attribute/foo/changed",
-				WakeOnChange:         spec.BoolPtr(true),
 				ForceUpstreamRefresh: spec.BoolPtr(false),
 			}},
 		},
@@ -84,7 +82,6 @@ func TestBuildHardDepEdges_CrossCuttingIgnored(t *testing.T) {
 			Subscribes: []spec.SubscriptionEntry{{
 				Instance:             true,
 				Type:                 "terminal/error/*",
-				WakeOnChange:         spec.BoolPtr(true),
 				ForceUpstreamRefresh: spec.BoolPtr(true),
 			}},
 		},

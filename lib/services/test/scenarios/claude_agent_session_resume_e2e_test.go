@@ -170,7 +170,6 @@ func buildSessionResumeTemplate() map[string]any {
 								{
 									"node":                   "operator/worker-rerun",
 									"type":                   "terminal/success",
-									"wake_on_change":         true,
 									"force_upstream_refresh": false,
 								},
 							},
@@ -210,7 +209,6 @@ func buildSessionResumeTemplate() map[string]any {
 								{
 									"node":                   "sub_trigger",
 									"type":                   "terminal/*",
-									"wake_on_change":         true,
 									"force_upstream_refresh": false,
 								},
 							},

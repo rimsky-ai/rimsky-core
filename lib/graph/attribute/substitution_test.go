@@ -73,8 +73,6 @@ func TestSubstitute(t *testing.T) {
 			missingSubstr: "no upstream node"},
 		{name: "attribute missing field", raw: "{{nodes.claim-topic.attribute.does_not_exist}}", wantMissing: true,
 			missingSubstr: "attribute field path not found"},
-		{name: "deps prefix retired", raw: "{{deps.claim-topic.area}}", wantMissing: true,
-			missingSubstr: "retired"},
 
 		{name: "claim payload simple", raw: "{{claim.topics-ring.payload.area}}", want: "rocky-shore"},
 		{name: "claim payload nested", raw: "{{claim.topics-ring.payload.nested.deep}}", want: "from-claim"},
@@ -777,26 +775,5 @@ func TestSubstitutionResolverArms(t *testing.T) {
 			t.Fatalf("kind %q routed to the unknown-source-kind default arm (reason %q); it is not a live resolver arm — fix liveResolverKinds or restore the arm",
 				kind, missing.Reason)
 		}
-	}
-
-	_, depsErr := resolveDirectiveValueRaw("deps.x.y", ResolveContext{})
-	var depsMissing *ErrMissingSource
-	if !errors.As(depsErr, &depsMissing) {
-		t.Fatalf("`deps.x.y`: want *ErrMissingSource migration-pointer, got %T: %v", depsErr, depsErr)
-	}
-	if strings.Contains(depsMissing.Reason, "unknown source kind") {
-		t.Fatalf("`deps` routed to the unknown-source-kind default arm; expected its dedicated retired-form rejection arm")
-	}
-
-	_, triggerErr := resolveDirectiveValueRaw("trigger.message.payload", ResolveContext{})
-	var triggerMissing *ErrMissingSource
-	if !errors.As(triggerErr, &triggerMissing) {
-		t.Fatalf("`trigger.message.payload`: want *ErrMissingSource migration-pointer, got %T: %v", triggerErr, triggerErr)
-	}
-	if strings.Contains(triggerMissing.Reason, "unknown source kind") {
-		t.Fatalf("`trigger` routed to the unknown-source-kind default arm; expected its dedicated retired-form rejection arm")
-	}
-	if !strings.Contains(triggerMissing.Reason, "messages.<type>") {
-		t.Fatalf("`trigger.message.payload` reason should point at the messages migration; got %q", triggerMissing.Reason)
 	}
 }

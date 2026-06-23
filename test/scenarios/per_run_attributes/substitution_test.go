@@ -34,7 +34,6 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 				node.TemplateNodeDef{Type: "upstream", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "test/wake/upstream", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 				scenario.WithAttributes(map[string]any{
@@ -47,7 +46,7 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "downstream", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "upstream", Type: "attribute/value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "upstream", Type: "attribute/value/changed", ForceUpstreamRefresh: node.BoolPtr(false)}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{

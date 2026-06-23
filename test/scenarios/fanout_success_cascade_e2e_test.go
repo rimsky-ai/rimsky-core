@@ -67,7 +67,7 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "downstream", Executor: "stub",
-					Subscribes: []tmplspec.SubscriptionEntry{{Node: "fan-parent", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}},
+					Subscribes: []tmplspec.SubscriptionEntry{{Node: "fan-parent", Type: "terminal/*", ForceUpstreamRefresh: tmplspec.BoolPtr(false)}},
 				},
 				openAttrs,
 			),

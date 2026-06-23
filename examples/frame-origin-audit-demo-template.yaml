@@ -62,7 +62,6 @@ nodes:
     subscribes:
       - node: audit/kick
         type: terminal/success
-        wake_on_change: true
         force_upstream_refresh: false
     attributes:
       schema:
@@ -93,15 +92,12 @@ nodes:
     subscribes:
       - node: a
         type: terminal/success
-        wake_on_change: true
         force_upstream_refresh: false
       - node: a
         type: attribute/checks/changed
-        wake_on_change: false
         force_upstream_refresh: false
       - node: a
         type: attribute/rows/changed
-        wake_on_change: false
         force_upstream_refresh: false
     attributes:
       schema:
@@ -128,7 +124,6 @@ nodes:
     subscribes:
       - node: audit/loop
         type: terminal/success
-        wake_on_change: true
         force_upstream_refresh: false
     attributes:
       schema:

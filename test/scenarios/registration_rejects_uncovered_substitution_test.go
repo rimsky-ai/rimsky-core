@@ -80,16 +80,14 @@ func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 			suggested, ok := entry["suggested_subscribes_entry"].(map[string]any)
 			require.True(t, ok,
 				"suggested_subscribes_entry must be a JSON object: %+v", entry)
-			require.Len(t, suggested, 4,
-				"suggested_subscribes_entry must be a flat 4-key drop-in JSON "+
-					"object (node, type, wake_on_change, force_upstream_refresh) "+
+			require.Len(t, suggested, 3,
+				"suggested_subscribes_entry must be a flat 3-key drop-in JSON "+
+					"object (node, type, force_upstream_refresh) "+
 					"per decision:uncovered-substitution-error-shape: %+v", suggested)
 			require.Equal(t, tc.suggestedSender, suggested["node"],
 				"suggested_subscribes_entry.node must name the sender")
 			require.Equal(t, tc.suggestedType, suggested["type"],
 				"suggested_subscribes_entry.type must match the implied signal type")
-			require.Equal(t, false, suggested["wake_on_change"],
-				"suggested wake_on_change default must be false (conservative)")
 			require.Equal(t, false, suggested["force_upstream_refresh"],
 				"suggested force_upstream_refresh default must be false (conservative)")
 
@@ -98,8 +96,6 @@ func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 				"suggested_subscribes_note must be a sibling string field: %+v", entry)
 			require.NotEmpty(t, note,
 				"suggested_subscribes_note must be non-empty")
-			require.Contains(t, note, "wake_on_change",
-				"the note must mention wake_on_change so the author understands the flag effect")
 			require.Contains(t, note, "force_upstream_refresh",
 				"the note must mention force_upstream_refresh so the author understands the flag effect")
 		})
@@ -170,7 +166,6 @@ func wholePullUncoveredSpec(name, version string) map[string]any {
 					{
 						"node":                   "foo",
 						"type":                   "attribute/bar/changed",
-						"wake_on_change":         true,
 						"force_upstream_refresh": false,
 					},
 				},

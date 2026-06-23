@@ -29,9 +29,9 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "middle", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "worker", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "worker", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)})),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "leaf", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "middle", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "middle", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-no-null", map[string]any{})

@@ -161,10 +161,6 @@ func resolveDirectiveValueRaw(directive string, ctx ResolveContext) (any, error)
 		return nil, &ErrMissingSource{Directive: directive, Reason: "directive must have at least <kind>.<field>"}
 	}
 	switch parts[0] {
-	case "deps":
-		return nil, &ErrMissingSource{Directive: directive, Reason: "`deps.<X>.<Y>` retired; use `nodes.<X>.attribute.<Y>` (see spec 2026-05-14)"}
-	case "trigger":
-		return nil, &ErrMissingSource{Directive: directive, Reason: "`trigger.<X>` retired; use `messages.<type>[.<field>]`"}
 	case "claim":
 		return resolveClaimValue(directive, parts[1:], ctx.Claim)
 	case "params":

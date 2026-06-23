@@ -53,7 +53,7 @@ func TestCanary_TemplateRegistrationAndRunAPass(t *testing.T) {
 					},
 				}),
 				scenario.WithSubscribes(
-					spec.SubscriptionEntry{Node: "root-worker", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+					spec.SubscriptionEntry{Node: "root-worker", Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
 				),
 			),
 		},

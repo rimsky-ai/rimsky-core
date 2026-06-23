@@ -39,7 +39,7 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "test/wake", Type: "terminal/success",
-					WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},

@@ -925,9 +925,6 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 			if s.When != "" {
 				item["when"] = s.When
 			}
-			if s.WakeOnChange != nil {
-				item["wake_on_change"] = *s.WakeOnChange
-			}
 			if s.ForceUpstreamRefresh != nil {
 				item["force_upstream_refresh"] = *s.ForceUpstreamRefresh
 			}

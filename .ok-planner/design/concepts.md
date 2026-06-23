@@ -50,7 +50,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `named-lock` — A named lock is a producer-independent capacity-counter primitive.
 - `node` (aliases: graph-node) — A node is one declarative unit of work in a template's graph.
 - `node-run` — The node-run row is the parent row for one execution of one node within a frame.
-- `node-subscription` (aliases: subscription) — A node-subscription declares `type:` (a canonical signal type-path, exact or trailing-`*` prefix per `concept:signal`) plus an optional `when:` CEL predicate over the signal payload, plus two required cascade-shape booleans: `wake_on_change` and `force_upstream_refresh`.
+- `node-subscription` (aliases: subscription) — A node-subscription declares `type:` (a canonical signal type-path, exact or trailing-`*` prefix per `concept:signal`) plus an optional `when:` CEL predicate over the signal payload, plus the required cascade-shape boolean `force_upstream_refresh`.
 - `observability` — The service-facing optional observability protocols and the startup handshake that probes them.
 - `orphan-reaper` — A periodic sweep that hard-deletes stale rows from the node-run ledger and the claim-handle ledger.
 - `parked-state` (aliases: park, parked node) — `parked` is the fifth legal node state, entered from `running` when the executor emits a park outcome.

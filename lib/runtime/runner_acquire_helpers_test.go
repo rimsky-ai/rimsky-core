@@ -495,7 +495,7 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 		Nodes: []spec.TemplateNodeDef{
 			{Type: upstreamType, Executor: "stub"},
 			{Type: receiverType, Executor: "stub", Subscribes: []spec.SubscriptionEntry{
-				{Node: upstreamType, Type: "attribute/items/changed", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: upstreamType, Type: "attribute/items/changed", ForceUpstreamRefresh: spec.BoolPtr(false)},
 			}},
 		},
 	}

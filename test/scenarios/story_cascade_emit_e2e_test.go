@@ -59,7 +59,7 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 					Type:     "pong",
 					Executor: "stub",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "initial/wakeup", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "initial/wakeup", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{
@@ -74,8 +74,8 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 					Type:         "emitter",
 					EmitsMessage: "ping/recheck",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "pong", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-						{Node: "pong", Type: "attribute/status/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "pong", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "pong", Type: "attribute/status/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{
@@ -94,7 +94,7 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 					Type:     "tail",
 					Executor: "stub",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "ping/recheck", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "ping/recheck", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{

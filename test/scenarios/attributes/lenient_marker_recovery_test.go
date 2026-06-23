@@ -38,8 +38,8 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "lenient", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "upstream", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					node.SubscriptionEntry{Node: "upstream", Type: "attribute/maybe/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "upstream", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "upstream", Type: "attribute/maybe/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
@@ -62,8 +62,8 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 					},
 				},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "upstream", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					node.SubscriptionEntry{Node: "upstream", Type: "attribute/maybe/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "upstream", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "upstream", Type: "attribute/maybe/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",

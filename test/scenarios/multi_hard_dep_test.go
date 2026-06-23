@@ -37,7 +37,6 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 				node.TemplateNodeDef{Type: "trigger", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "test/wake/trigger", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 				scenario.WithAttributes(map[string]any{
@@ -71,9 +70,9 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "c", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "trigger", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					node.SubscriptionEntry{Node: "a", Type: "attribute/a_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
-					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
+					node.SubscriptionEntry{Node: "trigger", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "a", Type: "attribute/a_value/changed", ForceUpstreamRefresh: node.BoolPtr(true)},
+					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", ForceUpstreamRefresh: node.BoolPtr(true)},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",

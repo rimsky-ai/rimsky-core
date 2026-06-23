@@ -10,10 +10,10 @@ aliases: []
 
 A **signal** is the unified emission shape for any transition that affects a node-run. Every signal is a type-path plus a typed payload object: a `type` field carrying a canonical hierarchical type-path (slash-separated, hierarchical, validator-enforced) and a `payload` field carrying a structured object (typed per type-path; see "Payload schemas" below).
 
-The signal travels two independent paths once emitted:
+Once emitted, the signal feeds two consumers:
 
-1. **Cascade walker.** Subscription edges keyed by type-path prefix select candidate receivers; a CEL `when:` predicate evaluated against the payload gates wait-set insertion.
-2. **Audit log.** Every signal writes one row to the persisted audit-event ledger with the event kind set to the signal's type-path string and the audit payload set to the signal payload. Audit emission is unconditional and independent of subscribers.
+1. **Cascade walker.** Subscription edges keyed by type-path prefix select candidate receivers; a CEL `when:` predicate evaluated against the payload gates wait-set insertion. The payload is consumed at walk-time and is NOT propagated to subscribers — wait-set rows carry only `(frame, receiver_run, sender_run, topic_kind, subscription_scope)` (see `concept:wait-set`). Subscribers receive the wake (the wait-set drain triggers their gate-eval), not the payload.
+2. **Audit log.** Every signal writes one row to the persisted audit-event ledger with the event kind set to the signal's type-path string and the audit payload set to the signal payload. This is the only path on which the payload is durably preserved. Audit emission is unconditional and independent of subscribers.
 
 The signal vocabulary unifies the historical parallel surfaces (run outcome, transition reason, subscription's structured-filter fields) into one type-path-plus-payload contract.
 
@@ -43,7 +43,7 @@ The `transient/*` leaves are `transient/retry/<attempt>/<error_class>` and `tran
 
 ### `attribute/<key>/changed` — attribute writes
 
-Emitted per changed attribute key when a node settles with a non-empty attribute delta.
+Emitted per attribute key whose value differs from the prior run's persisted value at settlement (per `concept:attribute`). The diff is computed against the immediately-preceding run by `sequence`; same-value resettlements emit nothing for that key. Keys present in the prior run but absent from the current run emit with `value: null` (deletion).
 
 ### `message/<kind>/<sender_kind>/<target>` — boundary-crossing messages
 

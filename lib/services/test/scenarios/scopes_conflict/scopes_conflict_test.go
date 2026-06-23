@@ -74,7 +74,7 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 						"held": map[string]any{"from": "acquirer"},
 					},
 					"subscribes": []map[string]any{
-						{"node": "acquirer", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false},
+						{"node": "acquirer", "type": "terminal/*", "force_upstream_refresh": false},
 					},
 				},
 				{
@@ -88,7 +88,7 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 						},
 					},
 					"subscribes": []map[string]any{
-						{"node": "verifier", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false},
+						{"node": "verifier", "type": "terminal/*", "force_upstream_refresh": false},
 					},
 				},
 			},

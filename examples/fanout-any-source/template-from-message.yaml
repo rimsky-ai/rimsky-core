@@ -37,7 +37,6 @@ nodes:
     subscribes:
       - node: backfill_trigger
         type: terminal/success
-        wake_on_change: true
         force_upstream_refresh: false
     fan_out:
       claim: fs_queue

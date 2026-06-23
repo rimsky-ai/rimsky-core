@@ -305,7 +305,6 @@ func deploySensorWebhookTemplate(t *testing.T, ep harness.RimskyEndpoint) string
 						{
 							"node":                   webhookMessageType,
 							"type":                   "terminal/success",
-							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
 					},

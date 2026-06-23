@@ -341,7 +341,6 @@ func deployObjectStoreSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 						{
 							"node":                   objectStoreMessageType,
 							"type":                   "terminal/success",
-							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
 					},

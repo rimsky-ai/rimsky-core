@@ -359,7 +359,6 @@ func deploySensorHttpTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedUR
 						{
 							"node":                   httpMessageType,
 							"type":                   "terminal/success",
-							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
 					},

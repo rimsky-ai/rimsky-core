@@ -53,7 +53,6 @@ func TestStory_EmptyMessageWakesRoots(t *testing.T) {
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node:                 "root1",
 					Type:                 "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
@@ -62,7 +61,6 @@ func TestStory_EmptyMessageWakesRoots(t *testing.T) {
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Instance:             true,
 					Type:                 "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),

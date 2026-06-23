@@ -62,7 +62,6 @@ func TestSubstitutionCoverage_WholePullRefUncovered(t *testing.T) {
 					{
 						Node:                 "foo",
 						Type:                 "attribute/bar/changed",
-						WakeOnChange:         BoolPtr(true),
 						ForceUpstreamRefresh: BoolPtr(false),
 					},
 				},
@@ -152,16 +151,14 @@ func assertSuggestedEntryShape(t *testing.T, entry map[string]any, expectedSende
 
 	suggested, ok := entry["suggested_subscribes_entry"].(map[string]any)
 	require.True(t, ok, "suggested_subscribes_entry must be a JSON object: %+v", entry)
-	require.Len(t, suggested, 4,
-		"suggested_subscribes_entry must be a flat 4-key drop-in JSON object "+
+	require.Len(t, suggested, 3,
+		"suggested_subscribes_entry must be a flat 3-key drop-in JSON object "+
 			"(no embedded _note field per decision:uncovered-substitution-error-shape): %+v",
 		suggested)
 	require.Equal(t, expectedSender, suggested["node"],
 		"suggested_subscribes_entry.node must name the sender")
 	require.Equal(t, expectedType, suggested["type"],
 		"suggested_subscribes_entry.type must match the implied signal type")
-	require.Equal(t, false, suggested["wake_on_change"],
-		"the suggested entry's wake_on_change default must be false (conservative)")
 	require.Equal(t, false, suggested["force_upstream_refresh"],
 		"the suggested entry's force_upstream_refresh default must be false (conservative)")
 
@@ -173,8 +170,6 @@ func assertSuggestedEntryShape(t *testing.T, entry map[string]any, expectedSende
 	note, ok := entry["suggested_subscribes_note"].(string)
 	require.True(t, ok, "suggested_subscribes_note must be a top-level string sibling: %+v", entry)
 	require.NotEmpty(t, note)
-	require.Contains(t, note, "wake_on_change",
-		"the note must mention wake_on_change so the author understands the flag's effect")
 	require.Contains(t, note, "force_upstream_refresh",
 		"the note must mention force_upstream_refresh so the author understands the flag's effect")
 }
@@ -228,7 +223,6 @@ func TestCoverageCheck_MessagesDeclaredAccepted(t *testing.T) {
 					{
 						Node:                 "ev/bar",
 						Type:                 "terminal/success",
-						WakeOnChange:         BoolPtr(true),
 						ForceUpstreamRefresh: BoolPtr(false),
 					},
 				},
@@ -270,7 +264,6 @@ func TestCoverageCheck_SymmetryWithNodes(t *testing.T) {
 						{
 							Node:                 "foo",
 							Type:                 "attribute/items/changed",
-							WakeOnChange:         BoolPtr(true),
 							ForceUpstreamRefresh: BoolPtr(false),
 						},
 					},
@@ -304,7 +297,6 @@ func TestCoverageCheck_SymmetryWithNodes(t *testing.T) {
 						{
 							Node:                 "ev/foo",
 							Type:                 "terminal/success",
-							WakeOnChange:         BoolPtr(true),
 							ForceUpstreamRefresh: BoolPtr(false),
 						},
 					},
@@ -341,7 +333,6 @@ func TestCoverageCheck_MessagesWildcardAccepted(t *testing.T) {
 					{
 						Node:                 "ev/foo",
 						Type:                 "terminal/*",
-						WakeOnChange:         BoolPtr(true),
 						ForceUpstreamRefresh: BoolPtr(false),
 					},
 				},

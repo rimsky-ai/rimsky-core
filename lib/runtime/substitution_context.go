@@ -20,6 +20,7 @@ import (
 
 // @concept: attribute
 // @decision: substitution-grammar-closed
+// @decision: substitution-deps-from-persisted-senders
 func BuildAttributeDeps(
 	ctx context.Context,
 	tx persistence.Tx,

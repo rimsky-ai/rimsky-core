@@ -258,9 +258,9 @@ func makeHardDepTemplate() nodepkg.TemplateSpec {
 			{
 				Type: "c", Executor: "stub",
 				Subscribes: []nodepkg.SubscriptionEntry{
-					{Node: "a", Type: "terminal/*", WakeOnChange: nodepkg.BoolPtr(true), ForceUpstreamRefresh: nodepkg.BoolPtr(false)},
-					{Node: "a", Type: "attribute/a_value/changed", WakeOnChange: nodepkg.BoolPtr(true), ForceUpstreamRefresh: nodepkg.BoolPtr(false)},
-					{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: nodepkg.BoolPtr(true), ForceUpstreamRefresh: nodepkg.BoolPtr(true)},
+					{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: nodepkg.BoolPtr(false)},
+					{Node: "a", Type: "attribute/a_value/changed", ForceUpstreamRefresh: nodepkg.BoolPtr(false)},
+					{Node: "b", Type: "attribute/b_value/changed", ForceUpstreamRefresh: nodepkg.BoolPtr(true)},
 				},
 				Attributes: &nodepkg.NodeAttributesDef{Schema: cSchema},
 			},

@@ -26,7 +26,7 @@ func TestBuildSubscriptionEdges_ExplicitDirect(t *testing.T) {
 		{Type: "sender", Executor: "stub"},
 		{Type: "receiver", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "sender", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "sender", Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 	}}
@@ -44,9 +44,6 @@ func TestBuildSubscriptionEdges_ExplicitDirect(t *testing.T) {
 	if matched[0].TypePattern != signal.TypePath("terminal/success") {
 		t.Errorf("TypePattern: got %q want terminal/success", matched[0].TypePattern)
 	}
-	if !matched[0].WakeOnChange {
-		t.Errorf("WakeOnChange: got false, want true")
-	}
 	if matched[0].ForceUpstreamRefresh {
 		t.Errorf("ForceUpstreamRefresh: got true, want false")
 	}
@@ -56,7 +53,7 @@ func TestBuildSubscriptionEdges_CrossCutting(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "cleanup", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Instance: true, Type: "terminal/error/*", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Instance: true, Type: "terminal/error/*", ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 	}}
@@ -110,8 +107,8 @@ func TestBuildSubscriptionEdges_Dedup(t *testing.T) {
 		{Type: "sender", Executor: "stub"},
 		{Type: "receiver", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "sender", Type: "attribute/out/changed", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
-				{Node: "sender", Type: "attribute/out/changed", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "sender", Type: "attribute/out/changed", ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "sender", Type: "attribute/out/changed", ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 	}}
@@ -130,9 +127,9 @@ func TestBuildSubscriptionEdges_FlagsDistinguishEdges(t *testing.T) {
 		{Type: "sender", Executor: "stub"},
 		{Type: "receiver", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "sender", Type: "attribute/out/changed", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
-				{Node: "sender", Type: "attribute/out/changed", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(true)},
-				{Node: "sender", Type: "attribute/out/changed", WakeOnChange: spec.BoolPtr(false), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "sender", Type: "attribute/out/changed", ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "sender", Type: "attribute/out/changed", ForceUpstreamRefresh: spec.BoolPtr(true)},
+				{Node: "sender", Type: "attribute/out/changed", ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 	}}
@@ -141,16 +138,16 @@ func TestBuildSubscriptionEdges_FlagsDistinguishEdges(t *testing.T) {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
 	matched := out.Match("sender", signal.TypePath("attribute/out/changed"))
-	if len(matched) != 3 {
-		t.Fatalf("expected 3 distinct edges (one per flag combination), got %d", len(matched))
+	if len(matched) != 2 {
+		t.Fatalf("expected 2 distinct edges (one per force_upstream_refresh value), got %d", len(matched))
 	}
-	seen := map[[2]bool]bool{}
+	seen := map[bool]bool{}
 	for _, e := range matched {
-		seen[[2]bool{e.WakeOnChange, e.ForceUpstreamRefresh}] = true
+		seen[e.ForceUpstreamRefresh] = true
 	}
-	for _, want := range [][2]bool{{true, false}, {true, true}, {false, false}} {
+	for _, want := range []bool{false, true} {
 		if !seen[want] {
-			t.Errorf("missing edge with WakeOnChange=%t ForceUpstreamRefresh=%t", want[0], want[1])
+			t.Errorf("missing edge with ForceUpstreamRefresh=%t", want)
 		}
 	}
 }
@@ -159,8 +156,8 @@ func TestBuildSubscriptionEdges_CrossCuttingAndPerNodeBothMatch(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "x", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "y", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
-				{Instance: true, Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "y", Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Instance: true, Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 		{Type: "y", Executor: "stub"},
@@ -196,7 +193,7 @@ func TestBuildSubscriptionEdges_StructuralRootInjection(t *testing.T) {
 		{Type: "root-b", Executor: "stub"},
 		{Type: "downstream", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "root-a", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "root-a", Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 	}}
@@ -227,7 +224,7 @@ func TestBuildSubscriptionEdges_StructuralRootInjection_CrossCuttingOnly(t *test
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "monitor", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Instance: true, Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Instance: true, Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 		{Type: "root", Executor: "stub"},
@@ -288,7 +285,7 @@ func TestSubscriptionEdgeMap_Match_StructuralRootDisambiguation(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "cleanup", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Instance: true, Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Instance: true, Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 		{Type: "root", Executor: "stub"},
@@ -335,7 +332,7 @@ func TestSubscriptionEdgeMap_PrefixWildcardMatch(t *testing.T) {
 		{Type: "sender", Executor: "stub"},
 		{Type: "receiver", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "sender", Type: "terminal/error/*", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "sender", Type: "terminal/error/*", ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 	}}

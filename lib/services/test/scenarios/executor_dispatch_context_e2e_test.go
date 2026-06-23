@@ -138,7 +138,6 @@ func buildDispatchContextProbeTemplate() map[string]any {
 						{
 							"node":                   "operator/worker-rerun",
 							"type":                   "terminal/success",
-							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
 					},
@@ -211,7 +210,6 @@ func buildDispatchContextRetryProbeTemplate() map[string]any {
 						{
 							"node":                   "operator/worker-rerun",
 							"type":                   "terminal/success",
-							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
 					},

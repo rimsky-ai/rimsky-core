@@ -29,7 +29,7 @@ func TestFanOutPattern(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "root"}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "child_a", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "root", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "root", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)}),
 				scenario.WithAttributes(map[string]any{
 					"type":       "object",
 					"properties": map[string]any{"a": map[string]any{"type": "integer"}},
@@ -37,7 +37,7 @@ func TestFanOutPattern(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "child_b", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "root", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "root", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)}),
 				scenario.WithAttributes(map[string]any{
 					"type":       "object",
 					"properties": map[string]any{"b": map[string]any{"type": "integer"}},
@@ -45,7 +45,7 @@ func TestFanOutPattern(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "child_c", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "root", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "root", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)}),
 				scenario.WithAttributes(map[string]any{
 					"type":       "object",
 					"properties": map[string]any{"c": map[string]any{"type": "integer"}},

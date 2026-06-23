@@ -104,7 +104,6 @@ func TestExampleExecutorE2E(t *testing.T) {
 							"node":                   "worker",
 							"type":                   "terminal/success",
 							"when":                   "\"work_started\" in payload.tags",
-							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
 					},

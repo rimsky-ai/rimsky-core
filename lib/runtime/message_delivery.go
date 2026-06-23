@@ -287,10 +287,6 @@ func cascadeEmptyMessageWakeInTx(
 			}
 			receivers := byType[e.ReceiverNodeType]
 			for _, r := range receivers {
-				// @concept: cascade
-				if !e.WakeOnChange {
-					continue
-				}
 				// @concept: parked-state
 				receiverScopeID := instanceMainRunScopeID
 				if latest, err := persist.Nodes().GetLatestRunForNode(ctx, tx, r.ID); err != nil {
@@ -301,7 +297,7 @@ func cascadeEmptyMessageWakeInTx(
 				receiverRunID, hasReceiver, err := resolveReceiverRunForCascade(
 					ctx, args, tx,
 					r.ID, receiverScopeID, frameID, shared.UUID{}, shared.UUID{},
-					e.WakeOnChange, visitedReceivers,
+					visitedReceivers,
 				)
 				if err != nil {
 					return fmt.Errorf("cascadeEmptyMessageWakeInTx: resolve receiver %s: %w", r.ID, err)

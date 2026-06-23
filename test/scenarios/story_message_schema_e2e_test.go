@@ -60,7 +60,7 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 					Type:     "receiver",
 					Executor: "stub",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "ping/recheck", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+						{Node: "ping/recheck", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{

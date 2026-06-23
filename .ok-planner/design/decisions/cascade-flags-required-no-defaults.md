@@ -3,11 +3,11 @@ decision: cascade-flags-required-no-defaults
 status: as-is
 ---
 
-# Both cascade-shape flags are required on every subscription entry
+# Cascade-shape flag is required on every subscription entry
 
 ## Choice
 
-Both `wake_on_change` and `force_upstream_refresh` are required fields on every subscription entry; registration rejects entries missing either. No defaults are applied.
+`force_upstream_refresh` is a required field on every subscription entry; registration rejects entries missing it. No default is applied.
 
 ## Rationale
 

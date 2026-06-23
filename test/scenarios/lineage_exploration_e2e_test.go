@@ -77,8 +77,8 @@ func TestLineageExploration(t *testing.T) {
 					Executor: "stub",
 				},
 				scenario.WithSubscribes(
-					tmplspec.SubscriptionEntry{Node: "producer", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
-					tmplspec.SubscriptionEntry{Node: "producer", Type: "attribute/ok/changed", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
+					tmplspec.SubscriptionEntry{Node: "producer", Type: "terminal/*", ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
+					tmplspec.SubscriptionEntry{Node: "producer", Type: "attribute/ok/changed", ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
