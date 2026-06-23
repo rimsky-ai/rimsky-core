@@ -56,12 +56,23 @@ gate (always-emit → emit-on-change).
   observable). New `testCascadeAttributeChangedDiffGate` sub-test added:
   sender re-settles with the same value via `test/wake` message, receiver
   woken exactly once across both rounds.
-- [ ] **story:cross-frame-coupling** — proof
+- [x] **story:cross-frame-coupling** — proof
   (`test/scenarios/story_cross_frame_coupling_e2e_test.go:170-317`)
   passes, but the `attribute/counter/changed` subscription it appears to
   exercise (line 247) is now inert under diff-gating because B always
   returns the same `counter: 2`. The proof technically holds; the lever
-  it claims to test is no longer pulled.
+  it claims to test is no longer pulled. Story rewritten in user-outcome
+  shape (Role/Capability/Business value lifted out of implementation
+  prescription); "coupling" terminology dropped from the prose (replaced
+  with "iterative workflows"); the self-drain test rewritten as
+  `TestStoryCrossFrameCoupling_SelfDrainConvergesViaDiffGate` —
+  emit-node subscribes only to `attribute/step/changed` (not
+  terminal/success), worker returns a fixed `step: 1`, the diff-gate
+  stops the loop after exactly one iteration. Assertions are exact-count
+  (worker=2, emit-node=1, drain/tick messages=1), not a runaway-prevention
+  ceiling. `BackEdgeCycle_LoopsThenConverges` renamed to
+  `BackEdgeCycle_LoopsWithoutGate` (the original name implied a
+  convergence proof the test never made).
 
 ## Cluster 2 — Pre-existing divergences
 

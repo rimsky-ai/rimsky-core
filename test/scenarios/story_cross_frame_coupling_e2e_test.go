@@ -166,7 +166,7 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 		iterateMsgs)
 }
 
-func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) {
+func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsWithoutGate(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
@@ -314,7 +314,7 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) 
 		"distinct triggering_message_id values must exist across frames")
 }
 
-func TestStoryCrossFrameCoupling_SelfDrain(t *testing.T) {
+func TestStoryCrossFrameCoupling_SelfDrainConvergesViaDiffGate(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
@@ -363,7 +363,6 @@ func TestStoryCrossFrameCoupling_SelfDrain(t *testing.T) {
 					Type:         "self-drain-emit",
 					EmitsMessage: "drain/tick",
 					Subscribes: []node.SubscriptionEntry{
-						{Node: "worker", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 						{Node: "worker", Type: "attribute/step/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
@@ -392,22 +391,50 @@ func TestStoryCrossFrameCoupling_SelfDrain(t *testing.T) {
 		"drain kick must succeed; status=%d body=%s", resp.status, string(resp.raw))
 
 	workerNode := h.FindNode(iid, "worker")
+	emitNode := h.FindNode(iid, "self-drain-emit")
 	require.NotNil(t, workerNode)
-	require.True(t, h.WaitForEventKind(workerNode.ID, "terminal/success", 20*time.Second),
-		"worker did not run after the drain kick; the kick → worker leg is broken")
+	require.NotNil(t, emitNode)
 
-	time.Sleep(15 * time.Second)
-	var frameCount int
-	h.QueryRowSQL(
-		`SELECT count(*) FROM rimsky_frames WHERE instance_id = $1`,
-		[]any{iid}, &frameCount)
-	require.Less(t, frameCount, 300,
-		"self-drain did not converge; frame count = %d is runaway (the loop fires forever)",
-		frameCount)
+	deadline := time.Now().Add(20 * time.Second)
 	var workerRuns int
+	for time.Now().Before(deadline) {
+		h.QueryRowSQL(
+			`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
+			[]any{workerNode.ID}, &workerRuns)
+		if workerRuns >= 2 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.GreaterOrEqual(t, workerRuns, 2,
+		"worker must run at least twice — once on the kick, once on the drain/tick the emit-node produced; got %d",
+		workerRuns)
+
+	time.Sleep(5 * time.Second)
+
 	h.QueryRowSQL(
 		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
 		[]any{workerNode.ID}, &workerRuns)
-	require.Greater(t, workerRuns, 1,
-		"worker must run more than once (the self-emit must fire across frames); got %d", workerRuns)
+	require.Equal(t, 2, workerRuns,
+		"diff-gate convergence: worker must run exactly twice. After the second settle the step value "+
+			"is unchanged from the first, so no `attribute/step/changed` signal fires, the emit-node does "+
+			"not wake, no further drain/tick message is emitted, and the loop ends. workerRuns=%d means "+
+			"the diff-gate is leaking — emit-node wakes on a same-value resettlement",
+		workerRuns)
+
+	var emitRuns int
+	h.QueryRowSQL(
+		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
+		[]any{emitNode.ID}, &emitRuns)
+	require.Equal(t, 1, emitRuns,
+		"emit-node must run exactly once — only on the first worker settle where step's value differs "+
+			"from the (absent) prior. emitRuns=%d means the diff-gate is leaking",
+		emitRuns)
+
+	var tickMsgs int
+	h.QueryRowSQL(
+		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'drain/tick'`,
+		[]any{iid}, &tickMsgs)
+	require.Equal(t, 1, tickMsgs,
+		"exactly one drain/tick must land in the ledger (the emit-node's single firing); got %d", tickMsgs)
 }
