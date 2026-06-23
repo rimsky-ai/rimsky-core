@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -43,6 +44,9 @@ func emitSignalInTxWithFilter(
 	visited map[foundationshared.UUID]struct{},
 	filter receiverFilter,
 ) error {
+	if err := signalpkg.ValidateTypePath(sig.Type); err != nil {
+		return fmt.Errorf("emitSignalInTx: %w", err)
+	}
 	var zeroUUID foundationshared.UUID
 	if senderRunID != zeroUUID && senderFrameID != zeroUUID {
 		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,

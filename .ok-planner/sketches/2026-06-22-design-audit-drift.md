@@ -24,7 +24,7 @@ gate (always-emit → emit-on-change).
   prior run's value (`lib/runtime/attribute_cascade.go:22-62`). Also
   tightened the opening "two paths" framing: payload is consumed at
   walk-time and audit-write time only, never propagated to subscribers.
-- [ ] **concept:signal + lib/foundation/signal/taxonomy.go** —
+- [x] **concept:signal + lib/foundation/signal/taxonomy.go** —
   `transient/*` taxonomy lists only `transient/retry/*` and
   `transient/await_async`; code emits `transient/infra/<class>`
   (`lib/runtime/runner_error_policy.go:212`) and
@@ -32,6 +32,16 @@ gate (always-emit → emit-on-change).
   (`lib/runtime/runner_error_policy.go:332`), neither in the canonical
   list. `ValidateTypePath` would reject them. Fix touches both the
   concept doc taxonomy section and `canonicalEmitPatterns` in code.
+  Fixed: added `transient/infra/*` and `transient/release_and_requeue/*`
+  to `canonicalEmitPatterns`; updated `taxonomy_test.go` accept-list
+  to cover both; updated `concept:signal`'s `transient/*` enumeration
+  with descriptions of when each fires. Also wired `ValidateTypePath`
+  into `emitSignalInTxWithFilter` as a mechanical guard so any future
+  undeclared emit fails loud rather than silently landing in the audit
+  log. New test file `signal_emit_test.go` covers the guard
+  (rejects empty, retired `message/*`, unknown top-level kind,
+  malformed attribute leaf) plus a regression assertion that the two
+  newly-declared `transient/*` patterns remain canonical.
 - [x] **concept:attribute** — "trigger-message" wording predates the
   unified `messages.<type>` substitution surface
   (`lib/graph/attribute/substitution.go:166-167`). Updated both stale
@@ -185,37 +195,41 @@ they don't share a delta the way Cluster 1 does.
   now "three canonical kinds + `state` fallback" with cross-reference to
   the decision.
 
-## Open question — lineage: data-flow vs. causal-flow
+## Open question — lineage: data-flow vs. causal-flow [RESOLVED]
+
+Resolution: keep lineage strictly as data-lineage; do not extend the
+surface to capture wake-only causality. Operators wanting "consumer C
+was woken by upstream U" consult the audit log's signal-emission rows
+or the wait-set ledger directly.
+
+Fixed: `concept:lineage` Definition rewritten to call out lineage as
+data lineage explicitly (attribute-substitution refs + claim-tree
+linkage), with substitution_refs framing made literal. Added a Boundaries
+clause stating wake-only causality is NOT owned by `concept:lineage`,
+naming the audit log and wait-set ledger as where operators consult for
+it. Added an invariant capturing the pass-through-emits-no-leaf-run
+behavior: fan-out parents (executor skipped at acquire-phase split) and
+pure-cascade nodes (no executor declared) emit no leaf_run record by
+design (the sketch's earlier note about subgraph exits was wrong on
+inspection — exits are normal executor-bearing nodes). Parallel
+invariant added to `concept:lineage-record` so the leaf-run record
+shape carries the same boundary.
+
+No new decision doc — the boundary is captured in the concept invariants;
+if the framing-as-decision becomes useful later (e.g. a wake-refs sibling
+surface is proposed), a decision can be written then to record the
+choice between data-only and causal-extension.
+
+### Original analysis (retained for history)
 
 Current implementation tracks **data lineage**: `substitution_refs`
 records "this run looked up X.attribute.Y, so its output depends on the
 run that produced X" (`lib/runtime/lineage_writer.go::CollectSubstitutionRefsForEmit:278`).
 Wake-only causality (consumer woken by upstream's `terminal/success` but
 reading nothing from it) is a different relationship — **causal
-lineage** — and the model is silent on it. Fan-out parents, pure-cascade
-nodes, and subgraph exits all live entirely in causal-lineage land (no
-attribute output to be cited), so they're structurally invisible in the
-existing surface. The audit also surfaced that **concept:lineage** is
-silent on fan-out parents emitting no leaf-run row; that gap is
-downstream of the data-flow-vs-causal-flow framing — once we pin the
-framing, the leaf-run-emission boundary writes itself.
-
-### Recommendation
-
-Keep lineage as data-lineage; document the boundary explicitly in
-**concept:lineage**. The cost of conflating the two is that operators
-read a ref and can't tell whether it means "this run's output literally
-depended on that run's output" or "this run was notified when that run
-settled." The precision protected elsewhere in the model erodes. If
-causal-flow becomes a real operator need later, it's a cleaner addition
-as a parallel surface (`/v1/lineage/causal/...` or a sibling `wake_refs`
-array) than a polymorphic field on the existing one.
-
-### Alternative framings (for completeness)
-
-- Extend `substitution_refs` (likely renamed to `upstream_refs`) to
-  cover wake-only causality; walker treats both kinds transparently.
-  Most info, conflated semantics.
-- Split into `substitution_refs` (data) + `wake_refs` (causal); same
-  shape, different array names. Preserves the distinction in storage
-  but doubles the cognitive surface for the same operator question.
+lineage** — and the model is silent on it. Alternative framings considered:
+(a) extend `substitution_refs` (rename to `upstream_refs`) to cover
+wake-only causality, walker treats both transparently — rejected for
+conflating semantics; (b) split into `substitution_refs` (data) +
+`wake_refs` (causal) — rejected for doubling cognitive surface without
+clear operator demand.

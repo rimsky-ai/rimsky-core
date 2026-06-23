@@ -16,6 +16,8 @@ var canonicalEmitPatterns = []string{
 	"terminal/park/await_callback",
 	"terminal/infra/*",
 	"transient/retry/*",
+	"transient/infra/*",
+	"transient/release_and_requeue/*",
 	"transient/await_async",
 	"attribute/*/changed",
 }

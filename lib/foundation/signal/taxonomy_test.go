@@ -16,6 +16,8 @@ func TestValidateTypePath_AcceptsCanonical(t *testing.T) {
 		"terminal/infra/heartbeat_lost",
 		"transient/retry/3/agent/rate_limited",
 		"transient/retry/1/foo",
+		"transient/infra/heartbeat_lost",
+		"transient/release_and_requeue/lock_lost",
 		"transient/await_async",
 		"attribute/budget_cents/changed",
 	}

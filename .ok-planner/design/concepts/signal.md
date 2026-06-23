@@ -37,7 +37,7 @@ A held node-run's own `running → held` transition emits NO terminal signal —
 
 ### `transient/*` — mid-dispatch transitions, dispatch not yet settled
 
-The `transient/*` leaves are `transient/retry/<attempt>/<error_class>` and `transient/await_async`.
+The `transient/*` leaves are `transient/retry/<attempt>/<error_class>` (mid-retry signal carrying the attempt counter and the operator-declared error class), `transient/infra/<error_class>` (infra-class error caught mid-retry, fires when `applyTerminalInfraError` increments its retry counter), `transient/release_and_requeue/<error_class>` (fires when the policy chain resolves to release-and-requeue for the given class), and `transient/await_async`.
 
 `transient/await_async` is the executor await-async-callback outcome — the node stays in `running` state until the callback's eventual terminal settles it. It is NOT a `terminal/park/*` leaf.
 
