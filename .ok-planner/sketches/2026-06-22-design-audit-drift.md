@@ -80,38 +80,110 @@ These weren't caused by this session — they were already wrong, and the
 audit caught them as a side effect. Each is independently shippable;
 they don't share a delta the way Cluster 1 does.
 
-- [ ] **concept:error-policy** — names a `discard-claims` action that
+- [x] **concept:error-policy** — names a `discard-claims` action that
   doesn't exist; closed set is `retry, give_up, pass, release_and_requeue`
   (`lib/foundation/spec/policy.go:38-43`). The behavior described maps
   to `release_and_requeue`. Operator-facing — anyone writing YAML against
-  the doc gets a validator rejection.
-- [ ] **concept:transition-reason** — references reasons
+  the doc gets a validator rejection. Fixed: concept:error-policy
+  invariant rewritten to describe `release_and_requeue` (release-and-
+  re-enqueue, not in-place); concepts TOC entry updated; decision:
+  in-place-retry stripped of the `discard_claims_then_retry` mention
+  (that action is not in-place); story:template-error-policy four-action
+  enumeration updated with corrected description of release-and-requeue
+  behavior.
+- [x] **concept:transition-reason** — references reasons
   (`infra_reenqueue`, `handler_resume`, `handler_error`) that aren't in
-  the 15-reason enum (`lib/foundation/cascade/state.go:32-57`). State-
-  machine reference is inaccurate.
-- [ ] **concept:node-run + concept:error-policy** — both assert a
+  the 17-reason enum (`lib/foundation/cascade/state.go:32-57`). State-
+  machine reference is inaccurate. Fixed: parenthetical example list
+  in "What it is" rewritten with actual reasons; audit-event-kind list
+  in Purpose §2 rewritten with actual non-signal reasons (`deadline_resume`
+  not `handler_resume`, removed `infra_reenqueue`); the "handler_error
+  reason is a deliberate dead-end sentinel" invariant deleted (described
+  a sentinel that never gets constructed).
+
+  Additional drift surfaced and swept in the same pass: the same phantom
+  values also appeared as **creation reasons** in several live design
+  docs. Actual creation-reason enum is `{cascade, operator_invalidate,
+  recalculate, message_delivery}` (`lib/foundation/cascade/state.go:189-194`).
+  Fixed sites: `decision:non-cascade-direct-to-stale` (Choice + Rationale
+  both rewritten — the two paths are now correctly named: operator-
+  invalidate, fanout-parent recalculate, message-delivery);
+  `decision:mode-default-most-recent` (non-cascade-immunity bullet);
+  `story:idempotent-mode-dedupes` (Capability + Falsifier);
+  `concept:wait-set` (non-cascade-rows invariant);
+  `concept:cascade-mode` (mode-applies-only-to-cascade invariant);
+  `concept:node-run` (transition table — `handler_error` removed from
+  `running → held` causes and replaced with the actual `handler_held`
+  reason; phantom `running → running (policy_retry)` transition removed
+  and replaced with a parenthetical noting that in-place retry fires no
+  state transition).
+- [x] **concept:node-run + concept:error-policy** — both assert a
   three-field policy cursor persists (action-index, retry-counter,
   current-error-class); only `retry_counter` column exists
   (`lib/foundation/spec/policy.go::EvaluatorState:27-29`,
-  `col:rimsky_node_runs.retry_counter`). Two concepts asserting
-  persistence of fields that have no column.
-- [ ] **concept:message-emitter-node** — invariant says the envelope
+  `col:rimsky_node_runs.retry_counter`). Root cause: this session's
+  commit `339809cc` ("refactor(policy): collapse per-class retry counts
+  into single node-level MaxRetries + per-class action") simplified
+  the model and the docs were never swept. Fixed both concept docs
+  end-to-end against the new shape: error-policy's "What it is",
+  Boundaries, Adjacent, and Invariants sections all rewritten to
+  describe the flat per-class action map + per-dispatch MaxRetries cap;
+  the action-chain machinery, no-progress-counter framing,
+  signal-type-resets-counter claim, pass-advances-action-index
+  invariant, supervisor-default-no-progress-cap, and synthetic-no-progress-
+  class metric all deleted (none have a corresponding code path);
+  acquire-failure fallback corrected to the actual two-level form
+  (exact-class → family-class, then fall-through to give-up).
+  node-run lines 28 and 95 cursor descriptions both shrunk to the single
+  per-dispatch `retry_counter`.
+- [x] **concept:message-emitter-node** — invariant says the envelope
   inserts in the same tx as the node's terminal-resolution;
   `emitCascadeMessage` (`lib/runtime/runner_emit_message.go:32`) opens
   its own tx. Atomicity is the deterministic idempotency key, not tx
-  coupling — the invariant is silently violated.
-- [ ] **decision:child-execution-unification** — promises unified
+  coupling — the invariant is silently violated. Fixed: Boundaries
+  Owns clause and Invariants entry both rewritten to describe the
+  actual mechanism — the envelope inserts in its own transaction
+  during the handler call (envelope row + frame enqueue atomic with
+  each other); at-most-once across retries is preserved by the
+  deterministic `(node-id, frame-id)` idempotency key, not by tx
+  coupling with terminal-resolution.
+- [x] **decision:child-execution-unification** — promises unified
   dispatch AND unified settle; only dispatch was unified. Settle stayed
   split between `SettleFromDelegate` (`lib/runtime/child_execution.go:149`)
   and `SettleFromFanoutChild` (`lib/runtime/child_execution.go:273`) —
   exactly the rejected-alternative shape the decision says we wouldn't
-  ship. Either complete the unification or retire the decision.
-- [ ] **decision:wait-set-topic-kind-taxonomy** — doc names
+  ship. Either complete the unification or retire the decision. Fixed:
+  retired the decision (moved to `_retired/` with retirement note +
+  original retained for history) since the "delegation is fan-out with
+  N=1" rationale doesn't survive scrutiny — fan-out clones the calling
+  node N×1, delegation dispatches a sub-graph's distinct internals 1×N,
+  the two are different operations not variants of one shape. New
+  `decision:fan-out-and-delegation-are-distinct-mechanisms` written
+  describing the actual situation: thin shared dispatch helper (a
+  partitions×children matrix) but intentionally-split settle because
+  the two fan-in shapes differ. `concept:child-execution` reframed as
+  an umbrella naming the two distinct mechanisms (not variants of one
+  shape) plus the thin shared dispatch helper. `concept:fan-out`
+  Definition rewritten to lead with the cloning framing — "fan-out
+  clones the calling node N times" — and explicitly call out no
+  attribute aggregation. `@decision: fan-out-and-delegation-are-distinct-mechanisms`
+  annotations added at the three load-bearing sites: `DispatchChildren`
+  (the shared helper), `dispatchFanOutChildren`, `applyTerminalCompleteSubgraphCaller`.
+  Decisions TOC updated.
+- [x] **decision:wait-set-topic-kind-taxonomy** — doc names
   `terminal/transient/attribute/message`; migration
   (`lib/foundation/persistence/sqlite/migrations/001-initial.sql:322`)
   enforces `state/attribute/transient/terminal` (no `message`); test
   (`lib/foundation/persistence/sqlite/wait_set_topic_kind_test.go:121-129`)
   explicitly rejects `message`. Two opposite stories on what's allowed.
+  Fixed: decision rewritten to "3 canonical kinds (terminal, transient,
+  attribute) projecting the signal taxonomy plus `state` as defensive
+  fallback = 4 total" — matches the migration exactly; `message` retirement
+  acknowledged in the Alternatives section. Decisions TOC entry updated.
+  Parallel claim in `concept:signal` invariant (line 104) corrected:
+  was "four canonical kinds (terminal, transient, attribute, message)";
+  now "three canonical kinds + `state` fallback" with cross-reference to
+  the decision.
 
 ## Open question — lineage: data-flow vs. causal-flow
 

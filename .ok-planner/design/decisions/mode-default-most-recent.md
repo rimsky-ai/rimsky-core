@@ -15,7 +15,7 @@ The per-template cascade-mode configuration defaults to `most-recent`. The four 
 - **`idempotent-queue`** (opt-in): drop the new run if its JCS-canonical input bag equals the prior cascade-stale's. Otherwise behaves like `sequenced`.
 - **`idempotent-settled`** (opt-in): same as `idempotent-queue` but also compares against the most recent fresh-settled predecessor when no cascade-stale exists.
 
-Non-cascade rows (operator_invalidate, policy_retry, infra_reenqueue) are immune to all mode rules regardless of the configured mode.
+Non-cascade rows (`operator_invalidate`, `recalculate`, `message_delivery`) are immune to all mode rules regardless of the configured mode.
 
 ## Rationale
 

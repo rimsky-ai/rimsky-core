@@ -56,6 +56,7 @@ type DispatchedChild struct {
 
 // @concept: child-execution
 // @concept: run-scope
+// @decision: fan-out-and-delegation-are-distinct-mechanisms
 func DispatchChildren(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in ChildExecutionInput,
 ) ([]DispatchedChild, error) {

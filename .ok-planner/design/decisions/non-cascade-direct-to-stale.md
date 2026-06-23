@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-Operator-invalidate and infra-reenqueue create a new node-run directly in state `stale` with `creation_reason` set to the appropriate value (`operator_invalidate`, `infra_reenqueue`). The new row carries:
+Operator-invalidate, fanout-parent recalculate, and message-delivery create a new node-run directly in state `stale` with `creation_reason` set to the appropriate value (`operator_invalidate`, `recalculate`, `message_delivery`). The new row carries:
 
 - The carry-forward bag built at row creation (the immediately-prior run's persisted live bag).
 - A fresh `sequence` number monotonic per (node, run-scope, frame).
@@ -18,9 +18,9 @@ The cascade walker's accumulation rule (a) targets only the latest *cascade-driv
 
 ## Rationale
 
-Non-cascade re-runs have a fundamentally different shape than cascade-driven re-runs. They originate from an explicit human action (operator-invalidate) or an infrastructure event (infra-reenqueue after a crash). In each case, the runtime knows the input bag the new run should see — the carry-forward from the immediately-prior run, optionally pre-mutated by an explicit `set_attribute` action (for operator-invalidate). There is no wait-set to drain, no upstream cascade to overlay, and no mode rule that could justify dropping the row. Policy-retry is NOT a non-cascade re-run path — it is handled in-place on the existing node-run row (see `decision:in-place-retry`); it never creates a new row.
+Non-cascade re-runs have a fundamentally different shape than cascade-driven re-runs. They originate from an explicit human action (operator-invalidate), a fanout-parent recalculate after a child completes, or an in-graph message-delivery that targets the receiver-node directly. In each case, the runtime knows the input bag the new run should see — the carry-forward from the immediately-prior run, optionally pre-mutated by an explicit `set_attribute` action (for operator-invalidate) or by the message envelope (for message-delivery). There is no wait-set to drain, no upstream cascade to overlay, and no mode rule that could justify dropping the row. Policy-retry is NOT a non-cascade re-run path — it is handled in-place on the existing node-run row (see `decision:in-place-retry`); it never creates a new row.
 
-Pushing these paths through `pending` would require a fake-drain mechanism (a wait-set with no real cascade behind it, or an immediate gate-evaluation that bypasses the normal trigger) and would force the runtime to consider whether mode rules apply (which they shouldn't — operator action should not be silently coalesced by most-recent, and infra-reenqueue should not be silently deduped by idempotent variants). Direct-to-stale avoids both: the runtime computes the bag at creation, persists it on the run's attribute bag (per `concept:attribute`), sets state=stale and writes the row.
+Pushing these paths through `pending` would require a fake-drain mechanism (a wait-set with no real cascade behind it, or an immediate gate-evaluation that bypasses the normal trigger) and would force the runtime to consider whether mode rules apply (which they shouldn't — operator action should not be silently coalesced by most-recent, a recalculate after a child completes should not be silently deduped, and a message delivery should not be silently dropped by idempotent variants). Direct-to-stale avoids both: the runtime computes the bag at creation, persists it on the run's attribute bag (per `concept:attribute`), sets state=stale and writes the row.
 
 The walker rule and the mode rule both naturally exclude non-cascade rows by scoping to `creation_reason = cascade`. No special-case code paths are needed at the walker, gate evaluator, or dispatcher — just the single column distinction.
 

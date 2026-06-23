@@ -8,27 +8,28 @@ aliases: []
 
 ## Definition
 
-Child execution is the run-side primitive by which a parent node-run dispatches one or more child executions into their own execution contexts and settles on their aggregate outcome. It is a primitive pair:
+Child execution is the umbrella term covering the two distinct mechanisms by which a parent node-run dispatches work into child execution contexts: **fan-out** (cloning the calling node N times across N partitions, fan-in via claim-handle aggregation) and **sub-graph delegation** (substituting into an absorbed entry and dispatching the sub-graph's distinct internal nodes into one shared child context, fan-in via a designated exit node's writeback). The two mechanisms are structurally different, not variants of one shape — see `decision:fan-out-and-delegation-are-distinct-mechanisms`.
 
-- **Dispatch-children** takes N≥1 partition descriptors (partition key, optional sub-claim handle, inert payload) and a child graph name, and dispatches one child execution per partition into its own child execution context rooted at the parent run.
-- **Settle-children** fires under the **settlement mode** the invocation pattern selected. Two settlement modes exist:
-  - **Carry** — the subgraph-exit path used by delegation. Fires once when the sub-graph's exit node terminates: copies the exit's writeback onto the calling node's attribute row, closes the child run-scope, fires the parent-settlement cascade.
-  - **Aggregate** — the fan-out path used per child as each sub-claim resolves. Each call records the child's outcome on the parent claim and applies the aggregation policy; when the policy settles the parent, the call also closes the remaining partition contexts, settles the parent's claim, and fires the parent-settlement cascade.
+What they share is a thin run-side dispatch helper that accepts a partitions × children matrix and creates the corresponding child run-scopes and child runs. Fan-out passes that helper N partitions × 1 child (the cloned calling node); delegation passes it 1 partition × N children (the sub-graph's internal nodes other than the absorbed entry). Settlement is split — each mechanism has its own settle primitive because their fan-in shapes differ:
 
-Delegation and fan-out are invocation patterns over this primitive (see `concept:delegation`, `concept:fan-out`): delegation is one partition under the **carry** settlement mode with an absorbed entry; fan-out is N partitions under the **aggregate** settlement mode with an author-chosen aggregation policy and one sub-claim per partition. The settlement mode is implicit in the invocation pattern; authors do not configure it.
+- **Carry** (delegation's settle): fires once when the sub-graph's designated exit terminates. Copies the exit's writeback verbatim onto the calling node's attribute row, closes the child run-scope, fires the parent-settlement cascade.
+- **Aggregate** (fan-out's settle): fires per clone as each sub-claim resolves. Records the child's outcome on the parent claim-handle and applies the author-chosen aggregation policy; when the policy settles the parent, closes the remaining partition contexts, settles the parent's claim, and fires the parent-settlement cascade. Per-clone attribute writebacks do NOT aggregate onto the parent's attribute bag.
+
+The carry / aggregate names refer to the two settle primitives and are stable; the settle primitive is selected by which dispatch path created the children, not by an author-configured mode.
 
 ## Purpose
 
-Own the shared dispatch shape and the parent-settlement cascade bridge so the two invocation patterns route through one dispatch and a common settlement framing. A defect fixed in the primitive is fixed for both patterns; an invariant enforced in the primitive cannot be skipped by either pattern.
+Name the two distinct child-execution mechanisms and the thin dispatch helper they share so callers and reviewers can refer to the shapes by stable terms (fan-out, sub-graph delegation, carry-settle, aggregate-settle) without conflating them. The umbrella exists to make the distinction explicit, not to claim a common shape.
 
 ## Boundaries
 
-Owns the dispatch primitive (N≥1 children into child execution contexts) and the two settlement modes (carry, aggregate) with their shared cascade-bridge mechanic. The execution contexts themselves and their tree structure are owned by `concept:run-scope`. Template surfaces are owned by `concept:delegation` and `concept:fan-out`. The aggregation policy — the fan-out-only knob with four values (`strict | threshold | best_effort | first`) — is owned by `concept:fan-out`. Sub-claim acquisition is owned by `concept:claim-tree` — the dispatch primitive accepts already-acquired sub-claims as input and never calls the producer's split itself. Adjacent: `concept:run-scope`, `concept:delegation`, `concept:fan-out`, `concept:claim-tree`, `concept:node-run`, `concept:cascade`.
+Owns the names of the two mechanisms (fan-out, sub-graph delegation), the names of their two settle primitives (carry, aggregate), and the thin shared dispatch helper that creates child run-scopes and child runs from a partitions × children matrix. The execution contexts themselves and their tree structure are owned by `concept:run-scope`. Template surfaces are owned by `concept:delegation` and `concept:fan-out`. The aggregation policy — the fan-out-only knob with four values (`strict | threshold | best_effort | first`) — is owned by `concept:fan-out`. Sub-claim acquisition is owned by `concept:claim-tree` — the dispatch helper accepts already-acquired sub-claims as input and never calls the producer's split itself. Adjacent: `concept:run-scope`, `concept:delegation`, `concept:fan-out`, `concept:claim-tree`, `concept:node-run`, `concept:cascade`.
 
 ## Invariants
 
-- Settlement is the only run-side path that closes child execution contexts (instance termination is the administrative exception, per `concept:run-scope`).
-- The carry settlement mode requires exactly one child, enforced at template validation; a delegation declaration that would dispatch more than one child is a template-validation error.
-- Entry absorption is a property of the invoking pattern, not of child execution — the dispatch primitive carries it as an input flag and does not compute it.
-- The parent-settlement cascade cannot be skipped by any settlement caller: the cascade bridge fires inside the settlement primitive, not alongside it at call sites.
-- The settlement's outcome carry — the carry mode's exit-attribute writeback or the aggregate mode's parent-claim Commit/Abandon — is atomic with closing the child execution context (invariant: exit-node-writeback).
+- Settlement (carry or aggregate) is the only run-side path that closes child execution contexts (instance termination is the administrative exception, per `concept:run-scope`).
+- Fan-out's clones share the calling node's template node-type, executor, and attribute schema — they ARE the same node, dispatched N times into N distinct run-scopes. Per-clone attribute writebacks do NOT aggregate onto the parent's attribute bag (per `concept:fan-out`).
+- Sub-graph delegation's carry settle fires exactly once per invocation, on the designated exit's terminal; if a delegate target declared more than one exit, template validation rejects it.
+- Entry absorption is a property of the delegation mechanism, not of child-execution as such — the dispatch helper does not compute it; the delegate template surface carries it.
+- The parent-settlement cascade cannot be skipped by either settle path: the cascade bridge fires inside the settle primitive, not alongside it at call sites.
+- The settle path's outcome carry — carry's exit-attribute writeback or aggregate's parent-claim Commit/Abandon — is atomic with closing the child execution context (invariant: exit-node-writeback).

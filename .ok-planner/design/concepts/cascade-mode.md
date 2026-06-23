@@ -30,7 +30,7 @@ Owns: the per-mode rule applied at the walker's accumulate-or-queue gate, and th
 ## Invariants
 
 - The mode is per-node and selected at template registration. An unset mode defaults to `most-recent` per `decision:mode-default-most-recent`.
-- The mode applies only to cascade-driven node-runs (those whose creation reason is `cascade` per `concept:node-run`'s creation-reason axis). Non-cascade rows — `operator_invalidate`, `policy_retry`, `infra_reenqueue` — are not subject to mode rules; they are created directly in state `stale` and dispatch on their own per `decision:non-cascade-direct-to-stale`.
+- The mode applies only to cascade-driven node-runs (those whose creation reason is `cascade` per `concept:node-run`'s creation-reason axis). Non-cascade rows — `operator_invalidate`, `recalculate`, `message_delivery` — are not subject to mode rules; they are created directly in state `stale` and dispatch on their own per `decision:non-cascade-direct-to-stale`.
 - The idempotent modes' bag comparison is byte-equivalence after canonicalization to a stable form; semantically identical bags that differ only in JSON serialization (key order, whitespace, number formatting) are treated as duplicates.
 - The mode does not change the per-sender-node accumulation rule (per `concept:cascade`) — it changes what happens after the walker has decided whether to accumulate or create a new pending, and what the gate evaluator does at pending→stale.
 - Each mode's behavior on the user-outcome surface has a dedicated story: `story:most-recent-coalesces-cascades`, `story:sequenced-preserves-cascade-rounds`, and `story:idempotent-mode-dedupes` (covering both `idempotent-queue` and `idempotent-settled`).

@@ -85,6 +85,7 @@ func IsSubgraphExit(tmpl *node.TemplateSpec, nodeType string) bool {
 
 // @concept: sub-graph
 // @concept: run-scope
+// @decision: fan-out-and-delegation-are-distinct-mechanisms
 func applyTerminalCompleteSubgraphCaller(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	merged map[string]any, t terminalEvent, tx persistence.Tx,

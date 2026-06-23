@@ -7,7 +7,7 @@ status: as-is
 
 ## Role
 
-As a template author writing fault-tolerant workflows, I can declare per-error-class routing actions (pass, give-up, retry, discard-claims-then-retry) and have the runtime honor each action at the appropriate error site, so that I express graceful failure handling without writing handlers.
+As a template author writing fault-tolerant workflows, I can declare per-error-class routing actions (pass, give-up, retry, release-and-requeue) and have the runtime honor each action at the appropriate error site, so that I express graceful failure handling without writing handlers.
 
 ## Capability
 
@@ -19,7 +19,7 @@ Template authors express graceful failure handling declaratively, without writin
 
 ## Acceptance
 
-A template declaring error-type entries mapping specific error classes to each of the four actions; when a node errors with a class mapped to pass, the cascade continues as if the node had succeeded; mapped to give-up, the node-run terminates and downstream nodes are not dispatched; mapped to retry, the runtime re-dispatches the node; mapped to discard-claims-then-retry, held claims are released before re-dispatch.
+A template declaring error-type entries mapping specific error classes to each of the four actions; when a node errors with a class mapped to pass, the cascade continues as if the node had succeeded; mapped to give-up, the node-run terminates and downstream nodes are not dispatched; mapped to retry, the runtime re-dispatches the node on the same row; mapped to release-and-requeue, held claims are released (abandon fired) and the dispatch row is re-enqueued for a fresh acquire.
 
 ## Falsifier
 

@@ -25,7 +25,7 @@ The row carries the run-tree extension and all state-bearing fields for the node
 - A creation-reason field — `cascade | operator_invalidate | recalculate | message_delivery`. Determines whether the row participates in cascade-walker accumulation (cascade only), goes through `pending` (cascade only), and is subject to per-template `cascade_mode` rules (cascade only). Non-cascade rows are created directly in state `stale` with the carry-forward bag (see `decision:non-cascade-direct-to-stale`). The `message_delivery` reason marks a row created when a named message is delivered to its message-receiver-node; the bag is the message body (not carry-forward), and the run dispatches via the empty-executor `pure_cascade` settle path (see `concept:message`). Policy retry is in-place on the existing row (see `decision:in-place-retry`) — no new row created.
 - A last-outcome field — the gate for cascade-firing.
 - Parked-reason metadata — parked-state taxonomy (see `concept:parked-state`).
-- Policy-evaluation cursor — action-index, retry-counter, and current-error-class fields that hold the per-run error-policy walk state (see `concept:error-policy` and `decision:in-place-retry`). Initialized to zero at row creation; mutated only during executor retry loops on this row.
+- Policy-evaluation cursor — a single per-dispatch `retry_counter` field that holds the error-policy retry count (see `concept:error-policy` and `decision:in-place-retry`). Initialized to zero at row creation; mutated only during executor retry loops on this row.
 
 ## Seven-state state machine
 
@@ -50,10 +50,11 @@ stale → fresh        (pure_cascade, acquire_pass)
 stale → failed       (dispatch_impossible, policy_give_up, instance_killed)
 
 running → fresh      (handler_complete with no active claim participation; handler_pass)
-running → held       (handler_complete or handler_error with active claim participation; fanout_dispatched — fan-out parent has yielded its synchronous dispatch phase and is acquirer of an active claim handle awaiting child aggregation, per `decision:held-as-state-not-phase`)
+running → held       (handler_held — runner classifies a terminal outcome with active claim participation; fanout_dispatched — fan-out parent has yielded its synchronous dispatch phase and is acquirer of an active claim handle awaiting child aggregation, per `decision:held-as-state-not-phase`)
 running → parked     (handler_park)
-running → failed     (policy_give_up, instance_killed)
-running → running    (policy_retry — in-place loop on this row, claims and bag preserved; see `decision:in-place-retry`)
+running → failed     (policy_give_up, auto_terminal_abandon, instance_killed)
+
+(`policy_retry` is in-place on the existing row with no state transition firing — claims and bag preserved; see `decision:in-place-retry`.)
 
 held → fresh         (auto_terminal_commit — at this moment cascade fires terminal/success)
 held → failed        (auto_terminal_abandon — at this moment cascade fires terminal/error/abandoned)
@@ -91,4 +92,4 @@ Owns: the seven-state machine and transitions, candidate-selection inputs, liven
 - The creation-reason column is set at row creation and never rewritten. It governs whether the row participates in cascade-walker accumulation, goes through pending, and is subject to mode rules.
 - In-flight states (`pending`, `stale`, `running`, `held`, `parked`) are sealed against cascade-driven mutation per `concept:cascade`. Cascade events targeting an in-flight run create a new node-run; never mutate the existing one.
 - Every row's persisted attribute bag (per `concept:attribute`) is built at exactly one moment: at the gate evaluator's pending→stale transition for cascade-driven rows, or at row creation for non-cascade rows. The bag is the executor's input on every invocation of the row, including deadline-wake from `parked` and in-place policy retry.
-- The policy-evaluation cursor (action-index, retry-counter, current-error-class) is per-run state: initialized to zero at row creation and mutated only by error-policy evaluation within the runner loop on this row. A new node-run for the same node starts with a fresh cursor (see `decision:in-place-retry`).
+- The policy-evaluation cursor (a single per-dispatch `retry_counter`) is per-run state: initialized to zero at row creation and mutated only by error-policy evaluation within the runner loop on this row. A new node-run for the same node starts at zero (see `decision:in-place-retry`).

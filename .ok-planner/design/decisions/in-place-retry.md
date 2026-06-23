@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-When the per-error-class policy chain resolves to `retry` (or `discard_claims_then_retry`), the supervisor loops in-process on the SAME node-run row: it sleeps the policy's retry delay and re-attempts the failed operation against the same dispatch context (same persisted attribute bag, same dispatch id). The node-run stays in its pre-error state across the retry loop; no state transition fires for retry; no new node-run row is created. The rule applies uniformly to two failure surfaces:
+When the per-error-class policy chain resolves to `retry`, the supervisor loops in-process on the SAME node-run row: it sleeps the policy's retry delay and re-attempts the failed operation against the same dispatch context (same persisted attribute bag, same dispatch id). The node-run stays in its pre-error state across the retry loop; no state transition fires for retry; no new node-run row is created. The rule applies uniformly to two failure surfaces:
 
 - **Executor errors** (post-dispatch handler errors). The row is in state `running`, the supervisor re-invokes the executor against the same claims, and the row stays `running` across iterations.
 - **Acquire errors** (pre-dispatch acquire-unavailable or acquire-producer-error). The row is in state `stale`, the supervisor re-attempts claim acquisition on the same dispatch row, and the row stays `stale` across iterations.

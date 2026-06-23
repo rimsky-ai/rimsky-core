@@ -113,6 +113,7 @@ func FanOutAggregationPolicy(def *node.TemplateNodeDef) spec.AggregationPolicy {
 // @concept: fan-out
 // @concept: run-scope
 // @concept: claim-tree
+// @decision: fan-out-and-delegation-are-distinct-mechanisms
 func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition) error {
 	if acq == nil || acq.NodeDef == nil || acq.NodeDef.FanOut == nil {
 		return fmt.Errorf("dispatchFanOutChildren: not a fan-out node")

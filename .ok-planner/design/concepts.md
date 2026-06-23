@@ -30,7 +30,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `delegation` — Delegation is an invocation pattern over `concept:child-execution`: a node carrying `delegate: <graph-name>` instead of `executor:` dispatches the named sub-graph as exactly one child execution under the carry settlement mode, with the entry absorbed.
 - `discovery-cache` (aliases: capabilities cache) — An in-memory per-service capabilities cache populated by the observability handshake at startup.
 - `dry-run` — A request mode — preview-without-commit — that asks "what would happen if I did this?" without applying it.
-- `error-policy` (aliases: error-types policy chain) — The template-level `error_types:` block maps per-`error_class` strings to one of four runtime actions: `pass`, `give_up`, `retry`, `discard_claims_then_retry`.
+- `error-policy` (aliases: error-types policy chain) — The template-level `error_types:` block maps per-`error_class` strings to one of four runtime actions: `pass`, `give_up`, `retry`, `release_and_requeue`.
 - `event-log` (aliases: audit log) — Rimsky's internal append-only audit-log ledger.
 - `executor` — An executor implements the gRPC executor's unary Execute method plus an optional executor-observability protocol.
 - `fan-out` — Fan-out is an invocation pattern over `concept:child-execution`: a node-level decision to partition a held claim into sub-claims and dispatch one child execution per partition under the aggregate settlement mode, with an author-chosen aggregation policy from the four-value family `strict | threshold | best_effort | first`.

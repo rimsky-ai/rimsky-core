@@ -15,7 +15,7 @@ When `cascade_mode=idempotent-queue`, at pending→stale transition the gate eva
 
 When `cascade_mode=idempotent-settled`, the comparison ALSO covers the most recent fresh-settled predecessor's input bag when no cascade-driven stale-not-claimed exists. This catches the "queue was just cleared by a settle, now an identical cascade arrives" case that `idempotent-queue` would miss.
 
-Both variants compare INPUT bags (what the executor saw at dispatch), not LIVE bags (post-writeback). The input bag is preserved on the run's attribute store (per `concept:attribute`) separately from the live bag. Non-cascade rows are immune to dedup — operator-invalidate, policy-retry, and infra-reenqueue creation reasons always queue regardless of bag equality.
+Both variants compare INPUT bags (what the executor saw at dispatch), not LIVE bags (post-writeback). The input bag is preserved on the run's attribute store (per `concept:attribute`) separately from the live bag. Non-cascade rows are immune to dedup — `operator_invalidate`, `recalculate`, and `message_delivery` creation reasons always queue regardless of bag equality.
 
 ## Business value
 
@@ -29,7 +29,7 @@ Under `idempotent-settled`: same setup, but the first cascade-stale dispatches a
 
 ## Falsifier
 
-B's executor is invoked with the duplicate bag — observable by counting executor invocations and comparing bag values across invocations. OR a non-cascade run (operator-invalidate, policy-retry, or infra-reenqueue creation reason) is dropped due to bag equality — observable by inspecting the lineage for a non-cascade row that vanished.
+B's executor is invoked with the duplicate bag — observable by counting executor invocations and comparing bag values across invocations. OR a non-cascade run (`operator_invalidate`, `recalculate`, or `message_delivery` creation reason) is dropped due to bag equality — observable by inspecting the lineage for a non-cascade row that vanished.
 
 ## Proof
 
