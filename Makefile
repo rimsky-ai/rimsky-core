@@ -207,16 +207,43 @@ IMAGES := \
 
 # Scan every locally-built image for critical or high CVEs via Docker Scout.
 # Used as a pre-push gate by the `release` target. Exits non-zero on the first
-# image that fails so a bad release can't proceed; comment out the `--exit-code`
-# to make the gate advisory instead. Requires the `docker scout` CLI plugin
-# (bundled with Docker Desktop; installed manually elsewhere). Works against
-# the local docker daemon, no Hub enrollment required.
+# image that fails so a bad release can't proceed. Requires the `docker scout`
+# CLI plugin (bundled with Docker Desktop; installed manually elsewhere).
+# Works against the local docker daemon, no Hub enrollment required.
+#
+# Per-image accepted-CVE allowlist in $(SCAN_ACCEPTED_CVES_FILE) — see that
+# file for the format and the rules governing what may go in. Accepted IDs
+# are subtracted from each image's findings before the exit-code check; the
+# human-readable scout output still surfaces them in the build log.
+SCAN_ACCEPTED_CVES_FILE := .scout-accepted-cves.txt
+
 scan:
 	@command -v docker >/dev/null || { echo "docker not on PATH"; exit 1; }
 	@docker scout --help >/dev/null 2>&1 || { echo "docker scout plugin not installed — install Docker Desktop or 'docker scout' plugin"; exit 1; }
 	@for img in $(IMAGES); do \
 	  echo "=== docker scout cves $$img:$(VERSION) ==="; \
-	  docker scout cves --only-severity critical,high --exit-code $$img:$(VERSION) || exit $$?; \
+	  scan_out=$$(mktemp); found_f=$$(mktemp); accepted_f=$$(mktemp); \
+	  docker scout cves --only-severity critical,high $$img:$(VERSION) 2>&1 | tee $$scan_out; \
+	  grep -oE 'CVE-[0-9]+-[0-9]+' $$scan_out | sort -u > $$found_f; \
+	  rm -f $$scan_out; \
+	  found_count=$$(wc -l < $$found_f | tr -d ' '); \
+	  if [ "$$found_count" = "0" ]; then rm -f $$found_f $$accepted_f; continue; fi; \
+	  if [ -f $(SCAN_ACCEPTED_CVES_FILE) ]; then \
+	    grep -E "^$$img:" $(SCAN_ACCEPTED_CVES_FILE) | sed 's/#.*//' | awk -F: '{print $$2}' | tr -d ' ' | grep -E 'CVE-[0-9]+-[0-9]+' | sort -u > $$accepted_f; \
+	  else \
+	    : > $$accepted_f; \
+	  fi; \
+	  remaining=$$(comm -23 $$found_f $$accepted_f); \
+	  rm -f $$found_f $$accepted_f; \
+	  if [ -z "$$remaining" ]; then \
+	    echo ""; \
+	    echo "[scan] $$img: $$found_count finding(s) all accepted per $(SCAN_ACCEPTED_CVES_FILE)"; \
+	    continue; \
+	  fi; \
+	  echo ""; \
+	  echo "[scan] $$img: unaccepted CVE(s) remain:"; \
+	  echo "$$remaining" | sed 's/^/  /'; \
+	  exit 1; \
 	done
 
 # Push every rimsky image to $(REGISTRY) with SBOM + provenance attestations

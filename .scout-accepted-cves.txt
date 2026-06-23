@@ -1,0 +1,27 @@
+# Accepted CVE allowlist for the `make scan` release gate.
+#
+# Each non-comment line is `<image>:<CVE-ID>  # <rationale>`. The `make scan`
+# target subtracts these from each image's scout findings before checking
+# the exit code; any CVE NOT in the accepted set fails the gate. The
+# human-readable scan output still surfaces accepted findings in the build
+# log so they remain visible.
+#
+# An entry is only legitimate when the CVE is transitively bundled inside an
+# upstream artifact we don't own and can't override at our layer, AND the
+# severity-vs-exposure tradeoff is acceptable for the image's role. Bundled-
+# upstream + no-override-path is the canonical case; pinned-by-business-choice
+# is NOT. Re-evaluate every release: an entry whose upstream has shipped a fix
+# must be removed (and the upstream pin bumped) before the next release.
+#
+# Format: lines starting with `#` are ignored; trailing `# ...` comments
+# after the CVE ID are stripped during parsing. CVE IDs match `CVE-\d+-\d+`.
+
+# rimsky-executor-claude-agent ships @anthropic-ai/claude-code as a downloaded
+# CLI bundle (the npm package is a 151KB wrapper whose install.cjs fetches the
+# real binary at install time). hono and undici are inlined into that bundle;
+# they are not separate node_modules entries we can override, and the wrapper
+# package declares no transitive deps. Both CVEs are accepted until Anthropic
+# ships a claude-code release that bundles the fixed versions, at which point
+# we bump the pin and remove these entries.
+rimsky-executor-claude-agent:CVE-2026-54290  # hono <4.12.25 bundled in @anthropic-ai/claude-code; no override path
+rimsky-executor-claude-agent:CVE-2026-12151  # undici <6.27.0 bundled in @anthropic-ai/claude-code; no override path

@@ -15,7 +15,7 @@ COPY lib/services/go.mod lib/services/go.sum ./lib/services/
 COPY examples/go.mod examples/go.sum ./examples/
 RUN cd lib/services && go mod download
 COPY . .
-RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ./stores/postgres/cmd
+RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ./claim_producers/postgres/cmd
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=builder /out/app /usr/local/bin/store-postgres

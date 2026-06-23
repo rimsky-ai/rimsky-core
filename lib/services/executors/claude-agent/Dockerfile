@@ -54,9 +54,9 @@ RUN apk add --no-cache nodejs-24 npm git tini
 # lands on PATH. Without this the executor exits with
 # error_class: subprocess_exit_before_complete on every dispatch.
 # Pinned for reproducible builds: an unpinned (floating-latest) install lets a
-# later rebuild silently pull a different version. 2.1.158 is the version this
+# later rebuild silently pull a different version. 2.1.186 is the version this
 # image was validated against (scans 0C/0H). Bump deliberately, re-scanning.
-RUN npm install -g @anthropic-ai/claude-code@2.1.158
+RUN npm install -g @anthropic-ai/claude-code@2.1.186
 # wolfi-base already ships an unprivileged `nonroot` user (UID/GID 65532,
 # created by apko). Create it idempotently so the runtime never runs as root
 # and the Dockerfile stays correct if a future base image drops the default
