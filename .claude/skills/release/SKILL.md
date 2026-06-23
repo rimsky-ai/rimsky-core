@@ -239,10 +239,41 @@ cleanup. No Hub push.
 
 ### 7. Automated pipeline (post-gate)
 
-1. Stage and commit the release. The commit body is intentionally
+1. Run the pre-build static gates BEFORE staging the commit. The
+   gates that don't depend on Docker images or the test-all
+   testcontainers boot — `lint` and `license-lint` — run against
+   the working tree (which contains the step-3 bump but no commit
+   yet) so pre-existing drift fails fast on a clean tree rather
+   than stranding the release half-committed with tags on a commit
+   that can't pass its own gate.
+   ```
+   make lint license-lint
+   ```
+   Failure handling:
+   - **License-header drift or simple lint violations**: mechanical.
+     The fix shape is "copy the canonical header from a sibling
+     file in the same classification" (the `tools/license-check`
+     binary names which file is wrong and how — missing header,
+     wrong license, etc.). Apply the fix to the working tree
+     alongside the un-committed bump artifacts and re-run the
+     gate. Do NOT stage or commit yet. On clean re-run, proceed
+     to sub-step 2.
+   - **Anything non-mechanical** (genuine lint failures requiring
+     judgment, novel license classifications, etc.): bail to the
+     operator. The working tree carries the bump but no commit
+     and no tags, so `git checkout -- lib/protocols/package.json`
+     plus `rm releases/vX.Y.Z.md` reverts cleanly.
+
+   `test-all` is left inside the `make release` invocation in
+   sub-step 4 below rather than pre-run here: it's an order of
+   magnitude more expensive than the static gates, it requires
+   Docker for testcontainers, and unlike license-lint a test-all
+   failure is rarely pre-existing tree drift.
+
+2. Stage and commit the release. The commit body is intentionally
    short — a one-line subject plus a pointer to the per-tag notes
    file. The full notes ship via `gh release create --notes-file`
-   in step 6 of this section, so embedding them in the commit too
+   in sub-step 7 below, so embedding them in the commit too
    would duplicate Markdown into `git log` where `## Section`
    headers and multi-line bullets look out of place against
    single-line subject lines from other commits.
@@ -254,21 +285,24 @@ cleanup. No Hub push.
 
    Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
    ```
-2. Tag locally:
+3. Tag locally:
    ```
    git tag vX.Y.Z
    git tag lib/protocols/vX.Y.Z
    ```
-3. Invoke `make release`. The formal path does NOT set `LATEST_TAG`;
-   it uses the default `latest`. Failure handling:
-   - Pre-build gate failure (lint / license-lint / test-all) → abort.
-     The release commit is committed (see `git log -1`); leave for the
-     operator to address. Rollback shape if desired:
-     `git reset --soft HEAD~1 && git tag -d vX.Y.Z lib/protocols/vX.Y.Z`.
+4. Invoke `make release`. The formal path does NOT set `LATEST_TAG`;
+   it uses the default `latest`. The static gates `lint` and
+   `license-lint` were already cleared pre-commit (sub-step 1) and
+   re-run idempotently here; `test-all`, the image builds, scan,
+   and push-images run for the first time. Failure handling:
+   - Test-all failure → abort. The release commit is committed
+     (see `git log -1`); leave for the operator to address.
+     Rollback shape if desired: `git reset --soft HEAD~1 && git tag
+     -d vX.Y.Z lib/protocols/vX.Y.Z`.
    - Build failure → abort with the build output. Same disposition.
    - Scan failure → enter CVE remediation (step 7a).
    - Push failure → abort. Hub state may be partial; surface clearly.
-4. Push the release branch and both git tags together. `--atomic` is
+5. Push the release branch and both git tags together. `--atomic` is
    load-bearing: without it, a partial push (a later ref fails on a
    transient network glitch after an earlier ref has already landed on
    origin) leaves the remote inconsistent — an orphan tag pointing at a
@@ -282,24 +316,24 @@ cleanup. No Hub push.
    branch=$(git rev-parse --abbrev-ref HEAD)
    git push --atomic origin "$branch" vX.Y.Z lib/protocols/vX.Y.Z
    ```
-5. npm publish:
+6. npm publish:
    ```
    make publish-protocols
    ```
    (lands on `@latest`).
-6. GitHub Release:
+7. GitHub Release:
    ```
    gh release create vX.Y.Z --notes-file releases/vX.Y.Z.md
    ```
-7. Fast-forward `main` to the release. A formal release is the new
+8. Fast-forward `main` to the release. A formal release is the new
    stable line, so `main` should always point at the most recent
    release commit — but releases are cut from the current branch
-   (often `dev`), and sub-step 4 pushes only that branch, which leaves
+   (often `dev`), and sub-step 5 pushes only that branch, which leaves
    `main` behind unless it is advanced explicitly. (This is exactly how
    v0.5.0 shipped on `dev` while `main` sat at v0.4.1.) After the
    release commit + tags are on origin and the publish steps have run:
    - If the release was cut from `main` (`$branch` == `main`),
-     sub-step 4 already advanced `main`; skip and log "released from
+     sub-step 5 already advanced `main`; skip and log "released from
      main; no fast-forward needed".
    - Otherwise advance `main` only when it is a clean fast-forward of
      the release commit. A non-fast-forwardable `main` carries commits
@@ -329,34 +363,70 @@ cleanup. No Hub push.
 
 ### 7a. CVE remediation (when scan fails)
 
-1. For each failing image, run `docker scout recommendations <img>:<version>`.
-2. Classify each recommendation:
+1. For each failing image, identify each CVE's package, severity,
+   fixed version, and whether it lives in a swappable layer (base
+   image, npm/go dep) or a bundled upstream artifact (single-file
+   downloaded CLI, statically-linked binary). Run
+   `docker scout recommendations <img>:<version>` for the
+   swappable-layer reading.
+2. Classify each finding:
    - **Patch-level base bump** (e.g. `node:20-alpine3.19` →
-     `node:20-alpine3.20`): mechanical, apply automatically. Edit the
-     relevant `FROM` line in the affected Dockerfile.
+     `node:20-alpine3.20`, or an npm-pinned tool version bump
+     within the same major where the fixed transitive is known to
+     ship in a specific upstream release): mechanical, apply
+     automatically. Edit the relevant `FROM` line, `npm install -g`
+     pin, or analogous source.
+   - **Transitive in bundled upstream artifact, no override path**:
+     the CVE lives inside a downloaded blob or single-file bundle
+     that our `npm install` / `docker build` can't override
+     (the canonical case is `@anthropic-ai/claude-code`, whose
+     npm package is a 151KB wrapper that fetches a ~150MB CLI
+     bundle at install time — bundled transitives like `hono` and
+     `undici` are inlined into that blob and Scout sees them via
+     embedded SBOM metadata). Bumping the upstream pin to a newer
+     release MAY pick up the fix; verify by rebuilding the one
+     image and re-scanning. If the bump doesn't help and the
+     severity-vs-exposure tradeoff is acceptable for the image's
+     role, surface to the operator with the full finding set and
+     the recommendation to allowlist via
+     `.scout-accepted-cves.txt` — see sub-step 3 below.
    - **Anything else** (major version jumps, multi-line
-     recommendations, non-mechanical changes): bail to operator with
-     the analysis.
-3. If all failing images had mechanical patch-level recommendations
-   applied: amend the release commit to absorb the Dockerfile edits
-   and move both tags onto the amended commit so the rerun sees a
-   clean tree. `push-images: check-clean` (`Makefile`) rejects any
-   `VERSION` ending in `-dirty`, so leaving the Dockerfile edits
-   uncommitted would dead-end the chain at the publish guard.
-   ```
-   git add <dockerfile>...
-   git commit --amend --no-edit
-   git tag -f vX.Y.Z
-   git tag -f lib/protocols/vX.Y.Z
-   ```
-   Then re-run the chain from build forward (`make core-images
-   service-images scan push-images`) — skips `lint / license-lint /
-   test-all` because the rerun is Dockerfile-only and those gates
-   already passed against the same Go code. On clean rescan,
-   push-images completes and the post-gate pipeline (step 7.4 onward)
-   continues. If still failing, bail with new analysis.
-4. If any failing image had a non-mechanical recommendation: bail
-   without applying any change; surface the full recommendation set.
+     recommendations, non-mechanical changes): bail to operator
+     with the analysis. Don't allowlist as an escape hatch.
+3. Apply the chosen remediation:
+   - **Mechanical fixes only**: amend the release commit to absorb
+     the source edits and move both tags onto the amended commit
+     so the rerun sees a clean tree. `push-images: check-clean`
+     (`Makefile`) rejects any `VERSION` ending in `-dirty`, so
+     leaving the source edits uncommitted would dead-end the
+     chain at the publish guard.
+     ```
+     git add <changed-files>...
+     git commit --amend --no-edit
+     git tag -f vX.Y.Z
+     git tag -f lib/protocols/vX.Y.Z
+     ```
+     Then re-run the chain from build forward (`make core-images
+     service-images scan push-images`) — skips `lint /
+     license-lint / test-all` because the rerun is image-build-only
+     and those gates already passed against the same Go code.
+   - **Allowlist for bundled-upstream-no-override**: add one
+     `<image>:<CVE-ID>  # <rationale>` line per accepted finding
+     to `.scout-accepted-cves.txt` at the repo root. The header
+     comment in that file governs what's legitimate — bundled
+     upstream + no override path only; not pinned-by-business-
+     choice. Amend the release commit to include the allowlist
+     change (same shape as the mechanical-fix amend above), move
+     both tags forward, then re-run from `scan` (`make scan
+     push-images`). Document the accepted entries in the release
+     notes' Internal section so the audit trail ships with the
+     release.
+   On clean rescan, push-images completes and the post-gate
+   pipeline (step 7.5 onward) continues. If still failing, bail
+   with new analysis.
+4. If any failing image had a non-mechanical recommendation and
+   no allowlist-eligible finding: bail without applying any
+   change; surface the full recommendation set.
 
 On bail: the partial state (release commit committed, tags local) is
 left for the operator. They can fix forward and re-run (the skill
