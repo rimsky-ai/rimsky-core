@@ -14,7 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
-	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 )
 
@@ -225,19 +224,10 @@ func applyTerminalComplete(
 			successSig, visited, heldFilter); err != nil {
 			return nil, err
 		}
-		for key, value := range merged {
-			attrSig := signalpkg.Signal{
-				Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
-				Payload: map[string]any{
-					"key":   key,
-					"value": value,
-				},
-			}
-			if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
-				acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
-				attrSig, visited, heldFilter); err != nil {
-				return nil, err
-			}
+		if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+			visited, heldFilter); err != nil {
+			return nil, err
 		}
 		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 			return nil, err
@@ -249,28 +239,6 @@ func applyTerminalComplete(
 		}
 		dispatchID := acq.DispatchID
 		post := func(ctx context.Context) {
-			if len(t.AttributesDel) > 0 {
-				if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-					for key, value := range t.AttributesDel {
-						attrSig := signalpkg.Signal{
-							Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
-							Payload: map[string]any{
-								"key":   key,
-								"value": value,
-							},
-						}
-						if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
-							acq.InstanceID, acq.NodeID, attrSig, args.Clock.Now(), tx); err != nil {
-							return err
-						}
-					}
-					return nil
-				}); err != nil && args.Logger != nil {
-					args.Logger.Warn("runner_terminal: append attribute signal rows failed (held)",
-						"node_id", acq.NodeID.String(),
-						"error", err.Error())
-				}
-			}
 			fanoutRecalculate(ctx, args, acq)
 			scope := resolveAcqScope(ctx, args, acq)
 			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
@@ -329,19 +297,10 @@ func applyTerminalComplete(
 		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, successSig, visited); err != nil {
 		return nil, err
 	}
-	for key, value := range merged {
-		attrSig := signalpkg.Signal{
-			Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
-			Payload: map[string]any{
-				"key":   key,
-				"value": value,
-			},
-		}
-		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
-			attrSig, visited, nil); err != nil {
-			return nil, err
-		}
+	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		visited, nil); err != nil {
+		return nil, err
 	}
 	// @concept: wait-set
 	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
@@ -350,28 +309,6 @@ func applyTerminalComplete(
 
 	dispatchID := acq.DispatchID
 	post := func(ctx context.Context) {
-		if len(t.AttributesDel) > 0 {
-			if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				for key, value := range t.AttributesDel {
-					attrSig := signalpkg.Signal{
-						Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
-						Payload: map[string]any{
-							"key":   key,
-							"value": value,
-						},
-					}
-					if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
-						acq.InstanceID, acq.NodeID, attrSig, args.Clock.Now(), tx); err != nil {
-						return err
-					}
-				}
-				return nil
-			}); err != nil && args.Logger != nil {
-				args.Logger.Warn("runner_terminal: append attribute signal rows failed",
-					"node_id", acq.NodeID.String(),
-					"error", err.Error())
-			}
-		}
 		fanoutRecalculate(ctx, args, acq)
 		scope := resolveAcqScope(ctx, args, acq)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
@@ -435,6 +372,11 @@ func applyTerminalCompletePoisoned(
 	if err := emitSignalInTxWithFilter(ctx, args, tx,
 		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
 		abandonedSig, visited, nonMemberFilter); err != nil {
+		return nil, err
+	}
+	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		visited, nonMemberFilter); err != nil {
 		return nil, err
 	}
 	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {

@@ -64,27 +64,27 @@ func evaluateOneGate(
 	if upstreamInFlight {
 		return nil
 	}
-	bag, priorBagFields, err := buildPendingInputBagSplit(ctx, args, tx, row)
+	carryForward, err := loadReceiverCarryForward(ctx, args, tx, row)
 	if err != nil {
-		return fmt.Errorf("build bag: %w", err)
+		return fmt.Errorf("carry-forward: %w", err)
 	}
-	mode, err := args.Persist.Nodes().GetCascadeMode(ctx, row.NodeID, tx)
-	if err != nil {
-		return fmt.Errorf("get cascade mode: %w", err)
-	}
-	drop, err := applyCascadeModeRule(ctx, args, tx, row, bag, mode)
-	if err != nil {
-		return fmt.Errorf("mode rule: %w", err)
-	}
-	if drop {
-		return args.Persist.Nodes().DropPendingRun(ctx, tx, row.RunID)
-	}
-	resolved, err := buildResolvedBagAtGateEvalCarry(ctx, args, tx, row, bag, priorBagFields)
+	resolved, err := buildResolvedBagAtGateEvalCarry(ctx, args, tx, row, carryForward)
 	if err != nil {
 		if isSubstitutionClassifiableError(err) {
 			return routeSubstitutionFailureAtGate(ctx, args, tx, row, err)
 		}
 		return fmt.Errorf("resolve at gate-eval: %w", err)
+	}
+	mode, err := args.Persist.Nodes().GetCascadeMode(ctx, row.NodeID, tx)
+	if err != nil {
+		return fmt.Errorf("get cascade mode: %w", err)
+	}
+	drop, err := applyCascadeModeRule(ctx, args, tx, row, resolved, mode)
+	if err != nil {
+		return fmt.Errorf("mode rule: %w", err)
+	}
+	if drop {
+		return args.Persist.Nodes().DropPendingRun(ctx, tx, row.RunID)
 	}
 	if err := args.Persist.NodeAttributes().Upsert(ctx, row.RunID, row.NodeID, resolved, tx); err != nil {
 		return fmt.Errorf("seed live bag: %w", err)
@@ -165,21 +165,21 @@ func routeSubstitutionFailureAtGate(
 // @concept: cascade
 func buildResolvedBagAtGateEvalCarry(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	row *persistence.NodeRunForGate, senderKeyedBag map[string]any, carryForward map[string]any,
+	row *persistence.NodeRunForGate, carryForward map[string]any,
 ) (map[string]any, error) {
 	receiverNode, err := args.Persist.Nodes().Get(ctx, row.NodeID, tx)
 	if err != nil || receiverNode == nil {
 		if err != nil {
 			return nil, err
 		}
-		return senderKeyedBag, nil
+		return carryForward, nil
 	}
 	tmplSpec, err := loadTemplateSpec(ctx, args, tx, receiverNode.InstanceID)
 	if err != nil {
 		return nil, err
 	}
 	if tmplSpec == nil {
-		return senderKeyedBag, nil
+		return carryForward, nil
 	}
 	nodeDef := lookupNodeDef(tmplSpec, receiverNode.NodeType)
 	if nodeDef == nil || nodeDef.Attributes == nil {
@@ -189,28 +189,9 @@ func buildResolvedBagAtGateEvalCarry(
 	if schema == nil {
 		return map[string]any{}, nil
 	}
-	deps, err := senderKeyedBagToDeps(senderKeyedBag)
+	deps, err := BuildAttributeDeps(ctx, tx, args, row.RunID, row.FrameID)
 	if err != nil {
 		return nil, err
-	}
-	if args.Persist.Messages() != nil {
-		msgs, msgErr := args.Persist.Messages().ListDeliveredForFrame(ctx, tx, row.FrameID)
-		if msgErr != nil {
-			return nil, fmt.Errorf("list delivered messages: %w", msgErr)
-		}
-		for _, m := range msgs {
-			if m.IsEmptyWake() {
-				continue
-			}
-			if _, present := deps[m.Type]; present {
-				continue
-			}
-			if len(m.Payload) == 0 {
-				deps[m.Type] = json.RawMessage(`{}`)
-				continue
-			}
-			deps[m.Type] = m.Payload
-		}
 	}
 	inst, err := args.Persist.Instances().Get(ctx, receiverNode.InstanceID, tx)
 	if err != nil {
@@ -251,19 +232,6 @@ func schemaForGateEval(args RunArgs, executor string, _ *node.TemplateSpec, node
 		return nil
 	}
 	return node.MergeAttributeDefaults(execSchema, nil, nodeSchema)
-}
-
-// @concept: attribute
-func senderKeyedBagToDeps(bag map[string]any) (map[string]json.RawMessage, error) {
-	out := make(map[string]json.RawMessage, len(bag))
-	for k, v := range bag {
-		raw, err := json.Marshal(v)
-		if err != nil {
-			return nil, err
-		}
-		out[k] = raw
-	}
-	return out, nil
 }
 
 // @concept: cascade
@@ -336,53 +304,28 @@ func anySubscribedUpstreamInFlight(
 
 // @concept: cascade
 // @decision: mode-default-most-recent
-func buildPendingInputBagSplit(
+func loadReceiverCarryForward(
 	ctx context.Context, args RunArgs, tx persistence.Tx, row *persistence.NodeRunForGate,
-) (map[string]any, map[string]any, error) {
-	bag := map[string]any{}
-	priorBagFields := map[string]any{}
+) (map[string]any, error) {
 	prior, err := args.Persist.Nodes().GetPriorRunBySequence(ctx, tx, row.NodeID, row.RunScopeID, row.Sequence)
 	if err != nil {
-		return nil, nil, fmt.Errorf("prior run: %w", err)
+		return nil, fmt.Errorf("prior run: %w", err)
 	}
-	if prior != nil {
-		priorBag, err := args.Persist.NodeAttributes().GetByRun(ctx, prior.RunID, tx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("prior attrs: %w", err)
-		}
-		if priorBag != nil {
-			for k, v := range priorBag.Data {
-				bag[k] = v
-				priorBagFields[k] = v
-			}
-		}
+	if prior == nil {
+		return map[string]any{}, nil
 	}
-	drained, err := args.Persist.WaitSet().ListDrainedAttributeRowsForReceiver(ctx, row.FrameID, row.RunID, tx)
+	priorBag, err := args.Persist.NodeAttributes().GetByRun(ctx, prior.RunID, tx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("drained rows: %w", err)
+		return nil, fmt.Errorf("prior attrs: %w", err)
 	}
-	for _, w := range drained {
-		senderRun, err := args.Persist.RunTree().GetByID(ctx, tx, w.SenderRunID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("sender run: %w", err)
-		}
-		if senderRun == nil {
-			continue
-		}
-		senderAttrs, err := args.Persist.NodeAttributes().GetByRun(ctx, w.SenderRunID, tx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("sender attrs: %w", err)
-		}
-		if senderAttrs == nil {
-			continue
-		}
-		senderNode, err := args.Persist.Nodes().Get(ctx, senderRun.NodeID, tx)
-		if err != nil || senderNode == nil {
-			continue
-		}
-		bag[senderNode.NodeType] = senderAttrs.Data
+	if priorBag == nil {
+		return map[string]any{}, nil
 	}
-	return bag, priorBagFields, nil
+	out := make(map[string]any, len(priorBag.Data))
+	for k, v := range priorBag.Data {
+		out[k] = v
+	}
+	return out, nil
 }
 
 // @concept: cascade

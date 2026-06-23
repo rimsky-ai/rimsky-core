@@ -278,6 +278,14 @@ func PropagateIfChildAfterTerminal(
 			); err != nil {
 				return fmt.Errorf("PropagateIfChildAfterTerminal: cascade parent %s: %w", s.ParentRunID, err)
 			}
+			if err := upsertDataFromDispatchInputBagIfEmpty(ctx, args, tx, s.ParentRunID, s.ParentNodeID); err != nil {
+				return fmt.Errorf("PropagateIfChildAfterTerminal: upsert parent attrs %s: %w", s.ParentRunID, err)
+			}
+			if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+				s.ParentNodeID, nodeRow.NodeType, s.ParentRunID, nodeRow.InstanceID, s.FrameID,
+				nil, nil); err != nil {
+				return fmt.Errorf("PropagateIfChildAfterTerminal: emit parent attribute changes %s: %w", s.ParentRunID, err)
+			}
 			// @concept: wait-set
 			// @decision: walker-rule-per-sender-node
 			if err := drainWaitSetOnSettled(ctx, args, tx, s.FrameID, s.ParentRunID); err != nil {

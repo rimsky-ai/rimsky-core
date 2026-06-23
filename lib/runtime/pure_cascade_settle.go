@@ -36,5 +36,13 @@ func EmitTerminalSuccessAndDrainInTx(
 		senderNodeID, senderNodeType, senderRunID, instanceID, senderFrameID, successSig); err != nil {
 		return err
 	}
+	if err := upsertDataFromDispatchInputBagIfEmpty(ctx, args, tx, senderRunID, senderNodeID); err != nil {
+		return err
+	}
+	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+		senderNodeID, senderNodeType, senderRunID, instanceID, senderFrameID,
+		nil, nil); err != nil {
+		return err
+	}
 	return drainWaitSetOnSettled(ctx, args, tx, senderFrameID, senderRunID)
 }

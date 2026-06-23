@@ -4,93 +4,34 @@
 
 // @concept: attribute
 // @concept: node-run
-// @concept: wait-set
 package runtime
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-// @concept: signal
-// @concept: node-run
-func isSettledForSubstitution(senderRun *persistence.RunTreeRow) bool {
-	if senderRun == nil {
-		return false
-	}
-	if senderRun.State != cascade.NodeStateFresh {
-		return false
-	}
-	return senderRun.SettlingSignalType != nil
-}
-
+// @concept: attribute
+// @decision: substitution-grammar-closed
 func BuildAttributeDeps(
 	ctx context.Context,
 	tx persistence.Tx,
 	args RunArgs,
-	receiverRunID shared.UUID,
-	frameID shared.UUID,
+	receiverRunID foundationshared.UUID,
+	frameID foundationshared.UUID,
 ) (map[string]json.RawMessage, error) {
 	out := make(map[string]json.RawMessage)
 
-	if receiverRunID != (shared.UUID{}) {
-		rows, err := args.Persist.WaitSet().ListDrainedAttributeRowsForReceiver(
-			ctx, frameID, receiverRunID, tx,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("BuildAttributeDeps: list drained attribute rows: %w", err)
-		}
-		for _, r := range rows {
-			senderRun, err := args.Persist.RunTree().GetByID(ctx, tx, r.SenderRunID)
-			if err != nil {
-				return nil, fmt.Errorf("BuildAttributeDeps: run-tree lookup for sender_run_id %s: %w", r.SenderRunID, err)
-			}
-			if senderRun == nil {
-				if args.Logger != nil {
-					args.Logger.Warn("BuildAttributeDeps: wait-set sender_run_id has no run-tree row",
-						"sender_run_id", r.SenderRunID.String(),
-						"receiver_run_id", receiverRunID.String(),
-						"frame_id", frameID.String())
-				}
-				continue
-			}
-			if !isSettledForSubstitution(senderRun) {
-				continue
-			}
-			attrRow, err := args.Persist.NodeAttributes().GetByRun(ctx, r.SenderRunID, tx)
-			if err != nil {
-				return nil, fmt.Errorf("BuildAttributeDeps: attribute row for sender_run_id %s: %w", r.SenderRunID, err)
-			}
-			nodeType, err := nodeTypeOf(ctx, args, senderRun.NodeID, tx)
-			if err != nil {
-				return nil, fmt.Errorf("BuildAttributeDeps: node-type for sender node_id %s: %w", senderRun.NodeID, err)
-			}
-			if nodeType == "" {
-				if args.Logger != nil {
-					args.Logger.Warn("BuildAttributeDeps: sender has empty node_type",
-						"sender_run_id", r.SenderRunID.String(),
-						"sender_node_id", senderRun.NodeID.String())
-				}
-				continue
-			}
-			var raw json.RawMessage
-			if attrRow == nil {
-				raw = json.RawMessage(`{}`)
-			} else {
-				marshaled, marshalErr := json.Marshal(attrRow.Data)
-				if marshalErr != nil {
-					return nil, fmt.Errorf("BuildAttributeDeps: marshal attribute data for sender_run_id %s: %w", r.SenderRunID, marshalErr)
-				}
-				raw = marshaled
-			}
-			out[nodeType] = raw
+	if receiverRunID != (foundationshared.UUID{}) {
+		if err := populateSubscribedSenderDeps(ctx, tx, args, receiverRunID, out); err != nil {
+			return nil, err
 		}
 	}
 
@@ -119,19 +60,88 @@ func BuildAttributeDeps(
 	return out, nil
 }
 
-func nodeTypeOf(ctx context.Context, args RunArgs, nodeID shared.UUID, tx persistence.Tx) (string, error) {
-	n, err := args.Persist.Nodes().Get(ctx, nodeID, tx)
-	if err != nil || n == nil {
-		return "", err
+// @concept: attribute
+// @concept: cascade
+func populateSubscribedSenderDeps(
+	ctx context.Context, tx persistence.Tx, args RunArgs,
+	receiverRunID foundationshared.UUID, out map[string]json.RawMessage,
+) error {
+	rec, err := args.Persist.Nodes().GetRunForGate(ctx, tx, receiverRunID)
+	if err != nil {
+		return fmt.Errorf("populateSubscribedSenderDeps: get receiver run: %w", err)
 	}
-	return n.NodeType, nil
+	if rec == nil {
+		return nil
+	}
+	receiverNode, err := args.Persist.Nodes().Get(ctx, rec.NodeID, tx)
+	if err != nil {
+		return fmt.Errorf("populateSubscribedSenderDeps: get receiver node: %w", err)
+	}
+	if receiverNode == nil {
+		return nil
+	}
+	inst, err := args.Persist.Instances().Get(ctx, receiverNode.InstanceID, tx)
+	if err != nil {
+		return fmt.Errorf("populateSubscribedSenderDeps: get instance: %w", err)
+	}
+	if inst == nil {
+		return nil
+	}
+	edges, err := subscriptionEdgesForTemplate(ctx, args, inst.TemplateHash, tx)
+	if err != nil {
+		return fmt.Errorf("populateSubscribedSenderDeps: subscription edges: %w", err)
+	}
+	if edges == nil {
+		return nil
+	}
+	senderTypes := edges.SenderNodeTypesForReceiver(receiverNode.NodeType)
+	if len(senderTypes) == 0 {
+		return nil
+	}
+	senderTypeSet := make(map[string]struct{}, len(senderTypes))
+	for _, t := range senderTypes {
+		senderTypeSet[t] = struct{}{}
+	}
+	instNodes, err := args.Persist.Nodes().ListByInstance(ctx, receiverNode.InstanceID, tx)
+	if err != nil {
+		return fmt.Errorf("populateSubscribedSenderDeps: list instance nodes: %w", err)
+	}
+	for _, n := range instNodes {
+		if n.ID == rec.NodeID {
+			continue
+		}
+		if _, ok := senderTypeSet[n.NodeType]; !ok {
+			continue
+		}
+		latest, err := args.Persist.Nodes().GetMostRecentSettledRun(ctx, tx, n.ID, rec.RunScopeID, math.MaxInt64)
+		if err != nil {
+			return fmt.Errorf("populateSubscribedSenderDeps: latest fresh run for %s: %w", n.NodeType, err)
+		}
+		if latest == nil {
+			continue
+		}
+		attrRow, err := args.Persist.NodeAttributes().GetByRun(ctx, latest.RunID, tx)
+		if err != nil {
+			return fmt.Errorf("populateSubscribedSenderDeps: attribute row for %s: %w", n.NodeType, err)
+		}
+		var raw json.RawMessage
+		if attrRow == nil {
+			raw = json.RawMessage(`{}`)
+		} else {
+			marshaled, marshalErr := json.Marshal(attrRow.Data)
+			if marshalErr != nil {
+				return fmt.Errorf("populateSubscribedSenderDeps: marshal attrs for %s: %w", n.NodeType, marshalErr)
+			}
+			raw = marshaled
+		}
+		out[n.NodeType] = raw
+	}
+	return nil
 }
 
-// @decision: substitution-grammar-closed
-// @decision: substitution-context-builder-reads-drained-rows
 func buildResolveContextForAcquisition(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	frameID, receiverRunID shared.UUID,
+	frameID, receiverRunID foundationshared.UUID,
 	templateHash string,
 	params json.RawMessage,
 	claims map[string]claimproducer.ClaimResult,

@@ -473,43 +473,52 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	frameID := shared.UUID(uuid.New())
+	runScopeID := shared.UUID(uuid.New())
 	receiverRunID := shared.UUID(uuid.New())
+	receiverNodeID := shared.UUID(uuid.New())
 	senderRunID := shared.UUID(uuid.New())
 	senderNodeID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
 
-	const upstreamType = "prefilter"
+	const (
+		receiverType = "consumer"
+		upstreamType = "prefilter"
+	)
 	itemsValue := []any{
 		map[string]any{"key": "a", "payload": map[string]any{"v": float64(1)}},
 		map[string]any{"key": "b", "payload": map[string]any{"v": float64(2)}},
 	}
 
-	wait := &fakeWaitSet{
-		drained: map[shared.UUID][]persistence.WaitSetRow{
-			receiverRunID: {{
-				FrameID:       frameID,
-				ReceiverRunID: receiverRunID,
-				SenderRunID:   senderRunID,
-				TopicKind:     "attribute",
-				DrainedAt:     timeNowPtr(),
+	templateHash := "tmpl-" + uuid.New().String()
+	tmplSpec := spec.TemplateSpec{
+		Name: "fanout-substitute-test", Version: "1",
+		Nodes: []spec.TemplateNodeDef{
+			{Type: upstreamType, Executor: "stub"},
+			{Type: receiverType, Executor: "stub", Subscribes: []spec.SubscriptionEntry{
+				{Node: upstreamType, Type: "attribute/items/changed", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
 			}},
 		},
 	}
-	settling := "terminal/success"
-	runTree := &fakeRunTreeDeps{
-		rows: map[shared.UUID]*persistence.RunTreeRow{
-			senderRunID: {
-				RunID:              senderRunID,
-				NodeID:             senderNodeID,
-				FrameID:            frameID,
-				State:              "fresh",
-				SettlingSignalType: &settling,
-			},
-		},
-	}
+
 	nodes := &fakeNodesDeps{
 		rows: map[shared.UUID]*persistence.NodeRow{
-			senderNodeID: {ID: senderNodeID, InstanceID: instanceID, NodeType: upstreamType},
+			receiverNodeID: {ID: receiverNodeID, InstanceID: instanceID, NodeType: receiverType},
+			senderNodeID:   {ID: senderNodeID, InstanceID: instanceID, NodeType: upstreamType},
+		},
+		gateRows: map[shared.UUID]*persistence.NodeRunForGate{
+			receiverRunID: {RunID: receiverRunID, NodeID: receiverNodeID, RunScopeID: runScopeID, FrameID: frameID},
+		},
+		freshByNodeInScope: map[freshKey]*persistence.NodeRunForGate{
+			{nodeID: senderNodeID, runScopeID: runScopeID}: {
+				RunID: senderRunID, NodeID: senderNodeID, RunScopeID: runScopeID, FrameID: frameID,
+				State: cascade.NodeStateFresh,
+			},
+		},
+		byInstance: map[shared.UUID][]persistence.NodeRow{
+			instanceID: {
+				{ID: receiverNodeID, InstanceID: instanceID, NodeType: receiverType},
+				{ID: senderNodeID, InstanceID: instanceID, NodeType: upstreamType},
+			},
 		},
 	}
 	attrs := &fakeNodeAttrs{
@@ -519,13 +528,25 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 			}},
 		},
 	}
+	instances := &fakeInstancesDeps{
+		rows: map[shared.UUID]*persistence.InstanceRow{
+			instanceID: {ID: instanceID, TemplateHash: templateHash, MainRunScopeID: runScopeID},
+		},
+	}
+	templates := &fakeTemplatesDeps{
+		rows: map[string]*persistence.TemplateRow{
+			templateHash: {ID: templateHash, Spec: tmplSpec, State: persistence.TemplateStateDeployed},
+		},
+	}
 
 	persist := &depsCapablePersist{
 		messagesPersist: messagesPersist{msgs: newFakeMessages()},
-		waitSet:         wait,
-		runTree:         runTree,
+		waitSet:         &fakeWaitSet{drained: map[shared.UUID][]persistence.WaitSetRow{}},
+		runTree:         &fakeRunTreeDeps{rows: map[shared.UUID]*persistence.RunTreeRow{}},
 		nodes:           nodes,
 		nodeAttrs:       attrs,
+		instances:       instances,
+		templates:       templates,
 	}
 	args := RunArgs{
 		Logger:  shared.SilentLogger{},
@@ -533,9 +554,10 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 	}
 
 	out := &acquisition{
-		DispatchID: receiverRunID,
-		FrameID:    frameID,
-		InstanceID: instanceID,
+		DispatchID:   receiverRunID,
+		FrameID:      frameID,
+		InstanceID:   instanceID,
+		TemplateHash: templateHash,
 	}
 
 	directive := "{{nodes." + upstreamType + ".attribute.items}}"
@@ -547,11 +569,6 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 	if string(got) != string(wantBytes) {
 		t.Fatalf("nodes.<X>.attribute.items did not resolve through Deps: got %s want %s", got, wantBytes)
 	}
-}
-
-func timeNowPtr() *time.Time {
-	t := time.Now().UTC()
-	return &t
 }
 
 type fakeWaitSet struct {
@@ -617,8 +634,15 @@ func (f *fakeRunTreeDeps) UpdateAggregationPolicy(_ context.Context, _ persisten
 	return nil
 }
 
+type freshKey struct {
+	nodeID, runScopeID shared.UUID
+}
+
 type fakeNodesDeps struct {
-	rows map[shared.UUID]*persistence.NodeRow
+	rows               map[shared.UUID]*persistence.NodeRow
+	gateRows           map[shared.UUID]*persistence.NodeRunForGate
+	freshByNodeInScope map[freshKey]*persistence.NodeRunForGate
+	byInstance         map[shared.UUID][]persistence.NodeRow
 }
 
 func (f *fakeNodesDeps) Create(_ context.Context, _ persistence.NodeCreateInput, _ persistence.Tx) (persistence.NodeRow, error) {
@@ -632,7 +656,12 @@ func (f *fakeNodesDeps) Get(_ context.Context, id shared.UUID, _ persistence.Tx)
 	c := *r
 	return &c, nil
 }
-func (f *fakeNodesDeps) ListByInstance(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]persistence.NodeRow, error) {
+func (f *fakeNodesDeps) ListByInstance(_ context.Context, instanceID shared.UUID, _ persistence.Tx) ([]persistence.NodeRow, error) {
+	if rows, ok := f.byInstance[instanceID]; ok {
+		out := make([]persistence.NodeRow, len(rows))
+		copy(out, rows)
+		return out, nil
+	}
 	return nil, nil
 }
 func (f *fakeNodesDeps) ListByInstancePaged(_ context.Context, _ shared.UUID, _ persistence.ListPagination, _ persistence.Tx) (persistence.PaginatedListResult[persistence.NodeRow], error) {
@@ -713,8 +742,13 @@ func (f *fakeNodesDeps) GetLatestRunInScope(_ context.Context, _ persistence.Tx,
 func (f *fakeNodesDeps) ListRunsForInstanceByStates(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []cascade.NodeState) ([]persistence.NodeRunLatest, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) GetRunForGate(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.NodeRunForGate, error) {
-	return nil, nil
+func (f *fakeNodesDeps) GetRunForGate(_ context.Context, _ persistence.Tx, runID shared.UUID) (*persistence.NodeRunForGate, error) {
+	r, ok := f.gateRows[runID]
+	if !ok {
+		return nil, nil
+	}
+	c := *r
+	return &c, nil
 }
 func (f *fakeNodesDeps) GetPriorRunBySequence(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
 	return nil, nil
@@ -725,8 +759,13 @@ func (f *fakeNodesDeps) DeletePriorCascadeStales(_ context.Context, _ persistenc
 func (f *fakeNodesDeps) GetPriorCascadeStaleNotClaimed(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) GetMostRecentSettledRun(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
-	return nil, nil
+func (f *fakeNodesDeps) GetMostRecentSettledRun(_ context.Context, _ persistence.Tx, nodeID, runScopeID shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
+	r, ok := f.freshByNodeInScope[freshKey{nodeID: nodeID, runScopeID: runScopeID}]
+	if !ok {
+		return nil, nil
+	}
+	c := *r
+	return &c, nil
 }
 func (f *fakeNodesDeps) TransitionPendingToStale(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) error {
 	return nil
@@ -774,6 +813,9 @@ func (f *fakeNodeAttrs) GetDispatchInputBag(_ context.Context, _ persistence.Tx,
 func (f *fakeNodeAttrs) SnapshotBagForNewRun(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) error {
 	return nil
 }
+func (f *fakeNodeAttrs) GetPriorRunData(_ context.Context, _ persistence.Tx, _ shared.UUID) (map[string]any, error) {
+	return map[string]any{}, nil
+}
 
 type depsCapablePersist struct {
 	messagesPersist
@@ -781,12 +823,16 @@ type depsCapablePersist struct {
 	runTree   persistence.RunTreeTable
 	nodes     persistence.NodeTable
 	nodeAttrs persistence.NodeAttributeTable
+	instances persistence.InstanceTable
+	templates persistence.TemplateTable
 }
 
 func (p *depsCapablePersist) WaitSet() persistence.WaitSetTable              { return p.waitSet }
 func (p *depsCapablePersist) RunTree() persistence.RunTreeTable              { return p.runTree }
 func (p *depsCapablePersist) Nodes() persistence.NodeTable                   { return p.nodes }
 func (p *depsCapablePersist) NodeAttributes() persistence.NodeAttributeTable { return p.nodeAttrs }
+func (p *depsCapablePersist) Instances() persistence.InstanceTable           { return p.instances }
+func (p *depsCapablePersist) Templates() persistence.TemplateTable           { return p.templates }
 
 // @concept: fan-out
 // @decision: substitution-grammar-closed
@@ -869,4 +915,78 @@ func TestSubstituteFanOutPartitionRequest_BindsFromHeldClaim(t *testing.T) {
 	if len(parsed.List) != 1 || parsed.List[0].Key != "x" {
 		t.Fatalf("substituted list = %v, want [{x}]", parsed.List)
 	}
+}
+
+type fakeInstancesDeps struct {
+	rows map[shared.UUID]*persistence.InstanceRow
+}
+
+func (f *fakeInstancesDeps) Create(_ context.Context, _ persistence.InstanceCreateInput, _ persistence.Tx) (persistence.InstanceRow, error) {
+	return persistence.InstanceRow{}, nil
+}
+func (f *fakeInstancesDeps) Get(_ context.Context, id shared.UUID, _ persistence.Tx) (*persistence.InstanceRow, error) {
+	r, ok := f.rows[id]
+	if !ok {
+		return nil, nil
+	}
+	c := *r
+	return &c, nil
+}
+func (f *fakeInstancesDeps) GetByInstanceKey(_ context.Context, _ string, _ string, _ persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (f *fakeInstancesDeps) FindAnyByInstanceKey(_ context.Context, _ string, _ persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (f *fakeInstancesDeps) List(_ context.Context, _ persistence.InstanceListFilter, _ persistence.ListPagination, _ persistence.Tx) (persistence.PaginatedListResult[persistence.InstanceRow], error) {
+	return persistence.PaginatedListResult[persistence.InstanceRow]{}, nil
+}
+func (f *fakeInstancesDeps) Delete(_ context.Context, _ shared.UUID, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeInstancesDeps) MarkTerminated(_ context.Context, _ shared.UUID, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeInstancesDeps) CountActiveByTemplate(_ context.Context, _ string, _ persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (f *fakeInstancesDeps) ListTerminatedWithLifecycleRows(_ context.Context, _ int, _ persistence.Tx) ([]persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (f *fakeInstancesDeps) CountByActive(_ context.Context, _ persistence.Tx) (int, int, error) {
+	return 0, 0, nil
+}
+func (f *fakeInstancesDeps) IncrementAttributeOverrideMatchCounts(_ context.Context, _ shared.UUID, _ []int, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeInstancesDeps) SetPaused(_ context.Context, _ shared.UUID, _ bool, _ persistence.Tx) (bool, error) {
+	return false, nil
+}
+
+type fakeTemplatesDeps struct {
+	rows map[string]*persistence.TemplateRow
+}
+
+func (f *fakeTemplatesDeps) Insert(_ context.Context, _ persistence.TemplateInsertInput, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeTemplatesDeps) GetByHash(_ context.Context, hash string, _ persistence.Tx) (*persistence.TemplateRow, error) {
+	r, ok := f.rows[hash]
+	if !ok {
+		return nil, nil
+	}
+	c := *r
+	return &c, nil
+}
+func (f *fakeTemplatesDeps) List(_ context.Context, _ persistence.TemplateListFilter, _ persistence.ListPagination, _ persistence.Tx) (persistence.PaginatedListResult[persistence.TemplateRow], error) {
+	return persistence.PaginatedListResult[persistence.TemplateRow]{}, nil
+}
+func (f *fakeTemplatesDeps) UpdateState(_ context.Context, _ string, _ persistence.TemplateState, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeTemplatesDeps) DeleteByHash(_ context.Context, _ string, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeTemplatesDeps) LockForUpdate(_ context.Context, _ string, _ persistence.Tx) (*persistence.TemplateRow, error) {
+	return nil, nil
 }

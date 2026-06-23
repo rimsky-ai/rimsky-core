@@ -88,6 +88,11 @@ func applyTerminalPark(
 		cascade.NodeStateParked, cascade.ReasonHandlerPark, &parkSigType, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
+	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		nil, nil); err != nil {
+		return nil, fmt.Errorf("applyTerminalPark: %w", err)
+	}
 	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}

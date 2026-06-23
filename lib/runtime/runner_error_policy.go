@@ -11,7 +11,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
-	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
@@ -136,6 +135,11 @@ func applyErrorPolicyWithScratch(
 		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
 		return nil, err
 	}
+	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		nil, nil); err != nil {
+		return nil, err
+	}
 	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 		return nil, err
 	}
@@ -249,27 +253,19 @@ func applyInfraGiveUp(
 		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
 		return nil, err
 	}
+	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		nil, nil); err != nil {
+		return nil, err
+	}
 	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 		return nil, err
 	}
 	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 		return nil, err
 	}
-	dispatchID := acq.DispatchID
-	post := func(ctx context.Context) {
-		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return signalaudit.EmitSignal(ctx, args.Persist.Events(),
-				acq.InstanceID, acq.NodeID, sig, args.Clock.Now(), tx)
-		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("applyInfraGiveUp: emit terminal signal failed",
-				"node_id", acq.NodeID.String(),
-				"error_class", errorClass,
-				"error", err.Error())
-		}
-		_ = dispatchID
-	}
 	acq.RetryDecision = &policyDecision{Kind: spec.ActionGiveUp, Signal: sig}
-	return chainPostCommit(releasePC, post), nil
+	return releasePC, nil
 }
 
 func lookupPolicyForNode(acq *acquisition, errorClass string) *node.ErrorTypePolicy {

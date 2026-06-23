@@ -312,6 +312,34 @@ func (s *nodeAttributesImpl) SnapshotBagForNewRun(
 	return nil
 }
 
+// @concept: cascade
+func (s *nodeAttributesImpl) GetPriorRunData(
+	ctx context.Context, tx persistence.Tx, runID shared.UUID,
+) (map[string]any, error) {
+	row := s.q(tx).QueryRow(ctx,
+		`SELECT a.node_run_id, a.node_id, a.data, a.updated_at, a.value_handle, a.value_handle_backend
+		   FROM rimsky_node_attributes a
+		   JOIN rimsky_node_runs r ON r.id = a.node_run_id
+		  WHERE r.node_id = (SELECT node_id FROM rimsky_node_runs WHERE id = $1)
+		    AND r.run_scope_id = (SELECT run_scope_id FROM rimsky_node_runs WHERE id = $1)
+		    AND r.sequence < (SELECT sequence FROM rimsky_node_runs WHERE id = $1)
+		  ORDER BY r.sequence DESC
+		  LIMIT 1`,
+		runID,
+	)
+	prior, err := scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetPriorRunData")
+	if err != nil {
+		return nil, err
+	}
+	if prior == nil {
+		return map[string]any{}, nil
+	}
+	if prior.Data == nil {
+		return map[string]any{}, nil
+	}
+	return prior.Data, nil
+}
+
 func readPriorBlobHandle(ctx context.Context, q querier, runID shared.UUID) (string, string, error) {
 	row := q.QueryRow(ctx,
 		`SELECT value_handle, value_handle_backend

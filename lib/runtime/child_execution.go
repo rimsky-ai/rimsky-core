@@ -240,6 +240,11 @@ func SettleFromDelegate(
 			in.InstanceID, *callingNodeRow.FrameID, exitBridgeSig); err != nil {
 			return fmt.Errorf("SettleFromDelegate: cascade subscribers of calling node: %w", err)
 		}
+		if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+			parent.NodeID, callingNodeRow.NodeType, parent.RunID, in.InstanceID, *callingNodeRow.FrameID,
+			nil, nil); err != nil {
+			return fmt.Errorf("SettleFromDelegate: emit parent attribute changes: %w", err)
+		}
 		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, *callingNodeRow.FrameID, parent.RunID, tx); err != nil {
 			return fmt.Errorf("SettleFromDelegate: drain wait-set for calling node: %w", err)
 		}

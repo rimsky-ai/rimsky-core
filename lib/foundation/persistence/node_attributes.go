@@ -35,4 +35,7 @@ type NodeAttributeTable interface {
 	// @decision: non-cascade-direct-to-stale
 	// @story: resume-preserves-snapshot
 	SnapshotBagForNewRun(ctx context.Context, tx Tx, newRunID, nodeID, runScopeID shared.UUID) error
+
+	// @concept: cascade
+	GetPriorRunData(ctx context.Context, tx Tx, runID shared.UUID) (map[string]any, error)
 }

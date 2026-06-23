@@ -134,6 +134,11 @@ func applyTerminalCompleteSubgraphCaller(
 		cascade.NodeStateRunning, &settlingSig); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: update run-tree: %w", err)
 	}
+	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		nil, nil); err != nil {
+		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: emit attribute changes: %w", err)
+	}
 	if len(internalNodes) > 0 {
 		instNodes, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, tx)
 		if err != nil {
