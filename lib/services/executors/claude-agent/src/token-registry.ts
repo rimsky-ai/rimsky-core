@@ -99,9 +99,6 @@ export interface TokenEntry {
     resumeAt: string | null,
     scheduleTeardown: (td: () => Promise<void>) => void,
   ) => Promise<void>;
-  onAttributesSet: (
-    delta: Record<string, unknown>,
-  ) => Promise<{ status: number }>;
 }
 
 export class TokenRegistry {

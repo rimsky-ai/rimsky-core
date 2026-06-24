@@ -10,7 +10,6 @@ import {
   ReportParkInput,
   DispatchContextReadInput,
   AttributesReadInput,
-  AttributesSetInput,
   TOOL_DEFINITIONS,
 } from "./internal-mcp-tools.js";
 
@@ -27,7 +26,7 @@ describe("internal-mcp-tools schemas", () => {
     expect(parsed.attributes_delta).toEqual({ ok: true });
   });
 
-  it("ReportCompleteInput accepts a payload without attributes_delta (incremental pattern)", () => {
+  it("ReportCompleteInput accepts a payload without attributes_delta (no-attribute-change report)", () => {
     const parsed = ReportCompleteInput.parse({
       token: "tok",
       changed: true,
@@ -88,24 +87,10 @@ describe("internal-mcp-tools schemas", () => {
     expect(parsed.token).toBe("tok");
   });
 
-  it("AttributesSetInput requires token and delta object", () => {
-    const parsed = AttributesSetInput.parse({
-      token: "tok",
-      delta: { x: 1, nested: { y: 2 } },
-    });
-    expect(parsed.delta).toEqual({ x: 1, nested: { y: 2 } });
-
-    expect(() => AttributesSetInput.parse({ token: "tok" })).toThrow();
-    expect(() =>
-      AttributesSetInput.parse({ token: "tok", delta: "no" }),
-    ).toThrow();
-  });
-
-  it("TOOL_DEFINITIONS exposes the seven tools (incl. report_park + dispatch_context_read)", () => {
+  it("TOOL_DEFINITIONS exposes the six callback tools (no attributes_set: terminal-bundled writes only)", () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name).sort();
     expect(names).toEqual([
       "attributes_read",
-      "attributes_set",
       "dispatch_context_read",
       "report_blocked",
       "report_complete",

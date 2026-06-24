@@ -169,10 +169,9 @@ func TestAwaitTerminal_AsyncFollowsCallbackToPark(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		body, _ := json.Marshal(map[string]any{
 			"park": map[string]any{
-				"reason":           "snooze",
-				"resume_at":        resumeAt,
-				"reason_note":      "rate-limited",
-				"attributes_delta": map[string]any{"session_token": "tok-1"},
+				"reason":      "snooze",
+				"resume_at":   resumeAt,
+				"reason_note": "rate-limited",
 			},
 		})
 		resp, perr := http.Post(r.URL()+"/v1/callback/"+ackID, "application/json", bytes.NewReader(body))
@@ -198,10 +197,6 @@ func TestAwaitTerminal_AsyncFollowsCallbackToPark(t *testing.T) {
 	}
 	if park.Park.GetReasonNote() != "rate-limited" {
 		t.Errorf("reason_note=%q", park.Park.GetReasonNote())
-	}
-	delta := park.Park.GetAttributesDelta().AsMap()
-	if delta["session_token"] != "tok-1" {
-		t.Errorf("attributes_delta=%v missing session_token=tok-1", delta)
 	}
 }
 

@@ -78,7 +78,7 @@ func runAcquireErrorPolicy(
 ) *policyDecision {
 	var post postCommitFn
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, err := applyErrorPolicyWithScratch(ctx, args, acq, errorClass, fallbackClass, payload, nil, nil, tx)
+		p, err := applyErrorPolicyWithScratch(ctx, args, acq, errorClass, fallbackClass, payload, nil, nil, nil, tx)
 		post = p
 		return err
 	}); err != nil {

@@ -11,9 +11,8 @@ func TestValidateTypePath_AcceptsCanonical(t *testing.T) {
 		"terminal/success",
 		"terminal/error/http/timeout",
 		"terminal/error/foo",
-		"terminal/park/snooze",
-		"terminal/park/await_callback",
-		"terminal/infra/heartbeat_lost",
+		"transient/park/snooze",
+		"transient/park/await_callback",
 		"transient/retry/3/agent/rate_limited",
 		"transient/retry/1/foo",
 		"transient/infra/heartbeat_lost",
@@ -36,6 +35,9 @@ func TestValidateTypePath_RejectsUnknown(t *testing.T) {
 		"terminal/garbage",
 		"not_a_kind/foo",
 		"terminal/error",
+		"terminal/park/snooze",
+		"terminal/park/await_callback",
+		"terminal/infra/heartbeat_lost",
 		"lifecycle/node_created",
 		"",
 		"attribute/changed",
@@ -61,13 +63,29 @@ func TestValidateSubscriptionType_AcceptsTrailingWildcard(t *testing.T) {
 		"transient/*",
 		"transient/retry/*",
 		"attribute/*",
-		"terminal/park/snooze",
+		"terminal/success",
 	}
 	for _, c := range cases {
 		c := c
 		t.Run(string(c), func(t *testing.T) {
 			if err := ValidateSubscriptionType(c); err != nil {
 				t.Fatalf("ValidateSubscriptionType(%q) returned %v; expected nil", c, err)
+			}
+		})
+	}
+}
+
+func TestValidateSubscriptionType_RejectsExplicitParkTargets(t *testing.T) {
+	cases := []TypePath{
+		"transient/park/snooze",
+		"transient/park/await_callback",
+		"transient/park/*",
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(string(c), func(t *testing.T) {
+			if err := ValidateSubscriptionType(c); err == nil {
+				t.Fatalf("ValidateSubscriptionType(%q) returned nil; expected park-audit-only error", c)
 			}
 		})
 	}

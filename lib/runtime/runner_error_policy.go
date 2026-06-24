@@ -34,7 +34,7 @@ func applyErrorPolicy(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any, tx persistence.Tx,
 ) (postCommitFn, error) {
-	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, "", payload, nil, nil, tx)
+	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, "", payload, nil, nil, nil, tx)
 }
 
 // @concept: executor
@@ -42,7 +42,7 @@ func applyErrorPolicy(
 func applyErrorPolicyWithScratch(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, fallbackClass string,
-	payload map[string]any, tags []string, scratch []byte, tx persistence.Tx,
+	payload map[string]any, tags []string, attributesDel map[string]any, scratch []byte, tx persistence.Tx,
 ) (postCommitFn, error) {
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, scratch); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
@@ -57,7 +57,7 @@ func applyErrorPolicyWithScratch(
 	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.DispatchID, resolved.NewState, tx); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: persist evaluator state: %w", err)
 	}
-	sig := errorPolicySignal(errorClass, payload, tags, resolved.Kind, resolved.NewState.RetryCounter, resolved.DelayMs)
+	sig := errorPolicySignal(errorClass, payload, attributesDel, tags, resolved.Kind, resolved.NewState.RetryCounter, resolved.DelayMs)
 	decision := policyDecision{Kind: resolved.Kind, DelayMs: resolved.DelayMs, Signal: sig}
 
 	if decision.IsRetry() {
@@ -202,7 +202,7 @@ func applyTerminalInfraError(
 		maxRetries = defaultInfraRetryCap
 	}
 	if state.RetryCounter >= maxRetries {
-		return applyInfraGiveUp(ctx, args, acq, errorClass, payload, tx)
+		return applyInfraGiveUp(ctx, args, acq, errorClass, payload, state.RetryCounter, tx)
 	}
 	state.RetryCounter++
 	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.DispatchID, state, tx); err != nil {
@@ -225,7 +225,7 @@ func applyTerminalInfraError(
 
 func applyInfraGiveUp(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	errorClass string, payload map[string]any, tx persistence.Tx,
+	errorClass string, payload map[string]any, retriesSoFar int, tx persistence.Tx,
 ) (postCommitFn, error) {
 	releasePC, err := releaseLocksInTx(ctx, args, tx, acq, false, false)
 	if err != nil {
@@ -242,13 +242,7 @@ func applyInfraGiveUp(
 			return nil, err
 		}
 	}
-	sig := signalpkg.Signal{
-		Type: signalpkg.TypePath(settlingSig),
-		Payload: map[string]any{
-			"reason":  errorClass,
-			"details": payload,
-		},
-	}
+	sig := signalpkg.BuildTerminalErrorSignal(errorClass, payload, retriesSoFar, retriesSoFar, nil, nil)
 	if err := emitSignalInTxOnce(ctx, args, tx,
 		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
 		return nil, err
@@ -315,7 +309,7 @@ func requiredClaimProducersForAcq(acq *acquisition) []string {
 }
 
 // @concept: signal
-func errorPolicySignal(errorClass string, errorPayload map[string]any, tags []string, resolvedKind string, retriesSoFar int, delayMs int) signalpkg.Signal {
+func errorPolicySignal(errorClass string, errorPayload map[string]any, attributesDelta map[string]any, tags []string, resolvedKind string, retriesSoFar int, delayMs int) signalpkg.Signal {
 	switch resolvedKind {
 	case spec.ActionRetry:
 		typ := signalpkg.TypePath(fmt.Sprintf("transient/retry/%d/%s", retriesSoFar, errorClass))
@@ -338,16 +332,6 @@ func errorPolicySignal(errorClass string, errorPayload map[string]any, tags []st
 			},
 		}
 	default:
-		typ := signalpkg.TypePath("terminal/error/" + errorClass)
-		return signalpkg.Signal{
-			Type: typ,
-			Payload: map[string]any{
-				"error_class":    errorClass,
-				"error_payload":  errorPayload,
-				"attempt":        retriesSoFar,
-				"retries_so_far": retriesSoFar,
-				"tags":           tags,
-			},
-		}
+		return signalpkg.BuildTerminalErrorSignal(errorClass, errorPayload, retriesSoFar, retriesSoFar, attributesDelta, tags)
 	}
 }

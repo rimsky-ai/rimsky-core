@@ -37,16 +37,15 @@ func TestProtoSmoke_OutcomeSuccess(t *testing.T) {
 	}
 }
 
-// TestProtoSmoke_OutcomePark round-trips a Park outcome without
-// session_token / inline payload (TD-remove-resume-context) but with
-// attributes_delta + tags carrying the executor's state forward.
+// TestProtoSmoke_OutcomePark round-trips a Park outcome with scratch
+// (the canonical executor-managed state-carry channel per
+// concept:parked-state) and tags.
 func TestProtoSmoke_OutcomePark(t *testing.T) {
-	delta, _ := structpb.NewStruct(map[string]any{"session_token": "sess-abc"})
 	src := &Outcome{Outcome: &Outcome_Park{Park: &Park{
-		Reason:          ParkReason_PARK_REASON_SNOOZE,
-		ResumeAt:        timestamppb.New(timestamppb.Now().AsTime()),
-		AttributesDelta: delta,
-		Tags:            []string{"awaiting_remote"},
+		Reason:   ParkReason_PARK_REASON_SNOOZE,
+		ResumeAt: timestamppb.New(timestamppb.Now().AsTime()),
+		Scratch:  []byte("sess-abc"),
+		Tags:     []string{"awaiting_remote"},
 	}}}
 	bytes, err := proto.Marshal(src)
 	if err != nil {
@@ -65,8 +64,8 @@ func TestProtoSmoke_OutcomePark(t *testing.T) {
 	if len(got.GetPark().GetTags()) != 1 || got.GetPark().GetTags()[0] != "awaiting_remote" {
 		t.Fatalf("park tags mismatch: %v", got.GetPark().GetTags())
 	}
-	if got.GetPark().GetAttributesDelta().AsMap()["session_token"] != "sess-abc" {
-		t.Fatalf("attributes_delta session_token did not round-trip")
+	if string(got.GetPark().GetScratch()) != "sess-abc" {
+		t.Fatalf("scratch round-trip mismatch: got %q want %q", string(got.GetPark().GetScratch()), "sess-abc")
 	}
 }
 

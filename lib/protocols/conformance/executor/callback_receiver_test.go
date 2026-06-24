@@ -114,9 +114,6 @@ func TestParseCallbackBody_Park(t *testing.T) {
 	if got := park.Park.GetResumeAt().AsTime(); !got.Equal(time.Date(2026, 6, 17, 15, 30, 0, 0, time.UTC)) {
 		t.Errorf("resume_at=%v", got)
 	}
-	if got := park.Park.GetAttributesDelta().AsMap(); got["session_token"] != "tok-1" {
-		t.Errorf("attributes_delta=%v want session_token=tok-1", got)
-	}
 	if tags := park.Park.GetTags(); len(tags) != 1 || tags[0] != "parked" {
 		t.Errorf("tags=%v want [parked]", tags)
 	}

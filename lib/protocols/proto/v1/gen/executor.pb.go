@@ -166,8 +166,10 @@ type ExecuteRequest struct {
 	// Per-run typed attributes. Source-directive fields are pre-populated by
 	// rimsky at dispatch; static-default fields carry their declared
 	// default value; sourceless/executor-written fields are populated by
-	// the executor (terminal-final via attributes_delta on Success / Error
-	// / Park, or incremental via POST {callback_url}/v1/runs/{run_id}/attributes).
+	// the executor via attributes_delta on the run-terminating verdict
+	// (Success / Error). Park is dispatch-internal and does not write
+	// attributes; executors that need state across a park-and-resume use
+	// scratch (per concept:parked-state).
 	Attributes *structpb.Struct `protobuf:"bytes,5,opt,name=attributes,proto3" json:"attributes,omitempty"`
 	// The declared JSON Schema for the node's attributes. For executor reference;
 	// rimsky validates at dispatch (substitution) and at commit (writeback)
@@ -635,9 +637,10 @@ func (x *Success) GetTags() []string {
 // Error reports an executor error. `error_class` is the discriminator
 // the operator-side `error_types:` policy routes on. Common classes
 // include "executor_blocked", "rate_limited", "transient_io", etc.
-// `attributes_delta` and `tags` carry the uniform settling-terminal
-// shape — error terminals may write attributes and emit tags exactly
-// as Success does.
+// `attributes_delta` and `tags` carry the uniform run-terminating
+// shape — error verdicts may write attributes and emit tags exactly
+// as Success does. Park is dispatch-internal and does not carry
+// either field.
 type Error struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	ErrorClass string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
@@ -719,10 +722,16 @@ func (x *Error) GetTags() []string {
 
 // Park signals that the executor wants to pause the node and resume
 // later. The held claim handle is retained across the park boundary.
-// Per concept:parked-state, resume state rides attribute carry-forward
-// — executors that need to thread state across a park-and-resume cycle
-// write it to `attributes_delta` and read it from
-// ExecuteRequest.attributes on the resume dispatch.
+// Per concept:parked-state, executor-managed state crosses the
+// park-and-resume boundary via scratch: the executor writes state
+// to `scratch` on Park, which the supervisor persists on the parked
+// row's scratch slot. On time-wake the same row re-dispatches, so
+// the resumed executor reads its scratch from ExecuteRequest.scratch
+// on the same dispatch. Attribute writes are not available on Park
+// because Park is dispatch-internal — the run does not terminate,
+// no cascade-fire happens, and the attribute-writeback channel is
+// reserved for run-terminating verdicts (Success / Error) per
+// decision:uniform-attributes-delta.
 //
 // At least one of resume_at or external invalidation must wake the
 // node; rimsky does not enforce this in-protocol.
@@ -744,10 +753,14 @@ type Park struct {
 	// col:rimsky_node_runs.parked_reason_label.
 	ReasonLabel string `protobuf:"bytes,6,opt,name=reason_label,json=reasonLabel,proto3" json:"reason_label,omitempty"`
 	// Executor-attached opaque bytes the supervisor persists onto the
-	// dispatch row at terminal time. Inert in rimsky.
-	Scratch         []byte           `protobuf:"bytes,7,opt,name=scratch,proto3" json:"scratch,omitempty"`
-	AttributesDelta *structpb.Struct `protobuf:"bytes,8,opt,name=attributes_delta,json=attributesDelta,proto3" json:"attributes_delta,omitempty"`
-	// Set semantics — same rules as Success.tags.
+	// dispatch row at park-verdict time. Copied forward onto the resume
+	// dispatch's row at re-enqueue. Inert in rimsky.
+	Scratch []byte `protobuf:"bytes,7,opt,name=scratch,proto3" json:"scratch,omitempty"`
+	// Set semantics — same rules as Success.tags. On Park these are
+	// audit-only (no cascade-fire means no CEL evaluation against
+	// `payload.tags`); operators reacting to a parked node subscribe
+	// to the eventual run-terminating settlement that follows the
+	// wake.
 	Tags          []string `protobuf:"bytes,9,rep,name=tags,proto3" json:"tags,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -814,13 +827,6 @@ func (x *Park) GetReasonLabel() string {
 func (x *Park) GetScratch() []byte {
 	if x != nil {
 		return x.Scratch
-	}
-	return nil
-}
-
-func (x *Park) GetAttributesDelta() *structpb.Struct {
-	if x != nil {
-		return x.AttributesDelta
 	}
 	return nil
 }
@@ -1055,16 +1061,15 @@ const file_executor_proto_rawDesc = "" +
 	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\x12\x18\n" +
 	"\ascratch\x18\x03 \x01(\fR\ascratch\x12B\n" +
 	"\x10attributes_delta\x18\x04 \x01(\v2\x17.google.protobuf.StructR\x0fattributesDelta\x12\x12\n" +
-	"\x04tags\x18\x05 \x03(\tR\x04tags\"\xc8\x02\n" +
+	"\x04tags\x18\x05 \x03(\tR\x04tags\"\x9c\x02\n" +
 	"\x04Park\x12-\n" +
 	"\x06reason\x18\x01 \x01(\x0e2\x15.rimsky.v1.ParkReasonR\x06reason\x127\n" +
 	"\tresume_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bresumeAt\x12\x1f\n" +
 	"\vreason_note\x18\x05 \x01(\tR\n" +
 	"reasonNote\x12!\n" +
 	"\freason_label\x18\x06 \x01(\tR\vreasonLabel\x12\x18\n" +
-	"\ascratch\x18\a \x01(\fR\ascratch\x12B\n" +
-	"\x10attributes_delta\x18\b \x01(\v2\x17.google.protobuf.StructR\x0fattributesDelta\x12\x12\n" +
-	"\x04tags\x18\t \x03(\tR\x04tagsJ\x04\b\x02\x10\x03J\x04\b\x04\x10\x05R\apayloadR\rsession_token\"l\n" +
+	"\ascratch\x18\a \x01(\fR\ascratch\x12\x12\n" +
+	"\x04tags\x18\t \x03(\tR\x04tagsJ\x04\b\x02\x10\x03J\x04\b\x04\x10\x05J\x04\b\b\x10\tR\apayloadR\rsession_tokenR\x10attributes_delta\"l\n" +
 	"\x12AwaitAsyncCallback\x12 \n" +
 	"\fasync_ack_id\x18\x01 \x01(\tR\n" +
 	"asyncAckId\x124\n" +
@@ -1131,18 +1136,17 @@ var file_executor_proto_depIdxs = []int32{
 	11, // 11: rimsky.v1.Error.attributes_delta:type_name -> google.protobuf.Struct
 	1,  // 12: rimsky.v1.Park.reason:type_name -> rimsky.v1.ParkReason
 	12, // 13: rimsky.v1.Park.resume_at:type_name -> google.protobuf.Timestamp
-	11, // 14: rimsky.v1.Park.attributes_delta:type_name -> google.protobuf.Struct
-	5,  // 15: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
-	6,  // 16: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
-	7,  // 17: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
-	3,  // 18: rimsky.v1.ExecuteRequest.ClaimProducersEntry.value:type_name -> rimsky.v1.ClaimProducerHandle
-	2,  // 19: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
-	4,  // 20: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.Outcome
-	20, // [20:21] is the sub-list for method output_type
-	19, // [19:20] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	5,  // 14: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
+	6,  // 15: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
+	7,  // 16: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
+	3,  // 17: rimsky.v1.ExecuteRequest.ClaimProducersEntry.value:type_name -> rimsky.v1.ClaimProducerHandle
+	2,  // 18: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
+	4,  // 19: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.Outcome
+	19, // [19:20] is the sub-list for method output_type
+	18, // [18:19] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_executor_proto_init() }

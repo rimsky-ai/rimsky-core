@@ -269,15 +269,19 @@ func transitionHolderIfFullyResolved(
 		newState cascade.NodeState
 		reason   cascade.TransitionReason
 		sigType  string
+		sig      signalpkg.Signal
 	)
+	changeSummary := "auto-terminal/" + outcomeVerbName(td.Outcome)
 	if status.Poisoned {
 		newState = cascade.NodeStateFailed
 		reason = cascade.ReasonAutoTerminalAbandon
 		sigType = "terminal/error/abandoned"
+		sig = signalpkg.BuildTerminalErrorSignal("abandoned", nil, 0, 0, nil, nil)
 	} else {
 		newState = cascade.NodeStateFresh
 		reason = cascade.ReasonAutoTerminalCommit
 		sigType = "terminal/success"
+		sig = signalpkg.BuildTerminalSuccessSignal(false, nil, changeSummary, nil)
 	}
 	if err := args.Persist.Nodes().UpdateState(
 		ctx, holderRun.NodeID, holderRun.RunScopeID, newState, reason, &sigType, tx,
@@ -293,21 +297,6 @@ func transitionHolderIfFullyResolved(
 		return nil, fmt.Errorf("load template: %w", terr)
 	}
 	filter := subgraphNonMemberFilter(tmplSpec, holderNode.NodeType)
-	holderAttrs := map[string]any{}
-	if args.Persist.NodeAttributes() != nil {
-		if attrs, aerr := args.Persist.NodeAttributes().GetByRun(ctx, holderRun.RunID, tx); aerr == nil && attrs != nil {
-			holderAttrs = attrs.Data
-		}
-	}
-	sig := signalpkg.Signal{
-		Type: signalpkg.TypePath(sigType),
-		Payload: map[string]any{
-			"changed":          len(holderAttrs) > 0,
-			"attributes_delta": holderAttrs,
-			"change_summary":   "auto-terminal/" + outcomeVerbName(td.Outcome),
-			"claim_handle_id":  td.ClaimHandleID.String(),
-		},
-	}
 	visited := map[foundationshared.UUID]struct{}{}
 	if err := emitSignalInTxWithFilter(ctx, args, tx,
 		holderRun.NodeID, holderNode.NodeType, holderRun.RunID,

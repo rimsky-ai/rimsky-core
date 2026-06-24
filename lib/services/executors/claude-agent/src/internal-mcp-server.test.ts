@@ -25,7 +25,6 @@ function makeRegistryEntry(overrides: {
   callbackUrl?: string;
   onComplete?: import("./token-registry.js").TokenEntry["onComplete"];
   onPark?: import("./token-registry.js").TokenEntry["onPark"];
-  onAttributesSet?: import("./token-registry.js").TokenEntry["onAttributesSet"];
 } = {}): import("./token-registry.js").TokenEntry {
   return {
     runId: "run-1",
@@ -42,9 +41,6 @@ function makeRegistryEntry(overrides: {
     onBlocked: async () => {},
     onError: async () => {},
     onPark: overrides.onPark,
-    onAttributesSet:
-      overrides.onAttributesSet ??
-      (async () => ({ status: 204 })),
   };
 }
 
@@ -66,7 +62,7 @@ function parseToolText<T>(content: unknown): T {
 }
 
 describe("rimsky-callback MCP tools", () => {
-  it("lists all seven tools (incl. report_park and dispatch_context_read)", async () => {
+  it("lists the six callback tools (no attributes_set: terminal-bundled writes only)", async () => {
     const registry = new TokenRegistry();
     const client = await buildClient(registry);
 
@@ -74,7 +70,6 @@ describe("rimsky-callback MCP tools", () => {
     const names = result.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       "attributes_read",
-      "attributes_set",
       "dispatch_context_read",
       "report_blocked",
       "report_complete",
@@ -282,52 +277,6 @@ describe("rimsky-callback MCP tools", () => {
       prior_dispatch_id: null,
       prior_dispatch_disposition: null,
     });
-  });
-
-  it("attributes_set forwards delta to onAttributesSet and reports HTTP status", async () => {
-    const registry = new TokenRegistry();
-    let captured: { delta: Record<string, unknown> } | null = null;
-    registry.register(
-      "tok-s",
-      makeRegistryEntry({
-        onAttributesSet: async (delta) => {
-          captured = { delta };
-          return { status: 204 };
-        },
-      }),
-    );
-    const client = await buildClient(registry);
-
-    const res = await client.callTool({
-      name: "attributes_set",
-      arguments: { token: "tok-s", delta: { progress: "halfway" } },
-    });
-    expect(parseToolText(res.content)).toEqual({
-      status: "accepted",
-      http_status: 204,
-    });
-    expect(captured).toEqual({ delta: { progress: "halfway" } });
-  });
-
-  it("attributes_set reports rejection on non-2xx HTTP status", async () => {
-    const registry = new TokenRegistry();
-    registry.register(
-      "tok-fail",
-      makeRegistryEntry({
-        onAttributesSet: async () => ({ status: 422 }),
-      }),
-    );
-    const client = await buildClient(registry);
-
-    const res = await client.callTool({
-      name: "attributes_set",
-      arguments: { token: "tok-fail", delta: { x: 1 } },
-    });
-    expect(parseToolText(res.content)).toEqual({
-      status: "rejected",
-      http_status: 422,
-    });
-    expect(res.isError).toBe(true);
   });
 
   it("returns isError for unknown token", async () => {

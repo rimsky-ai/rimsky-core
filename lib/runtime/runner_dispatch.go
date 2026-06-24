@@ -289,9 +289,6 @@ func readExecutorOutcome(
 			Scratch:         oc.Park.Scratch,
 			Tags:            dedupTagsRT(oc.Park.Tags),
 		}
-		if oc.Park.AttributesDelta != nil {
-			t.AttributesDel = oc.Park.AttributesDelta.AsMap()
-		}
 		if oc.Park.ResumeAt != nil {
 			t.ParkResumeAt = oc.Park.ResumeAt.AsTime()
 		}

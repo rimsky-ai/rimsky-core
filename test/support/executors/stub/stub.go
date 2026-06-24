@@ -51,6 +51,7 @@ type script struct {
 	parkReasonNote    string
 	parkResumeAt      time.Time
 	tags              []string
+	attributesDelta   map[string]any
 	holdUntil         <-chan struct{}
 }
 
@@ -147,6 +148,17 @@ func (b *TypeBuilder) Tags(tags ...string) *TypeBuilder {
 	return b
 }
 
+func (b *TypeBuilder) AttributesDelta(delta map[string]any) *TypeBuilder {
+	b.s.mu.Lock()
+	defer b.s.mu.Unlock()
+	cp := make(map[string]any, len(delta))
+	for k, v := range delta {
+		cp[k] = v
+	}
+	b.s.scripts[b.typ].attributesDelta = cp
+	return b
+}
+
 func (b *TypeBuilder) HoldUntil(ch <-chan struct{}) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -233,7 +245,11 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 
 	switch sc.terminal {
 	case termSuccess:
-		delta, err := toStruct(sc.result)
+		deltaSrc := sc.result
+		if sc.attributesDelta != nil {
+			deltaSrc = sc.attributesDelta
+		}
+		delta, err := toStruct(deltaSrc)
 		if err != nil {
 			return nil, err
 		}
@@ -248,11 +264,19 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 		if err != nil {
 			return nil, err
 		}
-		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+		errOut := &genv1.Error{
 			ErrorClass: prefixedStubClass(sc.errorClass),
 			Payload:    v,
 			Tags:       sc.tags,
-		}}}, nil
+		}
+		if sc.attributesDelta != nil {
+			delta, derr := structpb.NewStruct(sc.attributesDelta)
+			if derr != nil {
+				return nil, derr
+			}
+			errOut.AttributesDelta = delta
+		}
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: errOut}}, nil
 	case termAsync:
 		return &genv1.Outcome{Outcome: &genv1.Outcome_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
 			AsyncAckId:           sc.asyncAckID,

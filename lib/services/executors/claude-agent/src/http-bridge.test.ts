@@ -369,7 +369,7 @@ describe("HTTP bridge /execute threads dispatch-context fields end-to-end", () =
 });
 
 describe("http-bridge outcomeToCallbackBody park outcome", () => {
-  it("merges sessionToken into attributes_delta on Park (no top-level session_token / payload)", () => {
+  it("encodes sessionToken into scratch on Park (Park does not carry attributes_delta)", () => {
     const resumeAt = new Date("2026-06-04T12:00:00.000Z");
     const outcome: AgentOutcome = {
       kind: "park_requested",
@@ -390,11 +390,12 @@ describe("http-bridge outcomeToCallbackBody park outcome", () => {
     expect(park.resume_at).toBe(resumeAt.toISOString());
     expect("session_token" in park).toBe(false);
     expect("payload" in park).toBe(false);
-    const delta = park.attributes_delta as Record<string, unknown>;
-    expect(delta.session_token).toBe("sess-park-1");
+    expect("attributes_delta" in park).toBe(false);
+    expect(typeof park.scratch).toBe("string");
+    expect(Buffer.from(park.scratch as string, "base64").toString("utf8")).toBe("sess-park-1");
   });
 
-  it("omits resume_at for an indefinite park (resumeAt null) and attributes_delta when fully empty", () => {
+  it("omits resume_at for an indefinite park (resumeAt null) and scratch when sessionToken is empty", () => {
     const outcome: AgentOutcome = {
       kind: "park_requested",
       reason: "await_callback",
@@ -412,6 +413,7 @@ describe("http-bridge outcomeToCallbackBody park outcome", () => {
     expect("attributes_delta" in park).toBe(false);
     expect("payload" in park).toBe(false);
     expect("session_token" in park).toBe(false);
+    expect("scratch" in park).toBe(false);
     expect(park.reason).toBe("await_callback");
   });
 });

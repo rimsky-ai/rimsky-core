@@ -48,7 +48,7 @@ func applyTerminal(
 	case terminalKindInfra:
 		pc, err = applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload, t.Scratch, tx)
 	case terminalKindPark:
-		return applyTerminalPark(ctx, args, acq, resolvedAttrs, t, tx)
+		return applyTerminalPark(ctx, args, acq, t, tx)
 	default:
 		return nil, fmt.Errorf("applyTerminal: unhandled terminal kind %v", t.Kind)
 	}
@@ -156,7 +156,7 @@ func applyTerminalComplete(
 			}
 			// @concept: executor
 			return applyErrorPolicyWithScratch(ctx, args, acq, "attributes_schema_failed", "",
-				map[string]any{"error": err.Error()}, t.Tags, t.Scratch, tx)
+				map[string]any{"error": err.Error()}, t.Tags, t.AttributesDel, t.Scratch, tx)
 		}
 	}
 
@@ -361,14 +361,13 @@ func applyTerminalCompletePoisoned(
 	}
 	nonMemberFilter := subgraphNonMemberFilter(tmplSpec, acq.NodeType)
 	visited := map[foundationshared.UUID]struct{}{}
-	abandonedSig := signalpkg.Signal{
-		Type: signalpkg.TypePath(abandonedType),
-		Payload: map[string]any{
-			"error_class":    "abandoned",
-			"change_summary": t.ChangeSummary,
-			"tags":           t.Tags,
-		},
-	}
+	abandonedSig := signalpkg.BuildTerminalErrorSignal(
+		"abandoned",
+		nil,
+		0, 0,
+		t.AttributesDel,
+		t.Tags,
+	)
 	if err := emitSignalInTxWithFilter(ctx, args, tx,
 		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
 		abandonedSig, visited, nonMemberFilter); err != nil {

@@ -39,41 +39,29 @@ func TestPayloads_RoundTrip(t *testing.T) {
 		}
 	})
 
-	t.Run("TerminalParkSnoozePayload", func(t *testing.T) {
-		in := TerminalParkSnoozePayload{
+	t.Run("TransientParkSnoozePayload", func(t *testing.T) {
+		in := TransientParkSnoozePayload{
 			ResumeAt:          time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC),
 			ParkedReasonLabel: "wait",
 			ParkedReasonNote:  "ten min",
 			Tags:              []string{"rate_limited"},
 		}
-		var out TerminalParkSnoozePayload
+		var out TransientParkSnoozePayload
 		roundTrip(t, in, &out)
 		if !reflect.DeepEqual(in, out) {
 			t.Fatalf("round-trip mismatch: in=%+v out=%+v", in, out)
 		}
 	})
 
-	t.Run("TerminalParkAwaitCallbackPayload", func(t *testing.T) {
+	t.Run("TransientParkAwaitCallbackPayload", func(t *testing.T) {
 		ts := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
-		in := TerminalParkAwaitCallbackPayload{
+		in := TransientParkAwaitCallbackPayload{
 			ResumeAt:          &ts,
 			ParkedReasonLabel: "wait",
 			ParkedReasonNote:  "callback",
 			Tags:              []string{"awaiting_external"},
 		}
-		var out TerminalParkAwaitCallbackPayload
-		roundTrip(t, in, &out)
-		if !reflect.DeepEqual(in, out) {
-			t.Fatalf("round-trip mismatch: in=%+v out=%+v", in, out)
-		}
-	})
-
-	t.Run("TerminalInfraPayload", func(t *testing.T) {
-		in := TerminalInfraPayload{
-			Reason:  "heartbeat_lost",
-			Details: map[string]any{"k": "v"},
-		}
-		var out TerminalInfraPayload
+		var out TransientParkAwaitCallbackPayload
 		roundTrip(t, in, &out)
 		if !reflect.DeepEqual(in, out) {
 			t.Fatalf("round-trip mismatch: in=%+v out=%+v", in, out)
@@ -156,9 +144,10 @@ func TestPayloadSchemaForType(t *testing.T) {
 		{"terminal/success", reflect.TypeOf(TerminalSuccessPayload{}), true},
 		{"terminal/error/http/timeout", reflect.TypeOf(TerminalErrorPayload{}), true},
 		{"terminal/error/foo", reflect.TypeOf(TerminalErrorPayload{}), true},
-		{"terminal/park/snooze", reflect.TypeOf(TerminalParkSnoozePayload{}), true},
-		{"terminal/park/await_callback", reflect.TypeOf(TerminalParkAwaitCallbackPayload{}), true},
-		{"terminal/infra/heartbeat_lost", reflect.TypeOf(TerminalInfraPayload{}), true},
+		{"transient/park/snooze", reflect.TypeOf(TransientParkSnoozePayload{}), true},
+		{"transient/park/await_callback", reflect.TypeOf(TransientParkAwaitCallbackPayload{}), true},
+		{"terminal/infra/heartbeat_lost", nil, false},
+		{"terminal/park/snooze", nil, false},
 		{"transient/retry/3/agent/rate_limited", reflect.TypeOf(TransientRetryPayload{}), true},
 		{"transient/await_async", reflect.TypeOf(TransientAwaitAsyncPayload{}), true},
 		{"attribute/budget_cents/changed", reflect.TypeOf(AttributeChangedPayload{}), true},
@@ -179,5 +168,92 @@ func TestPayloadSchemaForType(t *testing.T) {
 				t.Fatalf("PayloadSchemaForType(%q): got=%v want=%v", c.path, got, c.want)
 			}
 		})
+	}
+}
+
+func TestBuildTerminalErrorSignal_CoversAllSchemaKeys(t *testing.T) {
+	sig := BuildTerminalErrorSignal(
+		"http/timeout",
+		map[string]any{"status": 504},
+		3,
+		2,
+		map[string]any{"last_error": "boom"},
+		[]string{"diag", "retryable"},
+	)
+	if sig.Type != "terminal/error/http/timeout" {
+		t.Fatalf("type: got %q want terminal/error/http/timeout", sig.Type)
+	}
+	schemaKeys := []string{"error_class", "error_payload", "attempt", "retries_so_far", "attributes_delta", "tags"}
+	for _, k := range schemaKeys {
+		if _, ok := sig.Payload[k]; !ok {
+			t.Fatalf("payload missing schema key %q; payload=%+v", k, sig.Payload)
+		}
+	}
+	if sig.Payload["error_class"] != "http/timeout" {
+		t.Errorf("error_class: got %v", sig.Payload["error_class"])
+	}
+	if sig.Payload["attempt"] != 3 {
+		t.Errorf("attempt: got %v", sig.Payload["attempt"])
+	}
+	if sig.Payload["retries_so_far"] != 2 {
+		t.Errorf("retries_so_far: got %v", sig.Payload["retries_so_far"])
+	}
+	if delta, ok := sig.Payload["attributes_delta"].(map[string]any); !ok || delta["last_error"] != "boom" {
+		t.Errorf("attributes_delta: got %v", sig.Payload["attributes_delta"])
+	}
+	if tags, ok := sig.Payload["tags"].([]string); !ok || len(tags) != 2 {
+		t.Errorf("tags: got %v", sig.Payload["tags"])
+	}
+}
+
+func TestBuildTerminalErrorSignal_NilAttributesDeltaEmits_EmptyMap(t *testing.T) {
+	sig := BuildTerminalErrorSignal("foo", nil, 0, 0, nil, nil)
+	delta, ok := sig.Payload["attributes_delta"].(map[string]any)
+	if !ok {
+		t.Fatalf("attributes_delta missing or not map; payload=%+v", sig.Payload)
+	}
+	if len(delta) != 0 {
+		t.Fatalf("attributes_delta should be empty when nil passed; got %+v", delta)
+	}
+}
+
+func TestBuildTerminalSuccessSignal_CoversAllSchemaKeys(t *testing.T) {
+	sig := BuildTerminalSuccessSignal(
+		true,
+		map[string]any{"k": "v"},
+		"did the thing",
+		[]string{"loop", "iteration_3"},
+	)
+	if sig.Type != "terminal/success" {
+		t.Fatalf("type: got %q want terminal/success", sig.Type)
+	}
+	schemaKeys := []string{"changed", "attributes_delta", "change_summary", "tags"}
+	for _, k := range schemaKeys {
+		if _, ok := sig.Payload[k]; !ok {
+			t.Fatalf("payload missing schema key %q; payload=%+v", k, sig.Payload)
+		}
+	}
+	if sig.Payload["changed"] != true {
+		t.Errorf("changed: got %v", sig.Payload["changed"])
+	}
+	if sig.Payload["change_summary"] != "did the thing" {
+		t.Errorf("change_summary: got %v", sig.Payload["change_summary"])
+	}
+	if delta, ok := sig.Payload["attributes_delta"].(map[string]any); !ok || delta["k"] != "v" {
+		t.Errorf("attributes_delta: got %v", sig.Payload["attributes_delta"])
+	}
+	if tags, ok := sig.Payload["tags"].([]string); !ok || len(tags) != 2 {
+		t.Errorf("tags: got %v", sig.Payload["tags"])
+	}
+}
+
+func TestBuildTerminalSuccessSignal_NilAttributesDeltaEmits_EmptyMap(t *testing.T) {
+	sig := BuildTerminalSuccessSignal(false, nil, "", nil)
+	delta, ok := sig.Payload["attributes_delta"].(map[string]any)
+	if !ok {
+		t.Fatalf("attributes_delta missing or not map; payload=%+v", sig.Payload)
+	}
+	if len(delta) != 0 {
+		t.Fatalf("attributes_delta should be empty when nil passed; got %+v", delta)
 	}
 }

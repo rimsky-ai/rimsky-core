@@ -87,7 +87,6 @@ var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_WORK_STARTED:                    "work_started",
 	genv1.OperationalKind_OPERATIONAL_KIND_WORK_COMPLETED:                  "work_completed",
 	genv1.OperationalKind_OPERATIONAL_KIND_WORK_REJECTED:                   "work_rejected",
-	genv1.OperationalKind_OPERATIONAL_KIND_HEARTBEAT_LOST:                  "heartbeat_lost",
 	genv1.OperationalKind_OPERATIONAL_KIND_NO_OP_COMMIT:                    "no_op_commit",
 	genv1.OperationalKind_OPERATIONAL_KIND_OPERATOR_OVERRIDE:               "operator_override",
 	genv1.OperationalKind_OPERATIONAL_KIND_UNRESOLVED_EXECUTOR:             "unresolved_executor",

@@ -147,7 +147,7 @@ func routeHeldClaimVerbError(
 		"source":          "claim_terminal_verb",
 		"producer":        td.ProducerName,
 		"claim_handle_id": td.ClaimHandleID.String(),
-	}, nil, "give_up", 0, 0)
+	}, nil, nil, "give_up", 0, 0)
 	if err := emitSignalInTxOnce(ctx, args, tx,
 		row.HolderNodeID, holderNodeType, senderRunID, td.LineageHint.InstanceID,
 		senderFrameID, sig); err != nil {

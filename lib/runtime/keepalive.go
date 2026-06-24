@@ -36,7 +36,7 @@ func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
 		return
 	}
-	if authErr := c.attributesAuth(token, runID); authErr != nil {
+	if authErr := c.runTokenAuth(token, runID); authErr != nil {
 		c.Logger.Warn("keepalive: unauthorized",
 			"run_id", runID.String(), "error", authErr.Error())
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)

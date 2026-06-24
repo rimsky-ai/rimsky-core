@@ -93,6 +93,30 @@ func TestCompileWhen_RejectsUnknownFieldExact(t *testing.T) {
 	}
 }
 
+func TestCompileWhen_AttributesDeltaOnError(t *testing.T) {
+	p, err := CompileWhen("terminal/error/agent/rate_limited",
+		"'transient' in payload.attributes_delta")
+	if err != nil {
+		t.Fatalf("CompileWhen error AttributesDelta: %v", err)
+	}
+	if p == nil {
+		t.Fatalf("CompileWhen returned nil predicate")
+	}
+	ok, err := p.Eval(Signal{
+		Type: "terminal/error/agent/rate_limited",
+		Payload: map[string]any{
+			"error_class":      "agent/rate_limited",
+			"attributes_delta": map[string]any{"transient": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Eval error AttributesDelta: %v", err)
+	}
+	if !ok {
+		t.Fatalf("Eval error AttributesDelta: expected true")
+	}
+}
+
 func TestCompileWhen_PrefixBindsDyn(t *testing.T) {
 	p, err := CompileWhen("terminal/*", "payload.error_class == 'x'")
 	if err != nil {

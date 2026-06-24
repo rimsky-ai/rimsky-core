@@ -28,11 +28,5 @@ export type { CliAuthConfig, CliEnvResult } from "./cli-env.js";
 export {
   ATTRIBUTES_TOOL_DEFINITIONS,
   AttributesReadInput,
-  AttributesSetInput,
-  buildAttributesWritebackUrl,
-  defaultPostAttributes,
 } from "./attributes-tools.js";
-export type {
-  AttributesToolDefinition,
-  PostAttributesFn,
-} from "./attributes-tools.js";
+export type { AttributesToolDefinition } from "./attributes-tools.js";

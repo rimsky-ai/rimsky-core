@@ -10,6 +10,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -20,31 +21,12 @@ import (
 func parentSettlementSignal(state cascade.NodeState, sigType signalpkg.TypePath, changed bool) signalpkg.Signal {
 	switch state {
 	case cascade.NodeStateFailed:
-		return signalpkg.Signal{
-			Type: sigType,
-			Payload: map[string]any{
-				"error_class":    string(sigType)[len("terminal/error/"):],
-				"error_payload":  map[string]any{},
-				"attempt":        0,
-				"retries_so_far": 0,
-			},
-		}
-	case cascade.NodeStateParked:
-		return signalpkg.Signal{
-			Type: sigType,
-			Payload: map[string]any{
-				"parked_reason_label": "aggregated_park",
-			},
-		}
+		errorClass := strings.TrimPrefix(string(sigType), "terminal/error/")
+		return signalpkg.BuildTerminalErrorSignal(errorClass, nil, 0, 0, nil, nil)
+	case cascade.NodeStateFresh:
+		return signalpkg.BuildTerminalSuccessSignal(changed, nil, "aggregated_settlement", nil)
 	default:
-		return signalpkg.Signal{
-			Type: sigType,
-			Payload: map[string]any{
-				"changed":          changed,
-				"attributes_delta": map[string]any{},
-				"change_summary":   "aggregated_settlement",
-			},
-		}
+		panic(fmt.Sprintf("parentSettlementSignal: unreachable state %q from Aggregate", state))
 	}
 }
 

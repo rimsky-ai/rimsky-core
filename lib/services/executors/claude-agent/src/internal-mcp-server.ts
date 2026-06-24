@@ -205,8 +205,8 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     "report_complete",
     "Report successful completion of this dispatch. Call exactly once at the end of the run. " +
       "`changed: true` if the work modified files; `changed: false` for no-op reports. " +
-      "Optional `attributes_delta` carries the terminal-final attribute writeback (omit if you " +
-      "already used incremental `attributes_set` calls).",
+      "`attributes_delta` carries the terminal-final attribute writeback (omit when the run " +
+      "made no attribute changes).",
     {
       token: tokenField,
       attributes_delta: z.record(z.unknown()).optional(),
@@ -352,31 +352,6 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
       const snapshot = entry.attributesAtSpawn;
       return {
         content: [{ type: "text" as const, text: JSON.stringify(snapshot) }],
-      };
-    },
-  );
-
-  mcp.tool(
-    "attributes_set",
-    "Persist attribute writes to the supervisor via the incremental writeback callback. " +
-      "Body is shaped {delta: {field: value, ...}}; the supervisor merges into " +
-      "rimsky_node_attributes.data and persists.",
-    {
-      token: tokenField,
-      delta: z.record(z.unknown()),
-    },
-    async (args) => {
-      const entry = registry.lookup(args.token);
-      if (!entry) return unknownToken("attributes_set");
-      logCall("attributes_set", entry.runId);
-      const result = await entry.onAttributesSet(args.delta);
-      const ok = result.status >= 200 && result.status < 300;
-      const body = ok
-        ? { status: "accepted" as const, http_status: result.status }
-        : { status: "rejected" as const, http_status: result.status };
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(body) }],
-        isError: !ok,
       };
     },
   );

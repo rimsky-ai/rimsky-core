@@ -34,6 +34,5 @@ function makeEntry(runId: string): TokenEntry {
     onComplete: async () => ({ status: "accepted" as const }),
     onBlocked: async () => {},
     onError: async () => {},
-    onAttributesSet: async () => ({ status: 204 }),
   };
 }

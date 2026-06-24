@@ -39,7 +39,11 @@ enum OperationalKind {
   OPERATIONAL_KIND_WORK_STARTED = 11;
   OPERATIONAL_KIND_WORK_COMPLETED = 12;
   OPERATIONAL_KIND_WORK_REJECTED = 13;
-  OPERATIONAL_KIND_HEARTBEAT_LOST = 14;
+  // 14 was OPERATIONAL_KIND_HEARTBEAT_LOST, retired by the
+  // executor-protocol-coherence reshape (orphan detection now keys on
+  // last_progress_at + RPC connection state).
+  reserved 14;
+  reserved "OPERATIONAL_KIND_HEARTBEAT_LOST";
   OPERATIONAL_KIND_NO_OP_COMMIT = 15;
   OPERATIONAL_KIND_OPERATOR_OVERRIDE = 16;
   OPERATIONAL_KIND_UNRESOLVED_EXECUTOR = 17;
@@ -116,12 +120,15 @@ message Event {
   //                                  verifier executors emit
   //                                  `executor_errored` with
   //                                  `error_class: "verifier_failed"`)
+  //   19 = HeartbeatLostPayload   (retired by the executor-protocol-coherence
+  //                                reshape; orphan detection keys on
+  //                                last_progress_at + RPC connection state)
   //   24 = ScheduleFiredPayload         (retired by the 2026-05-15 plan
   //                                      B10 / D7 / E16 schedule cascade)
   //   26 = PureCascadeCommitPayload (commit semantics fold into attributes)
   //   27 = ScheduleDispatchFailedPayload (retired with the schedule cascade)
-  reserved 16, 18, 24, 26, 27;
-  reserved "commit", "quality_rule_failed", "schedule_fired", "pure_cascade_commit", "schedule_dispatch_failed";
+  reserved 16, 18, 19, 24, 26, 27;
+  reserved "commit", "quality_rule_failed", "heartbeat_lost", "schedule_fired", "pure_cascade_commit", "schedule_dispatch_failed";
   // Reserved field numbers held vacant for future event-kind additions.
   // Keeping them reserved prevents accidental reuse if a payload is
   // removed from the 40+ block and a new one slots into 28/29 instead.
@@ -134,7 +141,6 @@ message Event {
     WorkStartedPayload work_started = 14;
     WorkCompletedPayload work_completed = 15;
     NoOpCommitPayload no_op_commit = 17;
-    HeartbeatLostPayload heartbeat_lost = 19;
     OperatorOverridePayload operator_override = 20;
     OrphanedClaimReleasedPayload orphaned_claim_released = 21;
     OrphanedClaimLostRacePayload orphaned_claim_lost_race = 22;
@@ -202,11 +208,6 @@ message WorkCompletedPayload {
 
 message NoOpCommitPayload {
   string reason = 1;
-}
-
-message HeartbeatLostPayload {
-  string supervisor_id = 1;
-  google.protobuf.Timestamp last_heartbeat_at = 2;
 }
 
 message OperatorOverridePayload {
@@ -301,8 +302,8 @@ message AttributesSubstitutedPayload {
 }
 
 // AttributesCommittedPayload is emitted when an executor's terminal
-// `attributes_delta` (or accumulated incremental writeback) is merged into
-// `rimsky_node_attributes.data` and validated successfully (§5.7).
+// `attributes_delta` is merged into `rimsky_node_attributes.data` and
+// validated successfully (§5.7).
 message AttributesCommittedPayload {
   // Producer-declared change flag — drives cascade propagation (§4.3 of the
   // node-graph design doc). Trust + audit log; rimsky does not hash-and-check.

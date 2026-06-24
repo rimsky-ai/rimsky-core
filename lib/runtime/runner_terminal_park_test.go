@@ -22,7 +22,7 @@ func TestParkTerminalSignal_Snooze(t *testing.T) {
 		Tags:            []string{"await_remote"},
 	}
 	got := parkTerminalSignal(ev)
-	if got.Type != signalpkg.TypePath("terminal/park/snooze") {
+	if got.Type != signalpkg.TypePath("transient/park/snooze") {
 		t.Fatalf("snooze type: got %q", got.Type)
 	}
 	if got.Payload["resume_at"].(time.Time) != resume {
@@ -43,7 +43,7 @@ func TestParkTerminalSignal_AwaitCallback(t *testing.T) {
 		ParkReasonLabel: "wait_for_remote",
 	}
 	got := parkTerminalSignal(ev)
-	if got.Type != signalpkg.TypePath("terminal/park/await_callback") {
+	if got.Type != signalpkg.TypePath("transient/park/await_callback") {
 		t.Fatalf("await_callback type: got %q", got.Type)
 	}
 	if got.Payload["resume_at"] != nil {

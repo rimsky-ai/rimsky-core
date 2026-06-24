@@ -12,7 +12,7 @@ import (
 )
 
 func TestErrorPolicySignal_RetryShape(t *testing.T) {
-	got := errorPolicySignal("foo", map[string]any{"k": "v"}, nil, spec.ActionRetry, 1, 500)
+	got := errorPolicySignal("foo", map[string]any{"k": "v"}, nil, nil, spec.ActionRetry, 1, 500)
 	if got.Type != signalpkg.TypePath("transient/retry/1/foo") {
 		t.Fatalf("retry type: got %q want transient/retry/1/foo", got.Type)
 	}
@@ -28,7 +28,7 @@ func TestErrorPolicySignal_RetryShape(t *testing.T) {
 }
 
 func TestErrorPolicySignal_ReleaseAndRequeueShape(t *testing.T) {
-	got := errorPolicySignal("acquire/unavailable", nil, nil, spec.ActionReleaseAndRequeue, 0, 0)
+	got := errorPolicySignal("acquire/unavailable", nil, nil, nil, spec.ActionReleaseAndRequeue, 0, 0)
 	if got.Type != signalpkg.TypePath("transient/release_and_requeue/acquire/unavailable") {
 		t.Fatalf("release_and_requeue type: got %q", got.Type)
 	}
@@ -38,17 +38,35 @@ func TestErrorPolicySignal_ReleaseAndRequeueShape(t *testing.T) {
 }
 
 func TestErrorPolicySignal_GiveUpShape(t *testing.T) {
-	got := errorPolicySignal("http/timeout", map[string]any{"status": 504}, nil, spec.ActionGiveUp, 0, 0)
+	got := errorPolicySignal("http/timeout", map[string]any{"status": 504}, map[string]any{"retry_count": 3}, nil, spec.ActionGiveUp, 0, 0)
 	if got.Type != signalpkg.TypePath("terminal/error/http/timeout") {
 		t.Fatalf("give_up type: got %q want terminal/error/http/timeout", got.Type)
 	}
 	if got.Payload["error_class"].(string) != "http/timeout" {
 		t.Fatalf("error_class: got %v", got.Payload["error_class"])
 	}
+	delta, ok := got.Payload["attributes_delta"].(map[string]any)
+	if !ok {
+		t.Fatalf("attributes_delta missing or not map; payload=%+v", got.Payload)
+	}
+	if delta["retry_count"] != 3 {
+		t.Fatalf("attributes_delta.retry_count: got %v want 3", delta["retry_count"])
+	}
+}
+
+func TestErrorPolicySignal_GiveUpEmptyAttributesDelta(t *testing.T) {
+	got := errorPolicySignal("foo", nil, nil, nil, spec.ActionGiveUp, 0, 0)
+	delta, ok := got.Payload["attributes_delta"].(map[string]any)
+	if !ok {
+		t.Fatalf("attributes_delta missing or not map; payload=%+v", got.Payload)
+	}
+	if len(delta) != 0 {
+		t.Fatalf("attributes_delta should be empty when nil passed; got %+v", delta)
+	}
 }
 
 func TestErrorPolicySignal_PassShape(t *testing.T) {
-	got := errorPolicySignal("foo", nil, nil, spec.ActionPass, 0, 0)
+	got := errorPolicySignal("foo", nil, nil, nil, spec.ActionPass, 0, 0)
 	if got.Type != signalpkg.TypePath("terminal/error/foo") {
 		t.Fatalf("pass type: got %q", got.Type)
 	}

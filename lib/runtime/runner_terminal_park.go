@@ -34,7 +34,7 @@ func parkReasonFromStorageForm(s string) genv1.ParkReason {
 
 func applyTerminalPark(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	resolvedAttrs map[string]any, t terminalEvent, tx persistence.Tx,
+	t terminalEvent, tx persistence.Tx,
 ) (postCommitFn, error) {
 
 	var maxParkSec *int
@@ -65,13 +65,6 @@ func applyTerminalPark(
 
 	if err := args.Queue.ParkActiveInTx(ctx, tx, in); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
-	}
-	// @concept: attribute
-	if len(t.AttributesDel) > 0 {
-		merged := mergeAttributesDelta(resolvedAttrs, t.AttributesDel)
-		if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
-			return nil, fmt.Errorf("applyTerminalPark: upsert attributes_delta: %w", err)
-		}
 	}
 	// @concept: executor
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, t.Scratch); err != nil {
@@ -148,7 +141,7 @@ func parkTerminalSignal(t terminalEvent) signalpkg.Signal {
 	if t.ParkReason == genv1.ParkReason_PARK_REASON_SNOOZE {
 		payload["resume_at"] = t.ParkResumeAt
 		return signalpkg.Signal{
-			Type:    "terminal/park/snooze",
+			Type:    "transient/park/snooze",
 			Payload: payload,
 		}
 	}
@@ -156,7 +149,7 @@ func parkTerminalSignal(t terminalEvent) signalpkg.Signal {
 		payload["resume_at"] = t.ParkResumeAt
 	}
 	return signalpkg.Signal{
-		Type:    "terminal/park/await_callback",
+		Type:    "transient/park/await_callback",
 		Payload: payload,
 	}
 }

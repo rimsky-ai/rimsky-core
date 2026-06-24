@@ -13,11 +13,11 @@ import type { CliAuthConfig } from "./cli-env.js";
 import { runAgent, type AgentOutcome, type HostMcpServerInput } from "./agent-run.js";
 import type { PostCallbackFn } from "./server.js";
 import { defaultPostCallback } from "./server.js";
-import type { PostAttributesFn } from "./attributes-tools.js";
 import type { Observability } from "./observability.js";
 import { mountObservability } from "./observability.js";
 import { CliConfigError, isCliConfigError } from "./cli-config-error.js";
 import type { McpCatalog } from "./mcp-catalog.js";
+import { sessionTokenFromScratch, sessionTokenToScratchBase64 } from "./session-token-scratch.js";
 
 export interface HttpBridgeConfig {
   host: string;
@@ -28,7 +28,6 @@ export interface HttpBridgeConfig {
   silenceTimeoutMs: number;
   logger: Logger;
   postCallback?: PostCallbackFn;
-  postAttributes?: PostAttributesFn;
   mcpCatalog?: McpCatalog;
   mcpAllowInline?: boolean;
   observability?: Observability;
@@ -58,6 +57,7 @@ interface ExecuteBody {
   prior_dispatch_id?: string;
   prior_dispatch_disposition?: string;
   run_scope_id?: string;
+  scratch?: string;
 }
 
 export async function startHttpBridge(
@@ -155,8 +155,7 @@ async function runAndCallback(
       callback: config.callback,
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
-      postAttributes: config.postAttributes,
-      sessionToken: stringOr(attributes.session_token, ""),
+      sessionToken: sessionTokenFromScratch(body.scratch) ?? stringOr(attributes.session_token, ""),
     });
     const cb = outcomeToCallbackBody(outcome, ackId);
     if (config.observability) {
@@ -237,12 +236,8 @@ export function outcomeToCallbackBody(
     if (outcome.resumeAt) {
       parkBody.resume_at = outcome.resumeAt.toISOString();
     }
-    const delta: Record<string, unknown> = { ...(outcome.attributesDelta ?? {}) };
     if (outcome.sessionToken && outcome.sessionToken.length > 0) {
-      delta.session_token = outcome.sessionToken;
-    }
-    if (Object.keys(delta).length > 0) {
-      parkBody.attributes_delta = delta;
+      parkBody.scratch = sessionTokenToScratchBase64(outcome.sessionToken);
     }
     return {
       async_ack_id: ackId,

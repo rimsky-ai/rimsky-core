@@ -6,7 +6,6 @@ import { z } from "zod";
 import {
   ATTRIBUTES_TOOL_DEFINITIONS,
   AttributesReadInput,
-  AttributesSetInput,
 } from "./attributes-tools.js";
 
 export const ReportCompleteInput = z.object({
@@ -45,7 +44,7 @@ export const DispatchContextReadInput = z.object({
   token: z.string(),
 });
 
-export { AttributesReadInput, AttributesSetInput };
+export { AttributesReadInput };
 
 export interface ToolDefinition {
   name: string;
@@ -57,9 +56,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "report_complete",
     description:
-      "Report successful completion. Optional attributes_delta carries " +
-      "the terminal-final attribute writeback; omit when the run used " +
-      "incremental attributes_set calls.",
+      "Report successful completion. attributes_delta carries the " +
+      "terminal-final attribute writeback (omit when the run made no " +
+      "attribute changes).",
     inputSchema: {
       type: "object",
       required: ["token", "changed"],

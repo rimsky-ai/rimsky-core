@@ -17,11 +17,6 @@ import {
 } from "./mcp-catalog.js";
 import { CliConfigError } from "./cli-config-error.js";
 import { resolveHeaderEnvRefs } from "./env-refs.js";
-import {
-  buildAttributesWritebackUrl,
-  defaultPostAttributes,
-  type PostAttributesFn,
-} from "./attributes-tools.js";
 import { detectRateLimit } from "./rate-limit.js";
 import { classifyAgentError } from "./error-classify.js";
 import { verifyRequiredSignoffs } from "./signoff.js";
@@ -92,7 +87,6 @@ export interface AgentRunOptions {
   silenceTimeoutMs: number;
   logger: Logger;
   sessionToken: string;
-  postAttributes?: PostAttributesFn;
 }
 
 export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
@@ -221,7 +215,6 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     cliRunner,
     silenceTimeoutMs,
     logger,
-    postAttributes,
     sessionToken,
   } = opts;
 
@@ -353,33 +346,6 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       logger.warn({ runId }, "teardownCli: child did not exit within 5s of SIGKILL");
     }
     teardownResolveRef.fn();
-  };
-
-  const post = postAttributes ?? defaultPostAttributes;
-  const writebackUrl = callbackUrl
-    ? buildAttributesWritebackUrl(callbackUrl, runId)
-    : "";
-  const accumulatedWriteback: Record<string, unknown> = {};
-  const onAttributesSet = async (
-    delta: Record<string, unknown>,
-  ): Promise<{ status: number }> => {
-    if (!writebackUrl) {
-      logger.warn({ runId }, "attributes_set called but no callback_url; dropping");
-      return { status: 503 };
-    }
-    try {
-      const result = await post(writebackUrl, { delta }, cancelToken);
-      if (result.status >= 200 && result.status < 300) {
-        Object.assign(accumulatedWriteback, delta);
-      }
-      return result;
-    } catch (e) {
-      logger.error(
-        { runId, error: String(e) },
-        "attributes writeback POST failed",
-      );
-      return { status: 502 };
-    }
   };
 
   const maxSchemaCorrections =
@@ -520,7 +486,6 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       schemaCorrectionFailures = 0;
 
       const effectiveBag: Record<string, unknown> = {
-        ...accumulatedWriteback,
         ...(attributesDelta ?? {}),
         session_token: runId,
       };
@@ -604,7 +569,6 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         });
       });
     },
-    onAttributesSet,
   });
 
   let hostServers: CliToolConfig[];

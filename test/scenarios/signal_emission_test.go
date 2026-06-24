@@ -114,10 +114,10 @@ func TestSignalEmission_ParkSnooze(t *testing.T) {
 		"worker did not reach parked")
 
 	rows := readEventsForNode(t, h, n.ID)
-	require.True(t, hasEventKind(rows, "terminal/park/snooze"),
-		"expected one rimsky_events row with kind=terminal/park/snooze; got kinds=%v", kindsOf(rows))
+	require.True(t, hasEventKind(rows, "transient/park/snooze"),
+		"expected one rimsky_events row with kind=transient/park/snooze; got kinds=%v", kindsOf(rows))
 	for _, e := range rows {
-		if e.KindRaw != "terminal/park/snooze" {
+		if e.KindRaw != "transient/park/snooze" {
 			continue
 		}
 		require.NotNil(t, e.Payload["resume_at"], "park payload should carry resume_at")
@@ -127,6 +127,82 @@ func TestSignalEmission_ParkSnooze(t *testing.T) {
 		case time.Time:
 			require.False(t, v.IsZero(), "resume_at time should be non-zero")
 		}
+		break
+	}
+}
+
+func TestSignalEmission_TerminalErrorCarriesAttributesDelta(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	h.Stub.WhenType("worker").
+		Error("foo", map[string]any{"why": "nope"}).
+		AttributesDelta(map[string]any{"retry_count": 3.0, "last_class": "stub/foo"})
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "signal-error-attrs-delta", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{
+				Type:     "worker",
+				Executor: "stub",
+			}),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-signal-error-attrs-delta", map[string]any{})
+	n := h.FindNode(iid, "worker")
+	require.NotNil(t, n)
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 30*time.Second),
+		"worker should land in failed")
+
+	rows := readEventsForNode(t, h, n.ID)
+	require.True(t, hasEventKind(rows, "terminal/error/stub/foo"),
+		"expected terminal/error/stub/foo row; got kinds=%v", kindsOf(rows))
+	for _, e := range rows {
+		if e.KindRaw != "terminal/error/stub/foo" {
+			continue
+		}
+		delta, ok := e.Payload["attributes_delta"].(map[string]any)
+		require.True(t, ok,
+			"terminal/error.payload.attributes_delta should be a map; got %T (%+v)",
+			e.Payload["attributes_delta"], e.Payload)
+		require.Equal(t, "stub/foo", delta["last_class"],
+			"executor-supplied attributes_delta should ride the terminal/error signal payload")
+		require.Equal(t, 3.0, delta["retry_count"],
+			"executor-supplied attributes_delta should ride the terminal/error signal payload")
+		break
+	}
+}
+
+func TestSignalEmission_TransientParkAuditOnlyNoAttributesDelta(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	resume := time.Now().Add(1 * time.Hour)
+	h.Stub.WhenType("worker").
+		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "sleep-1h", resume).
+		AttributesDelta(map[string]any{"session_token": "abc-123"})
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "signal-park-no-attrs-delta", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-signal-park-no-attrs-delta", map[string]any{})
+	n := h.FindNode(iid, "worker")
+	require.NotNil(t, n)
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateParked, 30*time.Second),
+		"worker did not reach parked")
+
+	rows := readEventsForNode(t, h, n.ID)
+	require.True(t, hasEventKind(rows, "transient/park/snooze"),
+		"expected transient/park/snooze audit row; got kinds=%v", kindsOf(rows))
+	for _, e := range rows {
+		if e.KindRaw != "transient/park/snooze" {
+			continue
+		}
+		_, hasDelta := e.Payload["attributes_delta"]
+		require.False(t, hasDelta,
+			"transient/park/* signal payload must NOT carry attributes_delta — park is audit-only and the delta is merged to the per-run row directly; payload=%+v",
+			e.Payload)
 		break
 	}
 }

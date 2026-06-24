@@ -24,10 +24,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	rimskyattrs "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	rimskyscratch "github.com/rimsky-ai/rimsky-core/lib/graph/scratch"
 )
+
+var errUnauthorizedCallback = errors.New("callback: unauthorized")
 
 type callbackAckBody struct {
 	AckStatus         string  `json:"ack_status"`
@@ -127,17 +128,6 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	}
 	r := chi.NewRouter()
 	r.Post("/v1/callback/{async_ack_id}", c.handleCallback)
-	if c.Persist != nil {
-		r.Method(http.MethodPost, "/v1/runs/{run_id}/attributes", rimskyattrs.Handler(rimskyattrs.HandlerDeps{
-			Store: attributesStoreAdapter{
-				store: c.Persist,
-				queue: c.Queue,
-				clock: c.Clock,
-			},
-			Auth:   c.attributesAuth,
-			Logger: c.Logger,
-		}))
-	}
 	if c.Persist != nil && c.Queue != nil {
 		r.Method(http.MethodPost, "/v1/runs/{run_id}/scratch", rimskyscratch.Handler(rimskyscratch.HandlerDeps{
 			Writer: scratchStoreAdapter{
@@ -147,7 +137,7 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 				spillThreshold: c.BlobSpillThreshold,
 				logger:         c.Logger,
 			},
-			Auth:   c.attributesAuth,
+			Auth:   c.runTokenAuth,
 			Logger: c.Logger,
 		}))
 	}
@@ -211,12 +201,11 @@ type asyncCallbackError struct {
 }
 
 type asyncCallbackPark struct {
-	Reason          string         `json:"reason,omitempty"`
-	ReasonNote      string         `json:"reason_note,omitempty"`
-	ReasonLabel     string         `json:"reason_label,omitempty"`
-	ResumeAt        string         `json:"resume_at,omitempty"`
-	AttributesDelta map[string]any `json:"attributes_delta,omitempty"`
-	Tags            []string       `json:"tags,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
+	ReasonNote  string   `json:"reason_note,omitempty"`
+	ReasonLabel string   `json:"reason_label,omitempty"`
+	ResumeAt    string   `json:"resume_at,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
 	// @concept: executor
 	Scratch []byte `json:"scratch,omitempty"`
 }
@@ -395,7 +384,6 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 			ParkReason:      parkReasonFromStorageForm(body.Park.Reason),
 			ParkReasonNote:  body.Park.ReasonNote,
 			ParkReasonLabel: body.Park.ReasonLabel,
-			AttributesDel:   body.Park.AttributesDelta,
 			Tags:            dedupTagsRT(body.Park.Tags),
 			Scratch:         body.Park.Scratch,
 		}
@@ -520,43 +508,43 @@ func ackStatusForState(s cascade.NodeState) string {
 	}
 }
 
-func (c *CallbackServer) attributesAuth(token string, runID shared.UUID) error {
+func (c *CallbackServer) runTokenAuth(token string, runID shared.UUID) error {
 	parts := strings.SplitN(token, ":", 2)
 	if len(parts) != 2 {
-		c.Logger.Warn("attributesAuth: token has no ':' separator",
+		c.Logger.Warn("runTokenAuth: token has no ':' separator",
 			"run_id", runID.String(),
 			"token_len", len(token))
-		return rimskyattrs.ErrUnauthorizedCallback
+		return errUnauthorizedCallback
 	}
 	tokSupervisor, tokDispatch := parts[0], parts[1]
 	if tokSupervisor == "" || tokDispatch == "" {
-		c.Logger.Warn("attributesAuth: empty supervisor or dispatch segment",
+		c.Logger.Warn("runTokenAuth: empty supervisor or dispatch segment",
 			"run_id", runID.String(),
 			"token_supervisor_len", len(tokSupervisor),
 			"token_dispatch_len", len(tokDispatch))
-		return rimskyattrs.ErrUnauthorizedCallback
+		return errUnauthorizedCallback
 	}
 	if c.SupervisorID != "" && tokSupervisor != c.SupervisorID {
-		c.Logger.Warn("attributesAuth: supervisor id mismatch",
+		c.Logger.Warn("runTokenAuth: supervisor id mismatch",
 			"run_id", runID.String(),
 			"token_supervisor", truncForLog(tokSupervisor, 64),
 			"token_supervisor_len", len(tokSupervisor),
 			"server_supervisor", c.SupervisorID)
-		return rimskyattrs.ErrUnauthorizedCallback
+		return errUnauthorizedCallback
 	}
 	dispatchID, err := uuid.Parse(tokDispatch)
 	if err != nil {
-		c.Logger.Warn("attributesAuth: dispatch id parse failed",
+		c.Logger.Warn("runTokenAuth: dispatch id parse failed",
 			"run_id", runID.String(),
 			"token_dispatch_len", len(tokDispatch),
 			"error", err.Error())
-		return rimskyattrs.ErrUnauthorizedCallback
+		return errUnauthorizedCallback
 	}
 	if dispatchID != runID {
-		c.Logger.Warn("attributesAuth: run id mismatch",
+		c.Logger.Warn("runTokenAuth: run id mismatch",
 			"url_run_id", runID.String(),
 			"token_dispatch_id", dispatchID.String())
-		return rimskyattrs.ErrUnauthorizedCallback
+		return errUnauthorizedCallback
 	}
 	return nil
 }
@@ -566,67 +554,6 @@ func truncForLog(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
-}
-
-type attributesStoreAdapter struct {
-	store persistence.Tables
-	queue persistence.Queue
-	clock shared.Clock
-}
-
-func (a attributesStoreAdapter) now() time.Time {
-	if a.clock != nil {
-		return a.clock.Now().UTC()
-	}
-	return time.Now().UTC()
-}
-
-func (a attributesStoreAdapter) GetByRun(ctx context.Context, runID shared.UUID) (*rimskyattrs.Row, error) {
-	var row *persistence.NodeAttributesRow
-	if err := a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := a.store.NodeAttributes().GetByRun(ctx, runID, tx)
-		row = r
-		return err
-	}); err != nil {
-		return nil, err
-	}
-	if row == nil {
-		return nil, nil
-	}
-	return &rimskyattrs.Row{
-		RunID:     row.NodeRunID,
-		NodeID:    row.NodeID,
-		Data:      row.Data,
-		UpdatedAt: row.UpdatedAt,
-	}, nil
-}
-
-func (a attributesStoreAdapter) Upsert(ctx context.Context, runID, nodeID shared.UUID, data map[string]any) error {
-	return a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := a.store.NodeAttributes().Upsert(ctx, runID, nodeID, data, tx); err != nil {
-			return err
-		}
-		if a.queue != nil {
-			if _, err := a.queue.BumpLastProgressAt(ctx, tx, runID, a.now()); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-func (a attributesStoreAdapter) MergeDelta(ctx context.Context, runID shared.UUID, delta map[string]any) error {
-	return a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := a.store.NodeAttributes().MergeDelta(ctx, runID, delta, tx); err != nil {
-			return err
-		}
-		if a.queue != nil {
-			if _, err := a.queue.BumpLastProgressAt(ctx, tx, runID, a.now()); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }
 
 // @concept: executor

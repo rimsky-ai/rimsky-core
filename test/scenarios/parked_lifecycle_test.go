@@ -59,8 +59,8 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	t.Logf("parked row: phase=%s resume_at=%v (now=%v, resume_at-now=%v)",
 		phase, *resumeAtStored, time.Now(), time.Until(*resumeAtStored))
 
-	require.True(t, h.WaitForEventKind(worker.ID, "terminal/park/snooze", 5*time.Second),
-		"terminal/park/snooze signal event should be recorded")
+	require.True(t, h.WaitForEventKind(worker.ID, "transient/park/snooze", 5*time.Second),
+		"transient/park/snooze signal event should be recorded")
 
 	var parkSettlingSignal string
 	h.QueryRowSQL(
@@ -70,8 +70,8 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 		[]any{worker.ID.String()},
 		&parkSettlingSignal,
 	)
-	require.Equal(t, "terminal/park/snooze", parkSettlingSignal,
-		"park leaf-run lineage row should carry settling_signal_type=terminal/park/snooze")
+	require.Equal(t, "transient/park/snooze", parkSettlingSignal,
+		"park leaf-run lineage row should carry settling_signal_type=transient/park/snooze")
 
 	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
 		"sweep should wake the parked node when resume_at elapses")

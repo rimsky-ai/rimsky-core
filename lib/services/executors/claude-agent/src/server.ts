@@ -11,11 +11,11 @@ import type { CallbackServerHandle } from "./internal-mcp-server.js";
 import type { CliRunner } from "./cli-runner.js";
 import { createClaudeCliRunner } from "./cli-runner.js";
 import type { CliAuthConfig } from "./cli-env.js";
-import type { PostAttributesFn } from "./attributes-tools.js";
 import type { Observability, TraceEvent } from "./observability.js";
 import { expectedAttributesSchemaBytes, resolveDeclaredTags, declaredErrorClasses } from "./expected-attributes-schema.js";
 import { CliConfigError, isCliConfigError } from "./cli-config-error.js";
 import type { McpCatalog } from "./mcp-catalog.js";
+import { sessionTokenFromScratch, sessionTokenToScratchBase64 } from "./session-token-scratch.js";
 
 export interface GrpcServerConfig {
   host: string;
@@ -28,7 +28,6 @@ export interface GrpcServerConfig {
   mcpCatalog?: McpCatalog;
   mcpAllowInline?: boolean;
   postCallback?: PostCallbackFn;
-  postAttributes?: PostAttributesFn;
   observability?: Observability;
   observabilityHttpBridgeUrl?: string;
 }
@@ -57,6 +56,7 @@ interface ExecuteRequest {
   prior_dispatch_id?: string;
   prior_dispatch_disposition?: string;
   run_scope_id?: string;
+  scratch?: Buffer | Uint8Array;
 }
 
 interface OutcomeWire {
@@ -314,8 +314,7 @@ async function runAndCallback(
       callback: config.callback,
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
-      postAttributes: config.postAttributes,
-      sessionToken: stringOr(attributes.session_token, ""),
+      sessionToken: sessionTokenFromScratch(req.scratch) ?? stringOr(attributes.session_token, ""),
     });
     const body = outcomeToCallbackBody(outcome);
     if (config.observability) {
@@ -407,12 +406,8 @@ export function outcomeToCallbackBody(
     if (outcome.resumeAt) {
       parkBody.resume_at = outcome.resumeAt.toISOString();
     }
-    const delta: Record<string, unknown> = { ...(outcome.attributesDelta ?? {}) };
     if (outcome.sessionToken && outcome.sessionToken.length > 0) {
-      delta.session_token = outcome.sessionToken;
-    }
-    if (Object.keys(delta).length > 0) {
-      parkBody.attributes_delta = delta;
+      parkBody.scratch = sessionTokenToScratchBase64(outcome.sessionToken);
     }
     return { park: parkBody };
   }

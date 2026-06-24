@@ -646,7 +646,7 @@ describe("ExecutorObservability.Capabilities declared_tags (gRPC surface)", () =
 });
 
 describe("outcomeToCallbackBody park outcome shape", () => {
-  it("merges sessionToken into attributes_delta on Park (no top-level session_token)", () => {
+  it("encodes sessionToken into scratch on Park (Park does not carry attributes_delta)", () => {
     const outcome: AgentOutcome = {
       kind: "park_requested",
       reason: "snooze",
@@ -663,11 +663,12 @@ describe("outcomeToCallbackBody park outcome shape", () => {
     expect(park.resume_at).toBe("2026-06-17T12:00:00.000Z");
     expect(park.session_token).toBeUndefined();
     expect(park.payload).toBeUndefined();
-    const delta = park.attributes_delta as Record<string, unknown>;
-    expect(delta.session_token).toBe("sess-abc");
+    expect(park.attributes_delta).toBeUndefined();
+    expect(typeof park.scratch).toBe("string");
+    expect(Buffer.from(park.scratch as string, "base64").toString("utf8")).toBe("sess-abc");
   });
 
-  it("omits resume_at when null and attributes_delta when both sessionToken and delta are empty", () => {
+  it("omits resume_at when null and scratch when sessionToken is empty", () => {
     const outcome: AgentOutcome = {
       kind: "park_requested",
       reason: "await_callback",
@@ -682,5 +683,6 @@ describe("outcomeToCallbackBody park outcome shape", () => {
     expect("attributes_delta" in park).toBe(false);
     expect("payload" in park).toBe(false);
     expect("session_token" in park).toBe(false);
+    expect("scratch" in park).toBe(false);
   });
 });

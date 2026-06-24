@@ -14,6 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
@@ -366,4 +367,58 @@ func TestPropagateFromChildState_NestedTree(t *testing.T) {
 	if rootRow.SettlingSignalType == nil || *rootRow.SettlingSignalType != "terminal/success" {
 		t.Fatalf("expected root settling_signal_type=terminal/success; got %v", rootRow.SettlingSignalType)
 	}
+}
+
+func TestParentSettlementSignal_FailedArmIsSchemaConformant(t *testing.T) {
+	sig := parentSettlementSignal(
+		cascade.NodeStateFailed,
+		signalpkg.TypePath("terminal/error/aggregate/strict_failed"),
+		false,
+	)
+	if sig.Type != "terminal/error/aggregate/strict_failed" {
+		t.Fatalf("type: got %q", sig.Type)
+	}
+	for _, k := range []string{"error_class", "error_payload", "attempt", "retries_so_far", "attributes_delta", "tags"} {
+		if _, ok := sig.Payload[k]; !ok {
+			t.Fatalf("payload missing schema key %q; payload=%+v", k, sig.Payload)
+		}
+	}
+	if sig.Payload["error_class"] != "aggregate/strict_failed" {
+		t.Errorf("error_class: got %v", sig.Payload["error_class"])
+	}
+}
+
+func TestParentSettlementSignal_SuccessArmIsSchemaConformant(t *testing.T) {
+	sig := parentSettlementSignal(
+		cascade.NodeStateFresh,
+		signalpkg.TypePath("terminal/success"),
+		true,
+	)
+	if sig.Type != "terminal/success" {
+		t.Fatalf("type: got %q", sig.Type)
+	}
+	for _, k := range []string{"changed", "attributes_delta", "change_summary", "tags"} {
+		if _, ok := sig.Payload[k]; !ok {
+			t.Fatalf("payload missing schema key %q; payload=%+v", k, sig.Payload)
+		}
+	}
+	if sig.Payload["changed"] != true {
+		t.Errorf("changed: got %v", sig.Payload["changed"])
+	}
+	if sig.Payload["change_summary"] != "aggregated_settlement" {
+		t.Errorf("change_summary: got %v", sig.Payload["change_summary"])
+	}
+}
+
+func TestParentSettlementSignal_ParkedStatePanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic for unreachable Parked state")
+		}
+	}()
+	_ = parentSettlementSignal(
+		cascade.NodeStateParked,
+		signalpkg.TypePath("transient/park/await_callback"),
+		false,
+	)
 }

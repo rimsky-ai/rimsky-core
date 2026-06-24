@@ -20,33 +20,26 @@ type TerminalSuccessPayload struct {
 
 // @concept: terminal-tag
 type TerminalErrorPayload struct {
-	ErrorClass   string         `json:"error_class"`
-	ErrorPayload map[string]any `json:"error_payload,omitempty"`
-	Attempt      int            `json:"attempt"`
-	RetriesSoFar int            `json:"retries_so_far"`
-	Tags         []string       `json:"tags,omitempty"`
+	ErrorClass      string         `json:"error_class"`
+	ErrorPayload    map[string]any `json:"error_payload,omitempty"`
+	Attempt         int            `json:"attempt"`
+	RetriesSoFar    int            `json:"retries_so_far"`
+	AttributesDelta map[string]any `json:"attributes_delta,omitempty"`
+	Tags            []string       `json:"tags,omitempty"`
 }
 
-// @concept: terminal-tag
-type TerminalParkSnoozePayload struct {
+type TransientParkSnoozePayload struct {
 	ResumeAt          time.Time `json:"resume_at"`
 	ParkedReasonLabel string    `json:"parked_reason_label,omitempty"`
 	ParkedReasonNote  string    `json:"parked_reason_note,omitempty"`
 	Tags              []string  `json:"tags,omitempty"`
 }
 
-// @concept: terminal-tag
-type TerminalParkAwaitCallbackPayload struct {
+type TransientParkAwaitCallbackPayload struct {
 	ResumeAt          *time.Time `json:"resume_at,omitempty"`
 	ParkedReasonLabel string     `json:"parked_reason_label,omitempty"`
 	ParkedReasonNote  string     `json:"parked_reason_note,omitempty"`
 	Tags              []string   `json:"tags,omitempty"`
-}
-
-type TerminalInfraPayload struct {
-	Reason          string         `json:"reason"`
-	LastHeartbeatAt *time.Time     `json:"last_heartbeat_at,omitempty"`
-	Details         map[string]any `json:"details,omitempty"`
 }
 
 type TransientRetryPayload struct {
@@ -69,6 +62,61 @@ type AttributeChangedPayload struct {
 	OldValue any    `json:"old_value,omitempty"`
 }
 
+func BuildTerminalErrorSignal(errorClass string, errorPayload map[string]any, attempt int, retriesSoFar int, attributesDelta map[string]any, tags []string) Signal {
+	p := TerminalErrorPayload{
+		ErrorClass:      errorClass,
+		ErrorPayload:    errorPayload,
+		Attempt:         attempt,
+		RetriesSoFar:    retriesSoFar,
+		AttributesDelta: orEmptyMap(attributesDelta),
+		Tags:            tags,
+	}
+	return Signal{
+		Type:    TypePath("terminal/error/" + errorClass),
+		Payload: terminalErrorPayloadToMap(p),
+	}
+}
+
+func terminalErrorPayloadToMap(p TerminalErrorPayload) map[string]any {
+	return map[string]any{
+		"error_class":      p.ErrorClass,
+		"error_payload":    p.ErrorPayload,
+		"attempt":          p.Attempt,
+		"retries_so_far":   p.RetriesSoFar,
+		"attributes_delta": p.AttributesDelta,
+		"tags":             p.Tags,
+	}
+}
+
+func BuildTerminalSuccessSignal(changed bool, attributesDelta map[string]any, changeSummary string, tags []string) Signal {
+	p := TerminalSuccessPayload{
+		Changed:         changed,
+		AttributesDelta: orEmptyMap(attributesDelta),
+		ChangeSummary:   changeSummary,
+		Tags:            tags,
+	}
+	return Signal{
+		Type:    TypePath("terminal/success"),
+		Payload: terminalSuccessPayloadToMap(p),
+	}
+}
+
+func terminalSuccessPayloadToMap(p TerminalSuccessPayload) map[string]any {
+	return map[string]any{
+		"changed":          p.Changed,
+		"attributes_delta": p.AttributesDelta,
+		"change_summary":   p.ChangeSummary,
+		"tags":             p.Tags,
+	}
+}
+
+func orEmptyMap(m map[string]any) map[string]any {
+	if m == nil {
+		return map[string]any{}
+	}
+	return m
+}
+
 func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
 	s := string(t)
 	if s == "" || strings.HasSuffix(s, "*") {
@@ -77,16 +125,14 @@ func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
 	switch {
 	case s == "terminal/success":
 		return reflect.TypeOf(TerminalSuccessPayload{}), true
-	case s == "terminal/park/snooze":
-		return reflect.TypeOf(TerminalParkSnoozePayload{}), true
-	case s == "terminal/park/await_callback":
-		return reflect.TypeOf(TerminalParkAwaitCallbackPayload{}), true
+	case s == "transient/park/snooze":
+		return reflect.TypeOf(TransientParkSnoozePayload{}), true
+	case s == "transient/park/await_callback":
+		return reflect.TypeOf(TransientParkAwaitCallbackPayload{}), true
 	case s == "transient/await_async":
 		return reflect.TypeOf(TransientAwaitAsyncPayload{}), true
 	case strings.HasPrefix(s, "terminal/error/"):
 		return reflect.TypeOf(TerminalErrorPayload{}), true
-	case strings.HasPrefix(s, "terminal/infra/"):
-		return reflect.TypeOf(TerminalInfraPayload{}), true
 	case strings.HasPrefix(s, "transient/retry/"):
 		return reflect.TypeOf(TransientRetryPayload{}), true
 	case strings.HasPrefix(s, "attribute/") && strings.HasSuffix(s, "/changed"):

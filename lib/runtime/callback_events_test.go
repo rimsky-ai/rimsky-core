@@ -29,13 +29,21 @@ func TestParseAsyncCallback_Error_AttributesDeltaAndTags(t *testing.T) {
 	require.Equal(t, "s", term.AttributesDel["session_token"])
 }
 
-func TestParseAsyncCallback_Park_AttributesDeltaAndTags(t *testing.T) {
+func TestParseAsyncCallback_Park_TagsOnly(t *testing.T) {
+	raw := []byte(`{"park":{"reason":"await_callback","tags":["await"]}}`)
+	term, err := parseAsyncCallback(raw)
+	require.NoError(t, err)
+	require.Equal(t, terminalKindPark, term.Kind)
+	require.Equal(t, []string{"await"}, term.Tags)
+}
+
+func TestParseAsyncCallback_Park_IgnoresAttributesDelta(t *testing.T) {
 	raw := []byte(`{"park":{"reason":"await_callback","attributes_delta":{"session_token":"s"},"tags":["await"]}}`)
 	term, err := parseAsyncCallback(raw)
 	require.NoError(t, err)
 	require.Equal(t, terminalKindPark, term.Kind)
 	require.Equal(t, []string{"await"}, term.Tags)
-	require.Equal(t, "s", term.AttributesDel["session_token"])
+	require.Nil(t, term.AttributesDel, "Park outcomes do not carry attributes_delta; the field is parsed-but-discarded on the JSON wire (proto reserved on the gRPC wire)")
 }
 
 func TestParseAsyncCallback_RejectsLegacyTypeDiscriminator(t *testing.T) {

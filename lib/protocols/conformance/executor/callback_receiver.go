@@ -183,13 +183,11 @@ func mapPark(m map[string]any) *genv1.Outcome {
 			reasonEnum = genv1.ParkReason(v)
 		}
 	}
-	delta, _ := structpb.NewStruct(asMap(m["attributes_delta"]))
 	p := &genv1.Park{
-		Reason:          reasonEnum,
-		ReasonNote:      asString(m["reason_note"]),
-		ReasonLabel:     asString(m["reason_label"]),
-		AttributesDelta: delta,
-		Tags:            asStringSlice(m["tags"]),
+		Reason:      reasonEnum,
+		ReasonNote:  asString(m["reason_note"]),
+		ReasonLabel: asString(m["reason_label"]),
+		Tags:        asStringSlice(m["tags"]),
 	}
 	if rawResume := asString(m["resume_at"]); rawResume != "" {
 		if pt, err := time.Parse(time.RFC3339, rawResume); err == nil {
