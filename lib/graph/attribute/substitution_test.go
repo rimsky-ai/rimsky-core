@@ -497,6 +497,112 @@ func TestSubstitute_ChildPartitionKey(t *testing.T) {
 	})
 }
 
+func TestSubstitute_Env(t *testing.T) {
+	t.Parallel()
+
+	envMap := map[string]string{
+		"ZONEBASE_AGENT_MCP_TOKEN": "shhh-bearer",
+		"PUBLIC_API_URL":           "https://api.example.com",
+		"EMPTY_BUT_SET":            "",
+	}
+	ctxWithEnv := ResolveContext{
+		EnvLookup: func(name string) (string, bool) {
+			v, ok := envMap[name]
+			return v, ok
+		},
+	}
+
+	t.Run("whole-directive resolves to env value", func(t *testing.T) {
+		got, err := Substitute("{{env.ZONEBASE_AGENT_MCP_TOKEN}}", ctxWithEnv)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "shhh-bearer" {
+			t.Fatalf("got %q, want shhh-bearer", got)
+		}
+	})
+
+	t.Run("embedded form concatenates", func(t *testing.T) {
+		got, err := Substitute("Bearer {{env.ZONEBASE_AGENT_MCP_TOKEN}}", ctxWithEnv)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "Bearer shhh-bearer" {
+			t.Fatalf("got %q, want %q", got, "Bearer shhh-bearer")
+		}
+	})
+
+	t.Run("empty-but-set value resolves to empty string", func(t *testing.T) {
+		got, err := Substitute("{{env.EMPTY_BUT_SET}}", ctxWithEnv)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("got %q, want empty string", got)
+		}
+	})
+
+	t.Run("unset var is ErrMissingSource", func(t *testing.T) {
+		_, err := Substitute("{{env.NOT_SET}}", ctxWithEnv)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+		var missing *ErrMissingSource
+		if !errors.As(err, &missing) {
+			t.Fatalf("want ErrMissingSource type, got %T", err)
+		}
+		if !strings.Contains(missing.Reason, "NOT_SET") {
+			t.Fatalf("reason should name the var; got %q", missing.Reason)
+		}
+	})
+
+	t.Run("lenient marker yields empty in embedded mode", func(t *testing.T) {
+		got, err := Substitute("prefix={{env.NOT_SET?}}/suffix", ctxWithEnv)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "prefix=/suffix" {
+			t.Fatalf("got %q, want prefix=/suffix", got)
+		}
+	})
+
+	t.Run("literal fallback resolves to literal on missing", func(t *testing.T) {
+		got, err := Substitute(`{{env.NOT_SET | "default-token"}}`, ctxWithEnv)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "default-token" {
+			t.Fatalf("got %q, want default-token", got)
+		}
+	})
+
+	t.Run("malformed env directive — no name", func(t *testing.T) {
+		_, err := Substitute("{{env.}}", ctxWithEnv)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("malformed env directive — invalid name", func(t *testing.T) {
+		_, err := Substitute("{{env.has-dash}}", ctxWithEnv)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+}
+
+func TestSubstitute_Env_NilLookupFallsBackToOsLookupEnv(t *testing.T) {
+	t.Setenv("RIMSKY_SUBSTITUTION_ENV_TEST", "from-os")
+	got, err := Substitute("{{env.RIMSKY_SUBSTITUTION_ENV_TEST}}", ResolveContext{})
+	if err != nil {
+		t.Fatalf("Substitute: %v", err)
+	}
+	if got != "from-os" {
+		t.Fatalf("got %q, want from-os", got)
+	}
+}
+
 func TestSubstituteValue_WholeDirective(t *testing.T) {
 	t.Parallel()
 	ctx := ResolveContext{

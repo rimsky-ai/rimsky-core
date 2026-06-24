@@ -869,13 +869,6 @@ func makeStatefulCounterAcq(fx carryForwardFixture, scopeID shared.UUID) *acquis
 
 // @story: attribute-carry-forward
 // @concept: attribute
-// Carry-forward semantics are now snapshotted at run-row creation by
-// SnapshotBagForNewRun (driven by Queue.EnqueueInTx and
-// Nodes.CreateNonCascadeStale). The conformance suite
-// testCreateNonCascadeStaleCarriesForward is the authoritative test for
-// same-scope carry-forward and cross-scope isolation; resolveAttributes
-// now simply loads the snapshot and fills claim refs.
-//
 // @decision: walker-rule-per-sender-node
 // @decision: non-cascade-direct-to-stale
 func TestResolveAttributes_LoadsSnapshotBag(t *testing.T) {
@@ -917,10 +910,6 @@ func TestResolveAttributes_LoadsSnapshotBag(t *testing.T) {
 
 // @story: attribute-carry-forward
 // @concept: attribute
-// resolveAttributes refuses to dispatch when no snapshot bag exists for
-// the run id — the runtime invariant is that gate-eval (cascade) or
-// row-creation (non-cascade) must have populated it before the
-// dispatcher claims the row.
 func TestResolveAttributes_MissingSnapshotIsInvariantViolation(t *testing.T) {
 	ctx := context.Background()
 	fx := seedCarryForwardFixture(t, ctx)

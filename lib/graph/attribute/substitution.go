@@ -4,25 +4,32 @@
 
 // @plumbline:allow-docstrings
 //
-// Five recognized source kinds:
+// Six recognized source kinds:
 //
 //   - {{claim.<alias>.<address|claim_scope|payload[.<field>]>}}
 //   - {{params.<key>[.<sub-field>...]}}
 //   - {{nodes.<node-type>.attribute[.<field>...]}}
 //   - {{messages.<message-type>[.<field>...]}}
 //   - {{child.partition_key}}
+//   - {{env.<VAR_NAME>}}
 //
 // `messages.<type>.<field>` is sugar for `nodes.<type>.attribute.<field>`
 // — both resolve through the same `Deps` lookup. The only difference is
 // the registration-time validation: a `messages.<type>` ref requires
 // `<type>` to be declared in the template's `messages:` registry, where
 // `nodes.<type>` requires `<type>` to be declared as a node-type.
+//
+// `env.<VAR_NAME>` reads from the supervisor process's environment at
+// dispatch time. Names must match `[A-Za-z_][A-Za-z0-9_]*`. Unlike the
+// graph-coupled kinds (nodes / messages) it induces no subscription
+// edge; like params/claim/child it resolves against non-graph context.
 package attributes
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -38,6 +45,10 @@ type ResolveContext struct {
 
 	// @concept: message-schema
 	RegistryDeclaredTypes map[string]struct{}
+
+	// EnvLookup overrides the host-environment reader for {{env.<VAR>}}
+	// resolution. Nil falls back to os.LookupEnv.
+	EnvLookup func(name string) (string, bool)
 }
 
 type ErrMissingSource struct {
@@ -169,9 +180,33 @@ func resolveDirectiveValueRaw(directive string, ctx ResolveContext) (any, error)
 		return resolveSubstitutionValue(directive, parts[0], parts[1:], ctx)
 	case "child":
 		return resolveChildValue(directive, parts[1:], ctx)
+	case "env":
+		return resolveEnvValue(directive, parts[1:], ctx)
 	default:
 		return nil, &ErrMissingSource{Directive: directive, Reason: "unknown source kind " + parts[0]}
 	}
+}
+
+var envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// @decision: env-as-substitution-source-kind
+func resolveEnvValue(directive string, rest []string, ctx ResolveContext) (any, error) {
+	if len(rest) != 1 || rest[0] == "" {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "env directive must be env.<VAR_NAME>"}
+	}
+	name := rest[0]
+	if !envVarNameRe.MatchString(name) {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "env var name must match [A-Za-z_][A-Za-z0-9_]*"}
+	}
+	lookup := ctx.EnvLookup
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	val, ok := lookup(name)
+	if !ok {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "env var " + name + " is not set"}
+	}
+	return val, nil
 }
 
 func parseFallbackLiteral(raw string) (any, error) {

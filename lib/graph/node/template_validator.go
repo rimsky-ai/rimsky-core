@@ -46,7 +46,9 @@ var anyBraceRe = regexp.MustCompile(`\{[^{}]*\}`)
 
 var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
-var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|child|messages)\.(.+)$`)
+var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|child|messages|env)\.(.+)$`)
+
+var envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // @concept: template
 type RefValidationMode int
@@ -1460,7 +1462,7 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 	if bodyMatch == nil {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: path,
-			Msg:  fmt.Sprintf("source directive %q must start with claim.|params.|nodes.|messages.|child.", body),
+			Msg:  fmt.Sprintf("source directive %q must start with claim.|params.|nodes.|messages.|child.|env.", body),
 		})
 		return
 	}
@@ -1563,6 +1565,13 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 				Msg:  fmt.Sprintf("messages directive %q has an empty trailing segment", body),
 			})
 		}
+	case "env":
+		if len(parts) != 1 || !envVarNameRe.MatchString(parts[0]) {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("env directive %q must be env.<VAR_NAME> where the name matches [A-Za-z_][A-Za-z0-9_]*", body),
+			})
+		}
 	default:
 		res.Errors = append(res.Errors, ValidationError{
 			Path: path,
@@ -1601,7 +1610,7 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], messages.<type>[.<field>], or child.partition_key)", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], messages.<type>[.<field>], child.partition_key, or env.<VAR_NAME>)", body),
 			})
 		}
 	}

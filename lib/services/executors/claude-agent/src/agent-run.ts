@@ -16,7 +16,6 @@ import {
   resolveCatalogServer,
 } from "./mcp-catalog.js";
 import { CliConfigError } from "./cli-config-error.js";
-import { resolveHeaderEnvRefs } from "./env-refs.js";
 import { detectRateLimit } from "./rate-limit.js";
 import { classifyAgentError } from "./error-classify.js";
 import { verifyRequiredSignoffs } from "./signoff.js";
@@ -581,11 +580,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       catalogTeardowns,
       logger,
     );
-    hostServers = resolved.tools.map((tool) =>
-      tool.kind === "mcp-http"
-        ? { ...tool, headers: resolveHeaderEnvRefs(tool.headers) }
-        : tool,
-    );
+    hostServers = resolved.tools;
     hostAllowed = resolved.allowedTools;
   } catch (e) {
     await tearDownCatalogServers();
