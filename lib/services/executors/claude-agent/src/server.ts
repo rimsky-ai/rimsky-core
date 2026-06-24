@@ -23,7 +23,8 @@ export interface GrpcServerConfig {
   callback: CallbackServerHandle;
   cliRunner?: CliRunner;
   cliAuth?: CliAuthConfig;
-  silenceTimeoutMs: number;
+  silenceTimeoutMsDefault: number;
+  toolUseTimeoutMsDefault: number;
   logger: Logger;
   mcpCatalog?: McpCatalog;
   mcpAllowInline?: boolean;
@@ -312,7 +313,8 @@ async function runAndCallback(
       cancelToken: req.cancel_token ?? "",
       cliRunner,
       callback: config.callback,
-      silenceTimeoutMs: config.silenceTimeoutMs,
+      silenceTimeoutMsDefault: config.silenceTimeoutMsDefault,
+      toolUseTimeoutMsDefault: config.toolUseTimeoutMsDefault,
       logger,
       sessionToken: sessionTokenFromScratch(req.scratch) ?? stringOr(attributes.session_token, ""),
     });
@@ -515,6 +517,8 @@ export function parseCliConfig(v: unknown): {
   mcpServers?: HostMcpServerInput[];
   requiredSignoffs?: { publicKey: string; path?: string }[];
   maxSignoffAttempts?: number;
+  silenceTimeoutMs?: number;
+  toolUseTimeoutMs?: number;
 } | undefined {
   const cli = toRecord(v);
   if (Object.keys(cli).length === 0) return undefined;
@@ -541,7 +545,21 @@ export function parseCliConfig(v: unknown): {
   if (rs !== undefined) out!.requiredSignoffs = rs;
   const msa = numberOrUndefined(cli.max_signoff_attempts);
   if (msa !== undefined) out!.maxSignoffAttempts = msa;
+  const stm = nonNegativeIntOrUndefined(cli.silence_timeout_ms, "cli.silence_timeout_ms");
+  if (stm !== undefined) out!.silenceTimeoutMs = stm;
+  const tutm = nonNegativeIntOrUndefined(cli.tool_use_timeout_ms, "cli.tool_use_timeout_ms");
+  if (tutm !== undefined) out!.toolUseTimeoutMs = tutm;
   return Object.keys(out!).length > 0 ? out : undefined;
+}
+
+function nonNegativeIntOrUndefined(v: unknown, field: string): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || !Number.isInteger(v)) {
+    throw new CliConfigError(
+      `${field} must be a non-negative integer (ms), got ${typeof v === "number" ? v : typeof v}`,
+    );
+  }
+  return v;
 }
 
 function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {

@@ -20,6 +20,7 @@ import { detectRateLimit } from "./rate-limit.js";
 import { classifyAgentError } from "./error-classify.js";
 import { verifyRequiredSignoffs } from "./signoff.js";
 import { dispatchContextSnapshot } from "./token-registry.js";
+import { makeCliStreamParser } from "./cli-stream-parser.js";
 
 export type AgentOutcome =
   | {
@@ -72,6 +73,8 @@ export interface AgentRunOptions {
     mcpServers?: HostMcpServerInput[];
     requiredSignoffs?: { publicKey: string; path?: string }[];
     maxSignoffAttempts?: number;
+    silenceTimeoutMs?: number;
+    toolUseTimeoutMs?: number;
   };
   mcpCatalog?: McpCatalog;
   mcpAllowInline?: boolean;
@@ -83,7 +86,8 @@ export interface AgentRunOptions {
   cancelToken: string;
   cliRunner: CliRunner;
   callback: CallbackServerHandle;
-  silenceTimeoutMs: number;
+  silenceTimeoutMsDefault: number;
+  toolUseTimeoutMsDefault: number;
   logger: Logger;
   sessionToken: string;
 }
@@ -212,10 +216,15 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     callbackUrl,
     cancelToken,
     cliRunner,
-    silenceTimeoutMs,
+    silenceTimeoutMsDefault,
+    toolUseTimeoutMsDefault,
     logger,
     sessionToken,
   } = opts;
+  const silenceTimeoutMs =
+    cliConfig?.silenceTimeoutMs ?? silenceTimeoutMsDefault;
+  const toolUseTimeoutMs =
+    cliConfig?.toolUseTimeoutMs ?? toolUseTimeoutMsDefault;
 
   const cwdResolution = resolveCwd({
     claimProducers: claimProducers ?? {},
@@ -678,12 +687,26 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   handleRef = handle;
 
   let lastStdoutAt = Date.now();
+  const openToolUses = new Map<string, { name: string; startedAt: number }>();
+  let streamParser = makeCliStreamParser();
   const stderrCap = 16 * 1024;
   let stderrBuf = "";
-  handle.onStdout((chunk) => {
+  const handleStdoutChunk = (chunk: string, retry: boolean): void => {
     lastStdoutAt = Date.now();
-    logger.info({ runId, chunk: chunk.slice(0, 2000) }, "cli.stdout");
-  });
+    logger.info(
+      retry ? { runId, retry: true, chunk: chunk.slice(0, 2000) } : { runId, chunk: chunk.slice(0, 2000) },
+      "cli.stdout",
+    );
+    const events = streamParser.push(chunk);
+    for (const ev of events) {
+      if (ev.kind === "tool_use_start") {
+        openToolUses.set(ev.id, { name: ev.name, startedAt: lastStdoutAt });
+      } else {
+        openToolUses.delete(ev.id);
+      }
+    }
+  };
+  handle.onStdout((chunk) => handleStdoutChunk(chunk, false));
   handle.onStderr((chunk) => {
     logger.warn({ runId, chunk: chunk.slice(0, 2000) }, "cli.stderr");
     stderrBuf += chunk;
@@ -698,38 +721,67 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   });
   teardownResolveRef.fn = teardownResolve;
 
+  const oldestOpenToolUse = (): { id: string; name: string; startedAt: number } | null => {
+    let oldest: { id: string; name: string; startedAt: number } | null = null;
+    for (const [id, info] of openToolUses) {
+      if (oldest === null || info.startedAt < oldest.startedAt) {
+        oldest = { id, name: info.name, startedAt: info.startedAt };
+      }
+    }
+    return oldest;
+  };
+
+  const teardownAndResolve = async (outcome: AgentOutcome): Promise<void> => {
+    teardownInProgress = true;
+    try {
+      handle.sendSigterm();
+      let graceTimer: NodeJS.Timeout | null = null;
+      await Promise.race([
+        handle.waitExit(),
+        new Promise<void>((r) => {
+          graceTimer = setTimeout(r, 500);
+        }),
+      ]);
+      if (graceTimer) clearTimeout(graceTimer);
+      handle.sendSigkill();
+      let killTimer: NodeJS.Timeout | null = null;
+      await Promise.race([
+        handle.waitExit(),
+        new Promise<void>((r) => {
+          killTimer = setTimeout(r, 5000);
+        }),
+      ]);
+      if (killTimer) clearTimeout(killTimer);
+    } catch {
+    }
+    teardownResolve();
+    safeResolve(outcome);
+  };
+
   let silenceStopped = false;
   const silenceLoop = (async (): Promise<void> => {
+    if (silenceTimeoutMs <= 0 && toolUseTimeoutMs <= 0) return;
     const pollMs = 100;
     while (!resolved && !silenceStopped) {
       await new Promise((r) => setTimeout(r, pollMs));
       if (resolved || silenceStopped || teardownInProgress) return;
       const now = Date.now();
-      if (now - lastStdoutAt > silenceTimeoutMs) {
-        teardownInProgress = true;
-        try {
-          handle.sendSigterm();
-          let graceTimer: NodeJS.Timeout | null = null;
-          await Promise.race([
-            handle.waitExit(),
-            new Promise<void>((r) => {
-              graceTimer = setTimeout(r, 500);
-            }),
-          ]);
-          if (graceTimer) clearTimeout(graceTimer);
-          handle.sendSigkill();
-          let killTimer: NodeJS.Timeout | null = null;
-          await Promise.race([
-            handle.waitExit(),
-            new Promise<void>((r) => {
-              killTimer = setTimeout(r, 5000);
-            }),
-          ]);
-          if (killTimer) clearTimeout(killTimer);
-        } catch {
+      const oldest = oldestOpenToolUse();
+      if (oldest !== null) {
+        if (toolUseTimeoutMs > 0 && now - oldest.startedAt > toolUseTimeoutMs) {
+          await teardownAndResolve({
+            kind: "errored",
+            errorClass: "agent/tool_use_timeout",
+            payload: {
+              tool_use_id: oldest.id,
+              tool_name: oldest.name,
+              duration_ms: now - oldest.startedAt,
+            },
+          });
+          return;
         }
-        teardownResolve();
-        safeResolve({
+      } else if (silenceTimeoutMs > 0 && now - lastStdoutAt > silenceTimeoutMs) {
+        await teardownAndResolve({
           kind: "errored",
           errorClass: "agent/timeout",
           payload: { silence_duration_ms: now - lastStdoutAt },
@@ -849,13 +901,10 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           cwd,
         });
         handleRef = retryHandle;
-        retryHandle.onStdout((chunk) => {
-          lastStdoutAt = Date.now();
-          logger.info(
-            { runId, retry: true, chunk: chunk.slice(0, 2000) },
-            "cli.stdout",
-          );
-        });
+        streamParser = makeCliStreamParser();
+        openToolUses.clear();
+        lastStdoutAt = Date.now();
+        retryHandle.onStdout((chunk) => handleStdoutChunk(chunk, true));
         retryHandle.onStderr((chunk) => {
           logger.warn(
             { runId, retry: true, chunk: chunk.slice(0, 2000) },

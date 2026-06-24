@@ -106,7 +106,8 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
       cancelToken: "",
       cliRunner: fakeCli,
       callback: cb,
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       cliConfig: { handleRateLimits: true },
     });
@@ -147,7 +148,8 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
       cancelToken: "",
       cliRunner: fakeCli,
       callback: cb,
-      silenceTimeoutMs: 5_000,
+      silenceTimeoutMsDefault: 5_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       sessionToken: "session-from-prior-park",
     });
@@ -219,7 +221,8 @@ describe("J11 e2e — claude-agent corrective retries on schema failure", () => 
       cancelToken: "",
       cliRunner: fakeCli,
       callback: cb,
-      silenceTimeoutMs: 5_000,
+      silenceTimeoutMsDefault: 5_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       cliConfig: { maxSchemaCorrections: 2 },
     });
@@ -267,7 +270,8 @@ describe("J11 e2e — happy-path stub MCP dispatch", () => {
       cancelToken: "",
       cliRunner: fakeCli,
       callback: cb,
-      silenceTimeoutMs: 1000,
+      silenceTimeoutMsDefault: 1000,
+      toolUseTimeoutMsDefault: 0,
       logger,
     });
     expect(outcome.kind).toBe("complete");

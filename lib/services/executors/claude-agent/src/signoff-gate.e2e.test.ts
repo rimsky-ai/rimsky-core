@@ -141,7 +141,8 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
       port: 0,
       callback: cb,
       cliRunner: unsignedCli,
-      silenceTimeoutMs: 30_000,
+      silenceTimeoutMsDefault: 30_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       postCallback: async (url, body) => {
         posts.push({ url, body });
@@ -196,7 +197,8 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
       port: 0,
       callback: cb,
       cliRunner: signedCli,
-      silenceTimeoutMs: 30_000,
+      silenceTimeoutMsDefault: 30_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       postCallback: async (url, body) => {
         posts.push({ url, body });
@@ -334,7 +336,8 @@ describe("MCP catalog module/http-loopback transports (real HTTP bridge)", () =>
         port: 0,
         callback: cb,
         cliRunner: completingCli,
-        silenceTimeoutMs: 30_000,
+        silenceTimeoutMsDefault: 30_000,
+        toolUseTimeoutMsDefault: 0,
         logger,
         mcpCatalog: catalog,
         mcpAllowInline: false,

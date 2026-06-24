@@ -21,8 +21,20 @@ The agent runtime:
 - Starts a loopback HTTP/JSON-RPC callback endpoint (the "internal MCP" server)
   the Claude CLI subprocess can invoke via its MCP-HTTP transport.
 - Spawns the `claude` binary with the callback URL and a per-run token.
-- Watches for silence (no stdout within `silenceTimeoutMs`) and tears the
-  subprocess down as `Error{error_class: "silence_timeout"}`.
+- Watches the CLI's `stream-json` output for progress signals and tears the
+  subprocess down on two configurable deadlines, both disabled by default:
+  - **Silence** — no stdout bytes within `cli.silence_timeout_ms` AND no
+    tool_use is in flight. Emits `terminal/error/agent/timeout` with
+    `silence_duration_ms`.
+  - **Tool-in-flight** — the oldest open tool_use (started via an
+    `assistant`/`tool_use` event but not yet closed by a matching
+    `user`/`tool_result`) has been open longer than
+    `cli.tool_use_timeout_ms`. Emits `terminal/error/agent/tool_use_timeout`
+    with `tool_use_id`, `tool_name`, and `duration_ms`.
+  - While a tool_use is open the silence detector is **paused** (a long-running
+    `Bash` subprocess with zero CLI stdout is recognized as honest work, not
+    a hang). Once `tool_result` closes the tool_use, silence detection
+    resumes against the next stream event.
 - Releases the callback token when the run ends.
 
 ## Stub mode
@@ -78,7 +90,8 @@ will error.
 | `RIMSKY_EXECUTOR_HOST`           | `0.0.0.0`     | bind host                                                           |
 | `RIMSKY_EXECUTOR_STUB_MODE`      | unset         | `1` to enable stub mode                                             |
 | `RIMSKY_EXECUTOR_CLAUDE_BINARY`  | `claude`      | path to Claude CLI                                                   |
-| `RIMSKY_EXECUTOR_SILENCE_MS`     | `120000`      | silence-detection timeout                                            |
+| `RIMSKY_EXECUTOR_SILENCE_MS`     | `0`           | deployment-wide stdout-silence-detection timeout (ms). `0` = disabled. Overridden per-node by `cli.silence_timeout_ms`. |
+| `RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS` | `0`      | deployment-wide tool-in-flight timeout (ms). `0` = disabled. Overridden per-node by `cli.tool_use_timeout_ms`. |
 | `RIMSKY_EXECUTOR_CALLBACK_HOST`  | `127.0.0.1`   | host for the internal MCP callback URL advertised to the subprocess |
 | `ANTHROPIC_API_KEY`              | unset         | Anthropic API key (production). See auth precedence below.          |
 | `CLAUDE_CODE_OAUTH_TOKEN`        | unset         | Claude Code OAuth token (dev). See auth precedence below.           |

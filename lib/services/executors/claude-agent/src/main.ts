@@ -31,8 +31,12 @@ async function main(): Promise<void> {
   );
   const callbackHost =
     process.env.RIMSKY_EXECUTOR_CALLBACK_HOST ?? "127.0.0.1";
-  const silenceTimeoutMs = parseInt(
-    process.env.RIMSKY_EXECUTOR_SILENCE_MS ?? "120000",
+  const silenceTimeoutMsDefault = parseInt(
+    process.env.RIMSKY_EXECUTOR_SILENCE_MS ?? "0",
+    10,
+  );
+  const toolUseTimeoutMsDefault = parseInt(
+    process.env.RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS ?? "0",
     10,
   );
   const cliBinaryPath = process.env.RIMSKY_EXECUTOR_CLAUDE_BINARY ?? "";
@@ -104,7 +108,8 @@ async function main(): Promise<void> {
     port: grpcPort,
     callback,
     cliAuth,
-    silenceTimeoutMs,
+    silenceTimeoutMsDefault,
+    toolUseTimeoutMsDefault,
     logger,
     observability,
     observabilityHttpBridgeUrl,
@@ -118,7 +123,8 @@ async function main(): Promise<void> {
     port: httpPort,
     callback,
     cliAuth,
-    silenceTimeoutMs,
+    silenceTimeoutMsDefault,
+    toolUseTimeoutMsDefault,
     logger,
     observability,
     observabilityHttpBridgeUrl,

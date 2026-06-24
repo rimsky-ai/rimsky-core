@@ -143,7 +143,8 @@ describe("runAgent in real mode short-circuits on invalid cwd_from_store", () =>
       cancelToken: "",
       cliRunner: fakeCli,
       callback: cb,
-      silenceTimeoutMs: 1000,
+      silenceTimeoutMsDefault: 1000,
+      toolUseTimeoutMsDefault: 0,
       logger,
     });
     expect(outcome.kind).toBe("errored");
@@ -235,7 +236,8 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
       cancelToken: "",
       cliRunner: fakeCli,
       callback: cb,
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
     });
     expect(resumeInvocations).toHaveLength(1);
@@ -371,7 +373,8 @@ describe("runAgent resume path lands report_complete over a real MCP client (#11
       cancelToken: "",
       cliRunner: fakeCli,
       callback: undefined as never,
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
     });
     expect(outcome.kind).toBe("complete");
@@ -414,7 +417,8 @@ describe("runAgent in stub mode", () => {
       cancelToken: "",
       cliRunner: fakeCli,
       callback: cb,
-      silenceTimeoutMs: 1000,
+      silenceTimeoutMsDefault: 1000,
+      toolUseTimeoutMsDefault: 0,
       logger,
     });
     expect(outcome.kind).toBe("complete");
@@ -517,7 +521,8 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
       cancelToken: "",
       cliRunner: cli,
       callback: undefined as never,
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       dispatchId: "gate-a-run",
       cliConfig: {
@@ -552,7 +557,8 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
       cancelToken: "",
       cliRunner: cli,
       callback: undefined as never,
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       dispatchId: "gate-b-run",
       cliConfig: {
@@ -587,7 +593,8 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
       cancelToken: "",
       cliRunner: cli,
       callback: undefined as never,
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       dispatchId: "",
       cliConfig: {
@@ -624,7 +631,8 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
       cancelToken: "",
       cliRunner: cli,
       callback: undefined as never,
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       dispatchId: "gate-d-run",
       cliConfig: {
@@ -673,7 +681,8 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
       cancelToken: "",
       cliRunner: cli,
       callback: undefined as never,
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       dispatchId: "gate-e-run",
       cliConfig: {
@@ -770,7 +779,8 @@ describe("runAgent surfaces dispatch context end-to-end via dispatch_context_rea
       cancelToken: "",
       cliRunner: makeDispatchContextProbeCli(),
       callback: undefined as never,
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       dispatchId: opts.dispatchId,
       runScopeId: opts.runScopeId,

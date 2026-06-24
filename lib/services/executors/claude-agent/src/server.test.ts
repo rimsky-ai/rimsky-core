@@ -67,7 +67,8 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
       port: 0,
       callback: cb,
       cliRunner: fakeCli,
-      silenceTimeoutMs: 5000,
+      silenceTimeoutMsDefault: 5000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       postCallback: async (url, body) => {
         callbackPosts.push({ url, body });
@@ -160,7 +161,8 @@ describe("gRPC Execute observability ledger", () => {
       port: 0,
       callback: cb,
       cliRunner: fakeCli,
-      silenceTimeoutMs: 5000,
+      silenceTimeoutMsDefault: 5000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       observability: obs,
       postCallback: async (url, body) => {
@@ -276,7 +278,8 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
       port: 0,
       callback: cb,
       cliRunner: fakeCli,
-      silenceTimeoutMs: 5000,
+      silenceTimeoutMsDefault: 5000,
+      toolUseTimeoutMsDefault: 0,
       logger,
     });
   });
@@ -356,7 +359,8 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       port: 0,
       callback: cb,
       cliRunner: fakeCli,
-      silenceTimeoutMs: 5000,
+      silenceTimeoutMsDefault: 5000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       postCallback: async (url, body) => {
         callbackPosts.push({ url, body });
@@ -614,7 +618,8 @@ describe("ExecutorObservability.Capabilities declared_tags (gRPC surface)", () =
       port: 0,
       callback: cb,
       cliRunner: fakeCli,
-      silenceTimeoutMs: 5000,
+      silenceTimeoutMsDefault: 5000,
+      toolUseTimeoutMsDefault: 0,
       logger,
     });
   });

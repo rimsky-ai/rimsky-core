@@ -39,7 +39,8 @@ describe("HTTP bridge stub-mode /execute", () => {
       port: 0,
       callback: cb,
       cliRunner: fakeCli,
-      silenceTimeoutMs: 5000,
+      silenceTimeoutMsDefault: 5000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       postCallback: async (url, body) => {
         posts.push({ url, body });
@@ -104,7 +105,8 @@ describe("HTTP bridge /execute rejects a malformed sign-off gate config (no sile
       port: 0,
       callback: cb,
       cliRunner: fakeCli,
-      silenceTimeoutMs: 5000,
+      silenceTimeoutMsDefault: 5000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       postCallback: async (url, body) => {
         posts.push({ url, body });
@@ -200,7 +202,8 @@ describe("HTTP bridge /execute observability ledger", () => {
       port: 0,
       callback: cb,
       cliRunner: fakeCli,
-      silenceTimeoutMs: 5000,
+      silenceTimeoutMsDefault: 5000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       observability: obs,
       postCallback: async (url, body) => {
@@ -323,7 +326,8 @@ describe("HTTP bridge /execute threads dispatch-context fields end-to-end", () =
       port: 0,
       callback: cb,
       cliRunner: makeDispatchContextProbeCli(),
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       postCallback: async (url, body) => {
         posts.push({ url, body });
@@ -483,7 +487,8 @@ describe("HTTP bridge /execute emits the four declared agent error classes", () 
       port: 0,
       callback: cb,
       cliRunner: fakeCliEmitting(opts.stderr, opts.exitCode),
-      silenceTimeoutMs: 60_000,
+      silenceTimeoutMsDefault: 60_000,
+      toolUseTimeoutMsDefault: 0,
       logger,
       postCallback: async (url, body) => {
         posts.push({ url, body });
