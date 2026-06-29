@@ -242,9 +242,7 @@ func deployClaimTemplateInternal(t *testing.T, ep harness.RimskyEndpoint, name, 
 	if withErrorPolicy {
 		node["error_types"] = map[string]any{
 			"stub/forced_error": map[string]any{
-				"policy": []map[string]any{
-					{"action": "give_up"},
-				},
+				"action": "give_up",
 			},
 		}
 	}

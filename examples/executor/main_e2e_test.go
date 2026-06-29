@@ -186,9 +186,7 @@ func TestExampleExecutorE2E(t *testing.T) {
 					},
 					"error_types": map[string]any{
 						"example/forbidden": map[string]any{
-							"policy": []map[string]any{
-								{"action": "give_up"},
-							},
+							"action": "give_up",
 						},
 					},
 				},

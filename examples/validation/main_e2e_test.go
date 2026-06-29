@@ -151,7 +151,7 @@ func validatedTemplate(name, selector string) map[string]any {
 				"executor": "exec-stub",
 				"error_types": map[string]any{
 					"acquire/unavailable": map[string]any{
-						"policy": []map[string]any{{"action": "give_up"}},
+						"action": "give_up",
 					},
 				},
 				"claim_producers": []map[string]any{
