@@ -7,6 +7,7 @@ package atomicstaging
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -81,8 +82,8 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 	abandonTemplateID := deployHeldSwapTemplate(t, ep, "fs-held-swap-abandon", fsAbandonSelector, "err")
 	abandonInstanceID := createHeldSwapInstance(t, ep, abandonTemplateID, "ck-fs-held-swap-abandon")
 
-	waitForNodeState(t, ep, abandonInstanceID, "acquirer", "fresh", 120*time.Second)
 	waitForNodeState(t, ep, abandonInstanceID, "verifier", "failed", 120*time.Second)
+	waitForNodeState(t, ep, abandonInstanceID, "acquirer", "failed", 120*time.Second)
 
 	abandonCommittedDst := filepath.Join(store.HostDir, fsCommittedSubdir, fsAbandonFolder)
 	abandonSource := filepath.Join(store.HostDir, fsAbandonSource, fsAbandonFolder)
@@ -104,9 +105,7 @@ func deployHeldSwapTemplate(t *testing.T, ep harness.RimskyEndpoint, name, selec
 	if verifierExecutor == "err" {
 		verifierNode["error_types"] = map[string]any{
 			"stub/forced_error": map[string]any{
-				"policy": []map[string]any{
-					{"action": "give_up"},
-				},
+				"action": "give_up",
 			},
 		}
 	}
@@ -180,34 +179,42 @@ func createHeldSwapInstance(t *testing.T, ep harness.RimskyEndpoint, templateID,
 func waitForNodeState(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType, want string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
-	var lastState string
+	var lastSummary string
 	for time.Now().Before(end) {
 		status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
 		if status == http.StatusOK {
 			var resp struct {
-				Node struct {
-					State string `json:"state"`
-				} `json:"node"`
+				RunSummary struct {
+					ActiveCount  int `json:"active_count"`
+					PendingCount int `json:"pending_count"`
+					FreshCount   int `json:"fresh_count"`
+					FailedCount  int `json:"failed_count"`
+				} `json:"run_summary"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.Node.State
-				if lastState == want {
-					return
-				}
-				if isTerminalState(lastState) && lastState != want {
-					t.Fatalf("node %q on instance %s settled in %q, want %q",
-						nodeType, instanceID, lastState, want)
+				lastSummary = fmt.Sprintf("active=%d pending=%d fresh=%d failed=%d",
+					resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount,
+					resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
+				switch want {
+				case "fresh":
+					if resp.RunSummary.FreshCount > 0 && resp.RunSummary.ActiveCount == 0 && resp.RunSummary.PendingCount == 0 {
+						return
+					}
+					if resp.RunSummary.FailedCount > 0 {
+						t.Fatalf("node %q on instance %s settled with failed_count=%d, want fresh terminal (run_summary=%s)",
+							nodeType, instanceID, resp.RunSummary.FailedCount, lastSummary)
+					}
+				case "failed":
+					if resp.RunSummary.FailedCount > 0 {
+						return
+					}
 				}
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("node %q on instance %s did not reach %q within %v; last state=%q",
-		nodeType, instanceID, want, deadline, lastState)
-}
-
-func isTerminalState(state string) bool {
-	return state == "failed"
+	t.Fatalf("node %q on instance %s did not reach %q within %v; last run_summary=%s",
+		nodeType, instanceID, want, deadline, lastSummary)
 }
 
 func requireEventuallyMoved(t *testing.T, dst, src string, deadline time.Duration) {

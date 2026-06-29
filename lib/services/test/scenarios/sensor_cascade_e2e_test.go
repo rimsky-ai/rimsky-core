@@ -301,33 +301,48 @@ func createSensorCascadeInstance(t *testing.T, ep harness.RimskyEndpoint, templa
 }
 
 type sensorNodeStateResponse struct {
-	Node struct {
-		State string `json:"state"`
-	} `json:"node"`
+	RunSummary struct {
+		ActiveCount  int `json:"active_count"`
+		PendingCount int `json:"pending_count"`
+		FreshCount   int `json:"fresh_count"`
+		FailedCount  int `json:"failed_count"`
+	} `json:"run_summary"`
 	Events []struct {
 		Kind string `json:"kind"`
 	} `json:"events"`
 }
 
+func sensorNodeMatches(summary sensorNodeStateResponse, want string) bool {
+	switch want {
+	case "fresh":
+		return summary.RunSummary.ActiveCount == 0 && summary.RunSummary.PendingCount == 0
+	case "failed":
+		return summary.RunSummary.FailedCount > 0
+	}
+	return false
+}
+
 func waitForSensorNodeState(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType, want string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
-	var lastState string
+	var lastSummary string
 	for time.Now().Before(end) {
 		status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
 		if status == http.StatusOK {
 			var resp sensorNodeStateResponse
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.Node.State
-				if lastState == want {
+				lastSummary = fmt.Sprintf("active=%d pending=%d fresh=%d failed=%d",
+					resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount,
+					resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
+				if sensorNodeMatches(resp, want) {
 					return
 				}
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("node %q on instance %s did not reach %q within %v; last state=%q",
-		nodeType, instanceID, want, deadline, lastState)
+	t.Fatalf("node %q on instance %s did not reach %q within %v; last run_summary=%s",
+		nodeType, instanceID, want, deadline, lastSummary)
 }
 
 func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {

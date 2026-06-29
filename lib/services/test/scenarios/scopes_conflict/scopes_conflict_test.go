@@ -7,6 +7,7 @@ package scopesconflict
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -17,8 +18,6 @@ import (
 )
 
 const overlapProducerName = "overlap"
-
-var terminalStates = map[string]bool{"fresh": true, "failed": true}
 
 func TestScopesConflict_OverlapHeldOff(t *testing.T) {
 	t.Parallel()
@@ -250,24 +249,29 @@ func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanc
 func waitForNodeTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
-	var lastState string
+	var lastSummary string
 	for time.Now().Before(end) {
 		status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
 		if status == http.StatusOK {
 			var resp struct {
-				Node struct {
-					State string `json:"state"`
-				} `json:"node"`
+				RunSummary struct {
+					ActiveCount  int `json:"active_count"`
+					PendingCount int `json:"pending_count"`
+					FreshCount   int `json:"fresh_count"`
+					FailedCount  int `json:"failed_count"`
+				} `json:"run_summary"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.Node.State
-				if terminalStates[lastState] {
+				lastSummary = fmt.Sprintf("active=%d pending=%d fresh=%d failed=%d",
+					resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount,
+					resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
+				if resp.RunSummary.FreshCount > 0 || resp.RunSummary.FailedCount > 0 {
 					return
 				}
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("node %q on instance %s did not reach terminal within %v; last state=%q",
-		nodeType, instanceID, deadline, lastState)
+	t.Fatalf("node %q on instance %s did not reach terminal within %v; last run_summary=%s",
+		nodeType, instanceID, deadline, lastSummary)
 }
