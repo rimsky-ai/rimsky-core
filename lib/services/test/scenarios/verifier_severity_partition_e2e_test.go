@@ -156,9 +156,10 @@ func createSeverityPartitionInstance(t *testing.T, ep harness.RimskyEndpoint, te
 }
 
 type severityNodeReadResponse struct {
-	Node struct {
-		State string `json:"state"`
-	} `json:"node"`
+	RunSummary struct {
+		FreshCount  int `json:"fresh_count"`
+		FailedCount int `json:"failed_count"`
+	} `json:"run_summary"`
 	Events []struct {
 		Kind    string         `json:"kind"`
 		Payload map[string]any `json:"payload"`
@@ -170,7 +171,8 @@ func requireVerifierSucceededWithWarning(t *testing.T, ep harness.RimskyEndpoint
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var (
-		lastState   string
+		lastFresh   int
+		lastFailed  int
 		sawDispatch bool
 		lastBody    string
 	)
@@ -181,34 +183,35 @@ func requireVerifierSucceededWithWarning(t *testing.T, ep harness.RimskyEndpoint
 			lastBody = string(raw)
 			var resp severityNodeReadResponse
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.Node.State
+				lastFresh = resp.RunSummary.FreshCount
+				lastFailed = resp.RunSummary.FailedCount
 				for _, e := range resp.Events {
 					if e.Kind == "work_started" {
 						sawDispatch = true
 						break
 					}
 				}
-				if sawDispatch && lastState == "fresh" {
+				if sawDispatch && lastFresh > 0 {
 					assertWarningRecorded(t, resp.LatestAttributes, lastBody)
 					return
 				}
-				if sawDispatch && lastState == "failed" {
-					t.Fatalf("warning leg: node %q settled `failed` after a real dispatch — "+
+				if sawDispatch && lastFailed > 0 {
+					t.Fatalf("warning leg: node %q settled with failed_count=%d after a real dispatch — "+
 						"a warning-severity failure must NOT block the commit. "+
 						"Falsifier hit: Warning blocks commit, OR the severity field is "+
 						"declared but unused (both look the same: a warning-only failure "+
 						"flipped the terminal).\nlast GET /v1/observability/nodes/%s/%s body:\n%s",
-						nodeType, instanceID, nodeType, lastBody)
+						nodeType, lastFailed, instanceID, nodeType, lastBody)
 				}
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
 	t.Fatalf("warning leg: node %q on instance %s did not reach a terminal state within %v "+
-		"(last state=%q, work_started seen=%v) — the cross-stack severity-partition exhibition "+
+		"(run_summary.fresh_count=%d failed_count=%d, work_started seen=%v) — the cross-stack severity-partition exhibition "+
 		"never got a real dispatch from the bundled verifier-shape-checks executor.\n"+
 		"last GET /v1/observability/nodes/%s/%s body:\n%s",
-		nodeType, instanceID, deadline, lastState, sawDispatch, instanceID, nodeType, lastBody)
+		nodeType, instanceID, deadline, lastFresh, lastFailed, sawDispatch, instanceID, nodeType, lastBody)
 }
 
 func assertWarningRecorded(t *testing.T, latest map[string]any, debugBody string) {
@@ -268,7 +271,8 @@ func requireVerifierFailedWithCheckFailedClass(t *testing.T, ep harness.RimskyEn
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var (
-		lastState   string
+		lastFresh   int
+		lastFailed  int
 		sawDispatch bool
 		lastBody    string
 	)
@@ -279,21 +283,22 @@ func requireVerifierFailedWithCheckFailedClass(t *testing.T, ep harness.RimskyEn
 			lastBody = string(raw)
 			var resp severityNodeReadResponse
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.Node.State
+				lastFresh = resp.RunSummary.FreshCount
+				lastFailed = resp.RunSummary.FailedCount
 				for _, e := range resp.Events {
 					if e.Kind == "work_started" {
 						sawDispatch = true
 						break
 					}
 				}
-				if sawDispatch && lastState == "fresh" {
-					t.Fatalf("error leg: node %q settled `fresh` after a real dispatch "+
+				if sawDispatch && lastFresh > 0 {
+					t.Fatalf("error leg: node %q settled with fresh_count=%d after a real dispatch "+
 						"despite the error-severity numeric_range check failing — the commit "+
 						"was NOT blocked. Falsifier hit: Error doesn't block commit.\n"+
 						"last GET /v1/observability/nodes/%s/%s body:\n%s",
-						nodeType, instanceID, nodeType, lastBody)
+						nodeType, lastFresh, instanceID, nodeType, lastBody)
 				}
-				if sawDispatch && lastState == "failed" {
+				if sawDispatch && lastFailed > 0 {
 					requireVerifierCheckFailedErrorClass(t, resp.Events, lastBody)
 					return
 				}
@@ -302,10 +307,10 @@ func requireVerifierFailedWithCheckFailedClass(t *testing.T, ep harness.RimskyEn
 		time.Sleep(250 * time.Millisecond)
 	}
 	t.Fatalf("error leg: node %q on instance %s did not reach a terminal state within %v "+
-		"(last state=%q, work_started seen=%v) — the cross-stack severity-partition exhibition "+
+		"(run_summary.fresh_count=%d failed_count=%d, work_started seen=%v) — the cross-stack severity-partition exhibition "+
 		"never got a real dispatch from the bundled verifier-shape-checks executor.\n"+
 		"last GET /v1/observability/nodes/%s/%s body:\n%s",
-		nodeType, instanceID, deadline, lastState, sawDispatch, instanceID, nodeType, lastBody)
+		nodeType, instanceID, deadline, lastFresh, lastFailed, sawDispatch, instanceID, nodeType, lastBody)
 }
 
 func requireVerifierCheckFailedErrorClass(t *testing.T, events []struct {

@@ -128,16 +128,12 @@ func repoExampleSpecPath(t *testing.T, rel string) string {
 	return path
 }
 
-var exampleTerminalStates = map[string]bool{
-	"fresh":  true,
-	"failed": true,
-}
-
 func waitForExampleDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var (
-		lastState   string
+		lastFresh   int
+		lastFailed  int
 		sawDispatch bool
 	)
 	for time.Now().Before(end) {
@@ -145,25 +141,27 @@ func waitForExampleDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, inst
 			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
 		if status == http.StatusOK {
 			var resp struct {
-				Node struct {
-					State string `json:"state"`
-				} `json:"node"`
+				RunSummary struct {
+					FreshCount  int `json:"fresh_count"`
+					FailedCount int `json:"failed_count"`
+				} `json:"run_summary"`
 				Events []struct {
 					Kind string `json:"kind"`
 				} `json:"events"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.Node.State
+				lastFresh = resp.RunSummary.FreshCount
+				lastFailed = resp.RunSummary.FailedCount
 				for _, e := range resp.Events {
 					if e.Kind == "work_started" {
 						sawDispatch = true
 						break
 					}
 				}
-				if sawDispatch && exampleTerminalStates[lastState] {
-					if lastState != "fresh" {
-						t.Fatalf("node %q dispatched via `rimsky run` but settled in %q, want fresh — the stub executor returns Success, so a non-fresh terminal is a real dev-loop defect",
-							nodeType, lastState)
+				if sawDispatch && (lastFresh > 0 || lastFailed > 0) {
+					if lastFailed > 0 {
+						t.Fatalf("node %q dispatched via `rimsky run` but settled with failed_count=%d, want all-fresh — the stub executor returns Success, so any failed run is a real dev-loop defect",
+							nodeType, lastFailed)
 					}
 					return
 				}
@@ -171,6 +169,6 @@ func waitForExampleDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, inst
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("node %q on instance %s (driven by `rimsky run`) did not complete a real dispatch within %v; last state=%q, work_started seen=%v",
-		nodeType, instanceID, deadline, lastState, sawDispatch)
+	t.Fatalf("node %q on instance %s (driven by `rimsky run`) did not complete a real dispatch within %v; run_summary.fresh_count=%d failed_count=%d, work_started seen=%v",
+		nodeType, instanceID, deadline, lastFresh, lastFailed, sawDispatch)
 }

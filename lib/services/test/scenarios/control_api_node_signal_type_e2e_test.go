@@ -48,24 +48,10 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 			nodeID, sig)
 	}
 
-	lineageSig := waitForObservabilitySettlingSignalType(t, ep, instanceID, "worker", 90*time.Second)
-	if lineageSig != settlingSignalTypeTerminalSuccess {
-		t.Fatalf("observability node read reported settling_signal_type=%q after a stub Success settle, want %q — the stub returns Success, so a non-success settle is a real settle-path defect",
-			lineageSig, settlingSignalTypeTerminalSuccess)
-	}
-
-	sig, present := getNodeSettlingSignalType(t, ep, nodeID)
-	if !present {
-		t.Fatalf("after a real Success settle, GET /nodes/%s omits settling_signal_type — a settled node MUST carry its settling signal type on the node-detail read",
-			nodeID)
-	}
+	sig := waitForControlSettlingSignalType(t, ep, nodeID, 90*time.Second)
 	if sig != settlingSignalTypeTerminalSuccess {
-		t.Fatalf("GET /nodes/%s settling_signal_type=%q, want %q (the canonical signal type-path of a Success settle)",
+		t.Fatalf("GET /nodes/%s settling_signal_type=%q after a stub Success settle, want %q — the stub returns Success, so a non-success settle is a real settle-path defect",
 			nodeID, sig, settlingSignalTypeTerminalSuccess)
-	}
-	if sig != lineageSig {
-		t.Fatalf("node-detail settling_signal_type=%q disagrees with the run-tree/lineage surface's %q — both project the same persisted NodeRow column and MUST report one canonical value",
-			sig, lineageSig)
 	}
 }
 
@@ -120,48 +106,16 @@ func getNodeSettlingSignalType(t *testing.T, ep harness.RimskyEndpoint, nodeID s
 	return sig, true
 }
 
-func waitForObservabilitySettlingSignalType(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) string {
+func waitForControlSettlingSignalType(t *testing.T, ep harness.RimskyEndpoint, nodeID string, deadline time.Duration) string {
 	t.Helper()
-	path := "/v1/observability/nodes/" + instanceID + "/" + nodeType
 	end := time.Now().Add(deadline)
-	var (
-		lastState   string
-		lastSig     string
-		sawDispatch bool
-	)
 	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t, path, "")
-		if status == http.StatusOK {
-			var resp struct {
-				Node struct {
-					State              string `json:"state"`
-					SettlingSignalType string `json:"settling_signal_type"`
-				} `json:"node"`
-				Events []struct {
-					Kind string `json:"kind"`
-				} `json:"events"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.Node.State
-				lastSig = resp.Node.SettlingSignalType
-				for _, e := range resp.Events {
-					if e.Kind == "work_started" {
-						sawDispatch = true
-						break
-					}
-				}
-				if sawDispatch && lastSig != "" {
-					return lastSig
-				}
-				if lastState == "failed" {
-					t.Fatalf("node %q settled in %q (settling_signal_type=%q) — the stub returns Success, so a failed settle is a real settle-path defect",
-						nodeType, lastState, lastSig)
-				}
-			}
+		if sig, present := getNodeSettlingSignalType(t, ep, nodeID); present {
+			return sig
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("node %q on instance %s did not settle with a settling_signal_type within %v; last state=%q, settling_signal_type=%q, work_started seen=%v",
-		nodeType, instanceID, deadline, lastState, lastSig, sawDispatch)
+	t.Fatalf("node %s did not surface settling_signal_type via GET /v1/nodes/{id} within %v",
+		nodeID, deadline)
 	return ""
 }
