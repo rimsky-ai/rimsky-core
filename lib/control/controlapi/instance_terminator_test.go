@@ -83,9 +83,21 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 		}
 		if _, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instanceID, TemplateHash: templateHash, InstanceKey: &ck,
-			Params:         map[string]any{},
-			MainRunScopeID: mainScopeID,
+			Params: map[string]any{},
 		}, tx); err != nil {
+			return err
+		}
+		msgID := uuid.New()
+		if err := f.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instanceID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		if _, err := f.persist.Frames().InsertFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx); err != nil {
 			return err
 		}
 		if err := f.persist.Instances().MarkTerminated(ctx, instanceID, tx); err != nil {

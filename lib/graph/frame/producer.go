@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func EnqueueFrame(ctx context.Context, store persistence.Tables, tx persistence.Tx,
@@ -20,5 +22,15 @@ func EnqueueFrame(ctx context.Context, store persistence.Tables, tx persistence.
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("frame.EnqueueFrame: %w", err)
 	}
-	return store.Frames().InsertFrame(ctx, instanceID, triggeringMessageID, frameTimeoutMs, tx)
+	// @concept: run-scope
+	rootRunScopeID := shared.UUID(uuid.New())
+	if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		ID:           rootRunScopeID,
+		GraphName:    spec.MainGraphName,
+		InstanceID:   instanceID,
+		PartitionKey: "",
+	}); err != nil {
+		return uuid.Nil, fmt.Errorf("frame.EnqueueFrame: create root run scope: %w", err)
+	}
+	return store.Frames().InsertFrame(ctx, instanceID, triggeringMessageID, rootRunScopeID, frameTimeoutMs, tx)
 }

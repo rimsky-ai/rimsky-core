@@ -442,19 +442,18 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 		var latestBag map[string]any
 		var summary persistence.NodeRunSummary
 		_ = inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
-			inst, err := deps.Tables.Instances().Get(ctx, id, tx)
+			latest, err := deps.Tables.Nodes().GetLatestRunForNode(ctx, tx, match.ID)
 			if err != nil {
 				return err
 			}
-			if inst == nil {
-				return nil
-			}
-			attrs, err := deps.Tables.NodeAttributes().GetLatestByNode(ctx, match.ID, inst.MainRunScopeID, tx)
-			if err != nil {
-				return err
-			}
-			if attrs != nil {
-				latestBag = attrs.Data
+			if latest != nil {
+				attrs, err := deps.Tables.NodeAttributes().GetLatestByNode(ctx, match.ID, latest.RunScopeID, tx)
+				if err != nil {
+					return err
+				}
+				if attrs != nil {
+					latestBag = attrs.Data
+				}
 			}
 			s, err := deps.Tables.Nodes().GetRunSummary(ctx, match.ID, tx)
 			if err != nil {

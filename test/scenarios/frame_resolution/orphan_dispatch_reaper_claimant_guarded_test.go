@@ -81,10 +81,9 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 		}
 		ck := "ck-orphan-" + instanceID.String()[:8]
 		_, err := h.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             instanceID,
-			TemplateHash:   templateHash,
-			InstanceKey:    &ck,
-			MainRunScopeID: mainScopeID,
+			ID:           instanceID,
+			TemplateHash: templateHash,
+			InstanceKey:  &ck,
 		}, tx)
 		return err
 	}))

@@ -284,6 +284,64 @@ func FanOutRunScopeEvent(
 	return peers, perPeerErr, nil
 }
 
+// @concept: run-scope
+// @concept: frame
+func CloseAndFanOutFrameRootRunScopesForInstance(
+	ctx context.Context,
+	deps AppDeps,
+	tplSpec node.TemplateSpec,
+	instanceID shared.UUID,
+	terminalReason string,
+) {
+	logger := deps.Logger
+	pag := persistence.ListPagination{Limit: 256}
+	instArg := instanceID
+	filter := persistence.FrameListFilter{InstanceID: &instArg}
+	seen := map[shared.UUID]struct{}{}
+	for {
+		var page persistence.PaginatedListResult[persistence.FrameRow]
+		if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			p, err := deps.Persist.Frames().ListForObservability(ctx, filter, pag, tx)
+			page = p
+			return err
+		}); err != nil {
+			if logger != nil {
+				logger.Warn("CloseAndFanOutFrameRootRunScopesForInstance: list frames failed",
+					"instance_id", instanceID.String(),
+					"error", err.Error())
+			}
+			return
+		}
+		for _, f := range page.Rows {
+			scope := f.RootRunScopeID
+			if scope == (shared.UUID{}) {
+				continue
+			}
+			if _, dup := seen[scope]; dup {
+				continue
+			}
+			seen[scope] = struct{}{}
+			if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				return deps.Persist.RunScopes().Close(ctx, tx, scope)
+			}); err != nil {
+				if logger != nil {
+					logger.Warn("CloseAndFanOutFrameRootRunScopesForInstance: close run-scope failed",
+						"instance_id", instanceID.String(),
+						"frame_id", f.FrameID.String(),
+						"root_run_scope_id", scope.String(),
+						"error", err.Error())
+				}
+				continue
+			}
+			_, _, _ = FanOutRunScopeEvent(ctx, deps, tplSpec, scope, instanceID, terminalReason, nil)
+		}
+		if page.NextCursor == "" {
+			return
+		}
+		pag.Cursor = page.NextCursor
+	}
+}
+
 func dispatchTemplateEvent(ctx context.Context, s locks.LifecycleSubscriber, event LifecycleEvent, templateID string, payload TemplatePayload) error {
 	switch event {
 	case EventTemplateRegistered:

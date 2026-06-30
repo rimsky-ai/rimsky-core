@@ -183,7 +183,6 @@ func pcCreateInstance(ctx context.Context, t *testing.T, b persistence.Tables, t
 		}
 		row, err := b.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instID, TemplateHash: templateHash, InstanceKey: &ckCopy, Params: map[string]any{},
-			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -253,7 +252,7 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 	}
 	var mainScopeID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
+		`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
 		[]any{instanceID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
@@ -270,6 +269,10 @@ func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, no
 		[]any{instanceID}, &count)
 	var frameID shared.UUID
 	if count == 0 {
+		var rootScope shared.UUID
+		pgtest.QueryRowForTest(ctx, t, f.driver,
+			`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
+			[]any{instanceID}, &rootScope)
 		msgID := uuid.New()
 		pgtest.ExecForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_messages
@@ -278,10 +281,10 @@ func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, no
         `, msgID, instanceID)
 		pgtest.QueryRowForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_frames
-                (instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms)
-            VALUES ($1, $2, 'running', now(), now(), 600000)
+                (instance_id, triggering_message_id, root_run_scope_id, state, queued_at, started_at, frame_timeout_ms)
+            VALUES ($1, $2, $3, 'running', now(), now(), 600000)
             RETURNING frame_id
-        `, []any{instanceID, msgID}, &frameID)
+        `, []any{instanceID, msgID, rootScope}, &frameID)
 		_ = nodeID
 	} else {
 		pgtest.QueryRowForTest(ctx, t, f.driver,

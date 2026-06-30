@@ -19,11 +19,9 @@ type InstanceRow struct {
 	Params             map[string]any `json:"params"`
 	AttributeOverrides map[string]any `json:"attribute_overrides"`
 	// @concept: attribute
-	AttributeOverridesMatchCounts []int64 `json:"attribute_overrides_match_counts,omitempty"`
-	// @concept: run-scope
-	MainRunScopeID shared.UUID `json:"main_run_scope_id"`
-	CreatedAt      time.Time   `json:"created_at"`
-	TerminatedAt   *time.Time  `json:"terminated_at"`
+	AttributeOverridesMatchCounts []int64    `json:"attribute_overrides_match_counts,omitempty"`
+	CreatedAt                     time.Time  `json:"created_at"`
+	TerminatedAt                  *time.Time `json:"terminated_at"`
 	// @concept: breakpoint
 	Paused bool `json:"paused"`
 	// @concept: instance
@@ -55,8 +53,6 @@ type InstanceCreateInput struct {
 	Params                        map[string]any
 	AttributeOverrides            map[string]any
 	AttributeOverridesMatchCounts []int64
-	// @concept: run-scope
-	MainRunScopeID shared.UUID
 	// @concept: breakpoint
 	Paused bool
 	// @concept: instance

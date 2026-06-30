@@ -530,7 +530,7 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 	}
 	instances := &fakeInstancesDeps{
 		rows: map[shared.UUID]*persistence.InstanceRow{
-			instanceID: {ID: instanceID, TemplateHash: templateHash, MainRunScopeID: runScopeID},
+			instanceID: {ID: instanceID, TemplateHash: templateHash},
 		},
 	}
 	templates := &fakeTemplatesDeps{
@@ -714,6 +714,12 @@ func (f *fakeNodesDeps) DeleteByInstance(_ context.Context, _ shared.UUID, _ per
 }
 func (f *fakeNodesDeps) HasRunForNodeInFrame(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) (bool, error) {
 	return false, nil
+}
+func (f *fakeNodesDeps) HasAdvancedSiblingInScope(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) (bool, error) {
+	return false, nil
+}
+func (f *fakeNodesDeps) ListPendingSiblingRunsInScope(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]shared.UUID, error) {
+	return nil, nil
 }
 func (f *fakeNodesDeps) GetRunByDispatchIDForUpdate(_ context.Context, _ shared.UUID, _ persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	return nil, nil

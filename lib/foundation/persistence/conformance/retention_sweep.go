@@ -98,8 +98,9 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 	mintRunningFrame := func(label string) shared.UUID {
 		var fid shared.UUID
 		frameOp(ctx, t, d, "mint "+label, func(tx persistence.Tx) error {
+			scope := seedMainRunScopeForInstance(ctx, t, tx, d.Tables(), fix.InstanceID)
 			var err error
-			fid, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, 600000, tx)
+			fid, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, scope, 600000, tx)
 			if err != nil {
 				return err
 			}

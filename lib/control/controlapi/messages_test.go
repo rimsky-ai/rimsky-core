@@ -94,9 +94,10 @@ func TestMessages_ListByFrameID(t *testing.T) {
 	mid, err := uuid.Parse(deliveredID)
 	require.NoError(t, err)
 	var frameID shared.UUID
+	rootScope := mainRunScopeIDForInstance(t, h, shared.UUID(mustParseUUID(t, instID)))
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		fid, err := h.persist.Frames().InsertFrame(ctx,
-			shared.UUID(mustParseUUID(t, instID)), shared.UUID(mid), 600000, tx)
+			shared.UUID(mustParseUUID(t, instID)), shared.UUID(mid), rootScope, 600000, tx)
 		if err != nil {
 			return err
 		}

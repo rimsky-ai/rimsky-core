@@ -253,11 +253,13 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		Name: "fanout-runtime-dispatch", Version: "1",
 	})
 	ck := "ck-fan"
+	var mainScopeID shared.UUID
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
 		inst = i
+		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
 		}, tx)
@@ -268,7 +270,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
@@ -456,11 +458,13 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 		Name: "fanout-cross-supervisor", Version: "1",
 	})
 	ck := "ck-xsup"
+	var mainScopeID shared.UUID
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
 		inst = i
+		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
 		}, tx)
@@ -470,7 +474,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 		parentNode = p
 		return nil
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
@@ -614,11 +618,13 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 		Name: "fanout-intent-inheritance", Version: "1",
 	})
 	ck := "ck-ro"
+	var mainScopeID shared.UUID
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
 		inst = i
+		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
 		}, tx)
@@ -628,7 +634,7 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 		parentNode = p
 		return nil
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
@@ -719,11 +725,13 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 		Name: "fanout-intent-inheritance-rw", Version: "1",
 	})
 	ck := "ck-rw"
+	var mainScopeID shared.UUID
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
 		inst = i
+		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
 		}, tx)
@@ -733,7 +741,7 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 		parentNode = p
 		return nil
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
@@ -828,11 +836,13 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 		Name: "fanout-addr-payload-persist", Version: "1",
 	})
 	ck := "ck-ap"
+	var mainScopeID shared.UUID
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
 		inst = i
+		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
 		}, tx)
@@ -842,7 +852,7 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 		parentNode = p
 		return nil
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())

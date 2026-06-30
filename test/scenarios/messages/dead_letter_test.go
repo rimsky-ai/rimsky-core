@@ -24,8 +24,9 @@ func TestDeadLetter_CancelledNotDelivered(t *testing.T) {
 	frameID := shared.UUID(uuid.New())
 	now := time.Now().UTC()
 
+	triggerID := shared.UUID(uuid.New())
 	if err := runtime.EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{
-		ID:         shared.UUID(uuid.New()),
+		ID:         triggerID,
 		InstanceID: instanceID,
 		Type:       "invalidate",
 		Sender:     "sensor-cron",
@@ -34,7 +35,7 @@ func TestDeadLetter_CancelledNotDelivered(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("EnqueueMessage live: %v", err)
 	}
-	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, now)
+	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, triggerID, now)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}

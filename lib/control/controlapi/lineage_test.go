@@ -44,6 +44,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	require.NoError(t, err)
 
 	var frameID uuid.UUID
+	rootScope := mainRunScopeIDForInstance(t, h, shared.UUID(instUUID))
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		nodes, err := h.persist.Nodes().ListByInstance(ctx, shared.UUID(instUUID), tx)
 		if err != nil || len(nodes) == 0 {
@@ -60,7 +61,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 			return err
 		}
 		_ = nodes
-		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instUUID), msgID, 600000, tx)
+		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instUUID), msgID, rootScope, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -149,6 +150,7 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 	require.NoError(t, err)
 
 	var frameID uuid.UUID
+	rootScope := mainRunScopeIDForInstance(t, h, shared.UUID(instUUID))
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		nodes, err := h.persist.Nodes().ListByInstance(ctx, shared.UUID(instUUID), tx)
 		if err != nil || len(nodes) == 0 {
@@ -159,7 +161,7 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 			return err
 		}
 		_ = nodes
-		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instUUID), msgID, 600000, tx)
+		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instUUID), msgID, rootScope, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -253,6 +255,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	var frameID uuid.UUID
+	rootScope := mainRunScopeIDForInstance(t, h, shared.UUID(instUUID))
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		nodes, err := h.persist.Nodes().ListByInstance(ctx, shared.UUID(instUUID), tx)
 		if err != nil || len(nodes) == 0 {
@@ -263,7 +266,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 			return err
 		}
 		_ = nodes
-		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instUUID), msgID, 600000, tx)
+		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instUUID), msgID, rootScope, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -367,6 +370,7 @@ func seedLineageInstance(t *testing.T, h *harness, prefix string) (instID uuid.U
 	instID, err = uuid.Parse(instStr)
 	require.NoError(t, err)
 
+	rootScope := mainRunScopeIDForInstance(t, h, shared.UUID(instID))
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		nodes, err := h.persist.Nodes().ListByInstance(ctx, shared.UUID(instID), tx)
 		if err != nil || len(nodes) == 0 {
@@ -383,7 +387,7 @@ func seedLineageInstance(t *testing.T, h *harness, prefix string) (instID uuid.U
 		}); err != nil {
 			return err
 		}
-		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instID), msgID, 600000, tx)
+		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instID), msgID, rootScope, 600000, tx)
 		if err != nil {
 			return err
 		}

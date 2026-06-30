@@ -52,9 +52,8 @@ func seedMessageInstanceForNullTest(t *testing.T, ctx context.Context, d persist
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             instanceID,
-			TemplateHash:   templateHash,
-			MainRunScopeID: mainRunScopeID,
+			ID:           instanceID,
+			TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err
 		}

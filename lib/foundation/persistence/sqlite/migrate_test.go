@@ -113,8 +113,8 @@ func TestSQLiteMigration002Tags(t *testing.T) {
 	}
 	defer func() { _ = stx.Rollback() }()
 	if _, err := stx.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, main_run_scope_id)
-		 VALUES ('inst-1', 'tpl-1', 'ck-1', 'scope-1')`); err != nil {
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key)
+		 VALUES ('inst-1', 'tpl-1', 'ck-1')`); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
 	if _, err := stx.ExecContext(ctx,

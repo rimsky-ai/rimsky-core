@@ -44,7 +44,7 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 	}
 	var mainScopeID uuid.UUID
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
+		`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
 		[]any{instanceID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
@@ -67,11 +67,15 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 	if startedAt != nil {
 		progressAt = *startedAt
 	}
+	var rootScope uuid.UUID
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
+		[]any{instanceID}, &rootScope)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, triggering_message_id, state, queued_at, started_at, ended_at, frame_timeout_ms, last_progress_at)
-        VALUES ($1, $2, $3, $4, now(), $5, $6, $7, $8)
-    `, id, instanceID, triggeringMessageID, state, startedAt, endedAt, timeoutMs, progressAt)
+            (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, queued_at, started_at, ended_at, frame_timeout_ms, last_progress_at)
+        VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8, $9)
+    `, id, instanceID, triggeringMessageID, rootScope, state, startedAt, endedAt, timeoutMs, progressAt)
 	return id
 }
 
@@ -84,9 +88,9 @@ func seedDispatch(t *testing.T, ctx context.Context, d persistence.Database,
 	}
 	var mainScopeID uuid.UUID
 	pgtest.QueryRowForTest(ctx, t, d, `
-        SELECT i.main_run_scope_id FROM rimsky_instances i
-        JOIN rimsky_nodes n ON n.instance_id = i.id
-        WHERE n.id = $1
+        SELECT s.id FROM rimsky_run_scopes s
+        JOIN rimsky_nodes n ON n.instance_id = s.instance_id
+        WHERE n.id = $1 AND s.graph_name = 'main'
     `, []any{nodeID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs

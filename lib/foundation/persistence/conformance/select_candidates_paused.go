@@ -40,10 +40,9 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             pausedInstanceID,
-			TemplateHash:   activeFix.TemplateHash,
-			MainRunScopeID: pausedRunScopeID,
-			Paused:         true,
+			ID:           pausedInstanceID,
+			TemplateHash: activeFix.TemplateHash,
+			Paused:       true,
 		}, tx); err != nil {
 			return err
 		}
@@ -65,7 +64,7 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		}); err != nil {
 			return err
 		}
-		fid, err := store.Frames().InsertFrame(ctx, pausedInstanceID, pausedMessageID, 600000, tx)
+		fid, err := store.Frames().InsertFrame(ctx, pausedInstanceID, pausedMessageID, pausedRunScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}

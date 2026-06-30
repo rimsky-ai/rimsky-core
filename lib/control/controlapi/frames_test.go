@@ -16,7 +16,21 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
+
+func mainRunScopeIDForInstance(t *testing.T, h *harness, instanceID shared.UUID) shared.UUID {
+	t.Helper()
+	scopeID := shared.UUID(uuid.New())
+	require.NoError(t, h.persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		return h.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         scopeID,
+			GraphName:  spec.MainGraphName,
+			InstanceID: instanceID,
+		})
+	}))
+	return scopeID
+}
 
 func seedFrameForTest(
 	t *testing.T, ctx context.Context, h *harness,
@@ -25,6 +39,7 @@ func seedFrameForTest(
 	t.Helper()
 	msgID := shared.UUID(uuid.New())
 	var frameID shared.UUID
+	rootScope := mainRunScopeIDForInstance(t, h, instanceID)
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
@@ -36,7 +51,7 @@ func seedFrameForTest(
 		}); err != nil {
 			return err
 		}
-		fid, err := h.persist.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
+		fid, err := h.persist.Frames().InsertFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
 		if err != nil {
 			return err
 		}

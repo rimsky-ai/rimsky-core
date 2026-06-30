@@ -107,8 +107,8 @@ func TestMigration002Tags(t *testing.T) {
 		t.Fatalf("defer constraints: %v", err)
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, main_run_scope_id)
-		 VALUES ($1, 'tpl-1', 'ck-1', $2)`, instUUID, scopeUUID); err != nil {
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key)
+		 VALUES ($1, 'tpl-1', 'ck-1')`, instUUID); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
 	if _, err := tx.Exec(ctx,

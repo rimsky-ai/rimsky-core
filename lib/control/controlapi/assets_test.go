@@ -145,9 +145,12 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 	instID, err := uuid.Parse(instStr)
 	require.NoError(t, err)
 
-	var (
-		mainScopeID shared.UUID
-	)
+	mainScopeID := shared.UUID(uuid.New())
+	pgtest.ExecForTest(ctx, t, h.driver,
+		`INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
+		 VALUES ($1, 'main', $2, '', now())`,
+		uuid.UUID(mainScopeID), instID)
+
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		nodes, err := h.persist.Nodes().ListByInstance(ctx, shared.UUID(instID), tx)
 		if err != nil {
@@ -171,7 +174,7 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 			return err
 		}
 		_ = prodNodeUUID
-		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instID), msgID, 600000, tx)
+		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instID), msgID, mainScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -179,10 +182,6 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 		return nil
 	}))
 	require.NotEqual(t, uuid.Nil, producerNodeID)
-
-	pgtest.QueryRowForTest(ctx, t, h.driver,
-		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
-		[]any{instID}, &mainScopeID)
 
 	nodeRunID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
@@ -349,8 +348,8 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 	holderRunID := uuid.New()
 	var mainScopeID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
-		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
-		[]any{instID}, &mainScopeID)
+		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
+		[]any{frameID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_node_runs
 			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)

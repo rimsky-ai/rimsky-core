@@ -64,10 +64,11 @@ func seedTerminalRunWithSignalType(
 	inst persistence.InstanceRow, nodeID shared.UUID, signalType string,
 ) uuid.UUID {
 	t.Helper()
-	var mainScopeID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver, `
-        SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1
-    `, []any{inst.ID}, &mainScopeID)
+	mainScopeID := shared.UUID(uuid.New())
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
+        VALUES ($1, 'main', $2, '', now())
+    `, uuid.UUID(mainScopeID), inst.ID)
 	msgID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_messages
@@ -77,9 +78,9 @@ func seedTerminalRunWithSignalType(
 	frameID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, state, queued_at, ended_at, triggering_message_id, frame_timeout_ms)
-        VALUES ($1, $2, 'completed', now(), now(), $3, 60000)
-    `, frameID, inst.ID, msgID)
+            (frame_id, instance_id, state, queued_at, ended_at, triggering_message_id, root_run_scope_id, frame_timeout_ms)
+        VALUES ($1, $2, 'completed', now(), now(), $3, $4, 60000)
+    `, frameID, inst.ID, msgID, mainScopeID)
 
 	runID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `

@@ -779,9 +779,8 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             fx.instanceID,
-			TemplateHash:   fx.templateHash,
-			MainRunScopeID: fx.mainScopeID,
+			ID:           fx.instanceID,
+			TemplateHash: fx.templateHash,
 		}, tx); err != nil {
 			return err
 		}
@@ -807,7 +806,7 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertFrame(ctx, fx.instanceID, msgID, 600000, tx)
+		frameID, err := tables.Frames().InsertFrame(ctx, fx.instanceID, msgID, fx.mainScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}

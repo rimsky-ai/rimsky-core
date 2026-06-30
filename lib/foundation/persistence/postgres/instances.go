@@ -21,7 +21,7 @@ import (
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, attribute_overrides_match_counts, paused, terminate_after_run, service_bindings, created_by_api_key_id`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	ex := s.q(tx)
@@ -55,10 +55,10 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		serviceBindings = in.ServiceBindings
 	}
 	row := ex.QueryRow(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, attribute_overrides_match_counts, paused, terminate_after_run, service_bindings, created_by_api_key_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING `+instanceCols,
-		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, matchCountsBytes, in.MainRunScopeID, in.Paused, in.TerminateAfterRun, serviceBindings, in.CreatedByAPIKeyID,
+		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, matchCountsBytes, in.Paused, in.TerminateAfterRun, serviceBindings, in.CreatedByAPIKeyID,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -362,13 +362,12 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		createdAt           time.Time
 		terminatedAt        *time.Time
 		matchCounts         []byte
-		mainRunScopeID      foundationshared.UUID
 		paused              bool
 		terminateAfterRun   bool
 		serviceBindingsByte []byte
 		createdByAPIKeyID   *foundationshared.UUID
 	)
-	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &createdAt, &terminatedAt, &matchCounts, &mainRunScopeID, &paused, &terminateAfterRun, &serviceBindingsByte, &createdByAPIKeyID); err != nil {
+	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &createdAt, &terminatedAt, &matchCounts, &paused, &terminateAfterRun, &serviceBindingsByte, &createdByAPIKeyID); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	m := map[string]any{}
@@ -400,7 +399,6 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		Params:                        m,
 		AttributeOverrides:            ov,
 		AttributeOverridesMatchCounts: mc,
-		MainRunScopeID:                mainRunScopeID,
 		CreatedAt:                     createdAt,
 		TerminatedAt:                  terminatedAt,
 		Paused:                        paused,

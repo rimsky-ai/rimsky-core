@@ -50,7 +50,7 @@ func seedWaitSetParentsPG(
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: instanceID, TemplateHash: templateHash, MainRunScopeID: mainRunScopeID,
+			ID: instanceID, TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err
 		}
@@ -67,10 +67,10 @@ func seedWaitSetParentsPG(
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, state,
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state,
 		    frame_timeout_ms, started_at)
-		 VALUES ($1, $2, $3, 'running', 60000, now())`,
-		frame, instanceID, messageID,
+		 VALUES ($1, $2, $3, $4, 'running', 60000, now())`,
+		frame, instanceID, messageID, mainRunScopeID,
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)

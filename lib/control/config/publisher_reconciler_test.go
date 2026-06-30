@@ -44,9 +44,8 @@ func seedInstanceForSubscriptions(t *testing.T, store persistence.Tables) shared
 			return err
 		}
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             instanceID,
-			TemplateHash:   templateHash,
-			MainRunScopeID: mainRunScopeID,
+			ID:           instanceID,
+			TemplateHash: templateHash,
 		}, tx)
 		return err
 	}); err != nil {

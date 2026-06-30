@@ -64,6 +64,13 @@ func evaluateOneGate(
 	if upstreamInFlight {
 		return nil
 	}
+	advancedSibling, err := args.Persist.Nodes().HasAdvancedSiblingInScope(ctx, tx, row.NodeID, row.RunScopeID, row.RunID)
+	if err != nil {
+		return fmt.Errorf("advanced sibling probe: %w", err)
+	}
+	if advancedSibling {
+		return nil
+	}
 	carryForward, err := loadReceiverCarryForward(ctx, args, tx, row)
 	if err != nil {
 		return fmt.Errorf("carry-forward: %w", err)
@@ -318,12 +325,16 @@ func loadReceiverCarryForward(
 	if err != nil {
 		return nil, fmt.Errorf("prior attrs: %w", err)
 	}
-	if priorBag == nil {
+	if priorBag == nil || len(priorBag.Data) == 0 {
 		return map[string]any{}, nil
 	}
-	out := make(map[string]any, len(priorBag.Data))
-	for k, v := range priorBag.Data {
-		out[k] = v
+	buf, err := json.Marshal(priorBag.Data)
+	if err != nil {
+		return nil, fmt.Errorf("marshal prior bag for deep copy: %w", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf, &out); err != nil {
+		return nil, fmt.Errorf("unmarshal prior bag for deep copy: %w", err)
 	}
 	return out, nil
 }

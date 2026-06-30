@@ -136,10 +136,9 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 		}
 		ck := "ck-" + uuid.NewString()
 		_, err := h.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             instID,
-			TemplateHash:   tplHash,
-			InstanceKey:    &ck,
-			MainRunScopeID: mainScopeID,
+			ID:           instID,
+			TemplateHash: tplHash,
+			InstanceKey:  &ck,
 		}, tx)
 		return err
 	}))
@@ -163,9 +162,11 @@ func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID s
 		`SELECT instance_id FROM rimsky_nodes WHERE id = $1`,
 		[]any{nodeID}, &instID,
 	)
-	pgtest.QueryRowForTest(ctx, t, h.driver,
-		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
-		[]any{instID}, &mainScopeID,
+	mainScopeID = shared.UUID(uuid.New())
+	pgtest.ExecForTest(ctx, t, h.driver,
+		`INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
+		 VALUES ($1, 'main', $2, '', now())`,
+		uuid.UUID(mainScopeID), instID,
 	)
 	msgID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver,
@@ -174,10 +175,10 @@ func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID s
 		msgID, instID,
 	)
 	pgtest.QueryRowForTest(ctx, t, h.driver,
-		`INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, last_progress_at, frame_timeout_ms)
-		 VALUES ($1, $2, 'running', now(), now(), now(), 600000)
+		`INSERT INTO rimsky_frames(instance_id, triggering_message_id, root_run_scope_id, state, queued_at, started_at, last_progress_at, frame_timeout_ms)
+		 VALUES ($1, $2, $3, 'running', now(), now(), now(), 600000)
 		 RETURNING frame_id`,
-		[]any{instID, msgID}, &frameID,
+		[]any{instID, msgID, mainScopeID}, &frameID,
 	)
 	_ = nodeID
 	var runID shared.UUID

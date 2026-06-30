@@ -549,21 +549,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				terminatedAtMs = inst.TerminatedAt.UnixMilli()
 			}
-			if inst.MainRunScopeID != (foundationshared.UUID{}) {
-				if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-					return deps.Persist.RunScopes().Close(ctx, tx, inst.MainRunScopeID)
-				}); err != nil {
-					if deps.Logger != nil {
-						deps.Logger.Warn("handleDeleteInstance: close main run-scope failed",
-							"instance_id", inst.ID.String(),
-							"main_run_scope_id", inst.MainRunScopeID.String(),
-							"error", err.Error())
-					}
-				} else {
-					_, _, _ = FanOutRunScopeEvent(req.Context(), deps, tpl.Spec,
-						inst.MainRunScopeID, inst.ID, "instance_deleted", nil)
-				}
-			}
+			CloseAndFanOutFrameRootRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_deleted")
 			if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
 				EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
 				InstancePayload{TerminatedAtUnixMs: terminatedAtMs}, nil); err != nil {
@@ -702,11 +688,6 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 				}
 				abandonInFlightClaims(ctx, deps, r.NodeID, tx)
 			}
-			if inst.MainRunScopeID != (foundationshared.UUID{}) {
-				if err := deps.Persist.RunScopes().Close(ctx, tx, inst.MainRunScopeID); err != nil {
-					return err
-				}
-			}
 			if err := deps.Persist.Instances().MarkTerminated(ctx, inst.ID, tx); err != nil {
 				return err
 			}
@@ -731,21 +712,18 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 				"error", err.Error())
 		}
 
-		if inst.MainRunScopeID != (foundationshared.UUID{}) {
-			var tpl *persistence.TemplateRow
-			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-				t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-				tpl = t
-				return err
-			}); err != nil {
-				if deps.Logger != nil {
-					deps.Logger.Warn("handleTerminateInstance: load template for run-scope fan-out failed",
-						"instance_id", inst.ID.String(), "error", err.Error())
-				}
-			} else if tpl != nil {
-				_, _, _ = FanOutRunScopeEvent(req.Context(), deps, tpl.Spec,
-					inst.MainRunScopeID, inst.ID, "instance_terminated", nil)
+		var tpl *persistence.TemplateRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+			tpl = t
+			return err
+		}); err != nil {
+			if deps.Logger != nil {
+				deps.Logger.Warn("handleTerminateInstance: load template for run-scope fan-out failed",
+					"instance_id", inst.ID.String(), "error", err.Error())
 			}
+		} else if tpl != nil {
+			CloseAndFanOutFrameRootRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_terminated")
 		}
 
 		updated, err := resolveInstance(req.Context(), deps, inst.ID.String())
@@ -876,19 +854,7 @@ func provisionInstanceTx(
 	tpl *persistence.TemplateRow,
 	args provisionArgs,
 ) (createInstanceResponse, error) {
-	// @concept: run-scope
 	instanceID := foundationshared.UUID(uuid.New())
-	mainRunScopeID := foundationshared.UUID(uuid.New())
-	if err := deps.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
-		ID:               mainRunScopeID,
-		ParentRunScopeID: nil,
-		ParentRunID:      nil,
-		GraphName:        spec.MainGraphName,
-		PartitionKey:     "",
-		InstanceID:       instanceID,
-	}); err != nil {
-		return createInstanceResponse{}, fmt.Errorf("instance-factory: create main run scope: %w", err)
-	}
 	inst, err := deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
 		ID:                            instanceID,
 		TemplateHash:                  tpl.ID,
@@ -896,7 +862,6 @@ func provisionInstanceTx(
 		Params:                        args.Params,
 		AttributeOverrides:            args.AttributeOverrides,
 		AttributeOverridesMatchCounts: args.AttributeOverridesMatchCounts,
-		MainRunScopeID:                mainRunScopeID,
 		Paused:                        args.Paused,
 		TerminateAfterRun:             args.TerminateAfterRun,
 		ServiceBindings:               args.ServiceBindings,

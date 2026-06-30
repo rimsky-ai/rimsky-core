@@ -77,9 +77,8 @@ func seedEmitInstance(t *testing.T, ctx context.Context, d persistence.Database)
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             instanceID,
-			TemplateHash:   templateHash,
-			MainRunScopeID: mainRunScopeID,
+			ID:           instanceID,
+			TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err
 		}

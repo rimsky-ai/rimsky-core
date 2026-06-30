@@ -93,20 +93,6 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			if row == nil {
 				return nil
 			}
-			inst, err := deps.Persist.Instances().Get(ctx, row.InstanceID, tx)
-			if err != nil {
-				return err
-			}
-			if inst == nil {
-				return nil
-			}
-			attrs, err := deps.Persist.NodeAttributes().GetLatestByNode(ctx, row.ID, inst.MainRunScopeID, tx)
-			if err != nil {
-				return err
-			}
-			if attrs != nil {
-				latestBag = attrs.Data
-			}
 			s, err := deps.Persist.Nodes().GetRunSummary(ctx, row.ID, tx)
 			if err != nil {
 				return err
@@ -115,6 +101,15 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, row.ID)
 			if err != nil {
 				return err
+			}
+			if latest != nil {
+				attrs, err := deps.Persist.NodeAttributes().GetLatestByNode(ctx, row.ID, latest.RunScopeID, tx)
+				if err != nil {
+					return err
+				}
+				if attrs != nil {
+					latestBag = attrs.Data
+				}
 			}
 			if latest != nil && latest.SettlingSignalType != nil {
 				settlingSignalType = *latest.SettlingSignalType

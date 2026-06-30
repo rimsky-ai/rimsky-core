@@ -44,10 +44,9 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 		}
 		ck := "ck-" + instanceID.String()[:8]
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             instanceID,
-			TemplateHash:   templateHash,
-			InstanceKey:    &ck,
-			MainRunScopeID: mainScopeID,
+			ID:           instanceID,
+			TemplateHash: templateHash,
+			InstanceKey:  &ck,
 		}, tx); err != nil {
 			return err
 		}

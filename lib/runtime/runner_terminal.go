@@ -621,7 +621,19 @@ func drainWaitSetOnSettled(
 	if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, frameID, senderRunID, tx); err != nil {
 		return err
 	}
-	return evaluateGatesAfterDrain(ctx, args, tx, frameID, senderRunID)
+	if err := evaluateGatesAfterDrain(ctx, args, tx, frameID, senderRunID); err != nil {
+		return err
+	}
+	siblings, err := args.Persist.Nodes().ListPendingSiblingRunsInScope(ctx, tx, senderRunID)
+	if err != nil {
+		return fmt.Errorf("drainWaitSetOnSettled: list pending siblings: %w", err)
+	}
+	for _, sib := range siblings {
+		if err := evaluateOneGate(ctx, args, tx, sib); err != nil {
+			return fmt.Errorf("drainWaitSetOnSettled: evaluate sibling gate %s: %w", sib, err)
+		}
+	}
+	return nil
 }
 
 func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {

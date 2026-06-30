@@ -125,7 +125,6 @@ func seedAbandonScenario(
 		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instID, TemplateHash: tmpl.ID, InstanceKey: &ik, Params: map[string]any{},
-			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -140,7 +139,7 @@ func seedAbandonScenario(
 		nodeRow = n
 		return nil
 	}))
-	frameID := seedFrameRow(ctx, t, backend, inst.ID, nodeRow.ID)
+	frameID := seedFrameRow(ctx, t, backend, inst.ID, nodeRow.ID, mainScopeID)
 	runID := seedRunRow(ctx, t, backend, nodeRow.ID, frameID)
 	claimHandleID := shared.UUID(uuid.New())
 	intent := "rw"

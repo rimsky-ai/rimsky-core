@@ -72,9 +72,8 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             instanceID,
-			TemplateHash:   templateHash,
-			MainRunScopeID: mainScopeID,
+			ID:           instanceID,
+			TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err
 		}
@@ -100,7 +99,7 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
+		frameID, err := tables.Frames().InsertFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}

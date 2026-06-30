@@ -9,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func frameOp(ctx context.Context, t *testing.T, d persistence.Database, op string, fn func(tx persistence.Tx) error) {
@@ -26,15 +29,31 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 	frames := d.Tables().Frames()
 
 	var f1, f2 shared.UUID
+	scope1 := shared.UUID(uuid.New())
+	scope2 := shared.UUID(uuid.New())
 	frameOp(ctx, t, d, "InsertFrame f1", func(tx persistence.Tx) error {
+		if err := d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         scope1,
+			GraphName:  spec.MainGraphName,
+			InstanceID: fix.InstanceID,
+		}); err != nil {
+			return err
+		}
 		var err error
-		f1, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, 600000, tx)
+		f1, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, scope1, 600000, tx)
 		return err
 	})
 	time.Sleep(20 * time.Millisecond)
 	frameOp(ctx, t, d, "InsertFrame f2", func(tx persistence.Tx) error {
+		if err := d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         scope2,
+			GraphName:  spec.MainGraphName,
+			InstanceID: fix.InstanceID,
+		}); err != nil {
+			return err
+		}
 		var err error
-		f2, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, 600000, tx)
+		f2, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, scope2, 600000, tx)
 		return err
 	})
 	if f1 == f2 {

@@ -56,8 +56,8 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 	}
 	defer func() { _ = stx.Rollback() }()
 	if _, err := stx.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, main_run_scope_id) VALUES (?, ?, ?)`,
-		instanceID, templateID, scopeID,
+		`INSERT INTO rimsky_instances (id, template_hash) VALUES (?, ?)`,
+		instanceID, templateID,
 	); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
@@ -92,10 +92,10 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 		runID := uuid.New().String()
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_frames
-			   (frame_id, instance_id, triggering_message_id, state,
+			   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state,
 			    queued_at, started_at, ended_at, frame_timeout_ms)
-			 VALUES (?, ?, ?, 'completed', ?, ?, ?, 600000)`,
-			frameID, instanceID, msgID, rfc(endedAt), rfc(endedAt), rfc(endedAt),
+			 VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, 600000)`,
+			frameID, instanceID, msgID, scopeID, rfc(endedAt), rfc(endedAt), rfc(endedAt),
 		); err != nil {
 			t.Fatalf("seed terminal frame: %v", err)
 		}
@@ -131,10 +131,10 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 	heldRun := uuid.New().String()
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, state,
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state,
 		    queued_at, started_at, frame_timeout_ms)
-		 VALUES (?, ?, ?, 'running', ?, ?, 600000)`,
-		heldFrame, instanceID, msgID, rfc(oldTime), rfc(oldTime),
+		 VALUES (?, ?, ?, ?, 'running', ?, ?, 600000)`,
+		heldFrame, instanceID, msgID, scopeID, rfc(oldTime), rfc(oldTime),
 	); err != nil {
 		t.Fatalf("seed held frame: %v", err)
 	}

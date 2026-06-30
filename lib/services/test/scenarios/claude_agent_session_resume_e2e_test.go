@@ -65,6 +65,8 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 			len(dispatches), dispatches)
 	}
 
+	dumpWorkerDispatchProvenance(t, ctx, pgPool, mainWorkerNodeID)
+
 	d1 := dispatches[0]
 	requireFakeCliTurn(t, d1.attributes, 1)
 	requireFakeCliRecall(t, d1.attributes, "")
@@ -89,6 +91,8 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	}
 
 	waitForWorkerDispatchCount(t, ctx, pgPool, subAgentNodeID, 1, 180*time.Second)
+
+	dumpWorkerDispatchProvenance(t, ctx, pgPool, subAgentNodeID)
 
 	subDispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, subAgentNodeID)
 	if len(subDispatches) != 1 {
@@ -255,6 +259,38 @@ type workerDispatch struct {
 	attributes map[string]any
 }
 
+func dumpWorkerDispatchProvenance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nodeID string) {
+	t.Helper()
+	rows, err := pool.Query(ctx, `
+		SELECT nr.id::text, nr.run_scope_id::text, nr.frame_id::text, nr.sequence, nr.state,
+		       nr.creation_reason, nr.enqueued_at,
+		       COALESCE(na.dispatch_input_bag, '{}'::jsonb), COALESCE(na.data, '{}'::jsonb)
+		  FROM rimsky_node_runs nr
+		  LEFT JOIN rimsky_node_attributes na ON na.node_run_id = nr.id
+		 WHERE nr.node_id = $1::uuid
+		 ORDER BY nr.enqueued_at, nr.id
+	`, nodeID)
+	if err != nil {
+		t.Logf("dumpWorkerDispatchProvenance: query: %v", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var runID, scopeID, frameID, state, creationReason string
+		var seq int64
+		var enqueuedAt time.Time
+		var inputBag, data []byte
+		if err := rows.Scan(&runID, &scopeID, &frameID, &seq, &state, &creationReason, &enqueuedAt, &inputBag, &data); err != nil {
+			t.Logf("dumpWorkerDispatchProvenance: scan: %v", err)
+			return
+		}
+		t.Logf("  dispatch run=%s seq=%d frame=%s scope=%s state=%s creation_reason=%s enqueued_at=%s",
+			runID, seq, frameID, scopeID, state, creationReason, enqueuedAt.Format(time.RFC3339Nano))
+		t.Logf("    dispatch_input_bag=%s", string(inputBag))
+		t.Logf("    data=%s", string(data))
+	}
+}
+
 func connectStatePostgres(ctx context.Context, t *testing.T, hostDSN string) *pgxpool.Pool {
 	t.Helper()
 	if hostDSN == "" {
@@ -320,6 +356,7 @@ func waitForWorkerDispatchCount(t *testing.T, ctx context.Context, pool *pgxpool
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	dumpWorkerDispatchProvenance(t, ctx, pool, nodeID)
 	t.Fatalf("node %s did not reach %d settled dispatches within %v (last count=%d)",
 		nodeID, wantN, deadline, lastN)
 }

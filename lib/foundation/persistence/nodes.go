@@ -94,6 +94,14 @@ type NodeTable interface {
 	// @concept: signal
 	HasRunForNodeInFrame(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx Tx) (bool, error)
 
+	// @concept: cascade
+	// @concept: run-scope
+	HasAdvancedSiblingInScope(ctx context.Context, tx Tx, nodeID, runScopeID, excludingRunID shared.UUID) (bool, error)
+
+	// @concept: cascade
+	// @concept: run-scope
+	ListPendingSiblingRunsInScope(ctx context.Context, tx Tx, senderRunID shared.UUID) ([]shared.UUID, error)
+
 	GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID shared.UUID, tx Tx) (*NodeRunForCallback, error)
 
 	// @concept: cascade
@@ -128,6 +136,7 @@ type NodeTable interface {
 	ListRunsForInstanceByStates(ctx context.Context, tx Tx, instanceID shared.UUID, states []cascade.NodeState) ([]NodeRunLatest, error)
 
 	// @concept: cascade
+	// @concept: run-scope
 	GetPriorRunBySequence(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, beforeSeq int64) (*NodeRunForGate, error)
 
 	// @concept: cascade

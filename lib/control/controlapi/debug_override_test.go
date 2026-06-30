@@ -48,11 +48,11 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 		if err != nil {
 			return err
 		}
-		inst, err := h.persist.Instances().Get(ctx, instanceID, tx)
+		frameRow, err := h.persist.Frames().GetForObservability(ctx, frameID, tx)
 		if err != nil {
 			return err
 		}
-		require.NotNil(t, inst)
+		require.NotNil(t, frameRow)
 		var rootNodeID shared.UUID
 		nodes, err := h.persist.Nodes().ListByInstance(ctx, instanceID, tx)
 		if err != nil {
@@ -67,7 +67,7 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 		if rootNodeID == (shared.UUID{}) {
 			return fmt.Errorf("seedPauseModeHitForTest: no root node on instance %s", instanceID)
 		}
-		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNodeID, inst.MainRunScopeID, frameID); err != nil {
+		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNodeID, frameRow.RootRunScopeID, frameID); err != nil {
 			return err
 		}
 		fresh, err := h.persist.Nodes().Get(ctx, rootNodeID, tx)
@@ -123,12 +123,13 @@ func seedRunningFrameForTest(ctx context.Context, t *testing.T, h *harness, inst
             (id, instance_id, type, sender_kind, sender, payload, received_at)
         VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
     `, msgID, instanceID)
+	rootScope := mainRunScopeIDForInstance(t, h, instanceID)
 	frameID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, state, queued_at, started_at, triggering_message_id, frame_timeout_ms)
-        VALUES ($1, $2, 'running', now(), now(), $3, 60000)
-    `, frameID, instanceID, msgID)
+            (frame_id, instance_id, state, queued_at, started_at, triggering_message_id, root_run_scope_id, frame_timeout_ms)
+        VALUES ($1, $2, 'running', now(), now(), $3, $4, 60000)
+    `, frameID, instanceID, msgID, rootScope)
 	return shared.UUID(frameID)
 }
 
@@ -264,12 +265,12 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 
 	var inFlightRunID shared.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		inst, err := h.persist.Instances().Get(ctx, instUUID, tx)
+		frameRow, err := h.persist.Frames().GetForObservability(ctx, frameID, tx)
 		if err != nil {
 			return err
 		}
-		require.NotNil(t, inst)
-		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNode.ID, inst.MainRunScopeID, frameID); err != nil {
+		require.NotNil(t, frameRow)
+		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNode.ID, frameRow.RootRunScopeID, frameID); err != nil {
 			return err
 		}
 		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
@@ -319,12 +320,12 @@ func TestDebugOverride_SetAttributeWritesAttribute(t *testing.T) {
 
 	var inFlightRunID shared.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		inst, err := h.persist.Instances().Get(ctx, instUUID, tx)
+		frameRow, err := h.persist.Frames().GetForObservability(ctx, frameID, tx)
 		if err != nil {
 			return err
 		}
-		require.NotNil(t, inst)
-		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNode.ID, inst.MainRunScopeID, frameID); err != nil {
+		require.NotNil(t, frameRow)
+		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNode.ID, frameRow.RootRunScopeID, frameID); err != nil {
 			return err
 		}
 		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
@@ -389,13 +390,9 @@ func TestDebugOverride_SetAttributeNoInFlightRunIsNoOp(t *testing.T) {
 	require.EqualValues(t, 0, out["runs_mutated"],
 		"set_attribute with no in-flight run must not mutate any run")
 
+	rootScope := mainRunScopeIDForInstance(t, h, instUUID)
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		inst, err := h.persist.Instances().Get(ctx, instUUID, tx)
-		if err != nil {
-			return err
-		}
-		require.NotNil(t, inst)
-		latest, err := h.persist.NodeAttributes().GetLatestByNode(ctx, rootNode.ID, inst.MainRunScopeID, tx)
+		latest, err := h.persist.NodeAttributes().GetLatestByNode(ctx, rootNode.ID, rootScope, tx)
 		if err != nil {
 			return err
 		}

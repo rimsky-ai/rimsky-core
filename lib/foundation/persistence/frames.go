@@ -29,6 +29,7 @@ type FrameQueuedReady struct {
 	FrameID             shared.UUID
 	InstanceID          shared.UUID
 	TriggeringMessageID shared.UUID
+	RootRunScopeID      shared.UUID
 }
 
 type FrameStuck struct {
@@ -48,6 +49,7 @@ type FrameRow struct {
 	InstanceID          shared.UUID `json:"instance_id"`
 	State               FrameState  `json:"state"`
 	TriggeringMessageID shared.UUID `json:"triggering_message_id"`
+	RootRunScopeID      shared.UUID `json:"root_run_scope_id"`
 	StartedAt           *time.Time  `json:"started_at,omitempty"`
 	EndedAt             *time.Time  `json:"ended_at,omitempty"`
 	LastProgressAt      *time.Time  `json:"last_progress_at,omitempty"`
@@ -91,7 +93,7 @@ type FrameTable interface {
 
 	LookupFrameTimeoutMs(ctx context.Context, instanceID shared.UUID, tx Tx) (frameTimeoutMs int64, err error)
 
-	InsertFrame(ctx context.Context, instanceID, triggeringMessageID shared.UUID, frameTimeoutMs int64, tx Tx) (shared.UUID, error)
+	InsertFrame(ctx context.Context, instanceID, triggeringMessageID, rootRunScopeID shared.UUID, frameTimeoutMs int64, tx Tx) (shared.UUID, error)
 
 	ListForObservabilityWithMessage(ctx context.Context, filter FrameListFilter, pag ListPagination, tx Tx) (PaginatedListResult[FrameRowWithMessage], error)
 

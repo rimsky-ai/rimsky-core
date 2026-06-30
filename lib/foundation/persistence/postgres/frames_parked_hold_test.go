@@ -48,7 +48,7 @@ func seedFrameParkedFixture(
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: instanceID, TemplateHash: templateHash, MainRunScopeID: mainRunScopeID,
+			ID: instanceID, TemplateHash: templateHash,
 			TerminateAfterRun: true,
 		}, tx); err != nil {
 			return err
@@ -71,10 +71,10 @@ func seedFrameParkedFixture(
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, state,
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state,
 		    frame_timeout_ms, started_at, ended_at)
-		 VALUES ($1, $2, $3, $4, 60000, `+startedClause+`, `+endedClause+`)`,
-		frameID, instanceID, messageID, frameState,
+		 VALUES ($1, $2, $3, $4, $5, 60000, `+startedClause+`, `+endedClause+`)`,
+		frameID, instanceID, messageID, mainRunScopeID, frameState,
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
@@ -174,7 +174,7 @@ func seedResolvedFrameInstancePG(
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: instanceID, TemplateHash: templateHash, MainRunScopeID: mainRunScopeID,
+			ID: instanceID, TemplateHash: templateHash,
 			TerminateAfterRun: terminateAfterRun,
 		}, tx); err != nil {
 			return err
@@ -192,10 +192,10 @@ func seedResolvedFrameInstancePG(
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, state,
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state,
 		    frame_timeout_ms, started_at, ended_at)
-		 VALUES ($1, $2, $3, 'completed', 60000, now(), now())`,
-		frameID, instanceID, messageID,
+		 VALUES ($1, $2, $3, $4, 'completed', 60000, now(), now())`,
+		frameID, instanceID, messageID, mainRunScopeID,
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)

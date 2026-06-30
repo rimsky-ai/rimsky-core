@@ -606,6 +606,60 @@ func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundations
 	return n > 0, nil
 }
 
+// @concept: cascade
+// @concept: run-scope
+func (s *nodesImpl) HasAdvancedSiblingInScope(
+	ctx context.Context, tx persistence.Tx,
+	nodeID, runScopeID, excludingRunID foundationshared.UUID,
+) (bool, error) {
+	var n int
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM rimsky_node_runs
+		  WHERE node_id = ? AND run_scope_id = ? AND id <> ?
+		    AND state IN ('stale', 'running', 'held', 'parked')`,
+		nodeID.String(), runScopeID.String(), excludingRunID.String(),
+	).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("HasAdvancedSiblingInScope: %w", err)
+	}
+	return n > 0, nil
+}
+
+// @concept: cascade
+// @concept: run-scope
+func (s *nodesImpl) ListPendingSiblingRunsInScope(
+	ctx context.Context, tx persistence.Tx, senderRunID foundationshared.UUID,
+) ([]foundationshared.UUID, error) {
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT pending.id
+		   FROM rimsky_node_runs pending
+		   JOIN rimsky_node_runs sender ON sender.id = ?
+		  WHERE pending.node_id = sender.node_id
+		    AND pending.run_scope_id = sender.run_scope_id
+		    AND pending.id <> sender.id
+		    AND pending.state = 'pending'
+		  ORDER BY pending.sequence ASC`,
+		senderRunID.String(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ListPendingSiblingRunsInScope: %w", err)
+	}
+	defer rows.Close()
+	var out []foundationshared.UUID
+	for rows.Next() {
+		var idStr string
+		if err := rows.Scan(&idStr); err != nil {
+			return nil, fmt.Errorf("ListPendingSiblingRunsInScope: scan: %w", err)
+		}
+		id, perr := uuid.Parse(idStr)
+		if perr != nil {
+			return nil, fmt.Errorf("ListPendingSiblingRunsInScope: parse id: %w", perr)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	var (
 		r          persistence.NodeRunForCallback

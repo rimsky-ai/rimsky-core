@@ -82,9 +82,8 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             instanceID,
-			TemplateHash:   templateHash,
-			MainRunScopeID: shared.UUID(mainRunScopeID),
+			ID:           instanceID,
+			TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err
 		}
@@ -110,7 +109,7 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 		}); err != nil {
 			return err
 		}
-		fid, err := store.Frames().InsertFrame(ctx, instanceID, shared.UUID(messageID), 600000, tx)
+		fid, err := store.Frames().InsertFrame(ctx, instanceID, shared.UUID(messageID), shared.UUID(mainRunScopeID), 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -151,14 +150,14 @@ func seedConformanceRunForNode(
 		if nodeRow == nil {
 			t.Fatalf("seedConformanceRunForNode: node %s not found", nodeID)
 		}
-		instRow, err := store.Instances().Get(ctx, nodeRow.InstanceID, tx)
+		frameRow, err := store.Frames().GetForObservability(ctx, frameID, tx)
 		if err != nil {
 			return err
 		}
-		if instRow == nil {
-			t.Fatalf("seedConformanceRunForNode: instance %s not found", nodeRow.InstanceID)
+		if frameRow == nil {
+			t.Fatalf("seedConformanceRunForNode: frame %s not found", frameID)
 		}
-		runScopeID = instRow.MainRunScopeID
+		runScopeID = frameRow.RootRunScopeID
 		return nil
 	}); err != nil {
 		t.Fatalf("seedConformanceRunForNode: resolve run scope: %v", err)

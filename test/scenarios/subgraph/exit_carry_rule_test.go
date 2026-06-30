@@ -87,9 +87,8 @@ func makeFixture(t *testing.T) carryFixture {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             instanceID,
-			TemplateHash:   templateHash,
-			MainRunScopeID: mainScopeID,
+			ID:           instanceID,
+			TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err
 		}
@@ -115,7 +114,7 @@ func makeFixture(t *testing.T) carryFixture {
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
+		frameID, err := tables.Frames().InsertFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}

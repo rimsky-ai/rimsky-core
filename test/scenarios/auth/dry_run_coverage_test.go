@@ -508,10 +508,6 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 	nodeID := mustUUID(t, nodes[0].(map[string]any)["id"].(string))
 
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		inst, err := f.db.Tables().Instances().Get(ctx, instanceID, tx)
-		if err != nil {
-			return err
-		}
 		msgID := foundationshared.UUID(uuid.New())
 		if err := f.db.Tables().Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
@@ -527,12 +523,16 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 		if err != nil {
 			return err
 		}
+		frameRow, err := f.db.Tables().Frames().GetForObservability(ctx, foundationshared.UUID(frameID), tx)
+		if err != nil {
+			return err
+		}
 		runID := foundationshared.UUID(uuid.New())
 		if err := f.db.Tables().RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
 			RunID:        runID,
 			NodeID:       nodeID,
 			FrameID:      foundationshared.UUID(frameID),
-			RunScopeID:   inst.MainRunScopeID,
+			RunScopeID:   frameRow.RootRunScopeID,
 			ExecutorName: "",
 		}); err != nil {
 			return err
@@ -589,10 +589,9 @@ func seedDurableAsset(ctx context.Context, t *testing.T, f *authFixture) (string
 		}
 		ck := "dryrun-asset-key"
 		if _, err := f.db.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             instanceID,
-			TemplateHash:   tplHash,
-			InstanceKey:    &ck,
-			MainRunScopeID: mainScopeID,
+			ID:           instanceID,
+			TemplateHash: tplHash,
+			InstanceKey:  &ck,
 		}, tx); err != nil {
 			return err
 		}

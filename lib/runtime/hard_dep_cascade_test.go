@@ -47,7 +47,6 @@ func TestPullHardDepUpstreams_DoesNotWakeParkedUpstream(t *testing.T) {
 		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck, Params: map[string]any{},
-			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -72,13 +71,13 @@ func TestPullHardDepUpstreams_DoesNotWakeParkedUpstream(t *testing.T) {
 		return nil
 	}))
 
-	earlierFrameID := seedFrame(ctx, t, backend, inst.ID, bN.ID)
+	earlierFrameID := seedFrame(ctx, t, backend, inst.ID, bN.ID, mainScopeID)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := backend.Frames().MarkRunningFrameTerminal(ctx, earlierFrameID,
 			persistence.FrameStateCompleted, tx)
 		return err
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID, mainScopeID)
 
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
@@ -157,7 +156,6 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck, Params: map[string]any{},
-			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -182,7 +180,7 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID, mainScopeID)
 
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `

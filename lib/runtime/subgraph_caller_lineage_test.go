@@ -60,8 +60,9 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 	tmplHash := "sha256-" + hex.EncodeToString(sum[:])
 
 	var (
-		inst       persistence.InstanceRow
-		callerNode persistence.NodeRow
+		inst        persistence.InstanceRow
+		callerNode  persistence.NodeRow
+		mainScopeID shared.UUID
 	)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.Templates().Insert(ctx, persistence.TemplateInsertInput{
@@ -74,7 +75,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		}
 		ck := "ck-subgraph-emit"
 		instID := shared.UUID(uuid.New())
-		mainScopeID := shared.UUID(uuid.New())
+		mainScopeID = shared.UUID(uuid.New())
 		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  "main",
@@ -84,8 +85,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instID, TemplateHash: tmplHash, InstanceKey: &ck,
-			Params:         map[string]any{"region": "us-east"},
-			MainRunScopeID: mainScopeID,
+			Params: map[string]any{"region": "us-east"},
 		}, tx)
 		if err != nil {
 			return err
@@ -127,7 +127,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		fid, err := backend.Frames().InsertFrame(ctx, inst.ID, msgID, 600000, tx)
+		fid, err := backend.Frames().InsertFrame(ctx, inst.ID, msgID, mainScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -140,7 +140,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 			RunID:        callerRunID,
 			NodeID:       callerNode.ID,
 			FrameID:      frameID,
-			RunScopeID:   inst.MainRunScopeID,
+			RunScopeID:   mainScopeID,
 			ExecutorName: "",
 		}); err != nil {
 			return err
@@ -161,7 +161,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		Executor:         "",
 		GraphName:        "main",
 		FrameID:          frameID,
-		RunScopeID:       inst.MainRunScopeID,
+		RunScopeID:       mainScopeID,
 		NodeDef:          nodeDef,
 		InstanceParams:   inst.Params,
 		MergedAttributes: map[string]any{"merged": true},

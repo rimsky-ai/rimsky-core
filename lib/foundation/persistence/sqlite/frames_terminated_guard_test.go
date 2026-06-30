@@ -38,9 +38,9 @@ func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
 	}
 	defer func() { _ = stx.Rollback() }()
 	if _, err := stx.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, main_run_scope_id, terminated_at)
-		 VALUES (?, ?, ?, datetime('now'))`,
-		instanceID.String(), templateID, scopeID,
+		`INSERT INTO rimsky_instances (id, template_hash, terminated_at)
+		 VALUES (?, ?, datetime('now'))`,
+		instanceID.String(), templateID,
 	); err != nil {
 		t.Fatalf("seed terminated instance: %v", err)
 	}
@@ -63,9 +63,9 @@ func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, state, frame_timeout_ms)
-		 VALUES (?, ?, ?, 'queued', 60000)`,
-		frameID.String(), instanceID.String(), msgID,
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, frame_timeout_ms)
+		 VALUES (?, ?, ?, ?, 'queued', 60000)`,
+		frameID.String(), instanceID.String(), msgID, scopeID,
 	); err != nil {
 		t.Fatalf("seed queued frame: %v", err)
 	}

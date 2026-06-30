@@ -176,12 +176,13 @@ func (f *invTestQueue) snapshot() ([]persistence.DispatchRequest, []shared.UUID)
 var _ persistence.Queue = (*invTestQueue)(nil)
 
 type fixture struct {
-	driver   persistence.Database
-	persist  persistence.Tables
-	q        *invTestQueue
-	clock    shared.Clock
-	log      shared.Logger
-	instance persistence.InstanceRow
+	driver      persistence.Database
+	persist     persistence.Tables
+	q           *invTestQueue
+	clock       shared.Clock
+	log         shared.Logger
+	instance    persistence.InstanceRow
+	mainScopeID shared.UUID
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -208,8 +209,7 @@ func newFixture(t *testing.T) *fixture {
 		}
 		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck,
-			Params:         map[string]any{},
-			MainRunScopeID: mainScopeID,
+			Params: map[string]any{},
 		}, tx)
 		if err != nil {
 			return err
@@ -219,12 +219,13 @@ func newFixture(t *testing.T) *fixture {
 	}))
 
 	return &fixture{
-		driver:   d,
-		persist:  d.Tables(),
-		q:        newInvTestQueueWithReal(d.Queue()),
-		clock:    shared.SystemClock{},
-		log:      shared.SilentLogger{},
-		instance: inst,
+		driver:      d,
+		persist:     d.Tables(),
+		q:           newInvTestQueueWithReal(d.Queue()),
+		clock:       shared.SystemClock{},
+		log:         shared.SilentLogger{},
+		instance:    inst,
+		mainScopeID: mainScopeID,
 	}
 }
 
@@ -258,10 +259,10 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
         `, msgID, f.instance.ID)
 		pgtest.QueryRowForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_frames
-                (instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms)
-            VALUES ($1, $2, 'running', now(), now(), 600000)
+                (instance_id, triggering_message_id, root_run_scope_id, state, queued_at, started_at, frame_timeout_ms)
+            VALUES ($1, $2, $3, 'running', now(), now(), 600000)
             RETURNING frame_id
-        `, []any{f.instance.ID, msgID}, &frameID)
+        `, []any{f.instance.ID, msgID, f.mainScopeID}, &frameID)
 	} else {
 		pgtest.QueryRowForTest(ctx, t, f.driver, `
             SELECT frame_id FROM rimsky_frames
@@ -276,7 +277,7 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES (gen_random_uuid(), $1, $2, ARRAY[]::text[], NOW(), $3, 1, 'cascade', $4, $5)
-    `, n.ID, executor, string(state), frameID, f.instance.MainRunScopeID)
+    `, n.ID, executor, string(state), frameID, f.mainScopeID)
 	return n
 }
 

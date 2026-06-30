@@ -13,7 +13,6 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 const tickBudget = 10 * time.Second
@@ -127,19 +126,7 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 		if inst.TerminatedAt != nil {
 			terminatedAtMs = inst.TerminatedAt.UnixMilli()
 		}
-		if inst.MainRunScopeID != (shared.UUID{}) {
-			if err := t.deps.Persist.Transaction(tickCtx, func(ctx context.Context, tx persistence.Tx) error {
-				return t.deps.Persist.RunScopes().Close(ctx, tx, inst.MainRunScopeID)
-			}); err != nil {
-				t.logger.Warn("instance_terminator.close_main_run_scope_failed",
-					"instance_id", inst.ID,
-					"main_run_scope_id", inst.MainRunScopeID,
-					"error", err.Error())
-			} else {
-				_, _, _ = FanOutRunScopeEvent(tickCtx, t.deps, tpl.Spec,
-					inst.MainRunScopeID, inst.ID, "instance_terminated", nil)
-			}
-		}
+		CloseAndFanOutFrameRootRunScopesForInstance(tickCtx, t.deps, tpl.Spec, inst.ID, "instance_terminated")
 		_, perStoreErr, err := FanOutInstanceEvent(tickCtx, t.deps,
 			EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
 			InstancePayload{TerminatedAtUnixMs: terminatedAtMs}, nil)

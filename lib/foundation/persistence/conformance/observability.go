@@ -53,13 +53,12 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		mainScopeID := seedMainRunScopeForInstance(ctx, t, tx, store, id)
+		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             id,
-			TemplateHash:   tmpl,
-			InstanceKey:    &key,
-			Params:         map[string]any{},
-			MainRunScopeID: mainScopeID,
+			ID:           id,
+			TemplateHash: tmpl,
+			InstanceKey:  &key,
+			Params:       map[string]any{},
 		}, tx)
 		return err
 	}); err != nil {
@@ -155,12 +154,11 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		mainScopeID := seedMainRunScopeForInstance(ctx, t, tx, store, id)
+		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             id,
-			TemplateHash:   tmpl,
-			Params:         map[string]any{},
-			MainRunScopeID: mainScopeID,
+			ID:           id,
+			TemplateHash: tmpl,
+			Params:       map[string]any{},
 		}, tx)
 		return err
 	}); err != nil {

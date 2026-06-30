@@ -65,7 +65,7 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: instanceID, TemplateHash: templateHash, MainRunScopeID: mainScopeID,
+			ID: instanceID, TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err
 		}
@@ -84,7 +84,7 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
+		frameID, err := tables.Frames().InsertFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}

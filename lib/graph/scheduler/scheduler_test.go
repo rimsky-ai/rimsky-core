@@ -34,6 +34,7 @@ type schedFixture struct {
 	clock       shared.Clock
 	log         shared.Logger
 	instance    persistence.InstanceRow
+	mainScopeID shared.UUID
 }
 
 func newSchedFixture(t *testing.T) *schedFixture {
@@ -60,8 +61,7 @@ func newSchedFixture(t *testing.T) *schedFixture {
 		}
 		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck,
-			Params:         map[string]any{},
-			MainRunScopeID: mainScopeID,
+			Params: map[string]any{},
 		}, tx)
 		if err != nil {
 			return err
@@ -78,6 +78,7 @@ func newSchedFixture(t *testing.T) *schedFixture {
 		clock:       shared.SystemClock{},
 		log:         shared.SilentLogger{},
 		instance:    inst,
+		mainScopeID: mainScopeID,
 	}
 }
 
@@ -113,7 +114,7 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 		                               state, sequence, creation_reason, frame_id, run_scope_id)
 		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), NULL, NULL,
 		         $3, 1, 'cascade', $4, $5)`,
-		n.ID, executor, string(state), frameID, f.instance.MainRunScopeID)
+		n.ID, executor, string(state), frameID, f.mainScopeID)
 	return n
 }
 
@@ -148,10 +149,10 @@ func insertRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, inst
 	var frameID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_frames
-            (instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms)
-        VALUES ($1, $2, 'running', now(), now(), 600000)
+            (instance_id, triggering_message_id, root_run_scope_id, state, queued_at, started_at, frame_timeout_ms)
+        VALUES ($1, $2, $3, 'running', now(), now(), 600000)
         RETURNING frame_id
-    `, []any{instanceID, msgID}, &frameID)
+    `, []any{instanceID, msgID, f.mainScopeID}, &frameID)
 	return frameID
 }
 
@@ -208,7 +209,7 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	require.NoError(t, f.queue.Enqueue(ctx, persistence.DispatchRequest{
 		NodeID: n.ID, ExecutorName: "worker", EnqueuedAt: time.Now().Add(-time.Second),
 		FrameID:    *n.FrameID,
-		RunScopeID: f.instance.MainRunScopeID,
+		RunScopeID: f.mainScopeID,
 	}))
 
 	var dispatchID shared.UUID

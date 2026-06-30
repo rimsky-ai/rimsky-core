@@ -591,6 +591,58 @@ func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundations
 	return exists, nil
 }
 
+// @concept: cascade
+// @concept: run-scope
+func (s *nodesImpl) HasAdvancedSiblingInScope(
+	ctx context.Context, tx persistence.Tx,
+	nodeID, runScopeID, excludingRunID foundationshared.UUID,
+) (bool, error) {
+	var exists bool
+	err := s.q(tx).QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM rimsky_node_runs
+		    WHERE node_id = $1 AND run_scope_id = $2 AND id <> $3
+		      AND state IN ('stale', 'running', 'held', 'parked')
+		 )`,
+		nodeID, runScopeID, excludingRunID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("HasAdvancedSiblingInScope: %w", err)
+	}
+	return exists, nil
+}
+
+// @concept: cascade
+// @concept: run-scope
+func (s *nodesImpl) ListPendingSiblingRunsInScope(
+	ctx context.Context, tx persistence.Tx, senderRunID foundationshared.UUID,
+) ([]foundationshared.UUID, error) {
+	rows, err := s.q(tx).Query(ctx,
+		`SELECT pending.id
+		   FROM rimsky_node_runs pending
+		   JOIN rimsky_node_runs sender ON sender.id = $1
+		  WHERE pending.node_id = sender.node_id
+		    AND pending.run_scope_id = sender.run_scope_id
+		    AND pending.id <> sender.id
+		    AND pending.state = 'pending'
+		  ORDER BY pending.sequence ASC`,
+		senderRunID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ListPendingSiblingRunsInScope: %w", err)
+	}
+	defer rows.Close()
+	var out []foundationshared.UUID
+	for rows.Next() {
+		var id foundationshared.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("ListPendingSiblingRunsInScope: scan: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	ex := s.q(tx)
 	var (

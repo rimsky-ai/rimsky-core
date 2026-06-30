@@ -52,7 +52,6 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instID, TemplateHash: tmpl.ID,
 			InstanceKey: &ck, Params: map[string]any{},
-			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -76,7 +75,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	})
 	reg.Add(storeName, stubStore)
 
-	frameID := seedFrameAsset(ctx, t, backend, inst.ID, acqNode.ID)
+	frameID := seedFrameAsset(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
 	acqRunID := seedRunForNodeAsset(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
 	intent := "rw"
@@ -193,7 +192,7 @@ func insertDeployedTemplateAsset(ctx context.Context, t *testing.T, sb persisten
 	return *row
 }
 
-func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
+func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, instanceID, sourceNodeID, rootScope shared.UUID) shared.UUID {
 	t.Helper()
 	_ = sourceNodeID
 	var frameID shared.UUID
@@ -208,7 +207,7 @@ func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, in
 		}); err != nil {
 			return err
 		}
-		fid, err := sb.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
+		fid, err := sb.Frames().InsertFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -229,21 +228,14 @@ func seedRunForNodeAsset(
 	var out shared.UUID
 	var scopeID shared.UUID
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		nd, err := sb.Nodes().Get(ctx, nodeID, tx)
+		frameRow, err := sb.Frames().GetForObservability(ctx, frameID, tx)
 		if err != nil {
 			return err
 		}
-		if nd == nil {
-			t.Fatalf("seedRunForNodeAsset: node %s missing", nodeID)
+		if frameRow == nil {
+			t.Fatalf("seedRunForNodeAsset: frame %s missing", frameID)
 		}
-		inst, err := sb.Instances().Get(ctx, nd.InstanceID, tx)
-		if err != nil {
-			return err
-		}
-		if inst == nil {
-			t.Fatalf("seedRunForNodeAsset: instance %s missing", nd.InstanceID)
-		}
-		scopeID = inst.MainRunScopeID
+		scopeID = frameRow.RootRunScopeID
 		return nil
 	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

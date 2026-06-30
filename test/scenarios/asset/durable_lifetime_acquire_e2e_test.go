@@ -77,7 +77,6 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instID, TemplateHash: tmpl.ID,
 			InstanceKey: &ck, Params: map[string]any{},
-			MainRunScopeID: mainScopeID,
 		}, tx); err != nil {
 			return err
 		}
@@ -92,7 +91,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrameAsset(ctx, t, backend, instID, acqNode.ID)
+	frameID := seedFrameAsset(ctx, t, backend, instID, acqNode.ID, mainScopeID)
 	_ = seedRunForNodeAsset(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
 	reg := locks.NewRegistry()

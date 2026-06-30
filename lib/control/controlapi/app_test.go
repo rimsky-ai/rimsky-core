@@ -423,10 +423,11 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	require.Equal(t, http.StatusConflict, status)
 
 	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1`, nodeRow.ID)
-	var mainScopeID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver, `
-        SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1
-    `, []any{inst.ID}, &mainScopeID)
+	mainScopeID := shared.UUID(uuid.New())
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
+        VALUES ($1, 'main', $2, '', now())
+    `, uuid.UUID(mainScopeID), inst.ID)
 	msgID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_messages
@@ -436,9 +437,9 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	frameID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, state, queued_at, started_at, triggering_message_id, frame_timeout_ms)
-        VALUES ($1, $2, 'running', now(), now(), $3, 60000)
-    `, frameID, inst.ID, msgID)
+            (frame_id, instance_id, state, queued_at, started_at, triggering_message_id, root_run_scope_id, frame_timeout_ms)
+        VALUES ($1, $2, 'running', now(), now(), $3, $4, 60000)
+    `, frameID, inst.ID, msgID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)

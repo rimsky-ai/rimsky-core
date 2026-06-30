@@ -127,49 +127,45 @@ func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 	}
 }
 
-func TestDeliverPendingMessages_OneMessagePerCall(t *testing.T) {
+func TestDeliverPendingMessages_OnlyDeliversFrameTrigger(t *testing.T) {
 	m := newFakeMessages()
 	ctx := context.Background()
 	inst := shared.UUID(uuid.New())
-	frame := shared.UUID(uuid.New())
+	frame1 := shared.UUID(uuid.New())
 	now := time.Now().UTC()
 
-	const total = 10
-	ids := make([]shared.UUID, total)
-	for i := 0; i < total; i++ {
-		ids[i] = shared.UUID(uuid.New())
-		_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
-			ID: ids[i], InstanceID: inst, Type: "invalidate",
-			Sender: "op-A", SenderKind: "operator",
-			ReceivedAt: now.Add(time.Duration(i) * time.Second),
-		})
-	}
+	triggerID := shared.UUID(uuid.New())
+	siblingID := shared.UUID(uuid.New())
+	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+		ID: triggerID, InstanceID: inst, Type: "invalidate",
+		Sender: "op-A", SenderKind: "operator", ReceivedAt: now,
+	})
+	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+		ID: siblingID, InstanceID: inst, Type: "invalidate",
+		Sender: "op-A", SenderKind: "operator",
+		ReceivedAt: now.Add(time.Second),
+	})
 
-	for i := 0; i < total; i++ {
-		res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, now)
-		if err != nil {
-			t.Fatalf("DeliverPendingMessages[%d]: %v", i, err)
-		}
-		if len(res.Messages) != 1 {
-			t.Fatalf("DeliverPendingMessages[%d] returned %d messages, want 1 (one-message-per-frame)",
-				i, len(res.Messages))
-		}
-		if res.Messages[0].ID != ids[i] {
-			t.Fatalf("DeliverPendingMessages[%d] returned id=%s, want oldest pending %s",
-				i, res.Messages[0].ID, ids[i])
-		}
-		remaining, _ := m.ListPendingForInstance(ctx, nil, inst)
-		if want := total - (i + 1); len(remaining) != want {
-			t.Fatalf("after delivery %d: pending=%d, want %d", i, len(remaining), want)
-		}
-	}
-
-	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, now)
+	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame1, triggerID, now)
 	if err != nil {
-		t.Fatalf("DeliverPendingMessages(drained): %v", err)
+		t.Fatalf("DeliverPendingMessages: %v", err)
+	}
+	if len(res.Messages) != 1 || res.Messages[0].ID != triggerID {
+		t.Fatalf("DeliverPendingMessages: got %+v, want exactly the trigger %s", res.Messages, triggerID)
+	}
+
+	remaining, _ := m.ListPendingForInstance(ctx, nil, inst)
+	if len(remaining) != 1 || remaining[0].ID != siblingID {
+		t.Fatalf("after delivering trigger, pending=%v, want one row with sibling %s — a message must only flow into its own frame, never into a sibling frame's delivery",
+			remaining, siblingID)
+	}
+
+	res, err = DeliverPendingMessages(ctx, nil, m, inst, frame1, triggerID, now)
+	if err != nil {
+		t.Fatalf("DeliverPendingMessages (repeat): %v", err)
 	}
 	if len(res.Messages) != 0 {
-		t.Fatalf("expected empty deliver-set after drain, got %d", len(res.Messages))
+		t.Fatalf("expected empty deliver-set on repeat call (idempotent), got %d", len(res.Messages))
 	}
 }
 
@@ -186,7 +182,7 @@ func TestDeliverPendingMessages_DeliveredMatchesTrigger(t *testing.T) {
 		Sender: "op-A", SenderKind: "operator", ReceivedAt: now,
 	})
 
-	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, now)
+	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, msgID, now)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}

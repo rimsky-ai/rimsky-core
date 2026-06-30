@@ -68,8 +68,8 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 	)
 	require.NoError(t, err)
 	_, err = stx.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, main_run_scope_id) VALUES (?, ?, ?)`,
-		instanceID.String(), templateHash, mainScopeID.String(),
+		`INSERT INTO rimsky_instances (id, template_hash) VALUES (?, ?)`,
+		instanceID.String(), templateHash,
 	)
 	require.NoError(t, err)
 	_, err = stx.ExecContext(ctx,
@@ -79,9 +79,9 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 	)
 	require.NoError(t, err)
 	_, err = stx.ExecContext(ctx,
-		`INSERT INTO rimsky_frames (frame_id, instance_id, triggering_message_id, state, started_at, queued_at, frame_timeout_ms)
-		 VALUES (?, ?, ?, 'running', datetime('now'), datetime('now'), 600000)`,
-		frameID.String(), instanceID.String(), messageID.String(),
+		`INSERT INTO rimsky_frames (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, started_at, queued_at, frame_timeout_ms)
+		 VALUES (?, ?, ?, ?, 'running', datetime('now'), datetime('now'), 600000)`,
+		frameID.String(), instanceID.String(), messageID.String(), mainScopeID.String(),
 	)
 	require.NoError(t, err)
 	for _, n := range []struct {

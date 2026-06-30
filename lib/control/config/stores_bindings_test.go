@@ -74,7 +74,6 @@ func TestLookupInstanceBindings_ReturnsServiceBindings(t *testing.T) {
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:              instID,
 			TemplateHash:    templateHash,
-			MainRunScopeID:  mainRunScopeID,
 			ServiceBindings: bindingsJSON,
 		}, tx)
 		return err

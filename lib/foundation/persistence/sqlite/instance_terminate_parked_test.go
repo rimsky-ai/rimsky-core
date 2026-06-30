@@ -41,9 +41,9 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	}
 	defer func() { _ = stx.Rollback() }()
 	if _, err := stx.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, main_run_scope_id, terminate_after_run)
-		 VALUES (?, ?, ?, 1)`,
-		instanceID.String(), templateID, scopeID,
+		`INSERT INTO rimsky_instances (id, template_hash, terminate_after_run)
+		 VALUES (?, ?, 1)`,
+		instanceID.String(), templateID,
 	); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
@@ -66,9 +66,9 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, state, frame_timeout_ms, started_at, ended_at)
-		 VALUES (?, ?, ?, 'completed', 60000, datetime('now'), datetime('now'))`,
-		frameID.String(), instanceID.String(), msgID,
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, frame_timeout_ms, started_at, ended_at)
+		 VALUES (?, ?, ?, ?, 'completed', 60000, datetime('now'), datetime('now'))`,
+		frameID.String(), instanceID.String(), msgID, scopeID,
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}
@@ -137,9 +137,9 @@ func seedResolvedFrameInstance(t *testing.T, ctx context.Context, d persistence.
 	}
 	defer func() { _ = stx.Rollback() }()
 	if _, err := stx.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, main_run_scope_id, terminate_after_run)
-		 VALUES (?, ?, ?, ?)`,
-		instanceID.String(), templateID, scopeID, flag,
+		`INSERT INTO rimsky_instances (id, template_hash, terminate_after_run)
+		 VALUES (?, ?, ?)`,
+		instanceID.String(), templateID, flag,
 	); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
@@ -162,9 +162,9 @@ func seedResolvedFrameInstance(t *testing.T, ctx context.Context, d persistence.
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, state, frame_timeout_ms, started_at, ended_at)
-		 VALUES (?, ?, ?, 'completed', 60000, datetime('now'), datetime('now'))`,
-		frameID.String(), instanceID.String(), msgID,
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, frame_timeout_ms, started_at, ended_at)
+		 VALUES (?, ?, ?, ?, 'completed', 60000, datetime('now'), datetime('now'))`,
+		frameID.String(), instanceID.String(), msgID, scopeID,
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}

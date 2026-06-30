@@ -57,13 +57,12 @@ func testInstancesAttributeOverridesRoundTrip(t *testing.T, d persistence.Databa
 		}, tx); err != nil {
 			return err
 		}
-		mainScopeID := seedMainRunScopeForInstance(ctx, t, tx, store, id)
+		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:                 id,
 			TemplateHash:       tmpl,
 			Params:             map[string]any{},
 			AttributeOverrides: overrides,
-			MainRunScopeID:     mainScopeID,
 		}, tx)
 		return err
 	}); err != nil {
@@ -126,9 +125,8 @@ func testInstancesAttributeOverridesMigrationBackfill(
 			return err
 		}
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             id,
-			TemplateHash:   tmpl,
-			MainRunScopeID: mainScopeID,
+			ID:           id,
+			TemplateHash: tmpl,
 		}, tx)
 		return err
 	}); err != nil {
@@ -179,12 +177,11 @@ func testInstancesAttributeOverridesDefaultsEmpty(t *testing.T, d persistence.Da
 		}, tx); err != nil {
 			return err
 		}
-		mainScopeID := seedMainRunScopeForInstance(ctx, t, tx, store, id)
+		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:             id,
-			TemplateHash:   tmpl,
-			Params:         map[string]any{},
-			MainRunScopeID: mainScopeID,
+			ID:           id,
+			TemplateHash: tmpl,
+			Params:       map[string]any{},
 		}, tx)
 		return err
 	}); err != nil {
@@ -236,13 +233,12 @@ func testInstancesAttributeOverridesMatchCountsRoundTrip(t *testing.T, d persist
 		}, tx); err != nil {
 			return err
 		}
-		mainScopeID := seedMainRunScopeForInstance(ctx, t, tx, store, id)
+		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:                            id,
 			TemplateHash:                  tmpl,
 			Params:                        map[string]any{},
 			AttributeOverridesMatchCounts: initial,
-			MainRunScopeID:                mainScopeID,
 		}, tx)
 		return err
 	}); err != nil {
@@ -290,13 +286,12 @@ func testInstancesIncrementAttributeOverrideMatchCounts(t *testing.T, d persiste
 		}, tx); err != nil {
 			return err
 		}
-		mainScopeID := seedMainRunScopeForInstance(ctx, t, tx, store, id)
+		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:                            id,
 			TemplateHash:                  tmpl,
 			Params:                        map[string]any{},
 			AttributeOverridesMatchCounts: []int64{0, 0, 0},
-			MainRunScopeID:                mainScopeID,
 		}, tx)
 		return err
 	}); err != nil {
@@ -370,13 +365,12 @@ func testInstancesIncrementAttributeOverrideMatchCountsConcurrent(t *testing.T, 
 		}, tx); err != nil {
 			return err
 		}
-		mainScopeID := seedMainRunScopeForInstance(ctx, t, tx, store, id)
+		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:                            id,
 			TemplateHash:                  tmpl,
 			Params:                        map[string]any{},
 			AttributeOverridesMatchCounts: []int64{0, 0, 0},
-			MainRunScopeID:                mainScopeID,
 		}, tx)
 		return err
 	}); err != nil {

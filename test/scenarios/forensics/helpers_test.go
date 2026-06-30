@@ -44,7 +44,7 @@ func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence
 	return *row
 }
 
-func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
+func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables, instanceID, sourceNodeID, rootScope shared.UUID) shared.UUID {
 	t.Helper()
 	_ = sourceNodeID
 	var frameID shared.UUID
@@ -59,7 +59,7 @@ func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables,
 		}); err != nil {
 			return err
 		}
-		fid, err := backend.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
+		fid, err := backend.Frames().InsertFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -77,21 +77,14 @@ func seedRunRow(ctx context.Context, t *testing.T, backend persistence.Tables, n
 	runID := shared.UUID(uuid.New())
 	var scopeID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		nd, err := backend.Nodes().Get(ctx, nodeID, tx)
+		frameRow, err := backend.Frames().GetForObservability(ctx, frameID, tx)
 		if err != nil {
 			return err
 		}
-		if nd == nil {
-			t.Fatalf("seedRunRow: node %s missing", nodeID)
+		if frameRow == nil {
+			t.Fatalf("seedRunRow: frame %s missing", frameID)
 		}
-		inst, err := backend.Instances().Get(ctx, nd.InstanceID, tx)
-		if err != nil {
-			return err
-		}
-		if inst == nil {
-			t.Fatalf("seedRunRow: instance %s missing", nd.InstanceID)
-		}
-		scopeID = inst.MainRunScopeID
+		scopeID = frameRow.RootRunScopeID
 		return nil
 	}))
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

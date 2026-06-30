@@ -785,16 +785,19 @@ func (h *Harness) InTx(fn func(tx persistence.Tx) error) error {
 func (h *Harness) GetMainRunScopeID(instanceID shared.UUID) shared.UUID {
 	h.T.Helper()
 	var out shared.UUID
+	instArg := instanceID
 	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := h.Persist.Instances().Get(ctx, instanceID, tx)
+		page, err := h.Persist.Frames().ListForObservability(ctx,
+			persistence.FrameListFilter{InstanceID: &instArg},
+			persistence.ListPagination{Limit: 1}, tx)
 		if err != nil {
 			return err
 		}
-		if row == nil {
-			h.T.Fatalf("GetMainRunScopeID: instance %s not found", instanceID)
+		if len(page.Rows) == 0 {
+			h.T.Fatalf("GetMainRunScopeID: no frames for instance %s", instanceID)
 			return nil
 		}
-		out = row.MainRunScopeID
+		out = page.Rows[0].RootRunScopeID
 		return nil
 	})
 	if err != nil {

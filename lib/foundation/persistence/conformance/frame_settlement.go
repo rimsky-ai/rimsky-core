@@ -160,8 +160,9 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 
 	var otherFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		otherScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
 		var err error
-		otherFrame, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, 600000, tx)
+		otherFrame, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, 600000, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("InsertFrame: %v", err)
@@ -182,7 +183,6 @@ func seedTerminateAfterRunInstance(ctx context.Context, t *testing.T, d persiste
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:                instanceID,
 			TemplateHash:      fix.TemplateHash,
-			MainRunScopeID:    out.MainRunScopeID,
 			TerminateAfterRun: true,
 		}, tx); err != nil {
 			return err
@@ -208,7 +208,7 @@ func seedTerminateAfterRunInstance(ctx context.Context, t *testing.T, d persiste
 			return err
 		}
 		out.MessageID = messageID
-		frameID, err := store.Frames().InsertFrame(ctx, instanceID, messageID, 600000, tx)
+		frameID, err := store.Frames().InsertFrame(ctx, instanceID, messageID, out.MainRunScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -278,8 +278,9 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 
 	var queuedFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		queuedScope := seedMainRunScopeForInstance(ctx, t, tx, store, tfr.InstanceID)
 		var err error
-		queuedFrame, err = frames.InsertFrame(ctx, tfr.InstanceID, tfr.MessageID, 600000, tx)
+		queuedFrame, err = frames.InsertFrame(ctx, tfr.InstanceID, tfr.MessageID, queuedScope, 600000, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("InsertFrame(queued): %v", err)
@@ -374,8 +375,9 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 
 	var otherFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		otherScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
 		var err error
-		otherFrame, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, 600000, tx)
+		otherFrame, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, 600000, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("InsertFrame: %v", err)

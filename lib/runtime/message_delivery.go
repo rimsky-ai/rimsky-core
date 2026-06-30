@@ -97,8 +97,15 @@ func deliverForRunningFrame(
 		if inst == nil {
 			return nil
 		}
+		frameRow, err := persist.Frames().GetForObservability(ctx, frameID, tx)
+		if err != nil {
+			return fmt.Errorf("get frame %s: %w", frameID, err)
+		}
+		if frameRow == nil {
+			return nil
+		}
 		delivered, err := DeliverPendingMessages(ctx, tx, persist.Messages(),
-			instanceID, frameID, now)
+			instanceID, frameID, frameRow.TriggeringMessageID, now)
 		if err != nil {
 			return err
 		}
@@ -126,13 +133,13 @@ func deliverForRunningFrame(
 			}
 			if err := cascadeEmptyMessageWakeInTx(ctx, persist, queue, logger, tx,
 				instanceID, frameID, emptyMessages, signalsByMessageID, inst.TemplateHash,
-				inst.MainRunScopeID); err != nil {
+				frameRow.RootRunScopeID); err != nil {
 				return err
 			}
 		}
 		for _, msg := range namedMessages {
 			if err := deliverNamedMessageInTx(ctx, persist, logger, tx,
-				instanceID, frameID, msg, inst.MainRunScopeID, now); err != nil {
+				instanceID, frameID, msg, frameRow.RootRunScopeID, now); err != nil {
 				return err
 			}
 		}
@@ -148,7 +155,7 @@ func deliverNamedMessageInTx(
 	tx persistence.Tx,
 	instanceID, frameID shared.UUID,
 	msg persistence.MessageRow,
-	instanceMainRunScopeID shared.UUID,
+	frameRootRunScopeID shared.UUID,
 	now time.Time,
 ) error {
 	receiver, err := findMessageReceiverNode(ctx, persist, tx, instanceID, msg.Type)
@@ -166,7 +173,7 @@ func deliverNamedMessageInTx(
 	}
 	runID, err := persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
 		NodeID:         receiver.ID,
-		RunScopeID:     instanceMainRunScopeID,
+		RunScopeID:     frameRootRunScopeID,
 		FrameID:        frameID,
 		ExecutorName:   "",
 		EnqueuedAt:     now,
@@ -240,7 +247,7 @@ func cascadeEmptyMessageWakeInTx(
 	instanceID, frameID shared.UUID, messages []persistence.MessageRow,
 	signalsByMessageID map[shared.UUID]signalpkg.Signal,
 	templateHash string,
-	instanceMainRunScopeID shared.UUID,
+	frameRootRunScopeID shared.UUID,
 ) error {
 	if len(messages) == 0 {
 		return nil
@@ -288,7 +295,7 @@ func cascadeEmptyMessageWakeInTx(
 			receivers := byType[e.ReceiverNodeType]
 			for _, r := range receivers {
 				// @concept: parked-state
-				receiverScopeID := instanceMainRunScopeID
+				receiverScopeID := frameRootRunScopeID
 				if latest, err := persist.Nodes().GetLatestRunForNode(ctx, tx, r.ID); err != nil {
 					return fmt.Errorf("cascadeEmptyMessageWakeInTx: latest run for receiver %s: %w", r.ID, err)
 				} else if latest != nil {
@@ -352,24 +359,29 @@ func pullForceRefreshUpstreamsForMessageReceiver(
 
 func DeliverPendingMessages(
 	ctx context.Context, tx persistence.Tx, m persistence.MessagesTable,
-	instanceID shared.UUID, frameID shared.UUID, now time.Time,
+	instanceID shared.UUID, frameID shared.UUID, triggeringMessageID shared.UUID, now time.Time,
 ) (DeliveredMessages, error) {
-	pending, err := m.ListPendingForInstance(ctx, tx, instanceID)
+	msg, err := m.GetInTx(ctx, tx, triggeringMessageID)
 	if err != nil {
-		return DeliveredMessages{}, fmt.Errorf("DeliverPendingMessages: list pending: %w", err)
+		return DeliveredMessages{}, fmt.Errorf("DeliverPendingMessages: get trigger %s: %w", triggeringMessageID, err)
 	}
-	if len(pending) == 0 {
+	if msg == nil {
 		return DeliveredMessages{}, nil
 	}
-	oldest := &pending[0]
-	ok, err := m.MarkDelivered(ctx, tx, oldest.ID, frameID, now)
+	if msg.InstanceID != instanceID {
+		return DeliveredMessages{}, nil
+	}
+	if msg.DeliveredAt != nil {
+		return DeliveredMessages{}, nil
+	}
+	ok, err := m.MarkDelivered(ctx, tx, triggeringMessageID, frameID, now)
 	if err != nil {
-		return DeliveredMessages{}, fmt.Errorf("DeliverPendingMessages: mark delivered %s: %w", oldest.ID, err)
+		return DeliveredMessages{}, fmt.Errorf("DeliverPendingMessages: mark delivered %s: %w", triggeringMessageID, err)
 	}
 	if !ok {
 		return DeliveredMessages{}, nil
 	}
-	row := *oldest
+	row := *msg
 	row.DeliveredAt = &now
 	f := frameID
 	row.FrameID = &f

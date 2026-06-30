@@ -114,6 +114,12 @@ func (noopNodes) DeleteByInstance(context.Context, shared.UUID, persistence.Tx) 
 func (noopNodes) HasRunForNodeInFrame(context.Context, shared.UUID, shared.UUID, persistence.Tx) (bool, error) {
 	return false, nil
 }
+func (noopNodes) HasAdvancedSiblingInScope(context.Context, persistence.Tx, shared.UUID, shared.UUID, shared.UUID) (bool, error) {
+	return false, nil
+}
+func (noopNodes) ListPendingSiblingRunsInScope(context.Context, persistence.Tx, shared.UUID) ([]shared.UUID, error) {
+	return nil, nil
+}
 func (noopNodes) GetRunByDispatchIDForUpdate(context.Context, shared.UUID, persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	return nil, nil
 }

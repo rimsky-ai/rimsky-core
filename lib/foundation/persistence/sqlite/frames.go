@@ -166,7 +166,7 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
 func (s *framesImpl) ListQueuedFramesReadyToStart(ctx context.Context, tx persistence.Tx) ([]persistence.FrameQueuedReady, error) {
 	rows, err := s.q(tx).QueryContext(ctx, `
         WITH ranked AS (
-            SELECT f.frame_id, f.instance_id, f.triggering_message_id,
+            SELECT f.frame_id, f.instance_id, f.triggering_message_id, f.root_run_scope_id,
                    ROW_NUMBER() OVER (PARTITION BY f.instance_id ORDER BY f.queued_at ASC) AS rn
             FROM rimsky_frames f
             JOIN rimsky_instances i ON i.id = f.instance_id
@@ -177,7 +177,7 @@ func (s *framesImpl) ListQueuedFramesReadyToStart(ctx context.Context, tx persis
                   WHERE r.instance_id = f.instance_id AND r.state = 'running'
               )
         )
-        SELECT frame_id, instance_id, triggering_message_id
+        SELECT frame_id, instance_id, triggering_message_id, root_run_scope_id
         FROM ranked
         WHERE rn = 1
     `)
@@ -191,8 +191,9 @@ func (s *framesImpl) ListQueuedFramesReadyToStart(ctx context.Context, tx persis
 			frameIDStr       string
 			instanceIDStr    string
 			triggeringMsgStr string
+			rootScopeStr     string
 		)
-		if err := rows.Scan(&frameIDStr, &instanceIDStr, &triggeringMsgStr); err != nil {
+		if err := rows.Scan(&frameIDStr, &instanceIDStr, &triggeringMsgStr, &rootScopeStr); err != nil {
 			return nil, fmt.Errorf("frames.ListQueuedFramesReadyToStart: scan: %w", err)
 		}
 		fid, err := uuid.Parse(frameIDStr)
@@ -207,7 +208,15 @@ func (s *framesImpl) ListQueuedFramesReadyToStart(ctx context.Context, tx persis
 		if err != nil {
 			return nil, fmt.Errorf("frames.ListQueuedFramesReadyToStart: triggering_message_id: %w", err)
 		}
-		out = append(out, persistence.FrameQueuedReady{FrameID: fid, InstanceID: iid, TriggeringMessageID: mid})
+		var rsid shared.UUID
+		if rootScopeStr != "" {
+			parsed, err := uuid.Parse(rootScopeStr)
+			if err != nil {
+				return nil, fmt.Errorf("frames.ListQueuedFramesReadyToStart: root_run_scope_id: %w", err)
+			}
+			rsid = parsed
+		}
+		out = append(out, persistence.FrameQueuedReady{FrameID: fid, InstanceID: iid, TriggeringMessageID: mid, RootRunScopeID: rsid})
 	}
 	return out, rows.Err()
 }
@@ -275,10 +284,10 @@ func (s *framesImpl) MarkSourceNodeStale(
                     AND json_extract(nd.value, '$.type') = n.node_type
                ), '[]'),
                ?, 'stale', 'cascade',
-               COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = inst.main_run_scope_id), 0) + 1,
-               ?, inst.main_run_scope_id
+               COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = f.root_run_scope_id), 0) + 1,
+               ?, f.root_run_scope_id
           FROM rimsky_nodes n
-          JOIN rimsky_instances inst ON inst.id = n.instance_id
+          JOIN rimsky_frames f ON f.frame_id = ?
          WHERE n.id = ?
            AND n.instance_id = ?
            AND NOT EXISTS (
@@ -286,7 +295,7 @@ func (s *framesImpl) MarkSourceNodeStale(
               WHERE r.node_id = ?
                 AND r.state IN ('pending','stale','running','held','parked')
            )
-    `, uuid.New().String(), nowUTC(), nodeID.String(), frameID.String(), nodeID.String(), instanceID.String(), nodeID.String())
+    `, uuid.New().String(), nowUTC(), nodeID.String(), frameID.String(), frameID.String(), nodeID.String(), instanceID.String(), nodeID.String())
 	if err != nil {
 		return false, fmt.Errorf("frames.MarkSourceNodeStale: insert run row: %w", err)
 	}
@@ -426,15 +435,15 @@ func (s *framesImpl) LookupFrameTimeoutMs(ctx context.Context, instanceID shared
 }
 
 func (s *framesImpl) InsertFrame(
-	ctx context.Context, instanceID, triggeringMessageID shared.UUID, frameTimeoutMs int64, tx persistence.Tx,
+	ctx context.Context, instanceID, triggeringMessageID, rootRunScopeID shared.UUID, frameTimeoutMs int64, tx persistence.Tx,
 ) (shared.UUID, error) {
 	frameID := uuid.New()
 	now := nowUTC()
 	_, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, triggering_message_id, state, queued_at, frame_timeout_ms, last_progress_at)
-        VALUES (?, ?, ?, 'queued', ?, ?, ?)
-    `, frameID.String(), instanceID.String(), triggeringMessageID.String(),
+            (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, queued_at, frame_timeout_ms, last_progress_at)
+        VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)
+    `, frameID.String(), instanceID.String(), triggeringMessageID.String(), rootRunScopeID.String(),
 		now, frameTimeoutMs, now)
 	if err != nil {
 		return shared.UUID{}, fmt.Errorf("frames.InsertFrame: %w", err)
@@ -467,7 +476,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		cursorFid = fid.String()
 	}
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT frame_id, instance_id, state, triggering_message_id, started_at, ended_at, last_progress_at, frame_timeout_ms, queued_at
+		`SELECT frame_id, instance_id, state, triggering_message_id, root_run_scope_id, started_at, ended_at, last_progress_at, frame_timeout_ms, queued_at
 		   FROM rimsky_frames
 		  WHERE (? IS NULL OR instance_id = ?)
 		    AND (? IS NULL OR state = ?)
@@ -490,12 +499,13 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 			instanceID     string
 			state          string
 			triggeringMsg  string
+			rootScope      string
 			startedAt      sql.NullString
 			endedAt        sql.NullString
 			lastProgressAt sql.NullString
 			queuedAt       string
 		)
-		if err := rows.Scan(&frameID, &instanceID, &state, &triggeringMsg, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs, &queuedAt); err != nil {
+		if err := rows.Scan(&frameID, &instanceID, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs, &queuedAt); err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
 		}
 		fid, err := uuid.Parse(frameID)
@@ -514,6 +524,13 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		r.InstanceID = iid
 		r.State = persistence.FrameState(state)
 		r.TriggeringMessageID = mid
+		if rootScope != "" {
+			rsid, err := uuid.Parse(rootScope)
+			if err != nil {
+				return persistence.PaginatedListResult[persistence.FrameRow]{}, fmt.Errorf("frames.ListForObservability: root_run_scope_id: %w", err)
+			}
+			r.RootRunScopeID = rsid
+		}
 		if startedAt.Valid {
 			t, err := parseTime(startedAt.String)
 			if err == nil {
@@ -601,15 +618,16 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 		iidStr         string
 		state          string
 		triggeringMsg  string
+		rootScope      string
 		startedAt      sql.NullString
 		endedAt        sql.NullString
 		lastProgressAt sql.NullString
 	)
 	err := s.q(tx).QueryRowContext(ctx,
-		`SELECT frame_id, instance_id, state, triggering_message_id, started_at, ended_at, last_progress_at, frame_timeout_ms
+		`SELECT frame_id, instance_id, state, triggering_message_id, root_run_scope_id, started_at, ended_at, last_progress_at, frame_timeout_ms
 		   FROM rimsky_frames WHERE frame_id = ?`,
 		frameID.String(),
-	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs)
+	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -632,6 +650,13 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 	r.InstanceID = iid
 	r.State = persistence.FrameState(state)
 	r.TriggeringMessageID = mid
+	if rootScope != "" {
+		rsid, err := uuid.Parse(rootScope)
+		if err != nil {
+			return nil, fmt.Errorf("frames.GetForObservability: root_run_scope_id: %w", err)
+		}
+		r.RootRunScopeID = rsid
+	}
 	if startedAt.Valid {
 		t, err := parseTime(startedAt.String)
 		if err == nil {
@@ -660,6 +685,7 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 		iidStr         string
 		state          string
 		triggeringMsg  string
+		rootScope      string
 		startedAt      sql.NullString
 		endedAt        sql.NullString
 		lastProgressAt sql.NullString
@@ -668,14 +694,14 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 		mKind          sql.NullString
 	)
 	err := s.q(tx).QueryRowContext(ctx,
-		`SELECT f.frame_id, f.instance_id, f.state, f.triggering_message_id,
+		`SELECT f.frame_id, f.instance_id, f.state, f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms,
 		        m.type, m.sender, m.sender_kind
 		   FROM rimsky_frames f
 		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
 		  WHERE f.frame_id = ?`,
 		frameID.String(),
-	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs,
+	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs,
 		&mType, &mSender, &mKind)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -699,6 +725,13 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 	r.InstanceID = iid
 	r.State = persistence.FrameState(state)
 	r.TriggeringMessageID = mid
+	if rootScope != "" {
+		rsid, err := uuid.Parse(rootScope)
+		if err != nil {
+			return nil, fmt.Errorf("frames.GetForObservabilityWithMessage: root_run_scope_id: %w", err)
+		}
+		r.RootRunScopeID = rsid
+	}
 	if startedAt.Valid {
 		t, err := parseTime(startedAt.String)
 		if err == nil {
@@ -754,7 +787,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		cursorFid = fid.String()
 	}
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT f.frame_id, f.instance_id, f.state, f.triggering_message_id,
+		`SELECT f.frame_id, f.instance_id, f.state, f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms, f.queued_at,
 		        m.type, m.sender, m.sender_kind
 		   FROM rimsky_frames f
@@ -780,6 +813,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 			instanceID     string
 			state          string
 			triggeringMsg  string
+			rootScope      string
 			startedAt      sql.NullString
 			endedAt        sql.NullString
 			lastProgressAt sql.NullString
@@ -788,7 +822,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 			mSender        sql.NullString
 			mKind          sql.NullString
 		)
-		if err := rows.Scan(&frameID, &instanceID, &state, &triggeringMsg, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs, &queuedAt,
+		if err := rows.Scan(&frameID, &instanceID, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs, &queuedAt,
 			&mType, &mSender, &mKind); err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
 		}
@@ -808,6 +842,13 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		r.InstanceID = iid
 		r.State = persistence.FrameState(state)
 		r.TriggeringMessageID = mid
+		if rootScope != "" {
+			rsid, err := uuid.Parse(rootScope)
+			if err != nil {
+				return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, fmt.Errorf("frames.ListForObservabilityWithMessage: root_run_scope_id: %w", err)
+			}
+			r.RootRunScopeID = rsid
+		}
 		if startedAt.Valid {
 			t, err := parseTime(startedAt.String)
 			if err == nil {
