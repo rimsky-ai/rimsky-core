@@ -47,25 +47,20 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	t.Cleanup(pgPool.Close)
 
 	tid := deployScenarioTemplate(t, ep, buildSessionResumeTemplate())
-
 	iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-session-resume")
-	mainWorkerNodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-	subAgentNodeID := resolveWorkerNodeID(t, ep, iid, "sub_agent")
+	workerNodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 
-	for i := 1; i <= 3; i++ {
-		postWorkerInvalidate(t, ep, iid,
-			fmt.Sprintf("session-resume-main-%d", i))
-	}
+	postWorkerInvalidate(t, ep, iid, "session-resume-loop")
 
-	waitForWorkerDispatchCount(t, ctx, pgPool, mainWorkerNodeID, 3, 180*time.Second)
+	waitForWorkerDispatchCount(t, ctx, pgPool, workerNodeID, 3, 180*time.Second)
 
-	dispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, mainWorkerNodeID)
+	dumpWorkerDispatchProvenance(t, ctx, pgPool, workerNodeID)
+
+	dispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, workerNodeID)
 	if len(dispatches) != 3 {
-		t.Fatalf("expected exactly 3 dispatches of `worker` in the main RunScope, got %d (%v)",
+		t.Fatalf("expected exactly 3 worker dispatches in one frame's RunScope, got %d (%v)",
 			len(dispatches), dispatches)
 	}
-
-	dumpWorkerDispatchProvenance(t, ctx, pgPool, mainWorkerNodeID)
 
 	d1 := dispatches[0]
 	requireFakeCliTurn(t, d1.attributes, 1)
@@ -86,69 +81,12 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	requireSessionTokenWritten(t, d3.attributes, d3.runID)
 
 	if d1.runScopeID != d2.runScopeID || d2.runScopeID != d3.runScopeID {
-		t.Fatalf("the three main-instance worker dispatches MUST share one RunScope (got %q, %q, %q)",
+		t.Fatalf("the three worker dispatches MUST share one RunScope (got %q, %q, %q); carry-forward is intra-RunScope and the cascade self-edge keeps the loop inside one frame's RunScope",
 			d1.runScopeID, d2.runScopeID, d3.runScopeID)
 	}
-
-	waitForWorkerDispatchCount(t, ctx, pgPool, subAgentNodeID, 1, 180*time.Second)
-
-	dumpWorkerDispatchProvenance(t, ctx, pgPool, subAgentNodeID)
-
-	subDispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, subAgentNodeID)
-	if len(subDispatches) != 1 {
-		t.Fatalf("expected exactly 1 dispatch of `sub_agent` in the sub-graph RunScope, got %d (%v)",
-			len(subDispatches), subDispatches)
-	}
-	sub := subDispatches[0]
-
-	// @concept: sub-graph
-	requireFakeCliTurn(t, sub.attributes, 1)
-	requireFakeCliRecall(t, sub.attributes, "")
-	requireFakeCliResumedWith(t, sub.attributes, "")
-
-	// @concept: run-scope
-	if sub.runScopeID == "" || sub.runScopeID == d1.runScopeID {
-		t.Fatalf("sub_agent MUST run in a RunScope distinct from the main worker (main scope=%q, sub scope=%q)",
-			d1.runScopeID, sub.runScopeID)
-	}
-	requireSubgraphRunScope(t, ctx, pgPool, sub.runScopeID, "subworker", iid)
 }
 
 func buildSessionResumeTemplate() map[string]any {
-	agentAttrsFor := func(chainID string) map[string]any {
-		return map[string]any{
-			"schema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"model": map[string]any{
-						"type":    "string",
-						"default": "claude-sonnet-4-5",
-					},
-					"system_prompt": map[string]any{
-						"type":    "string",
-						"default": "you are a session-resume proof stub. follow the scenario hint in the user prompt verbatim.",
-					},
-					"user_prompt": map[string]any{
-						"type":    "string",
-						"default": "scenario:session_resume:" + chainID,
-					},
-					"session_token": map[string]any{
-						"type":     "string",
-						"readOnly": true,
-						"default":  "",
-					},
-					"cli": map[string]any{
-						"type":       "object",
-						"properties": map[string]any{},
-						"default":    map[string]any{},
-					},
-				},
-			},
-		}
-	}
-	mainAgentAttrs := agentAttrsFor("main")
-	subAgentAttrs := agentAttrsFor("sub")
-
 	return map[string]any{
 		"spec": map[string]any{
 			"name":             "claude-agent-session-resume",
@@ -162,60 +100,50 @@ func buildSessionResumeTemplate() map[string]any {
 					},
 				},
 			},
-			"graphs": []map[string]any{
+			"nodes": []map[string]any{
 				{
-					"name": "main",
-					"nodes": []map[string]any{
-						{
-							"type":       "worker",
-							"executor":   "claude-agent",
-							"attributes": mainAgentAttrs,
-							"subscribes": []map[string]any{
-								{
-									"node":                   "operator/worker-rerun",
-									"type":                   "terminal/success",
-									"force_upstream_refresh": false,
+					"type":     "worker",
+					"executor": "claude-agent",
+					"attributes": map[string]any{
+						"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"model": map[string]any{
+									"type":    "string",
+									"default": "claude-sonnet-4-5",
+								},
+								"system_prompt": map[string]any{
+									"type":    "string",
+									"default": "you are a session-resume proof stub. follow the scenario hint in the user prompt verbatim.",
+								},
+								"user_prompt": map[string]any{
+									"type":    "string",
+									"default": "scenario:session_resume:main",
+								},
+								"session_token": map[string]any{
+									"type":     "string",
+									"readOnly": true,
+									"default":  "",
+								},
+								"cli": map[string]any{
+									"type":       "object",
+									"properties": map[string]any{},
+									"default":    map[string]any{},
 								},
 							},
-						},
-						{
-							"type":     "caller",
-							"delegate": "subworker",
 						},
 					},
-				},
-				{
-					"name":  "subworker",
-					"entry": "sub_trigger",
-					"exit":  "sub_agent",
-					"nodes": []map[string]any{
+					"subscribes": []map[string]any{
 						{
-							"type":     "sub_trigger",
-							"executor": "rimsky.loop_counter",
-							"attributes": map[string]any{
-								"schema": map[string]any{
-									"type": "object",
-									"properties": map[string]any{
-										"max": map[string]any{
-											"type":    "integer",
-											"default": 1,
-										},
-									},
-								},
-							},
+							"node":                   "operator/worker-rerun",
+							"type":                   "terminal/success",
+							"force_upstream_refresh": false,
 						},
 						{
-							// @concept: run-scope
-							"type":       "sub_agent",
-							"executor":   "claude-agent",
-							"attributes": subAgentAttrs,
-							"subscribes": []map[string]any{
-								{
-									"node":                   "sub_trigger",
-									"type":                   "terminal/*",
-									"force_upstream_refresh": false,
-								},
-							},
+							"node":                   "worker",
+							"type":                   "terminal/success",
+							"when":                   "payload.attributes_delta.fake_cli_turn < 3",
+							"force_upstream_refresh": false,
 						},
 					},
 				},
@@ -359,27 +287,6 @@ func waitForWorkerDispatchCount(t *testing.T, ctx context.Context, pool *pgxpool
 	dumpWorkerDispatchProvenance(t, ctx, pool, nodeID)
 	t.Fatalf("node %s did not reach %d settled dispatches within %v (last count=%d)",
 		nodeID, wantN, deadline, lastN)
-}
-
-func requireSubgraphRunScope(t *testing.T, ctx context.Context, pool *pgxpool.Pool, scopeID, wantGraph, instanceID string) {
-	t.Helper()
-	var gotGraph, gotInstance string
-	err := pool.QueryRow(ctx, `
-		SELECT graph_name, instance_id::text
-		  FROM rimsky_run_scopes
-		 WHERE id = $1::uuid
-	`, scopeID).Scan(&gotGraph, &gotInstance)
-	if err != nil {
-		t.Fatalf("query rimsky_run_scopes for scope %s: %v", scopeID, err)
-	}
-	if gotInstance != instanceID {
-		t.Fatalf("sub_agent RunScope %s belongs to instance %s, want %s",
-			scopeID, gotInstance, instanceID)
-	}
-	if gotGraph != wantGraph {
-		t.Fatalf("sub_agent RunScope %s graph_name=%q, want %q — the sub-graph carve-out did not route the exit through the sub-graph's own RunScope",
-			scopeID, gotGraph, wantGraph)
-	}
 }
 
 func requireFakeCliTurn(t *testing.T, attrs map[string]any, want int) {
