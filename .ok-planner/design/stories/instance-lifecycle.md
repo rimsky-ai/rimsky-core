@@ -19,7 +19,7 @@ Operators can drive an instance's runtime existence and intervene cleanly when s
 
 ## Acceptance
 
-Through the control-api or the instance-lifecycle CLI surface, an operator creates an instance of a deployed template; afterward, the instance is idle and the supervisor does not dispatch against it until a sender posts a message. The operator can pause the instance — the supervisor stops claiming new dispatches against it — and resume — the supervisor picks it up again. The operator can force-terminate an instance whose node is wedged awaiting an executor callback that never arrives; the wedged node-run transitions to a terminal state through the real lifecycle path (not by a direct write to the row), the main run-scope closes, and the operator can then delete the instance record. Deleting a non-terminal instance is refused.
+Through the control-api or the instance-lifecycle CLI surface, an operator creates an instance of a deployed template; afterward, the instance is idle and the supervisor does not dispatch against it until a sender posts a message. The operator can pause the instance — the supervisor stops claiming new dispatches against it — and resume — the supervisor picks it up again. The operator can force-terminate an instance whose node is wedged awaiting an executor callback that never arrives; the wedged node-run transitions to a terminal state through the real lifecycle path (not by a direct write to the row), the currently-running frame closes along with the `concept:run-scope` tree it owns, and the operator can then delete the instance record. Deleting a non-terminal instance is refused.
 
 ## Falsifier
 

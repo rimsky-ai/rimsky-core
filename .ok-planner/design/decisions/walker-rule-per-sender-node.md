@@ -10,12 +10,12 @@ aliases: []
 
 The cascade walker uses a per-sender-node accumulation gate. When a cascade walk targets receiver R from sender S in the current frame:
 
-1. Find R's latest (most-recently-created) cascade-driven pending run for the same (node, run-scope, frame), if any.
+1. Find R's latest (most-recently-created) cascade-driven pending run for the same (node, run-scope), if any.
 2. If R has no pending → create a new pending and insert the wait-set row referencing S.
 3. If R has a pending AND S's node IS NOT already in the pending's wait-set sender-nodes → accumulate (insert the wait-set row into the existing pending).
 4. If R has a pending AND S's node IS already in the pending's wait-set sender-nodes → create a NEW pending (the previous pending is sealed; subsequent cascades from other sender-nodes accumulate into the new one).
 
-Multiple cascade-driven pendings can coexist per (R, run-scope, frame). The latest pending is always the accumulation target. Each pending transitions independently when its own wait-set drains and its gates clear; the dispatcher's serialization gate orders their dispatch.
+Multiple cascade-driven pendings can coexist per (R, run-scope). The latest pending is always the accumulation target. Each pending transitions independently when its own wait-set drains and its gates clear; the dispatcher's serialization gate orders their dispatch.
 
 ## Rationale
 

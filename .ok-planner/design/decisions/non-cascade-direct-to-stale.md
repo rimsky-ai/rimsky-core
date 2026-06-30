@@ -11,7 +11,7 @@ aliases: []
 Operator-invalidate, fanout-parent recalculate, and message-delivery create a new node-run directly in state `stale` with `creation_reason` set to the appropriate value (`operator_invalidate`, `recalculate`, `message_delivery`). The new row carries:
 
 - The carry-forward bag built at row creation (the immediately-prior run's persisted live bag).
-- A fresh `sequence` number monotonic per (node, run-scope, frame).
+- A fresh `sequence` number monotonic per (node, run-scope) per `decision:sequence-scope-monotonic`.
 - No wait-set rows (the row never goes through pending and therefore never accumulates wait-set entries).
 
 The cascade walker's accumulation rule (a) targets only the latest *cascade-driven* pending — non-cascade stales are not accumulation targets by definition, so no carve-out is needed in the walker. The dispatcher claims non-cascade stales in `sequence` order via the same serialization gate that orders cascade-driven stales. Per-template `cascade_mode` rules (most-recent, sequenced, idempotent-*) are scoped to `creation_reason = cascade`; non-cascade stales are immune to all of them — they are never deleted by most-recent and never deduped by the idempotent variants.

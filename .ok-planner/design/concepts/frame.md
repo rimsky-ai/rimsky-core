@@ -9,11 +9,11 @@ aliases:
 
 ## Definition
 
-A frame is one cascade resolution. It is a persisted frame row carrying a triggering-message reference and a lifecycle state drawn from the frame lifecycle-state family. Every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame begins only when a message lands in the message ledger and the next frame boundary picks it up — operator-emitted, publisher-emitted, or cascade-emitted by a message-emitter node, all converging on the same delivery path. Resuming a parked node — park-wake, via async callback or snooze timer — does not begin a frame; it resumes the still-running frame the parked node belongs to.
+A frame is one cascade resolution. It is a persisted frame row carrying a triggering-message reference, a non-null root RunScope reference, and a lifecycle state drawn from the frame lifecycle-state family. A frame owns a tree of RunScopes rooted at the frame's root RunScope; every node-run in the frame lives in some RunScope under that root (per `concept:run-scope`), and every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame begins only when a message lands in the message ledger and the next frame boundary picks it up — operator-emitted, publisher-emitted, or cascade-emitted by a message-emitter node, all converging on the same delivery path. At frame start the runtime creates the root RunScope in the same tx as the frame row insert. Resuming a parked node — park-wake, via async callback or snooze timer — does not begin a frame; it resumes the still-running frame the parked node belongs to.
 
 The frame ends when every node_run in the frame is in a terminal state (`fresh` or `failed` per `concept:node-run`). Any node_run in an in-flight state (`pending`, `stale`, `running`, `held`, `parked`) holds the frame open — `pending` (cascade-waiting), `stale` (awaiting dispatcher claim), `running` (in flight), `held` (awaiting auto-terminal commit/abandon), and `parked` (awaiting wake) all count uniformly as in-flight for frame-end purposes.
 
-Frames are serial per instance: at most one running frame, queued frames dispatched in arrival order.
+Frames are serial per instance: at most one running frame, queued frames dispatched in arrival order. Frames run in perfect isolation from one another: no node-run, no RunScope, and no attribute state ever crosses a frame boundary.
 
 ## Purpose
 
@@ -27,13 +27,15 @@ A frame is **held** when one or more of its node-runs is in a non-terminal pause
 
 ## Boundaries
 
-Owns: the per-instance concurrency rule (≤1 running frame), the serial-per-instance ordering, the last-progress timestamp, frame-timeout warning emission, the triggering-message-id pointer that every frame carries. Does NOT own: node state (lives on the node-run, see `concept:node-run`), claim conflict (lives in `concept:claim-handle`), scheduling cadence (lives in `concept:sensor`), the message itself (see `concept:message`). Adjacent: `concept:cascade`, `concept:node`, `concept:node-run`, `concept:message`, `concept:sensor`.
+Owns: the per-instance concurrency rule (≤1 running frame), the serial-per-instance ordering, the last-progress timestamp, frame-timeout warning emission, the triggering-message-id pointer that every frame carries, the root-RunScope pointer (created at frame start). Does NOT own: node state (lives on the node-run, see `concept:node-run`), claim conflict (lives in `concept:claim-handle`), scheduling cadence (lives in `concept:sensor`), the message itself (see `concept:message`), RunScope internals (see `concept:run-scope`). Adjacent: `concept:cascade`, `concept:node`, `concept:node-run`, `concept:message`, `concept:run-scope`, `concept:sensor`.
 
 ## Invariants
 
 - At most one `running` frame per instance.
 - Every frame row carries a non-null triggering-message reference. There is no path that creates a frame without a triggering message.
-- Every dispatched run row carries a non-null frame reference.
+- Every frame row carries a non-null root-RunScope reference. The root RunScope is created at frame start in the same tx as the frame row insert (per `concept:run-scope`).
+- Every dispatched run row carries a non-null frame reference, and lives in a RunScope inside that frame's RunScope tree.
+- Frames run in perfect isolation: no node-run, RunScope, attribute bag, or message ever crosses a frame boundary. A message can only ever land in the frame it itself triggered; nothing in an already-running frame is observable to or mutable by a different frame.
 - Frames are processed in arrival order per instance; cross-instance ordering is independent.
 - The frame timeout is purely advisory: when the last-progress timestamp falls outside the window, the scheduler emits a single stuck-frame warning event and takes no destructive action.
 
