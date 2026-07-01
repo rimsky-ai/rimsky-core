@@ -40,6 +40,10 @@ async function main(): Promise<void> {
     10,
   );
   const cliBinaryPath = process.env.RIMSKY_EXECUTOR_CLAUDE_BINARY ?? "";
+  const exposeEnvNames = (process.env.RIMSKY_CLAUDE_AGENT_EXPOSE_ENV ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 
   const cliAuth: CliAuthConfig = {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
@@ -94,11 +98,15 @@ async function main(): Promise<void> {
 
   const sharedCliRunner =
     !stubModeEnabled() && cliBinaryPath !== ""
-      ? createClaudeCliRunner({ auth: cliAuth, binaryPath: cliBinaryPath })
+      ? createClaudeCliRunner({
+          auth: cliAuth,
+          binaryPath: cliBinaryPath,
+          exposeEnvNames,
+        })
       : undefined;
   if (sharedCliRunner) {
     logger.info(
-      { cli_binary_path: cliBinaryPath },
+      { cli_binary_path: cliBinaryPath, expose_env_names: exposeEnvNames },
       "cli binary override active",
     );
   }

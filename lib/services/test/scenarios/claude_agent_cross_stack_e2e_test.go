@@ -35,8 +35,6 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 	catalogYAML := `validator:
   transport: http
   url: http://127.0.0.1:9999/mcp
-  headers:
-    Authorization: "Bearer ${env:VALIDATOR_TOKEN}"
 `
 
 	netName := harness.NewNetwork(ctx, t)
@@ -49,6 +47,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 			ExtraEnv: map[string]string{
 				"VALIDATOR_TOKEN": validatorPlaintextToken,
 			},
+			ExposedEnvNames: []string{"VALIDATOR_TOKEN"},
 		},
 	)
 
@@ -100,7 +99,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
 	})
 
-	t.Run("env-var-referenced credential resolved at spawn but not persisted plaintext", func(t *testing.T) {
+	t.Run("expose-env allowlist reaches the agent; rimsky never sees the plaintext", func(t *testing.T) {
 		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-env-ref-witness",
 			"scenario:env_ref_witness",
@@ -120,7 +119,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		gotDigest, _ := obs["validator_header_digest_sha256"].(string)
 		wantDigest := sha256HexClaudeAgent(expectedAuthorizationHeader)
 		if gotDigest != wantDigest {
-			t.Fatalf("validator header digest mismatch: got %q, want %q (the executor's env-ref resolution didn't produce the expected plaintext header)",
+			t.Fatalf("validator header digest mismatch: got %q, want %q — the expose-env allowlist didn't deliver VALIDATOR_TOKEN to the agent's own env, or the agent didn't construct the expected Bearer header from it",
 				gotDigest, wantDigest)
 		}
 

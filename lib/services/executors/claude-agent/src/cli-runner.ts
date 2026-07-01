@@ -227,9 +227,19 @@ function buildHandleFromChild(
 export function createClaudeCliRunner(opts: {
   auth: CliAuthConfig;
   binaryPath?: string;
+  exposeEnvNames?: readonly string[];
 }): CliRunner {
   const binary = opts.binaryPath ?? "claude";
   const auth = opts.auth;
+  const exposeEnvNames = opts.exposeEnvNames ?? [];
+  const collectExposedEnv = (): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const name of exposeEnvNames) {
+      const v = process.env[name];
+      if (v !== undefined) out[name] = v;
+    }
+    return out;
+  };
   return {
     async spawn(req: CliSpawnRequest): Promise<CliHandle> {
       const tmp = await mkdtemp(join(tmpdir(), "rimsky-cli-"));
@@ -243,7 +253,7 @@ export function createClaudeCliRunner(opts: {
       const args = buildClaudeCliArgs(req, { systemPromptPath, mcpConfigPath });
       const child: ChildProcess = spawn(binary, args, {
         cwd: req.cwd,
-        env: { ...authEnv, ...req.env },
+        env: { ...collectExposedEnv(), ...authEnv, ...req.env },
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -263,7 +273,7 @@ export function createClaudeCliRunner(opts: {
       const args = buildClaudeCliResumeArgs(req, { mcpConfigPath });
       const child: ChildProcess = spawn(binary, args, {
         cwd: req.cwd,
-        env: { ...authEnv, ...req.env },
+        env: { ...collectExposedEnv(), ...authEnv, ...req.env },
         stdio: ["ignore", "pipe", "pipe"],
       });
       return buildHandleFromChild(child, () => {

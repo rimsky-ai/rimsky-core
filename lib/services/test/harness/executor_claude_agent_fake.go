@@ -24,6 +24,7 @@ type ClaudeAgentFakeOptions struct {
 	AllowInline          string
 	SignoffPrivateKeyPEM string
 	ExtraEnv             map[string]string
+	ExposedEnvNames      []string
 }
 
 func StartClaudeAgentFakeOnNetwork(
@@ -45,6 +46,9 @@ func StartClaudeAgentFakeOnNetwork(
 	}
 	if opts.AllowInline != "" {
 		env["RIMSKY_EXECUTOR_MCP_ALLOW_INLINE"] = opts.AllowInline
+	}
+	if len(opts.ExposedEnvNames) > 0 {
+		env["RIMSKY_CLAUDE_AGENT_EXPOSE_ENV"] = strings.Join(opts.ExposedEnvNames, ",")
 	}
 	for k, v := range opts.ExtraEnv {
 		env[k] = v
