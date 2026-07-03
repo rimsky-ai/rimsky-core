@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "cwd_from_store": { "type": "string", "default": "" },
+    "cwd": { "type": "string", "default": "" },
+    "model": { "type": "string", "default": "claude-sonnet-4-5" },
+    "system_prompt": { "type": "string" },
+    "user_prompt": { "type": "string" },
+    "session_token": {
+      "type": "string",
+      "readOnly": true,
+      "default": ""
+    },
+    "cli": {
+      "type": "object",
+      "properties": {
+        "bare": { "type": "boolean" },
+        "allowed_tools": { "type": "array", "items": { "type": "string" } },
+        "disallowed_tools": { "type": "array", "items": { "type": "string" } },
+        "add_dirs": { "type": "array", "items": { "type": "string" } },
+        "max_budget_usd": { "type": "string" },
+        "permission_mode": {
+          "type": "string",
+          "enum": ["default", "acceptEdits", "bypassPermissions", "plan"]
+        },
+        "max_schema_corrections": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 3
+        },
+        "handle_rate_limits": {
+          "type": "boolean",
+          "default": true
+        },
+        "expose_env": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "mcp_servers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["transport", "name"],
+            "anyOf": [
+              {
+                "required": ["transport", "name", "url"],
+                "properties": {
+                  "transport": { "const": "http" },
+                  "name": { "type": "string", "minLength": 1 },
+                  "url": { "type": "string", "minLength": 1 },
+                  "headers": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" }
+                  },
+                  "allowed_tools": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              {
+                "required": ["transport", "name", "command"],
+                "properties": {
+                  "transport": { "const": "stdio" },
+                  "name": { "type": "string", "minLength": 1 },
+                  "command": { "type": "string", "minLength": 1 },
+                  "args": { "type": "array", "items": { "type": "string" } },
+                  "env": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" }
+                  },
+                  "allowed_tools": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              {
+                "required": ["transport", "name", "module"],
+                "properties": {
+                  "transport": { "enum": ["module", "http-loopback"] },
+                  "name": { "type": "string", "minLength": 1 },
+                  "module": { "type": "string", "minLength": 1 },
+                  "allowed_tools": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            ]
+          }
+        },
+        "required_signoffs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["public_key"],
+            "properties": {
+              "public_key": { "type": "string", "minLength": 1 },
+              "path": { "type": "string" }
+            }
+          }
+        },
+        "max_signoff_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 3
+        },
+        "silence_timeout_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "tool_use_timeout_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -5,31 +5,29 @@
 # `claude_agent_cross_stack_e2e_test.go` to drive the executor's CLI-runner
 # path end-to-end without burning credentials on the real Claude API.
 #
-# The base image is built by `make service-images`. This Dockerfile copies the
-# stub into a known path and bakes `RIMSKY_EXECUTOR_CLAUDE_BINARY` to point at
-# it; the executor's `main.ts` reads that env at startup and wires the path
-# through `createClaudeCliRunner({ binaryPath })`, so every dispatch spawns the
-# stub instead of `claude` from PATH.
+# The base image is built by `make service-images`. This Dockerfile builds the
+# Go stub (which speaks the same MCP-callback wire shape as the real CLI's
+# callback usage), copies it into a known path, and bakes
+# `RIMSKY_EXECUTOR_CLAUDE_BINARY` to point at it; the executor reads that env
+# at startup, so every dispatch spawns the stub instead of `claude` from PATH.
 #
 # Build context: the rimsky-core repo root (the harness calls
 # `testcontainers.Run` with `FromDockerfile{Context: <repo-root>}`), so the
 # COPY reaches into the fake-cli directory.
+FROM golang:1.25-alpine AS fakebuilder
+WORKDIR /src
+COPY go.work go.work.sum ./
+COPY go.mod go.sum ./
+COPY lib/foundation/go.mod lib/foundation/go.sum ./lib/foundation/
+COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
+COPY lib/services/go.mod lib/services/go.sum ./lib/services/
+COPY examples/go.mod examples/go.sum ./examples/
+RUN cd lib/services && go mod download
+COPY . .
+RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/fake-claude ./test/scenarios/claude_agent_fake_cli/fakeclaude
 
 FROM rimsky-executor-claude-agent:latest
-
-# tini lives at /usr/bin/tini on Wolfi (the production base); keep using
-# the same entrypoint as the parent image so the test container starts
-# `node dist/main.js` identically. We override only the CLI binary path.
 USER root
-RUN mkdir -p /opt/fake-claude
-COPY lib/services/test/scenarios/claude_agent_fake_cli/fake-claude.js /opt/fake-claude/fake-claude.js
-RUN chmod +x /opt/fake-claude/fake-claude.js \
- && printf '#!/bin/sh\nexec /usr/bin/node /opt/fake-claude/fake-claude.js "$@"\n' > /usr/local/bin/fake-claude \
- && chmod +x /usr/local/bin/fake-claude \
- && chown -R nonroot:nonroot /opt/fake-claude
-
+COPY --from=fakebuilder /out/fake-claude /usr/local/bin/fake-claude
 USER nonroot
-
 ENV RIMSKY_EXECUTOR_CLAUDE_BINARY=/usr/local/bin/fake-claude
-
-# Parent ENTRYPOINT (`tini -- node dist/main.js`) is inherited unchanged.

@@ -1,0 +1,15 @@
+{
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEASzwqH0PODdxqmQwuzhhoNmnFDX7/91eEQMEjrsYJkNA=\n-----END PUBLIC KEY-----\n",
+  "object_value": {
+    "dispatch_id": "disp-wire-compat-object",
+    "value_json": "{\"b\":2,\"a\":1,\"nested\":{\"z\":[3,2,1],\"y\":\"s\"},\"unicode\":\"héllo € \\\"quoted\\\" \\\\ tab\\t\",\"num\":1e+21,\"frac\":0.1,\"neg\":-45.3,\"zero\":0,\"bool\":true,\"nil\":null}",
+    "canonical": "{\"a\":1,\"b\":2,\"bool\":true,\"frac\":0.1,\"neg\":-45.3,\"nested\":{\"y\":\"s\",\"z\":[3,2,1]},\"nil\":null,\"num\":1e+21,\"unicode\":\"héllo € \\\"quoted\\\" \\\\ tab\\t\",\"zero\":0}",
+    "signature_b64": "DQ4z3w6hLXEa+n1ORE+/g6A5ZuTZXwQSjRcFGmUlAJdwKI9Vjh8dzRGAoCuyQ7eAfW4RQr2qNmI362oifFvPAw=="
+  },
+  "scalar_value": {
+    "dispatch_id": "disp-wire-compat-scalar",
+    "value_json": "\"done €\"",
+    "canonical": "\"done €\"",
+    "signature_b64": "rasszwvJzRn9ZNYnVB/TLJQVsvRvV5387keOIf40suQnuvmKQ7Hsnuj+t9MCTci2NvggjGNmXolWdCTuYaS1Bw=="
+  }
+}

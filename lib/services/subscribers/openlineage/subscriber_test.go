@@ -286,12 +286,25 @@ func waitNodeTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeT
 			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
 		if status == http.StatusOK {
 			var resp struct {
-				Node struct {
-					State string `json:"state"`
-				} `json:"node"`
+				RunSummary struct {
+					ActiveCount  int `json:"active_count"`
+					PendingCount int `json:"pending_count"`
+					FreshCount   int `json:"fresh_count"`
+					FailedCount  int `json:"failed_count"`
+				} `json:"run_summary"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = resp.Node.State
+				s := resp.RunSummary
+				switch {
+				case s.FailedCount > 0:
+					lastState = "failed"
+				case s.ActiveCount > 0 || s.PendingCount > 0:
+					lastState = "in-flight"
+				case s.FreshCount > 0:
+					lastState = "fresh"
+				default:
+					lastState = "idle"
+				}
 				if lastState == "fresh" || lastState == "failed" {
 					return
 				}

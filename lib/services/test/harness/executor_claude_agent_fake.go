@@ -20,11 +20,10 @@ import (
 var fakeClaudeBuildMu sync.Mutex
 
 type ClaudeAgentFakeOptions struct {
-	McpCatalogYAML       string
-	AllowInline          string
+	McpAllowlist         []string
+	ExposeEnvAllowlist   []string
 	SignoffPrivateKeyPEM string
 	ExtraEnv             map[string]string
-	ExposedEnvNames      []string
 }
 
 func StartClaudeAgentFakeOnNetwork(
@@ -44,25 +43,17 @@ func StartClaudeAgentFakeOnNetwork(
 		"RIMSKY_EXECUTOR_CALLBACK_HOST": "127.0.0.1",
 		"RIMSKY_EXECUTOR_SILENCE_MS":    "30000",
 	}
-	if opts.AllowInline != "" {
-		env["RIMSKY_EXECUTOR_MCP_ALLOW_INLINE"] = opts.AllowInline
+	if opts.McpAllowlist != nil {
+		env["RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST"] = strings.Join(opts.McpAllowlist, ",")
 	}
-	if len(opts.ExposedEnvNames) > 0 {
-		env["RIMSKY_CLAUDE_AGENT_EXPOSE_ENV"] = strings.Join(opts.ExposedEnvNames, ",")
+	if opts.ExposeEnvAllowlist != nil {
+		env["RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST"] = strings.Join(opts.ExposeEnvAllowlist, ",")
 	}
 	for k, v := range opts.ExtraEnv {
 		env[k] = v
 	}
 
 	files := []testcontainers.ContainerFile{}
-	if opts.McpCatalogYAML != "" {
-		files = append(files, testcontainers.ContainerFile{
-			Reader:            strings.NewReader(opts.McpCatalogYAML),
-			ContainerFilePath: "/etc/rimsky/mcp-catalog.yaml",
-			FileMode:          0o644,
-		})
-		env["RIMSKY_EXECUTOR_MCP_CATALOG"] = "/etc/rimsky/mcp-catalog.yaml"
-	}
 	if opts.SignoffPrivateKeyPEM != "" {
 		files = append(files, testcontainers.ContainerFile{
 			Reader:            strings.NewReader(opts.SignoffPrivateKeyPEM),

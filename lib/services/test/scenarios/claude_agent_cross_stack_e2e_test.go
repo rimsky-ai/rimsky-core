@@ -32,22 +32,16 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 
 	pubPEM, privPEM := mustGenerateEd25519PEMs(t)
 
-	catalogYAML := `validator:
-  transport: http
-  url: http://127.0.0.1:9999/mcp
-`
-
 	netName := harness.NewNetwork(ctx, t)
 	executorEndpoint := harness.StartClaudeAgentFakeOnNetwork(
 		ctx, t, netName, "claude-agent-fake",
 		harness.ClaudeAgentFakeOptions{
-			McpCatalogYAML:       catalogYAML,
-			AllowInline:          "",
+			McpAllowlist:         []string{"validator"},
+			ExposeEnvAllowlist:   []string{"VALIDATOR_TOKEN"},
 			SignoffPrivateKeyPEM: privPEM,
 			ExtraEnv: map[string]string{
 				"VALIDATOR_TOKEN": validatorPlaintextToken,
 			},
-			ExposedEnvNames: []string{"VALIDATOR_TOKEN"},
 		},
 	)
 
@@ -78,13 +72,24 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
 	})
 
-	t.Run("inline mcp_servers refused when allow_inline=false", func(t *testing.T) {
+	t.Run("mcp server outside the operator allowlist is refused", func(t *testing.T) {
 		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
-			"claude-agent-inline-refused",
+			"claude-agent-mcp-refused",
 			"scenario:signoff_ok",
 			withInlineMcpServer("inline-bad", "http://example.invalid/mcp"),
 		))
-		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-inline-refused")
+		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-mcp-refused")
+		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+	})
+
+	t.Run("expose-env name outside the operator allowlist is refused", func(t *testing.T) {
+		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
+			"claude-agent-expose-env-refused",
+			"scenario:signoff_ok",
+			withExposeEnv("FORBIDDEN_SECRET"),
+		))
+		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-expose-env-refused")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
 	})
@@ -104,7 +109,8 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 			"claude-agent-env-ref-witness",
 			"scenario:env_ref_witness",
 			withSignoffGate(pubPEM, "cli_observation", 0),
-			withCatalogMcpServerRef("validator"),
+			withInlineMcpServer("validator", "http://127.0.0.1:9999/mcp"),
+			withExposeEnv("VALIDATOR_TOKEN"),
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-env-ref-witness")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
@@ -140,9 +146,12 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 			t.Fatalf("expected one cli.mcp_servers entry, got %d: %v", len(servers), servers)
 		}
 		first, _ := servers[0].(map[string]any)
-		if got, _ := first["ref"].(string); got != "validator" {
-			t.Fatalf("persisted cli.mcp_servers[0] missing ref=validator (got %v) — the dispatch attribute was rewritten with the resolved url/headers, leaking through a different surface",
+		if got, _ := first["name"].(string); got != "validator" {
+			t.Fatalf("persisted cli.mcp_servers[0] missing name=validator (got %v) — the dispatch attribute was rewritten, leaking through a different surface",
 				first)
+		}
+		if got, _ := first["transport"].(string); got != "http" {
+			t.Fatalf("persisted cli.mcp_servers[0] missing transport=http (got %v)", first)
 		}
 	})
 }
@@ -215,18 +224,20 @@ func withInlineMcpServer(name, url string) claudeAgentTemplateOption {
 		cli := attrs["schema"].(map[string]any)["properties"].(map[string]any)["cli"].(map[string]any)
 		cliDefault := cli["default"].(map[string]any)
 		cliDefault["mcp_servers"] = []any{
-			map[string]any{"name": name, "url": url},
+			map[string]any{"transport": "http", "name": name, "url": url},
 		}
 	}
 }
 
-func withCatalogMcpServerRef(refName string) claudeAgentTemplateOption {
+func withExposeEnv(names ...string) claudeAgentTemplateOption {
 	return func(attrs map[string]any) {
 		cli := attrs["schema"].(map[string]any)["properties"].(map[string]any)["cli"].(map[string]any)
 		cliDefault := cli["default"].(map[string]any)
-		cliDefault["mcp_servers"] = []any{
-			map[string]any{"ref": refName},
+		exposeEnv := make([]any, 0, len(names))
+		for _, n := range names {
+			exposeEnv = append(exposeEnv, n)
 		}
+		cliDefault["expose_env"] = exposeEnv
 	}
 }
 
