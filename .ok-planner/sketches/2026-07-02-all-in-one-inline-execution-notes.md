@@ -80,7 +80,12 @@ built straight to their final shape.
       cross-stack + session-resume container scenarios green, design docs
       mutated (story rewrite, 11 decision creates, 1 decision mutate,
       module-layout licensing edit)
-- [ ] Step 2
+- [x] Step 2 (passes A–C) — in-proc claim-producer registry landed
+      (registry + client + mix-in views, race-clean, lint green, decision
+      create + concept mutate); riding fixes: latest-run ordering bug,
+      nine stale frame fixtures, timeout-guard hardening. Known-red: six
+      pre-existing frame-isolation proofs, dispositioned in the repair
+      ledger (separate workstream).
 - [ ] Step 3
 - [ ] Step 4
 - [ ] Step 5
