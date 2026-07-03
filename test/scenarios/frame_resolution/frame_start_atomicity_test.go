@@ -32,6 +32,7 @@ func TestFrameStartAtomicity(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
+	mainScopeID := h.GetMainRunScopeID(iid)
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
@@ -43,11 +44,10 @@ func TestFrameStartAtomicity(t *testing.T) {
 		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, frame_timeout_ms)
-		VALUES ($1, $2, 'queued', now(), 600000)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, 'queued', now(), 600000, $3)
 		RETURNING frame_id
-	`, []any{uuid.UUID(iid), messageID}, &frameID)
-	mainScopeID := h.GetMainRunScopeID(iid)
+	`, []any{uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)}, &frameID)
 	h.ExecSQL(`
 		INSERT INTO rimsky_node_runs
 		    (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, frame_id, run_scope_id)

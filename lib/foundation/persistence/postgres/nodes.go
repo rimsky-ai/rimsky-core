@@ -835,7 +835,7 @@ func (s *nodesImpl) GetLatestRunForNode(
 		   FROM rimsky_node_runs
 		  WHERE node_id = $1
 		  ORDER BY CASE WHEN state IN ('pending','stale','running','held','parked') THEN 0 ELSE 1 END,
-		           sequence DESC
+		           enqueued_at DESC, sequence DESC, id DESC
 		  LIMIT 1`,
 		nodeID,
 	)

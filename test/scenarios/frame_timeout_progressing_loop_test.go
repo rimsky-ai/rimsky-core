@@ -32,6 +32,7 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
+	mainScopeID := h.GetMainRunScopeID(iid)
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
@@ -44,13 +45,12 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, last_progress_at, frame_timeout_ms)
-		VALUES ($1, $2, 'running', now() - interval '5 minutes', now() - interval '5 minutes', now(), $3)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, last_progress_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, 'running', now() - interval '5 minutes', now() - interval '5 minutes', now(), $3, $4)
 		RETURNING frame_id
-	`, []any{uuid.UUID(iid), messageID, int64(timeoutMs)}, &frameID)
+	`, []any{uuid.UUID(iid), messageID, int64(timeoutMs), uuid.UUID(mainScopeID)}, &frameID)
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,
 		frameID, uuid.UUID(worker.ID))
-	mainScopeID := h.GetMainRunScopeID(iid)
 	h.ExecSQL(`
 		INSERT INTO rimsky_node_runs
 		    (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)

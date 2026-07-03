@@ -37,6 +37,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
+	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err := h.Pool.Exec(h.Ctx,
 		`DELETE FROM rimsky_node_runs WHERE node_id = $1`, uuid.UUID(worker.ID))
 	require.NoError(t, err)
@@ -57,14 +58,13 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	var frameID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
 		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state,
-			queued_at, started_at, frame_timeout_ms)
-		VALUES ($1, $2, 'running', now(), now(), 600000)
+			queued_at, started_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, 'running', now(), now(), 600000, $3)
 		RETURNING frame_id
-	`, uuid.UUID(iid), messageID).Scan(&frameID))
+	`, uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)).Scan(&frameID))
 	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET frame_id=$1 WHERE id=$2`,
 		frameID, uuid.UUID(worker.ID))
 	require.NoError(t, err)
-	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_node_runs
 		    (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, frame_id, run_scope_id)
@@ -75,12 +75,12 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	// @decision: non-cascade-direct-to-stale
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		if err := h.Persist.Nodes().UpdateState(h.Ctx,
-			worker.ID, h.GetMainRunScopeID(iid), cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx); err != nil {
+			worker.ID, mainScopeID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx); err != nil {
 			return err
 		}
 		_, err := h.Persist.Nodes().CreateNonCascadeStale(h.Ctx, tx, persistence.NonCascadeStaleInput{
 			NodeID:                 worker.ID,
-			RunScopeID:             h.GetMainRunScopeID(iid),
+			RunScopeID:             mainScopeID,
 			FrameID:                shared.UUID(frameID),
 			ExecutorName:           "stub",
 			RequiredClaimProducers: []string{},

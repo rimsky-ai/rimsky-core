@@ -20,7 +20,7 @@ type ProducerCallError struct {
 }
 
 func (e *ProducerCallError) Error() string {
-	return fmt.Sprintf("remote producer %q: %s: %v", e.ProducerName, e.Method, e.Underlying)
+	return fmt.Sprintf("producer %q: %s: %v", e.ProducerName, e.Method, e.Underlying)
 }
 
 func (e *ProducerCallError) Unwrap() error { return e.Underlying }

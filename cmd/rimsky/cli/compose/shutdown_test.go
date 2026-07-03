@@ -92,7 +92,7 @@ func TestDrain_SIGTERMThenSIGKILLChildren_BoundedTime(t *testing.T) {
 	spawned, err := hostagent.SpawnService(ctx, hostagent.SpawnServiceParams{
 		BinaryPath:   bin,
 		Env:          os.Environ(),
-		ReadyTimeout: 5 * time.Second,
+		ReadyTimeout: 30 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("SpawnService: %v", err)

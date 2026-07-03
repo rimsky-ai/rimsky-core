@@ -6,6 +6,11 @@ package claimproducer
 
 import "errors"
 
+type ClassedError interface {
+	error
+	ErrorClass() string
+}
+
 var ErrSplitScopeUnsupported = errors.New("split_scope unsupported by this producer")
 
 var ErrScopesConflictUnsupported = errors.New("scopes_conflict unsupported by this producer")

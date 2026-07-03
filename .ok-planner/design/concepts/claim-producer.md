@@ -9,7 +9,7 @@ aliases:
 
 ## What it is
 
-A claim producer is an out-of-process service implementing the claim-producer protocol — four verbs plus a capabilities startup handshake.
+A claim producer is an implementation of the claim-producer protocol — four verbs plus capability advertisement — running either as an out-of-process service (capabilities via the startup handshake) or as an in-process bundled handler registered inside the rimsky all-in-one process (capabilities declared at registration). Both shapes are dispatched through the same protocol surface.
 
 The protocol carries three optional methods, each advertised in the capabilities handshake:
 
@@ -27,6 +27,8 @@ Out-of-process producers let rimsky stay project-agnostic: the producer knows wh
 
 Owns: the producer-side resource state, the canonical claim-scope-bytes emission, the realized write-semantics per claim. Does NOT own: lock state ledger (lives in `claim-handle`), the conflict predicate (lives in rimsky). Adjacent: `claim`, `claim-handle`, `claim-scope`, `write-semantics`, `auto-terminal`, `lifecycle-subscriber` (sibling opt-in protocol on the same service).
 
+For the in-process shape, the handler exposes the full protocol — the four core verbs, any implemented mix-ins (split-scope, scopes-conflict, validation, data-processing), and capability advertisement — through a handler-side interface consumed by the in-process dispatch path. For the out-of-process shape, the same surface is served over gRPC. See `decision:parallel-inproc-claim-producer-registry`.
+
 A producer may register the executor protocol alongside the claim-producer protocol on the same endpoint to support verification of its own staged content; see `concept:executor`.
 
 ## Invariants
@@ -35,3 +37,4 @@ A producer may register the executor protocol alongside the claim-producer proto
 - Producers do not persist lock state (invariant 9a) and do not internally serialize on lock-shaped predicates (invariant 9b).
 - Producers MUST satisfy byte-equal-claim-scope uniformity: two open calls returning byte-equal claim scope MUST also return the same realized write semantics.
 - Terminal verbs (commit/abandon/release) must be idempotent in the claim identifier so the verb-then-transaction-fail leak path is recoverable.
+- The two shapes exhibit protocol equivalence: an in-process handler and its gRPC-wrapped counterpart share the same underlying implementation, so any capability advertised by one is advertised by the other, and the capability envelope (realized write semantics within the advertised set, split-scope and scopes-conflict gated on their flags) is enforced identically on both dispatch paths.
