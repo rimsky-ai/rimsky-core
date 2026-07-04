@@ -35,7 +35,7 @@ func main() {
 	}
 	defer func() { _ = driver.Close() }()
 
-	stop, failCh, err := launch.RunControlAPI(ctx, logger, driver, cfg)
+	stop, failCh, err := launch.RunControlAPI(ctx, logger, driver, cfg, nil)
 	if err != nil {
 		_ = driver.Close()
 		os.Exit(1)

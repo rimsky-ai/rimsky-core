@@ -85,7 +85,7 @@ Phase 3).
 ## Build and test
 
 ```
-go build ./executors/http-node/
+go build ./executors/http-node/cmd
 go test ./executors/http-node/... -count=1
 ```
 

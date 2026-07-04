@@ -9,7 +9,7 @@ aliases:
 
 ## What it is
 
-An in-memory per-service capabilities cache populated by the observability handshake at startup. Indexed by service name; entry shape includes the service's declared events, observability-protocol availability, and a reachability status (reachable / unreachable).
+An in-memory per-service capabilities cache, populated by two paths: the observability handshake at startup for out-of-process services, and the bundled registration entrypoint for in-process bundled services, which populates the cache with each in-proc handler's schema, tags, and declared error classes at registration time (bypassing the handshake). Both paths converge on the same cache surface consumed by rimsky-side capability queries. Indexed by service name; entry shape includes the service's declared events, observability-protocol availability, and a reachability status (reachable / unreachable). Entries written by the registration path are marked static: the refresh loop skips them, since there is no endpoint to probe and an in-process handler cannot become unreachable within its own process.
 
 ## Purpose
 

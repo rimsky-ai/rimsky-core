@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package main
+package httpnode
 
 import (
 	"io"
@@ -13,7 +13,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-func mountBridge(mux *http.ServeMux, s *Server) {
+func MountBridge(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/v1/Execute", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

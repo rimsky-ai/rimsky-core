@@ -1,0 +1,80 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+// @story: single-process-all-in-one
+// @decision: bundled-registry-entrypoint
+
+package scenarios
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+)
+
+func TestBundledInProcDispatchZeroExecutorConfig(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	h := harness.BringUpRimskyHandle(ctx, t,
+		harness.WithSQLite(),
+		harness.WithContainerEnv("RIMSKY_EXECUTOR_STUB_MODE", "1"),
+	)
+	ep := h.Endpoint
+	t.Cleanup(func() {
+		if t.Failed() {
+			h.DumpRimskyLogs(t)
+		}
+	})
+
+	templateID := deployScenarioTemplate(t, ep, map[string]any{
+		"spec": map[string]any{
+			"name":             "bundled-inproc-dispatch",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
+			"nodes": []map[string]any{
+				{
+					"type":     "worker",
+					"executor": "http-node",
+					"attributes": map[string]any{
+						"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"stub_probe": map[string]any{
+									"type":    "boolean",
+									"default": true,
+								},
+								"stub": map[string]any{
+									"type":    "boolean",
+									"default": false,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	instanceID := createScenarioInstance(t, ep, templateID, "ck-bundled-inproc-dispatch")
+
+	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
+
+	status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/worker", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET /v1/observability/nodes/%s/worker: %d %s", instanceID, status, string(raw))
+	}
+	var resp struct {
+		LatestAttributes map[string]any `json:"latest_attributes"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode node observability response: %v: %s", err, string(raw))
+	}
+	if got, _ := resp.LatestAttributes["stub"].(bool); !got {
+		t.Fatalf("in-proc http-node stub outcome never landed: the bundled handler's attributes_delta {stub: true} is missing from latest_attributes %v — the template named no configured executor, so this only passes if the in-proc bundled registration resolved and dispatched it", resp.LatestAttributes)
+	}
+}

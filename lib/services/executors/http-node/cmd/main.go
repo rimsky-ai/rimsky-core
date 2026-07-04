@@ -18,29 +18,34 @@ import (
 	"google.golang.org/grpc"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	httpnode "github.com/rimsky-ai/rimsky-core/lib/services/executors/http-node"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 )
 
 func main() {
-	cfg := LoadConfig()
 	ops.Setup(slog.LevelInfo)
+	opts, err := httpnode.LoadOptsFromEnv()
+	if err != nil {
+		slog.Error("http-node config", "error", err.Error())
+		os.Exit(1)
+	}
 	slog.Info("http-node starting",
-		"grpc_port", cfg.GRPCPort,
-		"http_port", cfg.HTTPPort,
-		"stub_mode", cfg.StubMode,
+		"grpc_port", opts.GRPCPort,
+		"http_port", opts.HTTPPort,
+		"stub_mode", opts.StubMode,
 	)
 
-	s := NewServer(cfg)
+	s := httpnode.NewServer(opts)
 
-	grpcLis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Host, cfg.GRPCPort))
+	grpcLis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", opts.Host, opts.GRPCPort))
 	if err != nil {
 		slog.Error("grpc listen", "error", err.Error())
 		os.Exit(1)
 	}
 	grpcSrv := grpc.NewServer()
 	genv1.RegisterExecutorServer(grpcSrv, s)
-	obs := RegisterObservability(grpcSrv)
-	obs.SetHTTPBridgeURL(cfg.HTTPBridgeURL)
+	obs := httpnode.RegisterObservability(grpcSrv)
+	obs.SetHTTPBridgeURL(opts.HTTPBridgeURL)
 	s.SetObservability(obs)
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {
@@ -48,12 +53,12 @@ func main() {
 		}
 	}()
 
-	httpBridgeURL := cfg.HTTPBridgeURL
+	httpBridgeURL := opts.HTTPBridgeURL
 	mux := http.NewServeMux()
-	mountBridge(mux, s)
-	mountObservabilityBridge(mux, obs, httpBridgeURL)
+	httpnode.MountBridge(mux, s)
+	httpnode.MountObservabilityBridge(mux, obs, httpBridgeURL)
 	httpSrv := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", cfg.Host, cfg.HTTPPort),
+		Addr:    fmt.Sprintf("%s:%d", opts.Host, opts.HTTPPort),
 		Handler: mux,
 	}
 	go func() {

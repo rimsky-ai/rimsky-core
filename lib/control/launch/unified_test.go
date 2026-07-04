@@ -85,16 +85,16 @@ func TestStartUnifiedStack_OneDriverAcrossRunners(t *testing.T) {
 	runSchedulerFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig) (StopFunc, <-chan error, error) {
 		return record(d)
 	}
-	runSupervisorFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig) (StopFunc, <-chan error, error) {
+	runSupervisorFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig, _ *config.BundledRegistrations) (StopFunc, <-chan error, error) {
 		return record(d)
 	}
-	runControlAPIFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig) (StopFunc, <-chan error, error) {
+	runControlAPIFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig, _ *config.BundledRegistrations) (StopFunc, <-chan error, error) {
 		return record(d)
 	}
 
 	sentinel := &fakeDriver{}
 	logger := slog.New(slog.NewTextHandler(discardWriter{}, nil))
-	stack, err := StartUnifiedStack(context.Background(), logger, sentinel, &config.RimskyConfig{})
+	stack, err := StartUnifiedStack(context.Background(), logger, sentinel, &config.RimskyConfig{}, &config.BundledRegistrations{})
 	if err != nil {
 		t.Fatalf("StartUnifiedStack: %v", err)
 	}

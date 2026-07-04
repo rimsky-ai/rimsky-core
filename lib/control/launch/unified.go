@@ -43,7 +43,7 @@ var (
 	runControlAPIFn = RunControlAPI
 )
 
-func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig) (*UnifiedStack, error) {
+func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations) (*UnifiedStack, error) {
 	type roleRunner struct {
 		name string
 		run  func(context.Context, *slog.Logger) (StopFunc, <-chan error, error)
@@ -53,10 +53,10 @@ func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persiste
 			return runSchedulerFn(c, l, driver, cfg)
 		}},
 		{"supervisor", func(c context.Context, l *slog.Logger) (StopFunc, <-chan error, error) {
-			return runSupervisorFn(c, l, driver, cfg)
+			return runSupervisorFn(c, l, driver, cfg, bundledRegs)
 		}},
 		{"control-api", func(c context.Context, l *slog.Logger) (StopFunc, <-chan error, error) {
-			return runControlAPIFn(c, l, driver, cfg)
+			return runControlAPIFn(c, l, driver, cfg, bundledRegs)
 		}},
 	}
 

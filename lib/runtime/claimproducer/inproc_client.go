@@ -93,16 +93,15 @@ func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) 
 }
 
 func callError(name, method string, err error) *peer.ProducerCallError {
-	class := ""
 	var classed protocol.ClassedError
 	if errors.As(err, &classed) {
-		class = classed.ErrorClass()
+		return &peer.ProducerCallError{
+			ProducerName: name,
+			Method:       method,
+			ErrorClass:   classed.ErrorClass(),
+			Message:      err.Error(),
+			Underlying:   err,
+		}
 	}
-	return &peer.ProducerCallError{
-		ProducerName: name,
-		Method:       method,
-		ErrorClass:   class,
-		Message:      err.Error(),
-		Underlying:   err,
-	}
+	return peer.NewProducerCallError(name, method, err)
 }

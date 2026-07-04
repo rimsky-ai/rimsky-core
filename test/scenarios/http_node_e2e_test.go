@@ -240,7 +240,7 @@ func buildHttpNodeBinary(t *testing.T) string {
 	t.Helper()
 	root := repoRootFor(t)
 	out := filepath.Join(t.TempDir(), "http-node")
-	cmd := exec.Command("go", "build", "-o", out, "./lib/services/executors/http-node")
+	cmd := exec.Command("go", "build", "-o", out, "./lib/services/executors/http-node/cmd")
 	cmd.Dir = root
 	cmd.Env = os.Environ()
 	if combined, err := cmd.CombinedOutput(); err != nil {

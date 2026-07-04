@@ -11,8 +11,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 func Dial(ctx context.Context, name, endpoint, tlsMode string) (*Client, error) {
@@ -34,31 +34,16 @@ func Dial(ctx context.Context, name, endpoint, tlsMode string) (*Client, error) 
 		_ = conn.Close()
 		return nil, fmt.Errorf("remote producer %q: Capabilities handshake: %w", name, err)
 	}
-	envelope := make([]claimproducer.WriteSemantics, 0, len(resp.GetWriteSemanticsAllowed()))
-	for _, ws := range resp.GetWriteSemanticsAllowed() {
-		mapped := writeSemanticsFromProto(ws)
-		if mapped == claimproducer.WriteSemanticsUnknown {
-			_ = conn.Close()
-			return nil, fmt.Errorf("remote producer %q: Capabilities advertises UNKNOWN write_semantics value", name)
-		}
-		envelope = append(envelope, mapped)
-	}
-	if len(envelope) == 0 {
+	caps, err := bridge.ClaimProducerCapabilitiesFromProto(resp)
+	if err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("remote producer %q: Capabilities returned empty write_semantics_allowed", name)
+		return nil, fmt.Errorf("remote producer %q: %w", name, err)
 	}
 	return &Client{
 		name: name,
 		conn: conn,
 		rpc:  rpc,
-		caps: claimproducer.Capabilities{
-			WriteSemanticsAllowed:    envelope,
-			SupportsSplitScope:       resp.GetSupportsSplitScope(),
-			SupportsScopesConflict:   resp.GetSupportsScopesConflict(),
-			Protocols:                resp.GetProtocols(),
-			ValidationSupportedRoles: resp.GetValidationSupportedRoles(),
-			DeclaredErrorClasses:     resp.GetDeclaredErrorClasses(),
-		},
+		caps: caps,
 	}, nil
 }
 

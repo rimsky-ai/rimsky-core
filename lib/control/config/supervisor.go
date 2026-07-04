@@ -49,6 +49,8 @@ type SupervisorConfig struct {
 	LateBindServiceProxies map[string]string
 
 	ExtraInprocHandlers map[string]executor.InProcessHandler
+
+	Bundled *BundledRegistrations
 }
 
 type SupervisorHandle interface {
@@ -75,6 +77,31 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	registry, err := dialRemoteClaimProducers(context.Background(), cfg.ClaimProducers, persistStore, cfg.LateBindServiceProxies)
 	if err != nil {
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
+	}
+	if cfg.Bundled != nil {
+		logger := cfg.Logger
+		if logger == nil {
+			logger = shared.SilentLogger{}
+		}
+		for name, producer := range cfg.Bundled.ClaimProducerClients() {
+			if _, exists := registry.Get(name); exists {
+				logger.Info("bundled claim producer overridden by configured endpoint", "producer", name)
+				continue
+			}
+			registry.Add(name, producer)
+		}
+		merged := make(map[string]executor.InProcessHandler, len(cfg.ExtraInprocHandlers)+len(cfg.Bundled.ExecutorHandlers))
+		for url, h := range cfg.ExtraInprocHandlers {
+			merged[url] = h
+		}
+		for url, h := range cfg.Bundled.ExecutorHandlers {
+			if _, exists := merged[url]; exists {
+				registry.Close()
+				return nil, fmt.Errorf("StartSupervisor: bundled in-proc handler collides with extra handler %q", url)
+			}
+			merged[url] = h
+		}
+		cfg.ExtraInprocHandlers = merged
 	}
 	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors)
 	if err != nil {

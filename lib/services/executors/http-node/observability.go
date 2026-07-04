@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package main
+package httpnode
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	"google.golang.org/grpc"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/services/executors/http-node/errorclasses"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/internal/observability"
 )
 
@@ -64,8 +63,9 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorC
 		SupportsTraceStream:           true,
 		RetentionAfterTerminalSeconds: retentionSeconds,
 		HttpBridgeUrl:                 url,
-		ExpectedAttributesSchema:      []byte(`{"type":"object"}`),
-		DeclaredErrorClasses:          errorclasses.Declared(),
+		ExpectedAttributesSchema:      SchemaBytes(),
+		DeclaredTags:                  DeclaredTags(),
+		DeclaredErrorClasses:          DeclaredErrorClasses(),
 	}, nil
 }
 

@@ -66,6 +66,7 @@ type PeerEntry struct {
 	LastProbedAt          time.Time                  `json:"last_probed_at"`
 	LastError             string                     `json:"last_error,omitempty"`
 	TLS                   string                     `json:"tls,omitempty"`
+	Static                bool                       `json:"static,omitempty"`
 }
 
 type Discovery struct {

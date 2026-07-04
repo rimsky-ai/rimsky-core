@@ -39,6 +39,8 @@ type ControlAPIConfig struct {
 	Metrics                runtime.MetricsHook
 	LateBindServiceProxies map[string]string
 	RefValidationMode      node.RefValidationMode
+
+	Bundled *BundledRegistrations
 }
 
 type ControlAPIHandle interface {
@@ -111,6 +113,16 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
 	}
+	if cfg.Bundled != nil {
+		obsLog := slogLoggerFor(cfg.Logger)
+		for name, producer := range cfg.Bundled.ClaimProducerClients() {
+			if _, exists := registry.Get(name); exists {
+				obsLog.Info("bundled claim producer overridden by configured endpoint", "producer", name)
+				continue
+			}
+			registry.Add(name, producer)
+		}
+	}
 	lifecycleReg, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors)
 	if err != nil {
 		registry.Close()
@@ -134,6 +146,17 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			TLS:       e.TLS,
 		}
 	}
+	if cfg.Bundled != nil {
+		for name, ep := range cfg.Bundled.ExecutorAliases {
+			if _, exists := executorsByName[name]; exists {
+				continue
+			}
+			executorsByName[name] = controlapi.ExecutorEntry{
+				Transport: ep.Transport,
+				Endpoint:  ep.URL,
+			}
+		}
+	}
 	execPeers := make([]observability.PeerSpec, 0, len(cfg.Executors.Executors))
 	for name, e := range cfg.Executors.Executors {
 		execPeers = append(execPeers, observability.PeerSpec{
@@ -154,6 +177,9 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}
 	obsLogger := slogLoggerFor(cfg.Logger)
 	disc := observability.RunHandshake(context.Background(), observability.NewGRPCProber(), execPeers, storePeers, obsLogger)
+	if cfg.Bundled != nil {
+		cfg.Bundled.AdvertiseInto(disc)
+	}
 	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
 	go disc.RefreshLoop(discoveryCtx, ObservabilityRefreshInterval(), obsLogger)
 	publisherReg, validationReg, dataProcessorReg, peerClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)

@@ -8,7 +8,7 @@ aliases: []
 
 ## Definition
 
-An out-of-process binary speaking rimsky's service protocols that implements one or more of them and is orchestrated by rimsky.
+A rimsky-orchestrated implementation of one or more of rimsky's service protocols, running either as an out-of-process binary or as an in-process handler within the rimsky all-in-one process. Both forms are dispatched via the same protocol surface.
 
 ## Purpose
 
@@ -20,16 +20,16 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 
 `concept:service` owns:
 
-- How a binary declares its protocol membership in the unified config (the per-service-entry protocol-membership list; see `concept:rimsky-yml`).
+- How a service declares its protocol membership. For an out-of-process binary that is the unified config (the per-service-entry protocol-membership list; see `concept:rimsky-yml`); for a bundled in-process handler it is the sibling path of programmatic registration through the bundled registration entrypoint (see `decision:bundled-registry-entrypoint`).
 - The capabilities startup handshake (one handshake call per protocol; see `concept:observability` for the discovery-cache that consumes them).
 - Conformance-validation entry points (the per-protocol conformance subcommands shipped in the single binary, not standalone per-protocol binaries; see `concept:conformance`).
 - The multi-protocol composition pattern: a binary implementing N rimsky protocols uses N distinct handlers, one per protocol. Method-name collisions across protocols (e.g., a capabilities query on both the claim-producer and the executor-observability protocol) are resolved at the composition site, not by collapsing the protocols into one. Each handler implements one protocol; the binary registers each separately with its serving stack.
 
 ## Invariants
 
-- Services are declared in the unified config with an explicit protocol-membership list per service.
-- Protocol membership is advertised at startup via the per-protocol capabilities query.
-- Conformance is validated by the per-protocol conformance subcommands shipped in the single binary (see `concept:conformance`).
+- Out-of-process services are declared in the unified config with an explicit protocol-membership list per service. In-process bundled services register their protocol membership programmatically via the bundled registration entrypoint — an equivalent declaration on a different surface.
+- Protocol membership is advertised for out-of-process services at startup via the per-protocol capabilities query; in-process handlers advertise their protocol membership and capabilities (schema, tags, declared error classes) through the same registration entrypoint, which knows each handler's capabilities by construction.
+- Conformance is validated by the per-protocol conformance subcommands shipped in the single binary (see `concept:conformance`). Conformance runs against the standalone gRPC surface each bundled service still exposes; the in-process handler and the gRPC-wrapped handler share the same protocol semantics by construction (same handler package, same code paths), so a passing conformance run on the standalone image guarantees the in-process handler's semantics too.
 - Multi-protocol binaries use a distinct handler per protocol; there is no shared capabilities-provider abstraction across protocols (response shapes are protocol-specific and the downstream code is already protocol-specific).
 
 ## Adjacent

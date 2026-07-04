@@ -240,7 +240,7 @@ func buildVerifierHTTPBinary(t *testing.T) string {
 	t.Helper()
 	root := repoRootFor(t)
 	out := filepath.Join(t.TempDir(), "verifier-http")
-	cmd := exec.Command("go", "build", "-o", out, "./lib/services/executors/verifier-http")
+	cmd := exec.Command("go", "build", "-o", out, "./lib/services/executors/verifier-http/cmd")
 	cmd.Dir = root
 	cmd.Env = os.Environ()
 	if combined, err := cmd.CombinedOutput(); err != nil {

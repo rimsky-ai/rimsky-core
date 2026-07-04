@@ -44,7 +44,7 @@ type Config struct {
 	EnableExecutor bool
 }
 
-func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listener) error {
+func New(ctx context.Context, cfg Config) (*Server, error) {
 	st, err := pgsstore.New(ctx, pgsstore.Config{
 		Connection:        cfg.Connection,
 		WriteSemantics:    cfg.WriteSemantics,
@@ -52,10 +52,21 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		PartitionPolicies: cfg.PartitionPolicies,
 	})
 	if err != nil {
+		return nil, err
+	}
+	return &Server{store: st}, nil
+}
+
+func (s *Server) RunSweep(ctx context.Context, interval time.Duration) {
+	s.store.RunSweep(ctx, interval)
+}
+
+func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listener) error {
+	srv, err := New(ctx, cfg)
+	if err != nil {
 		return err
 	}
-
-	srv := &Server{store: st}
+	st := srv.store
 	grpcSrv := grpc.NewServer()
 	genv1.RegisterClaimProducerServer(grpcSrv, srv)
 	if cfg.EnableLifecycle {
@@ -96,7 +107,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		}()
 	}
 
-	go st.RunSweep(ctx, cfg.SweepInterval)
+	go srv.RunSweep(ctx, cfg.SweepInterval)
 
 	<-ctx.Done()
 	stopTimer := time.AfterFunc(gracefulStopBudget, grpcSrv.Stop)

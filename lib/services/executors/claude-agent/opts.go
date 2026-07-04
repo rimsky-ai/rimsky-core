@@ -5,6 +5,7 @@
 package claudeagent
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -107,10 +108,13 @@ func LoadOptsFromEnv() (Opts, error) {
 		ObservabilityHTTPBridgeURL: os.Getenv("RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL"),
 		StubMode:                   StubModeEnabled(),
 	}
-	if !opts.StubMode && opts.Auth.AnthropicAPIKey == "" && opts.Auth.ClaudeCodeOauthToken == "" {
-		return Opts{}, fmt.Errorf("at least one of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN must be set")
-	}
 	return opts, nil
+}
+
+var ErrCredentialsMissing = errors.New("at least one of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN must be set")
+
+func (o Opts) CredentialsConfigured() bool {
+	return o.StubMode || o.Auth.AnthropicAPIKey != "" || o.Auth.ClaudeCodeOauthToken != ""
 }
 
 func envOr(name string, fallback string) string {

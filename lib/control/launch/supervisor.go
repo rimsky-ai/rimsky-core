@@ -38,7 +38,7 @@ type supervisorYAMLCallback struct {
 	AdvertisePort int    `yaml:"advertise_port"`
 }
 
-func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig) (StopFunc, <-chan error, error) {
+func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations) (StopFunc, <-chan error, error) {
 	cfgPath := os.Getenv("RIMSKY_SUPERVISOR_CONFIG")
 	if cfgPath == "" {
 		err := fmt.Errorf("missing RIMSKY_SUPERVISOR_CONFIG (path to YAML)")
@@ -155,6 +155,17 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 	disc := observability.RunHandshake(ctx, observability.NewGRPCProber(), execPeers, nil, logger)
 
+	if bundledRegs != nil {
+		for name, ep := range bundledRegs.ExecutorAliases {
+			if _, exists := endpoints[name]; exists {
+				log.Info("bundled executor overridden by configured endpoint", "executor", name)
+				continue
+			}
+			resolver.Register(name, ep)
+		}
+		bundledRegs.AdvertiseInto(disc)
+	}
+
 	mreg := observability.NewMetricsRegistry()
 
 	lateBindProxies := rimskyCfg.LateBindServiceProxies
@@ -187,6 +198,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		Executors:                   rimskyCfg.Executors,
 		LifecyclePeersForSpec:       peersForSpec,
 		LateBindServiceProxies:      lateBindProxies,
+		Bundled:                     bundledRegs,
 	})
 	if err != nil {
 		log.Error("StartSupervisor", "error", err.Error())

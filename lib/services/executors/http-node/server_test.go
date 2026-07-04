@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package main
+package httpnode
 
 import (
 	"bytes"
@@ -45,7 +45,7 @@ func newRequestWithAttrs(t *testing.T, ud, attrs map[string]any) *genv1.ExecuteR
 
 func testServer(t *testing.T, stub bool) *Server {
 	t.Helper()
-	return NewServer(Config{
+	return NewServer(Opts{
 		Host:         "127.0.0.1",
 		GRPCPort:     0,
 		HTTPPort:     0,
@@ -139,7 +139,7 @@ func TestExecute_Timeout_ReturnsTimeout(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	s := NewServer(Config{
+	s := NewServer(Opts{
 		Host: "127.0.0.1", TimeoutMs: 50, MaxBodyBytes: 1 << 20,
 	})
 	req := newRequest(t, map[string]any{"url": ts.URL})
@@ -254,7 +254,7 @@ func TestExecute_HTTPBridge_PostExecuteRoundTrip(t *testing.T) {
 
 	s := testServer(t, false)
 	mux := http.NewServeMux()
-	mountBridge(mux, s)
+	MountBridge(mux, s)
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 

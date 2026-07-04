@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package main
+package httpnode
 
 import (
 	"net/http"
@@ -11,7 +11,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/internal/observability"
 )
 
-func mountObservabilityBridge(mux *http.ServeMux, obs *ObservabilityServer, httpBridgeURL string) {
+func MountObservabilityBridge(mux *http.ServeMux, obs *ObservabilityServer, httpBridgeURL string) {
 	mux.HandleFunc("/observability/v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

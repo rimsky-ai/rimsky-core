@@ -43,15 +43,26 @@ type Config struct {
 	EnableLifecycle bool
 }
 
-func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listener) error {
+func New(cfg Config) (*Server, error) {
 	st, err := fsstore.New(fsstore.Config{
 		Root:         cfg.Root,
 		PickPolicies: cfg.PickPolicies,
 	})
 	if err != nil {
+		return nil, err
+	}
+	return &Server{store: st}, nil
+}
+
+func (s *Server) RunSweep(ctx context.Context, interval time.Duration) {
+	s.store.RunSweep(ctx, interval)
+}
+
+func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listener) error {
+	srv, err := New(cfg)
+	if err != nil {
 		return err
 	}
-	srv := &Server{store: st}
 
 	grpcSrv := grpc.NewServer()
 	genv1.RegisterClaimProducerServer(grpcSrv, srv)
@@ -81,7 +92,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 
 	var adminSrv *http.Server
 	if adminLis != nil {
-		adminSrv = &http.Server{Handler: st.AdminHandler()}
+		adminSrv = &http.Server{Handler: srv.store.AdminHandler()}
 		go func() {
 			if err := adminSrv.Serve(adminLis); err != nil && err != http.ErrServerClosed {
 				slog.Warn("filesystem store: admin serve", "error", err.Error())
@@ -89,7 +100,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		}()
 	}
 
-	go st.RunSweep(ctx, cfg.SweepInterval)
+	go srv.RunSweep(ctx, cfg.SweepInterval)
 
 	<-ctx.Done()
 	stopTimer := time.AfterFunc(gracefulStopBudget, grpcSrv.Stop)

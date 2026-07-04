@@ -32,65 +32,37 @@ func (c *Client) Capabilities(_ context.Context) (claimproducer.Capabilities, er
 }
 
 func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
-	resp, err := c.rpc.Open(ctx, &genv1.OpenRequest{
-		ClaimId:      string(claimID),
-		ProducerName: spec.ProducerName,
-		Selector:     spec.Selector,
-		Intent:       string(spec.Intent),
-		Alias:        spec.Alias,
-		TemplateId:   spec.TemplateID,
-		InstanceId:   spec.InstanceID,
-		RunScopeId:   spec.RunScopeID,
-	})
+	resp, err := c.rpc.Open(ctx, bridge.OpenRequestFromSpec(claimID, spec))
 	if err != nil {
 		return claimproducer.OpenOutcome{}, NewProducerCallError(c.name, "Open", err)
 	}
-	if u := resp.GetUnavailable(); u != nil {
-		return claimproducer.OpenOutcome{Available: false, UnavailableClass: u.GetErrorClass()}, nil
+	out, err := bridge.OpenOutcomeFromProto(resp)
+	if err != nil {
+		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: %w", c.name, err)
 	}
-	acq := resp.GetAcquired()
-	if acq == nil {
-		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: response carries neither Acquired nor Unavailable", c.name)
+	if !out.Available {
+		return out, nil
 	}
-	rws := writeSemanticsFromProto(acq.GetRealizedWriteSemantics())
+	rws := out.Result.RealizedWriteSemantics
 	if rws == claimproducer.WriteSemanticsUnknown {
 		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: realized_write_semantics is UNKNOWN (producer must declare a concrete value)", c.name)
 	}
 	if !c.caps.Contains(rws) {
 		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: realized_write_semantics %q not in advertised envelope %v", c.name, rws, c.caps.WriteSemanticsAllowed)
 	}
-	return claimproducer.OpenOutcome{
-		Available: true,
-		Result: claimproducer.ClaimResult{
-			Address:                acq.GetAddress(),
-			Payload:                acq.GetPayload(),
-			ClaimScope:             acq.GetClaimScope(),
-			RealizedWriteSemantics: rws,
-		},
-	}, nil
+	return out, nil
 }
 
 func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) (claimproducer.CommitResult, error) {
-	resp, err := c.rpc.Commit(ctx, &genv1.CommitRequest{
-		ClaimId:    string(claimID),
-		ClaimScope: scope,
-		Address:    address,
-	})
+	resp, err := c.rpc.Commit(ctx, bridge.CommitRequestFromArgs(claimID, scope, address))
 	if err != nil {
 		return claimproducer.CommitResult{}, NewProducerCallError(c.name, "Commit", err)
 	}
-	return claimproducer.CommitResult{
-		VersionID:        resp.GetVersionId(),
-		ProducerMetadata: resp.GetProducerMetadata(),
-	}, nil
+	return bridge.CommitResultFromProto(resp), nil
 }
 
 func (c *Client) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
-	_, err := c.rpc.Abandon(ctx, &genv1.AbandonRequest{
-		ClaimId:    string(claimID),
-		ClaimScope: scope,
-		Address:    address,
-	})
+	_, err := c.rpc.Abandon(ctx, bridge.AbandonRequestFromArgs(claimID, scope, address))
 	if err != nil {
 		return NewProducerCallError(c.name, "Abandon", err)
 	}
@@ -98,11 +70,7 @@ func (c *Client) Abandon(ctx context.Context, claimID claimproducer.ClaimID, sco
 }
 
 func (c *Client) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
-	_, err := c.rpc.Release(ctx, &genv1.ReleaseRequest{
-		ClaimId:    string(claimID),
-		ClaimScope: scope,
-		Address:    address,
-	})
+	_, err := c.rpc.Release(ctx, bridge.ReleaseRequestFromArgs(claimID, scope, address))
 	if err != nil {
 		return NewProducerCallError(c.name, "Release", err)
 	}
@@ -113,24 +81,11 @@ func (c *Client) SplitScope(ctx context.Context, req claimproducer.SplitClaimSco
 	if !c.caps.SupportsSplitScope {
 		return claimproducer.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
 	}
-	resp, err := c.rpc.SplitScope(ctx, &genv1.SplitScopeRequest{
-		ClaimHandleId:    req.ClaimHandleID,
-		PartitionRequest: req.PartitionRequest,
-	})
+	resp, err := c.rpc.SplitScope(ctx, bridge.SplitScopeRequestToProto(req))
 	if err != nil {
 		return claimproducer.SplitClaimScopeResponse{}, NewProducerCallError(c.name, "SplitScope", err)
 	}
-	out := claimproducer.SplitClaimScopeResponse{}
-	for _, sub := range resp.GetSubScopes() {
-		out.SubClaimScopes = append(out.SubClaimScopes, claimproducer.SubClaimScopeDescriptor{
-			ClaimScopeData:   sub.GetClaimScopeData(),
-			PartitionKey:     sub.GetPartitionKey(),
-			ProducerMetadata: sub.GetProducerMetadata(),
-			Address:          sub.GetAddress(),
-			Payload:          sub.GetPayload(),
-		})
-	}
-	return out, nil
+	return bridge.SplitScopeResponseFromProto(resp), nil
 }
 
 func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) {
@@ -164,8 +119,4 @@ func (c *Client) ValidateCapabilities(declared claimproducer.Capabilities) error
 		}
 	}
 	return nil
-}
-
-func writeSemanticsFromProto(ws genv1.WriteSemantics) claimproducer.WriteSemantics {
-	return claimproducer.WriteSemantics(bridge.WriteSemanticsFromProto(ws))
 }

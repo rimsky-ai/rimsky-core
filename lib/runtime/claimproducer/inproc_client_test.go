@@ -11,6 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	protocol "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
@@ -191,6 +195,27 @@ func TestHandlerErrorWithoutClassYieldsEmptyErrorClass(t *testing.T) {
 	}
 	if pcErr.ErrorClass != "" {
 		t.Fatalf("ErrorClass: got %q, want empty", pcErr.ErrorClass)
+	}
+}
+
+func TestHandlerStatusErrorYieldsErrorClassFromDetails(t *testing.T) {
+	st := status.New(codes.Internal, "root gone")
+	withInfo, err := st.WithDetails(&errdetails.ErrorInfo{
+		Reason: "fs/root_unavailable",
+		Domain: "rimsky.store-filesystem",
+	})
+	if err != nil {
+		t.Fatalf("WithDetails: %v", err)
+	}
+	h := &fakeHandler{openErr: withInfo.Err()}
+	c := clientOver(h, coreCapabilities())
+	_, callErr := c.Open(context.Background(), "claim-1", protocol.ClaimSpec{})
+	var pcErr *peer.ProducerCallError
+	if !errors.As(callErr, &pcErr) {
+		t.Fatalf("want *peer.ProducerCallError, got %T: %v", callErr, callErr)
+	}
+	if pcErr.ErrorClass != "fs/root_unavailable" {
+		t.Fatalf("ErrorClass: got %q, want fs/root_unavailable (status-details channel)", pcErr.ErrorClass)
 	}
 }
 

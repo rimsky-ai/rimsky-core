@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package main
+package httpnode
 
 import (
 	"bytes"
@@ -27,13 +27,13 @@ import (
 // @concept: executor
 type Server struct {
 	genv1.UnimplementedExecutorServer
-	cfg      Config
+	cfg      Opts
 	client   *http.Client
 	stubMode bool
 	obs      *ObservabilityServer
 }
 
-func NewServer(cfg Config) *Server {
+func NewServer(cfg Opts) *Server {
 	return &Server{
 		cfg:      cfg,
 		client:   &http.Client{Timeout: time.Duration(cfg.TimeoutMs) * time.Millisecond},

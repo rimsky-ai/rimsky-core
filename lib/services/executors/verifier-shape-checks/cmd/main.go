@@ -9,59 +9,42 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	"google.golang.org/grpc"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
+	verifiershapechecks "github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-shape-checks"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 )
 
 func main() {
-	host := envOr("RIMSKY_EXECUTOR_VERIFIER_HTTP_HOST", "0.0.0.0")
-	port := atoiOr("RIMSKY_EXECUTOR_VERIFIER_HTTP_PORT", 9096)
-	stubMode := os.Getenv("RIMSKY_EXECUTOR_STUB_MODE") == "1"
-
 	ops.Setup(slog.LevelInfo)
-	slog.Info("verifier-http starting", "grpc_port", port, "stub_mode", stubMode)
+	opts, err := verifiershapechecks.LoadOptsFromEnv()
+	if err != nil {
+		slog.Error("verifier-shape-checks config", "error", err.Error())
+		os.Exit(1)
+	}
+	slog.Info("verifier-shape-checks starting", "grpc_port", opts.Port, "stub_mode", opts.StubMode)
 
-	lis, err := serverkit.Listen(host, port)
+	lis, err := serverkit.Listen(opts.Host, opts.Port)
 	if err != nil {
 		slog.Error("grpc listen", "error", err.Error())
 		os.Exit(1)
 	}
 	srv := grpc.NewServer()
-	genv1.RegisterExecutorServer(srv, NewServer(stubMode))
-	RegisterObservability(srv)
+	genv1.RegisterExecutorServer(srv, verifiershapechecks.NewServer(opts.StubMode))
+	verifiershapechecks.RegisterObservability(srv)
+	genv1.RegisterValidationServer(srv, verifiershapechecks.NewValidationServer())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		slog.Info("verifier-http stopping")
+		slog.Info("verifier-shape-checks stopping")
 		cancel()
 	}()
-	serverkit.RunGRPC(ctx, srv, lis, "verifier-http")
-}
-
-func envOr(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
-func atoiOr(k string, def int) int {
-	v := os.Getenv(k)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
+	serverkit.RunGRPC(ctx, srv, lis, "verifier-shape-checks")
 }

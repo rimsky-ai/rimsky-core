@@ -17,6 +17,10 @@ import (
 //go:embed expected_attributes_schema.json
 var expectedAttributesSchema []byte
 
+const ExecutorName = "claude-agent"
+
+const InProcURL = "inproc://claude-agent"
+
 func SchemaBytes() []byte {
 	out := make([]byte, len(expectedAttributesSchema))
 	copy(out, expectedAttributesSchema)

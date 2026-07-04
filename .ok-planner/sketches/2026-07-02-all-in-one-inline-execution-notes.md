@@ -74,6 +74,48 @@ built straight to their final shape.
   `parallel-inproc-claim-producer-registry`; concept mutate
   `claim-producer.md` (in-proc shape + protocol-equivalence invariant).
 
+## Step-3 passes
+
+- **Pass A — bundled contract + handler restructures + LoadOptsFromEnv.**
+  New `lib/services/bundled/` (protocols-only): `ExecutorHandler` interface
+  mirroring the gRPC Execute shape (`Execute(ctx, *genv1.ExecuteRequest)
+  (*genv1.Outcome, error)` — async-ack + HTTP callback survives in-proc
+  unchanged; the in-proc client already passes outcomes through the same
+  `Client` interface as the wire), sink interfaces for exec registry /
+  cp registry / aliases / discovery in protocols-only types, and
+  `RegisterAll(execReg, cpReg, aliases, discovery, opts)` per spec.
+  Server-backed claim-producer adapter in `lib/protocols/serverkit`
+  (wraps `genv1.ClaimProducerServer` as `claimproducer.ClaimProducer`;
+  pure conversion, errors pass through — envelope policy stays in the
+  step-2 runtime client, matching wire parity where error classes ride
+  in-band, not on status errors). Restructure http-node / verifier-http /
+  verifier-shape-checks from flat `package main` into importable handler
+  packages + thin `cmd/main.go` (claude-agent's step-1 layout is the
+  template; flat `package main` is not importable, so the spec's
+  "importable handler package" invariant forces this). `LoadOptsFromEnv()`
+  for the five services missing it. Unconfigured claim producer (required
+  env absent) → skipped with a log line; present-but-invalid → boot abort
+  naming the handler (zero-config boot stays possible; postgres can never
+  have an inventable default DSN). Unit tests with fakes.
+- **Pass B — capability advertisement.** Package-scope `SchemaBytes()` /
+  `DeclaredTags()` / `DeclaredErrorClasses()` for the three executors
+  missing them (data lifted from each service's observability surface);
+  claim-producer capabilities as construction data; discovery population
+  through the bundled-defined sink. Unit tests.
+- **Pass C — root-side wiring.** All-in-one entrypoint calls
+  `builtin.RegisterAll` then `bundled.RegisterAll` with root-side adapters
+  onto `executor.InProcessRegistry`, `runtime/claimproducer.InProcessRegistry`,
+  the executor alias/endpoint map, and `control/observability.Discovery`;
+  root go.mod gains the services dependency (one-way edge); construction
+  failure aborts boot naming the handler. Integration smoke: boot
+  all-in-one, drive one node through an in-proc bundled handler.
+- **Pass D — verification + design docs.** Full chain across modules.
+  Decision creates: handler-package-in-service-directory,
+  per-service-load-opts-from-env, bundled-registry-entrypoint,
+  bundled-executor-inproc-capability-advertisement. Concept mutates:
+  service, discovery-cache, module-layout. Story mutate
+  single-process-all-in-one; decision mutate single-process-mode.
+
 ## Status
 
 - [x] Step 1 (passes A–F) — Go port landed, TS retired, conformance 9/9,
@@ -86,7 +128,22 @@ built straight to their final shape.
       nine stale frame fixtures, timeout-guard hardening. Known-red: six
       pre-existing frame-isolation proofs, dispositioned in the repair
       ledger (separate workstream).
-- [ ] Step 3
+- [x] Step 3 (passes A–D) — bundled registration entrypoint landed:
+      `lib/services/bundled/RegisterAll` + per-service `LoadOptsFromEnv()`
+      (five built, claude-agent's reshaped), three executors restructured
+      into importable packages + `cmd/main.go`, server-backed claim-producer
+      adapter + shared proto↔Go converters in serverkit (peer refactored
+      onto them), capability accessors at package scope feeding both the
+      handshake and registration-time advertisement, root→services go.mod
+      edge with the collector confined to `cmd/internal/bundledwire`,
+      static discovery entries, config-wins precedence, error-class
+      status-details fallback in the in-proc CP client. Proofs: bundled
+      unit tests, serverkit adapter tests, zero-executor-config in-proc
+      dispatch scenario (`TestBundledInProcDispatchZeroExecutorConfig`),
+      single-process + compose + claude-agent cross-stack + http-node/
+      verifier cross-stack scenarios green on rebuilt images; race-clean;
+      lint green. Design docs: 4 decision creates, 3 concept mutates,
+      story + decision mutate (single-process pair).
 - [ ] Step 4
 - [ ] Step 5
 
@@ -194,6 +251,58 @@ built straight to their final shape.
   intra-frame cascade self-edge as the replacement shape). Five of six
   proofs passed at 6a62f50f~1; the breakage was masked by the 120s make
   timeout kill. Resolution per story is itemized in the repair ledger.
+
+### Step-3 deviations / discoveries
+
+- **Claude-agent credential gate reshaped.** `LoadOptsFromEnv()` demanded
+  credentials at load time, which would abort every credential-less
+  all-in-one boot. Moved the gate to `Opts.CredentialsConfigured()` +
+  `ErrCredentialsMissing`; the standalone main still fails fast, the
+  bundled entrypoint skips claude-agent with a log line (stub mode counts
+  as configured). Captured in `decision:per-service-load-opts-from-env`.
+- **Collector placement corrected mid-pass.** `CollectBundled` first landed
+  in `lib/control/config` — a layered package importing the services
+  module, which the module-layout concept forbids. Moved to
+  `cmd/internal/bundledwire` (cmd-group-only visibility); the data-only
+  `BundledRegistrations` type stays in the config package for role-config
+  threading. `StartUnifiedStack` takes the registrations as a parameter;
+  the two cmd callers (entrypoint, compose launcher) collect and abort
+  boot on error.
+- **Static discovery entries.** The discovery refresh loop re-probes every
+  cache entry and would have marked in-proc entries unreachable, wiping
+  their capabilities. `PeerEntry` gained a `Static` flag the refresh loop
+  skips. Captured in
+  `decision:bundled-executor-inproc-capability-advertisement`.
+- **Config-wins precedence.** An executor or claim-producer name already
+  declared in rimsky.yml keeps its configured endpoint; the bundled
+  in-proc handler for that name is skipped with a log line (supervisor
+  resolver, control-api executor map, and both locks registries).
+- **Error-class parity fix in the step-2 client.** gRPC-server-backed
+  handlers encode error classes as status ErrorInfo details, and
+  `status.Err()` breaks the `errors.As` chain to the protocols
+  `ClassedError`; `code:lib/runtime/claimproducer/inproc_client.go::callError`
+  now falls back to peer's status-details extraction.
+- **Shared claim-producer conversions.** proto↔Go conversions that peer
+  duplicated inline now live once in `lib/protocols/serverkit`
+  (plus `ServerBackedClaimProducer`, pure conversion, envelope policy
+  stays in the runtime clients); `peer.Client`/`Dial` refactored onto
+  them with identical error strings.
+- **In-proc executor async-ack survives unchanged.** The in-proc client
+  returns outcomes through the same `Client` interface as the wire, so
+  claude-agent's AwaitAsync + HTTP callback to the in-process supervisor
+  listener needs no adaptation; the adapter just drops the unused
+  `HandlerContext`.
+- **CP registration names** are the binary names (`store-filesystem`,
+  `store-postgres`); registered only when the service's config env is set.
+- **verifier-shape-checks' validation gRPC surface stays standalone-only**
+  (the spec's in-proc categories are executor + claim-producer; only its
+  executor protocol registers in-proc).
+- **http-node stub gating** needs the `stub_probe` attribute in addition to
+  `env:RIMSKY_EXECUTOR_STUB_MODE` — the smoke template carries
+  `stub_probe: true` as a schema default.
+- **Opts→Config mapping idiom**: postgres agent introduced
+  `Opts.ServerConfig()`; mirrored onto the filesystem producer so both
+  claim producers share one idiom.
 
 ## Repair ledger (frame-isolation fallout — settled with the user 2026-07-03)
 

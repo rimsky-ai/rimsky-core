@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/cmd/internal/bundledwire"
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/control/launch"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -50,7 +51,12 @@ func StartRoleStack(ctx context.Context, logger *slog.Logger, configPath string,
 	if err != nil {
 		return nil, err
 	}
-	unified, err := startRoleStackFn(ctx, logger, driver, &cfg)
+	bundledRegs, err := bundledwire.CollectBundled(ctx, logger.With("role", "bundled"))
+	if err != nil {
+		_ = driver.Close()
+		return nil, fmt.Errorf("register bundled services: %w", err)
+	}
+	unified, err := startRoleStackFn(ctx, logger, driver, &cfg, bundledRegs)
 	if err != nil {
 		_ = driver.Close()
 		return nil, err

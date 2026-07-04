@@ -56,7 +56,7 @@ func TestMigratePersistence_CompletesBeforeStartRoleStack(t *testing.T) {
 	var migrationsTableSeen atomic.Bool
 	var runnerStartCalled atomic.Int32
 	errFakeRunnerStart := errors.New("fake startRoleStackFn: synthetic stop")
-	startRoleStackFn = func(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig) (*launch.UnifiedStack, error) {
+	startRoleStackFn = func(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig, _ *config.BundledRegistrations) (*launch.UnifiedStack, error) {
 		runnerStartCalled.Add(1)
 		db, oerr := sql.Open("sqlite", dbPath)
 		if oerr == nil {

@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig) (StopFunc, <-chan error, error) {
+func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations) (StopFunc, <-chan error, error) {
 	host := os.Getenv("RIMSKY_CONTROL_API_HOST")
 	if host == "" {
 		host = "127.0.0.1"
@@ -65,6 +65,7 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 
 		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,
 		RefValidationMode:      rimskyCfg.RefValidationMode,
+		Bundled:                bundledRegs,
 	})
 	if err != nil {
 		log.Error("StartControlAPI", "error", err.Error())

@@ -287,6 +287,9 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 	stores := d.ListClaimProducers()
 	var wg sync.WaitGroup
 	for _, e := range executors {
+		if e.Static {
+			continue
+		}
 		wg.Add(1)
 		go func(e PeerEntry) {
 			defer wg.Done()
@@ -312,6 +315,9 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 		}(e)
 	}
 	for _, e := range stores {
+		if e.Static {
+			continue
+		}
 		wg.Add(1)
 		go func(e PeerEntry) {
 			defer wg.Done()

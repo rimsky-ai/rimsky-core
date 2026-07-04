@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The entrypoint's no-command path runs migrate synchronously, then starts all three roles (scheduler, supervisor, control-api) in-process via the existing library entry points, each on its configured port, with one signal-handled shutdown. The single-role path (explicit role command) keeps its per-role process behavior. A process-role env marker that names the unified single-process mode is set only in — and truthfully describes — that mode (see `concept:replica`, `story:single-process-all-in-one`).
+The entrypoint's no-command path runs migrate synchronously, then registers the bundled executor and claim-producer handlers into the process's in-proc dispatch pool via the bundled registration entrypoint (see `decision:bundled-registry-entrypoint`), then starts all three roles (scheduler, supervisor, control-api) in-process via the existing library entry points, each on its configured port, with one signal-handled shutdown. A failure to construct any configured bundled handler aborts the boot before any role starts. The single-role path (explicit role command) keeps its per-role process behavior. A process-role env marker that names the unified single-process mode is set only in — and truthfully describes — that mode (see `concept:replica`, `story:single-process-all-in-one`).
 
 ## Rationale
 

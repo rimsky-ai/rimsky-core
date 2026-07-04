@@ -23,6 +23,10 @@ func main() {
 		slog.Error("claude-agent config", "error", err.Error())
 		os.Exit(1)
 	}
+	if !opts.CredentialsConfigured() {
+		slog.Error("claude-agent config", "error", claudeagent.ErrCredentialsMissing.Error())
+		os.Exit(1)
+	}
 
 	authMode := "stub"
 	if opts.Auth.AnthropicAPIKey != "" {

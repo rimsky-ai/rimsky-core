@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package main
+package verifierhttp
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"google.golang.org/grpc"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-http/errorclasses"
 )
 
 type ObservabilityServer struct {
@@ -23,8 +22,9 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorC
 	return &genv1.ObservabilityCapabilities{
 		SupportsTraceGet:         false,
 		SupportsTraceStream:      false,
-		ExpectedAttributesSchema: []byte(`{"type":"object"}`),
-		DeclaredErrorClasses:     errorclasses.Declared(),
+		ExpectedAttributesSchema: SchemaBytes(),
+		DeclaredTags:             DeclaredTags(),
+		DeclaredErrorClasses:     DeclaredErrorClasses(),
 	}, nil
 }
 

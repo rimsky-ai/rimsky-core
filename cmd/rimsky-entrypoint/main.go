@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/cmd/internal/bundledwire"
 	"github.com/rimsky-ai/rimsky-core/lib/control/launch"
 )
 
@@ -128,7 +129,14 @@ func runUnified(sigCh <-chan os.Signal) {
 	}
 	closeDriver := func() { _ = driver.Close() }
 
-	stack, err := launch.StartUnifiedStack(ctx, base, driver, cfg)
+	bundledRegs, err := bundledwire.CollectBundled(ctx, base.With("role", "bundled"))
+	if err != nil {
+		slog.Error("bundled service registration failed", "err", err)
+		closeDriver()
+		os.Exit(1)
+	}
+
+	stack, err := launch.StartUnifiedStack(ctx, base, driver, cfg, bundledRegs)
 	if err != nil {
 		slog.Error("role failed to start", "err", err)
 		closeDriver()
