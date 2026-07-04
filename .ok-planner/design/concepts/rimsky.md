@@ -9,7 +9,7 @@ aliases:
 
 ## What it is
 
-Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack, plus an embedded one-shot orchestration mode that self-hosts the runtime stack to drive a manifest to terminal without standing up rimsky infrastructure. The CLI is the binary operators invoke directly; the embedded stack reuses the same role implementations as the deployed binaries, configured for a single ephemeral run rooted at a per-run artifact directory.
+Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack, plus two embedded one-shot orchestration modes that self-host the runtime stack without standing up rimsky infrastructure — the ephemeral-run verb (self-hosted by default when no endpoint is present) drives a single template to terminal, and the compose one-shot drives a compose manifest to terminal. Both share the self-host machinery under the compose-run implementation. The CLI is the binary operators invoke directly; the embedded stack reuses the same role implementations as the deployed binaries, configured for a single ephemeral run rooted at a per-run artifact directory.
 
 The binary name is the same as the project name.
 
@@ -28,7 +28,7 @@ Owns: command-line UX, request building, the compose-tag prefix reservation disc
 - The compose workflow uses the prefix to scan/diff/teardown project artifacts via the server's tag/key tables.
 - **API key resolution**: every verb accepts an API-key flag and falls back to an API-key environment variable. The auth-status and anonymous-bootstrap surfaces tolerate a missing key; every other verb sends the key as the authentication token and surfaces an unauthorized response when missing.
 - **Anonymous-mode bootstrap is special.** It posts a key-creation request without an authentication token and refuses to run when any active key exists — the server's anonymous-mode predicate is the authoritative gate; the CLI's pre-check is a UX nicety.
-- **Ephemeral-run template + param + service surfaces.** The ephemeral-run verb resolves a template by either a positional file argument or a named-template flag (mutually exclusive). Params are supplied via a whole-params-blob flag and/or a repeatable per-entry flag (mixable, later-wins). A late-bound service binds a service name to a local binary path.
+- **Ephemeral-run template + param + service surfaces.** The ephemeral-run verb resolves a template by either a positional file argument or a named-template flag (mutually exclusive), and plays a dual role: self-hosted by default when no endpoint is present; remote dispatch when an endpoint flag is passed or a context endpoint is configured; an explicit self-host flag overrides a configured context. Params are supplied via a whole-params-blob flag and/or a repeatable per-entry flag (mixable, later-wins). A late-bound service binds a service name to a local binary path.
 - **Per-context api-key.** Each CLI context grows an api-key field alongside its endpoint, populated at login time and consumed by the `concept:host-agent` for outbound authentication. The api-key field is optional on a context config.
 
 ## Capability surfaces

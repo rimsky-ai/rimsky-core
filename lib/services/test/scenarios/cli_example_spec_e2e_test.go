@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/compose"
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
@@ -77,7 +78,7 @@ func documentedRunInvocation(t *testing.T, baseURL, specPath string) []string {
 
 func captureRunRun(t *testing.T, ctx context.Context, args []string) (string, int) {
 	t.Helper()
-	return captureRun(t, func() int { return cli.RunRun(ctx, args) })
+	return captureRun(t, func() int { return compose.RunTemplateRun(ctx, args) })
 }
 
 var stdoutCaptureMu sync.Mutex

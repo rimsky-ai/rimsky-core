@@ -245,11 +245,11 @@ nodes:
 	if err := os.WriteFile(specB, []byte(yamlB), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	parsedA, err := readSpecFile(specA)
+	parsedA, err := ReadSpecFile(specA)
 	if err != nil {
 		t.Fatalf("readSpecFile A: %v", err)
 	}
-	parsedB, err := readSpecFile(specB)
+	parsedB, err := ReadSpecFile(specB)
 	if err != nil {
 		t.Fatalf("readSpecFile B: %v", err)
 	}
@@ -283,14 +283,14 @@ nodes:
 	if err := os.WriteFile(promptPath, []byte("you are an agent v1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	specV1, err := readSpecFile(specPath)
+	specV1, err := ReadSpecFile(specPath)
 	if err != nil {
 		t.Fatalf("readSpecFile v1: %v", err)
 	}
 	if err := os.WriteFile(promptPath, []byte("you are an agent v2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	specV2, err := readSpecFile(specPath)
+	specV2, err := ReadSpecFile(specPath)
 	if err != nil {
 		t.Fatalf("readSpecFile v2: %v", err)
 	}
@@ -324,7 +324,7 @@ nodes:
 	if err := os.WriteFile(specPath, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	spec, err := readSpecFile(specPath)
+	spec, err := ReadSpecFile(specPath)
 	if err != nil {
 		t.Fatalf("readSpecFile: %v", err)
 	}

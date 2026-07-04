@@ -249,6 +249,44 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		return coord.Drain(context.Background(), ReasonSignal)
 	}
 
+	reason := waitOneShotToTerminal(bootCtx, oneShotWait{
+		client:       c,
+		stack:        stack,
+		services:     services,
+		sigCh:        sigCh,
+		printer:      printer,
+		instanceIDs:  instanceIDs,
+		keyByID:      keyByID,
+		project:      m.Project,
+		timeout:      flags.timeout,
+		pollInterval: DefaultWaitPollInterval,
+		verb:         "compose run",
+		logger:       logger,
+	})
+
+	printer.Finalize()
+	fmt.Fprintf(os.Stderr, "compose run: %s (%d instance%s)\n",
+		reasonString(reason), len(instanceIDs), pluralS(len(instanceIDs)))
+
+	return coord.Drain(context.Background(), reason)
+}
+
+type oneShotWait struct {
+	client       instanceClient
+	stack        *RoleStack
+	services     []*hostagent.SpawnedService
+	sigCh        chan os.Signal
+	printer      ProgressPrinter
+	instanceIDs  []string
+	keyByID      map[string]string
+	project      string
+	timeout      time.Duration
+	pollInterval time.Duration
+	verb         string
+	logger       *slog.Logger
+}
+
+func waitOneShotToTerminal(bootCtx context.Context, w oneShotWait) ShutdownReason {
 	waitCtx, cancelWait := context.WithCancel(bootCtx)
 	defer cancelWait()
 	waitDone := make(chan struct{})
@@ -256,8 +294,8 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	var waitErr error
 	go func() {
 		waitOutcomes, waitErr = WaitForInstancesTerminal(
-			waitCtx, c, instanceIDs, m.Project, keyByID,
-			printer, DefaultWaitPollInterval,
+			waitCtx, w.client, w.instanceIDs, w.project, w.keyByID,
+			w.printer, w.pollInterval,
 		)
 		close(waitDone)
 	}()
@@ -266,52 +304,44 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	defer close(escalatorDone)
 
 	armEscalator := func() {
-		InstallSecondSignalEscalator(sigCh, escalatorDone, services, logger)
+		InstallSecondSignalEscalator(w.sigCh, escalatorDone, w.services, w.logger)
 	}
 
-	reason := func() ShutdownReason {
-		var timeoutCh <-chan time.Time
-		if flags.timeout > 0 {
-			timer := time.NewTimer(flags.timeout)
-			defer timer.Stop()
-			timeoutCh = timer.C
-		}
-		select {
-		case <-waitDone:
-			switch {
-			case waitErr != nil:
-				return classifyWaitErr(waitErr)
-			case AnyOutcomeFailed(waitOutcomes):
-				return ReasonAnyFailure
-			default:
-				return ReasonAllSuccess
-			}
-		case sig := <-sigCh:
-			logger.Info("compose run: signal received; draining", "signal", sig.String())
-			cancelWait()
-			armEscalator()
-			waitForOrTimeout(waitDone, waitDrainTimeout, "signal")
-			return ReasonSignal
-		case <-timeoutCh:
-			logger.Info("compose run: timeout fired; draining", "timeout", flags.timeout.String())
-			cancelWait()
-			armEscalator()
-			waitForOrTimeout(waitDone, waitDrainTimeout, "timeout")
-			return ReasonTimeout
-		case rf := <-stack.FailCh():
-			logger.Error("compose run: role runner failed", "role", rf.Role, "err", rf.Err.Error())
-			cancelWait()
-			armEscalator()
-			waitForOrTimeout(waitDone, waitDrainTimeout, "role-failure")
+	var timeoutCh <-chan time.Time
+	if w.timeout > 0 {
+		timer := time.NewTimer(w.timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
+	select {
+	case <-waitDone:
+		switch {
+		case waitErr != nil:
+			return classifyWaitErr(waitErr)
+		case AnyOutcomeFailed(waitOutcomes):
 			return ReasonAnyFailure
+		default:
+			return ReasonAllSuccess
 		}
-	}()
-
-	printer.Finalize()
-	fmt.Fprintf(os.Stderr, "compose run: %s (%d instance%s)\n",
-		reasonString(reason), len(instanceIDs), pluralS(len(instanceIDs)))
-
-	return coord.Drain(context.Background(), reason)
+	case sig := <-w.sigCh:
+		w.logger.Info(w.verb+": signal received; draining", "signal", sig.String())
+		cancelWait()
+		armEscalator()
+		waitForOrTimeout(waitDone, waitDrainTimeout, "signal")
+		return ReasonSignal
+	case <-timeoutCh:
+		w.logger.Info(w.verb+": timeout fired; draining", "timeout", w.timeout.String())
+		cancelWait()
+		armEscalator()
+		waitForOrTimeout(waitDone, waitDrainTimeout, "timeout")
+		return ReasonTimeout
+	case rf := <-w.stack.FailCh():
+		w.logger.Error(w.verb+": role runner failed", "role", rf.Role, "err", rf.Err.Error())
+		cancelWait()
+		armEscalator()
+		waitForOrTimeout(waitDone, waitDrainTimeout, "role-failure")
+		return ReasonAnyFailure
+	}
 }
 
 func pluralS(n int) string {

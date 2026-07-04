@@ -144,7 +144,25 @@ built straight to their final shape.
       verifier cross-stack scenarios green on rebuilt images; race-clean;
       lint green. Design docs: 4 decision creates, 3 concept mutates,
       story + decision mutate (single-process pair).
-- [ ] Step 4
+- [x] Step 4 (passes A–D) — `rimsky run <template>` self-hosts: the run
+      verb's entry moved to the compose package (compose imports cli, not
+      the reverse), lenient endpoint resolution with an
+      `ErrNoEndpointConfigured` sentinel (no endpoint → self-host;
+      `--self-host` overrides context/env; `--endpoint` + `--self-host`
+      is a usage error; self-host rejects `--template` and explicit
+      `--keep`), self-host runner reuses the compose one-shot machinery
+      (spawnServices, synthetic configs, role stack with bundled
+      registration, extracted shared `waitOneShotToTerminal`); unified-
+      marker blob error names all three setters; env-passthrough
+      regression test. Proof: in-process end-to-end (no Docker) —
+      `TestRunTemplateRun_SelfHostDrivesBundledInProcExecutorToTerminal`
+      drives a zero-config template through the in-proc bundled http-node
+      handler to terminal in ~1s; CLI-path container scenarios green.
+      Design docs: decisions rimsky-run-self-hosts-templates,
+      rimsky-compose-run-scope, late-bound-services-direct-spawn,
+      process-role-unified-message-covers-rimsky-run created; story
+      local-orchestrator-zero-config created; concept rimsky + decision
+      single-process-mode mutated.
 - [ ] Step 5
 
 ## Deviations / discoveries (surface at end of each step)
@@ -303,6 +321,31 @@ built straight to their final shape.
 - **Opts→Config mapping idiom**: postgres agent introduced
   `Opts.ServerConfig()`; mirrored onto the filesystem producer so both
   claim producers share one idiom.
+
+### Step-4 deviations / discoveries
+
+- **Run-verb entry moved to the compose package.** The self-host branch
+  needs the compose machinery, and compose imports cli (not the reverse),
+  so the router now sends `run` to `compose.RunTemplateRun`, which parses
+  once and either self-hosts or delegates to `cli.RunRunRemote`. The old
+  `cli.RunRun` was split into `ParseRunArgs` + `RunRunRemote` and deleted;
+  tests updated to the new entries (existing remote tests now regression-
+  test the dispatch discriminator via the env endpoint).
+- **`--service` semantics differ by mode** (as spec'd): remote resolves
+  bindings + auto-starts the host agent; self-host direct-spawns on
+  loopback ports via the compose spawn path — validation of binding
+  strings therefore happens in each branch, not at parse time.
+- **Shared one-shot wait extracted.** The compose one-shot's wait/
+  escalate/classify select is now `waitOneShotToTerminal`, used by both
+  verbs (DRY; only the verb label differs).
+- **Proof is in-process, not containerized.** The zero-config story proof
+  runs the real verb inside the compose package's tests (fresh HOME, no
+  endpoint, stub mode) and completes in ~1s — no Docker required; the
+  container scenarios cover the compose/remote paths.
+- **Docs pulled forward for citation resolution:** the
+  rimsky-run-self-hosts-templates decision and local-orchestrator-
+  zero-config story were created when the citing code landed (the lint
+  hook checks resolution at write time), not at the end of the step.
 
 ## Repair ledger (frame-isolation fallout — settled with the user 2026-07-03)
 

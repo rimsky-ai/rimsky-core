@@ -53,68 +53,108 @@ func RunLogs(ctx context.Context, args []string) int {
 	return RunInstanceEvents(ctx, append([]string{"--follow"}, args...))
 }
 
-func RunRun(ctx context.Context, args []string) int {
+// @decision: rimsky-run-self-hosts-templates
+type RunFlags struct {
+	Params            map[string]any
+	TemplateName      string
+	TemplateFile      string
+	Key               string
+	Tag               string
+	Keep              bool
+	KeepSet           bool
+	TerminateAfterRun bool
+	PollInterval      time.Duration
+	Timeout           time.Duration
+	Services          RepeatedFlag
+	SelfHost          bool
+}
+
+func ParseRunArgs(args []string) (*CommonFlags, RunFlags, int) {
 	var (
-		params            string
-		templateName      string
-		key               string
-		tag               string
-		keep              bool
-		noKeep            bool
-		terminateAfterRun bool
-		pollInterval      time.Duration
-		timeout           time.Duration
-		paramKV           RepeatedFlag
-		services          RepeatedFlag
+		params  string
+		keep    bool
+		noKeep  bool
+		rf      RunFlags
+		paramKV RepeatedFlag
 	)
-	fs, common, endpoint, code := runWithCommon("run", args, func(fs *flag.FlagSet) {
-		fs.StringVar(&params, "params", "", "JSON object or @file path")
-		fs.StringVar(&templateName, "template", "", "name of an already-registered template (mutually exclusive with <file>)")
-		fs.StringVar(&key, "instance-key", "", "instance_key")
-		fs.StringVar(&tag, "tag", "", "tag to attach to the registered template")
-		fs.BoolVar(&keep, "keep", true, "leave the instance and template after creation (default)")
-		fs.BoolVar(&noKeep, "no-keep", false, "delete instance and template after terminal state")
-		fs.BoolVar(&terminateAfterRun, "terminate-after-run", false,
-			"create the instance with terminate_after_run=true — it self-terminates once its nodes settle, "+
-				"so terminal-flag polling (e.g. `rimsky watch`) exits. Implied by --no-keep.")
-		fs.DurationVar(&pollInterval, "poll-interval", time.Second, "poll interval when --no-keep")
-		fs.DurationVar(&timeout, "timeout", 0, "max wait for terminal state when --no-keep (0 = unbounded)")
-		fs.Var(&paramKV, "param", "k=v param (repeatable); merged over --params (later wins)")
-		fs.Var(&services, "service", "late-bound service binding: <name>=<path> or bare <name> (alias). "+
-			"Supplying any --service auto-starts the local agent if its ~/.rimsky/agent.pid is not live")
-	})
-	if code != 0 {
-		return code
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	var common CommonFlags
+	RegisterCommonFlags(fs, &common)
+	fs.StringVar(&params, "params", "", "JSON object or @file path")
+	fs.StringVar(&rf.TemplateName, "template", "", "name of an already-registered template (mutually exclusive with <file>)")
+	fs.StringVar(&rf.Key, "instance-key", "", "instance_key")
+	fs.StringVar(&rf.Tag, "tag", "", "tag to attach to the registered template")
+	fs.BoolVar(&keep, "keep", true, "leave the instance and template after creation (default; remote endpoint only)")
+	fs.BoolVar(&noKeep, "no-keep", false, "delete instance and template after terminal state")
+	fs.BoolVar(&rf.TerminateAfterRun, "terminate-after-run", false,
+		"create the instance with terminate_after_run=true — it self-terminates once its nodes settle, "+
+			"so terminal-flag polling (e.g. `rimsky watch`) exits. Implied by --no-keep.")
+	fs.DurationVar(&rf.PollInterval, "poll-interval", time.Second, "poll interval when --no-keep")
+	fs.DurationVar(&rf.Timeout, "timeout", 0, "max wait for terminal state (0 = unbounded)")
+	fs.Var(&paramKV, "param", "k=v param (repeatable); merged over --params (later wins)")
+	fs.Var(&rf.Services, "service", "late-bound service binding: <name>=<path> or bare <name> (alias). "+
+		"Remote: auto-starts the local agent if its ~/.rimsky/agent.pid is not live. Self-host: spawned directly on loopback ports")
+	fs.BoolVar(&rf.SelfHost, "self-host", false,
+		"boot an in-process all-in-one stack for this run even when a context endpoint is configured (incompatible with --endpoint)")
+	if err := parseInterspersed(fs, args); err != nil {
+		return nil, RunFlags{}, 2
 	}
+	if err := common.ResolveFormat(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return nil, RunFlags{}, 2
+	}
+	SetActiveCommonFlags(&common)
 	rest := fs.Args()
 
-	if templateName != "" && len(rest) > 0 {
+	if rf.TemplateName != "" && len(rest) > 0 {
 		fmt.Fprintln(os.Stderr, "rimsky run: --template and a positional <file> are mutually exclusive")
-		return 2
+		return nil, RunFlags{}, 2
 	}
-	if templateName == "" && len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky run {<file>|--template <name>} [--params ...] [--param k=v ...] [--service <name>=<path> ...] [--instance-key ...] [--tag ...] [--no-keep]")
-		return 2
+	if rf.TemplateName == "" && len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: rimsky run {<file>|--template <name>} [--params ...] [--param k=v ...] [--service <name>=<path> ...] [--instance-key ...] [--tag ...] [--no-keep] [--self-host]")
+		return nil, RunFlags{}, 2
 	}
+	if len(rest) == 1 {
+		rf.TemplateFile = rest[0]
+	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "keep" || f.Name == "no-keep" {
+			rf.KeepSet = true
+		}
+	})
+	rf.Keep = keep
 	if noKeep || !keep {
-		keep = false
-		terminateAfterRun = true
+		rf.Keep = false
+		rf.TerminateAfterRun = true
 	}
 
 	pp, err := mergeParams(params, paramKV)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return 2
+		return nil, RunFlags{}, 2
 	}
+	rf.Params = pp
 
-	bindings, err := resolveServiceBindings(services)
+	if rf.Tag != "" && strings.HasPrefix(rf.Tag, ReservedTagPrefix) {
+		fmt.Fprintf(os.Stderr, "tag %q uses reserved prefix %q\n", rf.Tag, ReservedTagPrefix)
+		return nil, RunFlags{}, 2
+	}
+	return &common, rf, 0
+}
+
+func ResolveRunEndpoint(common *CommonFlags) (string, error) {
+	cfgPath, _ := DefaultConfigPath()
+	endpoint, err := ResolveEndpoint(common.Endpoint, os.Getenv("RIMSKY_CONTROL_API"), cfgPath, "")
+	if errors.Is(err, ErrNoEndpointConfigured) {
+		return "", nil
+	}
+	return endpoint, err
+}
+
+func RunRunRemote(ctx context.Context, common *CommonFlags, endpoint string, rf RunFlags) int {
+	bindings, err := resolveServiceBindings(rf.Services)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-
-	if tag != "" && strings.HasPrefix(tag, ReservedTagPrefix) {
-		fmt.Fprintf(os.Stderr, "tag %q uses reserved prefix %q\n", tag, ReservedTagPrefix)
 		return 2
 	}
 
@@ -122,19 +162,19 @@ func RunRun(ctx context.Context, args []string) int {
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 
 	var hash string
-	if templateName != "" {
-		tpl, rerr := c.GetTemplate(ctx, templateName)
+	if rf.TemplateName != "" {
+		tpl, rerr := c.GetTemplate(ctx, rf.TemplateName)
 		if rerr != nil {
 			return reportError(rerr)
 		}
 		hash = tpl.Hash()
 	} else {
-		spec, rerr := readSpecFile(rest[0])
+		spec, rerr := ReadSpecFile(rf.TemplateFile)
 		if rerr != nil {
 			fmt.Fprintln(os.Stderr, rerr)
 			return 2
 		}
-		tpl, terr := c.RegisterTemplate(ctx, RegisterTemplateRequest{Spec: spec, Tag: tag})
+		tpl, terr := c.RegisterTemplate(ctx, RegisterTemplateRequest{Spec: spec, Tag: rf.Tag})
 		if terr != nil {
 			return reportError(terr)
 		}
@@ -151,14 +191,15 @@ func RunRun(ctx context.Context, args []string) int {
 		}
 	}
 
-	body := CreateInstanceRequest{Template: hash, Params: pp}
-	if key != "" {
+	body := CreateInstanceRequest{Template: hash, Params: rf.Params}
+	if rf.Key != "" {
+		key := rf.Key
 		body.InstanceKey = &key
 	}
 	if len(bindings) > 0 {
 		body.ServiceBindings = bindings
 	}
-	if terminateAfterRun {
+	if rf.TerminateAfterRun {
 		body.TerminateAfterRun = true
 	}
 	inst, err := c.CreateInstance(ctx, body)
@@ -184,10 +225,10 @@ func RunRun(ctx context.Context, args []string) int {
 		}
 	}
 
-	if keep {
+	if rf.Keep {
 		return 0
 	}
-	return waitAndCleanup(ctx, c, inst.UUID(), hash, pollInterval, timeout)
+	return waitAndCleanup(ctx, c, inst.UUID(), hash, rf.PollInterval, rf.Timeout)
 }
 
 func mergeParams(paramsJSON string, kvs RepeatedFlag) (map[string]any, error) {

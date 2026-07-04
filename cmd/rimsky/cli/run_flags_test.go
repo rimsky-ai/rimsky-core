@@ -5,7 +5,6 @@
 package cli
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -110,7 +109,7 @@ func TestRunRun_TemplateAndFileMutuallyExclusive(t *testing.T) {
 	if err := os.WriteFile(specPath, []byte("name: x\nversion: \"1\"\nnodes: []\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := RunRun(context.Background(), []string{"--template", "foo", specPath}); got != 2 {
+	if _, _, got := ParseRunArgs([]string{"--template", "foo", specPath}); got != 2 {
 		t.Fatalf("exit %d, want 2", got)
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"os"
 )
 
+var ErrNoEndpointConfigured = errors.New("no endpoint configured: pass --endpoint, set RIMSKY_CONTROL_API, or run `rimsky ctx use <name>`")
+
 func ResolveEndpoint(flag, env, cfgPath, manifestContext string) (string, error) {
 	return resolveEndpoint(flag, env, cfgPath, manifestContext, false)
 }
@@ -68,7 +70,7 @@ func resolveEndpoint(flag, env, cfgPath, manifestContext string, manifestPinPrio
 		}
 		return ctx.Endpoint, nil
 	}
-	return "", errors.New("no endpoint configured: pass --endpoint, set RIMSKY_CONTROL_API, or run `rimsky ctx use <name>`")
+	return "", ErrNoEndpointConfigured
 }
 
 func resolveManifestContext(cfgPath, manifestContext string) (string, error) {

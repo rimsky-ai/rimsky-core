@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/compose"
 )
 
 func TestRunRun_Keep(t *testing.T) {
 	_ = setupClitest(t)
 	specPath := writeSpec(t)
-	if got := cli.RunRun(context.Background(), []string{specPath}); got != 0 {
+	if got := compose.RunTemplateRun(context.Background(), []string{specPath}); got != 0 {
 		t.Errorf("exit %d", got)
 	}
 }
@@ -37,7 +38,7 @@ func TestRunRun_NoKeep(t *testing.T) {
 	}()
 	defer func() { <-done }()
 
-	if got := cli.RunRun(context.Background(), []string{"--no-keep", "--poll-interval", "20ms", specPath}); got != 0 {
+	if got := compose.RunTemplateRun(context.Background(), []string{"--no-keep", "--poll-interval", "20ms", specPath}); got != 0 {
 		t.Errorf("exit %d", got)
 	}
 }

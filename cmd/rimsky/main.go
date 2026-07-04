@@ -51,7 +51,7 @@ func main() {
 	case "ctx":
 		os.Exit(dispatchCtx(os.Args[2:]))
 	case "run":
-		os.Exit(cli.RunRun(context.Background(), os.Args[2:]))
+		os.Exit(compose.RunTemplateRun(context.Background(), os.Args[2:]))
 	case "register":
 		os.Exit(cli.RunRegister(context.Background(), os.Args[2:]))
 	case "deploy":

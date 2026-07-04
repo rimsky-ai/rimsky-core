@@ -55,7 +55,7 @@ func reportError(err error) int {
 }
 
 // @concept: rimsky
-func readSpecFile(path string) (node.TemplateSpec, error) {
+func ReadSpecFile(path string) (node.TemplateSpec, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return node.TemplateSpec{}, err
@@ -167,7 +167,7 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 		fmt.Fprintf(os.Stderr, "tag %q uses reserved prefix %q (managed by `compose`)\n", tag, ReservedTagPrefix)
 		return 2
 	}
-	spec, err := readSpecFile(rest[0])
+	spec, err := ReadSpecFile(rest[0])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -217,7 +217,7 @@ func RunTemplateLint(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: rimsky template lint [--warnings-as-errors] <file>")
 		return 2
 	}
-	spec, err := readSpecFile(rest[0])
+	spec, err := ReadSpecFile(rest[0])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
