@@ -102,6 +102,14 @@ type NodeTable interface {
 	// @concept: run-scope
 	ListPendingSiblingRunsInScope(ctx context.Context, tx Tx, senderRunID shared.UUID) ([]shared.UUID, error)
 
+	// @concept: cascade
+	// @concept: run-scope
+	ListPendingRunsInScopeForNodes(ctx context.Context, tx Tx, runScopeID shared.UUID, nodeIDs []shared.UUID) ([]shared.UUID, error)
+
+	// @concept: cascade
+	// @decision: mode-default-most-recent
+	HasLaterCascadePending(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, afterSeq int64) (bool, error)
+
 	GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID shared.UUID, tx Tx) (*NodeRunForCallback, error)
 
 	// @concept: cascade

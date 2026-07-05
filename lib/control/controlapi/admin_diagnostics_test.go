@@ -156,6 +156,12 @@ func (noopNodes) GetPriorRunBySequence(context.Context, persistence.Tx, shared.U
 func (noopNodes) DeletePriorCascadeStales(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (int, error) {
 	return 0, nil
 }
+func (noopNodes) HasLaterCascadePending(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (bool, error) {
+	return false, nil
+}
+func (noopNodes) ListPendingRunsInScopeForNodes(context.Context, persistence.Tx, shared.UUID, []shared.UUID) ([]shared.UUID, error) {
+	return nil, nil
+}
 func (noopNodes) GetPriorCascadeStaleNotClaimed(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }

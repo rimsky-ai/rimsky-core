@@ -631,6 +631,78 @@ func drainWaitSetOnSettled(
 			return fmt.Errorf("drainWaitSetOnSettled: evaluate sibling gate %s: %w", sib, err)
 		}
 	}
+	if err := reevalDownstreamReceiverGates(ctx, args, tx, senderRunID); err != nil {
+		return fmt.Errorf("drainWaitSetOnSettled: reeval downstream receivers: %w", err)
+	}
+	return nil
+}
+
+// @concept: cascade
+// @decision: mode-default-most-recent
+func reevalDownstreamReceiverGates(
+	ctx context.Context, args RunArgs, tx persistence.Tx, senderRunID foundationshared.UUID,
+) error {
+	senderRun, err := args.Persist.RunTree().GetByID(ctx, tx, senderRunID)
+	if err != nil {
+		return fmt.Errorf("load sender run: %w", err)
+	}
+	if senderRun == nil {
+		return nil
+	}
+	senderNode, err := args.Persist.Nodes().Get(ctx, senderRun.NodeID, tx)
+	if err != nil {
+		return fmt.Errorf("load sender node: %w", err)
+	}
+	if senderNode == nil {
+		return nil
+	}
+	inst, err := args.Persist.Instances().Get(ctx, senderNode.InstanceID, tx)
+	if err != nil {
+		return fmt.Errorf("load instance: %w", err)
+	}
+	if inst == nil {
+		return nil
+	}
+	edges, err := subscriptionEdgesForTemplate(ctx, args, inst.TemplateHash, tx)
+	if err != nil {
+		return fmt.Errorf("load edges: %w", err)
+	}
+	if edges == nil {
+		return nil
+	}
+	receiverTypeList := edges.ReceiverNodeTypesForSender(senderNode.NodeType)
+	if len(receiverTypeList) == 0 {
+		return nil
+	}
+	receiverTypeSet := make(map[string]struct{}, len(receiverTypeList))
+	for _, rt := range receiverTypeList {
+		receiverTypeSet[rt] = struct{}{}
+	}
+	instNodes, err := args.Persist.Nodes().ListByInstance(ctx, senderNode.InstanceID, tx)
+	if err != nil {
+		return fmt.Errorf("list instance nodes: %w", err)
+	}
+	var downstreamNodeIDs []foundationshared.UUID
+	for _, n := range instNodes {
+		if n.ID == senderNode.ID {
+			continue
+		}
+		if _, ok := receiverTypeSet[n.NodeType]; ok {
+			downstreamNodeIDs = append(downstreamNodeIDs, n.ID)
+		}
+	}
+	if len(downstreamNodeIDs) == 0 {
+		return nil
+	}
+	pendings, err := args.Persist.Nodes().ListPendingRunsInScopeForNodes(ctx, tx, senderRun.RunScopeID, downstreamNodeIDs)
+	if err != nil {
+		return fmt.Errorf("list pending receivers: %w", err)
+	}
+	for _, rid := range pendings {
+		if err := evaluateOneGate(ctx, args, tx, rid); err != nil {
+			return fmt.Errorf("evaluate downstream receiver %s: %w", rid, err)
+		}
+	}
 	return nil
 }
 

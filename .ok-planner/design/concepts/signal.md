@@ -41,7 +41,7 @@ Transient signals mark moments when this particular dispatch concluded but the r
 
 ### `attribute/<key>/changed` — attribute writes
 
-Emitted per attribute key whose value differs from the prior run's persisted value at settlement (per `concept:attribute`). The diff is computed against the immediately-preceding run by `sequence`; same-value resettlements emit nothing for that key. Keys present in the prior run but absent from the current run emit with `value: null` (deletion).
+Emitted per attribute key whose value differs from the prior run's persisted value at settlement (per `concept:attribute`). The diff is computed against the most-recent settled run of the same node visible from the current run's scope: same-scope prior first (preserving fan-out partition and sub-graph isolation), and only if none, then the most-recent cross-frame prior — the second lookup applies only when the current run is in a root run-scope (i.e., spans frames within one instance, not a nested scope). Same-value resettlements emit nothing for that key, whether the prior run was in the current frame (intra-frame convergence for self-cascade) or an earlier frame at the root-scope layer (cross-frame convergence for message-emit loops). Keys present in the prior run but absent from the current run emit with `value: null` (deletion).
 
 ### `message/<kind>/<sender_kind>/<target>` — boundary-crossing messages
 

@@ -251,6 +251,39 @@ func TestStubMode_ParkProbeReturnsPark(t *testing.T) {
 	require.Equal(t, "demo", park.GetReasonLabel())
 }
 
+func TestThenAdvancesQueuePerCall(t *testing.T) {
+	s := New()
+	s.WhenType("t.seq").
+		Success(map[string]any{"n": 1}, true, "one").
+		Then().Success(map[string]any{"n": 2}, true, "two").
+		Then().Success(map[string]any{"n": 3}, true, "three")
+	addr := listenForTest(t, s)
+	c := dial(t, addr)
+
+	for i, want := range []float64{1, 2, 3, 3, 3} {
+		outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.seq"})
+		require.NoError(t, err, "call %d", i)
+		got := outcome.GetSuccess().GetAttributesDelta().AsMap()["n"]
+		require.Equal(t, want, got, "call %d: queue exhausts to last, then repeats", i)
+	}
+}
+
+func TestWhenTypeResetsQueue(t *testing.T) {
+	s := New()
+	s.WhenType("t.reset").
+		Success(map[string]any{"phase": "a"}, true, "").
+		Then().Success(map[string]any{"phase": "b"}, true, "")
+	addr := listenForTest(t, s)
+	c := dial(t, addr)
+
+	_, _ = c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.reset"})
+	s.WhenType("t.reset").Success(map[string]any{"phase": "fresh"}, true, "")
+
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.reset"})
+	require.NoError(t, err)
+	require.Equal(t, "fresh", outcome.GetSuccess().GetAttributesDelta().AsMap()["phase"])
+}
+
 func TestHoldUntilBlocksUntilSignal(t *testing.T) {
 	hold := make(chan struct{})
 	s := New()

@@ -64,13 +64,6 @@ func evaluateOneGate(
 	if upstreamInFlight {
 		return nil
 	}
-	advancedSibling, err := args.Persist.Nodes().HasAdvancedSiblingInScope(ctx, tx, row.NodeID, row.RunScopeID, row.RunID)
-	if err != nil {
-		return fmt.Errorf("advanced sibling probe: %w", err)
-	}
-	if advancedSibling {
-		return nil
-	}
 	carryForward, err := loadReceiverCarryForward(ctx, args, tx, row)
 	if err != nil {
 		return fmt.Errorf("carry-forward: %w", err)
@@ -92,6 +85,13 @@ func evaluateOneGate(
 	}
 	if drop {
 		return args.Persist.Nodes().DropPendingRun(ctx, tx, row.RunID)
+	}
+	advancedSibling, err := args.Persist.Nodes().HasAdvancedSiblingInScope(ctx, tx, row.NodeID, row.RunScopeID, row.RunID)
+	if err != nil {
+		return fmt.Errorf("advanced sibling probe: %w", err)
+	}
+	if advancedSibling {
+		return nil
 	}
 	if err := args.Persist.NodeAttributes().Upsert(ctx, row.RunID, row.NodeID, resolved, tx); err != nil {
 		return fmt.Errorf("seed live bag: %w", err)
@@ -348,6 +348,13 @@ func applyCascadeModeRule(
 ) (drop bool, err error) {
 	switch mode {
 	case cascade.CascadeModeMostRecent, "":
+		hasLater, herr := args.Persist.Nodes().HasLaterCascadePending(ctx, tx, row.NodeID, row.RunScopeID, row.Sequence)
+		if herr != nil {
+			return false, fmt.Errorf("most-recent: has later: %w", herr)
+		}
+		if hasLater {
+			return true, nil
+		}
 		if _, derr := args.Persist.Nodes().DeletePriorCascadeStales(ctx, tx, row.NodeID, row.RunScopeID, row.Sequence); derr != nil {
 			return false, fmt.Errorf("most-recent: delete prior: %w", derr)
 		}
@@ -397,7 +404,22 @@ func bagsEqual(
 		return false, fmt.Errorf("prior input bag: %w", err)
 	}
 	if prior == nil {
-		return false, nil
+		priorRow, gerr := args.Persist.Nodes().GetRunForGate(ctx, tx, priorRunID)
+		if gerr != nil {
+			return false, fmt.Errorf("prior row for on-demand resolve: %w", gerr)
+		}
+		if priorRow == nil {
+			return false, nil
+		}
+		carry, cerr := loadReceiverCarryForward(ctx, args, tx, priorRow)
+		if cerr != nil {
+			return false, fmt.Errorf("prior carry: %w", cerr)
+		}
+		resolved, rerr := buildResolvedBagAtGateEvalCarry(ctx, args, tx, priorRow, carry)
+		if rerr != nil {
+			return false, nil
+		}
+		prior = resolved
 	}
 	return canonicalEqual(prior, bag)
 }

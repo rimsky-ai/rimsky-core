@@ -58,7 +58,8 @@ type script struct {
 type Stub struct {
 	genv1.UnimplementedExecutorServer
 	mu       sync.Mutex
-	scripts  map[string]*script
+	scripts  map[string][]*script
+	callN    map[string]int
 	stubMode bool
 	observed []ObservedRequest
 }
@@ -76,7 +77,12 @@ type ObservedRequest struct {
 	CandidateHandles         map[string][]byte
 }
 
-func New() *Stub { return &Stub{scripts: map[string]*script{}} }
+func New() *Stub {
+	return &Stub{
+		scripts: map[string][]*script{},
+		callN:   map[string]int{},
+	}
+}
 
 func (s *Stub) EnableStubMode() *Stub {
 	s.mu.Lock()
@@ -102,14 +108,27 @@ func (s *Stub) WhenType(t string) *TypeBuilder {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sc := &script{terminal: termSuccess, changed: true}
-	s.scripts[t] = sc
+	s.scripts[t] = []*script{sc}
+	s.callN[t] = 0
 	return &TypeBuilder{s: s, typ: t}
+}
+
+func (b *TypeBuilder) tail() *script {
+	q := b.s.scripts[b.typ]
+	return q[len(q)-1]
+}
+
+func (b *TypeBuilder) Then() *TypeBuilder {
+	b.s.mu.Lock()
+	defer b.s.mu.Unlock()
+	b.s.scripts[b.typ] = append(b.s.scripts[b.typ], &script{terminal: termSuccess, changed: true})
+	return b
 }
 
 func (b *TypeBuilder) Success(result any, changed bool, changeSummary string) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
-	sc := b.s.scripts[b.typ]
+	sc := b.tail()
 	sc.terminal, sc.result, sc.changed, sc.changeSum = termSuccess, result, changed, changeSummary
 	return b
 }
@@ -117,7 +136,7 @@ func (b *TypeBuilder) Success(result any, changed bool, changeSummary string) *T
 func (b *TypeBuilder) Error(class string, payload any) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
-	sc := b.s.scripts[b.typ]
+	sc := b.tail()
 	sc.terminal, sc.errorClass, sc.payload = termError, class, payload
 	return b
 }
@@ -125,7 +144,7 @@ func (b *TypeBuilder) Error(class string, payload any) *TypeBuilder {
 func (b *TypeBuilder) AwaitAsyncCallback(ackID string, completionMs int64) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
-	sc := b.s.scripts[b.typ]
+	sc := b.tail()
 	sc.terminal, sc.asyncAckID, sc.asyncCompletionMs = termAsync, ackID, completionMs
 	return b
 }
@@ -133,7 +152,7 @@ func (b *TypeBuilder) AwaitAsyncCallback(ackID string, completionMs int64) *Type
 func (b *TypeBuilder) Park(reason genv1.ParkReason, reasonNote string, resumeAt time.Time) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
-	sc := b.s.scripts[b.typ]
+	sc := b.tail()
 	sc.terminal = termPark
 	sc.parkReason = reason
 	sc.parkReasonNote = reasonNote
@@ -144,7 +163,7 @@ func (b *TypeBuilder) Park(reason genv1.ParkReason, reasonNote string, resumeAt 
 func (b *TypeBuilder) Tags(tags ...string) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
-	b.s.scripts[b.typ].tags = append([]string(nil), tags...)
+	b.tail().tags = append([]string(nil), tags...)
 	return b
 }
 
@@ -155,21 +174,21 @@ func (b *TypeBuilder) AttributesDelta(delta map[string]any) *TypeBuilder {
 	for k, v := range delta {
 		cp[k] = v
 	}
-	b.s.scripts[b.typ].attributesDelta = cp
+	b.tail().attributesDelta = cp
 	return b
 }
 
 func (b *TypeBuilder) HoldUntil(ch <-chan struct{}) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
-	b.s.scripts[b.typ].holdUntil = ch
+	b.tail().holdUntil = ch
 	return b
 }
 
 func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
-	b.s.scripts[b.typ].delay = d
+	b.tail().delay = d
 	return b
 }
 
@@ -197,7 +216,19 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 		CandidateHandles:         candidateHandles,
 	})
 	stubMode := s.stubMode
-	sc, ok := s.scripts[req.NodeType]
+	q, ok := s.scripts[req.NodeType]
+	var sc *script
+	if ok && len(q) > 0 {
+		n := s.callN[req.NodeType]
+		idx := n
+		if idx >= len(q) {
+			idx = len(q) - 1
+		}
+		sc = q[idx]
+		s.callN[req.NodeType] = n + 1
+	} else {
+		ok = false
+	}
 	s.mu.Unlock()
 
 	if stubMode {

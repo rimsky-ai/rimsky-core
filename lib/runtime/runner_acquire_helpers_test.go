@@ -762,6 +762,12 @@ func (f *fakeNodesDeps) GetPriorRunBySequence(_ context.Context, _ persistence.T
 func (f *fakeNodesDeps) DeletePriorCascadeStales(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (int, error) {
 	return 0, nil
 }
+func (f *fakeNodesDeps) HasLaterCascadePending(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (bool, error) {
+	return false, nil
+}
+func (f *fakeNodesDeps) ListPendingRunsInScopeForNodes(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []shared.UUID) ([]shared.UUID, error) {
+	return nil, nil
+}
 func (f *fakeNodesDeps) GetPriorCascadeStaleNotClaimed(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }

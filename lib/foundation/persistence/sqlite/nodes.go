@@ -660,6 +660,71 @@ func (s *nodesImpl) ListPendingSiblingRunsInScope(
 	return out, rows.Err()
 }
 
+// @concept: cascade
+// @decision: mode-default-most-recent
+func (s *nodesImpl) HasLaterCascadePending(
+	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, afterSeq int64,
+) (bool, error) {
+	var exists bool
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM rimsky_node_runs
+		    WHERE node_id = ? AND run_scope_id = ? AND sequence > ?
+		      AND state IN ('pending','stale') AND creation_reason = 'cascade'
+		      AND claimed_by IS NULL
+		 )`,
+		nodeID.String(), runScopeID.String(), afterSeq,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("HasLaterCascadePending: %w", err)
+	}
+	return exists, nil
+}
+
+// @concept: cascade
+// @concept: run-scope
+func (s *nodesImpl) ListPendingRunsInScopeForNodes(
+	ctx context.Context, tx persistence.Tx, runScopeID foundationshared.UUID, nodeIDs []foundationshared.UUID,
+) ([]foundationshared.UUID, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(nodeIDs))
+	argsList := make([]any, 0, len(nodeIDs)+1)
+	argsList = append(argsList, runScopeID.String())
+	for i, id := range nodeIDs {
+		placeholders[i] = "?"
+		argsList = append(argsList, id.String())
+	}
+	q := fmt.Sprintf(
+		`SELECT id
+		   FROM rimsky_node_runs
+		  WHERE run_scope_id = ?
+		    AND state = 'pending'
+		    AND node_id IN (%s)
+		  ORDER BY sequence ASC`,
+		strings.Join(placeholders, ","),
+	)
+	rows, err := s.q(tx).QueryContext(ctx, q, argsList...)
+	if err != nil {
+		return nil, fmt.Errorf("ListPendingRunsInScopeForNodes: %w", err)
+	}
+	defer rows.Close()
+	var out []foundationshared.UUID
+	for rows.Next() {
+		var idStr string
+		if err := rows.Scan(&idStr); err != nil {
+			return nil, fmt.Errorf("ListPendingRunsInScopeForNodes: scan: %w", err)
+		}
+		id, perr := uuid.Parse(idStr)
+		if perr != nil {
+			return nil, fmt.Errorf("ListPendingRunsInScopeForNodes: parse: %w", perr)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	var (
 		r          persistence.NodeRunForCallback
@@ -1076,7 +1141,7 @@ func (s *nodesImpl) GetPriorCascadeStaleNotClaimed(
 		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
 		   FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
-		    AND state = 'stale' AND creation_reason = 'cascade' AND claimed_by IS NULL
+		    AND state IN ('pending','stale') AND creation_reason = 'cascade' AND claimed_by IS NULL
 		  ORDER BY sequence DESC
 		  LIMIT 1`,
 		nodeID.String(), runScopeID.String(), beforeSeq,

@@ -643,6 +643,59 @@ func (s *nodesImpl) ListPendingSiblingRunsInScope(
 	return out, rows.Err()
 }
 
+// @concept: cascade
+// @decision: mode-default-most-recent
+func (s *nodesImpl) HasLaterCascadePending(
+	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, afterSeq int64,
+) (bool, error) {
+	var exists bool
+	err := s.q(tx).QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM rimsky_node_runs
+		    WHERE node_id = $1 AND run_scope_id = $2 AND sequence > $3
+		      AND state IN ('pending','stale') AND creation_reason = 'cascade'
+		      AND claimed_by IS NULL
+		 )`,
+		nodeID, runScopeID, afterSeq,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("HasLaterCascadePending: %w", err)
+	}
+	return exists, nil
+}
+
+// @concept: cascade
+// @concept: run-scope
+func (s *nodesImpl) ListPendingRunsInScopeForNodes(
+	ctx context.Context, tx persistence.Tx, runScopeID foundationshared.UUID, nodeIDs []foundationshared.UUID,
+) ([]foundationshared.UUID, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.q(tx).Query(ctx,
+		`SELECT id
+		   FROM rimsky_node_runs
+		  WHERE run_scope_id = $1
+		    AND node_id = ANY($2)
+		    AND state = 'pending'
+		  ORDER BY sequence ASC`,
+		runScopeID, nodeIDs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ListPendingRunsInScopeForNodes: %w", err)
+	}
+	defer rows.Close()
+	var out []foundationshared.UUID
+	for rows.Next() {
+		var id foundationshared.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("ListPendingRunsInScopeForNodes: scan: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	ex := s.q(tx)
 	var (
@@ -961,7 +1014,7 @@ func (s *nodesImpl) GetPriorCascadeStaleNotClaimed(
 		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
 		   FROM rimsky_node_runs
 		  WHERE node_id = $1 AND run_scope_id = $2 AND sequence < $3
-		    AND state = 'stale' AND creation_reason = 'cascade' AND claimed_by IS NULL
+		    AND state IN ('pending','stale') AND creation_reason = 'cascade' AND claimed_by IS NULL
 		  ORDER BY sequence DESC
 		  LIMIT 1`,
 		nodeID, runScopeID, beforeSeq,
