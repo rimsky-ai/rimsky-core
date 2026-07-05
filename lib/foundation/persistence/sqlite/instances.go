@@ -19,7 +19,7 @@ import (
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, attribute_overrides_match_counts, paused, terminate_after_run, service_bindings, created_by_api_key_id`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, attribute_overrides_match_counts, paused, terminate_after_run, service_bindings, created_by_api_key_id, message_queue_mode`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	if in.Params == nil {
@@ -63,11 +63,15 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if in.CreatedByAPIKeyID != nil {
 		createdByAPIKeyArg = in.CreatedByAPIKeyID.String()
 	}
+	messageQueueMode := in.MessageQueueMode
+	if messageQueueMode == "" {
+		messageQueueMode = "backlog"
+	}
 	row := s.q(tx).QueryRowContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, created_at, attribute_overrides_match_counts, paused, terminate_after_run, service_bindings, created_by_api_key_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, created_at, attribute_overrides_match_counts, paused, terminate_after_run, service_bindings, created_by_api_key_id, message_queue_mode)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 RETURNING `+instanceCols,
-		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), nowUTC(), string(matchCountsBytes), pausedArg, terminateAfterRunArg, serviceBindingsArg, createdByAPIKeyArg,
+		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), nowUTC(), string(matchCountsBytes), pausedArg, terminateAfterRunArg, serviceBindingsArg, createdByAPIKeyArg, messageQueueMode,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -384,8 +388,9 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		terminateAfterRunInt int64
 		serviceBindingsStr   sql.NullString
 		createdByAPIKeyIDStr sql.NullString
+		messageQueueMode     string
 	)
-	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &createdAtStr, &terminatedAtStr, &matchCountsStr, &pausedInt, &terminateAfterRunInt, &serviceBindingsStr, &createdByAPIKeyIDStr); err != nil {
+	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &createdAtStr, &terminatedAtStr, &matchCountsStr, &pausedInt, &terminateAfterRunInt, &serviceBindingsStr, &createdByAPIKeyIDStr, &messageQueueMode); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	id, err := uuid.Parse(idStr)
@@ -423,6 +428,7 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		CreatedAt:                     createdAt,
 		Paused:                        pausedInt != 0,
 		TerminateAfterRun:             terminateAfterRunInt != 0,
+		MessageQueueMode:              messageQueueMode,
 	}
 	if instanceKey.Valid {
 		k := instanceKey.String

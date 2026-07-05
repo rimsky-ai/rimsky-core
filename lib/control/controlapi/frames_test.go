@@ -51,7 +51,16 @@ func seedFrameForTest(
 		}); err != nil {
 			return err
 		}
-		fid, err := h.persist.Frames().InsertFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
+		priorRunning, err := h.persist.Frames().GetRunningFrameID(ctx, instanceID, tx)
+		if err != nil {
+			return err
+		}
+		if priorRunning != nil {
+			if _, err := h.persist.Frames().MarkRunningFrameTerminal(ctx, *priorRunning, persistence.FrameStateCompleted, tx); err != nil {
+				return err
+			}
+		}
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
 		if err != nil {
 			return err
 		}

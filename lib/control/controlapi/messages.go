@@ -21,7 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
@@ -222,11 +221,10 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				SenderKind: senderKind,
 				Payload:    body.Payload,
 			}
-			if err := runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq); err != nil {
+			if err := runtime.EnqueueMessage(ctx, tx, deps.Persist, enqueueReq); err != nil {
 				return err
 			}
-			_, frErr := frame.EnqueueFrame(ctx, deps.Persist, tx, instUUID, shared.UUID(msgID))
-			return frErr
+			return nil
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_sent", map[string]any{
@@ -251,9 +249,12 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			}
 			var unknownType *unknownMessageTypeError
 			if errors.As(err, &unknownType) {
-				declared := unknownType.Declared
-				if declared == nil {
-					declared = []string{}
+				declared := make([]string, 0, len(unknownType.Declared))
+				for _, d := range unknownType.Declared {
+					if d == "" {
+						continue
+					}
+					declared = append(declared, d)
 				}
 				// @decision: empty-message-as-root-trigger
 				// @story: empty-message-wakes-roots

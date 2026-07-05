@@ -21,6 +21,52 @@ func newFakeMessages() *fakeMessages {
 	return &fakeMessages{rows: make(map[shared.UUID]*persistence.MessageRow)}
 }
 
+type fakeInstancesForEnqueue struct{}
+
+func (f *fakeInstancesForEnqueue) Create(context.Context, persistence.InstanceCreateInput, persistence.Tx) (persistence.InstanceRow, error) {
+	return persistence.InstanceRow{}, nil
+}
+func (f *fakeInstancesForEnqueue) Get(context.Context, shared.UUID, persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (f *fakeInstancesForEnqueue) GetByInstanceKey(context.Context, string, string, persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (f *fakeInstancesForEnqueue) FindAnyByInstanceKey(context.Context, string, persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (f *fakeInstancesForEnqueue) List(context.Context, persistence.InstanceListFilter, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.InstanceRow], error) {
+	return persistence.PaginatedListResult[persistence.InstanceRow]{}, nil
+}
+func (f *fakeInstancesForEnqueue) Delete(context.Context, shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (f *fakeInstancesForEnqueue) MarkTerminated(context.Context, shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (f *fakeInstancesForEnqueue) CountActiveByTemplate(context.Context, string, persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (f *fakeInstancesForEnqueue) ListTerminatedWithLifecycleRows(context.Context, int, persistence.Tx) ([]persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (f *fakeInstancesForEnqueue) CountByActive(context.Context, persistence.Tx) (int, int, error) {
+	return 0, 0, nil
+}
+func (f *fakeInstancesForEnqueue) IncrementAttributeOverrideMatchCounts(context.Context, shared.UUID, []int, persistence.Tx) error {
+	return nil
+}
+func (f *fakeInstancesForEnqueue) SetPaused(context.Context, shared.UUID, bool, persistence.Tx) (bool, error) {
+	return false, nil
+}
+
+type fakeEnqueueDeps struct {
+	msgs *fakeMessages
+}
+
+func (d *fakeEnqueueDeps) Instances() persistence.InstanceTable { return &fakeInstancesForEnqueue{} }
+func (d *fakeEnqueueDeps) Messages() persistence.MessagesTable  { return d.msgs }
+
 func (f *fakeMessages) Insert(_ context.Context, _ persistence.Tx, req persistence.EnqueueMessageRequest) error {
 	f.rows[req.ID] = &persistence.MessageRow{
 		ID:         req.ID,
@@ -72,6 +118,21 @@ func (f *fakeMessages) GetInTx(ctx context.Context, _ persistence.Tx, id shared.
 
 func (f *fakeMessages) List(_ context.Context, _ persistence.MessageListFilter, _ persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {
 	return persistence.PaginatedListResult[persistence.MessageRow]{}, nil
+}
+
+func (f *fakeMessages) CancelPendingForInstance(_ context.Context, _ persistence.Tx, instanceID shared.UUID) (int, error) {
+	n := 0
+	for _, r := range f.rows {
+		if r.InstanceID == instanceID && r.DeliveredAt == nil && !r.Cancelled {
+			r.Cancelled = true
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *fakeMessages) PickPendingMessagesForIdleInstances(_ context.Context, _ persistence.Tx) ([]persistence.PendingMessagePick, error) {
+	return nil, nil
 }
 
 func (f *fakeMessages) ListDeliveredForFrame(_ context.Context, _ persistence.Tx, frame shared.UUID) ([]persistence.MessageRow, error) {

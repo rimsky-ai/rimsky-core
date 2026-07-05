@@ -174,7 +174,7 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 			return err
 		}
 		_ = prodNodeUUID
-		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instID), msgID, mainScopeID, 600000, tx)
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instID), msgID, mainScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}

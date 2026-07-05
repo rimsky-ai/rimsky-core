@@ -57,9 +57,8 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	require.NoError(t, err)
 	var frameID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state,
-			queued_at, started_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, 'running', now(), now(), 600000, $3)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, started_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, 'running', now(), 600000, $3)
 		RETURNING frame_id
 	`, uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)).Scan(&frameID))
 	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET frame_id=$1 WHERE id=$2`,

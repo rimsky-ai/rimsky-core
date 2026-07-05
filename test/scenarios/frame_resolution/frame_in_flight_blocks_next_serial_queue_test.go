@@ -34,8 +34,13 @@ func TestFrameInFlightBlocksNextSerialQueue(t *testing.T) {
 
 	postInvalidateMessage(t, h, iid)
 
-	require.True(t, waitForFramesByState(t, h, iid, "queued", 1, 2*time.Second),
-		"second frame did not appear in queued state")
+	require.Eventually(t, func() bool {
+		var pending int
+		h.QueryRowSQL(`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE`,
+			[]any{iid}, &pending)
+		return pending == 1
+	}, 2*time.Second, 50*time.Millisecond,
+		"second wake message did not accumulate on the instance's message queue while frame 1 is running")
 	require.Equal(t, 1, countFramesByState(t, h, iid, "running"),
 		"only one frame may run at a time per instance")
 

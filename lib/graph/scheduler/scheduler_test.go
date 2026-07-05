@@ -149,8 +149,8 @@ func insertRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, inst
 	var frameID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_frames
-            (instance_id, triggering_message_id, root_run_scope_id, state, queued_at, started_at, frame_timeout_ms)
-        VALUES ($1, $2, $3, 'running', now(), now(), 600000)
+            (instance_id, triggering_message_id, root_run_scope_id, state, started_at, frame_timeout_ms)
+        VALUES ($1, $2, $3, 'running', now(), 600000)
         RETURNING frame_id
     `, []any{instanceID, msgID, f.mainScopeID}, &frameID)
 	return frameID

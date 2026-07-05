@@ -19,7 +19,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// @story: most-recent-coalesces-cascades
 // @decision: mode-default-most-recent
 func TestMostRecentCoalescesCascades(t *testing.T) {
 	t.Parallel()

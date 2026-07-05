@@ -19,7 +19,12 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-func EnqueueMessage(ctx context.Context, tx persistence.Tx, m persistence.MessagesTable, req persistence.EnqueueMessageRequest) error {
+type EnqueueMessageDeps interface {
+	Instances() persistence.InstanceTable
+	Messages() persistence.MessagesTable
+}
+
+func EnqueueMessage(ctx context.Context, tx persistence.Tx, deps EnqueueMessageDeps, req persistence.EnqueueMessageRequest) error {
 	if req.ID == (shared.UUID{}) {
 		return errors.New("EnqueueMessage: id required")
 	}
@@ -38,7 +43,16 @@ func EnqueueMessage(ctx context.Context, tx persistence.Tx, m persistence.Messag
 	if req.ReceivedAt.IsZero() {
 		req.ReceivedAt = time.Now().UTC()
 	}
-	return m.Insert(ctx, tx, req)
+	inst, err := deps.Instances().Get(ctx, req.InstanceID, tx)
+	if err != nil {
+		return fmt.Errorf("EnqueueMessage: get instance: %w", err)
+	}
+	if inst != nil && inst.MessageQueueMode == "coalesce" {
+		if _, err := deps.Messages().CancelPendingForInstance(ctx, tx, req.InstanceID); err != nil {
+			return fmt.Errorf("EnqueueMessage: coalesce prior pending: %w", err)
+		}
+	}
+	return deps.Messages().Insert(ctx, tx, req)
 }
 
 type DeliveredMessages struct {

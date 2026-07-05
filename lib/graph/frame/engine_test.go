@@ -9,6 +9,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,9 +17,55 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
+
+func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persistence.Database) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	suffix := uuid.NewString()
+	suffix = strings.ReplaceAll(suffix, "-", "")
+	suffix = (suffix + suffix)[:64]
+	templateHash := "sha256-" + suffix
+	pgtest.ExecForTest(ctx, t, d, `
+        INSERT INTO rimsky_templates (id, spec, state)
+        VALUES ($1, $2::jsonb, 'deployed')
+    `, templateHash, `{}`)
+
+	instanceID := uuid.New()
+	mainScopeID := uuid.New()
+	messageID := uuid.New()
+	tables := d.Tables()
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instanceID,
+		}); err != nil {
+			return err
+		}
+		ck := "ck-" + instanceID.String()[:8]
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:           instanceID,
+			TemplateHash: templateHash,
+			InstanceKey:  &ck,
+		}, tx); err != nil {
+			return err
+		}
+		return tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         foundationshared.UUID(messageID),
+			InstanceID: foundationshared.UUID(instanceID),
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+			ReceivedAt: time.Now().UTC(),
+		})
+	}); err != nil {
+		t.Fatalf("seed template+instance+message: %v", err)
+	}
+	return instanceID, messageID
+}
 
 func runTickAgainstDriver(ctx context.Context, d persistence.Database, log frame.Logger) error {
 	return frame.RunTick(ctx, d.Tables(), d.Queue(), log)
@@ -73,8 +120,8 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 		[]any{instanceID}, &rootScope)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, queued_at, started_at, ended_at, frame_timeout_ms, last_progress_at)
-        VALUES ($1, $2, $3, $4, $5, now(), $6, $7, $8, $9)
+            (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, started_at, ended_at, frame_timeout_ms, last_progress_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     `, id, instanceID, triggeringMessageID, rootScope, state, startedAt, endedAt, timeoutMs, progressAt)
 	return id
 }
@@ -139,7 +186,7 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 	require.Equal(t, "failed", state)
 }
 
-func TestRunTick_AdvanceQueued_Oldest(t *testing.T) {
+func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -151,20 +198,26 @@ func TestRunTick_AdvanceQueued_Oldest(t *testing.T) {
 	seedNode(t, ctx, d, instanceID, srcA, "fresh", nil)
 	seedNode(t, ctx, d, instanceID, srcB, "fresh", nil)
 
-	id1 := seedFrameRow(t, ctx, d, instanceID, msgID, "queued", nil, 600000)
-	pgtest.ExecForTest(ctx, t, d,
-		`UPDATE rimsky_frames SET queued_at = now() - interval '1 second' WHERE frame_id = $1`, id1)
-	id2 := seedFrameRow(t, ctx, d, instanceID, msgID, "queued", nil, 600000)
+	msg2ID := foundationshared.UUID(uuid.New())
+	pgtest.ExecForTest(ctx, t, d, `
+		INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind, received_at)
+		VALUES ($1, $2, 'test/seed', 'test', 'operator', now() + interval '1 second')`,
+		msg2ID, instanceID)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
-	var s1, s2 string
+	var running int
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{id1}, &s1)
+		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+		[]any{instanceID}, &running)
+	require.Equal(t, 1, running, "at most one running frame per instance")
+
+	var openedTriggeringID string
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{id2}, &s2)
-	require.Equal(t, "running", s1)
-	require.Equal(t, "queued", s2)
+		`SELECT triggering_message_id::text FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+		[]any{instanceID}, &openedTriggeringID)
+	require.Equal(t, msgID.String(), openedTriggeringID,
+		"oldest pending message opens the running frame")
 }
 
 func TestRunTick_WarnStuckFrame(t *testing.T) {

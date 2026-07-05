@@ -57,14 +57,14 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = h.Pool.Exec(h.Ctx, `
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, 'running', now(), now(), 600000, $3)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, started_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, 'running', now(), 600000, $3)
 	`, uuid.UUID(iid), messageIDFirst, uuid.UUID(mainScopeID))
 	require.NoError(t, err, "first running insert should succeed")
 
 	_, err = h.Pool.Exec(h.Ctx, `
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, 'running', now(), now(), 600000, $3)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, started_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, 'running', now(), 600000, $3)
 	`, uuid.UUID(iid), messageIDSecond, uuid.UUID(mainScopeID))
 	require.Error(t, err, "second running insert must fail")
 	require.Contains(t, strings.ToLower(err.Error()), "uq_rimsky_frames_running",

@@ -45,8 +45,8 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, last_progress_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, 'running', now() - interval '5 minutes', now() - interval '5 minutes', now(), $3, $4)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, started_at, last_progress_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, 'running', now() - interval '5 minutes', now() - interval '5 minutes', $3, $4)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), messageID, int64(timeoutMs), uuid.UUID(mainScopeID)}, &frameID)
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,

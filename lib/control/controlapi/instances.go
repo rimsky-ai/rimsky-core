@@ -855,6 +855,10 @@ func provisionInstanceTx(
 	args provisionArgs,
 ) (createInstanceResponse, error) {
 	instanceID := foundationshared.UUID(uuid.New())
+	queueMode := tpl.Spec.MessageQueueMode
+	if queueMode == "" {
+		queueMode = "backlog"
+	}
 	inst, err := deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
 		ID:                            instanceID,
 		TemplateHash:                  tpl.ID,
@@ -866,6 +870,7 @@ func provisionInstanceTx(
 		TerminateAfterRun:             args.TerminateAfterRun,
 		ServiceBindings:               args.ServiceBindings,
 		CreatedByAPIKeyID:             args.CreatedByAPIKeyID,
+		MessageQueueMode:              queueMode,
 	}, tx)
 	if err != nil {
 		return createInstanceResponse{}, err

@@ -60,11 +60,8 @@ func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables,
 		}); err != nil {
 			return err
 		}
-		fid, err := backend.Frames().InsertFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
+		fid, err := backend.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
 		if err != nil {
-			return err
-		}
-		if _, err := backend.Frames().PromoteQueuedFrameToRunning(ctx, fid, tx); err != nil {
 			return err
 		}
 		frameID = fid

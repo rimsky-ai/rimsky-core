@@ -20,7 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 )
 
 type dryRunCase struct {
@@ -519,11 +518,19 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 			return err
 		}
 		_ = nodeID
-		frameID, err := frame.EnqueueFrame(ctx, f.db.Tables(), tx, uuid.UUID(instanceID), uuid.UUID(msgID))
+		rootScope := foundationshared.UUID(uuid.New())
+		if err := f.db.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         rootScope,
+			GraphName:  "main",
+			InstanceID: instanceID,
+		}); err != nil {
+			return err
+		}
+		frameID, err := f.db.Tables().Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
 		if err != nil {
 			return err
 		}
-		frameRow, err := f.db.Tables().Frames().GetForObservability(ctx, foundationshared.UUID(frameID), tx)
+		frameRow, err := f.db.Tables().Frames().GetForObservability(ctx, frameID, tx)
 		if err != nil {
 			return err
 		}

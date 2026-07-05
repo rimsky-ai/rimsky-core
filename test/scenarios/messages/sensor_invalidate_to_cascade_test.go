@@ -24,7 +24,7 @@ func TestSensorInvalidateToCascade(t *testing.T) {
 	frameID := shared.UUID(uuid.New())
 	msgID := shared.UUID(uuid.New())
 	now := time.Now().UTC()
-	if err := runtime.EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{
+	if err := runtime.EnqueueMessage(ctx, nil, &fakeEnqueueDeps{msgs: m}, persistence.EnqueueMessageRequest{
 		ID:         msgID,
 		InstanceID: instanceID,
 		Type:       "invalidate",

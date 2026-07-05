@@ -14,7 +14,7 @@ import (
 	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
-func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
+func TestPendingMessageNotPickedForTerminatedInstance(t *testing.T) {
 	t.Parallel()
 	d := openSQLite(t)
 	ctx := context.Background()
@@ -23,7 +23,6 @@ func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
 
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New()
-	frameID := uuid.New()
 
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_templates (id, spec, state, source) VALUES (?, '{}', 'registered', 'direct')`,
@@ -31,27 +30,12 @@ func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	scopeID := uuid.New().String()
-	stx, err := rawDB.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	defer func() { _ = stx.Rollback() }()
-	if _, err := stx.ExecContext(ctx,
+	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_instances (id, template_hash, terminated_at)
 		 VALUES (?, ?, datetime('now'))`,
 		instanceID.String(), templateID,
 	); err != nil {
 		t.Fatalf("seed terminated instance: %v", err)
-	}
-	if _, err := stx.ExecContext(ctx,
-		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id) VALUES (?, 'main', '', ?)`,
-		scopeID, instanceID.String(),
-	); err != nil {
-		t.Fatalf("seed run_scope: %v", err)
-	}
-	if err := stx.Commit(); err != nil {
-		t.Fatalf("commit: %v", err)
 	}
 	msgID := uuid.New().String()
 	if _, err := rawDB.ExecContext(ctx,
@@ -61,29 +45,21 @@ func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed message: %v", err)
 	}
-	if _, err := rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, frame_timeout_ms)
-		 VALUES (?, ?, ?, ?, 'queued', 60000)`,
-		frameID.String(), instanceID.String(), msgID, scopeID,
-	); err != nil {
-		t.Fatalf("seed queued frame: %v", err)
-	}
 
 	store := d.Tables()
-	var ready []persistence.FrameQueuedReady
+	var picks []persistence.PendingMessagePick
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		out, err := store.Frames().ListQueuedFramesReadyToStart(ctx, tx)
-		ready = out
+		out, err := store.Messages().PickPendingMessagesForIdleInstances(ctx, tx)
+		picks = out
 		return err
 	}); err != nil {
-		t.Fatalf("ListQueuedFramesReadyToStart: %v", err)
+		t.Fatalf("PickPendingMessagesForIdleInstances: %v", err)
 	}
 
-	for _, r := range ready {
-		if r.FrameID == frameID {
-			t.Fatalf("queued frame %s for terminated instance %s was reported ready to start; "+
-				"a frame must never be promoted against a terminated instance", frameID, instanceID)
+	for _, p := range picks {
+		if p.InstanceID.String() == instanceID.String() {
+			t.Fatalf("pending message %s for terminated instance %s was picked for frame open; "+
+				"a frame must never open against a terminated instance", msgID, instanceID)
 		}
 	}
 }

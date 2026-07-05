@@ -97,7 +97,7 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 		}); err != nil {
 			return err
 		}
-		if _, err := f.persist.Frames().InsertFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx); err != nil {
+		if _, err := f.persist.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx); err != nil {
 			return err
 		}
 		if err := f.persist.Instances().MarkTerminated(ctx, instanceID, tx); err != nil {

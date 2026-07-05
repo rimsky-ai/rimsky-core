@@ -44,8 +44,8 @@ func TestFrameStartAtomicity(t *testing.T) {
 		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, 'queued', now(), 600000, $3)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, started_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, 'running', now(), 600000, $3)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)}, &frameID)
 	h.ExecSQL(`

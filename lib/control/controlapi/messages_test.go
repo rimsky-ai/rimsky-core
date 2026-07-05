@@ -96,7 +96,7 @@ func TestMessages_ListByFrameID(t *testing.T) {
 	var frameID shared.UUID
 	rootScope := mainRunScopeIDForInstance(t, h, shared.UUID(mustParseUUID(t, instID)))
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		fid, err := h.persist.Frames().InsertFrame(ctx,
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx,
 			shared.UUID(mustParseUUID(t, instID)), shared.UUID(mid), rootScope, 600000, tx)
 		if err != nil {
 			return err
@@ -523,6 +523,8 @@ func TestCreateMessage_EmptyTypeAdmittedAsImplicitEntry(t *testing.T) {
 	require.Len(t, msgs, 1, "the empty-typed emit must persist exactly one envelope")
 	first := msgs[0].(map[string]any)
 	require.Equal(t, "", first["type"], "the GET projection must echo type=\"\"")
+
+	h.tickFrameEngine(t)
 
 	status, framesOut := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/frames", instID), nil)
 	require.Equal(t, http.StatusOK, status, framesOut)

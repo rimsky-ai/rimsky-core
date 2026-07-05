@@ -21,7 +21,7 @@ import (
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, attribute_overrides_match_counts, paused, terminate_after_run, service_bindings, created_by_api_key_id`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, attribute_overrides_match_counts, paused, terminate_after_run, service_bindings, created_by_api_key_id, message_queue_mode`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	ex := s.q(tx)
@@ -54,11 +54,15 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if len(in.ServiceBindings) > 0 {
 		serviceBindings = in.ServiceBindings
 	}
+	messageQueueMode := in.MessageQueueMode
+	if messageQueueMode == "" {
+		messageQueueMode = "backlog"
+	}
 	row := ex.QueryRow(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, attribute_overrides_match_counts, paused, terminate_after_run, service_bindings, created_by_api_key_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, attribute_overrides_match_counts, paused, terminate_after_run, service_bindings, created_by_api_key_id, message_queue_mode)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING `+instanceCols,
-		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, matchCountsBytes, in.Paused, in.TerminateAfterRun, serviceBindings, in.CreatedByAPIKeyID,
+		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, matchCountsBytes, in.Paused, in.TerminateAfterRun, serviceBindings, in.CreatedByAPIKeyID, messageQueueMode,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -366,8 +370,9 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		terminateAfterRun   bool
 		serviceBindingsByte []byte
 		createdByAPIKeyID   *foundationshared.UUID
+		messageQueueMode    string
 	)
-	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &createdAt, &terminatedAt, &matchCounts, &paused, &terminateAfterRun, &serviceBindingsByte, &createdByAPIKeyID); err != nil {
+	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &createdAt, &terminatedAt, &matchCounts, &paused, &terminateAfterRun, &serviceBindingsByte, &createdByAPIKeyID, &messageQueueMode); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	m := map[string]any{}
@@ -405,6 +410,7 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		TerminateAfterRun:             terminateAfterRun,
 		ServiceBindings:               serviceBindings,
 		CreatedByAPIKeyID:             createdByAPIKeyID,
+		MessageQueueMode:              messageQueueMode,
 	}, nil
 }
 

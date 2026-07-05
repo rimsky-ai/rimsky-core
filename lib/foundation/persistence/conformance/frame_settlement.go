@@ -160,9 +160,12 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 
 	var otherFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if _, err := frames.MarkRunningFrameTerminal(ctx, fix.FrameID, persistence.FrameStateFailed, tx); err != nil {
+			return err
+		}
 		otherScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
 		var err error
-		otherFrame, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, 600000, tx)
+		otherFrame, err = frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, 600000, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("InsertFrame: %v", err)
@@ -208,13 +211,12 @@ func seedTerminateAfterRunInstance(ctx context.Context, t *testing.T, d persiste
 			return err
 		}
 		out.MessageID = messageID
-		frameID, err := store.Frames().InsertFrame(ctx, instanceID, messageID, out.MainRunScopeID, 600000, tx)
+		frameID, err := store.Frames().InsertRunningFrame(ctx, instanceID, messageID, out.MainRunScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}
 		out.FrameID = frameID
-		_, err = store.Frames().PromoteQueuedFrameToRunning(ctx, frameID, tx)
-		return err
+		return nil
 	}); err != nil {
 		t.Fatalf("seedTerminateAfterRunInstance: %v", err)
 	}
@@ -276,14 +278,17 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 		t.Fatalf("instance terminated with a PARKED run: %v", got)
 	}
 
-	var queuedFrame shared.UUID
+	pendingMsgID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		queuedScope := seedMainRunScopeForInstance(ctx, t, tx, store, tfr.InstanceID)
-		var err error
-		queuedFrame, err = frames.InsertFrame(ctx, tfr.InstanceID, tfr.MessageID, queuedScope, 600000, tx)
-		return err
+		return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         pendingMsgID,
+			InstanceID: tfr.InstanceID,
+			Type:       "fixture/pending",
+			Sender:     "operator",
+			SenderKind: "operator",
+		})
 	}); err != nil {
-		t.Fatalf("InsertFrame(queued): %v", err)
+		t.Fatalf("insert pending message: %v", err)
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := resumeRunInTx(ctx, d, tx, runID)
@@ -307,18 +312,18 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 		if _, err := frames.MarkRunningFrameTerminal(ctx, tfr.FrameID, persistence.FrameStateCompleted, tx); err != nil {
 			return err
 		}
-		ready, err := frames.ListQueuedFramesReadyToStart(ctx, tx)
+		picks, err := store.Messages().PickPendingMessagesForIdleInstances(ctx, tx)
 		if err != nil {
 			return err
 		}
-		for _, r := range ready {
-			if r.InstanceID == tfr.InstanceID {
-				t.Fatalf("queued frame %s surfaced ready on a TERMINATED instance (frame %s)", r.FrameID, queuedFrame)
+		for _, p := range picks {
+			if p.InstanceID == tfr.InstanceID {
+				t.Fatalf("pending message %s for terminated instance %s was picked for frame open; pending %s must never wake a terminated instance", p.MessageID, tfr.InstanceID, pendingMsgID)
 			}
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("terminated-instance ready check: %v", err)
+		t.Fatalf("terminated-instance pickup check: %v", err)
 	}
 }
 
@@ -375,9 +380,12 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 
 	var otherFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if _, err := frames.MarkRunningFrameTerminal(ctx, fix.FrameID, persistence.FrameStateCompleted, tx); err != nil {
+			return err
+		}
 		otherScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
 		var err error
-		otherFrame, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, 600000, tx)
+		otherFrame, err = frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, 600000, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("InsertFrame: %v", err)

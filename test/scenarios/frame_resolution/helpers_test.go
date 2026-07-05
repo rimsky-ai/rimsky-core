@@ -19,7 +19,6 @@ type frameRow struct {
 	InstanceID          uuid.UUID
 	State               string
 	TriggeringMessageID uuid.UUID
-	QueuedAt            time.Time
 	StartedAt           *time.Time
 	EndedAt             *time.Time
 	FrameTimeoutMs      int64
@@ -29,16 +28,15 @@ func listFrames(t *testing.T, h *scenario.Harness, instanceID shared.UUID) []fra
 	t.Helper()
 	var out []frameRow
 	h.QuerySQL(`
-		SELECT frame_id, instance_id, state, triggering_message_id,
-		       queued_at, started_at, ended_at, frame_timeout_ms
+		SELECT frame_id, instance_id, state, triggering_message_id, started_at, ended_at, frame_timeout_ms
 		FROM rimsky_frames
 		WHERE instance_id = $1
-		ORDER BY queued_at ASC
+		ORDER BY started_at ASC
 	`, []any{uuid.UUID(instanceID)}, func(scan func(...any) error) error {
 		var r frameRow
 		if err := scan(
 			&r.FrameID, &r.InstanceID, &r.State, &r.TriggeringMessageID,
-			&r.QueuedAt, &r.StartedAt, &r.EndedAt, &r.FrameTimeoutMs,
+			&r.StartedAt, &r.EndedAt, &r.FrameTimeoutMs,
 		); err != nil {
 			return err
 		}

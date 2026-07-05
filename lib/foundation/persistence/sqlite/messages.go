@@ -178,6 +178,69 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 	return persistence.PaginatedListResult[persistence.MessageRow]{Rows: out}, nil
 }
 
+const sqliteCancelPendingForInstanceSQL = `
+UPDATE rimsky_messages
+   SET cancelled = 1
+ WHERE instance_id = ? AND delivered_at IS NULL AND cancelled = 0`
+
+func (b *messagesImpl) CancelPendingForInstance(ctx context.Context, tx persistence.Tx, instanceID shared.UUID) (int, error) {
+	res, err := b.q(tx).ExecContext(ctx, sqliteCancelPendingForInstanceSQL, instanceID.String())
+	if err != nil {
+		return 0, fmt.Errorf("sqlite.Messages.CancelPendingForInstance: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+const sqlitePickPendingForIdleInstancesSQL = `
+WITH ranked AS (
+    SELECT m.id, m.instance_id,
+           ROW_NUMBER() OVER (
+               PARTITION BY m.instance_id
+               ORDER BY m.received_at ASC, m.id ASC
+           ) AS rn
+      FROM rimsky_messages m
+      JOIN rimsky_instances i ON i.id = m.instance_id
+     WHERE m.delivered_at IS NULL
+       AND m.cancelled = 0
+       AND i.terminated_at IS NULL
+       AND i.paused = 0
+       AND NOT EXISTS (
+           SELECT 1 FROM rimsky_frames f
+            WHERE f.instance_id = m.instance_id
+              AND f.state = 'running'
+       )
+)
+SELECT instance_id, id FROM ranked WHERE rn = 1`
+
+func (b *messagesImpl) PickPendingMessagesForIdleInstances(ctx context.Context, tx persistence.Tx) ([]persistence.PendingMessagePick, error) {
+	rows, err := b.q(tx).QueryContext(ctx, sqlitePickPendingForIdleInstancesSQL)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.Messages.PickPendingMessagesForIdleInstances: %w", err)
+	}
+	defer rows.Close()
+	var out []persistence.PendingMessagePick
+	for rows.Next() {
+		var instanceStr, messageStr string
+		if err := rows.Scan(&instanceStr, &messageStr); err != nil {
+			return nil, fmt.Errorf("sqlite.Messages.PickPendingMessagesForIdleInstances: scan: %w", err)
+		}
+		iid, err := uuid.Parse(instanceStr)
+		if err != nil {
+			return nil, err
+		}
+		mid, err := uuid.Parse(messageStr)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, persistence.PendingMessagePick{InstanceID: iid, MessageID: mid})
+	}
+	return out, rows.Err()
+}
+
 func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 	out := []persistence.MessageRow{}
 	for rows.Next() {

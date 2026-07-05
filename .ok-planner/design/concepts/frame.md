@@ -9,15 +9,15 @@ aliases:
 
 ## Definition
 
-A frame is one cascade resolution. It is a persisted frame row carrying a triggering-message reference, a non-null root RunScope reference, and a lifecycle state drawn from the frame lifecycle-state family. A frame owns a tree of RunScopes rooted at the frame's root RunScope; every node-run in the frame lives in some RunScope under that root (per `concept:run-scope`), and every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame begins only when a message lands in the message ledger and the next frame boundary picks it up — operator-emitted, publisher-emitted, or cascade-emitted by a message-emitter node, all converging on the same delivery path. At frame start the runtime creates the root RunScope in the same tx as the frame row insert. Resuming a parked node — park-wake, via async callback or snooze timer — does not begin a frame; it resumes the still-running frame the parked node belongs to.
+A frame is one cascade resolution. It is a persisted frame row carrying a triggering-message reference, a non-null root RunScope reference, and a lifecycle state drawn from the frame lifecycle-state family. A frame owns a tree of RunScopes rooted at the frame's root RunScope; every node-run in the frame lives in some RunScope under that root (per `concept:run-scope`), and every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame begins only when a message sits pending in the instance's message queue and the frame engine picks it up on a tick — operator-emitted, publisher-emitted, or cascade-emitted by a message-emitter node, all converging on the same pickup path. At the pickup moment the runtime creates the root RunScope and the frame row in one tx, straight into the `running` state; frames have no pre-run state. Resuming a parked node — park-wake, via async callback or snooze timer — does not begin a frame; it resumes the still-running frame the parked node belongs to.
 
 The frame ends when every node_run in the frame is in a terminal state (`fresh` or `failed` per `concept:node-run`). Any node_run in an in-flight state (`pending`, `stale`, `running`, `held`, `parked`) holds the frame open — `pending` (cascade-waiting), `stale` (awaiting dispatcher claim), `running` (in flight), `held` (awaiting auto-terminal commit/abandon), and `parked` (awaiting wake) all count uniformly as in-flight for frame-end purposes.
 
-Frames are serial per instance: at most one running frame, queued frames dispatched in arrival order. Frames run in perfect isolation from one another: no node-run, no RunScope, and no attribute state ever crosses a frame boundary.
+Frames are serial per instance: at most one running frame at any moment, and while one is running the instance's message queue accumulates any newly-arriving messages for the frame engine to pick up next. The waiting-work-for-a-slow-instance surface lives at the message queue (per `concept:instance`), not at the frame layer. Frames run in perfect isolation from one another: no node-run, no RunScope, and no attribute state ever crosses a frame boundary.
 
 ## Purpose
 
-Frames are the unit of cascade resolution. They let new messages arriving during in-flight propagation queue cleanly without preempting the running work — at most one frame runs per instance, queued frames dispatch in arrival order. They also tie the audit trail together: every terminal handler attributes back to its frame, and every frame back to the triggering message.
+Frames are the unit of cascade resolution. They let new messages arriving during in-flight propagation accumulate cleanly on the instance's message queue without preempting the running work — at most one frame runs per instance, and the frame engine opens the next frame when the current one settles. They also tie the audit trail together: every terminal handler attributes back to its frame, and every frame back to the triggering message.
 
 Ordering is per-instance, not template-wide: two instances of the same template execute independently. A consumer expecting template-wide serialization must coordinate above rimsky.
 
@@ -27,11 +27,12 @@ A frame is **held** when one or more of its node-runs is in a non-terminal pause
 
 ## Boundaries
 
-Owns: the per-instance concurrency rule (≤1 running frame), the serial-per-instance ordering, the last-progress timestamp, frame-timeout warning emission, the triggering-message-id pointer that every frame carries, the root-RunScope pointer (created at frame start). Does NOT own: node state (lives on the node-run, see `concept:node-run`), claim conflict (lives in `concept:claim-handle`), scheduling cadence (lives in `concept:sensor`), the message itself (see `concept:message`), RunScope internals (see `concept:run-scope`). Adjacent: `concept:cascade`, `concept:node`, `concept:node-run`, `concept:message`, `concept:run-scope`, `concept:sensor`.
+Owns: the per-instance concurrency rule (≤1 running frame), the serial-per-instance ordering, the last-progress timestamp, frame-timeout warning emission, the triggering-message-id pointer that every frame carries, the root-RunScope pointer (created at frame start). Does NOT own: node state (lives on the node-run, see `concept:node-run`), claim conflict (lives in `concept:claim-handle`), scheduling cadence (lives in `concept:sensor`), the message itself (see `concept:message`), the message queue and its coalesce mode (lives on the instance, see `concept:instance`), RunScope internals (see `concept:run-scope`). Adjacent: `concept:cascade`, `concept:node`, `concept:node-run`, `concept:message`, `concept:instance`, `concept:run-scope`, `concept:sensor`.
 
 ## Invariants
 
 - At most one `running` frame per instance.
+- Frames have no pre-run state: every frame row is inserted directly into `running` at the pickup moment. There is no `queued` state; work waiting for a busy instance sits on the instance's message queue instead.
 - Every frame row carries a non-null triggering-message reference. There is no path that creates a frame without a triggering message.
 - Every frame row carries a non-null root-RunScope reference. The root RunScope is created at frame start in the same tx as the frame row insert (per `concept:run-scope`).
 - Every dispatched run row carries a non-null frame reference, and lives in a RunScope inside that frame's RunScope tree.

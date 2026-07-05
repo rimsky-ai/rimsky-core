@@ -26,7 +26,6 @@ type MessageRow struct {
 }
 
 // @decision: empty-message-as-root-trigger
-// @story: empty-message-wakes-roots
 func (m MessageRow) IsEmptyWake() bool { return m.Type == "" }
 
 type EnqueueMessageRequest struct {
@@ -48,6 +47,11 @@ type MessageListFilter struct {
 	DeliveredBefore *time.Time
 }
 
+type PendingMessagePick struct {
+	InstanceID shared.UUID
+	MessageID  shared.UUID
+}
+
 type MessagesTable interface {
 	Insert(ctx context.Context, tx Tx, req EnqueueMessageRequest) error
 
@@ -62,4 +66,8 @@ type MessagesTable interface {
 	GetInTx(ctx context.Context, tx Tx, id shared.UUID) (*MessageRow, error)
 
 	List(ctx context.Context, filter MessageListFilter, pag ListPagination) (PaginatedListResult[MessageRow], error)
+
+	CancelPendingForInstance(ctx context.Context, tx Tx, instanceID shared.UUID) (int, error)
+
+	PickPendingMessagesForIdleInstances(ctx context.Context, tx Tx) ([]PendingMessagePick, error)
 }

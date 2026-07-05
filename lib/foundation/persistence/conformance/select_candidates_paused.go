@@ -64,14 +64,11 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		}); err != nil {
 			return err
 		}
-		fid, err := store.Frames().InsertFrame(ctx, pausedInstanceID, pausedMessageID, pausedRunScopeID, 600000, tx)
+		fid, err := store.Frames().InsertRunningFrame(ctx, pausedInstanceID, pausedMessageID, pausedRunScopeID, 600000, tx)
 		if err != nil {
 			return err
 		}
 		pausedFrameID = fid
-		if _, err := store.Frames().PromoteQueuedFrameToRunning(ctx, fid, tx); err != nil {
-			return err
-		}
 		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                 pausedNodeID,
 			ExecutorName:           "test-executor",

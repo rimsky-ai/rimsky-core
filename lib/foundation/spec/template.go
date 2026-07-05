@@ -24,6 +24,9 @@ type TemplateSpec struct {
 
 	// @concept: message-schema
 	Messages []MessageSchema `yaml:"messages,omitempty" json:"messages,omitempty"`
+
+	// @concept: instance
+	MessageQueueMode string `yaml:"message_queue_mode,omitempty" json:"message_queue_mode,omitempty"`
 }
 
 // @concept: message-schema

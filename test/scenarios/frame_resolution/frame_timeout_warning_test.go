@@ -47,8 +47,8 @@ func TestFrameTimeoutWarning(t *testing.T) {
 		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, last_progress_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, 'running', now() - interval '3 minutes', now() - interval '2 minutes', now() - interval '2 minutes', 60000, $3)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, started_at, last_progress_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, 'running', now() - interval '3 minutes', now() - interval '2 minutes', 60000, $3)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)}, &frameID)
 

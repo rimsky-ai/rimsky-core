@@ -30,6 +30,9 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 	frameBMsgID := shared.UUID(uuid.New())
 	var frameB shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if _, err := store.Frames().MarkRunningFrameTerminal(ctx, frameA, persistence.FrameStateCompleted, tx); err != nil {
+			return err
+		}
 		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         frameBMsgID,
 			InstanceID: fix.InstanceID,
@@ -40,7 +43,7 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 			return err
 		}
 		frameBScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
-		fid, err := store.Frames().InsertFrame(ctx, fix.InstanceID, frameBMsgID, frameBScope, 600000, tx)
+		fid, err := store.Frames().InsertRunningFrame(ctx, fix.InstanceID, frameBMsgID, frameBScope, 600000, tx)
 		if err != nil {
 			return err
 		}

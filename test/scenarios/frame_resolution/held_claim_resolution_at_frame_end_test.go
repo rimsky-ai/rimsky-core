@@ -35,7 +35,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	var frameID shared.UUID
 	h.QueryRowSQL(`
 		SELECT frame_id FROM rimsky_frames WHERE instance_id = $1
-		 ORDER BY queued_at DESC LIMIT 1
+		 ORDER BY started_at DESC LIMIT 1
 	`, []any{uuid.UUID(iid)}, &frameID)
 	h.ExecSQL(`UPDATE rimsky_frames SET state = 'running', started_at = COALESCE(started_at, now()),
 		         last_progress_at = COALESCE(last_progress_at, now())

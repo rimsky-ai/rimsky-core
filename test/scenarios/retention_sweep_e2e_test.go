@@ -54,11 +54,10 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 		    VALUES ($1, $2, 'fixture/retention-sweep', 'operator', 'operator')`,
 			messageID, instanceID)
 		h.ExecSQL(`INSERT INTO rimsky_frames
-		    (frame_id, instance_id, triggering_message_id, state,
-		     queued_at, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
+		    (frame_id, instance_id, triggering_message_id, state, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
 		    VALUES ($1, $2, $3, 'completed',
-		            $4, $4, $5, 600000, $6)`,
-			frameID, instanceID, messageID, endedAt, endedAt, uuid.UUID(scopeID))
+		            $4, $4, 600000, $5)`,
+			frameID, instanceID, messageID, endedAt, uuid.UUID(scopeID))
 
 		runID := uuid.New()
 		h.ExecSQL(`INSERT INTO rimsky_node_runs
@@ -82,10 +81,9 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	    VALUES ($1, $2, 'fixture/retention-sweep-stale', 'operator', 'operator')`,
 		staleMessageID, instanceID)
 	h.ExecSQL(`INSERT INTO rimsky_frames
-	    (frame_id, instance_id, triggering_message_id, state,
-	     queued_at, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
+	    (frame_id, instance_id, triggering_message_id, state, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
 	    VALUES ($1, $2, $3, 'completed',
-	            $4, $4, $4, 600000, $5)`,
+	            $4, $4, 600000, $5)`,
 		staleFrameID, instanceID, staleMessageID, base, uuid.UUID(scopeID))
 
 	staleLineageIDs := []uuid.UUID{uuid.New(), uuid.New()}

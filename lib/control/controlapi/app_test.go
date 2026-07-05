@@ -23,6 +23,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
@@ -75,6 +76,19 @@ func newHarness(t *testing.T) (*harness, func()) {
 		srv.Close()
 	}
 }
+
+func (h *harness) tickFrameEngine(t *testing.T) {
+	t.Helper()
+	if err := frame.RunTick(context.Background(), h.persist, h.driver.Queue(), silentFrameLogger{}); err != nil {
+		t.Fatalf("frame.RunTick: %v", err)
+	}
+}
+
+type silentFrameLogger struct{}
+
+func (silentFrameLogger) Debug(string, ...any) {}
+func (silentFrameLogger) Info(string, ...any)  {}
+func (silentFrameLogger) Warn(string, ...any)  {}
 
 func (h *harness) httpJSON(t *testing.T, method, path string, body any) (int, map[string]any) {
 	t.Helper()
@@ -335,7 +349,7 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ := out["nodes"].([]any)
-	require.Len(t, nodes, 3)
+	require.Len(t, nodes, 4)
 
 	pgtest.ExecForTest(context.Background(), t, h.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
@@ -437,8 +451,8 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	frameID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, state, queued_at, started_at, triggering_message_id, root_run_scope_id, frame_timeout_ms)
-        VALUES ($1, $2, 'running', now(), now(), $3, $4, 60000)
+            (frame_id, instance_id, state, started_at, triggering_message_id, root_run_scope_id, frame_timeout_ms)
+        VALUES ($1, $2, 'running', now(), $3, $4, 60000)
     `, frameID, inst.ID, msgID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs

@@ -28,6 +28,8 @@ type InstanceRow struct {
 	TerminateAfterRun bool            `json:"terminate_after_run"`
 	ServiceBindings   json.RawMessage `json:"service_bindings,omitempty"`
 	CreatedByAPIKeyID *shared.UUID    `json:"created_by_api_key_id,omitempty"`
+	// @concept: instance
+	MessageQueueMode string `json:"message_queue_mode"`
 }
 
 type InstanceTable interface {
@@ -59,6 +61,8 @@ type InstanceCreateInput struct {
 	TerminateAfterRun bool
 	ServiceBindings   json.RawMessage
 	CreatedByAPIKeyID *shared.UUID
+	// @concept: instance
+	MessageQueueMode string
 }
 
 type InstanceListFilter struct {

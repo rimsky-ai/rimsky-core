@@ -52,16 +52,21 @@ func TestListNodes_TagFilter(t *testing.T) {
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ := out["nodes"].([]any)
-	require.Len(t, nodes, 2)
+	authoredCount := 0
 	tagsSeen := map[string]bool{}
 	for _, n := range nodes {
 		row, _ := n.(map[string]any)
+		nt, _ := row["node_type"].(string)
 		tags, _ := row["tags"].([]any)
 		require.NotNil(t, tags, "every row carries a tags array, got %v", row)
-		for _, tg := range tags {
-			tagsSeen[tg.(string)] = true
+		if nt != "" {
+			authoredCount++
+			for _, tg := range tags {
+				tagsSeen[tg.(string)] = true
+			}
 		}
 	}
+	require.Equal(t, 2, authoredCount, "expected 2 author-declared nodes (plus the implicit empty-type receiver)")
 	require.True(t, tagsSeen["setup"])
 	require.True(t, tagsSeen["recurring"])
 

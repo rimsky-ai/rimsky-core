@@ -14,7 +14,6 @@ import (
 type FrameState string
 
 const (
-	FrameStateQueued    FrameState = "queued"
 	FrameStateRunning   FrameState = "running"
 	FrameStateCompleted FrameState = "completed"
 	FrameStateFailed    FrameState = "failed"
@@ -23,13 +22,6 @@ const (
 type FramePending struct {
 	FrameID    shared.UUID
 	InstanceID shared.UUID
-}
-
-type FrameQueuedReady struct {
-	FrameID             shared.UUID
-	InstanceID          shared.UUID
-	TriggeringMessageID shared.UUID
-	RootRunScopeID      shared.UUID
 }
 
 type FrameStuck struct {
@@ -79,10 +71,6 @@ type FrameTable interface {
 	// @concept: instance
 	MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx Tx) error
 
-	ListQueuedFramesReadyToStart(ctx context.Context, tx Tx) ([]FrameQueuedReady, error)
-
-	PromoteQueuedFrameToRunning(ctx context.Context, frameID shared.UUID, tx Tx) (transitioned bool, err error)
-
 	GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx Tx) (*shared.UUID, error)
 
 	MarkSourceNodeStale(ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx Tx) (matched bool, err error)
@@ -93,7 +81,8 @@ type FrameTable interface {
 
 	LookupFrameTimeoutMs(ctx context.Context, instanceID shared.UUID, tx Tx) (frameTimeoutMs int64, err error)
 
-	InsertFrame(ctx context.Context, instanceID, triggeringMessageID, rootRunScopeID shared.UUID, frameTimeoutMs int64, tx Tx) (shared.UUID, error)
+	// @decision: empty-message-as-root-trigger
+	InsertRunningFrame(ctx context.Context, instanceID, triggeringMessageID, rootRunScopeID shared.UUID, frameTimeoutMs int64, tx Tx) (shared.UUID, error)
 
 	ListForObservabilityWithMessage(ctx context.Context, filter FrameListFilter, pag ListPagination, tx Tx) (PaginatedListResult[FrameRowWithMessage], error)
 

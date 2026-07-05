@@ -85,6 +85,21 @@ func (f *fakeMessagesTable) GetInTx(ctx context.Context, _ persistence.Tx, id sh
 	return f.Get(ctx, id)
 }
 
+func (f *fakeMessagesTable) CancelPendingForInstance(_ context.Context, _ persistence.Tx, instanceID shared.UUID) (int, error) {
+	n := 0
+	for _, r := range f.rows {
+		if r.InstanceID == instanceID && r.DeliveredAt == nil && !r.Cancelled {
+			r.Cancelled = true
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *fakeMessagesTable) PickPendingMessagesForIdleInstances(_ context.Context, _ persistence.Tx) ([]persistence.PendingMessagePick, error) {
+	return nil, nil
+}
+
 func (f *fakeMessagesTable) List(_ context.Context, filter persistence.MessageListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {
 	var out []persistence.MessageRow
 	for _, r := range f.rows {
@@ -104,25 +119,71 @@ func (f *fakeMessagesTable) List(_ context.Context, filter persistence.MessageLi
 	return persistence.PaginatedListResult[persistence.MessageRow]{Rows: out}, nil
 }
 
+type enqueueDepsStub struct {
+	inst persistence.InstanceTable
+	msgs persistence.MessagesTable
+}
+
+func (d *enqueueDepsStub) Instances() persistence.InstanceTable { return d.inst }
+func (d *enqueueDepsStub) Messages() persistence.MessagesTable  { return d.msgs }
+
+type nilInstancesTable struct{}
+
+func (n *nilInstancesTable) Create(context.Context, persistence.InstanceCreateInput, persistence.Tx) (persistence.InstanceRow, error) {
+	return persistence.InstanceRow{}, nil
+}
+func (n *nilInstancesTable) Get(context.Context, shared.UUID, persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (n *nilInstancesTable) GetByInstanceKey(context.Context, string, string, persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (n *nilInstancesTable) FindAnyByInstanceKey(context.Context, string, persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (n *nilInstancesTable) List(context.Context, persistence.InstanceListFilter, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.InstanceRow], error) {
+	return persistence.PaginatedListResult[persistence.InstanceRow]{}, nil
+}
+func (n *nilInstancesTable) Delete(context.Context, shared.UUID, persistence.Tx) error { return nil }
+func (n *nilInstancesTable) MarkTerminated(context.Context, shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (n *nilInstancesTable) CountActiveByTemplate(context.Context, string, persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (n *nilInstancesTable) ListTerminatedWithLifecycleRows(context.Context, int, persistence.Tx) ([]persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (n *nilInstancesTable) CountByActive(context.Context, persistence.Tx) (int, int, error) {
+	return 0, 0, nil
+}
+func (n *nilInstancesTable) IncrementAttributeOverrideMatchCounts(context.Context, shared.UUID, []int, persistence.Tx) error {
+	return nil
+}
+func (n *nilInstancesTable) SetPaused(context.Context, shared.UUID, bool, persistence.Tx) (bool, error) {
+	return false, nil
+}
+
 func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 	m := newFakeMessages()
+	deps := &enqueueDepsStub{inst: &nilInstancesTable{}, msgs: m}
 	ctx := context.Background()
 	good := persistence.EnqueueMessageRequest{
 		ID: shared.UUID(uuid.New()), InstanceID: shared.UUID(uuid.New()),
 		Type: "invalidate", Sender: "op-A", SenderKind: "operator",
 	}
-	if err := EnqueueMessage(ctx, nil, m, good); err != nil {
+	if err := EnqueueMessage(ctx, nil, deps, good); err != nil {
 		t.Fatalf("EnqueueMessage(good): %v", err)
 	}
 
-	if err := EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{}); err == nil {
+	if err := EnqueueMessage(ctx, nil, deps, persistence.EnqueueMessageRequest{}); err == nil {
 		t.Fatal("EnqueueMessage(empty): expected error")
 	}
 
 	bad := good
 	bad.ID = shared.UUID(uuid.New())
 	bad.SenderKind = "bogus"
-	if err := EnqueueMessage(ctx, nil, m, bad); err == nil {
+	if err := EnqueueMessage(ctx, nil, deps, bad); err == nil {
 		t.Fatal("EnqueueMessage(bogus sender_kind): expected error")
 	}
 }

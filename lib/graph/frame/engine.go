@@ -31,8 +31,8 @@ func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Qu
 	if err := runFrameEndDetection(ctx, store, logger, m); err != nil {
 		return fmt.Errorf("frame.RunTick: frame-end: %w", err)
 	}
-	if err := runAdvanceQueued(ctx, store, queue, logger); err != nil {
-		return fmt.Errorf("frame.RunTick: advance: %w", err)
+	if err := runOpenNewFrames(ctx, store, queue, logger); err != nil {
+		return fmt.Errorf("frame.RunTick: open: %w", err)
 	}
 	if err := runWarnStuckFrames(ctx, store, logger); err != nil {
 		return fmt.Errorf("frame.RunTick: warn stuck: %w", err)
@@ -111,43 +111,41 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 	return nil
 }
 
-func runAdvanceQueued(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger) error {
+func runOpenNewFrames(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger) error {
 	_ = queue
-	var advances []persistence.FrameQueuedReady
+	var picks []persistence.PendingMessagePick
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		as, err := store.Frames().ListQueuedFramesReadyToStart(ctx, tx)
+		ps, err := store.Messages().PickPendingMessagesForIdleInstances(ctx, tx)
 		if err != nil {
 			return err
 		}
-		advances = as
+		picks = ps
 		return nil
 	}); err != nil {
 		return err
 	}
 
-	for _, a := range advances {
-		var promoted bool
+	for _, p := range picks {
+		var frameID shared.UUID
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			moved, perr := store.Frames().PromoteQueuedFrameToRunning(ctx, a.FrameID, tx)
-			if perr != nil {
-				return perr
+			fid, oerr := openRunningFrameForMessage(ctx, store, tx, p.InstanceID, p.MessageID)
+			if oerr != nil {
+				return oerr
 			}
-			promoted = moved
+			frameID = fid
 			return nil
 		})
 		if err != nil {
-			logger.Warn("frame.start.advance_failed",
-				"frame_id", a.FrameID,
-				"instance_id", a.InstanceID,
+			logger.Warn("frame.start.open_failed",
+				"instance_id", p.InstanceID,
+				"triggering_message_id", p.MessageID,
 				"error", err.Error())
 			continue
 		}
-		if promoted {
-			logger.Info("frame.start",
-				"frame_id", a.FrameID,
-				"instance_id", a.InstanceID,
-				"triggering_message_id", a.TriggeringMessageID)
-		}
+		logger.Info("frame.start",
+			"frame_id", frameID,
+			"instance_id", p.InstanceID,
+			"triggering_message_id", p.MessageID)
 	}
 	return nil
 }

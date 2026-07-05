@@ -806,11 +806,8 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertFrame(ctx, fx.instanceID, msgID, fx.mainScopeID, 600000, tx)
+		frameID, err := tables.Frames().InsertRunningFrame(ctx, fx.instanceID, msgID, fx.mainScopeID, 600000, tx)
 		if err != nil {
-			return err
-		}
-		if _, err := tables.Frames().PromoteQueuedFrameToRunning(ctx, frameID, tx); err != nil {
 			return err
 		}
 		fx.frameID = frameID

@@ -25,7 +25,7 @@ func TestDeadLetter_CancelledNotDelivered(t *testing.T) {
 	now := time.Now().UTC()
 
 	triggerID := shared.UUID(uuid.New())
-	if err := runtime.EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{
+	if err := runtime.EnqueueMessage(ctx, nil, &fakeEnqueueDeps{msgs: m}, persistence.EnqueueMessageRequest{
 		ID:         triggerID,
 		InstanceID: instanceID,
 		Type:       "invalidate",

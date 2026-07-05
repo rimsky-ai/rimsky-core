@@ -260,7 +260,7 @@ func TestEmitCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	}
 }
 
-func TestEmitCascadeMessageInTx_EnqueuesFrameForEnvelope(t *testing.T) {
+func TestEmitCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openEmitTestDB(t)
@@ -285,35 +285,22 @@ func TestEmitCascadeMessageInTx_EnqueuesFrameForEnvelope(t *testing.T) {
 		t.Fatalf("emit tx: %v", err)
 	}
 
-	var page persistence.PaginatedListResult[persistence.FrameRow]
-	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, err := d.Tables().Frames().ListForObservability(ctx,
-			persistence.FrameListFilter{
-				InstanceID:          &instanceID,
-				TriggeringMessageID: &msgID,
-			},
-			persistence.ListPagination{Limit: 16}, tx)
-		page = p
-		return err
-	}); err != nil {
-		t.Fatalf("Frames.ListForObservability: %v", err)
+	row, err := d.Tables().Messages().Get(ctx, msgID)
+	if err != nil {
+		t.Fatalf("Messages.Get: %v", err)
 	}
-	if got := len(page.Rows); got != 1 {
-		t.Fatalf("frame count for triggering_message_id = %d; want exactly 1 (emit must enqueue exactly one frame for its envelope)", got)
+	if row == nil {
+		t.Fatalf("expected message envelope for id=%s; got nil", msgID)
 	}
-	got := page.Rows[0]
-	if got.TriggeringMessageID != msgID {
-		t.Errorf("frame.triggering_message_id = %s; want %s", got.TriggeringMessageID.String(), msgID.String())
+	if row.InstanceID != instanceID {
+		t.Errorf("message.instance_id = %s; want %s", row.InstanceID, instanceID)
 	}
-	if got.InstanceID != instanceID {
-		t.Errorf("frame.instance_id = %s; want %s", got.InstanceID.String(), instanceID.String())
-	}
-	if got.State != persistence.FrameStateQueued {
-		t.Errorf("frame.state = %q; want queued (emit enqueues the frame; promotion happens later in the scheduler tick)", got.State)
+	if row.DeliveredAt != nil {
+		t.Errorf("message.delivered_at = %v; want nil (frame opens later, in the tick)", row.DeliveredAt)
 	}
 }
 
-func TestEmitCascadeMessageInTx_ReplayDoesNotDoubleEnqueueFrame(t *testing.T) {
+func TestEmitCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openEmitTestDB(t)
@@ -334,19 +321,6 @@ func TestEmitCascadeMessageInTx_ReplayDoesNotDoubleEnqueueFrame(t *testing.T) {
 
 	if got := countMessages(t, ctx, d, instanceID); got != 1 {
 		t.Fatalf("envelope count = %d; want 1 (replay dedups envelope)", got)
-	}
-	var page persistence.PaginatedListResult[persistence.FrameRow]
-	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, err := d.Tables().Frames().ListForObservability(ctx,
-			persistence.FrameListFilter{InstanceID: &instanceID},
-			persistence.ListPagination{Limit: 16}, tx)
-		page = p
-		return err
-	}); err != nil {
-		t.Fatalf("Frames.ListForObservability: %v", err)
-	}
-	if got := len(page.Rows); got != 1 {
-		t.Fatalf("frame count = %d; want exactly 1 (replay must not enqueue a second frame)", got)
 	}
 }
 

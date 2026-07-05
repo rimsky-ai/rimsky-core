@@ -15,12 +15,15 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-func EnqueueFrame(ctx context.Context, store persistence.Tables, tx persistence.Tx,
-	instanceID, triggeringMessageID uuid.UUID) (uuid.UUID, error) {
+// @decision: empty-message-as-root-trigger
+func openRunningFrameForMessage(
+	ctx context.Context, store persistence.Tables, tx persistence.Tx,
+	instanceID, triggeringMessageID uuid.UUID,
+) (uuid.UUID, error) {
 
 	frameTimeoutMs, err := store.Frames().LookupFrameTimeoutMs(ctx, instanceID, tx)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("frame.EnqueueFrame: %w", err)
+		return uuid.Nil, fmt.Errorf("frame.openRunningFrameForMessage: %w", err)
 	}
 	// @concept: run-scope
 	rootRunScopeID := shared.UUID(uuid.New())
@@ -30,7 +33,7 @@ func EnqueueFrame(ctx context.Context, store persistence.Tables, tx persistence.
 		InstanceID:   instanceID,
 		PartitionKey: "",
 	}); err != nil {
-		return uuid.Nil, fmt.Errorf("frame.EnqueueFrame: create root run scope: %w", err)
+		return uuid.Nil, fmt.Errorf("frame.openRunningFrameForMessage: create root run scope: %w", err)
 	}
-	return store.Frames().InsertFrame(ctx, instanceID, triggeringMessageID, rootRunScopeID, frameTimeoutMs, tx)
+	return store.Frames().InsertRunningFrame(ctx, instanceID, triggeringMessageID, rootRunScopeID, frameTimeoutMs, tx)
 }

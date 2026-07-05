@@ -224,4 +224,59 @@ Verification: `go build ./... && go vet ./... && make lint` green. Scenario suit
 
 Load-bearing outcome: the one hard frame-isolation violation surfaced by the code audit is gone. The receipt handler and delivery path treat the empty type identically with every other declared type — the two parallel paths collapse to one.
 
+### Item 2: Per-instance message-queue coalesce (2026-07-05)
+
+Executed inline instead of deferring per the sketch's initial sequencing. Two design decisions taken with the user during planning:
+
+- Frame lifecycle: **no `queued` state**. Frames are created directly in `running`. Work waiting for a busy instance sits at the message queue (`rimsky_messages` with `delivered_at IS NULL AND cancelled = FALSE`), not as pre-open queued frames.
+- Coalesce shape: **per-instance setting** (`message_queue_mode`), declared on the template (`message_queue_mode: backlog | coalesce`), materialized onto the instance row at creation. Coalesce cancels all prior pending messages for the instance at receipt of a new one (in the same tx), bounding the pending set at ≤ 1. Deliberately named away from `cascade_mode`'s intra-frame `most-recent`/`sequenced`/`idempotent-*` vocabulary — `coalesce`/`backlog` signals a different layer.
+
+Passes:
+
+- **`file:lib/foundation/persistence/{postgres,sqlite}/migrations/017-message-queue-coalesce.sql`** — drop `queued_at` column and `idx_rimsky_frames_queued` index from `rimsky_frames`, add `message_queue_mode` column to `rimsky_instances` (default `backlog`), rebuild `idx_messages_pending` with `cancelled = FALSE` predicate. State-CHECK on `rimsky_frames` still tolerates the `queued` token (pragmatic — no Go code writes it after this migration; future tightening migration if warranted).
+- **`code:lib/foundation/persistence/frames.go`** — retire `FrameStateQueued`, `FrameQueuedReady`, `ListQueuedFramesReadyToStart`, `PromoteQueuedFrameToRunning`; rename `InsertFrame` → `InsertRunningFrame` (inserts running state with `started_at = now`).
+- **`code:lib/foundation/persistence/messages.go`** — add `CancelPendingForInstance` (used by coalesce at receipt) and `PickPendingMessagesForIdleInstances` (used by tick to open frames), plus `PendingMessagePick` struct.
+- **`code:lib/foundation/persistence/instances.go`** — add `MessageQueueMode` field to `InstanceRow` + `InstanceCreateInput`.
+- **`code:lib/foundation/persistence/{postgres,sqlite}/*.go`** — implement new APIs, delete queued-frame implementations, migrate observability queries from `queued_at` to `started_at`.
+- **`code:lib/graph/frame/producer.go`** — delete `EnqueueFrame`; introduce `openRunningFrameForMessage` (package-private helper for the engine tick).
+- **`code:lib/graph/frame/engine.go`** — replace `runAdvanceQueued` (promote-queued) with `runOpenNewFrames` (pick oldest pending message per idle instance, create running frame directly).
+- **`code:lib/runtime/message_delivery.go::EnqueueMessage`** — signature widens from `(tx, MessagesTable, req)` → `(tx, EnqueueMessageDeps, req)` where `EnqueueMessageDeps` is a narrow interface exposing `Instances()` + `Messages()`. Under `message_queue_mode == "coalesce"`, calls `CancelPendingForInstance` in the same tx as the insert.
+- **`code:lib/control/controlapi/messages.go`** — drop the `frame.EnqueueFrame` call at receipt; `runtime.EnqueueMessage` handles the coalesce path (message-only, no frame).
+- **`code:lib/runtime/runner_emit_message.go`** — drop the `frame.EnqueueFrame` call at cascade-emit; the emitted message sits pending on the target instance's queue and the frame engine picks it up.
+- **`code:lib/foundation/spec/template.go`** — add `TemplateSpec.MessageQueueMode` (yaml: `message_queue_mode`, default empty → normalized to `backlog`).
+- **`code:lib/graph/node/template_validator.go`** — `validateMessageQueueMode` rejects any value other than `""`, `backlog`, `coalesce`.
+- **`code:lib/control/controlapi/instances.go`** — instance creation reads template's `MessageQueueMode`, materializes on the instance row.
+
+Design corpus:
+
+- **New:** `story:message-queue-coalesces-pending` (retires the old `story:most-recent-coalesces-cascades`), `decision:message-queue-mode-per-instance`.
+- **Mutated:** `concept:frame` (no queued state; direct-to-running lifecycle; message-queue-owns-waiting-work), `concept:instance` (owns the message queue + coalesce mode; force-terminate cancels pending instead of dropping queued frames), `concept:message` (envelope enqueues on instance's queue; frame binding at pickup, not receipt), `concept:cascade-mode` (drops the retired story reference; explains that `most-recent`'s intra-frame coalesce is implementation detail without a user-facing story). `stories.md` TOC + `decisions.md` TOC updated.
+- **Retired:** `story:most-recent-coalesces-cascades` (deleted). Its `@story:` citation at `code:test/scenarios/most_recent_coalesces_cascades_test.go` retired; the test itself retained under `@decision: mode-default-most-recent` since it still proves the intra-frame mechanism.
+
+Test sweep highlights:
+
+- **New scenario:** `code:test/scenarios/message_queue_coalesce_test.go` proves both modes end-to-end. Coalesce: 5 wakes → ≥ 4 messages cancelled, ≤ 2 delivered, second frame's trigger is the last message. Backlog: 5 wakes → 0 cancelled, all 5 delivered.
+- **Test-harness** (`code:test/support/scenario/harness.go`): `templateSpecToJSON` learns to serialize `message_queue_mode` so scenario tests can declare the mode via the TemplateSpec builder. `waitForRootDispatch` narrowed to count only non-empty-type node runs (empty-receiver's run existed under the old semantics too but is now the only guaranteed-immediate run; structural roots come one cascade round later).
+- **Frame-lifecycle conformance** (`code:lib/foundation/persistence/conformance/frame_lifecycle.go`) rewritten: adjacent `InsertRunningFrame` attempts against an already-running instance are expected to fail the `uq_rimsky_frames_running` unique index; the test explicitly terminates prior running frames before inserting new ones. New assertion: a second running-frame insert without prior termination MUST fail.
+- **Deleted:** `code:lib/graph/frame/producer_test.go` (tested the retired `EnqueueFrame` function).
+- **Rewrote:** `code:lib/runtime/runner_emit_message_test.go::TestEmitCascadeMessageInTx_EnqueuesFrameForEnvelope` → `TestEmitCascadeMessageInTx_InsertsMessageEnvelope` (emit no longer creates a frame; asserts the message envelope is persisted with `delivered_at = nil`). Same rename for the replay variant.
+- **Rewrote:** `code:lib/foundation/persistence/sqlite/frames_terminated_guard_test.go` from queued-frame guard to pending-message guard.
+
+Verification:
+
+- `go build ./... && go vet ./... && make lint` all green.
+- Full unit test suite green: `lib/foundation/persistence/...`, `lib/runtime/...`, `lib/graph/...`, `lib/control/...`.
+- Scenario suites green: `test/scenarios/frame_resolution/...` (rewrote several tests off queued-frame idioms — see below), `test/scenarios/messages/...`, `test/scenarios/message_queue_coalesce`.
+
+**Fallout in `test/scenarios/` still red — mostly pre-known plus a handful of new:**
+
+- `TestCascadeSignalBlind_E2E/attribute_changed__diff_gate` — pre-known, item 5 in the ledger.
+- `TestSequencedPreservesCascadeRounds` — pre-known, item 3a.
+- `TestIdempotentModeDedupes_QueueComparison` — pre-known, item 3b.
+- `TestCascadeDefersDuringFlight_ParkedReceiverNotInterruptedByUpstreamRerun` — pre-known, item 6.
+- `TestAttributeOverridesMatchOverlayFlatTemplateGraphResolution_ResolvesToMain` — new fallout. The test asserts `AttributeOverridesMatchCounts == [1]` after dispatch; under new model the match-count never reaches 1 within a 5s timeout. Extending timeout to 15s does not help — this is likely a semantic interaction with the empty-message-receiver-node addition from item 1 or with the extra frame-engine tick between message receipt and frame open. Warrants investigation as follow-up.
+- `TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGraph` — new fallout, same shape as above.
+- `TestNodeLatestAttributeBagFullStack` — pre-known from item 1 running notes.
+
+The proof-rewrite cluster (items 3a/3b/5/6) is next in the sketch's proposed sequencing and will address four of the six. The two new attribute-overlay fallouts want separate investigation.
 

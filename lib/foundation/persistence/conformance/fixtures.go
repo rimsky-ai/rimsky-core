@@ -109,14 +109,11 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 		}); err != nil {
 			return err
 		}
-		fid, err := store.Frames().InsertFrame(ctx, instanceID, shared.UUID(messageID), shared.UUID(mainRunScopeID), 600000, tx)
+		fid, err := store.Frames().InsertRunningFrame(ctx, instanceID, shared.UUID(messageID), shared.UUID(mainRunScopeID), 600000, tx)
 		if err != nil {
 			return err
 		}
 		frameID = fid
-		if _, err := store.Frames().PromoteQueuedFrameToRunning(ctx, frameID, tx); err != nil {
-			return err
-		}
 		return nil
 	}); err != nil {
 		t.Fatalf("seedFixtureSet: frame enqueue/promote: %v", err)

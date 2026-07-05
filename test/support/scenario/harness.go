@@ -602,6 +602,7 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Durat
             SELECT count(*) FROM rimsky_node_runs d
             JOIN rimsky_nodes n ON n.id = d.node_id
             WHERE n.instance_id = $1
+              AND n.node_type != ''
         `, instanceID).Scan(&count)
 		if err == nil && count > 0 {
 			return
@@ -875,6 +876,9 @@ func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 			msgs = append(msgs, item)
 		}
 		out["messages"] = msgs
+	}
+	if spec.MessageQueueMode != "" {
+		out["message_queue_mode"] = spec.MessageQueueMode
 	}
 	return out
 }

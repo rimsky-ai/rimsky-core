@@ -36,11 +36,8 @@ func testQueueRebindRunFrameInTx(t *testing.T, d persistence.Database) {
 	var newFrameID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		newScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
-		fid, err := store.Frames().InsertFrame(ctx, fix.InstanceID, fix.MessageID, newScope, 600000, tx)
+		fid, err := store.Frames().InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, newScope, 600000, tx)
 		if err != nil {
-			return err
-		}
-		if _, err := store.Frames().PromoteQueuedFrameToRunning(ctx, fid, tx); err != nil {
 			return err
 		}
 		newFrameID = fid

@@ -119,6 +119,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		res.Errors = append(res.Errors, ValidationError{Path: "version", Msg: "version is required"})
 	}
 	validateFrameTimeout(spec, &res)
+	validateMessageQueueMode(spec, &res)
 
 	canonicalizeGraphs(spec, &res)
 
@@ -240,6 +241,19 @@ func validateFrameTimeout(spec *TemplateSpec, res *ValidationResult) {
 			Path: "frame_timeout_ms",
 			Msg: fmt.Sprintf("frame_timeout_ms = %d is below hard floor %d",
 				spec.FrameTimeoutMs, FrameTimeoutMinMs),
+		})
+	}
+}
+
+// @concept: instance
+func validateMessageQueueMode(spec *TemplateSpec, res *ValidationResult) {
+	switch spec.MessageQueueMode {
+	case "", "backlog", "coalesce":
+	default:
+		res.Errors = append(res.Errors, ValidationError{
+			Path: "message_queue_mode",
+			Msg: fmt.Sprintf("message_queue_mode = %q; want one of backlog | coalesce (default backlog)",
+				spec.MessageQueueMode),
 		})
 	}
 }

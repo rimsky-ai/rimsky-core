@@ -15,7 +15,6 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 )
 
 // @story: cascade-emit
@@ -93,14 +92,8 @@ func emitCascadeMessageInTx(
 		SenderKind: senderKind,
 		Payload:    body,
 	}
-	if err := EnqueueMessage(ctx, tx, tables.Messages(), enqueueReq); err != nil {
+	if err := EnqueueMessage(ctx, tx, tables, enqueueReq); err != nil {
 		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: insert envelope: %w", err)
-	}
-	// @story: cascade-emit
-	// @story: cross-frame-coupling
-	// @story: one-message-per-frame
-	if _, err := frame.EnqueueFrame(ctx, tables, tx, instanceID, candidateID); err != nil {
-		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: enqueue frame: %w", err)
 	}
 	return candidateID, false, nil
 }

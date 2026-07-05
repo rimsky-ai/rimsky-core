@@ -175,6 +175,57 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 	return persistence.PaginatedListResult[persistence.MessageRow]{Rows: out}, nil
 }
 
+const cancelPendingForInstanceSQL = `
+UPDATE rimsky_messages
+   SET cancelled = TRUE
+ WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE`
+
+func (b *messagesImpl) CancelPendingForInstance(ctx context.Context, tx persistence.Tx, instanceID shared.UUID) (int, error) {
+	tag, err := b.q(tx).Exec(ctx, cancelPendingForInstanceSQL, instanceID)
+	if err != nil {
+		return 0, fmt.Errorf("postgres.Messages.CancelPendingForInstance: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+const pickPendingForIdleInstancesSQL = `
+WITH ranked AS (
+    SELECT m.id, m.instance_id,
+           ROW_NUMBER() OVER (
+               PARTITION BY m.instance_id
+               ORDER BY m.received_at ASC, m.id ASC
+           ) AS rn
+      FROM rimsky_messages m
+      JOIN rimsky_instances i ON i.id = m.instance_id
+     WHERE m.delivered_at IS NULL
+       AND m.cancelled = FALSE
+       AND i.terminated_at IS NULL
+       AND i.paused = FALSE
+       AND NOT EXISTS (
+           SELECT 1 FROM rimsky_frames f
+            WHERE f.instance_id = m.instance_id
+              AND f.state = 'running'
+       )
+)
+SELECT instance_id, id FROM ranked WHERE rn = 1`
+
+func (b *messagesImpl) PickPendingMessagesForIdleInstances(ctx context.Context, tx persistence.Tx) ([]persistence.PendingMessagePick, error) {
+	rows, err := b.q(tx).Query(ctx, pickPendingForIdleInstancesSQL)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.Messages.PickPendingMessagesForIdleInstances: %w", err)
+	}
+	defer rows.Close()
+	var out []persistence.PendingMessagePick
+	for rows.Next() {
+		var p persistence.PendingMessagePick
+		if err := rows.Scan(&p.InstanceID, &p.MessageID); err != nil {
+			return nil, fmt.Errorf("postgres.Messages.PickPendingMessagesForIdleInstances: scan: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func collectMessages(rows pgx.Rows) ([]persistence.MessageRow, error) {
 	out := []persistence.MessageRow{}
 	for rows.Next() {
