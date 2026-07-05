@@ -106,9 +106,6 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 		frameID = insertRunningFrame(ctx, t, f, f.instance.ID, n.ID)
 	}
 	pgtest.ExecForTest(ctx, t, f.driver,
-		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
-	n.FrameID = &frameID
-	pgtest.ExecForTest(ctx, t, f.driver,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
 		                               enqueued_at, claimed_by, claimed_at,
 		                               state, sequence, creation_reason, frame_id, run_scope_id)
@@ -205,10 +202,11 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	f := newSchedFixture(t)
 
 	n := f.createNode(t, "worker", cascade.NodeStateStale)
-	require.NotNil(t, n.FrameID)
+	frameID, ok := lookupRunningFrame(ctx, t, f, f.instance.ID)
+	require.True(t, ok, "instance must have a running frame after createNode")
 	require.NoError(t, f.queue.Enqueue(ctx, persistence.DispatchRequest{
 		NodeID: n.ID, ExecutorName: "worker", EnqueuedAt: time.Now().Add(-time.Second),
-		FrameID:    *n.FrameID,
+		FrameID:    frameID,
 		RunScopeID: f.mainScopeID,
 	}))
 

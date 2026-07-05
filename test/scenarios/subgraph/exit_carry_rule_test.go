@@ -153,7 +153,7 @@ func makeFixture(t *testing.T) carryFixture {
 }
 
 func settleCarry(fx carryFixture, exitRunID shared.UUID, writeback json.RawMessage) error {
-	args := runtime.RunArgs{Persist: fx.tables, Logger: shared.SilentLogger{}}
+	args := runtime.RunArgs{Persist: fx.tables, Logger: shared.SilentLogger{}, Clock: shared.SystemClock{}}
 	return fx.tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.SettleFromDelegate(ctx, args, tx, runtime.DelegateSettlementInput{
 			ExitRunID:     exitRunID,

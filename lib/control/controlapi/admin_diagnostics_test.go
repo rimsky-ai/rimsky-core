@@ -98,9 +98,6 @@ func (noopNodes) UpdateError(context.Context, shared.UUID, spec.EvaluatorState, 
 func (noopNodes) UpdateHeartbeat(context.Context, shared.UUID, shared.UUID, time.Time, string, persistence.Tx) error {
 	return nil
 }
-func (noopNodes) SetFrameID(context.Context, shared.UUID, *shared.UUID, persistence.Tx) error {
-	return nil
-}
 func (noopNodes) ClearSettlingSignalType(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
 	return nil
 }

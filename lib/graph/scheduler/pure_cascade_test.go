@@ -231,9 +231,9 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 		frameN     sql.NullString
 	)
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT executor, instance_id::text, frame_id::text FROM rimsky_nodes WHERE id = $1`,
-		[]any{id}, &executorN, &instanceID, &frameN)
-	if !frameN.Valid {
+		`SELECT executor, instance_id::text FROM rimsky_nodes WHERE id = $1`,
+		[]any{id}, &executorN, &instanceID)
+	{
 		var count int
 		pgtest.QueryRowForTest(ctx, t, f.driver,
 			`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
@@ -245,8 +245,6 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 			pgtest.QueryRowForTest(ctx, t, f.driver,
 				`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND state = 'running' LIMIT 1`,
 				[]any{instanceID}, &fid)
-			pgtest.ExecForTest(ctx, t, f.driver,
-				`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, fid, id)
 		}
 		frameN = sql.NullString{String: fid.String(), Valid: true}
 	}
@@ -291,8 +289,7 @@ func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, no
 			`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND state = 'running' LIMIT 1`,
 			[]any{instanceID}, &frameID)
 	}
-	pgtest.ExecForTest(ctx, t, f.driver,
-		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, nodeID)
+	_ = nodeID
 	return frameID
 }
 

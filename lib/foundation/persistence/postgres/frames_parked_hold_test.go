@@ -77,9 +77,8 @@ func seedFrameParkedFixture(
 		frameID, instanceID, messageID, mainRunScopeID, frameState,
 	)
 	pgtest.ExecForTest(ctx, t, d,
-		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
-		 VALUES ($1, $2, 'fixture-node-type', $3)`,
-		nodeID, instanceID, frameID,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES ($1, $2, 'fixture-node-type')`,
+		nodeID, instanceID,
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_node_runs
@@ -198,9 +197,8 @@ func seedResolvedFrameInstancePG(
 		frameID, instanceID, messageID, mainRunScopeID,
 	)
 	pgtest.ExecForTest(ctx, t, d,
-		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
-		 VALUES ($1, $2, 'fixture-node-type', $3)`,
-		nodeID, instanceID, frameID,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES ($1, $2, 'fixture-node-type')`,
+		nodeID, instanceID,
 	)
 	return shared.UUID(instanceID)
 }

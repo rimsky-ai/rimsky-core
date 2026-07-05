@@ -80,9 +80,9 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 	t.Helper()
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_nodes
-            (id, instance_id, node_type, frame_id)
-        VALUES ($1, $2, 'n', $3)
-    `, nodeID, instanceID, frameID)
+            (id, instance_id, node_type)
+        VALUES ($1, $2, 'n')
+    `, nodeID, instanceID)
 	if state == "fresh" || state == "" {
 		return
 	}

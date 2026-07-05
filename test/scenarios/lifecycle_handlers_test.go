@@ -64,11 +64,11 @@ func TestAlwaysPropagateResolution_NewShape(t *testing.T) {
 		if bLatestDbg != nil {
 			stateStr = string(bLatestDbg.State)
 		}
-		var frameID any
+		nodeType := ""
 		if bRowDbg != nil {
-			frameID = bRowDbg.FrameID
+			nodeType = bRowDbg.NodeType
 		}
-		t.Fatalf("b did not reach fresh — subscription without a when: predicate should have cascaded despite changed=false; b state=%v frame_id=%v", stateStr, frameID)
+		t.Fatalf("b did not reach fresh — subscription without a when: predicate should have cascaded despite changed=false; b state=%v node_type=%v", stateStr, nodeType)
 	}
 
 	var aLatest *persistence.NodeRunLatest

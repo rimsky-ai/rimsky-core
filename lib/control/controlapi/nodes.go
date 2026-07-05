@@ -19,16 +19,15 @@ import (
 
 // @concept: node
 // @decision: node-state-retired-from-operator-api
+// @decision: frame-isolation-is-structural
 type nodeResponse struct {
 	ID                 string                      `json:"id"`
 	InstanceID         string                      `json:"instance_id"`
 	NodeType           string                      `json:"node_type"`
 	Executor           string                      `json:"executor,omitempty"`
-	FrameID            string                      `json:"frame_id,omitempty"`
 	Tags               []string                    `json:"tags"`
 	CascadeMode        string                      `json:"cascade_mode"`
 	CreatedAt          time.Time                   `json:"created_at"`
-	UpdatedAt          time.Time                   `json:"updated_at"`
 	LatestAttributes   map[string]any              `json:"latest_attributes,omitempty"`
 	RunSummary         *persistence.NodeRunSummary `json:"run_summary,omitempty"`
 	SettlingSignalType string                      `json:"settling_signal_type,omitempty"`
@@ -36,10 +35,6 @@ type nodeResponse struct {
 
 // @concept: node
 func toNodeResponse(n persistence.NodeRow) nodeResponse {
-	frameID := ""
-	if n.FrameID != nil {
-		frameID = n.FrameID.String()
-	}
 	tags := n.Tags
 	if tags == nil {
 		tags = []string{}
@@ -49,11 +44,9 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 		InstanceID:  n.InstanceID.String(),
 		NodeType:    n.NodeType,
 		Executor:    n.Executor,
-		FrameID:     frameID,
 		Tags:        tags,
 		CascadeMode: string(n.CascadeMode),
 		CreatedAt:   n.CreatedAt,
-		UpdatedAt:   n.UpdatedAt,
 	}
 }
 
@@ -177,10 +170,7 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			if err := deps.Persist.Nodes().ResetFailedTerminalSettlingSignalType(ctx, id, *failedScopeID, tx); err != nil {
-				return err
-			}
-			return deps.Persist.Nodes().SetFrameID(ctx, id, nil, tx)
+			return deps.Persist.Nodes().ResetFailedTerminalSettlingSignalType(ctx, id, *failedScopeID, tx)
 		}); err != nil {
 			writeError(w, err)
 			return

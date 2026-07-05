@@ -23,7 +23,7 @@ import (
 
 const nodeCols = `
   n.id, n.instance_id, n.node_type, n.executor,
-  n.frame_id, n.tags, n.cascade_mode, n.created_at, n.updated_at
+  n.tags, n.cascade_mode, n.created_at
 `
 
 const nodeSelect = `FROM rimsky_nodes n`
@@ -206,7 +206,7 @@ func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persi
 		   FROM rimsky_nodes n
 		   JOIN rimsky_node_runs nr ON nr.node_id = n.id
 		  WHERE nr.state = 'running'
-		  ORDER BY n.updated_at ASC`)
+		  ORDER BY n.created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -305,10 +305,9 @@ func (s *nodesImpl) enforceAndUpdate(
 	settlingSignalType *string,
 ) error {
 	var (
-		current       cascade.NodeState = cascade.NodeStateFresh
-		runID         *foundationshared.UUID
-		runFrameID    *foundationshared.UUID
-		frameIDBefore *foundationshared.UUID
+		current    cascade.NodeState = cascade.NodeStateFresh
+		runID      *foundationshared.UUID
+		runFrameID *foundationshared.UUID
 	)
 	var (
 		runIDScan      *foundationshared.UUID
@@ -354,14 +353,6 @@ func (s *nodesImpl) enforceAndUpdate(
 	default:
 		return fmt.Errorf("nodes.updateState: select run row: %w", err)
 	}
-	if err := ex.QueryRow(ctx,
-		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, id,
-	).Scan(&frameIDBefore); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		return fmt.Errorf("nodes.updateState: select node frame: %w", err)
-	}
 	expected, err := cascade.NextState(current, reason)
 	if err != nil {
 		return err
@@ -379,15 +370,6 @@ func (s *nodesImpl) enforceAndUpdate(
 		settlingArg = nil
 	} else {
 		settlingArg = *settlingSignalType
-	}
-	if _, err := ex.Exec(ctx,
-		`UPDATE rimsky_nodes
-		   SET updated_at = NOW(),
-		       frame_id = CASE WHEN $2 = 'fresh' THEN NULL ELSE frame_id END
-		 WHERE id = $1`,
-		id, string(state),
-	); err != nil {
-		return fmt.Errorf("nodes.updateState: rimsky_nodes update: %w", err)
 	}
 	switch {
 	case runID != nil:
@@ -408,13 +390,6 @@ func (s *nodesImpl) enforceAndUpdate(
 		if _, err := ex.Exec(ctx,
 			`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`,
 			*runFrameID,
-		); err != nil {
-			return fmt.Errorf("nodes.updateState: refresh frame progress: %w", err)
-		}
-	} else if frameIDBefore != nil {
-		if _, err := ex.Exec(ctx,
-			`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`,
-			*frameIDBefore,
 		); err != nil {
 			return fmt.Errorf("nodes.updateState: refresh frame progress: %w", err)
 		}
@@ -449,30 +424,19 @@ func (s *nodesImpl) GetRunEvaluatorState(ctx context.Context, runID foundationsh
 	return es, nil
 }
 
-func (s *nodesImpl) SetFrameID(ctx context.Context, id foundationshared.UUID, frameID *foundationshared.UUID, tx persistence.Tx) error {
-	ex := s.q(tx)
-	_, err := ex.Exec(ctx,
-		`UPDATE rimsky_nodes SET frame_id = $2, updated_at = NOW() WHERE id = $1`, id, frameID)
-	return err
-}
-
 func (s *nodesImpl) ClearSettlingSignalType(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
-	if _, err := ex.Exec(ctx,
+	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_node_runs SET settling_signal_type = NULL
 		  WHERE node_id = $1
 		    AND run_scope_id = $2
-		    AND state IN ('pending','stale','running','held','parked')`, id, runScopeID); err != nil {
-		return err
-	}
-	_, err := ex.Exec(ctx,
-		`UPDATE rimsky_nodes SET updated_at = NOW() WHERE id = $1`, id)
+		    AND state IN ('pending','stale','running','held','parked')`, id, runScopeID)
 	return err
 }
 
 func (s *nodesImpl) ResetFailedTerminalSettlingSignalType(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
-	tag, err := ex.Exec(ctx,
+	_, err := ex.Exec(ctx,
 		`WITH target AS (
 		     SELECT id
 		       FROM rimsky_node_runs
@@ -489,12 +453,7 @@ func (s *nodesImpl) ResetFailedTerminalSettlingSignalType(ctx context.Context, i
 	if err != nil {
 		return fmt.Errorf("nodes.ResetFailedTerminalSettlingSignalType: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return nil
-	}
-	_, err = ex.Exec(ctx,
-		`UPDATE rimsky_nodes SET updated_at = NOW() WHERE id = $1`, id)
-	return err
+	return nil
 }
 
 func (s *nodesImpl) GetFailedTerminalRunScopeID(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) (*foundationshared.UUID, error) {
@@ -722,22 +681,19 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	var (
 		r           persistence.NodeRow
 		executor    *string
-		frameID     *foundationshared.UUID
 		tags        []string
 		cascadeMode string
 	)
 	if err := sc.Scan(
 		&r.ID, &r.InstanceID, &r.NodeType,
 		&executor,
-		&frameID,
 		&tags,
 		&cascadeMode,
-		&r.CreatedAt, &r.UpdatedAt,
+		&r.CreatedAt,
 	); err != nil {
 		return persistence.NodeRow{}, err
 	}
 	r.Executor = derefString(executor)
-	r.FrameID = frameID
 	if tags == nil {
 		tags = []string{}
 	}
@@ -858,12 +814,6 @@ func (s *nodesImpl) CreateCascadePending(
 	}
 	if err != nil {
 		return foundationshared.UUID{}, fmt.Errorf("CreateCascadePending: %w", err)
-	}
-	if _, err := ex.Exec(ctx,
-		`UPDATE rimsky_nodes SET frame_id = $1, updated_at = NOW() WHERE id = $2`,
-		frameID, nodeID,
-	); err != nil {
-		return foundationshared.UUID{}, fmt.Errorf("CreateCascadePending: bind node frame: %w", err)
 	}
 	return newID, nil
 }

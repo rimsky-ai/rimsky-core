@@ -73,8 +73,7 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 		t.Fatalf("seed frame: %v", err)
 	}
 	if _, err := rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
-		 VALUES (?, ?, 'fixture', ?)`,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
 		nodeID.String(), instanceID.String(), frameID.String(),
 	); err != nil {
 		t.Fatalf("seed node: %v", err)
@@ -169,8 +168,7 @@ func seedResolvedFrameInstance(t *testing.T, ctx context.Context, d persistence.
 		t.Fatalf("seed frame: %v", err)
 	}
 	if _, err := rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
-		 VALUES (?, ?, 'fixture', ?)`,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
 		uuid.New().String(), instanceID.String(), frameID.String(),
 	); err != nil {
 		t.Fatalf("seed node: %v", err)

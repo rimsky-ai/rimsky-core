@@ -128,13 +128,6 @@ func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UU
 func (s *framesImpl) MarkSourceNodeStale(
 	ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx persistence.Tx,
 ) (bool, error) {
-	if _, err := s.q(tx).Exec(ctx, `
-        UPDATE rimsky_nodes
-        SET frame_id = $1, updated_at = now()
-        WHERE instance_id = $2 AND id = $3
-    `, frameID, instanceID, nodeID); err != nil {
-		return false, fmt.Errorf("frames.MarkSourceNodeStale: bind frame: %w", err)
-	}
 	// @concept: run-scope
 	tag, err := s.q(tx).Exec(ctx, `
         INSERT INTO rimsky_node_runs

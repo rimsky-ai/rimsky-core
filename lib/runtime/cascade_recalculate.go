@@ -38,8 +38,9 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	}
 
 	var (
-		target *persistence.NodeRow
-		latest *persistence.NodeRunLatest
+		target      *persistence.NodeRow
+		latest      *persistence.NodeRunLatest
+		runningFrID *shared.UUID
 	)
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		t, err := sb.Nodes().Get(ctx, args.TargetNodeID, tx)
@@ -55,6 +56,11 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			return err
 		}
 		latest = l
+		fr, err := sb.Frames().GetRunningFrameID(ctx, t.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		runningFrID = fr
 		return nil
 	}); err != nil {
 		return err
@@ -78,8 +84,10 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	if latest == nil || latest.State != cascade.NodeStateStale {
 		return nil
 	}
-
-	if target.FrameID == nil {
+	if runningFrID == nil {
+		return nil
+	}
+	if latest.FrameID != *runningFrID {
 		return nil
 	}
 	runScopeID := latest.RunScopeID
@@ -93,7 +101,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			pending = 0
 			return nil
 		}
-		rows, err := sb.WaitSet().ListForReceiver(ctx, *target.FrameID, runID, tx)
+		rows, err := sb.WaitSet().ListForReceiver(ctx, *runningFrID, runID, tx)
 		if err != nil {
 			return err
 		}
@@ -144,7 +152,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			ExecutorName:                target.Executor,
 			RequiredClaimProducers:      []string{},
 			EnqueuedAt:                  args.Clock.Now(),
-			FrameID:                     *target.FrameID,
+			FrameID:                     *runningFrID,
 			RunScopeID:                  runScopeID,
 			PriorDispatchID:             priorDispatchID,
 			PriorDispatchDisposition:    "recalculate",

@@ -23,7 +23,7 @@ import (
 
 const nodeCols = `
   n.id, n.instance_id, n.node_type, n.executor,
-  n.frame_id, n.tags, n.cascade_mode, n.created_at, n.updated_at
+  n.tags, n.cascade_mode, n.created_at
 `
 
 const nodeSelect = `FROM rimsky_nodes n`
@@ -40,12 +40,12 @@ func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, 
 	}
 	if _, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (
-		   id, instance_id, node_type, executor, tags, cascade_mode, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		   id, instance_id, node_type, executor, tags, cascade_mode, created_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		in.ID.String(), in.InstanceID.String(), in.NodeType,
 		nullableString(in.Executor),
 		tagsJSON, cascadeMode,
-		now, now,
+		now,
 	); err != nil {
 		return persistence.NodeRow{}, err
 	}
@@ -228,7 +228,7 @@ func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persi
 		   FROM rimsky_nodes n
 		   JOIN rimsky_node_runs nr ON nr.node_id = n.id
 		  WHERE nr.state = 'running'
-		  ORDER BY n.updated_at ASC`)
+		  ORDER BY n.created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -371,15 +371,6 @@ func (s *nodesImpl) enforceAndUpdate(
 	default:
 		return fmt.Errorf("nodes.updateState: select run row: %w", err)
 	}
-	var nodeFrameIDStr sql.NullString
-	if err := ex.QueryRowContext(ctx,
-		`SELECT frame_id FROM rimsky_nodes WHERE id = ?`, id.String(),
-	).Scan(&nodeFrameIDStr); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		return fmt.Errorf("nodes.updateState: select node frame: %w", err)
-	}
 	expected, err := cascade.NextState(current, reason)
 	if err != nil {
 		return err
@@ -398,15 +389,6 @@ func (s *nodesImpl) enforceAndUpdate(
 	} else {
 		settlingArg = *settlingSignalType
 	}
-	if _, err := ex.ExecContext(ctx,
-		`UPDATE rimsky_nodes
-		   SET updated_at = ?,
-		       frame_id = CASE WHEN ? = 'fresh' THEN NULL ELSE frame_id END
-		 WHERE id = ?`,
-		nowUTC(), string(state), id.String(),
-	); err != nil {
-		return fmt.Errorf("nodes.updateState: rimsky_nodes update: %w", err)
-	}
 	switch {
 	case runIDStr.Valid:
 		if _, err := ex.ExecContext(ctx,
@@ -422,17 +404,10 @@ func (s *nodesImpl) enforceAndUpdate(
 	default:
 		return fmt.Errorf("nodes.updateState: no in-flight run row for node %s on transition to %q (reason %q); use CreateNonCascadeStale or the cascade walker to create a new run", id, state, reason.Kind)
 	}
-	var progressFrame sql.NullString
-	switch {
-	case runFrameIDStr.Valid:
-		progressFrame = runFrameIDStr
-	default:
-		progressFrame = nodeFrameIDStr
-	}
-	if progressFrame.Valid {
+	if runFrameIDStr.Valid {
 		if _, err := ex.ExecContext(ctx,
 			`UPDATE rimsky_frames SET last_progress_at = ? WHERE frame_id = ?`,
-			nowUTC(), progressFrame.String,
+			nowUTC(), runFrameIDStr.String,
 		); err != nil {
 			return fmt.Errorf("nodes.updateState: refresh frame progress: %w", err)
 		}
@@ -465,25 +440,13 @@ func (s *nodesImpl) GetRunEvaluatorState(ctx context.Context, runID foundationsh
 	return es, nil
 }
 
-func (s *nodesImpl) SetFrameID(ctx context.Context, id foundationshared.UUID, frameID *foundationshared.UUID, tx persistence.Tx) error {
-	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_nodes SET frame_id = ?, updated_at = ? WHERE id = ?`,
-		nullableUUID(frameID), nowUTC(), id.String())
-	return err
-}
-
 func (s *nodesImpl) ClearSettlingSignalType(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
-	if _, err := s.q(tx).ExecContext(ctx,
+	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs SET settling_signal_type = NULL
 		  WHERE node_id = ?
 		    AND run_scope_id = ?
 		    AND state IN ('pending','stale','running','held','parked')`,
-		id.String(), runScopeID.String()); err != nil {
-		return err
-	}
-	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_nodes SET updated_at = ? WHERE id = ?`,
-		nowUTC(), id.String())
+		id.String(), runScopeID.String())
 	return err
 }
 
@@ -507,10 +470,7 @@ func (s *nodesImpl) ResetFailedTerminalSettlingSignalType(ctx context.Context, i
 	); err != nil {
 		return fmt.Errorf("nodes.ResetFailedTerminalSettlingSignalType: %w", err)
 	}
-	_, err = s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_nodes SET updated_at = ? WHERE id = ?`,
-		nowUTC(), id.String())
-	return err
+	return nil
 }
 
 func (s *nodesImpl) GetFailedTerminalRunScopeID(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) (*foundationshared.UUID, error) {
@@ -774,19 +734,16 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		idStr         string
 		instanceIDStr string
 		executor      sql.NullString
-		frameIDStr    sql.NullString
 		tagsJSON      sql.NullString
 		cascadeMode   sql.NullString
 		createdAtStr  string
-		updatedAtStr  string
 	)
 	if err := sc.Scan(
 		&idStr, &instanceIDStr, &r.NodeType,
 		&executor,
-		&frameIDStr,
 		&tagsJSON,
 		&cascadeMode,
-		&createdAtStr, &updatedAtStr,
+		&createdAtStr,
 	); err != nil {
 		return persistence.NodeRow{}, err
 	}
@@ -802,20 +759,10 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	if err != nil {
 		return persistence.NodeRow{}, err
 	}
-	updatedAt, err := parseTime(updatedAtStr)
-	if err != nil {
-		return persistence.NodeRow{}, err
-	}
 	r.ID = id
 	r.InstanceID = instanceID
 	r.Executor = executor.String
 	r.CreatedAt = createdAt
-	r.UpdatedAt = updatedAt
-	frameID, err := scanNullableUUID(frameIDStr)
-	if err != nil {
-		return persistence.NodeRow{}, err
-	}
-	r.FrameID = frameID
 	tags, err := decodeTagsJSON(tagsJSON)
 	if err != nil {
 		return persistence.NodeRow{}, err
@@ -935,12 +882,6 @@ func (s *nodesImpl) CreateCascadePending(
 			return foundationshared.UUID{}, persistence.ErrRunScopeClosed
 		}
 		return foundationshared.UUID{}, fmt.Errorf("CreateCascadePending: node %s not found", nodeID)
-	}
-	if _, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_nodes SET frame_id = ?, updated_at = ? WHERE id = ?`,
-		frameID.String(), nowUTC(), nodeID.String(),
-	); err != nil {
-		return foundationshared.UUID{}, fmt.Errorf("CreateCascadePending: bind node frame: %w", err)
 	}
 	return newID, nil
 }

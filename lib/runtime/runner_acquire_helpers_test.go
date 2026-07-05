@@ -697,9 +697,6 @@ func (f *fakeNodesDeps) UpdateState(_ context.Context, _ shared.UUID, _ shared.U
 func (f *fakeNodesDeps) UpdateError(_ context.Context, _ shared.UUID, _ spec.EvaluatorState, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeNodesDeps) SetFrameID(_ context.Context, _ shared.UUID, _ *shared.UUID, _ persistence.Tx) error {
-	return nil
-}
 func (f *fakeNodesDeps) ClearSettlingSignalType(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) error {
 	return nil
 }

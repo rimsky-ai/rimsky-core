@@ -49,14 +49,15 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 		"frame should end failed when its expected node ended failed")
 	require.NotNil(t, first.EndedAt, "failed frame must have ended_at set")
 
-	var nodeFrameID *uuid.UUID
+	var runFrameID uuid.UUID
 	err := h.Pool.QueryRow(context.Background(),
-		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&nodeFrameID)
+		`SELECT frame_id FROM rimsky_node_runs
+		  WHERE node_id = $1 AND state = 'failed'
+		  ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC LIMIT 1`,
+		uuid.UUID(worker.ID)).Scan(&runFrameID)
 	require.NoError(t, err)
-	require.NotNil(t, nodeFrameID,
-		"failed node must preserve frame_id (got NULL)")
-	require.Equal(t, first.FrameID, *nodeFrameID,
-		"failed node frame_id should match the failed frame")
+	require.Equal(t, first.FrameID, runFrameID,
+		"failed run frame_id should match the failed frame")
 
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok")
 	postInvalidateMessage(t, h, iid)

@@ -478,7 +478,7 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	}))
 	require.NotNil(t, latest)
 	require.Equal(t, cascade.NodeStateFailed, latest.State)
-	require.Nil(t, loaded.FrameID)
+	_ = loaded
 
 	// @story: node-admin
 	// @decision: node-reset-as-pure-retry-budget-clear

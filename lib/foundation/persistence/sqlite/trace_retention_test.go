@@ -99,9 +99,8 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 			t.Fatalf("seed terminal frame: %v", err)
 		}
 		if _, err := rawDB.ExecContext(ctx,
-			`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
-			 VALUES (?, ?, 'fixture', ?)`,
-			nodeID, instanceID, frameID,
+			`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
+			nodeID, instanceID,
 		); err != nil {
 			t.Fatalf("seed node: %v", err)
 		}
@@ -137,8 +136,7 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 		t.Fatalf("seed held frame: %v", err)
 	}
 	if _, err := rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
-		 VALUES (?, ?, 'fixture', ?)`,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
 		heldNode, instanceID, heldFrame,
 	); err != nil {
 		t.Fatalf("seed held node: %v", err)

@@ -78,15 +78,15 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 
 	var newRunID string
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		row, err := h.Persist.Nodes().Get(context.Background(), worker.ID, tx)
+		fr, err := h.Persist.Frames().GetRunningFrameID(context.Background(), iid, tx)
 		if err != nil {
 			return err
 		}
-		require.NotNil(t, row.FrameID, "worker should carry frame_id after parking")
+		require.NotNil(t, fr, "instance should have a running frame after parking")
 		nid, err := h.Persist.Nodes().CreateNonCascadeStale(context.Background(), tx, persistence.NonCascadeStaleInput{
 			NodeID:                 worker.ID,
 			RunScopeID:             scopeID,
-			FrameID:                *row.FrameID,
+			FrameID:                *fr,
 			ExecutorName:           "stub",
 			RequiredClaimProducers: []string{},
 			EnqueuedAt:             time.Now(),

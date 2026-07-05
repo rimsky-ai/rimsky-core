@@ -32,19 +32,18 @@ type NodeRunSummary struct {
 }
 
 // @concept: node
+// @decision: frame-isolation-is-structural
 type NodeRow struct {
-	ID         shared.UUID  `json:"id"`
-	InstanceID shared.UUID  `json:"instance_id"`
-	NodeType   string       `json:"node_type"`
-	Executor   string       `json:"executor"`
-	FrameID    *shared.UUID `json:"frame_id,omitempty"`
+	ID         shared.UUID `json:"id"`
+	InstanceID shared.UUID `json:"instance_id"`
+	NodeType   string      `json:"node_type"`
+	Executor   string      `json:"executor"`
 	// @concept: node
 	Tags []string `json:"tags"`
 	// @concept: cascade
 	// @decision: mode-default-most-recent
 	CascadeMode cascade.CascadeMode `json:"cascade_mode"`
 	CreatedAt   time.Time           `json:"created_at"`
-	UpdatedAt   time.Time           `json:"updated_at"`
 }
 
 type NodeCreateInput struct {
@@ -83,7 +82,6 @@ type NodeTable interface {
 	UpdateRunEvaluatorState(ctx context.Context, runID shared.UUID, es spec.EvaluatorState, tx Tx) error
 	// @concept: error-policy
 	GetRunEvaluatorState(ctx context.Context, runID shared.UUID, tx Tx) (spec.EvaluatorState, error)
-	SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx Tx) error
 	ClearSettlingSignalType(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
 	ResetFailedTerminalSettlingSignalType(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
 

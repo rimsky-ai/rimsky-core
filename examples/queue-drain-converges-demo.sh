@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-# @story: queue-drain-converges
+# @story: cascade-emit
 
 set -euo pipefail
 

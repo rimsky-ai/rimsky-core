@@ -93,9 +93,9 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 		{senderBNodeID, "sender-b"},
 	} {
 		_, err = stx.ExecContext(ctx,
-			`INSERT INTO rimsky_nodes (id, instance_id, node_type, executor, frame_id, tags, cascade_mode)
-			 VALUES (?, ?, ?, 'stub', ?, '[]', 'most-recent')`,
-			n.id.String(), instanceID.String(), n.ntyp, frameID.String(),
+			`INSERT INTO rimsky_nodes (id, instance_id, node_type, executor, tags, cascade_mode)
+			 VALUES (?, ?, ?, 'stub', '[]', 'most-recent')`,
+			n.id.String(), instanceID.String(), n.ntyp,
 		)
 		require.NoError(t, err)
 	}

@@ -68,8 +68,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	inh := h.FindNode(iid, "inheritor")
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
-	require.NotNil(t, acq.FrameID, "acquirer should carry a frame_id from the initial frame advance")
-	frameID := *acq.FrameID
+	frameID := h.GetRunningFrameID(iid)
 	mainScopeID := h.GetMainRunScopeID(iid)
 	const supervisorID = "race-supervisor"
 

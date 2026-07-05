@@ -270,9 +270,6 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
             LIMIT 1
         `, []any{f.instance.ID}, &frameID)
 	}
-	pgtest.ExecForTest(ctx, t, f.driver,
-		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
-	n.FrameID = &frameID
 	pgtest.ExecForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
@@ -315,17 +312,20 @@ func TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp(t *testing.T) {
 	dep := f.createNodeInState(t, "worker", cascade.NodeStateStale)
 	target := f.createNodeInState(t, "worker", cascade.NodeStateStale)
 
-	require.NotNil(t, target.FrameID)
+	var frameID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND state = 'running' LIMIT 1`,
+		[]any{f.instance.ID}, &frameID)
 	var depRunID, targetRunID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 AND frame_id = $2`,
-		[]any{dep.ID, *target.FrameID}, &depRunID)
+		[]any{dep.ID, frameID}, &depRunID)
 	pgtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 AND frame_id = $2`,
-		[]any{target.ID, *target.FrameID}, &targetRunID)
+		[]any{target.ID, frameID}, &targetRunID)
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return f.persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID:       *target.FrameID,
+			FrameID:       frameID,
 			ReceiverRunID: targetRunID,
 			SenderRunID:   depRunID,
 			TopicKind:     "state",
@@ -348,7 +348,6 @@ func TestRecalculateNode_StaleWithEmptyWaitSetAndExecutor_EnqueuesDispatch(t *te
 	f := newFixture(t)
 
 	target := f.createNodeInState(t, "runner", cascade.NodeStateStale)
-	require.NotNil(t, target.FrameID)
 
 	err := runtime.RecalculateNode(ctx, runtime.RecalculateArgs{
 		Persist: f.persist, Queue: f.q, Clock: f.clock, Logger: f.log,

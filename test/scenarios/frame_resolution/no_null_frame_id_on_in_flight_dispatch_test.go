@@ -62,25 +62,6 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	require.Equal(t, 0, nullNodes,
 		"frame_id must not be NULL:%d non-fresh in-flight run rows have NULL frame_id", nullNodes)
 
-	for _, nodeType := range []string{"worker", "middle", "leaf"} {
-		nID := h.FindNode(iid, nodeType).ID
-		var state string
-		var frameID *uuid.UUID
-		err := h.Pool.QueryRow(context.Background(),
-			`SELECT COALESCE(r.state, 'fresh'), n.frame_id
-			   FROM rimsky_nodes n
-			   LEFT JOIN rimsky_node_runs r
-			          ON r.node_id = n.id
-			         AND r.state IN ('pending','stale','running','held','parked')
-			  WHERE n.id = $1`,
-			uuid.UUID(nID)).Scan(&state, &frameID)
-		require.NoError(t, err)
-		if state == string(cascade.NodeStateFresh) {
-			require.Nil(t, frameID,
-				"node %s in fresh state should have frame_id = NULL; got %v", nodeType, frameID)
-		}
-	}
-
 	rows, err := h.Pool.Query(context.Background(),
 		`SELECT id, frame_id FROM rimsky_node_runs`)
 	require.NoError(t, err)

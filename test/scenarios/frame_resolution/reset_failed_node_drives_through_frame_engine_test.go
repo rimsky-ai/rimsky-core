@@ -42,11 +42,15 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	require.True(t, waitForFramesByState(t, h, iid, "failed", 1, 5*time.Second),
 		"first frame should end failed")
 
-	var priorFrameID *uuid.UUID
+	var priorFrameID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&priorFrameID))
-	require.NotNil(t, priorFrameID,
-		"failed node should preserve frame_id from the failed frame")
+		`SELECT frame_id FROM rimsky_node_runs
+		  WHERE node_id = $1 AND state = 'failed'
+		  ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC LIMIT 1`,
+		uuid.UUID(worker.ID)).Scan(&priorFrameID))
+	require.NotEqual(t, uuid.Nil, priorFrameID,
+		"failed run should carry the frame_id of the failed frame")
+	_ = priorFrameID
 
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok")
 
@@ -67,11 +71,20 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 5*time.Second),
 		"second frame should end completed")
 
-	var finalFrameID *uuid.UUID
+	var runFrameID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&finalFrameID))
-	require.Nil(t, finalFrameID,
-		"fresh node must carry no frame_id after work_completed")
+		`SELECT frame_id FROM rimsky_node_runs
+		  WHERE node_id = $1 AND state = 'fresh'
+		  ORDER BY sequence DESC LIMIT 1`,
+		uuid.UUID(worker.ID)).Scan(&runFrameID))
+	require.NotEqual(t, uuid.Nil, runFrameID,
+		"the freshly-settled run must carry its frame_id")
+	var inFlight int
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT count(*) FROM rimsky_node_runs
+		  WHERE node_id = $1 AND state IN ('pending','stale','running','held','parked')`,
+		uuid.UUID(worker.ID)).Scan(&inFlight))
+	require.Equal(t, 0, inFlight, "no in-flight run may remain after fresh settlement")
 
 	var failedRowSettlingSig *string
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,

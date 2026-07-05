@@ -72,8 +72,8 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	}
 	for _, nID := range []string{receiverNodeID, senderNodeID} {
 		if _, err := rawDB.ExecContext(ctx,
-			`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id) VALUES (?, ?, 'fixture', ?)`,
-			nID, instanceID, frameID,
+			`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
+			nID, instanceID,
 		); err != nil {
 			t.Fatalf("seed node %s: %v", nID, err)
 		}

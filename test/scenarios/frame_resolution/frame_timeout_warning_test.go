@@ -38,7 +38,6 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	mainScopeID := h.GetMainRunScopeID(iid)
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
-	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
 	messageID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_messages
@@ -52,8 +51,6 @@ func TestFrameTimeoutWarning(t *testing.T) {
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)}, &frameID)
 
-	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,
-		frameID, uuid.UUID(worker.ID))
 	h.ExecSQL(`
 		INSERT INTO rimsky_node_runs
 		    (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, frame_id, run_scope_id)

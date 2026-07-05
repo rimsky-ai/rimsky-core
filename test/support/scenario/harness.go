@@ -627,16 +627,30 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 		Logger: shared.SilentLogger{},
 	})
 	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger)
-	var rows []persistence.NodeRow
+	var (
+		rows           []persistence.NodeRow
+		runningFrameID *shared.UUID
+	)
 	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().ListReadyForDispatch(ctx, tx)
+		if err != nil {
+			return err
+		}
 		rows = r
-		return err
+		fr, err := h.Persist.Frames().GetRunningFrameID(ctx, instanceID, tx)
+		if err != nil {
+			return err
+		}
+		runningFrameID = fr
+		return nil
 	}); err != nil {
 		return
 	}
+	if runningFrameID == nil {
+		return
+	}
 	for _, n := range rows {
-		if n.InstanceID != instanceID || n.FrameID == nil {
+		if n.InstanceID != instanceID {
 			continue
 		}
 		_ = h.Queue.Enqueue(h.Ctx, persistence.DispatchRequest{
@@ -644,7 +658,7 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 			ExecutorName:           n.Executor,
 			RequiredClaimProducers: []string{},
 			EnqueuedAt:             time.Now(),
-			FrameID:                *n.FrameID,
+			FrameID:                *runningFrameID,
 		})
 	}
 }
@@ -780,6 +794,29 @@ func (h *Harness) InTx(fn func(tx persistence.Tx) error) error {
 	return h.Persist.Transaction(h.Ctx, func(_ context.Context, tx persistence.Tx) error {
 		return fn(tx)
 	})
+}
+
+// @concept: frame
+// @decision: frame-isolation-is-structural
+func (h *Harness) GetRunningFrameID(instanceID shared.UUID) shared.UUID {
+	h.T.Helper()
+	var out shared.UUID
+	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		fr, err := h.Persist.Frames().GetRunningFrameID(ctx, instanceID, tx)
+		if err != nil {
+			return err
+		}
+		if fr == nil {
+			h.T.Fatalf("GetRunningFrameID: no running frame for instance %s", instanceID)
+			return nil
+		}
+		out = *fr
+		return nil
+	})
+	if err != nil {
+		h.T.Fatalf("GetRunningFrameID: %v", err)
+	}
+	return out
 }
 
 // @concept: run-scope

@@ -73,10 +73,11 @@ func seedWaitSetParentsPG(
 		frame, instanceID, messageID, mainRunScopeID,
 	)
 	pgtest.ExecForTest(ctx, t, d,
-		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
-		 VALUES ($1, $3, 'fixture-node-type', $4), ($2, $3, 'fixture-node-type', $4)`,
-		receiverNodeID, senderNodeID, instanceID, frame,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type)
+		 VALUES ($1, $3, 'fixture-node-type'), ($2, $3, 'fixture-node-type')`,
+		receiverNodeID, senderNodeID, instanceID,
 	)
+	_ = frame
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, state, sequence, creation_reason, enqueued_at, frame_id, run_scope_id)

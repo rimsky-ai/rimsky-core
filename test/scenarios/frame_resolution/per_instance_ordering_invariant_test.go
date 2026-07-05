@@ -40,8 +40,6 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 	require.NoError(t, err)
 	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	require.NoError(t, err)
-	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
-	require.NoError(t, err)
 
 	messageIDFirst := uuid.New()
 	_, err = h.Pool.Exec(h.Ctx, `

@@ -91,8 +91,8 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 			t.Fatalf("seed frame: %v", err)
 		}
 		if _, err := rawDB.ExecContext(ctx,
-			`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id) VALUES (?, ?, 'fixture', ?)`,
-			nodeID, instanceID, frameID,
+			`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
+			nodeID, instanceID,
 		); err != nil {
 			t.Fatalf("seed node: %v", err)
 		}

@@ -39,13 +39,13 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 
 	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
 	require.NoError(t, err)
-	require.NotNil(t, n.FrameID, "expected node to carry a frame_id from the initial frame advance")
+	frameID := h.GetRunningFrameID(iid)
 	dispatchID := uuid.New()
 	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, sequence)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', $3, $4, 1)`,
-		dispatchID, n.ID, *n.FrameID, mainScopeID,
+		dispatchID, n.ID, frameID, mainScopeID,
 	)
 	require.NoError(t, err)
 

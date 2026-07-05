@@ -52,7 +52,7 @@ func startReaperRaceFixture(t *testing.T) *reaperRaceFixture {
 	iid := h.CreateInstance(tid, "ck-reaper-terminal-race", map[string]any{})
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
-	require.NotNil(t, worker.FrameID)
+	frameID := h.GetRunningFrameID(iid)
 	mainScopeID := h.GetMainRunScopeID(iid)
 
 	const owner = "owner-supervisor"
@@ -61,7 +61,7 @@ func startReaperRaceFixture(t *testing.T) *reaperRaceFixture {
 	h.ExecSQL(
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, state, creation_reason, sequence)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '10 minutes', $3, $4, 'fresh', 'cascade', 1)`,
-		runID, worker.ID, *worker.FrameID, mainScopeID,
+		runID, worker.ID, frameID, mainScopeID,
 	)
 	chID := uuid.New()
 	h.ExecSQL(
@@ -70,7 +70,7 @@ func startReaperRaceFixture(t *testing.T) *reaperRaceFixture {
 		    is_held, holder_supervisor_id, holder_node_id, expires_at, frame_id, state)
 		 VALUES ($1, $2, 'claim_scope', 'reap-store', '"@thing"', '"@thing"', 'rw',
 		         FALSE, $3, $4, NOW() - INTERVAL '1 minute', $5, 'active')`,
-		chID, runID, owner, worker.ID, *worker.FrameID,
+		chID, runID, owner, worker.ID, frameID,
 	)
 
 	client, err := peer.Dial(h.Ctx, "reap-store", "grpc://"+endpoint, peer.TLSModeOff)

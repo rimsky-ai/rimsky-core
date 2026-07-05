@@ -313,41 +313,19 @@ func (s *nodeAttributesImpl) SnapshotBagForNewRun(
 }
 
 // @concept: cascade
+// @decision: frame-isolation-is-structural
 func (s *nodeAttributesImpl) GetPriorRunData(
 	ctx context.Context, tx persistence.Tx, runID shared.UUID,
 ) (map[string]any, error) {
 	row := s.q(tx).QueryRow(ctx,
-		`WITH cur AS (
-		   SELECT n.node_id, n.run_scope_id, n.sequence, n.enqueued_at, s.parent_run_id
-		     FROM rimsky_node_runs n
-		     JOIN rimsky_run_scopes s ON s.id = n.run_scope_id
-		    WHERE n.id = $1
-		 ),
-		 same_scope AS (
-		   SELECT a.node_run_id, a.node_id, a.data, a.updated_at, a.value_handle, a.value_handle_backend, r.sequence AS pri
-		     FROM rimsky_node_attributes a
-		     JOIN rimsky_node_runs r ON r.id = a.node_run_id
-		     JOIN cur ON r.node_id = cur.node_id AND r.run_scope_id = cur.run_scope_id AND r.sequence < cur.sequence
-		    ORDER BY r.sequence DESC
-		    LIMIT 1
-		 ),
-		 cross_instance AS (
-		   SELECT a.node_run_id, a.node_id, a.data, a.updated_at, a.value_handle, a.value_handle_backend, 0 AS pri
-		     FROM rimsky_node_attributes a
-		     JOIN rimsky_node_runs r ON r.id = a.node_run_id
-		     JOIN cur ON r.node_id = cur.node_id AND r.id <> $1
-		         AND r.enqueued_at < cur.enqueued_at AND r.state IN ('fresh','failed')
-		    WHERE cur.parent_run_id IS NULL
-		    ORDER BY r.enqueued_at DESC, r.sequence DESC
-		    LIMIT 1
-		 )
-		 SELECT node_run_id, node_id, data, updated_at, value_handle, value_handle_backend
-		   FROM (
-		     SELECT node_run_id, node_id, data, updated_at, value_handle, value_handle_backend, 1 AS ord FROM same_scope
-		     UNION ALL
-		     SELECT node_run_id, node_id, data, updated_at, value_handle, value_handle_backend, 2 AS ord FROM cross_instance
-		   ) merged
-		  ORDER BY ord ASC
+		`SELECT a.node_run_id, a.node_id, a.data, a.updated_at, a.value_handle, a.value_handle_backend
+		   FROM rimsky_node_attributes a
+		   JOIN rimsky_node_runs r ON r.id = a.node_run_id
+		   JOIN rimsky_node_runs cur ON cur.id = $1
+		  WHERE r.node_id = cur.node_id
+		    AND r.run_scope_id = cur.run_scope_id
+		    AND r.sequence < cur.sequence
+		  ORDER BY r.sequence DESC
 		  LIMIT 1`,
 		runID,
 	)

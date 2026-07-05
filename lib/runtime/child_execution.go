@@ -227,7 +227,8 @@ func SettleFromDelegate(
 	if err != nil {
 		return fmt.Errorf("SettleFromDelegate: load calling node: %w", err)
 	}
-	if callingNodeRow != nil && callingNodeRow.FrameID != nil {
+	if callingNodeRow != nil {
+		parentFrameID := parent.FrameID
 		exitBridgeSig := signalpkg.Signal{
 			Type: signalpkg.TypePath("terminal/success"),
 			Payload: map[string]any{
@@ -238,15 +239,15 @@ func SettleFromDelegate(
 		}
 		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
 			parent.NodeID, callingNodeRow.NodeType, parent.RunID,
-			in.InstanceID, *callingNodeRow.FrameID, exitBridgeSig); err != nil {
+			in.InstanceID, parentFrameID, exitBridgeSig); err != nil {
 			return fmt.Errorf("SettleFromDelegate: cascade subscribers of calling node: %w", err)
 		}
 		if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-			parent.NodeID, callingNodeRow.NodeType, parent.RunID, in.InstanceID, *callingNodeRow.FrameID,
+			parent.NodeID, callingNodeRow.NodeType, parent.RunID, in.InstanceID, parentFrameID,
 			nil, nil); err != nil {
 			return fmt.Errorf("SettleFromDelegate: emit parent attribute changes: %w", err)
 		}
-		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, *callingNodeRow.FrameID, parent.RunID, tx); err != nil {
+		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, parentFrameID, parent.RunID, tx); err != nil {
 			return fmt.Errorf("SettleFromDelegate: drain wait-set for calling node: %w", err)
 		}
 	}

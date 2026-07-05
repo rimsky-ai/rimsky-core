@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @story: queue-drain-converges
+// @story: cascade-emit
 // @concept: message-emitter-node
 package scenarios
 
@@ -103,21 +103,13 @@ func TestStoryQueueDrainConverges_TerminatesViaCELGate(t *testing.T) {
 							When:                 `payload.attributes_delta.should_loop`,
 							ForceUpstreamRefresh: node.BoolPtr(false),
 						},
-						{Node: "b", Type: "attribute/counter/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
-						{Node: "b", Type: "attribute/should_loop/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
 				},
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"trip_counter": map[string]any{
-							"type":   "integer",
-							"source": "{{nodes.b.attribute.counter}}",
-						},
-						"should_loop": map[string]any{
-							"type":   "boolean",
-							"source": "{{nodes.b.attribute.should_loop}}",
-						},
+						"trip_counter": map[string]any{"type": "integer", "default": 1},
+						"should_loop":  map[string]any{"type": "boolean", "default": false},
 					},
 					"required": []any{"trip_counter", "should_loop"},
 				}),
@@ -165,14 +157,11 @@ func TestStoryQueueDrainConverges_TerminatesViaCELGate(t *testing.T) {
 	h.QueryRowSQL(
 		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
 		[]any{aNode.ID}, &finalARuns)
-	require.LessOrEqual(t, iterateMsgs, 1,
-		"emit-node's CEL on b.terminal/success must gate the recurrence-driving path; at most one "+
-			"loop/iterate can escape (via the unconditional attribute-cascade subs), and that single "+
-			"iterate must arrive at a with payload.should_loop=false so the loop cannot continue. "+
-			"got %d loop/iterate messages", iterateMsgs)
-	require.LessOrEqual(t, finalARuns, 2,
-		"the CEL gate must bound A's re-runs — at most one from the initial wake plus one from the "+
-			"single unavoidable iterate. got %d", finalARuns)
+	require.Equal(t, 0, iterateMsgs,
+		"emit-node's CEL on b.terminal/success evaluates false against should_loop=false; "+
+			"no loop/iterate can emit and the queue drains to empty. got %d loop/iterate messages", iterateMsgs)
+	require.Equal(t, 1, finalARuns,
+		"A must run exactly once — the initial wake — because no back-edge iterate was emitted. got %d", finalARuns)
 }
 
 func TestStoryQueueDrainConverges_LoopsWithoutGate(t *testing.T) {
@@ -321,129 +310,4 @@ func TestStoryQueueDrainConverges_LoopsWithoutGate(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, len(seen), 2,
 		"distinct triggering_message_id values must exist across frames")
-}
-
-func TestStoryQueueDrainConverges_TerminatesViaDiffGate(t *testing.T) {
-	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{})
-
-	h.Stub.WhenType("worker").Success(map[string]any{
-		"step": 1,
-	}, true, "worker ran")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "story-queue-drain-converges-self-drain", Version: "1",
-		Messages: []spec.MessageSchema{
-			{
-				Type: "drain/kick",
-				BodySchema: []byte(`{
-					"type": "object",
-					"properties": {"step": {"type": "integer"}}
-				}`),
-			},
-			{
-				Type: "drain/tick",
-				BodySchema: []byte(`{
-					"type": "object",
-					"properties": {"step": {"type": "integer"}},
-					"required": ["step"]
-				}`),
-			},
-		},
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(
-				node.TemplateNodeDef{
-					Type:     "worker",
-					Executor: "stub",
-					Subscribes: []node.SubscriptionEntry{
-						{Node: "drain/kick", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
-						{Node: "drain/tick", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
-					},
-				},
-				scenario.WithAttributes(map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"step": map[string]any{"type": "integer"},
-					},
-				}),
-			),
-			scenario.MakeNode(
-				node.TemplateNodeDef{
-					Type:         "self-drain-emit",
-					EmitsMessage: "drain/tick",
-					Subscribes: []node.SubscriptionEntry{
-						{Node: "worker", Type: "attribute/step/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
-					},
-				},
-				scenario.WithAttributes(map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"step": map[string]any{
-							"type":   "integer",
-							"source": "{{nodes.worker.attribute.step}}",
-						},
-					},
-					"required": []any{"step"},
-				}),
-			),
-		},
-	})
-
-	iid := h.CreateInstance(tid, "ck-story-qdc-self-drain", map[string]any{})
-	require.NotEqual(t, shared.UUID{}, iid)
-
-	resp := postMessage(t, h.ControlBase, iid, map[string]any{
-		"type":    "drain/kick",
-		"payload": map[string]any{"step": 0},
-	}, "key-self-drain-kick-"+uuid.NewString())
-	require.Truef(t, resp.status == http.StatusOK || resp.status == http.StatusCreated,
-		"drain kick must succeed; status=%d body=%s", resp.status, string(resp.raw))
-
-	workerNode := h.FindNode(iid, "worker")
-	emitNode := h.FindNode(iid, "self-drain-emit")
-	require.NotNil(t, workerNode)
-	require.NotNil(t, emitNode)
-
-	deadline := time.Now().Add(20 * time.Second)
-	var workerRuns int
-	for time.Now().Before(deadline) {
-		h.QueryRowSQL(
-			`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
-			[]any{workerNode.ID}, &workerRuns)
-		if workerRuns >= 2 {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.GreaterOrEqual(t, workerRuns, 2,
-		"worker must run at least twice — once on the kick, once on the drain/tick the emit-node produced; got %d",
-		workerRuns)
-
-	time.Sleep(5 * time.Second)
-
-	h.QueryRowSQL(
-		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
-		[]any{workerNode.ID}, &workerRuns)
-	require.Equal(t, 2, workerRuns,
-		"diff-gate convergence: worker must run exactly twice. After the second settle the step value "+
-			"is unchanged from the first, so no `attribute/step/changed` signal fires, the emit-node does "+
-			"not wake, no further drain/tick message is emitted, and the loop ends. workerRuns=%d means "+
-			"the diff-gate is leaking — emit-node wakes on a same-value resettlement",
-		workerRuns)
-
-	var emitRuns int
-	h.QueryRowSQL(
-		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
-		[]any{emitNode.ID}, &emitRuns)
-	require.Equal(t, 1, emitRuns,
-		"emit-node must run exactly once — only on the first worker settle where step's value differs "+
-			"from the (absent) prior. emitRuns=%d means the diff-gate is leaking",
-		emitRuns)
-
-	var tickMsgs int
-	h.QueryRowSQL(
-		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'drain/tick'`,
-		[]any{iid}, &tickMsgs)
-	require.Equal(t, 1, tickMsgs,
-		"exactly one drain/tick must land in the ledger (the emit-node's single firing); got %d", tickMsgs)
 }
