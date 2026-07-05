@@ -320,3 +320,31 @@ Verification:
 - Full scenario suite green.
 - 10-run stability check on `TestStoryCrossFrameCoupling_BackEdgeCycle` after the assertion reframe: 10/10 pass.
 
+### Item 4: `story:cross-frame-coupling` split (2026-07-05)
+
+Executed the story split after tracing the actual code paths. The ledger's original two-way split (cascade layer vs message layer) didn't map cleanly onto what the tests actually proved — the pre-existing `story_cross_frame_coupling_e2e_test.go` tests were all cross-frame message-driven queue drains, not intra-frame back-edges (their names were misleading — "back-edge" and "self-drain" both connote same-frame semantics). Realigned the split onto what the code genuinely demonstrates.
+
+**Split shape:**
+
+- **`story:iterative-workflows-converge`** (new) — intra-frame graph cycles bounded by CEL `when:`, diff-gate, or `cascade_mode`. Load-bearing proof: `code:test/scenarios/cascade_two_node_backedge_in_frame_test.go` (two-node A → B → A cycle closed in one frame, terminated by pong's CEL predicate against ping's payload.tags). The intra-frame self-cascade cluster proofs (sequenced / idempotent / signal-blind / most-recent / defers-during-flight) keep their existing specific-mechanism story citations per Plumbline's annotate-where-enforced rule.
+- **`story:queue-drain-converges`** (new) — multi-frame queue-drain workflows bounded by CEL `when:` or the widened cross-frame diff-gate. Proofs: the three tests in `code:test/scenarios/story_queue_drain_converges_e2e_test.go` (renamed) + `code:lib/services/test/scenarios/queue_drain_converges_demo_e2e_test.go` (services-level demo, renamed) + shipped example `file:examples/queue-drain-converges-demo.{sh,yaml}` (renamed).
+- **`story:cascade-emit`** (existing, unchanged) — declares an emit-node node-type; the message-layer mechanism piece of the original `cross-frame-coupling` story was already covered here.
+- **`story:cross-frame-coupling`** — retired (file + `stories.md` TOC entry deleted).
+
+**Passes:**
+
+1. Draft new stories: `.ok-planner/design/stories/{iterative-workflows-converge,queue-drain-converges}.md` + TOC entries.
+2. Citation flips: `@story: cross-frame-coupling` → `@story: queue-drain-converges` at both call sites; add `@story: iterative-workflows-converge` to the intra-frame two-node back-edge test.
+3. File / symbol / example renames: `story_cross_frame_coupling_e2e_test.go` → `story_queue_drain_converges_e2e_test.go` in both scenarios and services layers; test-function renames (`TestStoryCrossFrameCoupling_BackEdgeCycle` → `TestStoryQueueDrainConverges_TerminatesViaCELGate`, `_LoopsWithoutGate` → same suffix on the new prefix, `_SelfDrainConvergesViaDiffGate` → `_TerminatesViaDiffGate`; services demo test function renamed likewise); shipped examples renamed (`examples/cross-frame-coupling-demo.{sh,yaml}` → `examples/queue-drain-converges-demo.{sh,yaml}`); prose sweep across scripts and yaml comments.
+4. Retire old story: delete `.ok-planner/design/stories/cross-frame-coupling.md` + remove TOC entry.
+
+Verification:
+
+- `go build ./... && go vet ./... && make lint` — all green.
+- Plumbline citation-resolution green.
+- Renamed scenario tests green (all four `TestStoryQueueDrainConverges_*` + `TestCascadeTwoNodeBackedgeInFrame`).
+- Full scenario suite green.
+- `make core-images && make service-images` green; renamed services demo test green.
+
+**Story-level judgment call — divergence from the ledger's item 4 recommendation:** the ledger proposed splitting into "cascade layer" vs "message layer" with the diff-gate-convergence acceptance clause dissolved. Tracing the actual code showed that (a) the message-layer piece was already covered by `story:cascade-emit`, so no new "message-layer" story was needed; (b) the diff-gate widening from items 3a/3b/5/6 made cross-frame convergence a genuine capability worth its own story (`queue-drain-converges`); (c) the intra-frame promise the ledger described — first-class iterative graph shapes bounded declaratively — remains a distinct story worth naming (`iterative-workflows-converge`), with the two-node back-edge test as its natural load-bearing proof. Split executed accordingly.
+
