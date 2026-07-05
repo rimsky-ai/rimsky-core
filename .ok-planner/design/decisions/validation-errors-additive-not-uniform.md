@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Validation-error responses are an array of entries that may be of two shapes: a `{path, msg}` entry for simple field violations, and a structured entry carrying a `kind` discriminator plus additional fields for violations that the operator (or an LLM agent) needs to act on programmatically. Both shapes coexist in the same array; consumers distinguish them by the presence of the `kind` discriminator on the richer shape. Substitution-coverage rejections use the structured shape (kind `substitution_ref_uncovered`); missing-flag and cross-cutting-incoherent rejections use the `{path, msg}` shape because their fix is mechanically obvious without a structured suggestion.
+Validation-error responses are an array of entries that may be of two shapes: a `{path, msg}` entry for simple field violations, and a structured entry carrying a `kind` discriminator plus additional fields for violations that the operator (or an LLM agent) needs to act on programmatically. Both shapes coexist in the same array; consumers distinguish them by the presence of the `kind` discriminator on the richer shape. Substitution-coverage rejections use the structured shape (kind `substitution_ref_uncovered`); missing-flag rejections use the `{path, msg}` shape because their fix is mechanically obvious without a structured suggestion.
 
 ## Rationale
 

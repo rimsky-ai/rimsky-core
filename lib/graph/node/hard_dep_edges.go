@@ -61,9 +61,6 @@ func hardDepSendersOf(n TemplateNodeDef) []string {
 		if s.ForceUpstreamRefresh == nil || !*s.ForceUpstreamRefresh {
 			continue
 		}
-		if s.Instance {
-			continue
-		}
 		if s.Node == "" || s.Node == n.Type {
 			continue
 		}

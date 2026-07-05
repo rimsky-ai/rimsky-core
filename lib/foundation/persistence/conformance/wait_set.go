@@ -54,14 +54,14 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
 			SenderRunID: senderARunID,
-			TopicKind:   "state", SubscriptionScope: "direct",
+			TopicKind:   "state",
 		}, tx); err != nil {
 			return err
 		}
 		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
 			SenderRunID: senderARunID,
-			TopicKind:   "state", SubscriptionScope: "direct",
+			TopicKind:   "state",
 		}, tx); err != nil {
 			return err
 		}
@@ -69,7 +69,7 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		return store.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
 			SenderRunID: senderBRunID,
-			TopicKind:   "attribute", SubscriptionScope: "instance",
+			TopicKind:   "attribute",
 			TopicFilter: filter,
 		}, tx)
 	}); err != nil {

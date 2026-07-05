@@ -49,31 +49,6 @@ func TestBuildSubscriptionEdges_ExplicitDirect(t *testing.T) {
 	}
 }
 
-func TestBuildSubscriptionEdges_CrossCutting(t *testing.T) {
-	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		{Type: "cleanup", Executor: "stub",
-			Subscribes: []spec.SubscriptionEntry{
-				{Instance: true, Type: "terminal/error/*", ForceUpstreamRefresh: spec.BoolPtr(false)},
-			},
-		},
-	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil)
-	if err != nil {
-		t.Fatalf("BuildSubscriptionEdges: %v", err)
-	}
-	cross := out.CrossCuttingEdges()
-	if len(cross) != 1 {
-		t.Fatalf("want 1 cross-cutting edge, got %d", len(cross))
-	}
-	if cross[0].SubscriptionScope != "instance" {
-		t.Errorf("want scope=instance, got %q", cross[0].SubscriptionScope)
-	}
-	matched := out.Match("any-sender", signal.TypePath("terminal/error/rate_limited"))
-	if len(matched) != 1 {
-		t.Fatalf("cross-cutting prefix match: want 1, got %d", len(matched))
-	}
-}
-
 // @decision: subscription-edges-only-from-explicit-block
 func TestBuildSubscriptionEdges_NoImplicitEdgeFromSubstitutionRef(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
@@ -152,26 +127,6 @@ func TestBuildSubscriptionEdges_FlagsDistinguishEdges(t *testing.T) {
 	}
 }
 
-func TestBuildSubscriptionEdges_CrossCuttingAndPerNodeBothMatch(t *testing.T) {
-	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		{Type: "x", Executor: "stub",
-			Subscribes: []spec.SubscriptionEntry{
-				{Node: "y", Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
-				{Instance: true, Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
-			},
-		},
-		{Type: "y", Executor: "stub"},
-	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil)
-	if err != nil {
-		t.Fatalf("BuildSubscriptionEdges: %v", err)
-	}
-	yMatches := out.Match("y", signal.TypePath("terminal/success"))
-	if len(yMatches) != 2 {
-		t.Fatalf("want 2 edges for sender y (per-node + cross-cutting), got %d", len(yMatches))
-	}
-}
-
 func TestParseSubstitutionDirective_EventFormRetired(t *testing.T) {
 	for _, body := range []string{
 		"nodes.emit.event",
@@ -204,9 +159,6 @@ func TestBuildSubscriptionEdges_StructuralRootInjection(t *testing.T) {
 	matched := out.Match("", signal.TypePath("terminal/success"))
 	rootSeen := map[string]bool{}
 	for _, e := range matched {
-		if !e.SenderBoundToEmpty {
-			t.Errorf("Match(\"\", terminal/success) surfaced a non-root edge for %q (SenderBoundToEmpty=false)", e.ReceiverNodeType)
-		}
 		rootSeen[e.ReceiverNodeType] = true
 	}
 	for _, want := range []string{"root-a", "root-b"} {
@@ -216,37 +168,6 @@ func TestBuildSubscriptionEdges_StructuralRootInjection(t *testing.T) {
 	}
 	if rootSeen["downstream"] {
 		t.Errorf("downstream node must not have a structural-root edge — it has an upstream subscription")
-	}
-}
-
-// @decision: structural-root-edge-injection-at-registration
-func TestBuildSubscriptionEdges_StructuralRootInjection_CrossCuttingOnly(t *testing.T) {
-	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		{Type: "monitor", Executor: "stub",
-			Subscribes: []spec.SubscriptionEntry{
-				{Instance: true, Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
-			},
-		},
-		{Type: "root", Executor: "stub"},
-	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil)
-	if err != nil {
-		t.Fatalf("BuildSubscriptionEdges: %v", err)
-	}
-	matched := out.Match("", signal.TypePath("terminal/success"))
-	for _, e := range matched {
-		if e.ReceiverNodeType == "monitor" && e.SenderBoundToEmpty {
-			t.Errorf("monitor is cross-cutting-only; must not gain a structural-root edge (SenderBoundToEmpty=true)")
-		}
-	}
-	sawRoot := false
-	for _, e := range matched {
-		if e.ReceiverNodeType == "root" && e.SenderBoundToEmpty {
-			sawRoot = true
-		}
-	}
-	if !sawRoot {
-		t.Errorf("Match(\"\", terminal/success) missing structural-root edge for \"root\"")
 	}
 }
 
@@ -280,14 +201,8 @@ func TestBuildSubscriptionEdges_StructuralRootInjection_AttributeRef(t *testing.
 	}
 }
 
-// @decision: empty-sender-key-edge-disambiguation
-func TestSubscriptionEdgeMap_Match_StructuralRootDisambiguation(t *testing.T) {
+func TestSubscriptionEdgeMap_Match_EmptySenderIsolated(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		{Type: "cleanup", Executor: "stub",
-			Subscribes: []spec.SubscriptionEntry{
-				{Instance: true, Type: "terminal/success", ForceUpstreamRefresh: spec.BoolPtr(false)},
-			},
-		},
 		{Type: "root", Executor: "stub"},
 		{Type: "executor-foo", Executor: "stub"},
 	}}
@@ -296,33 +211,19 @@ func TestSubscriptionEdgeMap_Match_StructuralRootDisambiguation(t *testing.T) {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
 	fromFoo := out.Match("executor-foo", signal.TypePath("terminal/success"))
-	sawCross := false
 	for _, e := range fromFoo {
-		if e.SenderBoundToEmpty {
-			t.Errorf("Match(executor-foo) surfaced structural-root edge for %q — must be suppressed under non-empty sender", e.ReceiverNodeType)
+		if e.ReceiverNodeType == "root" {
+			t.Errorf("Match(executor-foo) surfaced structural-root edge for %q — must be isolated to empty-sender lookups", e.ReceiverNodeType)
 		}
-		if e.ReceiverNodeType == "cleanup" && !e.SenderBoundToEmpty {
-			sawCross = true
-		}
-	}
-	if !sawCross {
-		t.Errorf("Match(executor-foo) missing cross-cutting edge for cleanup")
 	}
 	fromEmpty := out.Match("", signal.TypePath("terminal/success"))
-	sawCleanupCross := false
-	sawRootInjected := false
+	sawRoot := false
 	for _, e := range fromEmpty {
-		if e.ReceiverNodeType == "cleanup" && !e.SenderBoundToEmpty {
-			sawCleanupCross = true
-		}
-		if e.ReceiverNodeType == "root" && e.SenderBoundToEmpty {
-			sawRootInjected = true
+		if e.ReceiverNodeType == "root" {
+			sawRoot = true
 		}
 	}
-	if !sawCleanupCross {
-		t.Errorf("Match(\"\") missing cross-cutting edge for cleanup")
-	}
-	if !sawRootInjected {
+	if !sawRoot {
 		t.Errorf("Match(\"\") missing structural-root edge for root")
 	}
 }

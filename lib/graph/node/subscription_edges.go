@@ -17,18 +17,13 @@ import (
 )
 
 type SubscriptionEdge struct {
-	ReceiverNodeType  string
-	TypePattern       signal.TypePath
-	WhenExpr          *signal.CompiledPredicate
-	SubscriptionScope string
+	ReceiverNodeType string
+	TypePattern      signal.TypePath
+	WhenExpr         *signal.CompiledPredicate
 
 	//	@concept: cascade
 	//	@concept: node-subscription
 	ForceUpstreamRefresh bool
-
-	//	@concept: node-subscription
-	//	@concept: cascade
-	SenderBoundToEmpty bool
 }
 
 type SubscriptionEdgeMap struct {
@@ -84,26 +79,11 @@ func (m *SubscriptionEdgeMap) Insert(senderNodeType string, edge SubscriptionEdg
 	}
 }
 
-// @decision: empty-sender-key-edge-disambiguation
-type senderBoundFilter int
-
-const (
-	edgeFilterAll senderBoundFilter = iota
-	edgeFilterCrossCuttingOnly
-)
-
 func (m *SubscriptionEdgeMap) Match(senderNodeType string, signalType signal.TypePath) []SubscriptionEdge {
 	if m == nil || len(m.bySender) == 0 {
 		return nil
 	}
-	var out []SubscriptionEdge
-	if senderNodeType == "" {
-		out = appendMatches(out, m.bySender[""], signalType, edgeFilterAll)
-		return out
-	}
-	out = appendMatches(out, m.bySender[senderNodeType], signalType, edgeFilterAll)
-	out = appendMatches(out, m.bySender[""], signalType, edgeFilterCrossCuttingOnly)
-	return out
+	return appendMatches(nil, m.bySender[senderNodeType], signalType)
 }
 
 func (m *SubscriptionEdgeMap) Senders() []string {
@@ -122,23 +102,9 @@ func (m *SubscriptionEdgeMap) ReceiverNodeTypesForSender(senderNodeType string) 
 		return nil
 	}
 	seen := map[string]struct{}{}
-	collect := func(root *prefixNode, filter senderBoundFilter) {
-		if root == nil {
-			return
-		}
-		walkAllEdges(root, func(e SubscriptionEdge) {
-			if filter == edgeFilterCrossCuttingOnly && e.SenderBoundToEmpty {
-				return
-			}
-			seen[e.ReceiverNodeType] = struct{}{}
-		})
-	}
-	if senderNodeType == "" {
-		collect(m.bySender[""], edgeFilterAll)
-	} else {
-		collect(m.bySender[senderNodeType], edgeFilterAll)
-		collect(m.bySender[""], edgeFilterCrossCuttingOnly)
-	}
+	walkAllEdges(m.bySender[senderNodeType], func(e SubscriptionEdge) {
+		seen[e.ReceiverNodeType] = struct{}{}
+	})
 	if len(seen) == 0 {
 		return nil
 	}
@@ -176,19 +142,7 @@ func (m *SubscriptionEdgeMap) ReceiverEdgesForSender(senderNodeType string) []Su
 		return nil
 	}
 	var out []SubscriptionEdge
-	if senderNodeType == "" {
-		walkAllEdges(m.bySender[""], func(e SubscriptionEdge) {
-			out = append(out, e)
-		})
-		return out
-	}
 	walkAllEdges(m.bySender[senderNodeType], func(e SubscriptionEdge) {
-		out = append(out, e)
-	})
-	walkAllEdges(m.bySender[""], func(e SubscriptionEdge) {
-		if e.SenderBoundToEmpty {
-			return
-		}
 		out = append(out, e)
 	})
 	return out
@@ -207,20 +161,6 @@ func (m *SubscriptionEdgeMap) AllEdges() []SubscriptionEdge {
 	return out
 }
 
-func (m *SubscriptionEdgeMap) CrossCuttingEdges() []SubscriptionEdge {
-	if m == nil {
-		return nil
-	}
-	var out []SubscriptionEdge
-	walkAllEdges(m.bySender[""], func(e SubscriptionEdge) {
-		if e.SenderBoundToEmpty {
-			return
-		}
-		out = append(out, e)
-	})
-	return out
-}
-
 func walkAllEdges(n *prefixNode, cb func(SubscriptionEdge)) {
 	if n == nil {
 		return
@@ -236,11 +176,11 @@ func walkAllEdges(n *prefixNode, cb func(SubscriptionEdge)) {
 	}
 }
 
-func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath, filter senderBoundFilter) []SubscriptionEdge {
+func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath) []SubscriptionEdge {
 	if root == nil {
 		return out
 	}
-	out = appendFiltered(out, root.wildcard, filter)
+	out = append(out, root.wildcard...)
 	segs := splitSegments(string(typ))
 	frontier := []*prefixNode{root}
 	for _, seg := range segs {
@@ -251,12 +191,12 @@ func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath
 			}
 			if child, ok := cur.children[seg]; ok {
 				next = append(next, child)
-				out = appendFiltered(out, child.wildcard, filter)
+				out = append(out, child.wildcard...)
 			}
 			if seg != "*" {
 				if child, ok := cur.children["*"]; ok {
 					next = append(next, child)
-					out = appendFiltered(out, child.wildcard, filter)
+					out = append(out, child.wildcard...)
 				}
 			}
 		}
@@ -266,22 +206,9 @@ func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath
 		frontier = next
 	}
 	for _, cur := range frontier {
-		out = appendFiltered(out, cur.exact, filter)
+		out = append(out, cur.exact...)
 	}
 	return out
-}
-
-func appendFiltered(dst, src []SubscriptionEdge, filter senderBoundFilter) []SubscriptionEdge {
-	if filter == edgeFilterAll {
-		return append(dst, src...)
-	}
-	for _, e := range src {
-		if e.SenderBoundToEmpty {
-			continue
-		}
-		dst = append(dst, e)
-	}
-	return dst
 }
 
 func splitSegments(s string) []string {
@@ -297,9 +224,7 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 		if existing.ReceiverNodeType == e.ReceiverNodeType &&
 			existing.TypePattern == e.TypePattern &&
 			existing.WhenExpr == e.WhenExpr &&
-			existing.SubscriptionScope == e.SubscriptionScope &&
-			existing.ForceUpstreamRefresh == e.ForceUpstreamRefresh &&
-			existing.SenderBoundToEmpty == e.SenderBoundToEmpty {
+			existing.ForceUpstreamRefresh == e.ForceUpstreamRefresh {
 			return true
 		}
 	}
@@ -366,9 +291,7 @@ func BuildSubscriptionEdges(
 			ReceiverNodeType:     def.Type,
 			TypePattern:          signal.TypePath("terminal/success"),
 			WhenExpr:             nil,
-			SubscriptionScope:    spec.SubscriptionScopeDirect,
 			ForceUpstreamRefresh: false,
-			SenderBoundToEmpty:   true,
 		})
 	}
 	return out, nil
@@ -399,7 +322,6 @@ func edgeFromMessageRef(receiverType string) SubscriptionEdge {
 		ReceiverNodeType:     receiverType,
 		TypePattern:          signal.TypePath("terminal/success"),
 		WhenExpr:             nil,
-		SubscriptionScope:    spec.SubscriptionScopeDirect,
 		ForceUpstreamRefresh: false,
 	}
 }
@@ -636,10 +558,6 @@ func walkSchemaForSourcesWithPath(node any, path string, cb func(src, path strin
 }
 
 func edgeFromSubscription(s spec.SubscriptionEntry, receiverType string) (SubscriptionEdge, error) {
-	scope := spec.SubscriptionScopeDirect
-	if s.Instance {
-		scope = spec.SubscriptionScopeInstance
-	}
 	pattern := signal.TypePath(s.Type)
 	when, err := signal.CompileWhen(pattern, s.When)
 	if err != nil {
@@ -652,7 +570,6 @@ func edgeFromSubscription(s spec.SubscriptionEntry, receiverType string) (Subscr
 		ReceiverNodeType:     receiverType,
 		TypePattern:          pattern,
 		WhenExpr:             when,
-		SubscriptionScope:    scope,
 		ForceUpstreamRefresh: *s.ForceUpstreamRefresh,
 	}, nil
 }

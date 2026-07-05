@@ -590,12 +590,7 @@ func (h *Harness) templateHasStructuralRoot(templateHash string) bool {
 		return true
 	}
 	matched := edges.Match("", signal.TypePath("terminal/success"))
-	for _, e := range matched {
-		if e.SenderBoundToEmpty {
-			return true
-		}
-	}
-	return false
+	return len(matched) > 0
 }
 
 func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Duration) {
@@ -921,9 +916,6 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 			item := map[string]any{"type": s.Type}
 			if s.Node != "" {
 				item["node"] = s.Node
-			}
-			if s.Instance {
-				item["instance"] = true
 			}
 			if s.When != "" {
 				item["when"] = s.When

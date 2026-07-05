@@ -169,14 +169,14 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 		"r must run exactly once per frame, not once per settling sender")
 }
 
-func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
+func TestSubscriptionCascade_TerminalErrorPrefixMatchesPerSender(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("worker").Error("rate_limited", []byte(`{"hint":"backoff"}`))
 	h.Stub.WhenType("monitor").Success(map[string]any{"observed": 1}, true, "mon")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "subscription-cascade-crosscut-positive", Version: "1",
+		Name: "subscription-cascade-terminal-error-prefix", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "worker",
@@ -188,14 +188,14 @@ func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "monitor", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance:             true,
+					Node:                 "worker",
 					Type:                 "terminal/error/stub/rate_limited",
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
 	})
-	iid := h.CreateInstance(tid, "ck-crosscut-pos", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-term-err-prefix", map[string]any{})
 	worker := h.FindNode(iid, "worker")
 	monitor := h.FindNode(iid, "monitor")
 	require.NotNil(t, worker)
@@ -204,10 +204,10 @@ func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
 		"worker should reach failed via give_up")
 	require.True(t, h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh, 30*time.Second),
-		"monitor should reach fresh after cross-cutting cascade fires")
+		"monitor should reach fresh after per-sender terminal/error/<class> cascade fires")
 }
 
-func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
+func TestSubscriptionCascade_UnsubscribedNodeStaysIdle(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "w-ok")

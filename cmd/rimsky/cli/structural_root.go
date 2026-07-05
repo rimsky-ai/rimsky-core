@@ -39,10 +39,5 @@ func TemplateHasStructuralRoot(ctx context.Context, c *Client, hash string) (boo
 		return true, nil
 	}
 	matched := edges.Match("", rsignal.TypePath("terminal/success"))
-	for _, e := range matched {
-		if e.SenderBoundToEmpty {
-			return true, nil
-		}
-	}
-	return false, nil
+	return len(matched) > 0, nil
 }

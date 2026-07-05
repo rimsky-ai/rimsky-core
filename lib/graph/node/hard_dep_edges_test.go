@@ -76,25 +76,6 @@ func TestBuildHardDepEdges_SelfReferenceIgnored(t *testing.T) {
 	}
 }
 
-func TestBuildHardDepEdges_CrossCuttingIgnored(t *testing.T) {
-	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		{Type: "watcher", Executor: "stub",
-			Subscribes: []spec.SubscriptionEntry{{
-				Instance:             true,
-				Type:                 "terminal/error/*",
-				ForceUpstreamRefresh: spec.BoolPtr(true),
-			}},
-		},
-	}}
-	out, err := BuildHardDepEdges(tmpl)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(out) != 0 {
-		t.Fatalf("cross-cutting entries must be excluded, got %v", out)
-	}
-}
-
 func TestBuildHardDepEdges_CycleDetected(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		makeNodeWithRefresh("a", "b"),

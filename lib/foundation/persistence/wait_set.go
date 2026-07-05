@@ -14,13 +14,12 @@ import (
 
 // @concept: wait-set
 type WaitSetRow struct {
-	FrameID           shared.UUID
-	ReceiverRunID     shared.UUID
-	SenderRunID       shared.UUID
-	TopicKind         string
-	SubscriptionScope string
-	TopicFilter       json.RawMessage
-	DrainedAt         *time.Time
+	FrameID       shared.UUID
+	ReceiverRunID shared.UUID
+	SenderRunID   shared.UUID
+	TopicKind     string
+	TopicFilter   json.RawMessage
+	DrainedAt     *time.Time
 }
 
 // @concept: wait-set

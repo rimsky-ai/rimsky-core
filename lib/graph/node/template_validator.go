@@ -415,24 +415,10 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				Msg:  "force_upstream_refresh is required (true or false); no default applies",
 			})
 		}
-		if s.Node == "" && !s.Instance {
+		if s.Node == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase,
-				Msg:  "must declare either `node:` or `instance: true`",
-			})
-			continue
-		}
-		if s.Node != "" && s.Instance {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: sbase,
-				Msg:  "`node:` and `instance: true` are mutually exclusive",
-			})
-			continue
-		}
-		if refreshKnown && s.Instance && *s.ForceUpstreamRefresh {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: sbase,
-				Msg:  "force_upstream_refresh: true cannot be combined with instance: true (cross-cutting subscriptions are sender-agnostic; there is no specific upstream to refresh)",
+				Msg:  "must declare `node:`",
 			})
 			continue
 		}
@@ -544,10 +530,9 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 		}
 	}
 	type subKey struct {
-		node     string
-		instance bool
-		typ      string
-		when     string
+		node string
+		typ  string
+		when string
 	}
 	type subEntry struct {
 		idx     int
@@ -559,10 +544,9 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			continue
 		}
 		k := subKey{
-			node:     s.Node,
-			instance: s.Instance,
-			typ:      s.Type,
-			when:     s.When,
+			node: s.Node,
+			typ:  s.Type,
+			when: s.When,
 		}
 		groups[k] = append(groups[k], subEntry{
 			idx: i, refresh: *s.ForceUpstreamRefresh,
@@ -581,11 +565,11 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				Path: fmt.Sprintf("%s.subscribes[%d]", base, e.idx),
 				Msg: fmt.Sprintf(
 					"conflicting cascade-shape flags for subscription key "+
-						"(node:%q instance:%t type:%q when:%q): entry %d has "+
+						"(node:%q type:%q when:%q): entry %d has "+
 						"force_upstream_refresh=%t but entry %d has "+
 						"force_upstream_refresh=%t — a single subscription "+
 						"key must declare one coherent cascade contract",
-					k.node, k.instance, k.typ, k.when,
+					k.node, k.typ, k.when,
 					first.idx, first.refresh,
 					e.idx, e.refresh),
 			})
@@ -648,9 +632,6 @@ func validateSubstitutionRefCoverage(
 	for _, n := range tmpl.Nodes {
 		idx := map[coverageEntryKey]struct{}{}
 		for _, s := range n.Subscribes {
-			if s.Instance {
-				continue
-			}
 			if s.Node == "" {
 				continue
 			}

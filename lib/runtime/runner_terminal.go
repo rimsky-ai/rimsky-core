@@ -525,11 +525,10 @@ func cascadeSubscribersStaleInTxWithVisited(
 				continue
 			}
 			if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
-				FrameID:           senderFrameID,
-				ReceiverRunID:     receiverRunID,
-				SenderRunID:       senderRunID,
-				TopicKind:         waitSetTopicKindFor(edge.TypePattern),
-				SubscriptionScope: edge.SubscriptionScope,
+				FrameID:       senderFrameID,
+				ReceiverRunID: receiverRunID,
+				SenderRunID:   senderRunID,
+				TopicKind:     waitSetTopicKindFor(edge.TypePattern),
 			}, tx); err != nil {
 				return fmt.Errorf("cascadeSubscribersStaleInTx: wait-set insert: %w", err)
 			}
@@ -601,11 +600,10 @@ func pullForceRefreshUpstreams(
 			}
 		}
 		if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID:           senderFrameID,
-			ReceiverRunID:     receiverRunID,
-			SenderRunID:       upstreamRunID,
-			TopicKind:         "attribute",
-			SubscriptionScope: "direct",
+			FrameID:       senderFrameID,
+			ReceiverRunID: receiverRunID,
+			SenderRunID:   upstreamRunID,
+			TopicKind:     "attribute",
 		}, tx); err != nil {
 			return fmt.Errorf("pullForceRefreshUpstreams: insert wait-set: %w", err)
 		}

@@ -23,8 +23,8 @@ I `POST /instances/{id}/messages` with an empty body (`{}`, or with `type: ""` e
 
 ## Falsifier
 
-The empty-message emit lands in the ledger but no frame opens; OR the frame opens but no structural root stale-marks (no node-runs created); OR a non-root node with author-declared *direct* subscriptions (a `subscribes:` entry naming a specific upstream node-type, not the cross-cutting `instance: true` form) also stale-marks (the trigger overreaches); OR `Idempotency-Key` replay opens a second frame. Cross-cutting (`instance: true`) subscribers may legitimately fire when their `when:` predicate matches the empty-message virtual's `terminal/success` emission; their firing is not a falsifier.
+The empty-message emit lands in the ledger but no frame opens; OR the frame opens but no structural root stale-marks (no node-runs created); OR a non-root node with author-declared subscriptions (a `subscribes:` entry naming a specific upstream node-type) also stale-marks (the trigger overreaches); OR `Idempotency-Key` replay opens a second frame.
 
 ## Proof
 
-Executable proof — emit empty message; observe one new frame with `triggering_message_id` matching the emit; observe stale-mark and dispatch on each structural root; observe non-root direct subscribers untouched (and cross-cutting subscribers fire iff their predicate matches); replay with the same key observes the original message id and no second frame.
+Executable proof — emit empty message; observe one new frame with `triggering_message_id` matching the emit; observe stale-mark and dispatch on each structural root; observe non-root direct subscribers untouched; replay with the same key observes the original message id and no second frame.

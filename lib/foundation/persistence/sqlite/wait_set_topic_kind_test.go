@@ -96,8 +96,8 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	for _, topicKind := range []string{"transient", "terminal"} {
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_wait_set
-			   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)
-			 VALUES (?, ?, ?, ?, 'direct')`,
+			   (frame_id, receiver_run_id, sender_run_id, topic_kind)
+			 VALUES (?, ?, ?, ?)`,
 			frameID, receiverRunID, senderRunID, topicKind,
 		); err != nil {
 			t.Fatalf("insert wait_set row topic_kind=%q: %v; "+

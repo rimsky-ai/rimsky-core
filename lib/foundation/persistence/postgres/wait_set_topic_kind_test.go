@@ -96,8 +96,8 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	for _, topicKind := range []string{"transient", "terminal"} {
 		pgtest.ExecForTest(ctx, t, d,
 			`INSERT INTO rimsky_wait_set
-			   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)
-			 VALUES ($1, $2, $3, $4, 'direct')`,
+			   (frame_id, receiver_run_id, sender_run_id, topic_kind)
+			 VALUES ($1, $2, $3, $4)`,
 			uuid.UUID(frameID), uuid.UUID(receiverRunID), uuid.UUID(senderRunID), topicKind,
 		)
 	}
@@ -115,8 +115,8 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 
 	if err := pgtest.TryExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_wait_set
-		   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)
-		 VALUES ($1, $2, $3, 'message', 'direct')`,
+		   (frame_id, receiver_run_id, sender_run_id, topic_kind)
+		 VALUES ($1, $2, $3, 'message')`,
 		uuid.UUID(frameID), uuid.UUID(receiverRunID), uuid.UUID(senderRunID),
 	); err == nil {
 		t.Fatalf("insert wait_set row topic_kind='message' returned nil error; " +

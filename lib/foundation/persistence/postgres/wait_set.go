@@ -36,12 +36,12 @@ func (b *waitSetImpl) Insert(ctx context.Context, row persistence.WaitSetRow, tx
 	}
 	_, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_wait_set
-		   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope, topic_filter)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)
+		   (frame_id, receiver_run_id, sender_run_id, topic_kind, topic_filter)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (frame_id, receiver_run_id, sender_run_id, topic_kind)
 		 DO NOTHING`,
 		row.FrameID, row.ReceiverRunID, row.SenderRunID,
-		row.TopicKind, row.SubscriptionScope, filter)
+		row.TopicKind, filter)
 	if err != nil {
 		return fmt.Errorf("rimsky_wait_set insert: %w", err)
 	}
@@ -64,7 +64,7 @@ func (b *waitSetImpl) MarkDrainedBySender(ctx context.Context, frameID, senderRu
 func (b *waitSetImpl) ListForReceiver(ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx) ([]persistence.WaitSetRow, error) {
 	ex := b.q(tx)
 	rows, err := ex.Query(ctx,
-		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope, topic_filter, drained_at
+		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, topic_filter, drained_at
 		   FROM rimsky_wait_set
 		  WHERE frame_id = $1 AND receiver_run_id = $2`,
 		frameID, receiverRunID)
@@ -78,7 +78,7 @@ func (b *waitSetImpl) ListForReceiver(ctx context.Context, frameID, receiverRunI
 func (b *waitSetImpl) ListForFrame(ctx context.Context, frameID shared.UUID, tx persistence.Tx) ([]persistence.WaitSetRow, error) {
 	ex := b.q(tx)
 	rows, err := ex.Query(ctx,
-		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope, topic_filter, drained_at
+		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, topic_filter, drained_at
 		   FROM rimsky_wait_set
 		  WHERE frame_id = $1`,
 		frameID)
@@ -94,7 +94,7 @@ func (b *waitSetImpl) ListDrainedAttributeRowsForReceiver(
 ) ([]persistence.WaitSetRow, error) {
 	ex := b.q(tx)
 	rows, err := ex.Query(ctx,
-		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope, topic_filter, drained_at
+		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, topic_filter, drained_at
 		   FROM rimsky_wait_set
 		  WHERE frame_id = $1 AND receiver_run_id = $2
 		    AND drained_at IS NOT NULL
@@ -206,7 +206,7 @@ func collectWaitSet(rows pgx.Rows) ([]persistence.WaitSetRow, error) {
 		var filter []byte
 		var drainedAt *time.Time
 		if err := rows.Scan(&w.FrameID, &w.ReceiverRunID, &w.SenderRunID,
-			&w.TopicKind, &w.SubscriptionScope, &filter, &drainedAt); err != nil {
+			&w.TopicKind, &filter, &drainedAt); err != nil {
 			return nil, err
 		}
 		if filter != nil {

@@ -313,16 +313,6 @@ func cascadeEmptyMessageWakeInTx(
 					continue
 				}
 				touchedReceiverRuns[receiverRunID] = struct{}{}
-				// @story: upstream-pull-on-invalidate
-				// @concept: cascade
-				if !e.SenderBoundToEmpty {
-					if err := pullForceRefreshUpstreamsForMessageReceiver(
-						ctx, persist, queue, logger, tx, r, receiverRunID, receiverScopeID, frameID,
-						templateHash, byType,
-					); err != nil {
-						return fmt.Errorf("cascadeEmptyMessageWakeInTx: pull upstream-refresh for %s: %w", r.ID, err)
-					}
-				}
 			}
 		}
 	}
@@ -332,29 +322,6 @@ func cascadeEmptyMessageWakeInTx(
 		}
 	}
 	return nil
-}
-
-// @story: upstream-pull-on-invalidate
-// @concept: cascade
-func pullForceRefreshUpstreamsForMessageReceiver(
-	ctx context.Context, persist persistence.Tables, queue persistence.Queue,
-	logger shared.Logger,
-	tx persistence.Tx,
-	receiver persistence.NodeRow,
-	receiverRunID, targetRunScopeID, senderFrameID shared.UUID,
-	templateHash string,
-	byType map[string][]persistence.NodeRow,
-) error {
-	if logger == nil {
-		logger = shared.SilentLogger{}
-	}
-	args := RunArgs{Persist: persist, Queue: queue, Logger: logger, Clock: shared.SystemClock{}}
-	visited := map[shared.UUID]struct{}{receiver.ID: {}}
-	return pullForceRefreshUpstreams(
-		ctx, args, tx, receiver, byType,
-		receiverRunID, targetRunScopeID, senderFrameID,
-		templateHash, visited,
-	)
 }
 
 func DeliverPendingMessages(

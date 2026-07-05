@@ -16,12 +16,11 @@ import (
 )
 
 type WaitSetEntry struct {
-	FrameID           uuid.UUID `json:"frame_id"`
-	ReceiverRunID     uuid.UUID `json:"receiver_run_id"`
-	SenderRunID       uuid.UUID `json:"sender_run_id"`
-	TopicKind         string    `json:"topic_kind"`
-	SubscriptionScope string    `json:"subscription_scope"`
-	TopicFilter       any       `json:"topic_filter,omitempty"`
+	FrameID       uuid.UUID `json:"frame_id"`
+	ReceiverRunID uuid.UUID `json:"receiver_run_id"`
+	SenderRunID   uuid.UUID `json:"sender_run_id"`
+	TopicKind     string    `json:"topic_kind"`
+	TopicFilter   any       `json:"topic_filter,omitempty"`
 }
 
 type WaitSetResponse struct {
@@ -67,11 +66,10 @@ func handleAdminWaitSets(deps AppDeps) http.HandlerFunc {
 			}
 			for _, r := range rows {
 				entry := WaitSetEntry{
-					FrameID:           r.FrameID,
-					ReceiverRunID:     r.ReceiverRunID,
-					SenderRunID:       r.SenderRunID,
-					TopicKind:         r.TopicKind,
-					SubscriptionScope: r.SubscriptionScope,
+					FrameID:       r.FrameID,
+					ReceiverRunID: r.ReceiverRunID,
+					SenderRunID:   r.SenderRunID,
+					TopicKind:     r.TopicKind,
 				}
 				if len(r.TopicFilter) > 0 {
 					var f any

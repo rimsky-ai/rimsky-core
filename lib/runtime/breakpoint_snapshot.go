@@ -84,9 +84,8 @@ func openWaitSetSummaryForBreakpoint(ctx context.Context, args RunArgs, acq *acq
 				continue
 			}
 			entry := map[string]any{
-				"sender_run_id":      r.SenderRunID.String(),
-				"topic_kind":         r.TopicKind,
-				"subscription_scope": r.SubscriptionScope,
+				"sender_run_id": r.SenderRunID.String(),
+				"topic_kind":    r.TopicKind,
 			}
 			if len(r.TopicFilter) > 0 {
 				var f any

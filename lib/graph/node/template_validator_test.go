@@ -648,22 +648,6 @@ func TestValidateSubscribes_Ok(t *testing.T) {
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-func TestValidateSubscribes_MutexNodeAndInstance(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1",
-		Nodes: []TemplateNodeDef{
-			{Type: "a", Executor: "h"},
-			{Type: "b", Executor: "h",
-				Subscribes: []SubscriptionEntry{
-					{Node: "a", Instance: true, Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)},
-				},
-			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-}
-
 func TestValidateSubscribes_SelfOK(t *testing.T) {
 	spec := &TemplateSpec{
 		Name: "demo", Version: "1",
@@ -779,30 +763,6 @@ func TestValidateSubscribes_RejectsMissingForceUpstreamRefresh(t *testing.T) {
 		}
 	}
 	require.True(t, found, "expected an error whose path ends in .force_upstream_refresh with a required message; got %+v", res.Errors)
-}
-
-func TestValidateSubscribes_RejectsCrossCuttingWithForceUpstreamRefresh(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1",
-		Nodes: []TemplateNodeDef{
-			{Type: "a", Executor: "h"},
-			{Type: "b", Executor: "h",
-				Subscribes: []SubscriptionEntry{
-					{Instance: true, Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(true)},
-				},
-			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok(), "cross-cutting + force_upstream_refresh must be rejected")
-	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "force_upstream_refresh") && strings.Contains(e.Msg, "instance") {
-			found = true
-			break
-		}
-	}
-	require.True(t, found, "expected an error mentioning both force_upstream_refresh and instance; got %+v", res.Errors)
 }
 
 func TestValidateSubscribes_RejectsConflictingFlagsOnSameKey(t *testing.T) {

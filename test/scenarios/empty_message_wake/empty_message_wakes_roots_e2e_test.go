@@ -7,7 +7,6 @@
 // @concept: message
 // @decision: empty-message-as-root-trigger
 // @decision: structural-root-edge-injection-at-registration
-// @decision: empty-sender-key-edge-disambiguation
 
 package empty_message_wake
 
@@ -36,7 +35,6 @@ func TestStory_EmptyMessageWakesRoots(t *testing.T) {
 	h.Stub.WhenType("root1").Success(map[string]any{"r1": 1}, true, "root1")
 	h.Stub.WhenType("root2").Success(map[string]any{"r2": 1}, true, "root2")
 	h.Stub.WhenType("down").Success(map[string]any{"d": 1}, true, "down")
-	h.Stub.WhenType("watch").Success(map[string]any{"w": 1}, true, "watch")
 
 	tspec := node.TemplateSpec{
 		Name:    "empty-message-wakes-roots",
@@ -52,14 +50,6 @@ func TestStory_EmptyMessageWakesRoots(t *testing.T) {
 				node.TemplateNodeDef{Type: "down", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node:                 "root1",
-					Type:                 "terminal/success",
-					ForceUpstreamRefresh: node.BoolPtr(false),
-				}),
-			),
-			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "watch", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance:             true,
 					Type:                 "terminal/success",
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),

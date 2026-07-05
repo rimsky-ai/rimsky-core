@@ -33,12 +33,12 @@ func (b *waitSetImpl) Insert(ctx context.Context, row persistence.WaitSetRow, tx
 	}
 	_, err := b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_wait_set
-		   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope, topic_filter)
-		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)
+		   (frame_id, receiver_run_id, sender_run_id, topic_kind, topic_filter)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT (frame_id, receiver_run_id, sender_run_id, topic_kind)
 		 DO NOTHING`,
 		row.FrameID, row.ReceiverRunID, row.SenderRunID,
-		row.TopicKind, row.SubscriptionScope, filter)
+		row.TopicKind, filter)
 	if err != nil {
 		return fmt.Errorf("rimsky_wait_set insert: %w", err)
 	}
@@ -59,7 +59,7 @@ func (b *waitSetImpl) MarkDrainedBySender(ctx context.Context, frameID, senderRu
 
 func (b *waitSetImpl) ListForReceiver(ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx) ([]persistence.WaitSetRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
-		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope, topic_filter, drained_at
+		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, topic_filter, drained_at
 		   FROM rimsky_wait_set
 		  WHERE frame_id = ? AND receiver_run_id = ?`,
 		frameID, receiverRunID)
@@ -72,7 +72,7 @@ func (b *waitSetImpl) ListForReceiver(ctx context.Context, frameID, receiverRunI
 
 func (b *waitSetImpl) ListForFrame(ctx context.Context, frameID shared.UUID, tx persistence.Tx) ([]persistence.WaitSetRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
-		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope, topic_filter, drained_at
+		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, topic_filter, drained_at
 		   FROM rimsky_wait_set
 		  WHERE frame_id = ?`,
 		frameID)
@@ -87,7 +87,7 @@ func (b *waitSetImpl) ListDrainedAttributeRowsForReceiver(
 	ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx,
 ) ([]persistence.WaitSetRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
-		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope, topic_filter, drained_at
+		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, topic_filter, drained_at
 		   FROM rimsky_wait_set
 		  WHERE frame_id = ? AND receiver_run_id = ?
 		    AND drained_at IS NOT NULL
@@ -204,7 +204,7 @@ func collectWaitSetRows(rows *sql.Rows) ([]persistence.WaitSetRow, error) {
 		var filter sql.NullString
 		var drainedAtStr sql.NullString
 		if err := rows.Scan(&w.FrameID, &w.ReceiverRunID, &w.SenderRunID,
-			&w.TopicKind, &w.SubscriptionScope, &filter, &drainedAtStr); err != nil {
+			&w.TopicKind, &filter, &drainedAtStr); err != nil {
 			return nil, err
 		}
 		if filter.Valid && filter.String != "" {

@@ -8,8 +8,6 @@ package spec
 type SubscriptionEntry struct {
 	Node string `yaml:"node,omitempty" json:"node,omitempty"`
 
-	Instance bool `yaml:"instance,omitempty" json:"instance,omitempty"`
-
 	Type string `yaml:"type" json:"type"`
 
 	When string `yaml:"when,omitempty" json:"when,omitempty"`
@@ -25,11 +23,6 @@ const (
 	MessageSenderKindOperator  = "operator"
 	MessageSenderKindPublisher = "publisher"
 	MessageSenderKindInstance  = "instance"
-)
-
-const (
-	SubscriptionScopeDirect   = "direct"
-	SubscriptionScopeInstance = "instance"
 )
 
 const (

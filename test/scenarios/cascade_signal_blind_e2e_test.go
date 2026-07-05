@@ -44,10 +44,8 @@ func TestCascadeSignalBlind_E2E(t *testing.T) {
 	t.Parallel()
 
 	t.Run("terminal_success__per_sender", testCascadeTerminalSuccessPerSender)
-	t.Run("terminal_success__cross_cutting", testCascadeTerminalSuccessCrossCutting)
 
 	t.Run("terminal_error_giveup__per_sender_prefix", testCascadeTerminalErrorGiveUpPerSender)
-	t.Run("terminal_error_giveup__cross_cutting_exact", testCascadeTerminalErrorGiveUpCrossCutting)
 
 	t.Run("terminal_error_pass__per_sender_prefix", testCascadeTerminalErrorPassPerSender)
 
@@ -90,39 +88,6 @@ func testCascadeTerminalSuccessPerSender(t *testing.T) {
 		"audit row for terminal/success must land in rimsky_events")
 }
 
-func testCascadeTerminalSuccessCrossCutting(t *testing.T) {
-	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("sender").Success(map[string]any{"k": 1}, true, "ok")
-	h.Stub.WhenType("receiver").Success(map[string]any{"r": 1}, true, "rcv")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "cascade-signal-blind-success-cross-cutting", Version: "1",
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "sender", Executor: "stub"}),
-			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance: true, Type: "terminal/success",
-					ForceUpstreamRefresh: node.BoolPtr(false),
-				}),
-			),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-csb-success-cc", map[string]any{})
-
-	sender := h.FindNode(iid, "sender")
-	receiver := h.FindNode(iid, "receiver")
-	require.NotNil(t, sender)
-	require.NotNil(t, receiver)
-
-	require.True(t, h.WaitForNodeState(sender.ID, cascade.NodeStateFresh, 30*time.Second),
-		"sender should settle terminal/success")
-	require.True(t, h.WaitForEventKind(receiver.ID, "terminal/success", 30*time.Second),
-		"cross-cutting (instance:true) terminal/success subscriber must dispatch and emit terminal/success")
-	require.True(t, h.WaitForEventKind(sender.ID, "terminal/success", 10*time.Second),
-		"audit row for terminal/success must land in rimsky_events")
-}
-
 func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("sender").Error("giveup_class", map[string]any{"hint": "fail"})
@@ -159,46 +124,6 @@ func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
 		"per-sender terminal/error/* subscriber must dispatch on the sender's give_up settlement")
 	require.True(t, h.WaitForEventKind(sender.ID, "terminal/error/stub/giveup_class", 10*time.Second),
-		"audit row for terminal/error/<class> must land in rimsky_events")
-}
-
-func testCascadeTerminalErrorGiveUpCrossCutting(t *testing.T) {
-	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("sender").Error("giveup_class_cc", map[string]any{"hint": "fail"})
-	h.Stub.WhenType("receiver").Success(map[string]any{"r": 1}, true, "rcv")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "cascade-signal-blind-error-giveup-cross-cutting", Version: "1",
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{
-				Type:     "sender",
-				Executor: "stub",
-				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/giveup_class_cc": {Action: "give_up"},
-				},
-			}),
-			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance:             true,
-					Type:                 "terminal/error/stub/giveup_class_cc",
-					ForceUpstreamRefresh: node.BoolPtr(false),
-				}),
-			),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-csb-err-giveup-cc", map[string]any{})
-
-	sender := h.FindNode(iid, "sender")
-	receiver := h.FindNode(iid, "receiver")
-	require.NotNil(t, sender)
-	require.NotNil(t, receiver)
-
-	require.True(t, h.WaitForNodeState(sender.ID, cascade.NodeStateFailed, 30*time.Second),
-		"sender should settle failed under give_up")
-	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"cross-cutting terminal/error/<class> subscriber must dispatch")
-	require.True(t, h.WaitForEventKind(sender.ID, "terminal/error/stub/giveup_class_cc", 10*time.Second),
 		"audit row for terminal/error/<class> must land in rimsky_events")
 }
 

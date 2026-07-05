@@ -325,11 +325,10 @@ func TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp(t *testing.T) {
 		[]any{target.ID, *target.FrameID}, &targetRunID)
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return f.persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID:           *target.FrameID,
-			ReceiverRunID:     targetRunID,
-			SenderRunID:       depRunID,
-			TopicKind:         "state",
-			SubscriptionScope: "direct",
+			FrameID:       *target.FrameID,
+			ReceiverRunID: targetRunID,
+			SenderRunID:   depRunID,
+			TopicKind:     "state",
 		}, tx)
 	}))
 
