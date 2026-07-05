@@ -17,9 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
-	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
 func EnqueueMessage(ctx context.Context, tx persistence.Tx, m persistence.MessagesTable, req persistence.EnqueueMessageRequest) error {
@@ -49,7 +46,7 @@ type DeliveredMessages struct {
 }
 
 func SweepDeliverMessagesForRunningFrames(
-	ctx context.Context, persist persistence.Tables, queue persistence.Queue, logger shared.Logger, now time.Time,
+	ctx context.Context, persist persistence.Tables, logger shared.Logger, now time.Time,
 ) error {
 	if persist == nil {
 		return nil
@@ -67,7 +64,7 @@ func SweepDeliverMessagesForRunningFrames(
 			return fmt.Errorf("SweepDeliverMessagesForRunningFrames: list: %w", err)
 		}
 		for _, f := range page.Rows {
-			if err := deliverForRunningFrame(ctx, persist, queue, logger, f.InstanceID, f.FrameID, now); err != nil {
+			if err := deliverForRunningFrame(ctx, persist, logger, f.InstanceID, f.FrameID, now); err != nil {
 				if logger != nil {
 					logger.Warn("SweepDeliverMessagesForRunningFrames: deliver failed",
 						"frame_id", f.FrameID.String(),
@@ -85,7 +82,7 @@ func SweepDeliverMessagesForRunningFrames(
 }
 
 func deliverForRunningFrame(
-	ctx context.Context, persist persistence.Tables, queue persistence.Queue,
+	ctx context.Context, persist persistence.Tables,
 	logger shared.Logger,
 	instanceID, frameID shared.UUID, now time.Time,
 ) error {
@@ -112,32 +109,7 @@ func deliverForRunningFrame(
 		if len(delivered.Messages) == 0 {
 			return nil
 		}
-		emptyMessages := make([]persistence.MessageRow, 0)
-		namedMessages := make([]persistence.MessageRow, 0)
 		for _, msg := range delivered.Messages {
-			if msg.Type == "" {
-				emptyMessages = append(emptyMessages, msg)
-				continue
-			}
-			namedMessages = append(namedMessages, msg)
-		}
-		if len(emptyMessages) > 0 {
-			signalsByMessageID := make(map[shared.UUID]signalpkg.Signal, len(emptyMessages))
-			for _, msg := range emptyMessages {
-				msgSig := emptyMessageWakeSignal(msg)
-				signalsByMessageID[msg.ID] = msgSig
-				if err := signalaudit.EmitSignal(ctx, persist.Events(),
-					instanceID, shared.UUID{}, msgSig, now, tx); err != nil {
-					return fmt.Errorf("emit empty-message wake signal: %w", err)
-				}
-			}
-			if err := cascadeEmptyMessageWakeInTx(ctx, persist, queue, logger, tx,
-				instanceID, frameID, emptyMessages, signalsByMessageID, inst.TemplateHash,
-				frameRow.RootRunScopeID); err != nil {
-				return err
-			}
-		}
-		for _, msg := range namedMessages {
 			if err := deliverNamedMessageInTx(ctx, persist, logger, tx,
 				instanceID, frameID, msg, frameRow.RootRunScopeID, now); err != nil {
 				return err
@@ -211,21 +183,6 @@ func findMessageReceiverNode(
 }
 
 // @concept: message
-// @concept: signal
-// @decision: empty-message-as-root-trigger
-// @story: empty-message-wakes-roots
-func emptyMessageWakeSignal(msg persistence.MessageRow) signalpkg.Signal {
-	return signalpkg.Signal{
-		Type: signalpkg.TypePath("terminal/success"),
-		Payload: map[string]any{
-			"changed":          true,
-			"attributes_delta": messagePayloadAsMap(msg.Payload),
-			"change_summary":   "empty-message-wake",
-		},
-	}
-}
-
-// @concept: message
 func messagePayloadAsMap(payload []byte) map[string]any {
 	if len(payload) == 0 {
 		return map[string]any{}
@@ -235,93 +192,6 @@ func messagePayloadAsMap(payload []byte) map[string]any {
 		return out
 	}
 	return map[string]any{"_raw_bytes": len(payload)}
-}
-
-// @concept: message
-// @concept: cascade
-// @concept: signal
-func cascadeEmptyMessageWakeInTx(
-	ctx context.Context, persist persistence.Tables, queue persistence.Queue,
-	logger shared.Logger,
-	tx persistence.Tx,
-	instanceID, frameID shared.UUID, messages []persistence.MessageRow,
-	signalsByMessageID map[shared.UUID]signalpkg.Signal,
-	templateHash string,
-	frameRootRunScopeID shared.UUID,
-) error {
-	if len(messages) == 0 {
-		return nil
-	}
-	tmpl, err := persist.Templates().GetByHash(ctx, templateHash, tx)
-	if err != nil {
-		return fmt.Errorf("cascadeEmptyMessageWakeInTx: get template: %w", err)
-	}
-	if tmpl == nil {
-		return nil
-	}
-	msgRefs := node.ExtractMessageRefsFromTemplate(tmpl.Spec)
-	edges, err := node.BuildSubscriptionEdges(tmpl.Spec, msgRefs)
-	if err != nil {
-		return fmt.Errorf("cascadeEmptyMessageWakeInTx: build edges: %w", err)
-	}
-	if edges == nil {
-		return nil
-	}
-	instNodes, err := persist.Nodes().ListByInstance(ctx, instanceID, tx)
-	if err != nil {
-		return fmt.Errorf("cascadeEmptyMessageWakeInTx: list nodes: %w", err)
-	}
-	byType := make(map[string][]persistence.NodeRow, len(instNodes))
-	for _, n := range instNodes {
-		byType[n.NodeType] = append(byType[n.NodeType], n)
-	}
-	successType := signalpkg.TypePath("terminal/success")
-	args := RunArgs{Persist: persist, Queue: queue, Logger: logger, Clock: shared.SystemClock{}}
-	touchedReceiverRuns := map[shared.UUID]struct{}{}
-	for _, msg := range messages {
-		msgSig, ok := signalsByMessageID[msg.ID]
-		if !ok {
-			msgSig = emptyMessageWakeSignal(msg)
-		}
-		matched := edges.Match(msg.Type, successType)
-		visitedReceivers := map[shared.UUID]struct{}{}
-		for _, e := range matched {
-			if e.WhenExpr != nil {
-				ok, _ := e.WhenExpr.Eval(msgSig)
-				if !ok {
-					continue
-				}
-			}
-			receivers := byType[e.ReceiverNodeType]
-			for _, r := range receivers {
-				// @concept: parked-state
-				receiverScopeID := frameRootRunScopeID
-				if latest, err := persist.Nodes().GetLatestRunForNode(ctx, tx, r.ID); err != nil {
-					return fmt.Errorf("cascadeEmptyMessageWakeInTx: latest run for receiver %s: %w", r.ID, err)
-				} else if latest != nil {
-					receiverScopeID = latest.RunScopeID
-				}
-				receiverRunID, hasReceiver, err := resolveReceiverRunForCascade(
-					ctx, args, tx,
-					r.ID, receiverScopeID, frameID, shared.UUID{}, shared.UUID{},
-					visitedReceivers,
-				)
-				if err != nil {
-					return fmt.Errorf("cascadeEmptyMessageWakeInTx: resolve receiver %s: %w", r.ID, err)
-				}
-				if !hasReceiver {
-					continue
-				}
-				touchedReceiverRuns[receiverRunID] = struct{}{}
-			}
-		}
-	}
-	for receiverRunID := range touchedReceiverRuns {
-		if err := evaluateOneGate(ctx, args, tx, receiverRunID); err != nil {
-			return fmt.Errorf("cascadeEmptyMessageWakeInTx: evaluate gate %s: %w", receiverRunID, err)
-		}
-	}
-	return nil
 }
 
 func DeliverPendingMessages(

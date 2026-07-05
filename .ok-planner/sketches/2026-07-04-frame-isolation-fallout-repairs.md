@@ -208,3 +208,20 @@ Verification: `go build ./... && go vet ./... && make lint` all green. Full test
 
 Both failures are unrelated to this retirement.
 
+### Item 1: Empty-wake unification (2026-07-04)
+
+Executed after the pre-work retirement made `bySender[""]` unambiguous.
+
+Passes:
+
+- **`code:lib/control/controlapi/instances.go`** — after the author-declared message-receiver-node creation loop, append the runtime-implicit `""` receiver alongside them. Uniform per-type creation; no branch named for the empty case.
+- **`code:lib/control/controlapi/messages.go`** — reshape the receipt-time declared-types check to include `""` in the built `declared` list; delete the hard-coded `if body.Type == "" { matched = true }` bypass. Receipt check is now uniform.
+- **`code:lib/runtime/message_delivery.go`** — deleted the `msg.Type == ""` fork, the entire `cascadeEmptyMessageWakeInTx` function (~90 lines), and the `emptyMessageWakeSignal` helper. The frame-isolation violation at line 298 (`receiverScopeID = latest.RunScopeID` cross-frame override) dies with the deleted function. Empty messages now flow through `deliverNamedMessageInTx` — find `NodeRow` where `NodeType == ""`, create run, upsert payload as attributes, `runner_dispatch.go#104` auto-settles pure_cascade → terminal/success → cascade walker fans out via the auto-injected structural-root edges under sender=`""`. Trimmed now-unused imports.
+- **`concept:message`** — mutated three passages that named the empty case separately: the receiver-materialization paragraph, the "Owns" clause, and the delivery invariant. All now describe every message type uniformly, with the empty-type receiver as a runtime-implicit member of the declared set materialized alongside the author-declared receivers.
+- **`decision:subscription-edges-only-from-explicit-block`** — reworded from "gating the runtime-implicit empty-message virtual" to "waking on the runtime-implicit empty-type message-receiver-node's settlement." TOC line in `design/decisions.md` mirrored.
+
+Verification: `go build ./... && go vet ./... && make lint` green. Scenario suites green: `test/scenarios/empty_message_wake` (STORY-empty-message-wakes-roots proof), `test/scenarios/instance_create_is_idle`, `test/scenarios/messages`, `test/scenarios/subscription_cascade` (via -run). Full `lib/runtime/...` and `lib/graph/...` unit tests green.
+
+Load-bearing outcome: the one hard frame-isolation violation surfaced by the code audit is gone. The receipt handler and delivery path treat the empty type identically with every other declared type — the two parallel paths collapse to one.
+
+

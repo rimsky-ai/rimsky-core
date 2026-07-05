@@ -241,7 +241,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	}
 
 	if cfg.Persist != nil && cfg.Clock != nil {
-		if err := runtime.SweepDeliverMessagesForRunningFrames(ctx, cfg.Persist, cfg.Queue, log, cfg.Clock.Now()); err != nil {
+		if err := runtime.SweepDeliverMessagesForRunningFrames(ctx, cfg.Persist, log, cfg.Clock.Now()); err != nil {
 			log.Warn("tick: SweepDeliverMessagesForRunningFrames failed", "error", err.Error())
 		}
 	}

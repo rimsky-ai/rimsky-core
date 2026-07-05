@@ -926,14 +926,21 @@ func provisionInstanceTx(
 
 	// @concept: message
 	// @concept: message-schema
+	// @decision: empty-message-as-root-trigger
+	// @story: empty-message-wakes-roots
+	receiverTypes := make([]string, 0, len(tpl.Spec.Messages)+1)
+	receiverTypes = append(receiverTypes, "")
 	for _, m := range tpl.Spec.Messages {
+		receiverTypes = append(receiverTypes, m.Type)
+	}
+	for _, t := range receiverTypes {
 		if _, err := deps.Persist.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID:         foundationshared.UUID(uuid.New()),
 			InstanceID: inst.ID,
-			NodeType:   m.Type,
+			NodeType:   t,
 			Executor:   "",
 		}, tx); err != nil {
-			return createInstanceResponse{}, fmt.Errorf("instance-factory: create message-receiver node %q: %w", m.Type, err)
+			return createInstanceResponse{}, fmt.Errorf("instance-factory: create message-receiver node %q: %w", t, err)
 		}
 	}
 

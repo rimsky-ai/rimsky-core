@@ -159,18 +159,19 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			if tpl == nil {
 				return fmt.Errorf("instance %s template %s not found", instUUID, inst.TemplateHash)
 			}
-			declared := make([]string, 0, len(tpl.Spec.Messages))
-			matched := false
-			for _, m := range tpl.Spec.Messages {
-				declared = append(declared, m.Type)
-				if m.Type == body.Type {
-					matched = true
-				}
-			}
 			// @decision: empty-message-as-root-trigger
 			// @story: empty-message-wakes-roots
-			if body.Type == "" {
-				matched = true
+			declared := make([]string, 0, len(tpl.Spec.Messages)+1)
+			declared = append(declared, "")
+			for _, m := range tpl.Spec.Messages {
+				declared = append(declared, m.Type)
+			}
+			matched := false
+			for _, d := range declared {
+				if d == body.Type {
+					matched = true
+					break
+				}
 			}
 			if !matched {
 				sort.Strings(declared)

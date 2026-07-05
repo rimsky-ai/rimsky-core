@@ -618,7 +618,7 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger)
 	// @decision: empty-message-as-root-trigger
-	_ = runtime.SweepDeliverMessagesForRunningFrames(h.Ctx, h.Persist, h.Queue,
+	_ = runtime.SweepDeliverMessagesForRunningFrames(h.Ctx, h.Persist,
 		shared.SilentLogger{}, time.Now())
 	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger)
 	var rows []persistence.NodeRow
