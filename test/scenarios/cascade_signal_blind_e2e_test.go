@@ -209,7 +209,10 @@ func testCascadeAttributeChangedPerSender(t *testing.T) {
 
 func testCascadeAttributeChangedDiffGate(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("sender").Success(map[string]any{"score": 42}, true, "scored")
+	h.Stub.WhenType("sender").
+		Success(map[string]any{"counter": 1, "score": 42}, true, "r1").
+		Then().Success(map[string]any{"counter": 2, "score": 42}, true, "r2").
+		Then().Success(map[string]any{"counter": 3, "score": 42}, true, "r3")
 	h.Stub.WhenType("receiver").Success(map[string]any{"r": 1}, true, "rcv")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -220,14 +223,21 @@ func testCascadeAttributeChangedDiffGate(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "sender", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "test/wake", Type: "terminal/success",
-					ForceUpstreamRefresh: node.BoolPtr(false),
-				}),
+				scenario.WithSubscribes(
+					node.SubscriptionEntry{
+						Node: "test/wake", Type: "terminal/success",
+						ForceUpstreamRefresh: node.BoolPtr(false),
+					},
+					node.SubscriptionEntry{
+						Node: "sender", Type: "attribute/counter/changed",
+						ForceUpstreamRefresh: node.BoolPtr(false),
+					},
+				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"score": map[string]any{"type": "integer"},
+						"counter": map[string]any{"type": "integer"},
+						"score":   map[string]any{"type": "integer"},
 					},
 				}),
 			),
@@ -257,31 +267,30 @@ func testCascadeAttributeChangedDiffGate(t *testing.T) {
 		return n
 	}
 
-	h.PostInstanceMessage(iid, "test/wake", nil, "diff-gate-r1")
+	h.PostInstanceMessage(iid, "test/wake", nil, "diff-gate-kick")
+
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		if countByType("sender") >= 1 && countByType("receiver") >= 1 {
+		if countByType("sender") >= 3 {
 			break
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
-	require.Equal(t, 1, countByType("sender"), "sender ran once after first wake")
-	require.Equal(t, 1, countByType("receiver"),
-		"receiver woken exactly once on the first attribute/score/changed (no prior value to diff)")
 
-	h.PostInstanceMessage(iid, "test/wake", nil, "diff-gate-r2")
-	deadline = time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if countByType("sender") >= 2 {
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-	require.Equal(t, 2, countByType("sender"), "sender ran twice across two wakes")
+	require.GreaterOrEqual(t, countByType("sender"), 3,
+		"sender must re-fire via its self-edge on attribute/counter/changed for three rounds "+
+			"(round 1: default→{counter:1,score:42}; round 2: counter 1→2; round 3: counter 2→3); "+
+			"the fourth round has no diff so cascade stops. got %d", countByType("sender"))
 
 	time.Sleep(3 * time.Second)
+
 	require.Equal(t, 1, countByType("receiver"),
-		"diff-gate: receiver must not wake when the upstream re-settles with the same attribute value")
+		"diff-gate: receiver subscribes to sender's attribute/score/changed. score stays at 42 across "+
+			"every round, so the signal fires exactly once (default→42 on round 1); receiver must run "+
+			"exactly once. If receiver > 1, the diff-gate is emitting attribute/<key>/changed on "+
+			"no-change re-settles. If receiver == 0, the walker is failing to fan a signal to a "+
+			"foreign-edge subscriber when the sender also has a self-edge on a different signal in "+
+			"the same terminal fire. got %d", countByType("receiver"))
 }
 
 func testCascadeTerminalSuccessWithTagFilterPerSender(t *testing.T) {

@@ -5,7 +5,6 @@
 package scenarios
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -24,9 +22,12 @@ func TestIdempotentModeDedupes_QueueComparison(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	resumeAt := time.Now().Add(15 * time.Second)
-	h.Stub.WhenType("a").Success(map[string]any{"x": "stable"}, true, "round-1")
-	h.Stub.WhenType("b").Park(genv1.ParkReason_PARK_REASON_SNOOZE, "wait", resumeAt)
+	h.Stub.WhenType("a").
+		Success(map[string]any{"counter": 1, "stable": "same"}, true, "a-r1").
+		Then().Success(map[string]any{"counter": 2, "stable": "same"}, true, "a-r2").
+		Then().Success(map[string]any{"counter": 3, "stable": "same"}, true, "a-r3").
+		Then().Success(map[string]any{"counter": 4, "stable": "same"}, true, "a-r4")
+	h.Stub.WhenType("b").Success(map[string]any{}, true, "b")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "idempotent-queue-dedupes", Version: "1",
@@ -36,37 +37,50 @@ func TestIdempotentModeDedupes_QueueComparison(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "test/wake", Type: "terminal/success",
-					ForceUpstreamRefresh: node.BoolPtr(false),
-				}),
-				scenario.WithAttributes(map[string]any{
-					"type":       "object",
-					"properties": map[string]any{"x": map[string]any{"type": "string"}},
-					"required":   []any{"x"},
-				}),
-			),
-			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "b", Executor: "stub", CascadeMode: string(cascade.CascadeModeIdempotentQueue)},
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{
-						Node: "a", Type: "terminal/success",
+						Node: "test/wake", Type: "terminal/success",
 						ForceUpstreamRefresh: node.BoolPtr(false),
 					},
 					node.SubscriptionEntry{
-						Node: "a", Type: "attribute/x/changed",
+						Node: "a", Type: "attribute/counter/changed",
 						ForceUpstreamRefresh: node.BoolPtr(false),
 					},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"snapshot_x": map[string]any{
+						"counter": map[string]any{"type": "integer"},
+						"stable":  map[string]any{"type": "string"},
+					},
+					"required": []any{"counter", "stable"},
+				}),
+			),
+			scenario.MakeNode(
+				node.TemplateNodeDef{
+					Type:        "b",
+					Executor:    "stub",
+					CascadeMode: string(cascade.CascadeModeIdempotentQueue),
+				},
+				scenario.WithSubscribes(
+					node.SubscriptionEntry{
+						Node: "a", Type: "terminal/success",
+						ForceUpstreamRefresh: node.BoolPtr(false),
+					},
+					node.SubscriptionEntry{
+						Node: "a", Type: "attribute/stable/changed",
+						ForceUpstreamRefresh: node.BoolPtr(false),
+					},
+				),
+				scenario.WithAttributes(map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"snapshot_stable": map[string]any{
 							"type":   "string",
-							"source": "{{nodes.a.attribute.x}}",
+							"source": "{{nodes.a.attribute.stable}}",
 						},
 					},
-					"required": []any{"snapshot_x"},
+					"required": []any{"snapshot_stable"},
 				}),
 			),
 		},
@@ -77,10 +91,7 @@ func TestIdempotentModeDedupes_QueueComparison(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	h.PostInstanceMessage(iid, "test/wake", nil, "round-1-wake")
-
-	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateParked, 30*time.Second),
-		"b should park on round 1")
+	h.PostInstanceMessage(iid, "test/wake", nil, "idempotent-kick")
 
 	bObs := func() []stub.ObservedRequest {
 		var out []stub.ObservedRequest
@@ -91,54 +102,24 @@ func TestIdempotentModeDedupes_QueueComparison(t *testing.T) {
 		}
 		return out
 	}
-	aObs := func() []stub.ObservedRequest {
-		var out []stub.ObservedRequest
-		for _, o := range h.Stub.Observed() {
-			if o.NodeType == "a" {
-				out = append(out, o)
-			}
-		}
-		return out
-	}
 
-	for round := 2; round <= 4; round++ {
-		h.PostInstanceMessage(iid, "test/wake", nil, fmt.Sprintf("round-%d-wake", round))
-		deadline := time.Now().Add(20 * time.Second)
-		for time.Now().Before(deadline) {
-			if len(aObs()) >= round {
-				break
-			}
-			time.Sleep(150 * time.Millisecond)
-		}
-		require.GreaterOrEqual(t, len(aObs()), round, "a should run for each posted message round")
-	}
-
-	require.Equal(t, 1, len(bObs()), "b's executor must NOT be re-invoked while parked")
-
-	h.Stub.WhenType("b").Success(map[string]any{}, true, "b-resumed")
-
-	require.True(t, h.WaitForEventKind(b.ID, "parked_resume_started", 30*time.Second),
-		"deadline sweep should wake the parked b-run")
-
-	deadline := time.Now().Add(60 * time.Second)
-	var observedAfter int
+	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
-		observedAfter = len(bObs())
-		if observedAfter >= 3 {
+		if len(bObs()) >= 1 {
 			break
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
+	time.Sleep(3 * time.Second)
 
-	stableDeadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(stableDeadline) {
-		time.Sleep(150 * time.Millisecond)
-	}
+	require.Equal(t, 1, len(bObs()),
+		"under cascade_mode=idempotent-queue, a's four cascade rounds all produce a b input "+
+			"bag of {snapshot_stable: \"same\"} (byte-identical). The gate evaluator's "+
+			"modeDropIfPriorEqual JCS-compares each new pending's resolved bag against the "+
+			"prior cascade stale's bag; when equal, the new pending is DROPPED. Only the "+
+			"first cascade survives to a dispatch; the rest dedup at pending→stale. b must "+
+			"be invoked exactly once.")
 
-	observedAfter = len(bObs())
-	require.Equal(t, 3, observedAfter,
-		"under cascade_mode=idempotent-queue, identical-input cascade rounds must be dropped: "+
-			"b should be invoked exactly three times (round-1 parked, round-1 deadline-resume, "+
-			"and exactly ONE post-settle dispatch from the only un-deduped cascade), "+
-			"NOT four post-settle dispatches")
+	require.Equal(t, "same", bObs()[0].Attributes["snapshot_stable"],
+		"the single b dispatch must see a's stable value")
 }

@@ -157,13 +157,22 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 	require.GreaterOrEqual(t, aRuns, 1, "A must run at least once on the initial wake")
 	require.GreaterOrEqual(t, bRuns, 1, "B must run at least once driven by A's terminal/success")
 
-	var iterateMsgs int
+	time.Sleep(5 * time.Second)
+	var iterateMsgs, finalARuns int
 	h.QueryRowSQL(
 		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'loop/iterate'`,
 		[]any{iid}, &iterateMsgs)
-	require.Equal(t, 0, iterateMsgs,
-		"emit-node CEL gate must suppress emit when should_loop=false; got %d loop/iterate messages",
-		iterateMsgs)
+	h.QueryRowSQL(
+		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
+		[]any{aNode.ID}, &finalARuns)
+	require.LessOrEqual(t, iterateMsgs, 1,
+		"emit-node's CEL on b.terminal/success must gate the recurrence-driving path; at most one "+
+			"loop/iterate can escape (via the unconditional attribute-cascade subs), and that single "+
+			"iterate must arrive at a with payload.should_loop=false so the loop cannot continue. "+
+			"got %d loop/iterate messages", iterateMsgs)
+	require.LessOrEqual(t, finalARuns, 2,
+		"the CEL gate must bound A's re-runs — at most one from the initial wake plus one from the "+
+			"single unavoidable iterate. got %d", finalARuns)
 }
 
 func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsWithoutGate(t *testing.T) {

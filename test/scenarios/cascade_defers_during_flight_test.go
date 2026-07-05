@@ -19,13 +19,22 @@ import (
 )
 
 // @story: cascade-defers-during-flight
-func TestCascadeDefersDuringFlight_ParkedReceiverNotInterruptedByUpstreamRerun(t *testing.T) {
+func TestCascadeDefersDuringFlight_WalkerQueuesNewPendingWithoutMutatingInFlight(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	h.Stub.WhenType("a").Success(map[string]any{"x": "initial"}, true, "a-initial")
-	resumeAt := time.Now().Add(8 * time.Second)
-	h.Stub.WhenType("b").Park(genv1.ParkReason_PARK_REASON_SNOOZE, "deadline-wait", resumeAt)
+	h.Stub.WhenType("a").
+		Success(map[string]any{"counter": 1, "x": "r1"}, true, "a-r1").
+		Then().Success(map[string]any{"counter": 2, "x": "r2"}, true, "a-r2").
+		Then().Success(map[string]any{"counter": 3, "x": "r3"}, true, "a-r3")
+
+	resumeAt := time.Now().Add(6 * time.Second)
+	h.Stub.WhenType("b").
+		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "deadline-wait", resumeAt).
+		Then().Success(map[string]any{}, true, "b-r1-resumed").
+		Then().Success(map[string]any{}, true, "b-r2").
+		Then().Success(map[string]any{}, true, "b-r3").
+		Then().Success(map[string]any{}, true, "b-r4")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cascade-defers-during-flight", Version: "1",
@@ -35,18 +44,31 @@ func TestCascadeDefersDuringFlight_ParkedReceiverNotInterruptedByUpstreamRerun(t
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "test/wake", Type: "terminal/success",
-					ForceUpstreamRefresh: node.BoolPtr(false),
-				}),
+				scenario.WithSubscribes(
+					node.SubscriptionEntry{
+						Node: "test/wake", Type: "terminal/success",
+						ForceUpstreamRefresh: node.BoolPtr(false),
+					},
+					node.SubscriptionEntry{
+						Node: "a", Type: "attribute/counter/changed",
+						ForceUpstreamRefresh: node.BoolPtr(false),
+					},
+				),
 				scenario.WithAttributes(map[string]any{
-					"type":       "object",
-					"properties": map[string]any{"x": map[string]any{"type": "string"}},
-					"required":   []any{"x"},
+					"type": "object",
+					"properties": map[string]any{
+						"counter": map[string]any{"type": "integer"},
+						"x":       map[string]any{"type": "string"},
+					},
+					"required": []any{"counter", "x"},
 				}),
 			),
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "b", Executor: "stub"},
+				node.TemplateNodeDef{
+					Type:        "b",
+					Executor:    "stub",
+					CascadeMode: string(cascade.CascadeModeSequenced),
+				},
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{
 						Node: "a", Type: "terminal/success",
@@ -70,16 +92,16 @@ func TestCascadeDefersDuringFlight_ParkedReceiverNotInterruptedByUpstreamRerun(t
 			),
 		},
 	})
-	iid := h.CreateInstance(tid, "ck-cascade-defers-during-flight", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-defers-during-flight", map[string]any{})
 	a := h.FindNode(iid, "a")
 	b := h.FindNode(iid, "b")
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	h.PostInstanceMessage(iid, "test/wake", nil, "test-wake-1")
+	h.PostInstanceMessage(iid, "test/wake", nil, "defers-during-flight-kick")
 
 	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateParked, 30*time.Second),
-		"b should park on its first dispatch")
+		"b's first dispatch (b1) should park after a's self-cascade finishes and b1 clears the gate")
 
 	bObs := func() []stub.ObservedRequest {
 		var out []stub.ObservedRequest
@@ -91,66 +113,38 @@ func TestCascadeDefersDuringFlight_ParkedReceiverNotInterruptedByUpstreamRerun(t
 		return out
 	}
 
-	preCascade := bObs()
-	require.Equal(t, 1, len(preCascade), "b should be invoked exactly once before the upstream re-run")
-	require.Equal(t, "initial", preCascade[0].Attributes["snapshot_x"],
-		"b's first dispatch must see a's initial value for x")
-
-	aObs := func() []stub.ObservedRequest {
-		var out []stub.ObservedRequest
-		for _, o := range h.Stub.Observed() {
-			if o.NodeType == "a" {
-				out = append(out, o)
-			}
-		}
-		return out
-	}
-	h.Stub.WhenType("a").Success(map[string]any{"x": "updated"}, true, "a-updated")
-	h.PostInstanceMessage(iid, "test/wake", nil, "test-wake-2")
-
-	deadlineRerun := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadlineRerun) {
-		if len(aObs()) >= 2 {
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-	require.Equal(t, 2, len(aObs()), "a should be re-invoked once for the second message")
-
 	require.Equal(t, 1, len(bObs()),
-		"b's executor must not be re-invoked while b is parked — the cascade from a's re-run "+
-			"must queue a NEW pending b-run, not mutate or re-dispatch the parked one")
+		"b's parked run must be the ONLY b invocation while parked — the walker created "+
+			"b2, b3 as NEW pending runs for a2/a3 cascade rounds, not mutations of b1")
 
-	var rowCount int
+	var pendingBRuns int
 	h.QueryRowSQL(
-		`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND state IN ('pending','stale')`,
-		[]any{b.ID}, &rowCount,
+		`SELECT count(*) FROM rimsky_node_runs
+		  WHERE node_id = $1 AND state IN ('pending','stale') AND creation_reason = 'cascade'`,
+		[]any{b.ID}, &pendingBRuns,
 	)
-	require.GreaterOrEqual(t, rowCount, 1,
-		"there must be at least one queued cascade-driven b-run waiting for the parked predecessor to settle")
-
-	h.Stub.WhenType("b").Success(map[string]any{}, true, "b-resumed")
+	require.GreaterOrEqual(t, pendingBRuns, 2,
+		"b2, b3 must be queued (pending or stale) behind the parked b1 — proving the walker "+
+			"created NEW cascade-driven runs for a's later self-cascade rounds rather than "+
+			"mutating b1's in-flight state. got %d queued", pendingBRuns)
 
 	require.True(t, h.WaitForEventKind(b.ID, "parked_resume_started", 30*time.Second),
-		"deadline sweep should wake the parked b-run")
+		"deadline sweep should wake the parked b1")
 
 	deadline := time.Now().Add(45 * time.Second)
 	var observedAfter int
 	for time.Now().Before(deadline) {
 		observedAfter = len(bObs())
-		if observedAfter >= 3 {
+		if observedAfter >= 5 {
 			break
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
-	require.Equal(t, 3, observedAfter,
-		"b should be invoked exactly three times in total: (1) the parked dispatch, (2) the "+
-			"deadline-resume of the same run with the dispatch-time snapshot, (3) the queued "+
-			"cascade-driven run dispatched after settle with a's updated value")
-
-	allB := bObs()
-	last := allB[len(allB)-1]
-	require.Equal(t, "updated", last.Attributes["snapshot_x"],
-		"the cascade-driven post-settle dispatch must see a's POST-rerun value (updated), "+
-			"proving the cascade was incorporated into the new bag")
+	require.Equal(t, 5, observedAfter,
+		"b must be invoked exactly five times in total: (1) b1 park, (2) b1 deadline-resume, "+
+			"(3) b2, (4) b3, (5) b4 — one queued cascade-driven b-run per a self-cascade "+
+			"round (a settled four times: a1 with r1 diff, a2 with r2 diff, a3 with r3 diff, "+
+			"a4 with same r3 emitting terminal/success only; each terminal/success creates a "+
+			"new cascade-driven b-run under sequenced mode). Fewer means the walker mutated "+
+			"an in-flight run; more means it created a duplicate.")
 }
