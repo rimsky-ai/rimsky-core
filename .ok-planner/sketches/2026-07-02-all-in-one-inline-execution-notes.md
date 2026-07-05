@@ -163,7 +163,26 @@ built straight to their final shape.
       process-role-unified-message-covers-rimsky-run created; story
       local-orchestrator-zero-config created; concept rimsky + decision
       single-process-mode mutated.
-- [ ] Step 5
+- [x] Step 5 — cross-mode proofs + remaining design-doc sweep. Docs:
+      stories portable-template-across-modes,
+      claude-agent-mcp-servers-per-node, claude-agent-expose-env-per-node
+      created; decision env-var-convention-across-modes created; story
+      single-process-all-in-one Proof aligned with spec (process-level
+      no-external-service-contacted assertion). Proofs: bundled in-proc
+      dispatch scenario extended with the process-level assertion (peer
+      is Static, endpoint `inproc://…`);
+      `TestClaudeAgentPerNodeDivergence` covers per-node MCP + per-node
+      expose-env divergence in one template (http + stdio transports
+      end-to-end; module transport unit-covered by existing
+      `TestRunAgentMcpServersReachSpawnAcrossTransports`);
+      `TestPortableTemplateAcrossModes` drives the same template bytes
+      through all-in-one and containerized modes and asserts
+      terminal-graph-shape equality. Small production fix in
+      observability: `/v1/observability/executors` and
+      `/v1/observability/claim-producers` now surface bundled/static
+      discovery entries (previously only surfaced configured peer
+      specs) — the assertion needs them, and their absence was a real
+      observability gap.
 
 ## Deviations / discoveries (surface at end of each step)
 
@@ -346,6 +365,46 @@ built straight to their final shape.
   rimsky-run-self-hosts-templates decision and local-orchestrator-
   zero-config story were created when the citing code landed (the lint
   hook checks resolution at write time), not at the end of the step.
+
+### Step-5 deviations / discoveries
+
+- **Observability endpoint was silently missing bundled peers.**
+  `/v1/observability/executors` and `/v1/observability/claim-producers`
+  only iterated the configured PeerSpec list, so the bundled/static
+  entries populated into the discovery cache by `AdvertiseInto` were
+  invisible to consumers of the endpoint (including the new
+  process-level assertion). Extended both list handlers to merge in
+  discovery-cache entries not already covered by a configured peer,
+  and their `GET /:name` counterparts to accept static names. Not a
+  regression introduced by step 5 — a pre-existing gap that the
+  scenario proof exposed and this step fixed forward.
+- **Bundled peer endpoint is `inproc://<name>`, not empty.** The
+  no-external-service assertion originally checked for an empty
+  endpoint; the truthful marker is the `inproc://` scheme (set by
+  `bundled.AdvertiseInto`). Test updated to assert the scheme
+  prefix — semantically stronger, since it distinguishes "no external
+  contact" from "peer never registered".
+- **Module transport scenario coverage stays in unit tests.**
+  Standing up a module MCP server requires a registered
+  `RegisterMcpModule` factory in the executor process; production
+  currently registers none, and the fake-cli container is FROM the
+  production executor image (no way to inject a test module without
+  building an augmented executor binary). The existing unit test
+  `TestRunAgentMcpServersReachSpawnAcrossTransports` already covers
+  all three transports end-to-end at the executor-package boundary
+  (writes the mcp.json, stands up the loopback, sees the tool call).
+  The new scenario adds per-node divergence via http + stdio, which
+  is what the story's *divergence* arm actually tests.
+- **Fake-cli witness carries hashed env values.** The story's security
+  invariant (rimsky never sees plaintext env values) is the point of
+  the whole redesign; the witness therefore reports SHA-256 digests of
+  observed env values, not the raw strings. `assertEnvPresent` hashes
+  the expected plaintext locally and compares digests. The bag also
+  gets grep'd for the plaintext just in case.
+- **Story `single-process-all-in-one` Proof text tweaked to spec.** The
+  in-repo story was missing the "process-level assertion" clause the
+  spec's Design changes added; corrected in place. Assertion landed in
+  the existing `TestBundledInProcDispatchZeroExecutorConfig`.
 
 ## Repair ledger (frame-isolation fallout — settled with the user 2026-07-03)
 

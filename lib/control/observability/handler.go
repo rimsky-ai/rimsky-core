@@ -121,6 +121,7 @@ type peerListResponse struct {
 func handleListClaimProducers(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entries := []PeerEntry{}
+		seen := map[string]bool{}
 		for _, e := range deps.ClaimProducers {
 			cached, ok := deps.Discovery.GetStore(e.Name)
 			if !ok {
@@ -132,6 +133,13 @@ func handleListClaimProducers(deps Deps) http.HandlerFunc {
 				}
 			}
 			entries = append(entries, cached)
+			seen[e.Name] = true
+		}
+		for _, cached := range deps.Discovery.ListClaimProducers() {
+			if seen[cached.Name] {
+				continue
+			}
+			entries = append(entries, cached)
 		}
 		writeJSON(w, http.StatusOK, peerListResponse{ClaimProducers: entries})
 	}
@@ -140,11 +148,11 @@ func handleListClaimProducers(deps Deps) http.HandlerFunc {
 func handleGetClaimProducer(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
-		if !peerExists(deps.ClaimProducers, name) {
+		cached, ok := deps.Discovery.GetStore(name)
+		if !ok && !peerExists(deps.ClaimProducers, name) {
 			notFound(w, "unknown store")
 			return
 		}
-		cached, _ := deps.Discovery.GetStore(name)
 		var lifecycle []persistence.LifecycleIdempotencyRow
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
 			rows, err := deps.Tables.LifecycleIdempotency().ListByStore(ctx, name, tx)
@@ -165,6 +173,7 @@ func handleGetClaimProducer(deps Deps) http.HandlerFunc {
 func handleListExecutors(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entries := []PeerEntry{}
+		seen := map[string]bool{}
 		for _, e := range deps.Executors {
 			cached, ok := deps.Discovery.GetExecutor(e.Name)
 			if !ok {
@@ -176,6 +185,13 @@ func handleListExecutors(deps Deps) http.HandlerFunc {
 				}
 			}
 			entries = append(entries, cached)
+			seen[e.Name] = true
+		}
+		for _, cached := range deps.Discovery.ListExecutors() {
+			if seen[cached.Name] {
+				continue
+			}
+			entries = append(entries, cached)
 		}
 		writeJSON(w, http.StatusOK, peerListResponse{Executors: entries})
 	}
@@ -184,11 +200,11 @@ func handleListExecutors(deps Deps) http.HandlerFunc {
 func handleGetExecutor(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
-		if !peerExists(deps.Executors, name) {
+		cached, ok := deps.Discovery.GetExecutor(name)
+		if !ok && !peerExists(deps.Executors, name) {
 			notFound(w, "unknown executor")
 			return
 		}
-		cached, _ := deps.Discovery.GetExecutor(name)
 		writeJSON(w, http.StatusOK, map[string]any{"peer": cached})
 	}
 }

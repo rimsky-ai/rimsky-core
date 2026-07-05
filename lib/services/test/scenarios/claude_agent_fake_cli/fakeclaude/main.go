@@ -32,6 +32,7 @@ func main() {
 	sessionID := readArg(argv, "--session-id")
 	userPrompt := readArg(argv, "-p")
 	resumeToken := readArg(argv, "--resume")
+	mcpConfigPath := readArg(argv, "--mcp-config")
 
 	callbackURL := os.Getenv("RIMSKY_CALLBACK_URL")
 	callbackToken := os.Getenv("RIMSKY_CALLBACK_TOKEN")
@@ -72,6 +73,8 @@ func main() {
 		scenarioSessionResume(client, userPrompt, resumeToken)
 	case strings.Contains(userPrompt, "scenario:dispatch_context_probe"):
 		scenarioDispatchContextProbe(client)
+	case strings.Contains(userPrompt, "scenario:per_node_witness"):
+		scenarioPerNodeWitness(client, sessionID, mcpConfigPath, userPrompt)
 	default:
 		client.callTool("report_complete", map[string]any{
 			"changed":          true,
@@ -310,6 +313,56 @@ func scenarioSessionResume(client *mcpClient, userPrompt string, resumeToken str
 func writeSessionResumeLog(chainID string, state sessionResumeState) {
 	raw, _ := json.Marshal(state)
 	_ = os.WriteFile(sessionResumeLogPath(chainID), raw, 0o644)
+}
+
+var perNodeEnvVars = []string{"VALIDATOR_TOKEN", "REVIEWER_SEED"}
+
+func scenarioPerNodeWitness(client *mcpClient, sessionID, mcpConfigPath, userPrompt string) {
+	observed := map[string]any{
+		"scenario":  "per_node_witness",
+		"node_hint": readArg(strings.Fields(userPrompt), "node_hint"),
+	}
+
+	servers := []map[string]any{}
+	if mcpConfigPath != "" {
+		raw, err := os.ReadFile(mcpConfigPath)
+		if err != nil {
+			fail(fmt.Sprintf("per_node_witness: read mcp config %s: %v", mcpConfigPath, err))
+		}
+		var parsed struct {
+			McpServers map[string]map[string]any `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			fail(fmt.Sprintf("per_node_witness: parse mcp config: %v: %s", err, string(raw)))
+		}
+		for name, entry := range parsed.McpServers {
+			transport, _ := entry["type"].(string)
+			servers = append(servers, map[string]any{"name": name, "transport": transport})
+		}
+	}
+	observed["mcp_servers"] = servers
+
+	envDigests := map[string]string{}
+	envPresence := map[string]bool{}
+	for _, name := range perNodeEnvVars {
+		val, ok := os.LookupEnv(name)
+		envPresence[name] = ok
+		if ok {
+			sum := sha256.Sum256([]byte(val))
+			envDigests[name] = hex.EncodeToString(sum[:])
+		}
+	}
+	observed["env_presence"] = envPresence
+	observed["env_digests"] = envDigests
+
+	sig := signValue(sessionID, observed)
+	client.callTool("report_complete", map[string]any{
+		"changed": true,
+		"attributes_delta": map[string]any{
+			"cli_observation": observed,
+		},
+		"signoffs": []any{sig},
+	})
 }
 
 func scenarioDispatchContextProbe(client *mcpClient) {

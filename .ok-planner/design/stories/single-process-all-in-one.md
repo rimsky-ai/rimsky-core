@@ -27,4 +27,4 @@ The all-in-one deployment runs the roles as separate child processes; or the mem
 
 ## Proof
 
-Executable proof — one integration test boots the all-in-one image, asserts a single rimsky process serves all three role surfaces, drives a node to terminal, and round-trips a spilled blob across roles under the memory backend; a second boots the image with zero executor config and drives a node through an in-process bundled executor to a fresh terminal.
+Executable proof — one integration test boots the all-in-one image, asserts a single rimsky process serves all three role surfaces, drives a node to terminal, and round-trips a spilled blob across roles under the memory backend; a second boots the image with zero executor config and drives a node through an in-process bundled executor to a fresh terminal, with a process-level assertion that no external service process was contacted for that dispatch.

@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,5 +77,41 @@ func TestBundledInProcDispatchZeroExecutorConfig(t *testing.T) {
 	}
 	if got, _ := resp.LatestAttributes["stub"].(bool); !got {
 		t.Fatalf("in-proc http-node stub outcome never landed: the bundled handler's attributes_delta {stub: true} is missing from latest_attributes %v — the template named no configured executor, so this only passes if the in-proc bundled registration resolved and dispatched it", resp.LatestAttributes)
+	}
+
+	// @story: single-process-all-in-one
+	statusPeers, rawPeers := ep.GetJSON(t, "/v1/observability/executors", "")
+	if statusPeers != http.StatusOK {
+		t.Fatalf("GET /v1/observability/executors: %d %s", statusPeers, string(rawPeers))
+	}
+	var peerResp struct {
+		Executors []struct {
+			Name     string `json:"name"`
+			Endpoint string `json:"endpoint"`
+			Static   bool   `json:"static"`
+		} `json:"executors"`
+	}
+	if err := json.Unmarshal(rawPeers, &peerResp); err != nil {
+		t.Fatalf("decode peer list: %v: %s", err, string(rawPeers))
+	}
+	var httpNode *struct {
+		Name     string `json:"name"`
+		Endpoint string `json:"endpoint"`
+		Static   bool   `json:"static"`
+	}
+	for i := range peerResp.Executors {
+		if peerResp.Executors[i].Name == "http-node" {
+			httpNode = &peerResp.Executors[i]
+			break
+		}
+	}
+	if httpNode == nil {
+		t.Fatalf("http-node executor missing from observability peer list %s — the bundled adverts did not populate the discovery cache", string(rawPeers))
+	}
+	if !httpNode.Static {
+		t.Fatalf("http-node peer entry is not marked static (%+v) — the dispatch was fielded via an external service process, not the in-proc bundled handler", *httpNode)
+	}
+	if !strings.HasPrefix(httpNode.Endpoint, "inproc://") {
+		t.Fatalf("http-node peer entry has non-inproc endpoint %q — the dispatch was fielded via an external service process reachable at that address, not the in-proc bundled handler", httpNode.Endpoint)
 	}
 }
