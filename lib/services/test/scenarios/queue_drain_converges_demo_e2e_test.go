@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @story: cross-frame-coupling
+// @story: queue-drain-converges
 
 package scenarios
 
@@ -20,7 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-func TestCrossFrameCouplingDemo_RunExitsZero(t *testing.T) {
+func TestQueueDrainConvergesDemo_RunExitsZero(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -33,22 +33,22 @@ func TestCrossFrameCouplingDemo_RunExitsZero(t *testing.T) {
 		harness.WithExecutor("verifier-shape-checks", verifierEP),
 	)
 
-	demoScript := repoExampleSpecPath(t, "examples/cross-frame-coupling-demo.sh")
-	templatePath := repoExampleSpecPath(t, "examples/cross-frame-coupling-demo-template.yaml")
+	demoScript := repoExampleSpecPath(t, "examples/queue-drain-converges-demo.sh")
+	templatePath := repoExampleSpecPath(t, "examples/queue-drain-converges-demo-template.yaml")
 
-	stdout, exitCode := runCrossFrameDemoScript(t, ctx, demoScript, ep.BaseURL, 180*time.Second)
+	stdout, exitCode := runQueueDrainDemoScript(t, ctx, demoScript, ep.BaseURL, 180*time.Second)
 	if exitCode != 0 {
-		t.Fatalf("cross-frame-coupling-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
+		t.Fatalf("queue-drain-converges-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
 	}
 
 	if _, err := os.Stat(templatePath); err != nil {
-		t.Fatalf("shipped template %s missing on disk: %v — the cross-frame-coupling demo's template is broken", templatePath, err)
+		t.Fatalf("shipped template %s missing on disk: %v — the queue-drain-converges demo's template is broken", templatePath, err)
 	}
 
-	requireCrossFrameInstanceEmittedIterate(t, ep, 60*time.Second)
+	requireQueueDrainInstanceEmittedIterate(t, ep, 60*time.Second)
 }
 
-func runCrossFrameDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string, timeout time.Duration) (string, int) {
+func runQueueDrainDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string, timeout time.Duration) (string, int) {
 	t.Helper()
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -70,12 +70,12 @@ func runCrossFrameDemoScript(t *testing.T, ctx context.Context, scriptPath, base
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
-		t.Fatalf("cross-frame-coupling-demo.sh run error (not an exit error): %v\ncombined:\n%s", err, combined)
+		t.Fatalf("queue-drain-converges-demo.sh run error (not an exit error): %v\ncombined:\n%s", err, combined)
 	}
 	return combined, exitErr.ExitCode()
 }
 
-func requireCrossFrameInstanceEmittedIterate(t *testing.T, ep harness.RimskyEndpoint, deadline time.Duration) {
+func requireQueueDrainInstanceEmittedIterate(t *testing.T, ep harness.RimskyEndpoint, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var lastBody string
@@ -117,5 +117,5 @@ func requireCrossFrameInstanceEmittedIterate(t *testing.T, ep harness.RimskyEndp
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("no instance exhibited a loop/iterate frame with sender_kind=instance within %v — the cross-frame back-edge did not fire end-to-end\nlast /v1/instances body:\n%s", deadline, lastBody)
+	t.Fatalf("no instance exhibited a loop/iterate frame with sender_kind=instance within %v — the queue-drain-converges back-edge did not fire end-to-end\nlast /v1/instances body:\n%s", deadline, lastBody)
 }

@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @story: cross-frame-coupling
+// @story: queue-drain-converges
 // @concept: message-emitter-node
 package scenarios
 
@@ -21,7 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
+func TestStoryQueueDrainConverges_TerminatesViaCELGate(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
@@ -35,7 +35,7 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 	}, true, "b ran")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "story-cross-frame-coupling-cycle", Version: "1",
+		Name: "story-queue-drain-converges-cycle", Version: "1",
 		Messages: []spec.MessageSchema{
 			{
 				Type: "loop/wake",
@@ -125,7 +125,7 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 		},
 	})
 
-	iid := h.CreateInstance(tid, "ck-story-cfc-cycle", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-story-qdc-cycle", map[string]any{})
 	require.NotEqual(t, shared.UUID{}, iid)
 
 	resp := postMessage(t, h.ControlBase, iid, map[string]any{
@@ -175,7 +175,7 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 			"single unavoidable iterate. got %d", finalARuns)
 }
 
-func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsWithoutGate(t *testing.T) {
+func TestStoryQueueDrainConverges_LoopsWithoutGate(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
@@ -189,7 +189,7 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsWithoutGate(t *testing.T) {
 	}, true, "b ran")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "story-cross-frame-coupling-loops", Version: "1",
+		Name: "story-queue-drain-converges-loops", Version: "1",
 		Messages: []spec.MessageSchema{
 			{
 				Type: "loop/wake",
@@ -268,7 +268,7 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsWithoutGate(t *testing.T) {
 		},
 	})
 
-	iid := h.CreateInstance(tid, "ck-story-cfc-loops", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-story-qdc-loops", map[string]any{})
 	require.NotEqual(t, shared.UUID{}, iid)
 
 	resp := postMessage(t, h.ControlBase, iid, map[string]any{
@@ -323,7 +323,7 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsWithoutGate(t *testing.T) {
 		"distinct triggering_message_id values must exist across frames")
 }
 
-func TestStoryCrossFrameCoupling_SelfDrainConvergesViaDiffGate(t *testing.T) {
+func TestStoryQueueDrainConverges_TerminatesViaDiffGate(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
@@ -332,7 +332,7 @@ func TestStoryCrossFrameCoupling_SelfDrainConvergesViaDiffGate(t *testing.T) {
 	}, true, "worker ran")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "story-cross-frame-coupling-self-drain", Version: "1",
+		Name: "story-queue-drain-converges-self-drain", Version: "1",
 		Messages: []spec.MessageSchema{
 			{
 				Type: "drain/kick",
@@ -389,7 +389,7 @@ func TestStoryCrossFrameCoupling_SelfDrainConvergesViaDiffGate(t *testing.T) {
 		},
 	})
 
-	iid := h.CreateInstance(tid, "ck-story-cfc-self-drain", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-story-qdc-self-drain", map[string]any{})
 	require.NotEqual(t, shared.UUID{}, iid)
 
 	resp := postMessage(t, h.ControlBase, iid, map[string]any{

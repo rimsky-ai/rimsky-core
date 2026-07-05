@@ -1,10 +1,10 @@
-# cross-frame-coupling-demo-template.yaml — STORY-cross-frame-coupling
+# queue-drain-converges-demo-template.yaml — STORY-queue-drain-converges
 # proof template.
 #
-# A template author expresses cross-frame coupling — node R reads node
-# A's data through a typed-message body that the emit-node E composed —
-# entirely through the typed-message schema. The demo script
-# (cross-frame-coupling-demo.sh) deploys this template, drives an initial
+# A template author expresses a multi-frame queue-drain — node R reads
+# node A's data through a typed-message body that the emit-node E
+# composed — entirely through the typed-message schema. The demo script
+# (queue-drain-converges-demo.sh) deploys this template, drives an initial
 # wake message, polls the cascade-graph observability endpoint, and shows
 # both the wake frame (operator-posted) and the iterate frame (cascade-
 # emitted) carrying a triggering_message_id.
@@ -26,13 +26,13 @@
 #
 # The script's self-checking output greps for both the wake frame and
 # the iterate frame and exits non-zero if either is missing.
-name: cross-frame-coupling-demo
+name: queue-drain-converges-demo
 version: "1"
 description: |
-  STORY-cross-frame-coupling proof template. A two-frame back-edge:
+  STORY-queue-drain-converges proof template. A two-frame queue drain:
   wake → A → emit-node E → loop/iterate → R. R reads its inputs from
-  the typed-message body that E composed, exhibiting the cross-frame
-  data coupling the story names.
+  the typed-message body that E composed, exhibiting the multi-frame
+  queue-drain the story names.
 
 messages:
   - type: loop/wake
