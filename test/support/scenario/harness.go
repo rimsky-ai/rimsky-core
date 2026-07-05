@@ -27,6 +27,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/scheduler"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	stubexec "github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
@@ -621,6 +622,10 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	// @decision: empty-message-as-root-trigger
 	_ = runtime.SweepDeliverMessagesForRunningFrames(h.Ctx, h.Persist,
 		shared.SilentLogger{}, time.Now())
+	_, _ = scheduler.ProcessPureCascade(h.Ctx, scheduler.PureCascadeArgs{
+		Persist: h.Persist, Queue: h.Queue, Clock: shared.SystemClock{},
+		Logger: shared.SilentLogger{},
+	})
 	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger)
 	var rows []persistence.NodeRow
 	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {

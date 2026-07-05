@@ -98,8 +98,8 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 
 	pausedIID := createPausedInstanceLatestAttr(t, h, tid, "ck-latest-attr-paused")
 	pausedW := waitForNodeRow(t, h, pausedIID, "worker", 10*time.Second)
-	require.Nil(t, latestAttrRow(h, pausedW.ID, h.GetMainRunScopeID(pausedIID)),
-		"never-executed node should have no node_attributes row")
+	require.Nil(t, latestAttrRow(h, pausedW.ID, shared.UUID(uuid.New())),
+		"never-executed node should have no node_attributes row for any scope (paused instance opens no frame, has no root RunScope)")
 
 	caPaused := getJSONMap(t, h.ControlBase+"/v1/nodes/"+pausedW.ID.String())
 	requireAbsentOrEmptyBag(t, caPaused["latest_attributes"],

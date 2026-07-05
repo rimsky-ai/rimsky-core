@@ -121,13 +121,13 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 			"the supervisor must stop claiming new dispatches for the paused instance "+
 			"(spec falsifier: pause is recorded but the supervisor keeps dispatching)")
 
-	var pendingCount int
+	var pendingMessages int
 	h.QueryRowSQL(
-		`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND state = 'stale' AND claimed_by IS NULL`,
-		[]any{w.ID}, &pendingCount)
-	require.GreaterOrEqual(t, pendingCount, 1,
-		"under pause there must be at least one unclaimed pending dispatch row "+
-			"for the invalidated worker (the supervisor refused to claim it)")
+		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE`,
+		[]any{iid}, &pendingMessages)
+	require.GreaterOrEqual(t, pendingMessages, 1,
+		"under pause the wake message must sit pending on the instance queue "+
+			"(pause blocks the frame engine from picking it up; no frame opens, no dispatch is created)")
 
 	resumeResp := doPost(t, h.ControlBase+"/v1/instances/"+iid.String()+"/resume", nil)
 	require.Equal(t, http.StatusOK, resumeResp.status,

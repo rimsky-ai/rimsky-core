@@ -171,10 +171,17 @@ func RunNode(
 		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
 	}
 
-	resolvedAttrs, attrSchema, err := resolveAttributes(ctx, args, &acq)
-	if err != nil {
-		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
-			applyAttributeFailure(ctx, args, &acq, err)
+	var (
+		resolvedAttrs map[string]any
+		attrSchema    map[string]any
+	)
+	if acq.Executor != "" {
+		var err error
+		resolvedAttrs, attrSchema, err = resolveAttributes(ctx, args, &acq)
+		if err != nil {
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
+				applyAttributeFailure(ctx, args, &acq, err)
+		}
 	}
 	dispatchAttrs := resolvedAttrs
 
