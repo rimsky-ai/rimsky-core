@@ -33,4 +33,4 @@ B's executor is invoked with the duplicate bag — observable by counting execut
 
 ## Proof
 
-The intra-frame dedup mechanism is exercised by cascade-walker and gate-evaluator unit tests in `lib/runtime`. A scenario-level proof driving A's multiple identical-bag cascade rounds via the intra-frame cascade self-edge pattern is deferred — the mechanism's bag-equality dedup is verified at the unit level; the scenario proof will land in the intra-frame proof-cluster follow-up.
+An executable scenario test where A re-runs twice with byte-identical bags, B is configured with `cascade_mode=idempotent-queue`, the test asserts B's lineage shows only the original dispatch plus one cascade re-run (not two). A separate test for `idempotent-settled` runs the dedup across a settle boundary.

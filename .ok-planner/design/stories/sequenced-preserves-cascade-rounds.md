@@ -19,12 +19,12 @@ Some workloads cannot tolerate coalescing. An audit-trail executor needs to reco
 
 ## Acceptance
 
-An author writes a graph in one frame where A re-runs M times via an intra-frame cascade self-edge (bounded by a CEL `when:` predicate on the self-edge's subscription per `concept:cascade`) and B has `cascade_mode=sequenced`. Each cascade-driven pending for B accumulates in the dispatcher's queue (none are deleted by mode rule). B's initial in-flight dispatch settles, then the dispatcher claims the M queued stales by assigned sequence number. B dispatches M times, each invocation seeing the bag captured at its own moment.
+An author writes a graph A → B with `cascade_mode=sequenced` on B. A re-runs M times while B is in-flight. Each cascade-driven pending for B transitions to stale and accumulates in the dispatcher's queue (none are deleted by mode rule). After B's in-flight run settles, the dispatcher claims the M queued stales by assigned sequence number. B dispatches M times, each invocation seeing the bag captured at its own moment. Observable as: B's executor invocation count = M + 1 (the original plus one per cascade round), and each post-settle invocation's bag matches A's value at that round.
 
 ## Falsifier
 
-B dispatches fewer than M+1 times — observable by counting executor invocations across the frame. OR B's dispatches are out of sequence order — observable by comparing each dispatch's bag to A's value history against the assigned sequence number. OR two of B's post-settle dispatches see the same bag — observable by comparing bag values across invocations.
+B dispatches fewer than M+1 times — observable by counting executor invocations. OR B's dispatches are out of sequence order — observable by comparing each dispatch's bag to A's value history against the assigned sequence number. OR two of B's post-settle dispatches see the same bag — observable by comparing bag values across invocations.
 
 ## Proof
 
-The intra-frame mechanism is exercised by cascade-walker unit tests in `lib/runtime`. A scenario-level proof driving A's multiple cascade rounds via the intra-frame cascade self-edge pattern (the same pattern used by the session-resume proof) is deferred — the mechanism's queue-depth-preservation guarantee is verified at the unit level; the scenario proof will land in the intra-frame proof-cluster follow-up.
+An executable scenario test where A re-runs 3 times in sequence with distinct values, B is configured with `cascade_mode=sequenced`, B's in-flight dispatch settles, the test asserts B dispatches 3 more times in order with each of A's 3 distinct values.
