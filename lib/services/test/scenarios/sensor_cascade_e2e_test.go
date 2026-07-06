@@ -84,7 +84,6 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 }
 
 // @story: sensor-http
-// @story: terminate-after-run
 func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -130,7 +129,6 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
 
-	// @story: terminate-after-run
 	requireInstanceNotTerminated(t, ep, instanceID)
 
 	// @story: sensor-http

@@ -18,7 +18,6 @@ echo "onboarding-demo: registering + deploying + instantiating ${TEMPLATE_PATH} 
 RUN_STDOUT="$( "${RIMSKY_BIN}" run \
     --endpoint "${RIMSKY_ENDPOINT}" \
     --instance-key "onboarding-demo-$( date +%s )-$$" \
-    --terminate-after-run \
     "${TEMPLATE_PATH}" )"
 echo "${RUN_STDOUT}"
 

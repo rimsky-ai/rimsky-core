@@ -56,7 +56,6 @@ type createInstanceRequest struct {
 	Params             map[string]any  `json:"params,omitempty"`
 	AttributeOverrides map[string]any  `json:"attribute_overrides,omitempty"`
 	Paused             bool            `json:"paused,omitempty"`
-	TerminateAfterRun  bool            `json:"terminate_after_run,omitempty"`
 	ServiceBindings    json.RawMessage `json:"service_bindings,omitempty"`
 }
 
@@ -75,7 +74,6 @@ type instanceItem struct {
 	AttributeOverrides            map[string]any             `json:"attribute_overrides,omitempty"`
 	AttributeOverridesMatchCounts []int64                    `json:"attribute_overrides_match_counts,omitempty"`
 	Paused                        bool                       `json:"paused"`
-	TerminateAfterRun             bool                       `json:"terminate_after_run"`
 	CreatedAt                     time.Time                  `json:"created_at"`
 	TerminatedAt                  *time.Time                 `json:"terminated_at,omitempty"`
 	ServiceBindings               json.RawMessage            `json:"service_bindings,omitempty"`
@@ -95,14 +93,13 @@ type instanceSubscriptionItem struct {
 
 func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 	out := instanceItem{
-		ID:                r.ID.String(),
-		TemplateHash:      r.TemplateHash,
-		InstanceKey:       r.InstanceKey,
-		Params:            ApplyParamsRedact(r.Params, redact),
-		Paused:            r.Paused,
-		TerminateAfterRun: r.TerminateAfterRun,
-		CreatedAt:         r.CreatedAt,
-		TerminatedAt:      r.TerminatedAt,
+		ID:           r.ID.String(),
+		TemplateHash: r.TemplateHash,
+		InstanceKey:  r.InstanceKey,
+		Params:       ApplyParamsRedact(r.Params, redact),
+		Paused:       r.Paused,
+		CreatedAt:    r.CreatedAt,
+		TerminatedAt: r.TerminatedAt,
 	}
 	if len(r.AttributeOverrides) > 0 {
 		out.AttributeOverrides = r.AttributeOverrides
@@ -293,7 +290,6 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				AttributeOverrides:            body.AttributeOverrides,
 				AttributeOverridesMatchCounts: initialMatchCounts,
 				Paused:                        body.Paused,
-				TerminateAfterRun:             body.TerminateAfterRun,
 				ServiceBindings:               body.ServiceBindings,
 				CreatedByAPIKeyID:             ident.KeyID,
 			})
@@ -842,7 +838,6 @@ type provisionArgs struct {
 	AttributeOverrides            map[string]any
 	AttributeOverridesMatchCounts []int64
 	Paused                        bool
-	TerminateAfterRun             bool
 	ServiceBindings               json.RawMessage
 	CreatedByAPIKeyID             *foundationshared.UUID
 }
@@ -867,7 +862,6 @@ func provisionInstanceTx(
 		AttributeOverrides:            args.AttributeOverrides,
 		AttributeOverridesMatchCounts: args.AttributeOverridesMatchCounts,
 		Paused:                        args.Paused,
-		TerminateAfterRun:             args.TerminateAfterRun,
 		ServiceBindings:               args.ServiceBindings,
 		CreatedByAPIKeyID:             args.CreatedByAPIKeyID,
 		MessageQueueMode:              queueMode,

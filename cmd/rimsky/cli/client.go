@@ -356,11 +356,10 @@ func (c *Client) DeleteTag(ctx context.Context, tag string) error {
 }
 
 type CreateInstanceRequest struct {
-	Template          string                 `json:"template"`
-	InstanceKey       *string                `json:"instance_key,omitempty"`
-	Params            map[string]any         `json:"params,omitempty"`
-	ServiceBindings   map[string]bindingSpec `json:"service_bindings,omitempty"`
-	TerminateAfterRun bool                   `json:"terminate_after_run,omitempty"`
+	Template        string                 `json:"template"`
+	InstanceKey     *string                `json:"instance_key,omitempty"`
+	Params          map[string]any         `json:"params,omitempty"`
+	ServiceBindings map[string]bindingSpec `json:"service_bindings,omitempty"`
 }
 
 type bindingSpec struct {

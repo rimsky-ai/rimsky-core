@@ -21,8 +21,6 @@ import (
 
 type ApplyOpts struct {
 	Logger io.Writer
-	// @decision: instance-self-termination
-	TerminateAfterRun bool
 }
 
 type CreatedInstance struct {
@@ -132,10 +130,6 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 			Template:    step.TemplateTag,
 			InstanceKey: &key,
 			Params:      step.Params,
-		}
-		// @decision: instance-self-termination
-		if opts.TerminateAfterRun {
-			body.TerminateAfterRun = true
 		}
 		resp, err := c.CreateInstance(ctx, body)
 		if err != nil {

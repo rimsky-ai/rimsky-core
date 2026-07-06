@@ -55,18 +55,17 @@ func RunLogs(ctx context.Context, args []string) int {
 
 // @decision: rimsky-run-self-hosts-templates
 type RunFlags struct {
-	Params            map[string]any
-	TemplateName      string
-	TemplateFile      string
-	Key               string
-	Tag               string
-	Keep              bool
-	KeepSet           bool
-	TerminateAfterRun bool
-	PollInterval      time.Duration
-	Timeout           time.Duration
-	Services          RepeatedFlag
-	SelfHost          bool
+	Params       map[string]any
+	TemplateName string
+	TemplateFile string
+	Key          string
+	Tag          string
+	Keep         bool
+	KeepSet      bool
+	PollInterval time.Duration
+	Timeout      time.Duration
+	Services     RepeatedFlag
+	SelfHost     bool
 }
 
 func ParseRunArgs(args []string) (*CommonFlags, RunFlags, int) {
@@ -86,9 +85,6 @@ func ParseRunArgs(args []string) (*CommonFlags, RunFlags, int) {
 	fs.StringVar(&rf.Tag, "tag", "", "tag to attach to the registered template")
 	fs.BoolVar(&keep, "keep", true, "leave the instance and template after creation (default; remote endpoint only)")
 	fs.BoolVar(&noKeep, "no-keep", false, "delete instance and template after terminal state")
-	fs.BoolVar(&rf.TerminateAfterRun, "terminate-after-run", false,
-		"create the instance with terminate_after_run=true — it self-terminates once its nodes settle, "+
-			"so terminal-flag polling (e.g. `rimsky watch`) exits. Implied by --no-keep.")
 	fs.DurationVar(&rf.PollInterval, "poll-interval", time.Second, "poll interval when --no-keep")
 	fs.DurationVar(&rf.Timeout, "timeout", 0, "max wait for terminal state (0 = unbounded)")
 	fs.Var(&paramKV, "param", "k=v param (repeatable); merged over --params (later wins)")
@@ -125,7 +121,6 @@ func ParseRunArgs(args []string) (*CommonFlags, RunFlags, int) {
 	rf.Keep = keep
 	if noKeep || !keep {
 		rf.Keep = false
-		rf.TerminateAfterRun = true
 	}
 
 	pp, err := mergeParams(params, paramKV)
@@ -198,9 +193,6 @@ func RunRunRemote(ctx context.Context, common *CommonFlags, endpoint string, rf 
 	}
 	if len(bindings) > 0 {
 		body.ServiceBindings = bindings
-	}
-	if rf.TerminateAfterRun {
-		body.TerminateAfterRun = true
 	}
 	inst, err := c.CreateInstance(ctx, body)
 	if err != nil {

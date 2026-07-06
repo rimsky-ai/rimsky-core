@@ -139,30 +139,6 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 	return int(n), nil
 }
 
-func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
-	_, err := s.q(tx).ExecContext(ctx, `
-        UPDATE rimsky_instances
-        SET terminated_at = ?
-        WHERE id = ?
-          AND terminated_at IS NULL
-          AND terminate_after_run = 1
-          AND NOT EXISTS (
-              -- unresolved-work: counts parked. A parked run is suspended
-              -- work awaiting a wake, not a terminal, so it blocks instance
-              -- termination (a later wake must not land on a terminated
-              -- instance). Defensive restatement of the frame-end invariant.
-              SELECT 1 FROM rimsky_node_runs r
-              JOIN rimsky_nodes n ON n.id = r.node_id
-              WHERE n.instance_id = rimsky_instances.id
-                AND r.state IN ('pending','stale','running','held','parked')
-          )
-    `, nowUTC(), instanceID.String())
-	if err != nil {
-		return fmt.Errorf("frames.MarkInstanceTerminatedIfDone: %w", err)
-	}
-	return nil
-}
-
 func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (*shared.UUID, error) {
 	var frameIDStr string
 	err := s.q(tx).QueryRowContext(ctx, `

@@ -68,9 +68,6 @@ type FrameTable interface {
 
 	MarkRunningFrameTerminal(ctx context.Context, frameID shared.UUID, finalState FrameState, tx Tx) (transitioned bool, err error)
 
-	// @concept: instance
-	MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx Tx) error
-
 	GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx Tx) (*shared.UUID, error)
 
 	MarkSourceNodeStale(ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx Tx) (matched bool, err error)

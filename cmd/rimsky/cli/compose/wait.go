@@ -3,7 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @decision: termination
-// @decision: instance-self-termination
 // @story: one-shot-to-terminal
 package compose
 
@@ -33,6 +32,7 @@ const (
 type instanceClient interface {
 	GetInstance(ctx context.Context, idOrKey string) (*cli.Instance, error)
 	ListInstanceNodes(ctx context.Context, idOrKey string) (*cli.ListInstanceNodesResponse, error)
+	TerminateInstance(ctx context.Context, idOrKey string, reason string) (*cli.Instance, error)
 }
 
 func WaitForInstancesTerminal(
@@ -103,10 +103,10 @@ func WaitForInstancesTerminal(
 				return outcomes, ctx.Err()
 			}
 
-			if inst.TerminatedAt == nil {
+			if nodes == nil {
 				continue
 			}
-			if nodes == nil {
+			if !allNodesSettled(nodes.Nodes) {
 				continue
 			}
 			name := keys[id]
@@ -117,6 +117,7 @@ func WaitForInstancesTerminal(
 			outcomes[id] = outcome
 			printer.InstanceTerminal(project, name, outcome, frames)
 			delete(remaining, id)
+			_ = inst
 		}
 		if len(remaining) == 0 {
 			break
@@ -168,6 +169,19 @@ func isNodeSettled(s *cli.NodeRunSummary) bool {
 		return false
 	}
 	return s.FreshCount > 0 || s.FailedCount > 0
+}
+
+// @concept: node
+func allNodesSettled(nodes []cli.Node) bool {
+	if len(nodes) == 0 {
+		return false
+	}
+	for _, n := range nodes {
+		if !isNodeSettled(n.RunSummary) {
+			return false
+		}
+	}
+	return true
 }
 
 func AnyOutcomeFailed(outcomes map[string]string) bool {

@@ -127,7 +127,6 @@ func Suite(
 	t.Run("FrameSettlement", func(t *testing.T) {
 		t.Run("NoPendingNodes", func(t *testing.T) { testFrameSettlementNoPendingNodes(t, factory(t)) })
 		t.Run("HasFailedNode", func(t *testing.T) { testFrameSettlementHasFailedNode(t, factory(t)) })
-		t.Run("InstanceTermination", func(t *testing.T) { testFrameSettlementInstanceTermination(t, factory(t)) })
 		t.Run("MarkSourceNodeStale", func(t *testing.T) { testFrameSettlementMarkSourceNodeStale(t, factory(t)) })
 		t.Run("StuckFrames", func(t *testing.T) { testFrameSettlementStuckFrames(t, factory(t), rawExec) })
 		t.Run("OrphanDispatches", func(t *testing.T) { testFrameSettlementOrphanDispatches(t, factory(t)) })

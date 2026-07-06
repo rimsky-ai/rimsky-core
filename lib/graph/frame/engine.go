@@ -95,7 +95,7 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 			now := time.Now()
 			endedAt = &now
 		}
-		return store.Frames().MarkInstanceTerminatedIfDone(ctx, instanceID, tx)
+		return nil
 	}); err != nil {
 		return err
 	}

@@ -265,48 +265,6 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 		"stuck-frame warning must not terminate the instance")
 }
 
-func TestDurableByDefaultVsTerminateAfterRun(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	d := pgtest.OpenDriver(ctx, t)
-
-	instanceA, msgA := seedTemplateInstanceAndMessage(t, ctx, d)
-	srcA := uuid.New()
-	nowA := time.Now()
-	frameA := seedFrameRow(t, ctx, d, instanceA, msgA, "running", &nowA, 600000)
-	seedNode(t, ctx, d, instanceA, srcA, "fresh", &frameA)
-
-	instanceB, msgB := seedTemplateInstanceAndMessage(t, ctx, d)
-	pgtest.ExecForTest(ctx, t, d,
-		`UPDATE rimsky_instances SET terminate_after_run = true WHERE id = $1`, instanceB)
-	srcB := uuid.New()
-	nowB := time.Now()
-	frameB := seedFrameRow(t, ctx, d, instanceB, msgB, "running", &nowB, 600000)
-	seedNode(t, ctx, d, instanceB, srcB, "fresh", &frameB)
-
-	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
-
-	var stateA, stateB string
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameA}, &stateA)
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameB}, &stateB)
-	require.Equal(t, "completed", stateA, "instance A's frame should end")
-	require.Equal(t, "completed", stateB, "instance B's frame should end")
-
-	var termA, termB *time.Time
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT terminated_at FROM rimsky_instances WHERE id = $1`, []any{instanceA}, &termA)
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT terminated_at FROM rimsky_instances WHERE id = $1`, []any{instanceB}, &termB)
-
-	require.Nil(t, termA,
-		"durable-by-default instance A must survive its own drain; terminated_at must stay NULL")
-	require.NotNil(t, termB,
-		"terminate_after_run instance B must self-terminate after its frame ends")
-}
-
 func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

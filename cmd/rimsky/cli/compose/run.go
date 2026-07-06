@@ -15,7 +15,6 @@
 // @decision: services-source
 // @decision: launch-integration
 // @decision: network-binding
-// @decision: instance-self-termination
 // @decision: termination
 // @decision: exit-codes
 // @decision: graceful-shutdown
@@ -195,7 +194,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	if flags.json {
 		applyLogger = io.Discard
 	}
-	created, err := ApplyPlan(bootCtx, c, plan, ApplyOpts{Logger: applyLogger, TerminateAfterRun: true})
+	created, err := ApplyPlan(bootCtx, c, plan, ApplyOpts{Logger: applyLogger})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: apply:", err)
 		return coord.Drain(context.Background(), ReasonAnyFailure)
@@ -315,6 +314,7 @@ func waitOneShotToTerminal(bootCtx context.Context, w oneShotWait) ShutdownReaso
 	}
 	select {
 	case <-waitDone:
+		terminateInstancesForOneShot(bootCtx, w.client, w.instanceIDs, w.verb, w.logger)
 		switch {
 		case waitErr != nil:
 			return classifyWaitErr(waitErr)
@@ -515,6 +515,20 @@ func waitForOrTimeout(waitDone <-chan struct{}, d time.Duration, trigger string)
 			"trigger", trigger,
 			"budget", d.String(),
 		)
+	}
+}
+
+func terminateInstancesForOneShot(ctx context.Context, c instanceClient, instanceIDs []string, verb string, logger *slog.Logger) {
+	if c == nil {
+		return
+	}
+	for _, id := range instanceIDs {
+		if _, err := c.TerminateInstance(ctx, id, "one_shot_workflow_complete"); err != nil {
+			if logger != nil {
+				logger.Warn(verb+": terminate instance after wait failed",
+					"instance_id", id, "err", err.Error())
+			}
+		}
 	}
 }
 

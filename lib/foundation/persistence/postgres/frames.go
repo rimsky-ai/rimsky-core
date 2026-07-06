@@ -83,30 +83,6 @@ func (s *framesImpl) MarkRunningFrameTerminal(
 	return cmd.RowsAffected() == 1, nil
 }
 
-func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
-	_, err := s.q(tx).Exec(ctx, `
-        UPDATE rimsky_instances i
-        SET terminated_at = now()
-        WHERE i.id = $1
-          AND i.terminated_at IS NULL
-          AND i.terminate_after_run = true
-          AND NOT EXISTS (
-              -- unresolved-work: counts parked. A parked run is suspended
-              -- work awaiting a wake, not a terminal, so it blocks instance
-              -- termination (a later wake must not land on a terminated
-              -- instance). Defensive restatement of the frame-end invariant.
-              SELECT 1 FROM rimsky_node_runs r
-              JOIN rimsky_nodes n ON n.id = r.node_id
-              WHERE n.instance_id = i.id
-                AND r.state IN ('pending','stale','running','held','parked')
-          )
-    `, instanceID)
-	if err != nil {
-		return fmt.Errorf("frames.MarkInstanceTerminatedIfDone: %w", err)
-	}
-	return nil
-}
-
 func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (*shared.UUID, error) {
 	var frameID shared.UUID
 	err := s.q(tx).QueryRow(ctx, `

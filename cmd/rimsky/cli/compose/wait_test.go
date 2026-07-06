@@ -74,6 +74,10 @@ func (f *fakeInstanceClient) ListInstanceNodes(ctx context.Context, id string) (
 	return &cli.ListInstanceNodesResponse{Nodes: append([]cli.Node(nil), frames[i].nodes...)}, nil
 }
 
+func (f *fakeInstanceClient) TerminateInstance(_ context.Context, id string, _ string) (*cli.Instance, error) {
+	return &cli.Instance{ID: id}, nil
+}
+
 func termTime() *string {
 	s := time.Now().UTC().Format(time.RFC3339Nano)
 	return &s

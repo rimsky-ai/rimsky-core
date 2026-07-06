@@ -23,9 +23,7 @@ type InstanceRow struct {
 	CreatedAt                     time.Time  `json:"created_at"`
 	TerminatedAt                  *time.Time `json:"terminated_at"`
 	// @concept: breakpoint
-	Paused bool `json:"paused"`
-	// @concept: instance
-	TerminateAfterRun bool            `json:"terminate_after_run"`
+	Paused            bool            `json:"paused"`
 	ServiceBindings   json.RawMessage `json:"service_bindings,omitempty"`
 	CreatedByAPIKeyID *shared.UUID    `json:"created_by_api_key_id,omitempty"`
 	// @concept: instance
@@ -56,9 +54,7 @@ type InstanceCreateInput struct {
 	AttributeOverrides            map[string]any
 	AttributeOverridesMatchCounts []int64
 	// @concept: breakpoint
-	Paused bool
-	// @concept: instance
-	TerminateAfterRun bool
+	Paused            bool
 	ServiceBindings   json.RawMessage
 	CreatedByAPIKeyID *shared.UUID
 	// @concept: instance
