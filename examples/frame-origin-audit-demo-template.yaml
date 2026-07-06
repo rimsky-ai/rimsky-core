@@ -82,7 +82,7 @@ nodes:
         required: [checks, rows]
 
   - type: emitter
-    emits_message: audit/loop
+    sends_message: audit/loop
     description: |
       The cascade-send origin: emitter subscribes to A's terminal/
       success and emits an audit/loop message whose body carries the

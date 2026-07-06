@@ -83,7 +83,7 @@ nodes:
         required: [checks, rows]
 
   - type: emitter
-    emits_message: loop/iterate
+    sends_message: loop/iterate
     description: |
       The cross-frame back-edge: emitter subscribes to A's terminal/
       success and emits a loop/iterate message whose body carries the
