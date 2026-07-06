@@ -385,3 +385,294 @@ Verification:
 - Full unit test suite green: `lib/foundation/...`, `lib/runtime/...`, `lib/graph/...`, `lib/control/...`.
 - Full scenario suite green: `test/scenarios/...` including the reshaped `TestStoryQueueDrainConverges_*` tests.
 
+### Extended fallout audit (2026-07-05, post-restoration re-audit)
+
+The user asked for a full re-audit after the frame-isolation restoration to
+catch every remaining trace of cross-frame state coupling and every language
+error around messages/events. Fanned out four parallel research agents over
+the design catalog, the Go source under `lib/`, the test suite, and the
+message-queue / frame-gate mechanism. Findings clustered into four buckets;
+appending them here as an amendment to the ledger.
+
+**Item 7 verdict revised.** The original item-7 audit concluded "all
+attribute-value reads are scope-qualified — no change required, only two
+compliant-but-fragile spots (`wake_parked` / operator `recalculate`)". That
+verdict was wrong. The extended audit found four real leaks (bucket 10
+below) that the earlier pass missed. Item 7's "no change required" status
+retires; item 7 becomes "audit superseded by items 10 / 11 / 12 / 13".
+
+#### Bucket 10 — Real cross-frame leaks (four sites, corrective work)
+
+Sites where code shipping today reads or writes state across frame
+boundaries in a way that violates the structural invariant.
+
+- **[10a] `Nodes.UpdateState` ambient-lookup with cross-frame fallback.**
+  `code:lib/foundation/persistence/postgres/nodes.go::enforceAndUpdate`
+  (+ sqlite mirror) takes `(node_id, run_scope_id)` and looks up the
+  in-flight run to validate a cascade transition. When no in-flight run
+  exists in the current scope, it falls back to
+  `SELECT state FROM rimsky_node_runs WHERE node_id = $1 AND state = 'failed' LIMIT 1` —
+  keyed by `node_id` alone — and uses that terminal-failed state from
+  ANY prior frame as the "current" state for `cascade.NextState`. Direct
+  cross-frame read.
+
+  Fix: change the signature to `UpdateState(node_run_id, state, reason, settling_signal_type, tx)`
+  and delete the ambient lookup entirely. The function looks up the
+  specific run by id, reads its state, validates the transition, updates
+  the row. All 26 non-test call sites already hold a node_run_id (under
+  varying names — see item 12b). Two conformance test callers, all
+  runtime callers via `acq.DispatchID`, one scheduler caller via
+  `PureCascadeReadyRow.RunID`.
+
+  Follow-on inspection: `Nodes.GetLatestRunInScope(node_id, run_scope_id)`
+  at `code:lib/runtime/runner_error_policy.go#102,123,235` is the same
+  "look up a run by (node, scope)" shape. Intra-frame by construction
+  (RunScopes are per-frame), so not a leak — but the abstraction is the
+  same shape and worth scrutinizing once 10a lands.
+
+- **[10b] `IncrementAttributeOverrideMatchCounts` writes `rimsky_instances`
+  mid-frame per dispatch.** `code:lib/runtime/runner_dispatch.go#402` →
+  `code:lib/runtime/attribute_overrides.go#151` →
+  `code:lib/foundation/persistence/postgres/instances.go#265` (+ sqlite
+  mirror). Every dispatched run updates
+  `rimsky_instances.attribute_overrides_match_counts`. Violates
+  `concept:instance`'s invariant that frame processing mutates only the
+  message queue on the instance row.
+
+  Underlying design question: is `attribute_overrides_match_counts`
+  actually instance state (durable, persisted, immutable during frame
+  processing) or is it frame-scoped telemetry that landed in the wrong
+  table? Two candidate re-homings: (i) move it onto `rimsky_node_runs`
+  as per-run bookkeeping and derive the instance-level rollup from
+  events; (ii) surface it as an event stream and drop the persisted
+  column. The two ledger-open fallout tests
+  (`TestAttributeOverridesMatchOverlayFlatTemplateGraphResolution_ResolvesToMain`,
+  `TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGraph`)
+  in item-2's running notes target this column and are likely resolved
+  as a side-effect of re-homing.
+
+- **[10c] `MarkInstanceTerminatedIfDone` writes `rimsky_instances.terminated_at`
+  at frame settlement.** `code:lib/graph/frame/engine.go#98` →
+  `code:lib/foundation/persistence/postgres/frames.go#88-103` (+ sqlite
+  mirror). At frame settlement, when `terminate_after_run=true` and no
+  unresolved runs remain, sets `terminated_at`. Violates the invariant
+  that frame resolution does not mutate the instance row.
+
+  Underlying design question: how does an instance get terminated at
+  all under strict frame isolation? Two candidates: (i) a lifecycle
+  observer separate from frame settlement that reads events and
+  transitions the instance out-of-band; (ii) a terminate message on the
+  instance queue drained by a receiver node that itself doesn't need
+  to mutate `rimsky_instances` (the instance is "terminated" when the
+  observer sees the terminate event). Wants a design pass before code
+  changes; open the question in bucket 11 as a structural gap.
+
+- **[10d] `unresolved_executor_test.go` mid-scenario `UPDATE rimsky_nodes`.**
+  `code:test/scenarios/unresolved_executor_test.go#38-42` does
+  `UPDATE rimsky_nodes SET executor = 'does_not_exist_unknown' WHERE id = $2`
+  on a live node to arrange the unresolvable-executor scenario. Fix:
+  arrange via a template declaring an unknown executor at
+  registration; delete the raw-SQL mutation.
+
+#### Bucket 11 — Structural gaps (convention → construction)
+
+Places where the invariant is upheld only by convention across multiple
+sites; the fix is a structural collapse so the "correct-by-construction"
+property is enforced by the shape, not the discipline.
+
+- **[11a] Retire `rimsky_frames.state`; derive "unresolved" from
+  `rimsky_node_runs.state` alone.** The picker
+  (`code:lib/foundation/persistence/postgres/messages.go#191-210`) tests
+  `f.state = 'running'`; the frame-end path
+  (`code:lib/foundation/persistence/postgres/frames.go::ListRunningFramesNoPendingNodes`)
+  defines when `f.state` transitions off `'running'` by looking at
+  `rimsky_node_runs.state IN ('pending','stale','running','held','parked')`.
+  Two sites agree today by convention.
+
+  Structural fix: eliminate the `state` column on `rimsky_frames`
+  entirely. Retire `MarkRunningFrameTerminal`. Rewrite the picker's
+  gate as a direct predicate on `rimsky_node_runs`: "does any frame
+  owned by this instance have any node_run in a non-terminal state?"
+  Retire the `uq_rimsky_frames_running (instance_id) WHERE state = 'running'`
+  unique partial index; replace with an instance-scoped exclusion on
+  frame open. Subsumes the schema `'queued'` degree of freedom
+  (item-2's migration 017 left `'queued'` in the CHECK — moot once
+  the column is gone).
+
+- **[11b] Concept-doc clarity on the two-step "fresh node_runs at frame
+  start" guarantee.** At row-time, new node_run rows carry `data = '{}'`
+  in `rimsky_node_attributes` (SnapshotBagForNewRun falls through to
+  the empty branch because each frame mints a fresh root RunScope).
+  Template-schema defaults are applied at dispatch time via
+  `MergeAttributeDefaults`. Observable behavior at execution matches
+  the invariant; anyone reading `rimsky_node_attributes.data` directly
+  and expecting "defaults are already there" would be misled. Add a
+  clarifying note to `concept:attribute` (via spec pipeline).
+
+- **[11c] Template-validator warning: `message_queue_mode: coalesce` +
+  multiple non-idempotent declared message types.** Coalesce mode
+  cancels ALL pending messages per instance regardless of type
+  (`code:lib/runtime/message_delivery.go::EnqueueMessage#46-55`); a
+  `stop` cancels a pending `start` of a different type. Intentional
+  per item-2's decision, but the template validator has no guardrail
+  warning when a template declares distinct non-idempotent payload
+  shapes AND selects coalesce. Add a warning (not an error — coalesce
+  is legitimate).
+
+  Related open question from item 2: per-instance vs per-message-type
+  coalesce scope. If per-type coalesce becomes a supported mode, this
+  validator warning becomes stricter (an error under coalesce mode
+  when multiple types are declared, "use `per-type-coalesce`
+  instead").
+
+- **[11d] Where does `attribute_overrides_match_counts` live?**
+  Structural gap corresponding to 10b's underlying question. Not the
+  code fix itself — the design decision. Wants a spec pass.
+
+- **[11e] Where does instance termination happen?** Structural gap
+  corresponding to 10c's underlying question. Not the code fix
+  itself — the design decision. Wants a spec pass.
+
+#### Bucket 12 — Language sweep (extends and supersedes item 9)
+
+Item 9 named the message-send / event-emit vocabulary sweep as
+`EmitCascadeMessage` rename + prose. The extended audit found the
+scope is materially wider — DSL surface, proto surface, executor SDK,
+and two more axes of naming drift (run vs node_run; three names for
+the node_run id). Per the uniformity rule, land as one atomic sweep;
+supersede item 9 with the expanded scope here.
+
+- **[12a] Message-send verb sweep.** All "emit" for a message action
+  becomes "send"; all "emit" for an event/signal stays "emit". Blast
+  radius:
+  - Concept slug: `message-emitter-node` → `message-sender-node` (25+
+    citing files across concepts / decisions / stories / code).
+  - Decision slug: `compose-driver-emits-empty-message-after-create` →
+    `compose-driver-sends-empty-message-after-create` (7 citing sites).
+  - Story slug: `cascade-emit` → `cascade-send` (open — the noun
+    "cascade-emit envelope" is a first-class term). Discuss during
+    execution.
+  - Prose in ~25 design files (`concept:message`, `concept:frame`,
+    `concept:instance`, `concept:cascade`, `concept:publisher`,
+    `concept:sensor`, `concept:message-emitter-node`,
+    `concept:message-schema`, `concept:publisher-subscription`, plus
+    stories for publisher, sensor, node-admin, typed-message,
+    empty-message-wake, frame-origin-audit, and decisions for
+    `emit-as-node-kind`, `attribute-set-as-body`, `idempotency-key-header-universal`,
+    `envelope-type-discriminator`).
+  - DSL/YAML surface: `TemplateNodeDef.EmitsMessage` (Go field name
+    with `yaml:"emits_message"` tag) → `TemplateNodeDef.SendsMessage`
+    (yaml `sends_message`).
+  - Executor SDK: `HandlerContext.EmitCascadeMessage` /
+    `EmitMessageType` → `SendCascadeMessage` / `SendMessageType`.
+  - Built-in executor package: `lib/runtime/executor/builtin/emit_message/`
+    → `.../send_message/`; alias `rimsky.emit_message` →
+    `rimsky.send_message`; constant `KindName = "emit_message"` →
+    `"send_message"`; `InProcURL` string mirrors.
+  - Wire proto: `OPERATIONAL_KIND_MESSAGE_EMITTED = 60` →
+    `OPERATIONAL_KIND_MESSAGE_SENT`; `MessageEmittedPayload` →
+    `MessageSentPayload`; field `message_emitted = 10` →
+    `message_sent`. `KindMessageEmitted()` mirror.
+  - Runtime symbols: `runner_emit_message.go` file rename;
+    `emitCascadeMessage` / `emitCascadeMessageInTx` function renames;
+    `CanonicalizeEmitMessageSugar` rename;
+    `runner_dispatch.go` `emitMessageType` local + `DispatchExtras.EmitMessageType`
+    field rename.
+  - CLI stderr strings and MCP tool schema description
+    (`code:lib/control/controlapi/mcp_route.go#88` "treated as a
+    publisher emit; otherwise as an operator emit").
+  - Test names, comments, error strings (~18 hits across 9 files).
+  - Outlier: `story:message-bus` — file/story spelling "bus" instead
+    of "queue" throughout. Rename story to `story:message-queue` or
+    fold into an existing story; prose rewrite.
+
+- **[12b] `run` → `node_run` term unification.** The codebase drops
+  the `node_` prefix from "node_run" throughout ("nobody knows what
+  a run is"). Sweep:
+  - `RunTree` → `NodeRunTree`; `RunTreeRow` → `NodeRunTreeRow`;
+    `CreateRootRun` → `CreateRootNodeRun`; `CreateChildRun` →
+    `CreateChildNodeRun`; `ParentRunID` → `ParentNodeRunID`;
+    `ExitRunID` → `ExitNodeRunID`.
+  - `PureCascadeReadyRow.RunID` → `NodeRunID`; ripple through the
+    scheduler and cascade walker.
+  - `RunArgs` → likely stays (it's the runtime's arg bundle, not a
+    run-of-node_run reference) — call it out and confirm.
+  - `RunScope`: OPEN question. Is a RunScope actually "the scope in
+    which node_runs live" (in which case leave it, or rename to
+    `NodeRunScope`), or is it a per-frame graph-invocation scope
+    (`main` / sub-graph name) whose name has nothing to do with a
+    "run"? Look at `concept:run-scope` and decide during the sweep.
+
+- **[12c] `DispatchID` / `RunID` / `NodeRunID` unification →
+  `NodeRunID`.** Three Go names for the same underlying column
+  (`rimsky_node_runs.id`):
+  - `DispatchID`: on `acquisition` struct (`code:lib/runtime/runner_acquire.go#44`),
+    threading through supervisor, dispatch results, executor scratch
+    writer, breakpoint eval — dozens of sites.
+  - `RunID`: on `PureCascadeReadyRow`, `NodeRunTreeRow`, `CreateRoot*Input`,
+    `WaitSetRow.{ReceiverRunID,SenderRunID}`, etc.
+  - `NodeRunID`: on `AttributeRow.NodeRunID`,
+    `ClaimHandles.UpdateNodeRunID`, `EnqueuedNodeRunKey.NodeRunID`.
+
+  Winner: `NodeRunID`. Sweep every occurrence to that name. This
+  overlaps 12b — do them in one commit so the churn is coherent.
+
+- **[12d] Prose in the design catalog.** Sweep every "emit" applied
+  to a message across `.ok-planner/design/{concepts,stories,decisions,tensions}`.
+  Coordinate with 12a's slug renames so the prose lands in a
+  post-rename state.
+
+Sequencing note: 12a + 12b + 12c ship as one commit per the
+Plumbline uniformity rule ("no coexisting dialects"). 12d rides
+alongside since the slug renames it references.
+
+#### Bucket 13 — Cosmetic cleanup
+
+- **[13a] Retire remaining `queue-drain-converges` naming residue.**
+  Story is retired but the following still spell it:
+  - `test/scenarios/story_queue_drain_converges_e2e_test.go` (file
+    name + `TestStoryQueueDrainConverges_*` function names).
+  - `lib/services/test/scenarios/queue_drain_converges_demo_e2e_test.go`
+    (file name + `TestQueueDrainConvergesDemo_*` function names +
+    helpers).
+  - `examples/queue-drain-converges-demo.{sh,yaml}` (shipped example
+    filenames + in-file comments).
+  Test files re-tagged to `@story: cascade-emit` internally in
+  commit `1ad171c2`, but the filenames still cite the retired slug.
+  Rename to reflect the actual story (`cascade_emit_*` /
+  `emit-demo` — TBD during the pass).
+
+- **[13b] Stale tension slug reference.**
+  `tension:event-vocabulary-implies-delivery` lists `named-event`
+  in its `affects:` frontmatter block; the current catalog has
+  `concept:signal` under that role. `named-event` no longer exists
+  as a concept slug. Fix: update the `affects:` list. Note: this
+  tension is open; the fix does not resolve the tension, only
+  corrects the stale reference. Change rides through the spec
+  pipeline (touches `design/`).
+
+#### Proposed sequencing
+
+Under the same dependency logic as the original ledger:
+
+1. **Bucket 10 first (real leaks).** Small blast radius per item,
+   corrective, and orthogonal to bucket 12 (the rename). Order
+   within the bucket: 10a → 10d → 10b → 10c. 10a and 10d are
+   mechanical (signature change / test rearrangement). 10b and
+   10c want a spec pass because they raise "where does this state
+   actually live" design questions (paired with 11d / 11e).
+2. **Bucket 11 second, alongside the spec passes for 10b/10c.**
+   11a (retire `rimsky_frames.state`) is the biggest structural
+   change but touches only frame/scheduler/persistence layers.
+   11b / 11c are small.
+3. **Bucket 12 third, as one atomic sweep.** After bucket 10 and
+   11 land, the code shape is stable; the rename covers the final
+   shape, not a moving target. One commit per the uniformity rule.
+4. **Bucket 13 last.** File renames and the stale tension slug —
+   trivial once the rename is done.
+
+Two open ledger fallout tests (`TestAttributeOverridesMatchOverlay*`,
+`TestNodeLatestAttributeBagFullStack`) fold into bucket 10b's spec
+pass (the first two directly; the third is from item 1 and may or
+may not survive the pass — revisit).
+
