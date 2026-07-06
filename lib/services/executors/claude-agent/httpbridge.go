@@ -21,13 +21,13 @@ type httpExecuteBody struct {
 	NodeID                   string         `json:"node_id"`
 	InstanceID               string         `json:"instance_id"`
 	NodeType                 string         `json:"node_type"`
-	DispatchID               string         `json:"dispatch_id"`
+	NodeRunID                string         `json:"dispatch_id"`
 	Attributes               map[string]any `json:"attributes"`
 	AttributesSchema         map[string]any `json:"attributes_schema"`
 	ClaimProducers           map[string]any `json:"claim_producers"`
 	CallbackURL              string         `json:"callback_url"`
 	CancelToken              string         `json:"cancel_token"`
-	PriorDispatchID          string         `json:"prior_dispatch_id"`
+	PriorNodeRunID           string         `json:"prior_dispatch_id"`
 	PriorDispatchDisposition string         `json:"prior_dispatch_disposition"`
 	RunScopeID               string         `json:"run_scope_id"`
 	Scratch                  string         `json:"scratch"`
@@ -74,11 +74,11 @@ func StartHTTPBridge(host string, port int, executor *ExecutorServer) (*RunningH
 			return
 		}
 		ackID := uuid.NewString()
-		runID := body.DispatchID
+		runID := body.NodeRunID
 		if runID == "" {
 			runID = uuid.NewString()
 		}
-		traceID := body.DispatchID
+		traceID := body.NodeRunID
 		if traceID == "" {
 			traceID = ackID
 		}
@@ -92,9 +92,9 @@ func StartHTTPBridge(host string, port int, executor *ExecutorServer) (*RunningH
 			NodeID:                       nodeIDOr(body.NodeID, runID),
 			InstanceID:                   body.InstanceID,
 			NodeType:                     nodeTypeOr(body.NodeType),
-			DispatchID:                   body.DispatchID,
+			NodeRunID:                    body.NodeRunID,
 			RunScopeID:                   body.RunScopeID,
-			PriorDispatchID:              body.PriorDispatchID,
+			PriorNodeRunID:               body.PriorNodeRunID,
 			PriorDispatchDispositionWire: body.PriorDispatchDisposition,
 			CallbackURL:                  body.CallbackURL,
 			CancelToken:                  body.CancelToken,

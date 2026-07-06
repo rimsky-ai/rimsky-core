@@ -57,7 +57,7 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 				if c.NodeID != fix.NodeID {
 					continue
 				}
-				ok, err := q.ClaimDispatchRow(ctx, tx, c.DispatchID, supID)
+				ok, err := q.ClaimDispatchRow(ctx, tx, c.NodeRunID, supID)
 				if err != nil {
 					return err
 				}
@@ -93,18 +93,18 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("ListLive: %v", err)
 	}
-	var dispatchID shared.UUID
+	var nodeRunID shared.UUID
 	var winner string
 	for _, r := range live.Rows {
 		if r.NodeID == fix.NodeID {
-			dispatchID = r.ID
+			nodeRunID = r.ID
 			if r.ClaimedBy != nil {
 				winner = *r.ClaimedBy
 			}
 			break
 		}
 	}
-	if dispatchID == (shared.UUID{}) {
+	if nodeRunID == (shared.UUID{}) {
 		t.Fatalf("could not find dispatch row for node %s", fix.NodeID)
 	}
 	if winner != supA && winner != supB {
@@ -115,10 +115,10 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		loser = supB
 	}
 
-	if err := q.ReleaseClaim(ctx, dispatchID, loser); err != nil {
+	if err := q.ReleaseClaim(ctx, nodeRunID, loser); err != nil {
 		t.Fatalf("releaseClaim wrong sup: %v", err)
 	}
-	owner, err := q.GetClaimedBy(ctx, dispatchID)
+	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("getClaimedBy: %v", err)
 	}

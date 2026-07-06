@@ -126,14 +126,14 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 	return nil
 }
 
-func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.ExecutorObservabilityClient, dispatchID string, logf func(string, ...any)) error {
+func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.ExecutorObservabilityClient, nodeRunID string, logf func(string, ...any)) error {
 	ud, err := structpb.NewStruct(map[string]any{"stub_probe": true})
 	if err != nil {
 		return fmt.Errorf("build attributes: %w", err)
 	}
 	exec := genv1.NewExecutorClient(conn)
 	if _, err := exec.Execute(ctx, &genv1.ExecuteRequest{
-		DispatchId: dispatchID,
+		DispatchId: nodeRunID,
 		NodeId:     "obs-probe-node",
 		InstanceId: "obs-probe-instance",
 		NodeType:   "conformance-observability",
@@ -142,7 +142,7 @@ func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.Exe
 		return fmt.Errorf("Execute: %w", err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	tr, err := obs.GetTrace(ctx, &genv1.GetTraceRequest{DispatchId: dispatchID})
+	tr, err := obs.GetTrace(ctx, &genv1.GetTraceRequest{DispatchId: nodeRunID})
 	if err != nil {
 		return fmt.Errorf("GetTrace canned: %w", err)
 	}
@@ -159,7 +159,7 @@ func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.Exe
 
 	streamCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	ts, err := obs.StreamTrace(streamCtx, &genv1.StreamTraceRequest{DispatchId: dispatchID})
+	ts, err := obs.StreamTrace(streamCtx, &genv1.StreamTraceRequest{DispatchId: nodeRunID})
 	if err != nil {
 		return fmt.Errorf("StreamTrace canned: %w", err)
 	}
@@ -183,7 +183,7 @@ func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.Exe
 	return nil
 }
 
-func runRetentionProbe(ctx context.Context, obs genv1.ExecutorObservabilityClient, dispatchID string, seconds int, logf func(string, ...any)) error {
+func runRetentionProbe(ctx context.Context, obs genv1.ExecutorObservabilityClient, nodeRunID string, seconds int, logf func(string, ...any)) error {
 	wait := time.Duration(seconds+1) * time.Second
 	logf("observability: retention probe — sleeping %v before re-querying\n", wait)
 	select {
@@ -191,7 +191,7 @@ func runRetentionProbe(ctx context.Context, obs genv1.ExecutorObservabilityClien
 		return ctx.Err()
 	case <-time.After(wait):
 	}
-	tr, err := obs.GetTrace(ctx, &genv1.GetTraceRequest{DispatchId: dispatchID})
+	tr, err := obs.GetTrace(ctx, &genv1.GetTraceRequest{DispatchId: nodeRunID})
 	if err != nil {
 		return fmt.Errorf("GetTrace post-retention: %w", err)
 	}

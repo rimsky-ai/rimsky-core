@@ -25,8 +25,8 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	frameID := uuid.New().String()
 	receiverNodeID := uuid.New().String()
 	senderNodeID := uuid.New().String()
-	receiverRunID := uuid.New().String()
-	senderRunID := uuid.New().String()
+	receiverNodeRunID := uuid.New().String()
+	senderNodeRunID := uuid.New().String()
 
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_templates (id, spec, state, source) VALUES (?, '{}', 'registered', 'direct')`,
@@ -79,8 +79,8 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 		}
 	}
 	runs := []struct{ runID, nodeID string }{
-		{receiverRunID, receiverNodeID},
-		{senderRunID, senderNodeID},
+		{receiverNodeRunID, receiverNodeID},
+		{senderNodeRunID, senderNodeID},
 	}
 	for i, r := range runs {
 		if _, err := rawDB.ExecContext(ctx,
@@ -98,7 +98,7 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 			`INSERT INTO rimsky_wait_set
 			   (frame_id, receiver_run_id, sender_run_id, topic_kind)
 			 VALUES (?, ?, ?, ?)`,
-			frameID, receiverRunID, senderRunID, topicKind,
+			frameID, receiverNodeRunID, senderNodeRunID, topicKind,
 		); err != nil {
 			t.Fatalf("insert wait_set row topic_kind=%q: %v; "+
 				"the topic_kind CHECK must admit 'transient' and 'terminal'", topicKind, err)
@@ -122,7 +122,7 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 		`INSERT INTO rimsky_wait_set
 		   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)
 		 VALUES (?, ?, ?, ?, 'direct')`,
-		frameID, receiverRunID, senderRunID, "message",
+		frameID, receiverNodeRunID, senderNodeRunID, "message",
 	); err == nil {
 		t.Fatalf("insert wait_set row topic_kind='message' returned nil error; " +
 			"the topic_kind CHECK must REJECT 'message' (post-011 retirement)")

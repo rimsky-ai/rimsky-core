@@ -53,7 +53,7 @@ func TestHitQueueOverflowDropOldest(t *testing.T) {
 	args := runtime.RunArgs{Persist: h.Persist, Logger: shared.SilentLogger{}}
 	cc := runtime.CheckpointContext{
 		InstanceID:       iid,
-		DispatchID:       shared.UUID(uuid.New()),
+		NodeRunID:        shared.UUID(uuid.New()),
 		FrameID:          shared.UUID(uuid.New()),
 		Executor:         "stub",
 		NodeType:         "worker",
@@ -64,7 +64,7 @@ func TestHitQueueOverflowDropOldest(t *testing.T) {
 	}
 	const total = 150
 	for i := 0; i < total; i++ {
-		cc.DispatchID = shared.UUID(uuid.New())
+		cc.NodeRunID = shared.UUID(uuid.New())
 		cc.FrameID = shared.UUID(uuid.New())
 		_, err := runtime.EvaluateBreakpoints(h.Ctx, args, cc)
 		require.NoError(t, err, "EvaluateBreakpoints iteration %d", i)

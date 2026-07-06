@@ -40,12 +40,12 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
 	require.NoError(t, err)
 	frameID := h.GetRunningFrameID(iid)
-	dispatchID := uuid.New()
+	nodeRunID := uuid.New()
 	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, sequence)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', $3, $4, 1)`,
-		dispatchID, n.ID, frameID, mainScopeID,
+		nodeRunID, n.ID, frameID, mainScopeID,
 	)
 	require.NoError(t, err)
 
@@ -71,7 +71,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 		PostCommitHook: func(ctx context.Context) {
 			tag, uerr := h.Pool.Exec(ctx,
 				`UPDATE rimsky_node_runs SET claimed_by = 'thief-supervisor', claimed_at = NOW() WHERE id = $1`,
-				dispatchID,
+				nodeRunID,
 			)
 			require.NoError(t, uerr)
 			require.Equal(t, int64(1), tag.RowsAffected(),
@@ -110,7 +110,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 		`SELECT count(*) FROM rimsky_events
 		  WHERE kind = 'orphaned_claim_lost_race'
 		    AND payload->>'dispatch_id' = $1`,
-		dispatchID.String(),
+		nodeRunID.String(),
 	).Scan(&orphanCount))
 	require.Equal(t, 1, orphanCount,
 		"verify-before-run bail must emit exactly one orphaned_claim_lost_race event for the stolen dispatch")

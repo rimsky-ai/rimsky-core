@@ -132,8 +132,8 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 
 	foundEdge := false
 	for _, e := range waitSetBody.WaitSet {
-		if shared.UUID(e.ReceiverRunID) == transientReceiverRun &&
-			shared.UUID(e.SenderRunID) == transientSenderRun &&
+		if shared.UUID(e.ReceiverNodeRunID) == transientReceiverRun &&
+			shared.UUID(e.SenderNodeRunID) == transientSenderRun &&
 			e.TopicKind == "transient" {
 			foundEdge = true
 			break
@@ -155,7 +155,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 		"the receiver_run-narrowed query must return the same edge — "+
 			"empty would mean the supervisor's actual gate is hidden behind the narrow filter")
 	for _, e := range narrowed.WaitSet {
-		require.Equal(t, transientReceiverRun, shared.UUID(e.ReceiverRunID),
+		require.Equal(t, transientReceiverRun, shared.UUID(e.ReceiverNodeRunID),
 			"every narrowed row must key on the supplied receiver_run")
 	}
 
@@ -176,10 +176,10 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 		"claim-holders endpoint must return 200 for a real claim_handle_id")
 	var holdersBody struct {
 		Holders []struct {
-			ID            string `json:"id"`
-			ClaimHandleID string `json:"claim_handle_id"`
-			HolderRunID   string `json:"holder_run_id"`
-			State         string `json:"state"`
+			ID              string `json:"id"`
+			ClaimHandleID   string `json:"claim_handle_id"`
+			HolderNodeRunID string `json:"holder_run_id"`
+			State           string `json:"state"`
 		} `json:"holders"`
 	}
 	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&holdersBody))
@@ -302,7 +302,7 @@ func waitForHeldClaimHandle(t *testing.T, h *scenario.Harness, instanceID shared
 func waitForUndrainedWaitSetRow(
 	t *testing.T, h *scenario.Harness, receiverNodeID shared.UUID,
 	topicKind string, timeout time.Duration,
-) (frameID, receiverRunID, senderRunID shared.UUID) {
+) (frameID, receiverNodeRunID, senderNodeRunID shared.UUID) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

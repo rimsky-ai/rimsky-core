@@ -111,7 +111,7 @@ func applyTerminalCompleteSubgraphCaller(
 	}
 	if tmplSpec != nil {
 		nodes, err := SubgraphInternalCascade(SubgraphInternalCascadeArgs{
-			CallingNodeRunID:  acq.DispatchID,
+			CallingNodeRunID:  acq.NodeRunID,
 			CallingNodeID:     acq.NodeID,
 			InstanceID:        acq.InstanceID,
 			FrameID:           acq.FrameID,
@@ -131,12 +131,12 @@ func applyTerminalCompleteSubgraphCaller(
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, t.Scratch); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: %w", err)
 	}
-	if err := args.Persist.RunTree().UpdateStateAndOutcome(ctx, tx, acq.DispatchID,
+	if err := args.Persist.NodeRunTree().UpdateStateAndOutcome(ctx, tx, acq.NodeRunID,
 		cascade.NodeStateRunning, &settlingSig); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: update run-tree: %w", err)
 	}
 	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 		nil, nil); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: emit attribute changes: %w", err)
 	}
@@ -163,7 +163,7 @@ func applyTerminalCompleteSubgraphCaller(
 			})
 		}
 		if _, err := DispatchChildren(ctx, args, tx, ChildExecutionInput{
-			ParentRunID:       acq.DispatchID,
+			ParentNodeRunID:   acq.NodeRunID,
 			ParentRunScopeID:  acq.RunScopeID,
 			InstanceID:        acq.InstanceID,
 			FrameID:           acq.FrameID,
@@ -185,7 +185,7 @@ func applyTerminalCompleteSubgraphCaller(
 		Kind: events.KindSubgraphInternalCascadeFired(),
 		Payload: map[string]any{
 			"delegate_graph":       acq.NodeDef.Delegate,
-			"calling_run_id":       acq.DispatchID.String(),
+			"calling_run_id":       acq.NodeRunID.String(),
 			"settling_signal_type": settlingSig,
 			"changed":              t.Changed,
 			"child_count":          len(internalNodes),
@@ -197,7 +197,7 @@ func applyTerminalCompleteSubgraphCaller(
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: events.KindSubgraphDispatched(),
 		Payload: map[string]any{
-			"caller_run_id":  acq.DispatchID.String(),
+			"caller_run_id":  acq.NodeRunID.String(),
 			"caller_node_id": acq.NodeID.String(),
 			"subgraph_name":  acq.NodeDef.Delegate,
 			"child_aliases":  childAliases,
@@ -209,18 +209,18 @@ func applyTerminalCompleteSubgraphCaller(
 
 	if args.Logger != nil {
 		args.Logger.Info("subgraph: parent run staying running for internal cascade",
-			"calling_run_id", acq.DispatchID.String(),
+			"calling_run_id", acq.NodeRunID.String(),
 			"node_type", acq.NodeType,
 			"delegate", acq.NodeDef.Delegate,
 			"settling_signal_type", settlingSig)
 	}
-	dispatchID := acq.DispatchID
+	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
 		scope := resolveAcqScope(ctx, args, acq)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
-			RunID:              dispatchID,
+			NodeRunID:          nodeRunID,
 			NodeID:             acq.NodeID,
 			State:              string(cascade.NodeStateRunning),
 			SettlingSignalType: settlingSig,
@@ -232,7 +232,7 @@ func applyTerminalCompleteSubgraphCaller(
 			Params:             acq.InstanceParams,
 			AttributesMerged:   acq.MergedAttributes,
 			HeldClaims:         HeldClaimsForLineage(acq),
-			ParentRunID:        scope.ParentRunID,
+			ParentNodeRunID:    scope.ParentNodeRunID,
 			ChildKey:           scope.PartitionKey,
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
@@ -256,7 +256,7 @@ func applyTerminalCompleteSubgraphExit(
 		wb = encoded
 	}
 	return SettleFromDelegate(ctx, args, tx, DelegateSettlementInput{
-		ExitRunID:     acq.DispatchID,
+		ExitNodeRunID: acq.NodeRunID,
 		ExitNodeID:    acq.NodeID,
 		ExitNodeAlias: acq.NodeType,
 		InstanceID:    acq.InstanceID,

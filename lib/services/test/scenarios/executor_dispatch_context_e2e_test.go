@@ -114,9 +114,9 @@ func requireFreshDispatchContext(t *testing.T, d workerDispatch) {
 	if !ok {
 		t.Fatalf("dispatch %s: latest_attributes missing dispatch_context, got %v", d.runID, d.attributes)
 	}
-	gotDispatchID, _ := got["dispatch_id"].(string)
+	gotNodeRunID, _ := got["dispatch_id"].(string)
 	gotRunScopeID, _ := got["run_scope_id"].(string)
-	if gotDispatchID == "" {
+	if gotNodeRunID == "" {
 		t.Fatalf("dispatch %s: dispatch_id empty in dispatch_context: %v", d.runID, got)
 	}
 	if gotRunScopeID == "" {
@@ -128,9 +128,9 @@ func requireFreshDispatchContext(t *testing.T, d workerDispatch) {
 	if got["prior_dispatch_disposition"] != nil {
 		t.Fatalf("dispatch %s: expected prior_dispatch_disposition nil on fresh dispatch, got %v", d.runID, got["prior_dispatch_disposition"])
 	}
-	if gotDispatchID != d.runID {
+	if gotNodeRunID != d.runID {
 		t.Fatalf("dispatch %s: dispatch_context.dispatch_id %q does not match the persisted run id (the wire field is supposed to round-trip exactly)",
-			d.runID, gotDispatchID)
+			d.runID, gotNodeRunID)
 	}
 	if gotRunScopeID != d.runScopeID {
 		t.Fatalf("dispatch %s: dispatch_context.run_scope_id %q does not match the persisted run_scope_id %q",

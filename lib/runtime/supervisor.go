@@ -210,14 +210,14 @@ func Start(cfg Config) (*Handle, error) {
 	blobCap := cfg.Blob
 	spillCap := cfg.BlobSpillThreshold
 	loggerCap := cfg.Logger
-	newHctx := executor.HandlerContextFactory(func(ctx context.Context, dispatchID, nodeID shared.UUID) executor.HandlerContext {
+	newHctx := executor.HandlerContextFactory(func(ctx context.Context, nodeRunID, nodeID shared.UUID) executor.HandlerContext {
 		hctx := executor.HandlerContext{
 			Scratch: &executor.ScratchWriter{
 				Persist:        persistCap,
 				Queue:          queueCap,
 				Blob:           blobCap,
 				SpillThreshold: spillCap,
-				DispatchID:     dispatchID,
+				NodeRunID:      nodeRunID,
 				NodeID:         nodeID,
 				Logger:         loggerCap,
 			},
@@ -360,8 +360,8 @@ func runLoop(
 			if result.Async {
 				return
 			}
-			if result.Ran && result.DispatchID != (shared.UUID{}) {
-				_ = cfg.Queue.Complete(context.Background(), result.DispatchID, cfg.SupervisorID)
+			if result.Ran && result.NodeRunID != (shared.UUID{}) {
+				_ = cfg.Queue.Complete(context.Background(), result.NodeRunID, cfg.SupervisorID)
 			}
 		}()
 	}

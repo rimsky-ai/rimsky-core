@@ -44,11 +44,11 @@ func NewServer(cfg Opts) *Server {
 func (s *Server) SetObservability(obs *ObservabilityServer) { s.obs = obs }
 
 func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
-	dispatchID := req.GetDispatchId()
+	nodeRunID := req.GetDispatchId()
 	stepID := "http-node:" + req.GetNodeType()
-	if s.obs != nil && dispatchID != "" {
-		s.obs.RegisterDispatch(dispatchID)
-		s.obs.AppendEvent(dispatchID, MakeEvent(
+	if s.obs != nil && nodeRunID != "" {
+		s.obs.RegisterDispatch(nodeRunID)
+		s.obs.AppendEvent(nodeRunID, MakeEvent(
 			"step-"+stepID, "", "step_started",
 			"http-node dispatch started",
 			genv1.Severity_INFO,
@@ -57,47 +57,47 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	}
 
 	outcome, err := s.executeCore(ctx, req)
-	s.recordTerminal(dispatchID, stepID, outcome)
+	s.recordTerminal(nodeRunID, stepID, outcome)
 	return outcome, err
 }
 
-func (s *Server) recordTerminal(dispatchID, stepID string, outcome *genv1.Outcome) {
-	if s.obs == nil || dispatchID == "" || outcome == nil {
+func (s *Server) recordTerminal(nodeRunID, stepID string, outcome *genv1.Outcome) {
+	if s.obs == nil || nodeRunID == "" || outcome == nil {
 		return
 	}
 	switch oc := outcome.GetOutcome().(type) {
 	case *genv1.Outcome_Success:
 		_ = oc
-		s.obs.AppendEvent(dispatchID, MakeEvent(
+		s.obs.AppendEvent(nodeRunID, MakeEvent(
 			"step-complete-"+stepID, "step-"+stepID, "step_completed",
 			"http-node dispatch completed",
 			genv1.Severity_INFO,
 			map[string]any{"step_id": stepID},
 		))
-		s.obs.MarkTerminal(dispatchID)
+		s.obs.MarkTerminal(nodeRunID)
 	case *genv1.Outcome_Error:
 		ec := oc.Error.GetErrorClass()
-		s.obs.AppendEvent(dispatchID, MakeEvent(
+		s.obs.AppendEvent(nodeRunID, MakeEvent(
 			"step-failed-"+stepID, "step-"+stepID, "step_failed",
 			"http-node dispatch failed",
 			genv1.Severity_ERROR,
 			map[string]any{"step_id": stepID, "error": ec},
 		))
-		s.obs.AppendEvent(dispatchID, MakeEvent(
+		s.obs.AppendEvent(nodeRunID, MakeEvent(
 			"error-"+stepID, "step-"+stepID, "error",
 			ec,
 			genv1.Severity_ERROR,
 			map[string]any{"error": ec},
 		))
-		s.obs.MarkTerminal(dispatchID)
+		s.obs.MarkTerminal(nodeRunID)
 	case *genv1.Outcome_Park:
-		s.obs.AppendEvent(dispatchID, MakeEvent(
+		s.obs.AppendEvent(nodeRunID, MakeEvent(
 			"step-parked-"+stepID, "step-"+stepID, "step_parked",
 			"http-node dispatch parked",
 			genv1.Severity_INFO,
 			map[string]any{"step_id": stepID},
 		))
-		s.obs.MarkTerminal(dispatchID)
+		s.obs.MarkTerminal(nodeRunID)
 	}
 }
 

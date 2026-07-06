@@ -18,7 +18,7 @@ import (
 
 func seedWaitSetParentsPG(
 	t *testing.T, ctx context.Context, d persistence.Database,
-) (frameID, receiverRunID, senderRunID shared.UUID) {
+) (frameID, receiverNodeRunID, senderNodeRunID shared.UUID) {
 	t.Helper()
 	store := d.Tables()
 	templateHash := "sha256-" + uuid.NewString()
@@ -92,14 +92,14 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
-	frameID, receiverRunID, senderRunID := seedWaitSetParentsPG(t, ctx, d)
+	frameID, receiverNodeRunID, senderNodeRunID := seedWaitSetParentsPG(t, ctx, d)
 
 	for _, topicKind := range []string{"transient", "terminal"} {
 		pgtest.ExecForTest(ctx, t, d,
 			`INSERT INTO rimsky_wait_set
 			   (frame_id, receiver_run_id, sender_run_id, topic_kind)
 			 VALUES ($1, $2, $3, $4)`,
-			uuid.UUID(frameID), uuid.UUID(receiverRunID), uuid.UUID(senderRunID), topicKind,
+			uuid.UUID(frameID), uuid.UUID(receiverNodeRunID), uuid.UUID(senderNodeRunID), topicKind,
 		)
 	}
 
@@ -118,7 +118,7 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 		`INSERT INTO rimsky_wait_set
 		   (frame_id, receiver_run_id, sender_run_id, topic_kind)
 		 VALUES ($1, $2, $3, 'message')`,
-		uuid.UUID(frameID), uuid.UUID(receiverRunID), uuid.UUID(senderRunID),
+		uuid.UUID(frameID), uuid.UUID(receiverNodeRunID), uuid.UUID(senderNodeRunID),
 	); err == nil {
 		t.Fatalf("insert wait_set row topic_kind='message' returned nil error; " +
 			"the topic_kind CHECK must REJECT 'message' (post-011 retirement)")

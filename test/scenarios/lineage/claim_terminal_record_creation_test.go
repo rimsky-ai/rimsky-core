@@ -23,7 +23,7 @@ func TestClaimTerminalRecordCreation(t *testing.T) {
 	ctx := context.Background()
 	rec := runtime.ClaimTerminalRecord{
 		ClaimHandleID:      shared.UUID(uuid.New()),
-		RunID:              shared.UUID(uuid.New()),
+		NodeRunID:          shared.UUID(uuid.New()),
 		NodeID:             shared.UUID(uuid.New()),
 		FrameID:            shared.UUID(uuid.New()),
 		ProducerName:       "stub",

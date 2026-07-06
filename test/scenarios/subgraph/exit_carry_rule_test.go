@@ -21,12 +21,12 @@ import (
 )
 
 type carryFixture struct {
-	tables      persistence.Tables
-	instanceID  shared.UUID
-	parentRunID shared.UUID
-	exitRunID   shared.UUID
-	exitScopeID shared.UUID
-	exitNodeID  shared.UUID
+	tables          persistence.Tables
+	instanceID      shared.UUID
+	parentNodeRunID shared.UUID
+	exitNodeRunID   shared.UUID
+	exitScopeID     shared.UUID
+	exitNodeID      shared.UUID
 }
 
 func openSQLiteTables(t *testing.T) persistence.Tables {
@@ -56,9 +56,9 @@ func makeFixture(t *testing.T) carryFixture {
 	mainScopeID := shared.UUID(uuid.New())
 	callerNodeID := shared.UUID(uuid.New())
 	exitNodeID := shared.UUID(uuid.New())
-	parentRunID := shared.UUID(uuid.New())
+	parentNodeRunID := shared.UUID(uuid.New())
 	exitScopeID := shared.UUID(uuid.New())
-	exitRunID := shared.UUID(uuid.New())
+	exitNodeRunID := shared.UUID(uuid.New())
 
 	tmpl := tmplspec.TemplateSpec{
 		Name:           "exit-carry-fixture",
@@ -118,45 +118,45 @@ func makeFixture(t *testing.T) carryFixture {
 		if err != nil {
 			return err
 		}
-		if err := tables.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-			RunID: parentRunID, NodeID: callerNodeID, FrameID: frameID,
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+			NodeRunID: parentNodeRunID, NodeID: callerNodeID, FrameID: frameID,
 			RunScopeID: mainScopeID,
 		}); err != nil {
 			return err
 		}
-		parentRunIDCopy := parentRunID
+		parentRunIDCopy := parentNodeRunID
 		mainScopeIDCopy := mainScopeID
 		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               exitScopeID,
 			ParentRunScopeID: &mainScopeIDCopy,
-			ParentRunID:      &parentRunIDCopy,
+			ParentNodeRunID:  &parentRunIDCopy,
 			GraphName:        "inner",
 			InstanceID:       instanceID,
 		}); err != nil {
 			return err
 		}
-		return tables.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
-			RunID: exitRunID, NodeID: exitNodeID, FrameID: frameID,
+		return tables.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+			NodeRunID: exitNodeRunID, NodeID: exitNodeID, FrameID: frameID,
 			RunScopeID: exitScopeID, ExecutorName: "test-executor",
 		})
 	}); err != nil {
 		t.Fatalf("seed fixture: %v", err)
 	}
 	return carryFixture{
-		tables:      tables,
-		instanceID:  instanceID,
-		parentRunID: parentRunID,
-		exitRunID:   exitRunID,
-		exitScopeID: exitScopeID,
-		exitNodeID:  exitNodeID,
+		tables:          tables,
+		instanceID:      instanceID,
+		parentNodeRunID: parentNodeRunID,
+		exitNodeRunID:   exitNodeRunID,
+		exitScopeID:     exitScopeID,
+		exitNodeID:      exitNodeID,
 	}
 }
 
-func settleCarry(fx carryFixture, exitRunID shared.UUID, writeback json.RawMessage) error {
+func settleCarry(fx carryFixture, exitNodeRunID shared.UUID, writeback json.RawMessage) error {
 	args := runtime.RunArgs{Persist: fx.tables, Logger: shared.SilentLogger{}, Clock: shared.SystemClock{}}
 	return fx.tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.SettleFromDelegate(ctx, args, tx, runtime.DelegateSettlementInput{
-			ExitRunID:     exitRunID,
+			ExitNodeRunID: exitNodeRunID,
 			ExitNodeID:    fx.exitNodeID,
 			ExitNodeAlias: "inner-exit",
 			InstanceID:    fx.instanceID,
@@ -170,7 +170,7 @@ func readParentAttrs(t *testing.T, fx carryFixture) *persistence.NodeAttributesR
 	var attrs *persistence.NodeAttributesRow
 	if err := fx.tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		attrs, err = fx.tables.NodeAttributes().GetByRun(ctx, fx.parentRunID, tx)
+		attrs, err = fx.tables.NodeAttributes().GetByRun(ctx, fx.parentNodeRunID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("load parent attributes: %v", err)
@@ -184,7 +184,7 @@ func TestSettleFromDelegate_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 	fx := makeFixture(t)
 
 	writeback := json.RawMessage(`{"version_id":"v42","row_count":1024}`)
-	if err := settleCarry(fx, fx.exitRunID, writeback); err != nil {
+	if err := settleCarry(fx, fx.exitNodeRunID, writeback); err != nil {
 		t.Fatalf("SettleFromDelegate (carry-verbatim): %v", err)
 	}
 
@@ -238,7 +238,7 @@ func TestSettleFromDelegate_CarryVerbatim_RejectsNonJSONBytes(t *testing.T) {
 	fx := makeFixture(t)
 
 	bogus := json.RawMessage(`not-json{`)
-	if err := settleCarry(fx, fx.exitRunID, bogus); err == nil {
+	if err := settleCarry(fx, fx.exitNodeRunID, bogus); err == nil {
 		t.Fatalf("expected JSON-decode error for non-JSON writeback bytes")
 	}
 }
@@ -248,7 +248,7 @@ func TestSettleFromDelegate_CarryVerbatim_RejectsRunWithoutParent(t *testing.T) 
 	fx := makeFixture(t)
 
 	wb := json.RawMessage(`{"a":1}`)
-	if err := settleCarry(fx, fx.parentRunID, wb); err == nil {
+	if err := settleCarry(fx, fx.parentNodeRunID, wb); err == nil {
 		t.Fatalf("expected error for run without parent (root run cannot carry to a parent)")
 	}
 }
@@ -258,7 +258,7 @@ func TestSettleFromDelegate_CarryVerbatim_EmptyWritebackSkipsOnlyAttributeCarry(
 	ctx := context.Background()
 	fx := makeFixture(t)
 
-	if err := settleCarry(fx, fx.exitRunID, nil); err != nil {
+	if err := settleCarry(fx, fx.exitNodeRunID, nil); err != nil {
 		t.Errorf("SettleFromDelegate with empty writeback should succeed, got: %v", err)
 	}
 	attrs := readParentAttrs(t, fx)

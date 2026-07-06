@@ -26,7 +26,7 @@ func seedFrameParkedFixture(
 	mainRunScopeID := uuid.New()
 	frameID := uuid.New()
 	nodeID := uuid.New()
-	dispatchID := uuid.New()
+	nodeRunID := uuid.New()
 
 	tmpl := spec.TemplateSpec{
 		Name:           "parked-hold-fixture",
@@ -84,7 +84,7 @@ func seedFrameParkedFixture(
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, state, sequence, creation_reason, enqueued_at, frame_id, run_scope_id)
 		 VALUES ($1, $2, 'test-executor', 'parked', 1, 'cascade', NOW(), $3, $4)`,
-		dispatchID, nodeID, frameID, mainRunScopeID,
+		nodeRunID, nodeID, frameID, mainRunScopeID,
 	)
 	return shared.UUID(instanceID), shared.UUID(frameID)
 }

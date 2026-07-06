@@ -26,7 +26,7 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	parentRunID := shared.UUID(uuid.New())
+	parentNodeRunID := shared.UUID(uuid.New())
 	childRunID := shared.UUID(uuid.New())
 	unrelatedParent := shared.UUID(uuid.New())
 	unrelatedChild := shared.UUID(uuid.New())
@@ -63,37 +63,37 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 	}
 
 	base := time.Now().UTC()
-	insertLeaf(t, childRunID, parentRunID, base)
+	insertLeaf(t, childRunID, parentNodeRunID, base)
 	insertLeaf(t, unrelatedChild, unrelatedParent, base.Add(1*time.Second))
 	insertLeaf(t, shared.UUID(uuid.New()), shared.UUID{}, base.Add(2*time.Second))
 
-	rows, err := store.Lineage().QueryByParentRunID(ctx, parentRunID, 10)
+	rows, err := store.Lineage().QueryByParentNodeRunID(ctx, parentNodeRunID, 10)
 	if err != nil {
-		t.Fatalf("QueryByParentRunID: %v", err)
+		t.Fatalf("QueryByParentNodeRunID: %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("QueryByParentRunID: got %d rows want 1 (only the direct child of %s)", len(rows), parentRunID)
+		t.Fatalf("QueryByParentNodeRunID: got %d rows want 1 (only the direct child of %s)", len(rows), parentNodeRunID)
 	}
 	var decoded struct {
-		RunID       string `json:"run_id"`
-		ParentRunID string `json:"parent_run_id"`
+		NodeRunID       string `json:"run_id"`
+		ParentNodeRunID string `json:"parent_run_id"`
 	}
 	if err := json.Unmarshal(rows[0].Record, &decoded); err != nil {
 		t.Fatalf("unmarshal returned row: %v", err)
 	}
-	if decoded.RunID != childRunID.String() {
-		t.Fatalf("returned row run_id=%q want %q", decoded.RunID, childRunID.String())
+	if decoded.NodeRunID != childRunID.String() {
+		t.Fatalf("returned row run_id=%q want %q", decoded.NodeRunID, childRunID.String())
 	}
-	if decoded.ParentRunID != parentRunID.String() {
-		t.Fatalf("returned row parent_run_id=%q want %q", decoded.ParentRunID, parentRunID.String())
+	if decoded.ParentNodeRunID != parentNodeRunID.String() {
+		t.Fatalf("returned row parent_run_id=%q want %q", decoded.ParentNodeRunID, parentNodeRunID.String())
 	}
 
-	rows, err = store.Lineage().QueryByParentRunID(ctx, shared.UUID(uuid.New()), 10)
+	rows, err = store.Lineage().QueryByParentNodeRunID(ctx, shared.UUID(uuid.New()), 10)
 	if err != nil {
-		t.Fatalf("QueryByParentRunID(unknown): %v", err)
+		t.Fatalf("QueryByParentNodeRunID(unknown): %v", err)
 	}
 	if len(rows) != 0 {
-		t.Fatalf("QueryByParentRunID(unknown): got %d rows want 0", len(rows))
+		t.Fatalf("QueryByParentNodeRunID(unknown): got %d rows want 0", len(rows))
 	}
 }
 

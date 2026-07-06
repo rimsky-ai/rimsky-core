@@ -36,7 +36,7 @@ func (b *runScopesImpl) Create(ctx context.Context, tx persistence.Tx, row persi
 		`INSERT INTO rimsky_run_scopes
 		   (id, parent_run_scope_id, parent_run_id, graph_name, partition_key, instance_id, created_at, closed_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, NOW()), $8)`,
-		row.ID, row.ParentRunScopeID, row.ParentRunID, row.GraphName, row.PartitionKey,
+		row.ID, row.ParentRunScopeID, row.ParentNodeRunID, row.GraphName, row.PartitionKey,
 		row.InstanceID, createdAt, row.ClosedAt)
 	if err != nil {
 		return fmt.Errorf("runScopes.Create: %w", err)
@@ -56,11 +56,11 @@ func (b *runScopesImpl) GetByID(ctx context.Context, tx persistence.Tx, id share
 	return &r, nil
 }
 
-func (b *runScopesImpl) GetFanoutPartition(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID, partitionKey string) (*persistence.RunScopeRow, error) {
+func (b *runScopesImpl) GetFanoutPartition(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID, partitionKey string) (*persistence.RunScopeRow, error) {
 	r, err := scanRunScopeRow(b.q(tx).QueryRow(ctx,
 		`SELECT `+runScopeCols+` FROM rimsky_run_scopes
 		   WHERE parent_run_id = $1 AND partition_key = $2 AND closed_at IS NULL`,
-		parentRunID, partitionKey))
+		parentNodeRunID, partitionKey))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -79,9 +79,9 @@ func (b *runScopesImpl) Close(ctx context.Context, tx persistence.Tx, id shared.
 	return nil
 }
 
-func (b *runScopesImpl) ListChildScopes(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID) ([]persistence.RunScopeRow, error) {
+func (b *runScopesImpl) ListChildScopes(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.RunScopeRow, error) {
 	rows, err := b.q(tx).Query(ctx,
-		`SELECT `+runScopeCols+` FROM rimsky_run_scopes WHERE parent_run_id = $1 ORDER BY created_at`, parentRunID)
+		`SELECT `+runScopeCols+` FROM rimsky_run_scopes WHERE parent_run_id = $1 ORDER BY created_at`, parentNodeRunID)
 	if err != nil {
 		return nil, fmt.Errorf("runScopes.ListChildScopes: %w", err)
 	}
@@ -136,7 +136,7 @@ type runScopeScanner interface {
 
 func scanRunScopeRow(s runScopeScanner) (persistence.RunScopeRow, error) {
 	var r persistence.RunScopeRow
-	err := s.Scan(&r.ID, &r.ParentRunScopeID, &r.ParentRunID, &r.GraphName,
+	err := s.Scan(&r.ID, &r.ParentRunScopeID, &r.ParentNodeRunID, &r.GraphName,
 		&r.PartitionKey, &r.InstanceID, &r.CreatedAt, &r.ClosedAt)
 	return r, err
 }

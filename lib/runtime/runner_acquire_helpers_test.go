@@ -49,7 +49,7 @@ func (p *scopeOnlyPersist) Lineage() persistence.LineageTable                   
 func (p *scopeOnlyPersist) PublisherSubscriptions() persistence.PublisherSubscriptionsTable {
 	return nil
 }
-func (p *scopeOnlyPersist) RunTree() persistence.RunTreeTable        { return nil }
+func (p *scopeOnlyPersist) NodeRunTree() persistence.RunTreeTable    { return nil }
 func (p *scopeOnlyPersist) RunScopes() persistence.RunScopeTable     { return p.scopes }
 func (p *scopeOnlyPersist) APIKeys() persistence.APIKeyTable         { return nil }
 func (p *scopeOnlyPersist) Breakpoints() persistence.BreakpointTable { return nil }
@@ -149,7 +149,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage_NonZeroReceiv
 
 	frameID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
-	receiverRunID := shared.UUID(uuid.New())
+	receiverNodeRunID := shared.UUID(uuid.New())
 
 	msgs := newFakeMessages()
 	id := shared.UUID(uuid.New())
@@ -169,7 +169,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage_NonZeroReceiv
 	}
 
 	wait := &fakeWaitSet{drained: map[shared.UUID][]persistence.WaitSetRow{}}
-	runTree := &fakeRunTreeDeps{rows: map[shared.UUID]*persistence.RunTreeRow{}}
+	runTree := &fakeRunTreeDeps{rows: map[shared.UUID]*persistence.NodeRunTreeRow{}}
 	nodes := &fakeNodesDeps{rows: map[shared.UUID]*persistence.NodeRow{}}
 	attrs := &fakeNodeAttrs{rows: map[shared.UUID]*persistence.NodeAttributesRow{}}
 	persist := &depsCapablePersist{
@@ -182,13 +182,13 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage_NonZeroReceiv
 	args := RunArgs{Logger: shared.SilentLogger{}, Persist: persist}
 	out := &acquisition{
 		InstanceID: instanceID,
-		DispatchID: receiverRunID,
+		NodeRunID:  receiverNodeRunID,
 		FrameID:    frameID,
 	}
 
 	got, err := substituteFanOutPartitionRequest(ctx, args, nil, frameID, out, nil, directive)
 	if err != nil {
-		t.Fatalf("substitute (production-path, non-zero receiverRunID): %v", err)
+		t.Fatalf("substitute (production-path, non-zero receiverNodeRunID): %v", err)
 	}
 	var override struct {
 		PartitionKeys []string `json:"partition_keys"`
@@ -259,10 +259,10 @@ func TestAcquireFanOutIfDeclared_ChildRunsSkipSplitScope(t *testing.T) {
 	scopeID := shared.UUID{9, 9, 9}
 	scopes := &staticScopeTable{}
 	_ = scopes.Create(context.Background(), nil, persistence.RunScopeRow{
-		ID:           scopeID,
-		ParentRunID:  &parentRun,
-		PartitionKey: "a",
-		GraphName:    "main",
+		ID:              scopeID,
+		ParentNodeRunID: &parentRun,
+		PartitionKey:    "a",
+		GraphName:       "main",
 	})
 	out := &acquisition{RunScopeID: scopeID}
 	nodeDef := &node.TemplateNodeDef{
@@ -340,7 +340,7 @@ func TestAcquireFanOutIfDeclared_NoFanOutSpecIsNoOp(t *testing.T) {
 	scopes := &staticScopeTable{}
 	_ = scopes.Create(context.Background(), nil, persistence.RunScopeRow{ID: rootScopeID, GraphName: "main"})
 	_ = scopes.Create(context.Background(), nil, persistence.RunScopeRow{
-		ID: childScopeID, ParentRunID: &parentRun, PartitionKey: "a", GraphName: "main",
+		ID: childScopeID, ParentNodeRunID: &parentRun, PartitionKey: "a", GraphName: "main",
 	})
 	args := RunArgs{Persist: &scopeOnlyPersist{scopes: scopes}}
 	for _, scopeID := range []shared.UUID{rootScopeID, childScopeID} {
@@ -436,9 +436,9 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 		SupervisorID:  "sup-FAN",
 	}
 	cand := persistence.Candidate{
-		FrameID:    frameID,
-		NodeID:     shared.UUID(uuid.New()),
-		DispatchID: shared.UUID(uuid.New()),
+		FrameID:   frameID,
+		NodeID:    shared.UUID(uuid.New()),
+		NodeRunID: shared.UUID(uuid.New()),
 	}
 
 	err := acquireFanOutIfDeclared(ctx, args, nil, instanceID, out, cand, nodeDef, acquiredLocks, 30*time.Second)
@@ -474,9 +474,9 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 	ctx := context.Background()
 	frameID := shared.UUID(uuid.New())
 	runScopeID := shared.UUID(uuid.New())
-	receiverRunID := shared.UUID(uuid.New())
+	receiverNodeRunID := shared.UUID(uuid.New())
 	receiverNodeID := shared.UUID(uuid.New())
-	senderRunID := shared.UUID(uuid.New())
+	senderNodeRunID := shared.UUID(uuid.New())
 	senderNodeID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
 
@@ -506,11 +506,11 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 			senderNodeID:   {ID: senderNodeID, InstanceID: instanceID, NodeType: upstreamType},
 		},
 		gateRows: map[shared.UUID]*persistence.NodeRunForGate{
-			receiverRunID: {RunID: receiverRunID, NodeID: receiverNodeID, RunScopeID: runScopeID, FrameID: frameID},
+			receiverNodeRunID: {NodeRunID: receiverNodeRunID, NodeID: receiverNodeID, RunScopeID: runScopeID, FrameID: frameID},
 		},
 		freshByNodeInScope: map[freshKey]*persistence.NodeRunForGate{
 			{nodeID: senderNodeID, runScopeID: runScopeID}: {
-				RunID: senderRunID, NodeID: senderNodeID, RunScopeID: runScopeID, FrameID: frameID,
+				NodeRunID: senderNodeRunID, NodeID: senderNodeID, RunScopeID: runScopeID, FrameID: frameID,
 				State: cascade.NodeStateFresh,
 			},
 		},
@@ -523,7 +523,7 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 	}
 	attrs := &fakeNodeAttrs{
 		rows: map[shared.UUID]*persistence.NodeAttributesRow{
-			senderRunID: {NodeRunID: senderRunID, NodeID: senderNodeID, Data: map[string]any{
+			senderNodeRunID: {NodeRunID: senderNodeRunID, NodeID: senderNodeID, Data: map[string]any{
 				"items": itemsValue,
 			}},
 		},
@@ -542,7 +542,7 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 	persist := &depsCapablePersist{
 		messagesPersist: messagesPersist{msgs: newFakeMessages()},
 		waitSet:         &fakeWaitSet{drained: map[shared.UUID][]persistence.WaitSetRow{}},
-		runTree:         &fakeRunTreeDeps{rows: map[shared.UUID]*persistence.RunTreeRow{}},
+		runTree:         &fakeRunTreeDeps{rows: map[shared.UUID]*persistence.NodeRunTreeRow{}},
 		nodes:           nodes,
 		nodeAttrs:       attrs,
 		instances:       instances,
@@ -554,7 +554,7 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 	}
 
 	out := &acquisition{
-		DispatchID:   receiverRunID,
+		NodeRunID:    receiverNodeRunID,
 		FrameID:      frameID,
 		InstanceID:   instanceID,
 		TemplateHash: templateHash,
@@ -587,8 +587,8 @@ func (f *fakeWaitSet) ListForReceiver(_ context.Context, _, _ shared.UUID, _ per
 func (f *fakeWaitSet) ListForFrame(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]persistence.WaitSetRow, error) {
 	return nil, nil
 }
-func (f *fakeWaitSet) ListDrainedAttributeRowsForReceiver(_ context.Context, _, receiverRunID shared.UUID, _ persistence.Tx) ([]persistence.WaitSetRow, error) {
-	return f.drained[receiverRunID], nil
+func (f *fakeWaitSet) ListDrainedAttributeRowsForReceiver(_ context.Context, _, receiverNodeRunID shared.UUID, _ persistence.Tx) ([]persistence.WaitSetRow, error) {
+	return f.drained[receiverNodeRunID], nil
 }
 func (f *fakeWaitSet) ListSenderNodesForReceiver(_ context.Context, _, _ shared.UUID, _ persistence.Tx) ([]shared.UUID, error) {
 	return nil, nil
@@ -604,16 +604,16 @@ func (f *fakeWaitSet) HasUndrainedRowsForReceiver(_ context.Context, _, _ shared
 }
 
 type fakeRunTreeDeps struct {
-	rows map[shared.UUID]*persistence.RunTreeRow
+	rows map[shared.UUID]*persistence.NodeRunTreeRow
 }
 
-func (f *fakeRunTreeDeps) CreateRootRun(_ context.Context, _ persistence.Tx, _ persistence.CreateRootRunInput) error {
+func (f *fakeRunTreeDeps) CreateRootNodeRun(_ context.Context, _ persistence.Tx, _ persistence.CreateRootNodeRunInput) error {
 	return nil
 }
-func (f *fakeRunTreeDeps) CreateChildRun(_ context.Context, _ persistence.Tx, _ persistence.CreateChildRunInput) error {
+func (f *fakeRunTreeDeps) CreateChildNodeRun(_ context.Context, _ persistence.Tx, _ persistence.CreateChildNodeRunInput) error {
 	return nil
 }
-func (f *fakeRunTreeDeps) GetByID(_ context.Context, _ persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
+func (f *fakeRunTreeDeps) GetByID(_ context.Context, _ persistence.Tx, runID shared.UUID) (*persistence.NodeRunTreeRow, error) {
 	r, ok := f.rows[runID]
 	if !ok {
 		return nil, nil
@@ -621,10 +621,10 @@ func (f *fakeRunTreeDeps) GetByID(_ context.Context, _ persistence.Tx, runID sha
 	c := *r
 	return &c, nil
 }
-func (f *fakeRunTreeDeps) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
+func (f *fakeRunTreeDeps) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.NodeRunTreeRow, error) {
 	return f.GetByID(ctx, tx, runID)
 }
-func (f *fakeRunTreeDeps) ListChildren(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.RunTreeRow, error) {
+func (f *fakeRunTreeDeps) ListChildren(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.NodeRunTreeRow, error) {
 	return nil, nil
 }
 func (f *fakeRunTreeDeps) UpdateStateAndOutcome(_ context.Context, _ persistence.Tx, _ shared.UUID, _ cascade.NodeState, _ *string) error {
@@ -834,7 +834,7 @@ type depsCapablePersist struct {
 }
 
 func (p *depsCapablePersist) WaitSet() persistence.WaitSetTable              { return p.waitSet }
-func (p *depsCapablePersist) RunTree() persistence.RunTreeTable              { return p.runTree }
+func (p *depsCapablePersist) NodeRunTree() persistence.RunTreeTable          { return p.runTree }
 func (p *depsCapablePersist) Nodes() persistence.NodeTable                   { return p.nodes }
 func (p *depsCapablePersist) NodeAttributes() persistence.NodeAttributeTable { return p.nodeAttrs }
 func (p *depsCapablePersist) Instances() persistence.InstanceTable           { return p.instances }

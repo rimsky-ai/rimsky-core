@@ -70,7 +70,7 @@ func seedBreakpointEvalFixture(t *testing.T, ctx context.Context, tables persist
 func newCheckpointContext(instanceID shared.UUID) runtime.CheckpointContext {
 	return runtime.CheckpointContext{
 		InstanceID:       instanceID,
-		DispatchID:       shared.UUID(uuid.New()),
+		NodeRunID:        shared.UUID(uuid.New()),
 		FrameID:          shared.UUID(uuid.New()),
 		Executor:         "test-executor",
 		NodeType:         "fixture-node-type",

@@ -271,7 +271,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	}))
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope"`)
@@ -289,7 +289,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			HolderSupervisorID: "sup-FAN",
 			HolderNodeID:       parentNode.ID,
 			ExpiresAt:          time.Now().Add(10 * time.Minute),
-			NodeRunID:          &parentRunID,
+			NodeRunID:          &parentNodeRunID,
 		}, tx)
 	}))
 
@@ -299,7 +299,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			ParentClaimHandleID: parentClaimID,
 			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
-			NodeRunID:           parentRunID,
+			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-FAN",
 			InstanceID:          shared.UUID{},
@@ -475,7 +475,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 		return nil
 	}))
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope"`)
@@ -492,7 +492,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 			HolderSupervisorID: supOne,
 			HolderNodeID:       parentNode.ID,
 			ExpiresAt:          time.Now().Add(10 * time.Minute),
-			NodeRunID:          &parentRunID,
+			NodeRunID:          &parentNodeRunID,
 		}, tx)
 	}))
 
@@ -502,7 +502,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 			ParentClaimHandleID: parentClaimID,
 			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
-			NodeRunID:           parentRunID,
+			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  supOne,
 			InstanceID:          shared.UUID{},
@@ -635,7 +635,7 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 		return nil
 	}))
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope-ro"`)
@@ -651,7 +651,7 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 			HolderSupervisorID: "sup-RO",
 			HolderNodeID:       parentNode.ID,
 			ExpiresAt:          time.Now().Add(10 * time.Minute),
-			NodeRunID:          &parentRunID,
+			NodeRunID:          &parentNodeRunID,
 		}, tx)
 	}))
 
@@ -661,7 +661,7 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 			ParentClaimHandleID: parentClaimID,
 			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
-			NodeRunID:           parentRunID,
+			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-RO",
 			InstanceID:          inst.ID,
@@ -742,7 +742,7 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 		return nil
 	}))
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope-rw"`)
@@ -758,7 +758,7 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 			HolderSupervisorID: "sup-RW",
 			HolderNodeID:       parentNode.ID,
 			ExpiresAt:          time.Now().Add(10 * time.Minute),
-			NodeRunID:          &parentRunID,
+			NodeRunID:          &parentNodeRunID,
 		}, tx)
 	}))
 
@@ -768,7 +768,7 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 			ParentClaimHandleID: parentClaimID,
 			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
-			NodeRunID:           parentRunID,
+			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-RW",
 			InstanceID:          inst.ID,
@@ -853,7 +853,7 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 		return nil
 	}))
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope-ap"`)
@@ -869,7 +869,7 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 			HolderSupervisorID: "sup-AP",
 			HolderNodeID:       parentNode.ID,
 			ExpiresAt:          time.Now().Add(10 * time.Minute),
-			NodeRunID:          &parentRunID,
+			NodeRunID:          &parentNodeRunID,
 		}, tx)
 	}))
 
@@ -879,7 +879,7 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 			ParentClaimHandleID: parentClaimID,
 			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
-			NodeRunID:           parentRunID,
+			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-AP",
 			InstanceID:          inst.ID,

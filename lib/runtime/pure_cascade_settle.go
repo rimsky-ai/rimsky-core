@@ -19,7 +19,7 @@ func EmitTerminalSuccessAndDrainInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	senderNodeID foundationshared.UUID,
 	senderNodeType string,
-	senderRunID foundationshared.UUID,
+	senderNodeRunID foundationshared.UUID,
 	instanceID foundationshared.UUID,
 	senderFrameID foundationshared.UUID,
 	changeSummary string,
@@ -33,16 +33,16 @@ func EmitTerminalSuccessAndDrainInTx(
 		},
 	}
 	if err := emitSignalInTxOnce(ctx, args, tx,
-		senderNodeID, senderNodeType, senderRunID, instanceID, senderFrameID, successSig); err != nil {
+		senderNodeID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, successSig); err != nil {
 		return err
 	}
-	if err := upsertDataFromDispatchInputBagIfEmpty(ctx, args, tx, senderRunID, senderNodeID); err != nil {
+	if err := upsertDataFromDispatchInputBagIfEmpty(ctx, args, tx, senderNodeRunID, senderNodeID); err != nil {
 		return err
 	}
 	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-		senderNodeID, senderNodeType, senderRunID, instanceID, senderFrameID,
+		senderNodeID, senderNodeType, senderNodeRunID, instanceID, senderFrameID,
 		nil, nil); err != nil {
 		return err
 	}
-	return drainWaitSetOnSettled(ctx, args, tx, senderFrameID, senderRunID)
+	return drainWaitSetOnSettled(ctx, args, tx, senderFrameID, senderNodeRunID)
 }

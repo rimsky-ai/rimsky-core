@@ -85,8 +85,8 @@ func seedRunRow(ctx context.Context, t *testing.T, backend persistence.Tables, n
 		return nil
 	}))
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return backend.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-			RunID:        runID,
+		return backend.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+			NodeRunID:    runID,
 			NodeID:       nodeID,
 			FrameID:      frameID,
 			ExecutorName: "stub",

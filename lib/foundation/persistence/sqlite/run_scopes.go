@@ -35,8 +35,8 @@ func (b *runScopesImpl) Create(ctx context.Context, tx persistence.Tx, row persi
 		parentScope = row.ParentRunScopeID.String()
 	}
 	var parentRun any
-	if row.ParentRunID != nil {
-		parentRun = row.ParentRunID.String()
+	if row.ParentNodeRunID != nil {
+		parentRun = row.ParentNodeRunID.String()
 	}
 	createdAt := row.CreatedAt
 	if createdAt.IsZero() {
@@ -70,11 +70,11 @@ func (b *runScopesImpl) GetByID(ctx context.Context, tx persistence.Tx, id share
 	return r, nil
 }
 
-func (b *runScopesImpl) GetFanoutPartition(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID, partitionKey string) (*persistence.RunScopeRow, error) {
+func (b *runScopesImpl) GetFanoutPartition(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID, partitionKey string) (*persistence.RunScopeRow, error) {
 	r, err := scanSqliteRunScopeRow(b.q(tx).QueryRowContext(ctx,
 		`SELECT `+sqliteRunScopeCols+` FROM rimsky_run_scopes
 		   WHERE parent_run_id = ? AND partition_key = ? AND closed_at IS NULL`,
-		parentRunID.String(), partitionKey))
+		parentNodeRunID.String(), partitionKey))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -94,10 +94,10 @@ func (b *runScopesImpl) Close(ctx context.Context, tx persistence.Tx, id shared.
 	return nil
 }
 
-func (b *runScopesImpl) ListChildScopes(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID) ([]persistence.RunScopeRow, error) {
+func (b *runScopesImpl) ListChildScopes(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.RunScopeRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
 		`SELECT `+sqliteRunScopeCols+` FROM rimsky_run_scopes WHERE parent_run_id = ? ORDER BY created_at`,
-		parentRunID.String())
+		parentNodeRunID.String())
 	if err != nil {
 		return nil, fmt.Errorf("sqlite.runScopes.ListChildScopes: %w", err)
 	}
@@ -185,7 +185,7 @@ func scanSqliteRunScopeRow(s scannable) (*persistence.RunScopeRow, error) {
 			return nil, fmt.Errorf("parse parent_run_id: %w", err)
 		}
 		p := shared.UUID(pid)
-		out.ParentRunID = &p
+		out.ParentNodeRunID = &p
 	}
 	iid, err := uuid.Parse(instanceIDStr)
 	if err != nil {

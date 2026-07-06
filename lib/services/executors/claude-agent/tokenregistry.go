@@ -18,49 +18,49 @@ const (
 )
 
 type DispatchContextSnapshot struct {
-	DispatchID               string                    `json:"dispatch_id"`
+	NodeRunID                string                    `json:"dispatch_id"`
 	RunScopeID               string                    `json:"run_scope_id"`
-	PriorDispatchID          *string                   `json:"prior_dispatch_id"`
+	PriorNodeRunID           *string                   `json:"prior_dispatch_id"`
 	PriorDispatchDisposition *PriorDispatchDisposition `json:"prior_dispatch_disposition"`
 }
 
 type WireContractViolation struct {
 	Kind                         string `json:"kind"`
 	Message                      string `json:"message"`
-	PriorDispatchID              string `json:"prior_dispatch_id"`
+	PriorNodeRunID               string `json:"prior_dispatch_id"`
 	PriorDispatchDispositionWire string `json:"prior_dispatch_disposition_wire"`
 }
 
 type DispatchContextWarn func(event WireContractViolation)
 
 func NewDispatchContextSnapshot(
-	dispatchID string,
+	nodeRunID string,
 	runScopeID string,
-	priorDispatchID string,
+	priorNodeRunID string,
 	priorDispatchDispositionWire string,
 	warn DispatchContextWarn,
 ) DispatchContextSnapshot {
 	disposition := mapDispositionFromWire(priorDispatchDispositionWire)
-	var priorID *string
-	if priorDispatchID != "" {
-		priorID = &priorDispatchID
+	var priorRunPtr *string
+	if priorNodeRunID != "" {
+		priorRunPtr = &priorNodeRunID
 	}
-	if priorID != nil && disposition == nil && warn != nil {
+	if priorRunPtr != nil && disposition == nil && warn != nil {
 		warn(WireContractViolation{
 			Kind: "wire_contract_violation",
 			Message: "prior_dispatch_id present but prior_dispatch_disposition is " +
 				"PRIOR_NONE / empty / unknown; the supervisor must send a typed " +
 				"disposition whenever a prior identifier is set",
-			PriorDispatchID:              priorDispatchID,
+			PriorNodeRunID:               priorNodeRunID,
 			PriorDispatchDispositionWire: priorDispatchDispositionWire,
 		})
 	}
 	snapshot := DispatchContextSnapshot{
-		DispatchID:      dispatchID,
-		RunScopeID:      runScopeID,
-		PriorDispatchID: priorID,
+		NodeRunID:      nodeRunID,
+		RunScopeID:     runScopeID,
+		PriorNodeRunID: priorRunPtr,
 	}
-	if priorID != nil {
+	if priorRunPtr != nil {
 		snapshot.PriorDispatchDisposition = disposition
 	}
 	return snapshot
@@ -96,7 +96,7 @@ func (r CompleteResult) MarshalJSON() ([]byte, error) {
 type ScheduleTeardown func(td func() error)
 
 type TokenEntry struct {
-	RunID             string
+	SessionID         string
 	AttributesAtSpawn map[string]any
 	DispatchContext   DispatchContextSnapshot
 	CancelToken       string

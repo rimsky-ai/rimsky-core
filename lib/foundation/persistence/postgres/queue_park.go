@@ -38,14 +38,14 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		  WHERE id = $1
 		    AND claimed_by = $2
 		    AND state = 'running'`,
-		in.DispatchID, in.ExpectedClaimedBy, in.ParkedAt, resumeAt,
+		in.NodeRunID, in.ExpectedClaimedBy, in.ParkedAt, resumeAt,
 		in.Reason, in.ReasonNote, in.ReasonLabel,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.ParkActiveInTx: %w", err)
 	}
 	if cmd.RowsAffected() != 1 {
-		return fmt.Errorf("postgres.ParkActiveInTx: row %s not in expected (active, claimed_by=%s) state", in.DispatchID, in.ExpectedClaimedBy)
+		return fmt.Errorf("postgres.ParkActiveInTx: row %s not in expected (active, claimed_by=%s) state", in.NodeRunID, in.ExpectedClaimedBy)
 	}
 	return nil
 }
@@ -131,7 +131,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 			reasonNote sql.NullString
 			nodeID     string
 		)
-		if err := rows.Scan(&r.DispatchID, &instID, &nodeID, &frameID, &r.ParkedAt, &resumeAt, &reason, &reasonNote); err != nil {
+		if err := rows.Scan(&r.NodeRunID, &instID, &nodeID, &frameID, &r.ParkedAt, &resumeAt, &reason, &reasonNote); err != nil {
 			return nil, err
 		}
 		if instID.Valid {
@@ -179,7 +179,7 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, run
 	return r, nil
 }
 
-func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) (bool, error) {
+func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID) (bool, error) {
 	if tx == nil {
 		return false, errors.New("postgres.ResumeParkedInTx: tx required")
 	}
@@ -190,7 +190,7 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 		        resume_at = NULL
 		  WHERE id = $1
 		    AND state = 'parked'`,
-		dispatchID,
+		nodeRunID,
 	)
 	if err != nil {
 		return false, fmt.Errorf("postgres.ResumeParkedInTx: %w", err)
@@ -200,25 +200,25 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 
 func (q *queueImpl) RebindRunFrameInTx(
 	ctx context.Context, tx persistence.Tx,
-	dispatchID, newFrameID shared.UUID,
+	nodeRunID, newFrameID shared.UUID,
 ) error {
 	if tx == nil {
 		return errors.New("postgres.RebindRunFrameInTx: tx required")
 	}
 	tag, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs SET frame_id = $1 WHERE id = $2`,
-		newFrameID, dispatchID,
+		newFrameID, nodeRunID,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.RebindRunFrameInTx: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("postgres.RebindRunFrameInTx: %s: %w", dispatchID, persistence.ErrRunRowMissing)
+		return fmt.Errorf("postgres.RebindRunFrameInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
 	}
 	return nil
 }
 
-func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (int, *int, error) {
+func (q *queueImpl) GetRetryNoProgress(ctx context.Context, nodeRunID shared.UUID) (int, *int, error) {
 	var (
 		count    int
 		override sql.NullInt32
@@ -227,7 +227,7 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 		`SELECT consecutive_retries_no_progress, max_retries_without_progress
 		   FROM rimsky_node_runs
 		  WHERE id = $1`,
-		dispatchID,
+		nodeRunID,
 	).Scan(&count, &override)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -242,7 +242,7 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 	return count, nil, nil
 }
 
-func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, count int) error {
+func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, count int) error {
 	if tx == nil {
 		return errors.New("postgres.SetRetryNoProgressForRunInTx: tx required")
 	}
@@ -250,7 +250,7 @@ func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persist
 		`UPDATE rimsky_node_runs
 		    SET consecutive_retries_no_progress = $2
 		  WHERE id = $1`,
-		dispatchID, count,
+		nodeRunID, count,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.SetRetryNoProgressForRunInTx: %w", err)
@@ -258,13 +258,13 @@ func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persist
 	return nil
 }
 
-func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error {
+func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error {
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET max_park_duration_seconds = $2,
 		        max_retries_without_progress = $3
 		  WHERE id = $1`,
-		dispatchID, intPtrOrNullPark(maxParkDurationSeconds), intPtrOrNullPark(maxRetriesWithoutProgress),
+		nodeRunID, intPtrOrNullPark(maxParkDurationSeconds), intPtrOrNullPark(maxRetriesWithoutProgress),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.UpdateDispatchTuningInTx: %w", err)
@@ -298,7 +298,7 @@ func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 		maxParkSec sql.NullInt32
 	)
 	if err := row.Scan(
-		&r.DispatchID, &r.NodeID, &executor, &stores, &r.FrameID,
+		&r.NodeRunID, &r.NodeID, &executor, &stores, &r.FrameID,
 		&r.ParkedAt, &resumeAt, &reason, &reasonNote,
 		&maxParkSec, &r.ConsecutiveRetriesNoProg,
 	); err != nil {
@@ -328,7 +328,7 @@ func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	return &r, nil
 }
 
-func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) ([]byte, string, string, error) {
+func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID) ([]byte, string, string, error) {
 	if tx == nil {
 		return nil, "", "", errors.New("postgres.LoadScratchInTx: tx required")
 	}
@@ -341,7 +341,7 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, disp
 		`SELECT scratch_inline, scratch_handle, scratch_handle_backend
 		   FROM rimsky_node_runs
 		  WHERE id = $1`,
-		dispatchID,
+		nodeRunID,
 	).Scan(&inline, &handle, &backend)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -359,7 +359,7 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, disp
 	return inline, hStr, bStr, nil
 }
 
-func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error {
+func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, inline []byte, handle, handleBackend string) error {
 	if tx == nil {
 		return errors.New("postgres.WriteScratchInTx: tx required")
 	}
@@ -372,13 +372,13 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dis
 		        scratch_handle         = $3,
 		        scratch_handle_backend = $4
 		  WHERE id = $1`,
-		dispatchID, nilIfEmpty(inline), nilIfEmptyStr(handle), nilIfEmptyStr(handleBackend),
+		nodeRunID, nilIfEmpty(inline), nilIfEmptyStr(handle), nilIfEmptyStr(handleBackend),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.WriteScratchInTx: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("postgres.WriteScratchInTx: %s: %w", dispatchID, persistence.ErrRunRowMissing)
+		return fmt.Errorf("postgres.WriteScratchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
 	}
 	return nil
 }

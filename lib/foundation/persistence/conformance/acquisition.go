@@ -50,7 +50,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 		if len(cands) != 1 {
 			t.Fatalf("expected 1 candidate, got %d", len(cands))
 		}
-		ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].DispatchID, supID)
+		ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].NodeRunID, supID)
 		if err != nil {
 			return err
 		}
@@ -108,7 +108,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 		if err != nil {
 			return err
 		}
-		ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].DispatchID, supID)
+		ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].NodeRunID, supID)
 		if err != nil {
 			return err
 		}

@@ -88,8 +88,8 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if err := tables.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-			RunID: leafRunID, NodeID: nodeID, FrameID: frameID,
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+			NodeRunID: leafRunID, NodeID: nodeID, FrameID: frameID,
 			RunScopeID: mainScopeID, ExecutorName: "stub",
 		}); err != nil {
 			return err
@@ -134,7 +134,7 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 	}
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return restampLinkedSubClaimHolders(ctx, args, tx, persistence.Candidate{
-			DispatchID: leafRunID, NodeID: nodeID, NodeType: "leaf",
+			NodeRunID: leafRunID, NodeID: nodeID, NodeType: "leaf",
 		})
 	}); err != nil {
 		t.Fatalf("restampLinkedSubClaimHolders: %v", err)

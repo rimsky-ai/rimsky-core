@@ -724,16 +724,16 @@ func openInMemoryDatabaseForCarryForward(t *testing.T) persistence.Database {
 }
 
 type carryForwardFixture struct {
-	db           persistence.Database
-	tables       persistence.Tables
-	instanceID   shared.UUID
-	nodeID       shared.UUID
-	callerNodeID shared.UUID
-	mainScopeID  shared.UUID
-	subScopeID   shared.UUID
-	parentRunID  shared.UUID
-	frameID      shared.UUID
-	templateHash string
+	db              persistence.Database
+	tables          persistence.Tables
+	instanceID      shared.UUID
+	nodeID          shared.UUID
+	callerNodeID    shared.UUID
+	mainScopeID     shared.UUID
+	subScopeID      shared.UUID
+	parentNodeRunID shared.UUID
+	frameID         shared.UUID
+	templateHash    string
 }
 
 func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixture {
@@ -741,15 +741,15 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 	db := openInMemoryDatabaseForCarryForward(t)
 	tables := db.Tables()
 	fx := carryForwardFixture{
-		db:           db,
-		tables:       tables,
-		instanceID:   shared.UUID(uuid.New()),
-		nodeID:       shared.UUID(uuid.New()),
-		callerNodeID: shared.UUID(uuid.New()),
-		mainScopeID:  shared.UUID(uuid.New()),
-		subScopeID:   shared.UUID(uuid.New()),
-		parentRunID:  shared.UUID(uuid.New()),
-		templateHash: "sha256-" + uuid.NewString(),
+		db:              db,
+		tables:          tables,
+		instanceID:      shared.UUID(uuid.New()),
+		nodeID:          shared.UUID(uuid.New()),
+		callerNodeID:    shared.UUID(uuid.New()),
+		mainScopeID:     shared.UUID(uuid.New()),
+		subScopeID:      shared.UUID(uuid.New()),
+		parentNodeRunID: shared.UUID(uuid.New()),
+		templateHash:    "sha256-" + uuid.NewString(),
 	}
 
 	tmpl := tmplspec.TemplateSpec{
@@ -811,18 +811,18 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 			return err
 		}
 		fx.frameID = frameID
-		if err := tables.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-			RunID: fx.parentRunID, NodeID: fx.callerNodeID, FrameID: frameID,
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+			NodeRunID: fx.parentNodeRunID, NodeID: fx.callerNodeID, FrameID: frameID,
 			RunScopeID: fx.mainScopeID,
 		}); err != nil {
 			return err
 		}
 		mainScopeIDCopy := fx.mainScopeID
-		parentRunIDCopy := fx.parentRunID
+		parentRunIDCopy := fx.parentNodeRunID
 		return tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               fx.subScopeID,
 			ParentRunScopeID: &mainScopeIDCopy,
-			ParentRunID:      &parentRunIDCopy,
+			ParentNodeRunID:  &parentRunIDCopy,
 			GraphName:        "inner",
 			InstanceID:       fx.instanceID,
 		})
@@ -834,7 +834,7 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 
 func makeStatefulCounterAcq(fx carryForwardFixture, scopeID shared.UUID) *acquisition {
 	return &acquisition{
-		DispatchID: shared.UUID(uuid.New()),
+		NodeRunID:  shared.UUID(uuid.New()),
 		NodeID:     fx.nodeID,
 		InstanceID: fx.instanceID,
 		NodeType:   "stateful-node",
@@ -870,15 +870,15 @@ func makeStatefulCounterAcq(fx carryForwardFixture, scopeID shared.UUID) *acquis
 func TestResolveAttributes_LoadsSnapshotBag(t *testing.T) {
 	ctx := context.Background()
 	fx := seedCarryForwardFixture(t, ctx)
-	dispatchID := shared.UUID(uuid.New())
+	nodeRunID := shared.UUID(uuid.New())
 	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := fx.tables.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
-			RunID: dispatchID, NodeID: fx.nodeID, FrameID: fx.frameID,
+		if err := fx.tables.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+			NodeRunID: nodeRunID, NodeID: fx.nodeID, FrameID: fx.frameID,
 			RunScopeID: fx.mainScopeID,
 		}); err != nil {
 			return err
 		}
-		return fx.tables.NodeAttributes().SetDispatchInputBag(ctx, tx, dispatchID, fx.nodeID,
+		return fx.tables.NodeAttributes().SetDispatchInputBag(ctx, tx, nodeRunID, fx.nodeID,
 			map[string]any{"count": float64(7)})
 	}); err != nil {
 		t.Fatalf("seed dispatch row: %v", err)
@@ -891,7 +891,7 @@ func TestResolveAttributes_LoadsSnapshotBag(t *testing.T) {
 		SupervisorID: "sup-carry-forward",
 	}
 	acq := makeStatefulCounterAcq(fx, fx.mainScopeID)
-	acq.DispatchID = dispatchID
+	acq.NodeRunID = nodeRunID
 	resolved, schema, err := resolveAttributes(ctx, args, acq)
 	if err != nil {
 		t.Fatalf("resolveAttributes: %v", err)

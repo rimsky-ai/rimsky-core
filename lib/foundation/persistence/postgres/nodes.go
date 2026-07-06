@@ -191,7 +191,7 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 	var out []persistence.PureCascadeReadyRow
 	for rows.Next() {
 		var r persistence.PureCascadeReadyRow
-		if err := rows.Scan(&r.NodeID, &r.InstanceID, &r.NodeType, &r.RunID, &r.RunScopeID, &r.FrameID); err != nil {
+		if err := rows.Scan(&r.NodeID, &r.InstanceID, &r.NodeType, &r.NodeRunID, &r.RunScopeID, &r.FrameID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -531,7 +531,7 @@ func (s *nodesImpl) HasAdvancedSiblingInScope(
 // @concept: cascade
 // @concept: run-scope
 func (s *nodesImpl) ListPendingSiblingRunsInScope(
-	ctx context.Context, tx persistence.Tx, senderRunID foundationshared.UUID,
+	ctx context.Context, tx persistence.Tx, senderNodeRunID foundationshared.UUID,
 ) ([]foundationshared.UUID, error) {
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT pending.id
@@ -542,7 +542,7 @@ func (s *nodesImpl) ListPendingSiblingRunsInScope(
 		    AND pending.id <> sender.id
 		    AND pending.state = 'pending'
 		  ORDER BY pending.sequence ASC`,
-		senderRunID,
+		senderNodeRunID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ListPendingSiblingRunsInScope: %w", err)
@@ -612,7 +612,7 @@ func (s *nodesImpl) ListPendingRunsInScopeForNodes(
 	return out, rows.Err()
 }
 
-func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
+func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, nodeRunID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	ex := s.q(tx)
 	var (
 		r         persistence.NodeRunForCallback
@@ -622,7 +622,7 @@ func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID 
 		`SELECT id, node_id, run_scope_id, frame_id, state
 		   FROM rimsky_node_runs
 		  WHERE id = $1
-		  FOR UPDATE`, dispatchID,
+		  FOR UPDATE`, nodeRunID,
 	).Scan(&r.ID, &r.NodeID, &r.RunScopeID, &r.FrameID, &stateScan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -833,7 +833,7 @@ func (s *nodesImpl) ListRunsForInstanceByStates(
 			state   string
 			sigType *string
 		)
-		if err := rows.Scan(&r.RunID, &r.NodeID, &r.RunScopeID, &r.FrameID, &r.Sequence, &state, &sigType, &r.ClaimedBy); err != nil {
+		if err := rows.Scan(&r.NodeRunID, &r.NodeID, &r.RunScopeID, &r.FrameID, &r.Sequence, &state, &sigType, &r.ClaimedBy); err != nil {
 			return nil, fmt.Errorf("ListRunsForInstanceByStates: scan: %w", err)
 		}
 		r.State = cascade.NodeState(state)
@@ -852,7 +852,7 @@ func scanLatestRow(row pgx.Row) (*persistence.NodeRunLatest, error) {
 		state   string
 		sigType *string
 	)
-	err := row.Scan(&r.RunID, &r.NodeID, &r.RunScopeID, &r.FrameID, &r.Sequence, &state, &sigType, &r.ClaimedBy)
+	err := row.Scan(&r.NodeRunID, &r.NodeID, &r.RunScopeID, &r.FrameID, &r.Sequence, &state, &sigType, &r.ClaimedBy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -988,9 +988,9 @@ func (s *nodesImpl) CreateNonCascadeStale(
 	if stores == nil {
 		stores = []string{}
 	}
-	var priorID any
-	if in.PriorDispatchID != nil {
-		priorID = *in.PriorDispatchID
+	var priorRunPtr any
+	if in.PriorNodeRunID != nil {
+		priorRunPtr = *in.PriorNodeRunID
 	}
 	var newID foundationshared.UUID
 	err := s.q(tx).QueryRow(ctx,
@@ -1005,7 +1005,7 @@ func (s *nodesImpl) CreateNonCascadeStale(
 		  WHERE rs.id = $7 AND rs.closed_at IS NULL
 		 RETURNING id`,
 		in.NodeID, nullableText(in.ExecutorName), stores, in.EnqueuedAt, string(in.CreationReason),
-		in.FrameID, in.RunScopeID, priorID, nullableText(in.PriorDispatchDisposition),
+		in.FrameID, in.RunScopeID, priorRunPtr, nullableText(in.PriorDispatchDisposition),
 		nilIfEmpty(in.InitialScratchInline), nilIfEmptyStr(in.InitialScratchHandle), nilIfEmptyStr(in.InitialScratchHandleBackend),
 	).Scan(&newID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1038,7 +1038,7 @@ func scanGateRow(row pgx.Row) (*persistence.NodeRunForGate, error) {
 		stateScan  string
 		reasonScan string
 	)
-	err := row.Scan(&out.RunID, &out.NodeID, &out.RunScopeID, &out.FrameID, &out.Sequence, &stateScan, &reasonScan, &out.ClaimedBy)
+	err := row.Scan(&out.NodeRunID, &out.NodeID, &out.RunScopeID, &out.FrameID, &out.Sequence, &stateScan, &reasonScan, &out.ClaimedBy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

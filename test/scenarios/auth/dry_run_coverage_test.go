@@ -535,8 +535,8 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 			return err
 		}
 		runID := foundationshared.UUID(uuid.New())
-		if err := f.db.Tables().RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-			RunID:        runID,
+		if err := f.db.Tables().NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+			NodeRunID:    runID,
 			NodeID:       nodeID,
 			FrameID:      foundationshared.UUID(frameID),
 			RunScopeID:   frameRow.RootRunScopeID,
@@ -544,7 +544,7 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 		}); err != nil {
 			return err
 		}
-		return f.db.Tables().RunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateFailed, nil)
+		return f.db.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateFailed, nil)
 	}); err != nil {
 		t.Fatalf("seed failed node: %v", err)
 	}

@@ -31,20 +31,20 @@ func parentSettlementSignal(state cascade.NodeState, sigType signalpkg.TypePath,
 }
 
 type PropagationArgs struct {
-	RunTree   persistence.RunTreeTable
-	RunScopes persistence.RunScopeTable
+	NodeRunTree persistence.RunTreeTable
+	RunScopes   persistence.RunScopeTable
 }
 
 func PropagateFromChildState(
 	ctx context.Context, args PropagationArgs, tx persistence.Tx,
 	childRunID shared.UUID, newState cascade.NodeState, settlingSignalType *string,
 ) ([]CancelAction, []ParentSettlement, error) {
-	if args.RunTree == nil {
-		return nil, nil, fmt.Errorf("PropagateFromChildState: RunTree is required")
+	if args.NodeRunTree == nil {
+		return nil, nil, fmt.Errorf("PropagateFromChildState: NodeRunTree is required")
 	}
 	_, _ = newState, settlingSignalType
 
-	childRow, err := args.RunTree.GetByID(ctx, tx, childRunID)
+	childRow, err := args.NodeRunTree.GetByID(ctx, tx, childRunID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("PropagateFromChildState: load child %s: %w", childRunID, err)
 	}
@@ -58,28 +58,28 @@ func PropagateFromChildState(
 	if err != nil {
 		return nil, nil, fmt.Errorf("PropagateFromChildState: load run scope %s: %w", childRow.RunScopeID, err)
 	}
-	if scope == nil || scope.ParentRunID == nil {
+	if scope == nil || scope.ParentNodeRunID == nil {
 		return nil, nil, nil
 	}
-	return walkUpwards(ctx, args, tx, *scope.ParentRunID)
+	return walkUpwards(ctx, args, tx, *scope.ParentNodeRunID)
 }
 
 func walkUpwards(
 	ctx context.Context, args PropagationArgs, tx persistence.Tx,
-	parentRunID shared.UUID,
+	parentNodeRunID shared.UUID,
 ) ([]CancelAction, []ParentSettlement, error) {
 	var actions []CancelAction
 	var settlements []ParentSettlement
-	current := parentRunID
+	current := parentNodeRunID
 	for {
-		parent, err := args.RunTree.LockTreeForUpdate(ctx, tx, current)
+		parent, err := args.NodeRunTree.LockTreeForUpdate(ctx, tx, current)
 		if err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: lock %s: %w", current, err)
 		}
 		if parent == nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: parent %s not found", current)
 		}
-		children, err := args.RunTree.ListChildren(ctx, tx, current)
+		children, err := args.NodeRunTree.ListChildren(ctx, tx, current)
 		if err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: list children %s: %w", current, err)
 		}
@@ -119,19 +119,19 @@ func walkUpwards(
 		if newSig != "" {
 			newSigArg = &newSig
 		}
-		if err := args.RunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, newSigArg); err != nil {
+		if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, newSigArg); err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: update parent %s: %w", current, err)
 		}
 		if result.Action != AggregateActionNone {
 			actions = append(actions, CancelAction{
-				ParentRunID: current,
-				Kind:        result.Action,
-				Children:    children,
+				ParentNodeRunID: current,
+				Kind:            result.Action,
+				Children:        children,
 			})
 		}
 		if isSettled(result.ParentState) {
 			settlements = append(settlements, ParentSettlement{
-				ParentRunID:           current,
+				ParentNodeRunID:       current,
 				ParentNodeID:          parent.NodeID,
 				ParentRunScope:        parent.RunScopeID,
 				FrameID:               parent.FrameID,
@@ -148,17 +148,17 @@ func walkUpwards(
 		if err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: load run scope %s: %w", parent.RunScopeID, err)
 		}
-		if parentScope == nil || parentScope.ParentRunID == nil {
+		if parentScope == nil || parentScope.ParentNodeRunID == nil {
 			return actions, settlements, nil
 		}
-		current = *parentScope.ParentRunID
+		current = *parentScope.ParentNodeRunID
 	}
 }
 
 // @concept: cascade
 // @concept: run-scope
 type ParentSettlement struct {
-	ParentRunID           shared.UUID
+	ParentNodeRunID       shared.UUID
 	ParentNodeID          shared.UUID
 	ParentRunScope        shared.UUID
 	FrameID               shared.UUID
@@ -168,9 +168,9 @@ type ParentSettlement struct {
 }
 
 type CancelAction struct {
-	ParentRunID shared.UUID
-	Kind        AggregateAction
-	Children    []persistence.RunTreeRow
+	ParentNodeRunID shared.UUID
+	Kind            AggregateAction
+	Children        []persistence.NodeRunTreeRow
 }
 
 func isSettled(state cascade.NodeState) bool {
@@ -188,7 +188,7 @@ func PropagateIfChildAfterTerminal(
 	if args.Persist == nil {
 		return nil, nil
 	}
-	rt := args.Persist.RunTree()
+	rt := args.Persist.NodeRunTree()
 	if rt == nil {
 		return nil, nil
 	}
@@ -207,7 +207,7 @@ func PropagateIfChildAfterTerminal(
 		if err != nil || scope == nil {
 			return err
 		}
-		parentID = scope.ParentRunID
+		parentID = scope.ParentNodeRunID
 		return nil
 	}); err != nil {
 		return nil, err
@@ -219,8 +219,8 @@ func PropagateIfChildAfterTerminal(
 	var settlements []ParentSettlement
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		outActions, outSettlements, err := PropagateFromChildState(ctx, PropagationArgs{
-			RunTree:   rt,
-			RunScopes: scopes,
+			NodeRunTree: rt,
+			RunScopes:   scopes,
 		}, tx, runID, newState, settlingSignalType)
 		actions = outActions
 		settlements = outSettlements
@@ -233,7 +233,7 @@ func PropagateIfChildAfterTerminal(
 			if s.FrameID == (shared.UUID{}) {
 				if args.Logger != nil {
 					args.Logger.Warn("PropagateIfChildAfterTerminal: skip cascade bridge: parent frame_id is zero",
-						"parent_run_id", s.ParentRunID.String(),
+						"parent_run_id", s.ParentNodeRunID.String(),
 						"parent_node_id", s.ParentNodeID.String(),
 						"new_state", string(s.NewState),
 						"settling_signal_type", string(s.NewSettlingSignalType))
@@ -253,25 +253,25 @@ func PropagateIfChildAfterTerminal(
 				ctx, args, tx,
 				s.ParentNodeID,
 				nodeRow.NodeType,
-				s.ParentRunID,
+				s.ParentNodeRunID,
 				nodeRow.InstanceID,
 				s.FrameID,
 				parentSig,
 			); err != nil {
-				return fmt.Errorf("PropagateIfChildAfterTerminal: cascade parent %s: %w", s.ParentRunID, err)
+				return fmt.Errorf("PropagateIfChildAfterTerminal: cascade parent %s: %w", s.ParentNodeRunID, err)
 			}
-			if err := upsertDataFromDispatchInputBagIfEmpty(ctx, args, tx, s.ParentRunID, s.ParentNodeID); err != nil {
-				return fmt.Errorf("PropagateIfChildAfterTerminal: upsert parent attrs %s: %w", s.ParentRunID, err)
+			if err := upsertDataFromDispatchInputBagIfEmpty(ctx, args, tx, s.ParentNodeRunID, s.ParentNodeID); err != nil {
+				return fmt.Errorf("PropagateIfChildAfterTerminal: upsert parent attrs %s: %w", s.ParentNodeRunID, err)
 			}
 			if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-				s.ParentNodeID, nodeRow.NodeType, s.ParentRunID, nodeRow.InstanceID, s.FrameID,
+				s.ParentNodeID, nodeRow.NodeType, s.ParentNodeRunID, nodeRow.InstanceID, s.FrameID,
 				nil, nil); err != nil {
-				return fmt.Errorf("PropagateIfChildAfterTerminal: emit parent attribute changes %s: %w", s.ParentRunID, err)
+				return fmt.Errorf("PropagateIfChildAfterTerminal: emit parent attribute changes %s: %w", s.ParentNodeRunID, err)
 			}
 			// @concept: wait-set
 			// @decision: walker-rule-per-sender-node
-			if err := drainWaitSetOnSettled(ctx, args, tx, s.FrameID, s.ParentRunID); err != nil {
-				return fmt.Errorf("PropagateIfChildAfterTerminal: drain wait-set for parent %s: %w", s.ParentRunID, err)
+			if err := drainWaitSetOnSettled(ctx, args, tx, s.FrameID, s.ParentNodeRunID); err != nil {
+				return fmt.Errorf("PropagateIfChildAfterTerminal: drain wait-set for parent %s: %w", s.ParentNodeRunID, err)
 			}
 		}
 		return nil

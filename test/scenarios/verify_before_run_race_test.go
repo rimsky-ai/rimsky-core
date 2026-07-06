@@ -39,12 +39,12 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
 	require.NoError(t, err)
 	frameID := h.GetRunningFrameID(iid)
-	dispatchID := uuid.New()
+	nodeRunID := uuid.New()
 	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, frame_id, run_scope_id, sequence)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), $3, $4, 1)`,
-		dispatchID, n.ID, frameID, mainScopeID,
+		nodeRunID, n.ID, frameID, mainScopeID,
 	)
 	require.NoError(t, err)
 
@@ -81,7 +81,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	require.NotNil(t, latest)
 	require.Equal(t, cascade.NodeStateStale, latest.State)
 
-	own, err := h.Queue.GetClaimedBy(h.Ctx, dispatchID)
+	own, err := h.Queue.GetClaimedBy(h.Ctx, nodeRunID)
 	require.NoError(t, err)
 	require.Equal(t, "claimed_by", own.Kind)
 	require.Equal(t, "fake-other", own.SupervisorID)

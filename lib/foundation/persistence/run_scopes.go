@@ -17,7 +17,7 @@ import (
 type RunScopeRow struct {
 	ID               shared.UUID
 	ParentRunScopeID *shared.UUID
-	ParentRunID      *shared.UUID
+	ParentNodeRunID  *shared.UUID
 	GraphName        string
 	PartitionKey     string
 	InstanceID       shared.UUID
@@ -30,11 +30,11 @@ type RunScopeTable interface {
 
 	GetByID(ctx context.Context, tx Tx, id shared.UUID) (*RunScopeRow, error)
 
-	GetFanoutPartition(ctx context.Context, tx Tx, parentRunID shared.UUID, partitionKey string) (*RunScopeRow, error)
+	GetFanoutPartition(ctx context.Context, tx Tx, parentNodeRunID shared.UUID, partitionKey string) (*RunScopeRow, error)
 
 	Close(ctx context.Context, tx Tx, id shared.UUID) error
 
-	ListChildScopes(ctx context.Context, tx Tx, parentRunID shared.UUID) ([]RunScopeRow, error)
+	ListChildScopes(ctx context.Context, tx Tx, parentNodeRunID shared.UUID) ([]RunScopeRow, error)
 
 	ListParentChain(ctx context.Context, tx Tx, id shared.UUID) ([]RunScopeRow, error)
 }

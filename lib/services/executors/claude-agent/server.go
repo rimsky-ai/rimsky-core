@@ -52,9 +52,9 @@ type dispatchInputs struct {
 	NodeID                       string
 	InstanceID                   string
 	NodeType                     string
-	DispatchID                   string
+	NodeRunID                    string
 	RunScopeID                   string
-	PriorDispatchID              string
+	PriorNodeRunID               string
 	PriorDispatchDispositionWire string
 	CallbackURL                  string
 	CancelToken                  string
@@ -102,9 +102,9 @@ func (s *ExecutorServer) Execute(_ context.Context, req *genv1.ExecuteRequest) (
 		NodeID:                       nodeIDOr(req.GetNodeId(), runID),
 		InstanceID:                   req.GetInstanceId(),
 		NodeType:                     nodeTypeOr(req.GetNodeType()),
-		DispatchID:                   req.GetDispatchId(),
+		NodeRunID:                    req.GetDispatchId(),
 		RunScopeID:                   req.GetRunScopeId(),
-		PriorDispatchID:              req.GetPriorDispatchId(),
+		PriorNodeRunID:               req.GetPriorDispatchId(),
 		PriorDispatchDispositionWire: priorDispositionWire(req),
 		CallbackURL:                  req.GetCallbackUrl(),
 		CancelToken:                  req.GetCancelToken(),
@@ -160,7 +160,7 @@ func (s *ExecutorServer) runAndCallback(
 	}
 
 	outcome := RunAgent(AgentRunOptions{
-		RunID:                        runID,
+		SessionID:                    runID,
 		NodeID:                       inputs.NodeID,
 		NodeType:                     inputs.NodeType,
 		InstanceID:                   inputs.InstanceID,
@@ -175,9 +175,9 @@ func (s *ExecutorServer) runAndCallback(
 		CliConfig:                    cliConfig,
 		McpAllowlist:                 s.cfg.Opts.McpAllowlist,
 		ExposeEnvAllowlist:           s.cfg.Opts.ExposeEnvAllowlist,
-		DispatchID:                   inputs.DispatchID,
+		NodeRunID:                    inputs.NodeRunID,
 		RunScopeID:                   inputs.RunScopeID,
-		PriorDispatchID:              inputs.PriorDispatchID,
+		PriorNodeRunID:               inputs.PriorNodeRunID,
 		PriorDispatchDispositionWire: inputs.PriorDispatchDispositionWire,
 		CallbackURL:                  inputs.CallbackURL,
 		CancelToken:                  inputs.CancelToken,

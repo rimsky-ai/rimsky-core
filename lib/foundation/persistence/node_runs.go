@@ -25,7 +25,7 @@ type DispatchRequest struct {
 	RunScopeID shared.UUID
 
 	// @concept: run-scope
-	PriorDispatchID *shared.UUID
+	PriorNodeRunID *shared.UUID
 
 	// @concept: run-scope
 	PriorDispatchDisposition string
@@ -51,12 +51,12 @@ type SelectCandidatesRequest struct {
 
 	LateBindClaimProducerProxy string
 
-	CursorEnqueuedAfter   time.Time
-	CursorAfterDispatchID shared.UUID
+	CursorEnqueuedAfter  time.Time
+	CursorAfterNodeRunID shared.UUID
 }
 
 type Candidate struct {
-	DispatchID             shared.UUID
+	NodeRunID              shared.UUID
 	NodeID                 shared.UUID
 	NodeType               string
 	ExecutorName           string
@@ -65,7 +65,7 @@ type Candidate struct {
 	FrameID                shared.UUID
 
 	// @concept: run-scope
-	PriorDispatchID *shared.UUID
+	PriorNodeRunID *shared.UUID
 	// @concept: run-scope
 	PriorDispatchDisposition string
 
@@ -95,11 +95,11 @@ type Queue interface {
 	// @concept: cascade
 	ListInFlightRunStates(ctx context.Context, tx Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error)
 
-	ClaimDispatchRow(ctx context.Context, tx Tx, dispatchID shared.UUID, supervisorID string) (claimed bool, err error)
+	ClaimDispatchRow(ctx context.Context, tx Tx, nodeRunID shared.UUID, supervisorID string) (claimed bool, err error)
 
-	PromoteClaimedToRunning(ctx context.Context, tx Tx, dispatchID shared.UUID, supervisorID string) (promoted bool, err error)
+	PromoteClaimedToRunning(ctx context.Context, tx Tx, nodeRunID shared.UUID, supervisorID string) (promoted bool, err error)
 
-	Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error
+	Complete(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error
 
 	// @concept: run-scope
 	RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string) error
@@ -108,11 +108,11 @@ type Queue interface {
 
 	ListOrphanedClaims(ctx context.Context) ([]DispatchRow, error)
 
-	ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error
+	ReleaseClaim(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error
 
-	GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (ClaimOwnership, error)
+	GetClaimedBy(ctx context.Context, nodeRunID shared.UUID) (ClaimOwnership, error)
 
-	GetDispatchNode(ctx context.Context, dispatchID shared.UUID) (shared.UUID, ClaimOwnership, error)
+	GetDispatchNode(ctx context.Context, nodeRunID shared.UUID) (shared.UUID, ClaimOwnership, error)
 
 	LookupRunByAsyncAckID(ctx context.Context, tx Tx, ackID string) (*DispatchRow, error)
 
@@ -145,25 +145,25 @@ type Queue interface {
 	// @concept: run-scope
 	GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*ParkedRow, error)
 
-	ResumeParkedInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) (resumed bool, err error)
+	ResumeParkedInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID) (resumed bool, err error)
 
-	RebindRunFrameInTx(ctx context.Context, tx Tx, dispatchID, newFrameID shared.UUID) error
+	RebindRunFrameInTx(ctx context.Context, tx Tx, nodeRunID, newFrameID shared.UUID) error
 
-	GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (count int, override *int, err error)
+	GetRetryNoProgress(ctx context.Context, nodeRunID shared.UUID) (count int, override *int, err error)
 
-	SetRetryNoProgressForRunInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, count int) error
+	SetRetryNoProgressForRunInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, count int) error
 
-	UpdateDispatchTuningInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error
-
-	// @concept: executor
-	LoadScratchInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) (inline []byte, handle, handleBackend string, err error)
+	UpdateDispatchTuningInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error
 
 	// @concept: executor
-	WriteScratchInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error
+	LoadScratchInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID) (inline []byte, handle, handleBackend string, err error)
+
+	// @concept: executor
+	WriteScratchInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, inline []byte, handle, handleBackend string) error
 }
 
 type ParkActiveInput struct {
-	DispatchID        shared.UUID
+	NodeRunID         shared.UUID
 	ExpectedClaimedBy string
 	ParkedAt          time.Time
 	ResumeAt          time.Time
@@ -173,7 +173,7 @@ type ParkActiveInput struct {
 }
 
 type ParkedDiagnosticRow struct {
-	DispatchID shared.UUID
+	NodeRunID  shared.UUID
 	InstanceID string
 	NodeID     string
 	FrameID    string
@@ -184,7 +184,7 @@ type ParkedDiagnosticRow struct {
 }
 
 type ParkedRow struct {
-	DispatchID               shared.UUID
+	NodeRunID                shared.UUID
 	NodeID                   shared.UUID
 	ExecutorName             string
 	RequiredClaimProducers   []string

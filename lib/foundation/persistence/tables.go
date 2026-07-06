@@ -25,7 +25,7 @@ type Tables interface {
 	MessageIdempotencies() MessageIdempotencyTable
 	Lineage() LineageTable
 	PublisherSubscriptions() PublisherSubscriptionsTable
-	RunTree() RunTreeTable
+	NodeRunTree() RunTreeTable
 
 	// @concept: run-scope
 	RunScopes() RunScopeTable

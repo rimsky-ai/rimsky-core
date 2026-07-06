@@ -57,7 +57,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return h.Persist.NodeAttributes().SetDispatchInputBag(h.Ctx, tx, latest.RunID, n.ID, map[string]any{})
+		return h.Persist.NodeAttributes().SetDispatchInputBag(h.Ctx, tx, latest.NodeRunID, n.ID, map[string]any{})
 	}))
 
 	args := runtime.RunArgs{

@@ -126,7 +126,7 @@ func guardJSONEq(t *testing.T, got json.RawMessage, want string) bool {
 func seedClaimedGuardRun(ctx context.Context, t *testing.T, d persistence.Database, fix fixtureSet, supID string) shared.UUID {
 	t.Helper()
 	q := d.Queue()
-	var dispatchID shared.UUID
+	var nodeRunID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
@@ -150,17 +150,17 @@ func seedClaimedGuardRun(ctx context.Context, t *testing.T, d persistence.Databa
 			if c.NodeID != fix.NodeID {
 				continue
 			}
-			ok, err := q.ClaimDispatchRow(ctx, tx, c.DispatchID, supID)
+			ok, err := q.ClaimDispatchRow(ctx, tx, c.NodeRunID, supID)
 			if err != nil {
 				return err
 			}
 			if !ok {
 				t.Fatalf("seedClaimedGuardRun: claim was not successful")
 			}
-			if _, err := q.PromoteClaimedToRunning(ctx, tx, c.DispatchID, supID); err != nil {
+			if _, err := q.PromoteClaimedToRunning(ctx, tx, c.NodeRunID, supID); err != nil {
 				return err
 			}
-			dispatchID = c.DispatchID
+			nodeRunID = c.NodeRunID
 			return nil
 		}
 		t.Fatalf("seedClaimedGuardRun: candidate not surfaced for node %s", fix.NodeID)
@@ -168,12 +168,12 @@ func seedClaimedGuardRun(ctx context.Context, t *testing.T, d persistence.Databa
 	}); err != nil {
 		t.Fatalf("seedClaimedGuardRun: %v", err)
 	}
-	return dispatchID
+	return nodeRunID
 }
 
-func assertRunOwnedBy(ctx context.Context, t *testing.T, d persistence.Database, dispatchID shared.UUID, supID string, op string) {
+func assertRunOwnedBy(ctx context.Context, t *testing.T, d persistence.Database, nodeRunID shared.UUID, supID string, op string) {
 	t.Helper()
-	owner, err := d.Queue().GetClaimedBy(ctx, dispatchID)
+	owner, err := d.Queue().GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("%s: GetClaimedBy: %v", op, err)
 	}
@@ -512,10 +512,10 @@ func testClaimantGuardHolderRelease(t *testing.T, d persistence.Database) {
 	holderID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:            holderID,
-			ClaimHandleID: in.ID,
-			HolderRunID:   runID,
-			FrameID:       &fix.FrameID,
+			ID:              holderID,
+			ClaimHandleID:   in.ID,
+			HolderNodeRunID: runID,
+			FrameID:         &fix.FrameID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("seed claim holder: %v", err)
@@ -562,10 +562,10 @@ func testClaimantGuardRunClaimSteal(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
-	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
+	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, dispatchID, guardSupB)
+		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, guardSupB)
 		if err != nil {
 			return err
 		}
@@ -576,14 +576,14 @@ func testClaimantGuardRunClaimSteal(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("steal tx: %v", err)
 	}
-	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "ClaimDispatchRow")
+	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "ClaimDispatchRow")
 }
 
 func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
-	var dispatchID shared.UUID
+	var nodeRunID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
@@ -607,14 +607,14 @@ func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Databas
 			if c.NodeID != fix.NodeID {
 				continue
 			}
-			ok, err := q.ClaimDispatchRow(ctx, tx, c.DispatchID, guardSupA)
+			ok, err := q.ClaimDispatchRow(ctx, tx, c.NodeRunID, guardSupA)
 			if err != nil {
 				return err
 			}
 			if !ok {
 				t.Fatalf("seed: first claim must succeed")
 			}
-			dispatchID = c.DispatchID
+			nodeRunID = c.NodeRunID
 			return nil
 		}
 		t.Fatalf("seed: candidate not surfaced for node %s", fix.NodeID)
@@ -624,7 +624,7 @@ func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Databas
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, dispatchID, guardSupA)
+		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, guardSupA)
 		if err != nil {
 			return err
 		}
@@ -635,25 +635,25 @@ func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Databas
 	}); err != nil {
 		t.Fatalf("self-reclaim tx: %v", err)
 	}
-	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "ClaimDispatchRow self-reclaim")
+	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "ClaimDispatchRow self-reclaim")
 }
 
 func testClaimantGuardRunReleaseClaim(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
-	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
+	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
-	beforeRow, err := q.GetByID(ctx, dispatchID)
+	beforeRow, err := q.GetByID(ctx, nodeRunID)
 	if err != nil || beforeRow == nil {
 		t.Fatalf("GetByID before: row=%v err=%v", beforeRow, err)
 	}
 
-	if err := q.ReleaseClaim(ctx, dispatchID, guardSupB); err != nil {
+	if err := q.ReleaseClaim(ctx, nodeRunID, guardSupB); err != nil {
 		t.Fatalf("wrong-claimant ReleaseClaim: %v", err)
 	}
-	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "ReleaseClaim")
-	afterRow, err := q.GetByID(ctx, dispatchID)
+	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "ReleaseClaim")
+	afterRow, err := q.GetByID(ctx, nodeRunID)
 	if err != nil || afterRow == nil {
 		t.Fatalf("GetByID after wrong-claimant release: row=%v err=%v", afterRow, err)
 	}
@@ -662,10 +662,10 @@ func testClaimantGuardRunReleaseClaim(t *testing.T, d persistence.Database) {
 		t.Fatalf("wrong-claimant ReleaseClaim mutated last_progress_at")
 	}
 
-	if err := q.ReleaseClaim(ctx, dispatchID, guardSupA); err != nil {
+	if err := q.ReleaseClaim(ctx, nodeRunID, guardSupA); err != nil {
 		t.Fatalf("owner ReleaseClaim: %v", err)
 	}
-	owner, err := q.GetClaimedBy(ctx, dispatchID)
+	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy after owner release: %v", err)
 	}
@@ -678,17 +678,17 @@ func testClaimantGuardRunComplete(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
-	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
+	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
-	if err := q.Complete(ctx, dispatchID, guardSupB); err != nil {
+	if err := q.Complete(ctx, nodeRunID, guardSupB); err != nil {
 		t.Fatalf("wrong-claimant Complete: %v", err)
 	}
-	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "Complete")
+	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "Complete")
 
-	if err := q.Complete(ctx, dispatchID, guardSupA); err != nil {
+	if err := q.Complete(ctx, nodeRunID, guardSupA); err != nil {
 		t.Fatalf("owner Complete: %v", err)
 	}
-	owner, err := q.GetClaimedBy(ctx, dispatchID)
+	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy after owner Complete: %v", err)
 	}
@@ -701,19 +701,19 @@ func testClaimantGuardRunRemoveForNode(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
-	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
+	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, guardSupB, tx)
 	}); err != nil {
 		t.Fatalf("wrong-claimant RemoveForNodeInTx: %v", err)
 	}
-	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "RemoveForNodeInTx")
+	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "RemoveForNodeInTx")
 
 	if err := q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, guardSupA); err != nil {
 		t.Fatalf("owner RemoveForNode: %v", err)
 	}
-	owner, err := q.GetClaimedBy(ctx, dispatchID)
+	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy after owner remove: %v", err)
 	}
@@ -726,11 +726,11 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
-	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
+	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
 	parkInput := func(sup string) persistence.ParkActiveInput {
 		return persistence.ParkActiveInput{
-			DispatchID:        dispatchID,
+			NodeRunID:         nodeRunID,
 			ExpectedClaimedBy: sup,
 			ParkedAt:          time.Now(),
 			Reason:            "snooze",
@@ -744,7 +744,7 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 	if err == nil {
 		t.Fatalf("wrong-claimant ParkActiveInTx did not error")
 	}
-	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "ParkActiveInTx")
+	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "ParkActiveInTx")
 	parked, perr := q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)
 	if perr != nil {
 		t.Fatalf("GetParkedByNode after wrong-claimant park: %v", perr)
@@ -758,10 +758,10 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 	if perr != nil {
 		t.Fatalf("GetParkedByNode after owner park: %v", perr)
 	}
-	if parked == nil || parked.DispatchID != dispatchID {
+	if parked == nil || parked.NodeRunID != nodeRunID {
 		t.Fatalf("owner ParkActiveInTx did not park the row: %v", parked)
 	}
-	owner, err := q.GetClaimedBy(ctx, dispatchID)
+	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy after park: %v", err)
 	}
@@ -774,12 +774,12 @@ func testClaimantGuardRunEmptyClaimantCarveOut(t *testing.T, d persistence.Datab
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
-	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
+	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
-	if err := q.ReleaseClaim(ctx, dispatchID, ""); err != nil {
+	if err := q.ReleaseClaim(ctx, nodeRunID, ""); err != nil {
 		t.Fatalf("empty-claimant ReleaseClaim: %v", err)
 	}
-	owner, err := q.GetClaimedBy(ctx, dispatchID)
+	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy after empty release: %v", err)
 	}
@@ -788,22 +788,22 @@ func testClaimantGuardRunEmptyClaimantCarveOut(t *testing.T, d persistence.Datab
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, dispatchID, guardSupA)
+		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, guardSupA)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			t.Fatalf("re-claim as A failed")
 		}
-		_, err = q.PromoteClaimedToRunning(ctx, tx, dispatchID, guardSupA)
+		_, err = q.PromoteClaimedToRunning(ctx, tx, nodeRunID, guardSupA)
 		return err
 	}); err != nil {
 		t.Fatalf("re-claim tx: %v", err)
 	}
-	if err := q.Complete(ctx, dispatchID, ""); err != nil {
+	if err := q.Complete(ctx, nodeRunID, ""); err != nil {
 		t.Fatalf("empty-claimant Complete: %v", err)
 	}
-	cowner, err := q.GetClaimedBy(ctx, dispatchID)
+	cowner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy after empty Complete: %v", err)
 	}
@@ -811,7 +811,7 @@ func testClaimantGuardRunEmptyClaimantCarveOut(t *testing.T, d persistence.Datab
 		t.Fatalf("empty-claimant Complete did not release A's row: %s/%s", cowner.Kind, cowner.SupervisorID)
 	}
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return d.Tables().Nodes().UpdateState(ctx, dispatchID,
+		return d.Tables().Nodes().UpdateState(ctx, nodeRunID,
 			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx)
 	}); err != nil {
 		t.Fatalf("settle row after empty Complete: %v", err)
@@ -854,10 +854,10 @@ func testClaimantGuardUnguardedMutationCarveOuts(t *testing.T, d persistence.Dat
 	holderID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:            holderID,
-			ClaimHandleID: in.ID,
-			HolderRunID:   runID,
-			FrameID:       &fix.FrameID,
+			ID:              holderID,
+			ClaimHandleID:   in.ID,
+			HolderNodeRunID: runID,
+			FrameID:         &fix.FrameID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("seed claim holder: %v", err)
@@ -885,10 +885,10 @@ func testClaimantGuardUnguardedMutationCarveOuts(t *testing.T, d persistence.Dat
 	holderID2 := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:            holderID2,
-			ClaimHandleID: in2.ID,
-			HolderRunID:   runID,
-			FrameID:       &fix.FrameID,
+			ID:              holderID2,
+			ClaimHandleID:   in2.ID,
+			HolderNodeRunID: runID,
+			FrameID:         &fix.FrameID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("seed second claim holder: %v", err)

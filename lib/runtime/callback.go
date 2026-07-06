@@ -31,8 +31,8 @@ import (
 var errUnauthorizedCallback = errors.New("callback: unauthorized")
 
 type callbackAckBody struct {
-	AckStatus         string  `json:"ack_status"`
-	CurrentDispatchID *string `json:"current_dispatch_id,omitempty"`
+	AckStatus        string  `json:"ack_status"`
+	CurrentNodeRunID *string `json:"current_dispatch_id,omitempty"`
 }
 
 const (
@@ -99,26 +99,26 @@ type CallbackServer struct {
 	ackOutcomes    map[shared.UUID]ackOutcomeRecord
 }
 
-func (c *CallbackServer) recordAckOutcome(dispatchID shared.UUID, status, phase string, _ bool) {
+func (c *CallbackServer) recordAckOutcome(nodeRunID shared.UUID, status, phase string, _ bool) {
 	c.ackMu.Lock()
 	defer c.ackMu.Unlock()
 	if c.ackOutcomes == nil {
 		c.ackOutcomes = make(map[shared.UUID]ackOutcomeRecord)
 	}
-	c.ackOutcomes[dispatchID] = ackOutcomeRecord{Status: status, Phase: phase}
+	c.ackOutcomes[nodeRunID] = ackOutcomeRecord{Status: status, Phase: phase}
 }
 
-func (c *CallbackServer) consumeAckOutcome(dispatchID shared.UUID) ackOutcomeRecord {
+func (c *CallbackServer) consumeAckOutcome(nodeRunID shared.UUID) ackOutcomeRecord {
 	c.ackMu.Lock()
 	defer c.ackMu.Unlock()
 	if c.ackOutcomes == nil {
 		return ackOutcomeRecord{Status: ackStatusAccepted}
 	}
-	rec, ok := c.ackOutcomes[dispatchID]
+	rec, ok := c.ackOutcomes[nodeRunID]
 	if !ok {
 		return ackOutcomeRecord{Status: ackStatusAccepted}
 	}
-	delete(c.ackOutcomes, dispatchID)
+	delete(c.ackOutcomes, nodeRunID)
 	return rec
 }
 
@@ -248,23 +248,23 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 		c.Registry.Register(ackID, asyncCtx)
 		c.Logger.Warn("callback: driveTerminal failed",
 			"node_id", asyncCtx.NodeID.String(), "error", err.Error())
-		_ = c.consumeAckOutcome(asyncCtx.DispatchID)
+		_ = c.consumeAckOutcome(asyncCtx.NodeRunID)
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
 	}
-	outcome := c.consumeAckOutcome(asyncCtx.DispatchID)
+	outcome := c.consumeAckOutcome(asyncCtx.NodeRunID)
 	body := callbackAckBody{AckStatus: outcome.Status}
 	if outcome.Status != ackStatusAccepted && outcome.Status != ackStatusRejectedUnknown {
 		if successor := c.findCanonicalSuccessor(r.Context(), asyncCtx); successor != nil {
 			s := successor.String()
-			body.CurrentDispatchID = &s
+			body.CurrentNodeRunID = &s
 		}
 	}
 	if outcome.Status == ackStatusAccepted {
-		if err := c.Queue.Complete(r.Context(), asyncCtx.DispatchID, asyncCtx.SupervisorID); err != nil {
+		if err := c.Queue.Complete(r.Context(), asyncCtx.NodeRunID, asyncCtx.SupervisorID); err != nil {
 			c.Logger.Error("callback: queue.Complete failed after applied terminal",
 				"node_id", asyncCtx.NodeID.String(),
-				"dispatch_id", asyncCtx.DispatchID.String(),
+				"dispatch_id", asyncCtx.NodeRunID.String(),
 				"supervisor_id", asyncCtx.SupervisorID,
 				"error", err.Error())
 		}
@@ -273,7 +273,7 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		c.Logger.Warn("callback: encode ack body failed",
-			"dispatch_id", asyncCtx.DispatchID.String(),
+			"dispatch_id", asyncCtx.NodeRunID.String(),
 			"error", err.Error())
 	}
 }
@@ -315,7 +315,7 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 	return &AsyncContext{
 		NodeID:       row.NodeID,
 		InstanceID:   instanceID,
-		DispatchID:   row.ID,
+		NodeRunID:    row.ID,
 		SupervisorID: supervisorID,
 		FrameID:      row.FrameID,
 	}, nil
@@ -324,7 +324,7 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 func (c *CallbackServer) findCanonicalSuccessor(ctx context.Context, ac AsyncContext) *shared.UUID {
 	var successor *shared.UUID
 	_ = c.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := c.Persist.Nodes().GetRunByDispatchIDForUpdate(ctx, ac.DispatchID, tx)
+		row, err := c.Persist.Nodes().GetRunByDispatchIDForUpdate(ctx, ac.NodeRunID, tx)
 		if err != nil || row == nil {
 			return nil
 		}
@@ -332,7 +332,7 @@ func (c *CallbackServer) findCanonicalSuccessor(ctx context.Context, ac AsyncCon
 		if err != nil || !ok {
 			return nil
 		}
-		if nextID == ac.DispatchID {
+		if nextID == ac.NodeRunID {
 			return nil
 		}
 		successor = &nextID
@@ -417,7 +417,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		DataProcessors:              c.DataProcessors,
 	}
 	acq := &acquisition{
-		DispatchID:     ac.DispatchID,
+		NodeRunID:      ac.NodeRunID,
 		NodeID:         ac.NodeID,
 		InstanceID:     ac.InstanceID,
 		NodeType:       ac.NodeType,
@@ -432,7 +432,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 	var phase string
 	rejected := false
 	setup := func(ctx context.Context, tx persistence.Tx) (bool, error) {
-		row, err := c.Persist.Nodes().GetRunByDispatchIDForUpdate(ctx, ac.DispatchID, tx)
+		row, err := c.Persist.Nodes().GetRunByDispatchIDForUpdate(ctx, ac.NodeRunID, tx)
 		if err != nil {
 			return false, fmt.Errorf("driveTerminal: GetRunByDispatchIDForUpdate: %w", err)
 		}
@@ -440,7 +440,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 			rejected = true
 			ackStatus = ackStatusRejectedUnknown
 			c.Logger.Warn("callback.late_or_stale_run",
-				"dispatch_id", ac.DispatchID.String(),
+				"dispatch_id", ac.NodeRunID.String(),
 				"reason", "run_not_found")
 			return true, nil
 		}
@@ -449,7 +449,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 			phase = string(row.State)
 			ackStatus = ackStatusForState(row.State)
 			c.Logger.Warn("callback.late_or_stale_run",
-				"dispatch_id", ac.DispatchID.String(),
+				"dispatch_id", ac.NodeRunID.String(),
 				"current_state", string(row.State),
 				"expected_state", "running|held")
 			return true, nil
@@ -476,7 +476,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
 		InstanceID:       acq.InstanceID,
 		NodeID:           acq.NodeID,
-		DispatchID:       acq.DispatchID,
+		NodeRunID:        acq.NodeRunID,
 		FrameID:          acq.FrameID,
 		Executor:         acq.Executor,
 		NodeType:         acq.NodeType,
@@ -490,10 +490,10 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		OpenWaitSet:      openWaitSetSummaryForBreakpoint(ctx, args, acq),
 	}); err != nil && c.Logger != nil {
 		c.Logger.Warn("breakpoint: after_terminal eval failed; continuing",
-			"dispatch_id", acq.DispatchID.String(),
+			"dispatch_id", acq.NodeRunID.String(),
 			"error", err.Error())
 	}
-	c.recordAckOutcome(ac.DispatchID, ackStatus, phase, rejected)
+	c.recordAckOutcome(ac.NodeRunID, ackStatus, phase, rejected)
 	return nil
 }
 
@@ -532,7 +532,7 @@ func (c *CallbackServer) runTokenAuth(token string, runID shared.UUID) error {
 			"server_supervisor", c.SupervisorID)
 		return errUnauthorizedCallback
 	}
-	dispatchID, err := uuid.Parse(tokDispatch)
+	nodeRunID, err := uuid.Parse(tokDispatch)
 	if err != nil {
 		c.Logger.Warn("runTokenAuth: dispatch id parse failed",
 			"run_id", runID.String(),
@@ -540,10 +540,10 @@ func (c *CallbackServer) runTokenAuth(token string, runID shared.UUID) error {
 			"error", err.Error())
 		return errUnauthorizedCallback
 	}
-	if dispatchID != runID {
+	if nodeRunID != runID {
 		c.Logger.Warn("runTokenAuth: run id mismatch",
 			"url_run_id", runID.String(),
-			"token_dispatch_id", dispatchID.String())
+			"token_dispatch_id", nodeRunID.String())
 		return errUnauthorizedCallback
 	}
 	return nil

@@ -36,7 +36,7 @@ type ChildRunSpec struct {
 }
 
 type ChildExecutionInput struct {
-	ParentRunID       shared.UUID
+	ParentNodeRunID   shared.UUID
 	ParentRunScopeID  shared.UUID
 	InstanceID        shared.UUID
 	FrameID           shared.UUID
@@ -48,7 +48,7 @@ type ChildExecutionInput struct {
 }
 
 type DispatchedChild struct {
-	RunID        shared.UUID
+	NodeRunID    shared.UUID
 	RunScopeID   shared.UUID
 	NodeID       shared.UUID
 	PartitionKey string
@@ -78,7 +78,7 @@ func DispatchChildren(
 				p.PartitionKey, len(in.Children))
 		}
 		var childScopeID shared.UUID
-		existing, err := args.Persist.RunScopes().GetFanoutPartition(ctx, tx, in.ParentRunID, p.PartitionKey)
+		existing, err := args.Persist.RunScopes().GetFanoutPartition(ctx, tx, in.ParentNodeRunID, p.PartitionKey)
 		if err != nil {
 			return nil, fmt.Errorf("DispatchChildren: lookup partition %q: %w", p.PartitionKey, err)
 		}
@@ -86,12 +86,12 @@ func DispatchChildren(
 			childScopeID = existing.ID
 		} else {
 			childScopeID = shared.UUID(uuid.New())
-			parentRunIDCopy := in.ParentRunID
+			parentRunIDCopy := in.ParentNodeRunID
 			parentScopeIDCopy := parentScope.ID
 			if err := args.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 				ID:               childScopeID,
 				ParentRunScopeID: &parentScopeIDCopy,
-				ParentRunID:      &parentRunIDCopy,
+				ParentNodeRunID:  &parentRunIDCopy,
 				GraphName:        in.ChildGraphName,
 				PartitionKey:     p.PartitionKey,
 				InstanceID:       in.InstanceID,
@@ -100,8 +100,8 @@ func DispatchChildren(
 			}
 		}
 		for _, c := range in.Children {
-			runID, err := CreateChildRun(
-				ctx, tx, args.Persist.RunTree(), args.Queue,
+			runID, err := CreateChildNodeRun(
+				ctx, tx, args.Persist.NodeRunTree(), args.Queue,
 				c.NodeID, in.FrameID, childScopeID,
 				c.Executor, c.RequiredClaimProducers, in.AggregationPolicy)
 			if err != nil {
@@ -119,7 +119,7 @@ func DispatchChildren(
 				}
 			}
 			out = append(out, DispatchedChild{
-				RunID:        runID,
+				NodeRunID:    runID,
 				RunScopeID:   childScopeID,
 				NodeID:       c.NodeID,
 				PartitionKey: p.PartitionKey,
@@ -130,7 +130,7 @@ func DispatchChildren(
 }
 
 type DelegateSettlementInput struct {
-	ExitRunID     shared.UUID
+	ExitNodeRunID shared.UUID
 	ExitNodeID    shared.UUID
 	ExitNodeAlias string
 	InstanceID    shared.UUID
@@ -153,27 +153,27 @@ func SettleFromDelegate(
 	if args.Persist == nil {
 		return fmt.Errorf("SettleFromDelegate: Persist is required")
 	}
-	rt := args.Persist.RunTree()
+	rt := args.Persist.NodeRunTree()
 	if rt == nil {
-		return fmt.Errorf("SettleFromDelegate: RunTree is required")
+		return fmt.Errorf("SettleFromDelegate: NodeRunTree is required")
 	}
 	scopes := args.Persist.RunScopes()
 	if scopes == nil {
 		return fmt.Errorf("SettleFromDelegate: RunScopes is required")
 	}
-	exit, err := rt.GetByID(ctx, tx, in.ExitRunID)
+	exit, err := rt.GetByID(ctx, tx, in.ExitNodeRunID)
 	if err != nil {
-		return fmt.Errorf("SettleFromDelegate: load exit run %s: %w", in.ExitRunID, err)
+		return fmt.Errorf("SettleFromDelegate: load exit run %s: %w", in.ExitNodeRunID, err)
 	}
 	if exit == nil {
-		return fmt.Errorf("SettleFromDelegate: run %s not found", in.ExitRunID)
+		return fmt.Errorf("SettleFromDelegate: run %s not found", in.ExitNodeRunID)
 	}
 	exitScope, err := scopes.GetByID(ctx, tx, exit.RunScopeID)
 	if err != nil {
 		return fmt.Errorf("SettleFromDelegate: load exit run scope %s: %w", exit.RunScopeID, err)
 	}
-	if exitScope == nil || exitScope.ParentRunID == nil {
-		return fmt.Errorf("SettleFromDelegate: run %s has no parent; not a sub-graph exit", in.ExitRunID)
+	if exitScope == nil || exitScope.ParentNodeRunID == nil {
+		return fmt.Errorf("SettleFromDelegate: run %s has no parent; not a sub-graph exit", in.ExitNodeRunID)
 	}
 	var asMap map[string]any
 	if len(in.Writeback) > 0 {
@@ -181,18 +181,18 @@ func SettleFromDelegate(
 			return fmt.Errorf("SettleFromDelegate: exit writeback bytes not JSON-decodable: %w", err)
 		}
 	}
-	parentRunID := *exitScope.ParentRunID
-	parent, err := rt.GetByID(ctx, tx, parentRunID)
+	parentNodeRunID := *exitScope.ParentNodeRunID
+	parent, err := rt.GetByID(ctx, tx, parentNodeRunID)
 	if err != nil {
-		return fmt.Errorf("SettleFromDelegate: load parent run %s: %w", parentRunID, err)
+		return fmt.Errorf("SettleFromDelegate: load parent run %s: %w", parentNodeRunID, err)
 	}
 	if parent == nil {
-		return fmt.Errorf("SettleFromDelegate: parent run %s not found", parentRunID)
+		return fmt.Errorf("SettleFromDelegate: parent run %s not found", parentNodeRunID)
 	}
 	if args.Logger != nil {
 		args.Logger.Info("subgraph: carry exit writeback to parent run",
-			"exit_run_id", in.ExitRunID.String(),
-			"parent_run_id", parentRunID.String(),
+			"exit_run_id", in.ExitNodeRunID.String(),
+			"parent_run_id", parentNodeRunID.String(),
 			"parent_node_id", parent.NodeID.String(),
 			"writeback_field_count", len(asMap))
 	}
@@ -201,7 +201,7 @@ func SettleFromDelegate(
 	}
 	if len(in.Writeback) > 0 {
 		if err := args.Persist.NodeAttributes().Upsert(
-			ctx, parent.RunID, parent.NodeID, asMap, tx,
+			ctx, parent.NodeRunID, parent.NodeID, asMap, tx,
 		); err != nil {
 			return fmt.Errorf("SettleFromDelegate: upsert parent attributes: %w", err)
 		}
@@ -238,16 +238,16 @@ func SettleFromDelegate(
 			},
 		}
 		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
-			parent.NodeID, callingNodeRow.NodeType, parent.RunID,
+			parent.NodeID, callingNodeRow.NodeType, parent.NodeRunID,
 			in.InstanceID, parentFrameID, exitBridgeSig); err != nil {
 			return fmt.Errorf("SettleFromDelegate: cascade subscribers of calling node: %w", err)
 		}
 		if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-			parent.NodeID, callingNodeRow.NodeType, parent.RunID, in.InstanceID, parentFrameID,
+			parent.NodeID, callingNodeRow.NodeType, parent.NodeRunID, in.InstanceID, parentFrameID,
 			nil, nil); err != nil {
 			return fmt.Errorf("SettleFromDelegate: emit parent attribute changes: %w", err)
 		}
-		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, parentFrameID, parent.RunID, tx); err != nil {
+		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, parentFrameID, parent.NodeRunID, tx); err != nil {
 			return fmt.Errorf("SettleFromDelegate: drain wait-set for calling node: %w", err)
 		}
 	}
@@ -261,8 +261,8 @@ func SettleFromDelegate(
 		InstanceID: &instanceID,
 		Kind:       events.KindSubgraphExitCarry(),
 		Payload: map[string]any{
-			"parent_run_id":   parentRunID.String(),
-			"exit_run_id":     in.ExitRunID.String(),
+			"parent_run_id":   parentNodeRunID.String(),
+			"exit_run_id":     in.ExitNodeRunID.String(),
 			"exit_node_alias": in.ExitNodeAlias,
 			"outcome":         "fresh",
 		},
@@ -339,7 +339,7 @@ func SettleFromFanoutChild(
 			if c.NodeRunID == nil {
 				continue
 			}
-			childRun, err := args.Persist.RunTree().GetByID(ctx, tx, *c.NodeRunID)
+			childRun, err := args.Persist.NodeRunTree().GetByID(ctx, tx, *c.NodeRunID)
 			if err != nil {
 				return nil, fmt.Errorf("SettleFromFanoutChild: load child run %s: %w", c.NodeRunID, err)
 			}
@@ -385,7 +385,7 @@ func SettleFromFanoutChild(
 		parentHint.FrameID = *parent.FrameID
 	}
 	if parent.NodeRunID != nil {
-		parentHint.RunID = *parent.NodeRunID
+		parentHint.NodeRunID = *parent.NodeRunID
 	}
 	if acquirer, aErr := args.Persist.Nodes().Get(ctx, parent.HolderNodeID, tx); aErr == nil && acquirer != nil {
 		parentHint.InstanceID = acquirer.InstanceID
@@ -468,7 +468,7 @@ func childPartitionWritebackKey(
 	if child == nil || child.NodeRunID == nil {
 		return fallback, nil
 	}
-	childRun, err := args.Persist.RunTree().GetByID(ctx, tx, *child.NodeRunID)
+	childRun, err := args.Persist.NodeRunTree().GetByID(ctx, tx, *child.NodeRunID)
 	if err != nil {
 		return "", fmt.Errorf("load child run %s: %w", child.NodeRunID, err)
 	}

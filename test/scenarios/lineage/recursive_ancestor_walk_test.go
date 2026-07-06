@@ -30,7 +30,7 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:              rootRunID,
+			NodeRunID:          rootRunID,
 			NodeID:             shared.UUID(uuid.New()),
 			FrameID:            frameID,
 			State:              "fresh",
@@ -40,23 +40,23 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 	}
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:              childRunID,
+			NodeRunID:          childRunID,
 			NodeID:             shared.UUID(uuid.New()),
 			FrameID:            frameID,
 			State:              "fresh",
 			SettlingSignalType: "terminal/success",
-			ParentRunID:        rootRunID.String(),
+			ParentNodeRunID:    rootRunID.String(),
 		}); err != nil {
 		t.Fatalf("seed child: %v", err)
 	}
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:              grandchildRunID,
+			NodeRunID:          grandchildRunID,
 			NodeID:             shared.UUID(uuid.New()),
 			FrameID:            frameID,
 			State:              "fresh",
 			SettlingSignalType: "terminal/success",
-			ParentRunID:        childRunID.String(),
+			ParentNodeRunID:    childRunID.String(),
 		}); err != nil {
 		t.Fatalf("seed grandchild: %v", err)
 	}
@@ -72,12 +72,12 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 		if err := json.Unmarshal(row.Record, &rec); err != nil {
 			t.Fatalf("walk: unmarshal at hop %d: %v", hops, err)
 		}
-		if rec.ParentRunID == "" {
+		if rec.ParentNodeRunID == "" {
 			break
 		}
-		parent, err := uuid.Parse(rec.ParentRunID)
+		parent, err := uuid.Parse(rec.ParentNodeRunID)
 		if err != nil {
-			t.Fatalf("walk: bad parent_run_id %q at hop %d: %v", rec.ParentRunID, hops, err)
+			t.Fatalf("walk: bad parent_run_id %q at hop %d: %v", rec.ParentNodeRunID, hops, err)
 		}
 		current = shared.UUID(parent)
 		visited = append(visited, current)
@@ -96,19 +96,19 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 		t.Errorf("walk hop 2: got %s want root %s", visited[2], rootRunID)
 	}
 
-	rows, err := lt.QueryByParentRunID(ctx, rootRunID, 10)
+	rows, err := lt.QueryByParentNodeRunID(ctx, rootRunID, 10)
 	if err != nil {
-		t.Fatalf("QueryByParentRunID(root): %v", err)
+		t.Fatalf("QueryByParentNodeRunID(root): %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("QueryByParentRunID(root): got %d rows want 1 (the child)", len(rows))
+		t.Fatalf("QueryByParentNodeRunID(root): got %d rows want 1 (the child)", len(rows))
 	}
-	rows, err = lt.QueryByParentRunID(ctx, childRunID, 10)
+	rows, err = lt.QueryByParentNodeRunID(ctx, childRunID, 10)
 	if err != nil {
-		t.Fatalf("QueryByParentRunID(child): %v", err)
+		t.Fatalf("QueryByParentNodeRunID(child): %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("QueryByParentRunID(child): got %d rows want 1 (the grandchild)", len(rows))
+		t.Fatalf("QueryByParentNodeRunID(child): got %d rows want 1 (the grandchild)", len(rows))
 	}
 }
 
@@ -116,7 +116,7 @@ type queryableLineage struct {
 	fakeLineage
 }
 
-func (f *queryableLineage) QueryByParentRunID(_ context.Context, parentRunID shared.UUID, limit int) ([]persistence.LineageRow, error) {
+func (f *queryableLineage) QueryByParentNodeRunID(_ context.Context, parentNodeRunID shared.UUID, limit int) ([]persistence.LineageRow, error) {
 	var out []persistence.LineageRow
 	for _, r := range f.rows {
 		if r.RecordKind != persistence.LineageRecordKindLeafRun {
@@ -126,7 +126,7 @@ func (f *queryableLineage) QueryByParentRunID(_ context.Context, parentRunID sha
 		if err := json.Unmarshal(r.Record, &rec); err != nil {
 			continue
 		}
-		if rec.ParentRunID == parentRunID.String() {
+		if rec.ParentNodeRunID == parentNodeRunID.String() {
 			out = append(out, r)
 			if limit > 0 && len(out) >= limit {
 				break
@@ -145,7 +145,7 @@ func (f *queryableLineage) findByRunID(runID shared.UUID) (persistence.LineageRo
 		if err := json.Unmarshal(r.Record, &rec); err != nil {
 			continue
 		}
-		if rec.RunID == runID {
+		if rec.NodeRunID == runID {
 			return r, true
 		}
 	}
@@ -165,7 +165,7 @@ func TestRecursiveAncestorWalk_ChainsSubstitutionRefs(t *testing.T) {
 
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:              rootRunID,
+			NodeRunID:          rootRunID,
 			NodeID:             shared.UUID(uuid.New()),
 			FrameID:            frameID,
 			State:              "fresh",
@@ -175,7 +175,7 @@ func TestRecursiveAncestorWalk_ChainsSubstitutionRefs(t *testing.T) {
 	}
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:              childRunID,
+			NodeRunID:          childRunID,
 			NodeID:             shared.UUID(uuid.New()),
 			FrameID:            frameID,
 			State:              "fresh",
@@ -188,7 +188,7 @@ func TestRecursiveAncestorWalk_ChainsSubstitutionRefs(t *testing.T) {
 	}
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:              grandchildRunID,
+			NodeRunID:          grandchildRunID,
 			NodeID:             shared.UUID(uuid.New()),
 			FrameID:            frameID,
 			State:              "fresh",

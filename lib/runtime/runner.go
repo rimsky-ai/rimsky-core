@@ -24,7 +24,7 @@ type RunnerResult struct {
 	Async      bool
 	AsyncAckID string
 	NodeID     shared.UUID
-	DispatchID shared.UUID
+	NodeRunID  shared.UUID
 }
 
 type RunArgs struct {
@@ -113,7 +113,7 @@ func metricsOf(args RunArgs) MetricsHook {
 type AsyncContext struct {
 	NodeID             shared.UUID
 	InstanceID         shared.UUID
-	DispatchID         shared.UUID
+	NodeRunID          shared.UUID
 	SupervisorID       string
 	StoreRegistry      *locks.Registry
 	FrameID            shared.UUID
@@ -166,9 +166,9 @@ func RunNode(
 	// @concept: run-scope
 	if len(acq.SubClaims) > 0 && IsFanOutNode(acq.NodeDef) {
 		if err := dispatchFanOutChildren(ctx, args, &acq); err != nil {
-			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, NodeRunID: acq.NodeRunID}, err
 		}
-		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
+		return RunnerResult{Ran: true, NodeID: acq.NodeID, NodeRunID: acq.NodeRunID}, nil
 	}
 
 	var (
@@ -179,7 +179,7 @@ func RunNode(
 		var err error
 		resolvedAttrs, attrSchema, err = resolveAttributes(ctx, args, &acq)
 		if err != nil {
-			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, NodeRunID: acq.NodeRunID},
 				applyAttributeFailure(ctx, args, &acq, err)
 		}
 	}
@@ -203,16 +203,16 @@ func RunNode(
 		acq.RetryDecision = nil
 		terminal, asyncResult, err = dispatch(ctx, dctx)
 		if err != nil {
-			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, NodeRunID: acq.NodeRunID}, err
 		}
 		if asyncResult != nil {
 			return *asyncResult, nil
 		}
 		if err := runApplyTerminal(ctx, args, &acq, dispatchAttrs, attrSchema, terminal, nil); err != nil {
-			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, NodeRunID: acq.NodeRunID}, err
 		}
 		if acq.RetryDecision != nil && acq.RetryDecision.IsReleaseAndRequeue() {
-			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, NodeRunID: acq.NodeRunID}, nil
 		}
 		if acq.RetryDecision == nil || !acq.RetryDecision.IsRetry() {
 			break
@@ -221,7 +221,7 @@ func RunNode(
 		if delay := time.Duration(acq.RetryDecision.DelayMs) * time.Millisecond; delay > 0 {
 			select {
 			case <-ctx.Done():
-				return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, ctx.Err()
+				return RunnerResult{Ran: true, NodeID: acq.NodeID, NodeRunID: acq.NodeRunID}, ctx.Err()
 			case <-time.After(delay):
 			}
 		}
@@ -232,7 +232,7 @@ func RunNode(
 	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
 		InstanceID:       acq.InstanceID,
 		NodeID:           acq.NodeID,
-		DispatchID:       acq.DispatchID,
+		NodeRunID:        acq.NodeRunID,
 		FrameID:          acq.FrameID,
 		Executor:         acq.Executor,
 		NodeType:         acq.NodeType,
@@ -246,10 +246,10 @@ func RunNode(
 		OpenWaitSet:      openWaitSetSummaryForBreakpoint(ctx, args, &acq),
 	}); err != nil && log != nil {
 		log.Warn("breakpoint: after_terminal eval failed; continuing",
-			"dispatch_id", acq.DispatchID.String(),
+			"dispatch_id", acq.NodeRunID.String(),
 			"error", err.Error())
 	}
-	return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
+	return RunnerResult{Ran: true, NodeID: acq.NodeID, NodeRunID: acq.NodeRunID}, nil
 }
 
 func validateRunArgs(args RunArgs) error {

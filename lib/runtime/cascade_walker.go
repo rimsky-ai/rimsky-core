@@ -16,7 +16,7 @@ import (
 // @decision: walker-rule-per-sender-node
 func ensureCascadePending(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	receiverNodeID, runScopeID, frameID, senderNodeID, senderRunID foundationshared.UUID,
+	receiverNodeID, runScopeID, frameID, senderNodeID, senderNodeRunID foundationshared.UUID,
 ) (foundationshared.UUID, error) {
 	if err := args.Persist.Nodes().LockReceiverCascade(ctx, tx, receiverNodeID, runScopeID, frameID); err != nil {
 		return foundationshared.UUID{}, err
@@ -26,16 +26,16 @@ func ensureCascadePending(
 		return foundationshared.UUID{}, err
 	}
 	if latest != nil {
-		if senderRunID != (foundationshared.UUID{}) {
-			covered, err := args.Persist.WaitSet().HasRowForSenderRun(ctx, frameID, latest.RunID, senderRunID, tx)
+		if senderNodeRunID != (foundationshared.UUID{}) {
+			covered, err := args.Persist.WaitSet().HasRowForSenderRun(ctx, frameID, latest.NodeRunID, senderNodeRunID, tx)
 			if err != nil {
 				return foundationshared.UUID{}, err
 			}
 			if covered {
-				return latest.RunID, nil
+				return latest.NodeRunID, nil
 			}
 		}
-		senderNodes, err := args.Persist.WaitSet().ListSenderNodesForReceiver(ctx, frameID, latest.RunID, tx)
+		senderNodes, err := args.Persist.WaitSet().ListSenderNodesForReceiver(ctx, frameID, latest.NodeRunID, tx)
 		if err != nil {
 			return foundationshared.UUID{}, err
 		}
@@ -47,7 +47,7 @@ func ensureCascadePending(
 			}
 		}
 		if !coversSender {
-			return latest.RunID, nil
+			return latest.NodeRunID, nil
 		}
 	}
 	return args.Persist.Nodes().CreateCascadePending(ctx, tx, receiverNodeID, runScopeID, frameID)
@@ -57,7 +57,7 @@ func ensureCascadePending(
 // @decision: walker-rule-per-sender-node
 func resolveReceiverRunForCascade(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	receiverNodeID, runScopeID, frameID, senderNodeID, senderRunID foundationshared.UUID,
+	receiverNodeID, runScopeID, frameID, senderNodeID, senderNodeRunID foundationshared.UUID,
 	visitedThisTurn map[foundationshared.UUID]struct{},
 ) (foundationshared.UUID, bool, error) {
 	if _, seen := visitedThisTurn[receiverNodeID]; seen {
@@ -69,11 +69,11 @@ func resolveReceiverRunForCascade(
 			return foundationshared.UUID{}, false, err
 		}
 		if latest != nil {
-			return latest.RunID, true, nil
+			return latest.NodeRunID, true, nil
 		}
 		return foundationshared.UUID{}, false, nil
 	}
-	id, err := ensureCascadePending(ctx, args, tx, receiverNodeID, runScopeID, frameID, senderNodeID, senderRunID)
+	id, err := ensureCascadePending(ctx, args, tx, receiverNodeID, runScopeID, frameID, senderNodeID, senderNodeRunID)
 	if err != nil {
 		if errors.Is(err, persistence.ErrRunScopeClosed) {
 			return foundationshared.UUID{}, false, nil

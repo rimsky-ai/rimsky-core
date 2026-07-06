@@ -57,7 +57,7 @@ func producerNameForSpec(sp any) string {
 func buildLockSpecs(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	nd *persistence.NodeRow, def *node.TemplateNodeDef, inst *persistence.InstanceRow,
-	dispatchID, frameID, runScopeID shared.UUID,
+	nodeRunID, frameID, runScopeID shared.UUID,
 ) ([]any, error) {
 	if def == nil {
 		return nil, nil
@@ -70,7 +70,7 @@ func buildLockSpecs(
 		}
 		paramsRaw = b
 	}
-	deps, err := BuildAttributeDeps(ctx, tx, args, dispatchID, frameID)
+	deps, err := BuildAttributeDeps(ctx, tx, args, nodeRunID, frameID)
 	if err != nil {
 		return nil, err
 	}

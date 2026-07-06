@@ -74,7 +74,7 @@ type CliConfig struct {
 }
 
 type AgentRunOptions struct {
-	RunID                        string
+	SessionID                    string
 	NodeID                       string
 	NodeType                     string
 	InstanceID                   string
@@ -89,9 +89,9 @@ type AgentRunOptions struct {
 	CliConfig                    *CliConfig
 	McpAllowlist                 Allowlist
 	ExposeEnvAllowlist           Allowlist
-	DispatchID                   string
+	NodeRunID                    string
 	RunScopeID                   string
-	PriorDispatchID              string
+	PriorNodeRunID               string
 	PriorDispatchDispositionWire string
 	CallbackURL                  string
 	CancelToken                  string
@@ -134,7 +134,7 @@ func malformedAttributesReason(attrs map[string]any) string {
 }
 
 func runAgentStub(opts AgentRunOptions) AgentOutcome {
-	opts.Logger.Info("agent-run: stub mode", "run_id", opts.RunID)
+	opts.Logger.Info("agent-run: stub mode", "run_id", opts.SessionID)
 	time.Sleep(50 * time.Millisecond)
 	attrs := opts.Attributes
 
@@ -171,7 +171,7 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 	if attrs["stub_probe"] != true {
 		return AgentOutcome{
 			Kind:            OutcomeComplete,
-			AttributesDelta: map[string]any{"stub": true, "session_token": opts.RunID},
+			AttributesDelta: map[string]any{"stub": true, "session_token": opts.SessionID},
 			Changed:         true,
 			ChangeSummary:   &summary,
 		}
@@ -188,7 +188,7 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 		for k, v := range obj {
 			delta[k] = v
 		}
-		delta["session_token"] = opts.RunID
+		delta["session_token"] = opts.SessionID
 		return AgentOutcome{
 			Kind:            OutcomeComplete,
 			AttributesDelta: delta,
@@ -198,7 +198,7 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 	}
 	return AgentOutcome{
 		Kind:            OutcomeComplete,
-		AttributesDelta: map[string]any{"stub": true, "session_token": opts.RunID},
+		AttributesDelta: map[string]any{"stub": true, "session_token": opts.SessionID},
 		Changed:         true,
 		ChangeSummary:   &summary,
 	}
@@ -266,7 +266,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 	callbackToken := uuid.NewString()
 	renderedUser := opts.UserPrompt + "\n\n---\n" +
 		"callback_token: " + callbackToken + "\n" +
-		"binding_id: " + opts.DispatchID + "\n" +
+		"binding_id: " + opts.SessionID + "\n" +
 		"---\n"
 
 	dispatchMcp, err := StartInternalMcpServer(InternalMcpOpts{Host: "127.0.0.1", Logger: logger})
@@ -277,7 +277,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 	closeDispatchMcp := func() {
 		dispatchMcpCloseOnce.Do(func() {
 			if err := dispatchMcp.Close(); err != nil {
-				logger.Warn("dispatch MCP close failed", "run_id", opts.RunID, "error", err.Error())
+				logger.Warn("dispatch MCP close failed", "run_id", opts.SessionID, "error", err.Error())
 			}
 		})
 	}
@@ -288,7 +288,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 		catalogTeardownOnce.Do(func() {
 			for _, td := range catalogTeardowns {
 				if err := td(); err != nil {
-					logger.Warn("catalog server teardown failed", "run_id", opts.RunID, "error", err.Error())
+					logger.Warn("catalog server teardown failed", "run_id", opts.SessionID, "error", err.Error())
 				}
 			}
 		})
@@ -325,7 +325,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 		waitExitWithTimeout(h, 5*time.Second)
 		h.SendSigkill()
 		if !waitExitWithTimeout(h, 5*time.Second) {
-			logger.Warn("teardownCli: child did not exit within 5s of SIGKILL", "run_id", opts.RunID)
+			logger.Warn("teardownCli: child did not exit within 5s of SIGKILL", "run_id", opts.SessionID)
 		}
 		state.closeTeardownDone()
 	}
@@ -346,7 +346,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 		state.mu.Unlock()
 		if failures > maxSchemaCorrections {
 			logger.Warn("report_complete: schema corrections exhausted; committing errored",
-				"run_id", opts.RunID, "failures", failures, "max", maxSchemaCorrections)
+				"run_id", opts.SessionID, "failures", failures, "max", maxSchemaCorrections)
 			scheduleTeardown(func() error {
 				teardownCli()
 				state.safeResolve(erroredOutcome("agent/schema_violation", map[string]any{
@@ -370,7 +370,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 		state.mu.Unlock()
 		if failures > maxSignoffAttempts {
 			logger.Warn("report_complete: sign-offs unobtained; committing errored",
-				"run_id", opts.RunID, "failures", failures, "max", maxSignoffAttempts)
+				"run_id", opts.SessionID, "failures", failures, "max", maxSignoffAttempts)
 			scheduleTeardown(func() error {
 				teardownCli()
 				state.safeResolve(erroredOutcome("agent/signoff_unobtained", map[string]any{
@@ -388,21 +388,21 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 	}
 
 	dispatchMcp.Registry.Register(callbackToken, &TokenEntry{
-		RunID:             opts.RunID,
+		SessionID:         opts.SessionID,
 		AttributesAtSpawn: opts.Attributes,
 		CancelToken:       opts.CancelToken,
 		NodeID:            opts.NodeID,
 		CallbackURL:       opts.CallbackURL,
 		DispatchContext: NewDispatchContextSnapshot(
-			opts.DispatchID,
+			opts.NodeRunID,
 			opts.RunScopeID,
-			opts.PriorDispatchID,
+			opts.PriorNodeRunID,
 			opts.PriorDispatchDispositionWire,
 			func(event WireContractViolation) {
 				logger.Warn("dispatch_context: "+event.Message,
-					"run_id", opts.RunID,
+					"run_id", opts.SessionID,
 					"kind", event.Kind,
-					"prior_dispatch_id", event.PriorDispatchID,
+					"prior_dispatch_id", event.PriorNodeRunID,
 					"prior_dispatch_disposition_wire", event.PriorDispatchDispositionWire)
 			},
 		),
@@ -427,23 +427,23 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 			for k, v := range attributesDelta {
 				effectiveBag[k] = v
 			}
-			effectiveBag["session_token"] = opts.RunID
+			effectiveBag["session_token"] = opts.SessionID
 
 			required := cliConfig.RequiredSignoffs
 			if len(required) > 0 {
-				if opts.DispatchID == "" {
-					logger.Warn("report_complete: sign-off gate configured but dispatch_id empty; committing errored",
-						"run_id", opts.RunID)
+				if opts.NodeRunID == "" {
+					logger.Warn("report_complete: sign-off gate configured but node_run_id empty; committing errored",
+						"run_id", opts.SessionID)
 					scheduleTeardown(func() error {
 						teardownCli()
 						state.safeResolve(erroredOutcome("agent/signoff_unobtained", map[string]any{
-							"error": "dispatch_id required for sign-off gate but was empty",
+							"error": "node_run_id required for sign-off gate but was empty",
 						}))
 						return nil
 					})
 					return CompleteResult{Accepted: true}, nil
 				}
-				res := VerifyRequiredSignoffs(required, effectiveBag, opts.DispatchID, signoffs)
+				res := VerifyRequiredSignoffs(required, effectiveBag, opts.NodeRunID, signoffs)
 				if !res.OK {
 					detail := ""
 					for i, u := range res.Unmet {
@@ -505,7 +505,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 					Reason:       reason,
 					ReasonNote:   note,
 					ResumeAt:     parsedResumeAt,
-					SessionToken: opts.RunID,
+					SessionToken: opts.SessionID,
 				})
 				return nil
 			})
@@ -560,7 +560,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 	var handle CliHandle
 	var spawnErr error
 	if opts.SessionToken != "" {
-		logger.Info("cli.resume_with_session_token", "run_id", opts.RunID, "session_token", opts.SessionToken)
+		logger.Info("cli.resume_with_session_token", "run_id", opts.SessionID, "session_token", opts.SessionToken)
 		handle, spawnErr = opts.CliRunner.Resume(CliResumeRequest{
 			SessionID:      opts.SessionToken,
 			Prompt:         renderedUser,
@@ -579,7 +579,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 			Env:             callbackEnv,
 			ExposeEnvNames:  cliConfig.ExposeEnv,
 			Cwd:             cwd,
-			SessionID:       opts.RunID,
+			SessionID:       opts.SessionID,
 			Bare:            cliConfig.Bare,
 			PermissionMode:  cliConfig.PermissionMode,
 			AllowedTools:    allowedToolsUnion,
@@ -598,7 +598,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 	state.handle = handle
 	state.mu.Unlock()
 	logger.Info("cli.spawned",
-		"run_id", opts.RunID,
+		"run_id", opts.SessionID,
 		"pid", handle.Pid(),
 		"model", opts.Model,
 		"cwd", cwd,
@@ -619,14 +619,14 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 		}
 		state.mu.Unlock()
 		if retry {
-			logger.Info("cli.stdout", "run_id", opts.RunID, "retry", true, "chunk", truncateChunk(chunk))
+			logger.Info("cli.stdout", "run_id", opts.SessionID, "retry", true, "chunk", truncateChunk(chunk))
 		} else {
-			logger.Info("cli.stdout", "run_id", opts.RunID, "chunk", truncateChunk(chunk))
+			logger.Info("cli.stdout", "run_id", opts.SessionID, "chunk", truncateChunk(chunk))
 		}
 	}
 	handle.OnStdout(func(chunk string) { handleStdoutChunk(chunk, false) })
 	handle.OnStderr(func(chunk string) {
-		logger.Warn("cli.stderr", "run_id", opts.RunID, "chunk", truncateChunk(chunk))
+		logger.Warn("cli.stderr", "run_id", opts.SessionID, "chunk", truncateChunk(chunk))
 		state.mu.Lock()
 		state.stderrBuf += chunk
 		if len(state.stderrBuf) > 16*1024 {
@@ -692,7 +692,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 	go func() {
 		result := handle.WaitExit()
 		logger.Info("cli.exited",
-			"run_id", opts.RunID,
+			"run_id", opts.SessionID,
 			"pid", handle.Pid(),
 			"exit_code", exitCodeForLog(result),
 			"signal", result.Signal,
@@ -714,7 +714,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 			signalRL := DetectRateLimit(stderrBuf, time.Now())
 			if signalRL.Detected && !handleRateLimits {
 				logger.Warn("cli.rate_limit_detected; handle_rate_limits=false → emitting agent/rate_limited Error",
-					"run_id", opts.RunID, "exit_code", *result.ExitCode, "signal", result.Signal)
+					"run_id", opts.SessionID, "exit_code", *result.ExitCode, "signal", result.Signal)
 				state.safeResolve(erroredOutcome("agent/rate_limited", map[string]any{
 					"exitCode":  *result.ExitCode,
 					"signal":    result.Signal,
@@ -724,7 +724,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 			}
 			if signalRL.Detected && handleRateLimits {
 				logger.Warn("cli.rate_limit_detected; emitting park_requested",
-					"run_id", opts.RunID, "exit_code", *result.ExitCode, "signal", result.Signal)
+					"run_id", opts.SessionID, "exit_code", *result.ExitCode, "signal", result.Signal)
 				note := signalRL.Reason
 				if note == "" {
 					note = "claude cli rate-limit detected; resume_at=" + isoOrIndefinite(signalRL.ResumeAt)
@@ -734,7 +734,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 					Reason:       "snooze",
 					ReasonNote:   note,
 					ResumeAt:     signalRL.ResumeAt,
-					SessionToken: opts.RunID,
+					SessionToken: opts.SessionID,
 				})
 				return
 			}
@@ -749,9 +749,9 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 				"an unexpected failure). This is REQUIRED — without it rimsky treats " +
 				"the dispatch as failed and discards your work."
 			logger.Warn("cli.clean_exit_no_report; attempting resume",
-				"run_id", opts.RunID, "exit_code", 0, "duration_ms", time.Since(spawnedAt).Milliseconds())
+				"run_id", opts.SessionID, "exit_code", 0, "duration_ms", time.Since(spawnedAt).Milliseconds())
 			retryHandle, retryErr := opts.CliRunner.Resume(CliResumeRequest{
-				SessionID:      opts.RunID,
+				SessionID:      opts.SessionID,
 				Prompt:         reminderPrompt,
 				Tools:          tools,
 				AllowedTools:   allowedToolsUnion,
@@ -760,7 +760,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 				Cwd:            cwd,
 			})
 			if retryErr != nil {
-				logger.Warn("cli.resume_failed", "run_id", opts.RunID, "error", retryErr.Error())
+				logger.Warn("cli.resume_failed", "run_id", opts.SessionID, "error", retryErr.Error())
 				state.safeResolve(erroredOutcome("agent/subprocess_exit/before_complete", map[string]any{
 					"exitCode":     0,
 					"signal":       result.Signal,
@@ -776,12 +776,12 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 			state.mu.Unlock()
 			retryHandle.OnStdout(func(chunk string) { handleStdoutChunk(chunk, true) })
 			retryHandle.OnStderr(func(chunk string) {
-				logger.Warn("cli.stderr", "run_id", opts.RunID, "retry", true, "chunk", truncateChunk(chunk))
+				logger.Warn("cli.stderr", "run_id", opts.SessionID, "retry", true, "chunk", truncateChunk(chunk))
 			})
 			retryStartedAt := time.Now()
 			retryResult := retryHandle.WaitExit()
 			logger.Info("cli.exited",
-				"run_id", opts.RunID,
+				"run_id", opts.SessionID,
 				"retry", true,
 				"pid", retryHandle.Pid(),
 				"exit_code", exitCodeForLog(retryResult),

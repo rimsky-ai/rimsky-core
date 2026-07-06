@@ -40,7 +40,7 @@ func (b *waitSetImpl) Insert(ctx context.Context, row persistence.WaitSetRow, tx
 		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (frame_id, receiver_run_id, sender_run_id, topic_kind)
 		 DO NOTHING`,
-		row.FrameID, row.ReceiverRunID, row.SenderRunID,
+		row.FrameID, row.ReceiverNodeRunID, row.SenderNodeRunID,
 		row.TopicKind, filter)
 	if err != nil {
 		return fmt.Errorf("rimsky_wait_set insert: %w", err)
@@ -48,26 +48,26 @@ func (b *waitSetImpl) Insert(ctx context.Context, row persistence.WaitSetRow, tx
 	return nil
 }
 
-func (b *waitSetImpl) MarkDrainedBySender(ctx context.Context, frameID, senderRunID shared.UUID, tx persistence.Tx) error {
+func (b *waitSetImpl) MarkDrainedBySender(ctx context.Context, frameID, senderNodeRunID shared.UUID, tx persistence.Tx) error {
 	ex := b.q(tx)
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_wait_set
 		    SET drained_at = NOW()
 		  WHERE frame_id = $1 AND sender_run_id = $2 AND drained_at IS NULL`,
-		frameID, senderRunID)
+		frameID, senderNodeRunID)
 	if err != nil {
 		return fmt.Errorf("rimsky_wait_set mark drained by sender: %w", err)
 	}
 	return nil
 }
 
-func (b *waitSetImpl) ListForReceiver(ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx) ([]persistence.WaitSetRow, error) {
+func (b *waitSetImpl) ListForReceiver(ctx context.Context, frameID, receiverNodeRunID shared.UUID, tx persistence.Tx) ([]persistence.WaitSetRow, error) {
 	ex := b.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, topic_filter, drained_at
 		   FROM rimsky_wait_set
 		  WHERE frame_id = $1 AND receiver_run_id = $2`,
-		frameID, receiverRunID)
+		frameID, receiverNodeRunID)
 	if err != nil {
 		return nil, fmt.Errorf("rimsky_wait_set list for receiver: %w", err)
 	}
@@ -90,7 +90,7 @@ func (b *waitSetImpl) ListForFrame(ctx context.Context, frameID shared.UUID, tx 
 }
 
 func (b *waitSetImpl) ListDrainedAttributeRowsForReceiver(
-	ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx,
+	ctx context.Context, frameID, receiverNodeRunID shared.UUID, tx persistence.Tx,
 ) ([]persistence.WaitSetRow, error) {
 	ex := b.q(tx)
 	rows, err := ex.Query(ctx,
@@ -100,7 +100,7 @@ func (b *waitSetImpl) ListDrainedAttributeRowsForReceiver(
 		    AND drained_at IS NOT NULL
 		    AND topic_kind = 'attribute'
 		  ORDER BY drained_at ASC, sender_run_id ASC`,
-		frameID, receiverRunID)
+		frameID, receiverNodeRunID)
 	if err != nil {
 		return nil, fmt.Errorf("rimsky_wait_set list drained attribute rows: %w", err)
 	}
@@ -111,14 +111,14 @@ func (b *waitSetImpl) ListDrainedAttributeRowsForReceiver(
 // @concept: cascade
 // @decision: walker-rule-per-sender-node
 func (b *waitSetImpl) ListSenderNodesForReceiver(
-	ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx,
+	ctx context.Context, frameID, receiverNodeRunID shared.UUID, tx persistence.Tx,
 ) ([]shared.UUID, error) {
 	rows, err := b.q(tx).Query(ctx,
 		`SELECT DISTINCT r.node_id
 		   FROM rimsky_wait_set w
 		   JOIN rimsky_node_runs r ON r.id = w.sender_run_id
 		  WHERE w.frame_id = $1 AND w.receiver_run_id = $2`,
-		frameID, receiverRunID,
+		frameID, receiverNodeRunID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ListSenderNodesForReceiver: %w", err)
@@ -138,7 +138,7 @@ func (b *waitSetImpl) ListSenderNodesForReceiver(
 // @concept: cascade
 // @decision: walker-rule-per-sender-node
 func (b *waitSetImpl) HasRowForSenderRun(
-	ctx context.Context, frameID, receiverRunID, senderRunID shared.UUID, tx persistence.Tx,
+	ctx context.Context, frameID, receiverNodeRunID, senderNodeRunID shared.UUID, tx persistence.Tx,
 ) (bool, error) {
 	var present bool
 	err := b.q(tx).QueryRow(ctx,
@@ -146,7 +146,7 @@ func (b *waitSetImpl) HasRowForSenderRun(
 		   SELECT 1 FROM rimsky_wait_set
 		    WHERE frame_id = $1 AND receiver_run_id = $2 AND sender_run_id = $3
 		 )`,
-		frameID, receiverRunID, senderRunID,
+		frameID, receiverNodeRunID, senderNodeRunID,
 	).Scan(&present)
 	if err != nil {
 		return false, fmt.Errorf("HasRowForSenderRun: %w", err)
@@ -156,7 +156,7 @@ func (b *waitSetImpl) HasRowForSenderRun(
 
 // @concept: cascade
 func (b *waitSetImpl) ListPendingReceiversForDrainedSender(
-	ctx context.Context, frameID, senderRunID shared.UUID, tx persistence.Tx,
+	ctx context.Context, frameID, senderNodeRunID shared.UUID, tx persistence.Tx,
 ) ([]shared.UUID, error) {
 	rows, err := b.q(tx).Query(ctx,
 		`SELECT DISTINCT w.receiver_run_id
@@ -165,7 +165,7 @@ func (b *waitSetImpl) ListPendingReceiversForDrainedSender(
 		  WHERE w.frame_id = $1 AND w.sender_run_id = $2
 		    AND r.state = 'pending'
 		    AND r.creation_reason = 'cascade'`,
-		frameID, senderRunID,
+		frameID, senderNodeRunID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ListPendingReceiversForDrainedSender: %w", err)
@@ -184,14 +184,14 @@ func (b *waitSetImpl) ListPendingReceiversForDrainedSender(
 
 // @concept: cascade
 func (b *waitSetImpl) HasUndrainedRowsForReceiver(
-	ctx context.Context, frameID, receiverRunID shared.UUID, tx persistence.Tx,
+	ctx context.Context, frameID, receiverNodeRunID shared.UUID, tx persistence.Tx,
 ) (bool, error) {
 	var exists bool
 	err := b.q(tx).QueryRow(ctx,
 		`SELECT EXISTS (
 		   SELECT 1 FROM rimsky_wait_set
 		    WHERE frame_id = $1 AND receiver_run_id = $2 AND drained_at IS NULL
-		 )`, frameID, receiverRunID,
+		 )`, frameID, receiverNodeRunID,
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("HasUndrainedRowsForReceiver: %w", err)
@@ -205,7 +205,7 @@ func collectWaitSet(rows pgx.Rows) ([]persistence.WaitSetRow, error) {
 		var w persistence.WaitSetRow
 		var filter []byte
 		var drainedAt *time.Time
-		if err := rows.Scan(&w.FrameID, &w.ReceiverRunID, &w.SenderRunID,
+		if err := rows.Scan(&w.FrameID, &w.ReceiverNodeRunID, &w.SenderNodeRunID,
 			&w.TopicKind, &filter, &drainedAt); err != nil {
 			return nil, err
 		}

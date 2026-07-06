@@ -85,14 +85,14 @@ func TestClaimHoldersRoute(t *testing.T) {
 	require.Empty(t, emptyResp.Holders)
 
 	holderNodeID := seedThrowawayNode(t, h)
-	holderRunID := seedRunForNode(ctx, t, h, holderNodeID)
+	holderNodeRunID := seedRunForNode(ctx, t, h, holderNodeID)
 	lockHolderID := seedScopeClaimHandle(ctx, t, h, holderNodeID)
 	claimHolderID := uuid.New()
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:            claimHolderID,
-			ClaimHandleID: lockHolderID,
-			HolderRunID:   holderRunID,
+			ID:              claimHolderID,
+			ClaimHandleID:   lockHolderID,
+			HolderNodeRunID: holderNodeRunID,
 		}, tx)
 	}))
 
@@ -105,7 +105,7 @@ func TestClaimHoldersRoute(t *testing.T) {
 	require.Len(t, resp.Holders, 1)
 	require.Equal(t, claimHolderID.String(), resp.Holders[0]["id"])
 	require.Equal(t, lockHolderID.String(), resp.Holders[0]["claim_handle_id"])
-	require.Equal(t, holderRunID.String(), resp.Holders[0]["holder_run_id"])
+	require.Equal(t, holderNodeRunID.String(), resp.Holders[0]["holder_run_id"])
 	require.Equal(t, "active", resp.Holders[0]["state"])
 }
 

@@ -33,7 +33,7 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 	d := pgtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	inst, frameID, parentRunID, parentNodeID := seedForceCancelScenario(ctx, t, backend, "force-cancel")
+	inst, frameID, parentNodeRunID, parentNodeID := seedForceCancelScenario(ctx, t, backend, "force-cancel")
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("cancel-store", claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
@@ -48,7 +48,7 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 		Clock:         shared.SystemClock{},
 	}
 
-	parentID, subIDs := seedFanOutTree(ctx, t, backend, parentRunID, parentNodeID, frameID,
+	parentID, subIDs := seedFanOutTree(ctx, t, backend, parentNodeRunID, parentNodeID, frameID,
 		"sup-FC", "cancel-store", 3,
 		spec.AggregationPolicy{Kind: spec.AggregationKindStrict, CancelSiblings: true})
 
@@ -68,7 +68,7 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 			LineageHint: runtime.ClaimLineageHint{
 				InstanceID:   inst,
 				FrameID:      frameID,
-				RunID:        parentRunID,
+				NodeRunID:    parentNodeRunID,
 				NodeID:       parentNodeID,
 				ProducerName: "cancel-store",
 			},
@@ -176,7 +176,7 @@ func seedForceCancelScenario(
 
 func seedFanOutTree(
 	ctx context.Context, t *testing.T, backend persistence.Tables,
-	parentRunID, parentNodeID, frameID shared.UUID,
+	parentNodeRunID, parentNodeID, frameID shared.UUID,
 	supervisorID, producerName string, n int,
 	policy spec.AggregationPolicy,
 ) (shared.UUID, []shared.UUID) {
@@ -198,7 +198,7 @@ func seedFanOutTree(
 			HolderSupervisorID: supervisorID,
 			HolderNodeID:       parentNodeID,
 			ExpiresAt:          time.Now().Add(10 * time.Minute),
-			NodeRunID:          &parentRunID,
+			NodeRunID:          &parentNodeRunID,
 			FrameID:            &frameID,
 			AggregationPolicy:  policyBytes,
 		}, tx); err != nil {
@@ -217,7 +217,7 @@ func seedFanOutTree(
 				HolderSupervisorID:  supervisorID,
 				HolderNodeID:        parentNodeID,
 				ExpiresAt:           time.Now().Add(10 * time.Minute),
-				NodeRunID:           &parentRunID,
+				NodeRunID:           &parentNodeRunID,
 				FrameID:             &frameID,
 				ParentClaimHandleID: &parent,
 			}, tx); err != nil {

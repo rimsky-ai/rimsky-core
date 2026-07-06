@@ -48,13 +48,13 @@ func applyErrorPolicyWithScratch(
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
 	policy := lookupPolicyForNodeWithFallback(acq, errorClass, fallbackClass)
-	state, err := args.Persist.Nodes().GetRunEvaluatorState(ctx, acq.DispatchID, tx)
+	state, err := args.Persist.Nodes().GetRunEvaluatorState(ctx, acq.NodeRunID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: load evaluator state: %w", err)
 	}
 	maxRetries, backoff := resolveRetryConfig(acq.NodeDef)
 	resolved := node.Evaluate(policy, state, errorClass, maxRetries, backoff, nil)
-	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.DispatchID, resolved.NewState, tx); err != nil {
+	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.NodeRunID, resolved.NewState, tx); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: persist evaluator state: %w", err)
 	}
 	sig := errorPolicySignal(errorClass, payload, attributesDel, tags, resolved.Kind, resolved.NewState.RetryCounter, resolved.DelayMs)
@@ -62,7 +62,7 @@ func applyErrorPolicyWithScratch(
 
 	if decision.IsRetry() {
 		if err := emitSignalInTxOnce(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
+			acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, sig); err != nil {
 			return nil, fmt.Errorf("applyErrorPolicy: emit retry signal: %w", err)
 		}
 		acq.RetryDecision = &decision
@@ -71,7 +71,7 @@ func applyErrorPolicyWithScratch(
 
 	if decision.IsReleaseAndRequeue() {
 		if err := emitSignalInTxOnce(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
+			acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, sig); err != nil {
 			return nil, fmt.Errorf("applyErrorPolicy: emit release signal: %w", err)
 		}
 		releasePC, err := releaseLocksInTx(ctx, args, tx, acq, false, false)
@@ -79,26 +79,26 @@ func applyErrorPolicyWithScratch(
 			return nil, fmt.Errorf("applyErrorPolicy: release locks: %w", err)
 		}
 		acq.RetryDecision = &decision
-		dispatchID := acq.DispatchID
+		nodeRunID := acq.NodeRunID
 		supID := args.SupervisorID
 		logger := args.Logger
 		requeuePC := func(ctx context.Context) {
-			if err := args.Queue.ReleaseClaim(ctx, dispatchID, supID); err != nil && logger != nil {
+			if err := args.Queue.ReleaseClaim(ctx, nodeRunID, supID); err != nil && logger != nil {
 				logger.Warn("applyErrorPolicy: ReleaseClaim failed; row may stay claimed until liveness sweep",
-					"dispatch_id", dispatchID.String(), "error", err.Error())
+					"dispatch_id", nodeRunID.String(), "error", err.Error())
 			}
 		}
 		return chainPostCommit(releasePC, requeuePC), nil
 	}
 
-	dispatchID := acq.DispatchID
+	nodeRunID := acq.NodeRunID
 	successOutcome := resolved.Kind == spec.ActionPass
 	releasePC, err := releaseLocksInTx(ctx, args, tx, acq, successOutcome, false)
 	if err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
 	settlingSig := string(sig.Type)
-	run, rerr := args.Persist.Nodes().GetRunForGate(ctx, tx, acq.DispatchID)
+	run, rerr := args.Persist.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
 	if rerr != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: run lookup: %w", rerr)
 	}
@@ -109,32 +109,32 @@ func applyErrorPolicyWithScratch(
 	if resolved.Kind == spec.ActionPass {
 		switch curState {
 		case cascade.NodeStateRunning:
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 				cascade.NodeStateFresh, cascade.ReasonHandlerPass, &settlingSig, tx); err != nil {
 				return nil, err
 			}
 		case cascade.NodeStateStale:
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 				cascade.NodeStateFresh, cascade.ReasonAcquirePass, &settlingSig, tx); err != nil {
 				return nil, err
 			}
 		}
 	} else if curState == cascade.NodeStateRunning || curState == cascade.NodeStateStale {
-		if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
 			return nil, err
 		}
 	}
 	if err := emitSignalInTxOnce(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, sig); err != nil {
 		return nil, err
 	}
 	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 		nil, nil); err != nil {
 		return nil, err
 	}
-	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeRunID); err != nil {
 		return nil, err
 	}
 	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
@@ -147,7 +147,7 @@ func applyErrorPolicyWithScratch(
 			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 				InstanceID:         acq.InstanceID,
 				FrameID:            acq.FrameID,
-				RunID:              dispatchID,
+				NodeRunID:          nodeRunID,
 				NodeID:             acq.NodeID,
 				State:              string(cascade.NodeStateFailed),
 				SettlingSignalType: settlingSig,
@@ -159,14 +159,14 @@ func applyErrorPolicyWithScratch(
 				Params:             acq.InstanceParams,
 				AttributesMerged:   acq.MergedAttributes,
 				HeldClaims:         HeldClaimsForLineage(acq),
-				ParentRunID:        scope.ParentRunID,
+				ParentNodeRunID:    scope.ParentNodeRunID,
 				ChildKey:           scope.PartitionKey,
 				SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 			})
-			if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
+			if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
 				cascade.NodeStateFailed, &settlingSig); err != nil {
 				args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
-					"run_id", dispatchID.String(), "error", err.Error())
+					"run_id", nodeRunID.String(), "error", err.Error())
 			}
 		}
 	}
@@ -187,7 +187,7 @@ func applyTerminalInfraError(
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, scratch); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
-	state, err := args.Persist.Nodes().GetRunEvaluatorState(ctx, acq.DispatchID, tx)
+	state, err := args.Persist.Nodes().GetRunEvaluatorState(ctx, acq.NodeRunID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: load evaluator state: %w", err)
 	}
@@ -199,7 +199,7 @@ func applyTerminalInfraError(
 		return applyInfraGiveUp(ctx, args, acq, errorClass, payload, state.RetryCounter, tx)
 	}
 	state.RetryCounter++
-	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.DispatchID, state, tx); err != nil {
+	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.NodeRunID, state, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: persist evaluator state: %w", err)
 	}
 	infraSig := signalpkg.Signal{
@@ -210,7 +210,7 @@ func applyTerminalInfraError(
 		},
 	}
 	if err := emitSignalInTxOnce(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, infraSig); err != nil {
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, infraSig); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: emit signal: %w", err)
 	}
 	acq.RetryDecision = &policyDecision{Kind: spec.ActionRetry, DelayMs: 0, Signal: infraSig}
@@ -226,27 +226,27 @@ func applyInfraGiveUp(
 		return nil, fmt.Errorf("applyInfraGiveUp: %w", err)
 	}
 	settlingSig := "terminal/error/" + errorClass
-	run, rerr := args.Persist.Nodes().GetRunForGate(ctx, tx, acq.DispatchID)
+	run, rerr := args.Persist.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
 	if rerr != nil {
 		return nil, fmt.Errorf("applyInfraGiveUp: run lookup: %w", rerr)
 	}
 	if run != nil && (run.State == cascade.NodeStateRunning || run.State == cascade.NodeStateStale) {
-		if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
 			return nil, err
 		}
 	}
 	sig := signalpkg.BuildTerminalErrorSignal(errorClass, payload, retriesSoFar, retriesSoFar, nil, nil)
 	if err := emitSignalInTxOnce(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig); err != nil {
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, sig); err != nil {
 		return nil, err
 	}
 	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 		nil, nil); err != nil {
 		return nil, err
 	}
-	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeRunID); err != nil {
 		return nil, err
 	}
 	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {

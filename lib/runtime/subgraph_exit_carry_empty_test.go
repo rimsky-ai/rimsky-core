@@ -41,9 +41,9 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 	mainScopeID := shared.UUID(uuid.New())
 	callerNodeID := shared.UUID(uuid.New())
 	exitNodeID := shared.UUID(uuid.New())
-	parentRunID := shared.UUID(uuid.New())
+	parentNodeRunID := shared.UUID(uuid.New())
 	exitScopeID := shared.UUID(uuid.New())
-	exitRunID := shared.UUID(uuid.New())
+	exitNodeRunID := shared.UUID(uuid.New())
 
 	tmpl := tmplspec.TemplateSpec{
 		Name:           "exit-carry-empty-fixture",
@@ -103,25 +103,25 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		if err != nil {
 			return err
 		}
-		if err := tables.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-			RunID: parentRunID, NodeID: callerNodeID, FrameID: frameID,
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+			NodeRunID: parentNodeRunID, NodeID: callerNodeID, FrameID: frameID,
 			RunScopeID: mainScopeID,
 		}); err != nil {
 			return err
 		}
-		parentRunIDCopy := parentRunID
+		parentRunIDCopy := parentNodeRunID
 		mainScopeIDCopy := mainScopeID
 		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               exitScopeID,
 			ParentRunScopeID: &mainScopeIDCopy,
-			ParentRunID:      &parentRunIDCopy,
+			ParentNodeRunID:  &parentRunIDCopy,
 			GraphName:        "inner",
 			InstanceID:       instanceID,
 		}); err != nil {
 			return err
 		}
-		return tables.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
-			RunID: exitRunID, NodeID: exitNodeID, FrameID: frameID,
+		return tables.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+			NodeRunID: exitNodeRunID, NodeID: exitNodeID, FrameID: frameID,
 			RunScopeID: exitScopeID, ExecutorName: "test-executor",
 		})
 	}); err != nil {
@@ -137,7 +137,7 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		SupervisorID: "sup-exit-carry-empty",
 	}
 	acq := &acquisition{
-		DispatchID: exitRunID,
+		NodeRunID:  exitNodeRunID,
 		NodeID:     exitNodeID,
 		InstanceID: instanceID,
 		NodeType:   "inner-exit",
@@ -188,7 +188,7 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 	var attrs *persistence.NodeAttributesRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		attrs, err = tables.NodeAttributes().GetByRun(ctx, parentRunID, tx)
+		attrs, err = tables.NodeAttributes().GetByRun(ctx, parentNodeRunID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("load parent attributes: %v", err)

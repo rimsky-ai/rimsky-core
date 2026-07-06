@@ -66,9 +66,9 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 			return err
 		}
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:            holderID,
-			ClaimHandleID: lockHolderID,
-			HolderRunID:   runID,
+			ID:              holderID,
+			ClaimHandleID:   lockHolderID,
+			HolderNodeRunID: runID,
 		}, tx)
 	}))
 
@@ -80,14 +80,14 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	}))
 	require.NotNil(t, row)
 	require.Equal(t, lockHolderID, row.ClaimHandleID)
-	require.Equal(t, runID, row.HolderRunID)
+	require.Equal(t, runID, row.HolderNodeRunID)
 	require.Equal(t, persistence.ClaimHolderStateActive, row.State)
 
 	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:            shared.UUID(uuid.New()),
-			ClaimHandleID: lockHolderID,
-			HolderRunID:   runID,
+			ID:              shared.UUID(uuid.New()),
+			ClaimHandleID:   lockHolderID,
+			HolderNodeRunID: runID,
 		}, tx)
 	})
 	require.Error(t, err)

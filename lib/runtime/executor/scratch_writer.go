@@ -19,7 +19,7 @@ type ScratchWriter struct {
 	Queue          persistence.Queue
 	Blob           persistence.BlobBackend
 	SpillThreshold int
-	DispatchID     shared.UUID
+	NodeRunID      shared.UUID
 	NodeID         shared.UUID
 	Logger         Logger
 }
@@ -36,7 +36,7 @@ func (w *ScratchWriter) Write(ctx context.Context, bytes []byte) error {
 		if err != nil {
 			if w.Logger != nil {
 				w.Logger.Warn("ScratchWriter: blob spill failed; falling back to inline",
-					"dispatch_id", w.DispatchID.String(),
+					"dispatch_id", w.NodeRunID.String(),
 					"node_id", w.NodeID.String(),
 					"error", err.Error())
 			}
@@ -49,6 +49,6 @@ func (w *ScratchWriter) Write(ctx context.Context, bytes []byte) error {
 		inline = bytes
 	}
 	return w.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return w.Queue.WriteScratchInTx(ctx, tx, w.DispatchID, inline, handle, handleBackend)
+		return w.Queue.WriteScratchInTx(ctx, tx, w.NodeRunID, inline, handle, handleBackend)
 	})
 }

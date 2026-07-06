@@ -71,8 +71,8 @@ type ObservedRequest struct {
 	Attributes               map[string]any
 	CallbackURL              string
 	CancelToken              string
-	DispatchID               string
-	PriorDispatchID          string
+	NodeRunID                string
+	PriorNodeRunID           string
 	PriorDispatchDisposition genv1.PriorDispatchDisposition
 	CandidateHandles         map[string][]byte
 }
@@ -210,8 +210,8 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 		Attributes:               req.GetAttributes().AsMap(),
 		CallbackURL:              req.GetCallbackUrl(),
 		CancelToken:              req.GetCancelToken(),
-		DispatchID:               req.GetDispatchId(),
-		PriorDispatchID:          req.GetPriorDispatchId(),
+		NodeRunID:                req.GetDispatchId(),
+		PriorNodeRunID:           req.GetPriorDispatchId(),
 		PriorDispatchDisposition: req.GetPriorDispatchDisposition(),
 		CandidateHandles:         candidateHandles,
 	})

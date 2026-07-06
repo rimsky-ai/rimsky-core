@@ -327,7 +327,7 @@ func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persisten
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, persistence.OrphanFrameDispatch{DispatchID: did, ClaimedBy: claimedBy, FrameID: fid})
+		out = append(out, persistence.OrphanFrameDispatch{NodeRunID: did, ClaimedBy: claimedBy, FrameID: fid})
 	}
 	return out, rows.Err()
 }

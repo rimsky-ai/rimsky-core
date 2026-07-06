@@ -182,12 +182,12 @@ func runDispositionVariant(t *testing.T, disposition string) {
 	require.NoError(t, err)
 	runScopeUUIDParsed, err := uuid.Parse(runScopeIDText)
 	require.NoError(t, err)
-	priorID := shared.UUID(priorUUID)
+	priorRunPtr := shared.UUID(priorUUID)
 	frameID := shared.UUID(frameUUID)
 	runScopeID := shared.UUID(runScopeUUIDParsed)
 
 	require.NoError(t, harness.Persist.Transaction(harness.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		inline, handle, backend, lerr := harness.Queue.LoadScratchInTx(ctx, tx, priorID)
+		inline, handle, backend, lerr := harness.Queue.LoadScratchInTx(ctx, tx, priorRunPtr)
 		if lerr != nil {
 			return lerr
 		}
@@ -198,7 +198,7 @@ func runDispositionVariant(t *testing.T, disposition string) {
 			EnqueuedAt:                  time.Now().Add(-time.Second),
 			FrameID:                     frameID,
 			RunScopeID:                  runScopeID,
-			PriorDispatchID:             &priorID,
+			PriorNodeRunID:              &priorRunPtr,
 			PriorDispatchDisposition:    disposition,
 			InitialScratchInline:        inline,
 			InitialScratchHandle:        handle,
@@ -213,7 +213,7 @@ func runDispositionVariant(t *testing.T, disposition string) {
 		 WHERE node_id = $1
 		   AND prior_dispatch_id = $2
 		   AND prior_dispatch_disposition = $3`,
-		[]any{n.ID, priorID, disposition}, &gotInline)
+		[]any{n.ID, priorRunPtr, disposition}, &gotInline)
 	require.True(t, bytes.Equal(gotInline, scratchBytes),
 		"%s recovery row MUST carry prior scratch verbatim: want=%x got=%x",
 		disposition, scratchBytes, gotInline)

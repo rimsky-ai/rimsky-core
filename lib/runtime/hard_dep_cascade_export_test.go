@@ -14,7 +14,7 @@ import (
 
 func CascadeSubscribersStaleInTxForTest(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	senderID shared.UUID, senderNodeType string, senderRunID shared.UUID,
+	senderID shared.UUID, senderNodeType string, senderNodeRunID shared.UUID,
 	instanceID, senderFrameID shared.UUID,
 ) error {
 	sig := signalpkg.Signal{
@@ -25,5 +25,5 @@ func CascadeSubscribersStaleInTxForTest(
 			"change_summary":   "cascade_test",
 		},
 	}
-	return cascadeSubscribersStaleInTx(ctx, args, tx, senderID, senderNodeType, senderRunID, instanceID, senderFrameID, sig)
+	return cascadeSubscribersStaleInTx(ctx, args, tx, senderID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, sig)
 }

@@ -228,7 +228,7 @@ func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persisten
 	var out []persistence.OrphanFrameDispatch
 	for rows.Next() {
 		var r persistence.OrphanFrameDispatch
-		if err := rows.Scan(&r.DispatchID, &r.ClaimedBy, &r.FrameID); err != nil {
+		if err := rows.Scan(&r.NodeRunID, &r.ClaimedBy, &r.FrameID); err != nil {
 			return nil, fmt.Errorf("frames.ListOrphanFrameDispatches: scan: %w", err)
 		}
 		out = append(out, r)

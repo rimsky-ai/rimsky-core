@@ -15,7 +15,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-type HandlerContextFactory func(ctx context.Context, dispatchID, nodeID shared.UUID) HandlerContext
+type HandlerContextFactory func(ctx context.Context, nodeRunID, nodeID shared.UUID) HandlerContext
 
 // @concept: executor
 type InProcessClient struct {
@@ -43,7 +43,7 @@ func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest
 	if !ok {
 		return nil, fmt.Errorf("InProcessClient.Execute: no handler for %q", c.url)
 	}
-	dispatchID, err := uuid.Parse(req.DispatchId)
+	nodeRunID, err := uuid.Parse(req.DispatchId)
 	if err != nil {
 		return nil, fmt.Errorf("InProcessClient.Execute: parse dispatch_id %q: %w", req.DispatchId, err)
 	}
@@ -53,7 +53,7 @@ func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest
 	}
 	hctx := HandlerContext{}
 	if c.newHctx != nil {
-		hctx = c.newHctx(ctx, shared.UUID(dispatchID), shared.UUID(nodeID))
+		hctx = c.newHctx(ctx, shared.UUID(nodeRunID), shared.UUID(nodeID))
 	}
 	var outcome *genv1.Outcome
 	func() {

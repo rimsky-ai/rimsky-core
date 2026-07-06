@@ -36,7 +36,7 @@ func (f *fakeLineageTable) GetByClaimHandleID(_ context.Context, _ shared.UUID) 
 func (f *fakeLineageTable) Query(_ context.Context, _ persistence.LineageQuery, _ persistence.ListPagination) (persistence.PaginatedListResult[persistence.LineageRow], error) {
 	return persistence.PaginatedListResult[persistence.LineageRow]{}, nil
 }
-func (f *fakeLineageTable) QueryByParentRunID(_ context.Context, _ shared.UUID, _ int) ([]persistence.LineageRow, error) {
+func (f *fakeLineageTable) QueryByParentNodeRunID(_ context.Context, _ shared.UUID, _ int) ([]persistence.LineageRow, error) {
 	return nil, nil
 }
 func (f *fakeLineageTable) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) {
@@ -54,7 +54,7 @@ func TestWriteLeafRunLineage_PayloadRoundtrip(t *testing.T) {
 	run := shared.UUID(uuid.New())
 	now := time.Now().UTC()
 	rec := LeafRunRecord{
-		RunID:              run,
+		NodeRunID:          run,
 		NodeID:             shared.UUID(uuid.New()),
 		FrameID:            frame,
 		State:              "fresh",
@@ -75,7 +75,7 @@ func TestWriteLeafRunLineage_PayloadRoundtrip(t *testing.T) {
 	if err := json.Unmarshal(row.Record, &decoded); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if decoded.RunID != run {
+	if decoded.NodeRunID != run {
 		t.Fatalf("run_id roundtrip failed")
 	}
 	if decoded.SettlingSignalType != "terminal/success" {
@@ -92,7 +92,7 @@ func TestWriteClaimTerminalLineage_VersionIDPersisted(t *testing.T) {
 	handle := shared.UUID(uuid.New())
 	rec := ClaimTerminalRecord{
 		ClaimHandleID:      handle,
-		RunID:              shared.UUID(uuid.New()),
+		NodeRunID:          shared.UUID(uuid.New()),
 		NodeID:             shared.UUID(uuid.New()),
 		FrameID:            frame,
 		ProducerName:       "parquet-store",
@@ -121,7 +121,7 @@ func TestWriteClaimTerminalLineage_AbandonedOutcome(t *testing.T) {
 	frame := shared.UUID(uuid.New())
 	rec := ClaimTerminalRecord{
 		ClaimHandleID: shared.UUID(uuid.New()),
-		RunID:         shared.UUID(uuid.New()),
+		NodeRunID:     shared.UUID(uuid.New()),
 		NodeID:        shared.UUID(uuid.New()),
 		FrameID:       frame,
 		ProducerName:  "store",
@@ -140,7 +140,7 @@ func TestWriteClaimTerminalLineage_ForceCancelledOutcome(t *testing.T) {
 	ctx := context.Background()
 	rec := ClaimTerminalRecord{
 		ClaimHandleID: shared.UUID(uuid.New()),
-		RunID:         shared.UUID(uuid.New()),
+		NodeRunID:     shared.UUID(uuid.New()),
 		NodeID:        shared.UUID(uuid.New()),
 		FrameID:       shared.UUID(uuid.New()),
 		Outcome:       persistence.LineageOutcomeForceCancelled,
@@ -165,7 +165,7 @@ func TestWriteClaimTerminalLineage_EmptyOutcomeRejected(t *testing.T) {
 	lt := &fakeLineageTable{}
 	rec := ClaimTerminalRecord{
 		ClaimHandleID: shared.UUID(uuid.New()),
-		RunID:         shared.UUID(uuid.New()),
+		NodeRunID:     shared.UUID(uuid.New()),
 		NodeID:        shared.UUID(uuid.New()),
 		FrameID:       shared.UUID(uuid.New()),
 		ProducerName:  "store",
@@ -188,19 +188,19 @@ func TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable(t *testing.T) {
 	parent := shared.UUID(uuid.New())
 	child := shared.UUID(uuid.New())
 	rec := LeafRunRecord{
-		RunID:              child,
+		NodeRunID:          child,
 		NodeID:             shared.UUID(uuid.New()),
 		FrameID:            frame,
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
-		ParentRunID:        parent.String(),
+		ParentNodeRunID:    parent.String(),
 	}
 	if err := WriteLeafRunLineage(ctx, nil, lt, inst, frame, time.Now().UTC(), rec); err != nil {
 		t.Fatalf("WriteLeafRunLineage: %v", err)
 	}
-	rows, err := lt.QueryByParentRunID(ctx, parent, 10)
+	rows, err := lt.QueryByParentNodeRunID(ctx, parent, 10)
 	if err != nil {
-		t.Fatalf("QueryByParentRunID: %v", err)
+		t.Fatalf("QueryByParentNodeRunID: %v", err)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
@@ -209,11 +209,11 @@ func TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable(t *testing.T) {
 	if err := json.Unmarshal(rows[0].Record, &decoded); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if decoded.ParentRunID != parent.String() {
+	if decoded.ParentNodeRunID != parent.String() {
 		t.Fatalf("parent_run_id round-trip failed: got %q want %q",
-			decoded.ParentRunID, parent.String())
+			decoded.ParentNodeRunID, parent.String())
 	}
-	if decoded.RunID != child {
+	if decoded.NodeRunID != child {
 		t.Fatalf("run_id round-trip failed")
 	}
 }
@@ -222,7 +222,7 @@ type queryableFakeLineageTable struct {
 	fakeLineageTable
 }
 
-func (f *queryableFakeLineageTable) QueryByParentRunID(_ context.Context, parentRunID shared.UUID, limit int) ([]persistence.LineageRow, error) {
+func (f *queryableFakeLineageTable) QueryByParentNodeRunID(_ context.Context, parentNodeRunID shared.UUID, limit int) ([]persistence.LineageRow, error) {
 	var out []persistence.LineageRow
 	for _, r := range f.rows {
 		if r.RecordKind != persistence.LineageRecordKindLeafRun {
@@ -232,7 +232,7 @@ func (f *queryableFakeLineageTable) QueryByParentRunID(_ context.Context, parent
 		if err := json.Unmarshal(r.Record, &rec); err != nil {
 			continue
 		}
-		if rec.ParentRunID == parentRunID.String() {
+		if rec.ParentNodeRunID == parentNodeRunID.String() {
 			out = append(out, r)
 			if limit > 0 && len(out) >= limit {
 				break
@@ -267,7 +267,7 @@ func (f *emitFakePersist) Lineage() persistence.LineageTable                    
 func (f *emitFakePersist) PublisherSubscriptions() persistence.PublisherSubscriptionsTable {
 	return nil
 }
-func (f *emitFakePersist) RunTree() persistence.RunTreeTable        { return nil }
+func (f *emitFakePersist) NodeRunTree() persistence.RunTreeTable    { return nil }
 func (f *emitFakePersist) RunScopes() persistence.RunScopeTable     { return nil }
 func (f *emitFakePersist) APIKeys() persistence.APIKeyTable         { return nil }
 func (f *emitFakePersist) Breakpoints() persistence.BreakpointTable { return nil }
@@ -293,11 +293,11 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         inst,
 			FrameID:            frame,
-			RunID:              shared.UUID(uuid.New()),
+			NodeRunID:          shared.UUID(uuid.New()),
 			NodeID:             shared.UUID(uuid.New()),
 			State:              string(cascade.NodeStateFresh),
 			SettlingSignalType: "terminal/success",
-			ParentRunID:        nil,
+			ParentNodeRunID:    nil,
 		})
 		if len(lt.rows) != 1 {
 			t.Fatalf("expected 1 row, got %d", len(lt.rows))
@@ -306,8 +306,8 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 		if err := json.Unmarshal(lt.rows[0].Record, &rec); err != nil {
 			t.Fatalf("unmarshal typed: %v", err)
 		}
-		if rec.ParentRunID != "" {
-			t.Fatalf("root run: ParentRunID got %q want \"\"", rec.ParentRunID)
+		if rec.ParentNodeRunID != "" {
+			t.Fatalf("root run: ParentNodeRunID got %q want \"\"", rec.ParentNodeRunID)
 		}
 		var raw map[string]any
 		if err := json.Unmarshal(lt.rows[0].Record, &raw); err != nil {
@@ -328,11 +328,11 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         inst,
 			FrameID:            frame,
-			RunID:              shared.UUID(uuid.New()),
+			NodeRunID:          shared.UUID(uuid.New()),
 			NodeID:             shared.UUID(uuid.New()),
 			State:              string(cascade.NodeStateFresh),
 			SettlingSignalType: "terminal/success",
-			ParentRunID:        &parent,
+			ParentNodeRunID:    &parent,
 		})
 		if len(lt.rows) != 1 {
 			t.Fatalf("expected 1 row, got %d", len(lt.rows))
@@ -341,9 +341,9 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 		if err := json.Unmarshal(lt.rows[0].Record, &rec); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		if rec.ParentRunID != parent.String() {
-			t.Fatalf("child run: ParentRunID got %q want %q",
-				rec.ParentRunID, parent.String())
+		if rec.ParentNodeRunID != parent.String() {
+			t.Fatalf("child run: ParentNodeRunID got %q want %q",
+				rec.ParentNodeRunID, parent.String())
 		}
 	})
 }
@@ -369,12 +369,12 @@ func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 		jsonTag   string
 		omitempty bool
 	}{
-		{"RunID", "run_id", false},
+		{"NodeRunID", "run_id", false},
 		{"NodeID", "node_id", false},
 		{"FrameID", "frame_id", false},
 		{"ChildKey", "child_key", true},
 		{"NodeAlias", "node_alias", true},
-		{"ParentRunID", "parent_run_id", true},
+		{"ParentNodeRunID", "parent_run_id", true},
 		{"FrameTriggerKind", "frame_trigger_kind", true},
 		{"TriggerMessageID", "trigger_message_id", true},
 		{"HeldClaims", "held_claims", true},
@@ -404,7 +404,7 @@ func TestClaimTerminalRecord_TagDisciplineAndOrder(t *testing.T) {
 		omitempty bool
 	}{
 		{"ClaimHandleID", "claim_handle_id", false},
-		{"RunID", "run_id", false},
+		{"NodeRunID", "run_id", false},
 		{"NodeID", "node_id", false},
 		{"FrameID", "frame_id", false},
 		{"ParentClaimHandleID", "parent_claim_handle_id", true},

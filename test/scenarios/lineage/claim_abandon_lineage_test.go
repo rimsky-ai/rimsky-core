@@ -50,7 +50,7 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 	hint := runtime.ClaimLineageHint{
 		InstanceID:   inst,
 		FrameID:      frameID,
-		RunID:        shared.UUID(uuid.New()),
+		NodeRunID:    shared.UUID(uuid.New()),
 		NodeID:       nodeID,
 		ProducerName: "abandon-store",
 	}

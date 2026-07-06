@@ -15,10 +15,10 @@ import (
 )
 
 func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
-	ownership, err := args.Queue.GetClaimedBy(ctx, acq.DispatchID)
+	ownership, err := args.Queue.GetClaimedBy(ctx, acq.NodeRunID)
 	if err != nil {
 		args.Logger.Warn("verifyBeforeRun: GetClaimedBy failed",
-			"dispatch_id", acq.DispatchID.String(), "error", err.Error())
+			"dispatch_id", acq.NodeRunID.String(), "error", err.Error())
 		return false
 	}
 	return ownership.Kind == "claimed_by" && ownership.SupervisorID == args.SupervisorID
@@ -32,13 +32,13 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 			args.Logger.Warn("handleOrphanedClaim: unwind acquired lock failed",
 				"claim_handle_id", lk.ClaimHandleID.String(),
 				"producer", producerNameForSpec(lk.Spec),
-				"dispatch_id", acq.DispatchID.String(),
+				"dispatch_id", acq.NodeRunID.String(),
 				"error", err.Error())
 		}
 	}
-	if err := args.Queue.ReleaseClaim(ctx, acq.DispatchID, args.SupervisorID); err != nil && args.Logger != nil {
+	if err := args.Queue.ReleaseClaim(ctx, acq.NodeRunID, args.SupervisorID); err != nil && args.Logger != nil {
 		args.Logger.Warn("handleOrphanedClaim: release claim failed",
-			"dispatch_id", acq.DispatchID.String(),
+			"dispatch_id", acq.NodeRunID.String(),
 			"supervisor_id", args.SupervisorID,
 			"error", err.Error())
 	}
@@ -47,14 +47,14 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: events.KindOrphanedClaimLostRace(),
 			Payload: map[string]any{
-				"dispatch_id":   acq.DispatchID.String(),
+				"dispatch_id":   acq.NodeRunID.String(),
 				"supervisor_id": args.SupervisorID,
 			},
 		}, tx)
 	}); err != nil && args.Logger != nil {
 		args.Logger.Warn("handleOrphanedClaim: append orphaned_claim_lost_race event failed",
 			"node_id", acq.NodeID.String(),
-			"dispatch_id", acq.DispatchID.String(),
+			"dispatch_id", acq.NodeRunID.String(),
 			"error", err.Error())
 	}
 }

@@ -30,7 +30,7 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 	}
 
 	supID := "verify-supervisor"
-	var dispatchID shared.UUID
+	var nodeRunID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
@@ -43,8 +43,8 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 		if len(cands) != 1 {
 			t.Fatalf("expected 1 candidate, got %d", len(cands))
 		}
-		dispatchID = cands[0].DispatchID
-		ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].DispatchID, supID)
+		nodeRunID = cands[0].NodeRunID
+		ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].NodeRunID, supID)
 		if err != nil {
 			return err
 		}
@@ -56,7 +56,7 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 		t.Fatalf("claim tx: %v", err)
 	}
 
-	owner, err := q.GetClaimedBy(ctx, dispatchID)
+	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy: %v", err)
 	}
@@ -64,10 +64,10 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 		t.Fatalf("expected claimed_by/%s, got kind=%s sup=%s", supID, owner.Kind, owner.SupervisorID)
 	}
 
-	if err := q.ReleaseClaim(ctx, dispatchID, supID); err != nil {
+	if err := q.ReleaseClaim(ctx, nodeRunID, supID); err != nil {
 		t.Fatalf("ReleaseClaim: %v", err)
 	}
-	owner2, err := q.GetClaimedBy(ctx, dispatchID)
+	owner2, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy: %v", err)
 	}

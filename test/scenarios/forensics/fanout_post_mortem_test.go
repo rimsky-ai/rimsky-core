@@ -32,7 +32,7 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 	d := pgtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	inst, frameID, parentRunID, parentNodeID := seedForensicsScenario(ctx, t, backend, "fanout-postmortem")
+	inst, frameID, parentNodeRunID, parentNodeID := seedForensicsScenario(ctx, t, backend, "fanout-postmortem")
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("postmortem-store", claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
@@ -47,7 +47,7 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 		Clock:         shared.SystemClock{},
 	}
 
-	parentID, subIDs := seedFanOutTree(ctx, t, backend, parentRunID, parentNodeID, frameID,
+	parentID, subIDs := seedFanOutTree(ctx, t, backend, parentNodeRunID, parentNodeID, frameID,
 		"sup-PM", "postmortem-store", 4,
 		spec.AggregationPolicy{Kind: spec.AggregationKindThreshold, MaxFailures: 1})
 
@@ -72,7 +72,7 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 				LineageHint: runtime.ClaimLineageHint{
 					InstanceID:   inst,
 					FrameID:      frameID,
-					RunID:        parentRunID,
+					NodeRunID:    parentNodeRunID,
 					NodeID:       parentNodeID,
 					ProducerName: "postmortem-store",
 				},
@@ -172,7 +172,7 @@ func seedForensicsScenario(
 
 func seedFanOutTree(
 	ctx context.Context, t *testing.T, backend persistence.Tables,
-	parentRunID, parentNodeID, frameID shared.UUID,
+	parentNodeRunID, parentNodeID, frameID shared.UUID,
 	supervisorID, producerName string, n int,
 	policy spec.AggregationPolicy,
 ) (shared.UUID, []shared.UUID) {
@@ -194,7 +194,7 @@ func seedFanOutTree(
 			HolderSupervisorID: supervisorID,
 			HolderNodeID:       parentNodeID,
 			ExpiresAt:          time.Now().Add(10 * time.Minute),
-			NodeRunID:          &parentRunID,
+			NodeRunID:          &parentNodeRunID,
 			FrameID:            &frameID,
 			AggregationPolicy:  policyBytes,
 		}, tx); err != nil {
@@ -213,7 +213,7 @@ func seedFanOutTree(
 				HolderSupervisorID:  supervisorID,
 				HolderNodeID:        parentNodeID,
 				ExpiresAt:           time.Now().Add(10 * time.Minute),
-				NodeRunID:           &parentRunID,
+				NodeRunID:           &parentNodeRunID,
 				FrameID:             &frameID,
 				ParentClaimHandleID: &parent,
 			}, tx); err != nil {

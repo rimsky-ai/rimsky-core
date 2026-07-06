@@ -136,11 +136,11 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 		drainedAt := time.Now()
 		require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return tables.WaitSet().Insert(ctx, persistence.WaitSetRow{
-				FrameID:       frameID,
-				ReceiverRunID: firstPendingID,
-				SenderRunID:   senderARunID,
-				TopicKind:     "terminal",
-				DrainedAt:     &drainedAt,
+				FrameID:           frameID,
+				ReceiverNodeRunID: firstPendingID,
+				SenderNodeRunID:   senderARunID,
+				TopicKind:         "terminal",
+				DrainedAt:         &drainedAt,
 			}, tx)
 		}))
 

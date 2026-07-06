@@ -72,14 +72,14 @@ func emitWorkCompleted(ctx context.Context, args RunArgs, acq *acquisition, kind
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: events.KindWorkCompleted(), Payload: map[string]any{
 				"supervisor_id": args.SupervisorID,
-				"dispatch_id":   acq.DispatchID.String(),
+				"dispatch_id":   acq.NodeRunID.String(),
 				"terminal_kind": string(terminalClassFor(kind)),
 			},
 		}, tx)
 	}); err != nil && args.Logger != nil {
 		args.Logger.Warn("emitWorkCompleted: work_completed event append failed; pairing event lost",
 			"node_id", acq.NodeID.String(),
-			"dispatch_id", acq.DispatchID.String(),
+			"dispatch_id", acq.NodeRunID.String(),
 			"terminal_kind", string(terminalClassFor(kind)),
 			"error", err.Error())
 	}
@@ -176,7 +176,7 @@ func applyTerminalComplete(
 
 	// @concept: claim-handle
 	// @decision: held-as-state-not-phase
-	heldBeforeRelease, err := runHasActiveHeldClaims(ctx, args, tx, acq.DispatchID)
+	heldBeforeRelease, err := runHasActiveHeldClaims(ctx, args, tx, acq.NodeRunID)
 	if err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: held probe (pre-release): %w", err)
 	}
@@ -197,7 +197,7 @@ func applyTerminalComplete(
 	if heldBeforeRelease {
 		// @concept: claim-handle
 		// @decision: held-as-state-not-phase
-		if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 			cascade.NodeStateHeld, cascade.ReasonHandlerHeld, settlingSignalType, tx); err != nil {
 			return nil, err
 		}
@@ -220,16 +220,16 @@ func applyTerminalComplete(
 			},
 		}
 		if err := emitSignalInTxWithFilter(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+			acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 			successSig, visited, heldFilter); err != nil {
 			return nil, err
 		}
 		if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+			acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 			visited, heldFilter); err != nil {
 			return nil, err
 		}
-		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeRunID); err != nil {
 			return nil, err
 		}
 		// @decision: held-as-state-not-phase
@@ -237,14 +237,14 @@ func applyTerminalComplete(
 		if err != nil {
 			return nil, err
 		}
-		dispatchID := acq.DispatchID
+		nodeRunID := acq.NodeRunID
 		post := func(ctx context.Context) {
 			fanoutRecalculate(ctx, args, acq)
 			scope := resolveAcqScope(ctx, args, acq)
 			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 				InstanceID:       acq.InstanceID,
 				FrameID:          acq.FrameID,
-				RunID:            dispatchID,
+				NodeRunID:        nodeRunID,
 				NodeID:           acq.NodeID,
 				State:            string(cascade.NodeStateHeld),
 				Changed:          t.Changed,
@@ -255,7 +255,7 @@ func applyTerminalComplete(
 				Params:           acq.InstanceParams,
 				AttributesMerged: acq.MergedAttributes,
 				HeldClaims:       HeldClaimsForLineage(acq),
-				ParentRunID:      scope.ParentRunID,
+				ParentNodeRunID:  scope.ParentNodeRunID,
 				ChildKey:         scope.PartitionKey,
 				SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
 			})
@@ -264,14 +264,14 @@ func applyTerminalComplete(
 	}
 	// @concept: claim-handle
 	// @decision: held-as-state-not-phase
-	portfolio, err := evaluateHolderPortfolio(ctx, args, tx, acq.DispatchID)
+	portfolio, err := evaluateHolderPortfolio(ctx, args, tx, acq.NodeRunID)
 	if err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: portfolio probe: %w", err)
 	}
 	if portfolio.Poisoned {
 		return applyTerminalCompletePoisoned(ctx, args, acq, t, tx)
 	}
-	if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
+	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, settlingSignalType, tx); err != nil {
 		return nil, err
 	}
@@ -294,27 +294,27 @@ func applyTerminalComplete(
 		},
 	}
 	if err := emitSignalInTx(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, successSig, visited); err != nil {
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, successSig, visited); err != nil {
 		return nil, err
 	}
 	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 		visited, nil); err != nil {
 		return nil, err
 	}
 	// @concept: wait-set
-	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeRunID); err != nil {
 		return nil, err
 	}
 
-	dispatchID := acq.DispatchID
+	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
 		fanoutRecalculate(ctx, args, acq)
 		scope := resolveAcqScope(ctx, args, acq)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
-			RunID:              dispatchID,
+			NodeRunID:          nodeRunID,
 			NodeID:             acq.NodeID,
 			State:              string(cascade.NodeStateFresh),
 			SettlingSignalType: *settlingSignalType,
@@ -326,14 +326,14 @@ func applyTerminalComplete(
 			Params:             acq.InstanceParams,
 			AttributesMerged:   acq.MergedAttributes,
 			HeldClaims:         HeldClaimsForLineage(acq),
-			ParentRunID:        scope.ParentRunID,
+			ParentNodeRunID:    scope.ParentNodeRunID,
 			ChildKey:           scope.PartitionKey,
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
-		if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
 			cascade.NodeStateFresh, settlingSignalType); err != nil {
 			args.Logger.Warn("applyTerminalComplete: run-tree propagation failed",
-				"run_id", dispatchID.String(), "error", err.Error())
+				"run_id", nodeRunID.String(), "error", err.Error())
 		}
 	}
 	return chainPostCommit(releasePC, post), nil
@@ -348,7 +348,7 @@ func applyTerminalCompletePoisoned(
 ) (postCommitFn, error) {
 	abandonedType := string(signalpkg.TypePath("terminal/error/abandoned"))
 	settlingSignalType := &abandonedType
-	if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
+	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 		cascade.NodeStateFailed, cascade.ReasonAutoTerminalAbandon, settlingSignalType, tx); err != nil {
 		return nil, err
 	}
@@ -369,25 +369,25 @@ func applyTerminalCompletePoisoned(
 		t.Tags,
 	)
 	if err := emitSignalInTxWithFilter(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 		abandonedSig, visited, nonMemberFilter); err != nil {
 		return nil, err
 	}
 	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 		visited, nonMemberFilter); err != nil {
 		return nil, err
 	}
-	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeRunID); err != nil {
 		return nil, err
 	}
-	dispatchID := acq.DispatchID
+	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
 		scope := resolveAcqScope(ctx, args, acq)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
-			RunID:              dispatchID,
+			NodeRunID:          nodeRunID,
 			NodeID:             acq.NodeID,
 			State:              string(cascade.NodeStateFailed),
 			SettlingSignalType: *settlingSignalType,
@@ -400,14 +400,14 @@ func applyTerminalCompletePoisoned(
 			Params:             acq.InstanceParams,
 			AttributesMerged:   acq.MergedAttributes,
 			HeldClaims:         HeldClaimsForLineage(acq),
-			ParentRunID:        scope.ParentRunID,
+			ParentNodeRunID:    scope.ParentNodeRunID,
 			ChildKey:           scope.PartitionKey,
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
-		if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
 			cascade.NodeStateFailed, settlingSignalType); err != nil {
 			args.Logger.Warn("applyTerminalCompletePoisoned: run-tree propagation failed",
-				"run_id", dispatchID.String(), "error", err.Error())
+				"run_id", nodeRunID.String(), "error", err.Error())
 		}
 	}
 	return post, nil
@@ -420,13 +420,13 @@ func cascadeSubscribersStaleInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	senderID foundationshared.UUID,
 	senderNodeType string,
-	senderRunID foundationshared.UUID,
+	senderNodeRunID foundationshared.UUID,
 	instanceID foundationshared.UUID,
 	senderFrameID foundationshared.UUID,
 	sig signalpkg.Signal,
 ) error {
 	return cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
-		senderID, senderNodeType, senderRunID, instanceID, senderFrameID, sig,
+		senderID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, sig,
 		map[foundationshared.UUID]struct{}{}, nil)
 }
 
@@ -438,7 +438,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	senderID foundationshared.UUID,
 	senderNodeType string,
-	senderRunID foundationshared.UUID,
+	senderNodeRunID foundationshared.UUID,
 	instanceID foundationshared.UUID,
 	senderFrameID foundationshared.UUID,
 	sig signalpkg.Signal,
@@ -468,7 +468,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 		byType[n.NodeType] = append(byType[n.NodeType], n)
 	}
 	// @concept: run-scope
-	senderRun, err := args.Persist.RunTree().GetByID(ctx, tx, senderRunID)
+	senderRun, err := args.Persist.NodeRunTree().GetByID(ctx, tx, senderNodeRunID)
 	if err != nil {
 		return fmt.Errorf("cascadeSubscribersStaleInTx: load sender run: %w", err)
 	}
@@ -483,7 +483,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 	if senderRunScope == nil {
 		return nil
 	}
-	senderScopeIsMain := senderRunScope.ParentRunID == nil
+	senderScopeIsMain := senderRunScope.ParentNodeRunID == nil
 	// @concept: signal
 	candidateEdges := edges.Match(senderNodeType, sig.Type)
 	if len(candidateEdges) == 0 {
@@ -513,9 +513,9 @@ func cascadeSubscribersStaleInTxWithVisited(
 				}
 				_ = existingID
 			}
-			receiverRunID, hasReceiver, err := resolveReceiverRunForCascade(
+			receiverNodeRunID, hasReceiver, err := resolveReceiverRunForCascade(
 				ctx, args, tx,
-				r.ID, receiverRunScopeID, senderFrameID, senderID, senderRunID,
+				r.ID, receiverRunScopeID, senderFrameID, senderID, senderNodeRunID,
 				visitedReceivers,
 			)
 			if err != nil {
@@ -525,15 +525,15 @@ func cascadeSubscribersStaleInTxWithVisited(
 				continue
 			}
 			if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
-				FrameID:       senderFrameID,
-				ReceiverRunID: receiverRunID,
-				SenderRunID:   senderRunID,
-				TopicKind:     waitSetTopicKindFor(edge.TypePattern),
+				FrameID:           senderFrameID,
+				ReceiverNodeRunID: receiverNodeRunID,
+				SenderNodeRunID:   senderNodeRunID,
+				TopicKind:         waitSetTopicKindFor(edge.TypePattern),
 			}, tx); err != nil {
 				return fmt.Errorf("cascadeSubscribersStaleInTx: wait-set insert: %w", err)
 			}
 			pullVisited := map[foundationshared.UUID]struct{}{r.ID: {}, senderID: {}}
-			if err := pullForceRefreshUpstreams(ctx, args, tx, r, byType, receiverRunID, receiverRunScopeID, senderFrameID, inst.TemplateHash, pullVisited); err != nil {
+			if err := pullForceRefreshUpstreams(ctx, args, tx, r, byType, receiverNodeRunID, receiverRunScopeID, senderFrameID, inst.TemplateHash, pullVisited); err != nil {
 				return err
 			}
 		}
@@ -547,7 +547,7 @@ func pullForceRefreshUpstreams(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	receiver persistence.NodeRow,
 	byType map[string][]persistence.NodeRow,
-	receiverRunID foundationshared.UUID,
+	receiverNodeRunID foundationshared.UUID,
 	targetRunScopeID foundationshared.UUID,
 	senderFrameID foundationshared.UUID,
 	templateHash string,
@@ -600,10 +600,10 @@ func pullForceRefreshUpstreams(
 			}
 		}
 		if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID:       senderFrameID,
-			ReceiverRunID: receiverRunID,
-			SenderRunID:   upstreamRunID,
-			TopicKind:     "attribute",
+			FrameID:           senderFrameID,
+			ReceiverNodeRunID: receiverNodeRunID,
+			SenderNodeRunID:   upstreamRunID,
+			TopicKind:         "attribute",
 		}, tx); err != nil {
 			return fmt.Errorf("pullForceRefreshUpstreams: insert wait-set: %w", err)
 		}
@@ -614,15 +614,15 @@ func pullForceRefreshUpstreams(
 // @concept: wait-set
 // @concept: cascade
 func drainWaitSetOnSettled(
-	ctx context.Context, args RunArgs, tx persistence.Tx, frameID, senderRunID foundationshared.UUID,
+	ctx context.Context, args RunArgs, tx persistence.Tx, frameID, senderNodeRunID foundationshared.UUID,
 ) error {
-	if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, frameID, senderRunID, tx); err != nil {
+	if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, frameID, senderNodeRunID, tx); err != nil {
 		return err
 	}
-	if err := evaluateGatesAfterDrain(ctx, args, tx, frameID, senderRunID); err != nil {
+	if err := evaluateGatesAfterDrain(ctx, args, tx, frameID, senderNodeRunID); err != nil {
 		return err
 	}
-	siblings, err := args.Persist.Nodes().ListPendingSiblingRunsInScope(ctx, tx, senderRunID)
+	siblings, err := args.Persist.Nodes().ListPendingSiblingRunsInScope(ctx, tx, senderNodeRunID)
 	if err != nil {
 		return fmt.Errorf("drainWaitSetOnSettled: list pending siblings: %w", err)
 	}
@@ -631,7 +631,7 @@ func drainWaitSetOnSettled(
 			return fmt.Errorf("drainWaitSetOnSettled: evaluate sibling gate %s: %w", sib, err)
 		}
 	}
-	if err := reevalDownstreamReceiverGates(ctx, args, tx, senderRunID); err != nil {
+	if err := reevalDownstreamReceiverGates(ctx, args, tx, senderNodeRunID); err != nil {
 		return fmt.Errorf("drainWaitSetOnSettled: reeval downstream receivers: %w", err)
 	}
 	return nil
@@ -640,9 +640,9 @@ func drainWaitSetOnSettled(
 // @concept: cascade
 // @decision: mode-default-most-recent
 func reevalDownstreamReceiverGates(
-	ctx context.Context, args RunArgs, tx persistence.Tx, senderRunID foundationshared.UUID,
+	ctx context.Context, args RunArgs, tx persistence.Tx, senderNodeRunID foundationshared.UUID,
 ) error {
-	senderRun, err := args.Persist.RunTree().GetByID(ctx, tx, senderRunID)
+	senderRun, err := args.Persist.NodeRunTree().GetByID(ctx, tx, senderNodeRunID)
 	if err != nil {
 		return fmt.Errorf("load sender run: %w", err)
 	}
@@ -760,7 +760,7 @@ func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
 func upsertFinalAttributesTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, merged map[string]any,
 ) error {
-	prior, _ := args.Persist.NodeAttributes().GetByRun(ctx, acq.DispatchID, tx)
+	prior, _ := args.Persist.NodeAttributes().GetByRun(ctx, acq.NodeRunID, tx)
 	final := merged
 	if prior != nil && len(prior.Data) > 0 {
 		combined := make(map[string]any, len(prior.Data)+len(merged))
@@ -775,7 +775,7 @@ func upsertFinalAttributesTx(
 	if final == nil {
 		final = map[string]any{}
 	}
-	return args.Persist.NodeAttributes().Upsert(ctx, acq.DispatchID, acq.NodeID, final, tx)
+	return args.Persist.NodeAttributes().Upsert(ctx, acq.NodeRunID, acq.NodeID, final, tx)
 }
 
 func mergeAttributesDelta(base, delta map[string]any) map[string]any {

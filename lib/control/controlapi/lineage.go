@@ -224,7 +224,7 @@ func walkLineageRuns(
 					}
 				}
 			case lineageWalkDirectionDescendants:
-				children, err := deps.Persist.Lineage().QueryByParentRunID(ctx, id, lineageWalkPerFrontierLimit)
+				children, err := deps.Persist.Lineage().QueryByParentNodeRunID(ctx, id, lineageWalkPerFrontierLimit)
 				if err != nil {
 					return nil, err
 				}
@@ -274,12 +274,12 @@ func extractRunIDFromRecord(record json.RawMessage) shared.UUID {
 		return shared.UUID{}
 	}
 	var rec struct {
-		RunID string `json:"run_id"`
+		NodeRunID string `json:"run_id"`
 	}
 	if err := json.Unmarshal(record, &rec); err != nil {
 		return shared.UUID{}
 	}
-	if u, err := uuid.Parse(rec.RunID); err == nil {
+	if u, err := uuid.Parse(rec.NodeRunID); err == nil {
 		return shared.UUID(u)
 	}
 	return shared.UUID{}

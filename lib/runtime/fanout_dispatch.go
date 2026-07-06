@@ -82,21 +82,21 @@ func NewFanOutSemaphoreRegistry() *FanOutSemaphoreRegistry {
 	return &FanOutSemaphoreRegistry{m: make(map[shared.UUID]*FanOutParallelismSemaphore)}
 }
 
-func (r *FanOutSemaphoreRegistry) GetOrCreate(parentRunID shared.UUID, cap int) *FanOutParallelismSemaphore {
+func (r *FanOutSemaphoreRegistry) GetOrCreate(parentNodeRunID shared.UUID, cap int) *FanOutParallelismSemaphore {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if s, ok := r.m[parentRunID]; ok {
+	if s, ok := r.m[parentNodeRunID]; ok {
 		return s
 	}
 	s := NewFanOutParallelismSemaphore(cap)
-	r.m[parentRunID] = s
+	r.m[parentNodeRunID] = s
 	return s
 }
 
-func (r *FanOutSemaphoreRegistry) Drop(parentRunID shared.UUID) {
+func (r *FanOutSemaphoreRegistry) Drop(parentNodeRunID shared.UUID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.m, parentRunID)
+	delete(r.m, parentNodeRunID)
 }
 
 func IsFanOutNode(def *node.TemplateNodeDef) bool {
@@ -120,7 +120,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 	}
 	policy := FanOutAggregationPolicy(acq.NodeDef)
 	in := ChildExecutionInput{
-		ParentRunID:       acq.DispatchID,
+		ParentNodeRunID:   acq.NodeRunID,
 		ParentRunScopeID:  acq.RunScopeID,
 		InstanceID:        acq.InstanceID,
 		FrameID:           acq.FrameID,
@@ -135,7 +135,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		}},
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := args.Persist.RunTree().UpdateAggregationPolicy(ctx, tx, acq.DispatchID, policy); err != nil {
+		if err := args.Persist.NodeRunTree().UpdateAggregationPolicy(ctx, tx, acq.NodeRunID, policy); err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: snapshot policy: %w", err)
 		}
 		children, err := DispatchChildren(ctx, args, tx, in)
@@ -144,7 +144,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		}
 		// @concept: fan-out
 		// @decision: held-as-state-not-phase
-		if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 			cascade.NodeStateHeld, cascade.ReasonFanoutDispatched, nil, tx); err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: parent → held: %w", err)
 		}
@@ -155,13 +155,13 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		childIDs := make([]string, 0, len(children))
 		for _, c := range children {
 			childKeys = append(childKeys, c.PartitionKey)
-			childIDs = append(childIDs, c.RunID.String())
+			childIDs = append(childIDs, c.NodeRunID.String())
 		}
 		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: events.KindFanOutDispatched(),
 			Payload: map[string]any{
-				"parent_run_id":  acq.DispatchID.String(),
+				"parent_run_id":  acq.NodeRunID.String(),
 				"child_run_ids":  childIDs,
 				"child_keys":     childKeys,
 				"parallelism":    acq.NodeDef.FanOut.Parallelism,
@@ -175,7 +175,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: events.KindFanoutChildrenCreated(),
 			Payload: map[string]any{
-				"parent_run_id":        acq.DispatchID.String(),
+				"parent_run_id":        acq.NodeRunID.String(),
 				"parent_node_id":       acq.NodeID.String(),
 				"child_count":          len(children),
 				"partition_keys_count": len(childKeys),

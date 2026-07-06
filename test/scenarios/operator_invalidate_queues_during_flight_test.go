@@ -71,7 +71,7 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 			return err
 		}
 		require.NotNil(t, latest, "worker should have a parked run before invalidate")
-		return h.Persist.NodeAttributes().Upsert(context.Background(), latest.RunID, worker.ID, map[string]any{
+		return h.Persist.NodeAttributes().Upsert(context.Background(), latest.NodeRunID, worker.ID, map[string]any{
 			"prior_marker": "from-parked-run",
 		}, tx)
 	}))

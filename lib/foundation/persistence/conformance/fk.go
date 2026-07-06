@@ -41,9 +41,9 @@ func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 			return err
 		}
 		if err := store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:            claimHolderID,
-			ClaimHandleID: lockHolderID,
-			HolderRunID:   runID,
+			ID:              claimHolderID,
+			ClaimHandleID:   lockHolderID,
+			HolderNodeRunID: runID,
 		}, tx); err != nil {
 			return err
 		}

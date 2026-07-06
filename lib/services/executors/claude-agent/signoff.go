@@ -34,7 +34,7 @@ type SignoffResult struct {
 	Unmet []UnmetSignoff
 }
 
-func BuildSignoffMessage(dispatchID string, value any) ([]byte, error) {
+func BuildSignoffMessage(nodeRunID string, value any) ([]byte, error) {
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func BuildSignoffMessage(dispatchID string, value any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	msg := SignoffDomain + "\n" + dispatchID + "\n" + canonical
+	msg := SignoffDomain + "\n" + nodeRunID + "\n" + canonical
 	return []byte(msg), nil
 }
 
@@ -77,7 +77,7 @@ func ValueAtPath(obj any, path string) any {
 func VerifyRequiredSignoffs(
 	required []RequiredSignoff,
 	attributesDelta map[string]any,
-	dispatchID string,
+	nodeRunID string,
 	signatures []string,
 ) SignoffResult {
 	sigBufs := make([][]byte, 0, len(signatures))
@@ -105,7 +105,7 @@ func VerifyRequiredSignoffs(
 		if attributesDelta != nil {
 			value = ValueAtPath(attributesDelta, req.Path)
 		}
-		message, err := BuildSignoffMessage(dispatchID, value)
+		message, err := BuildSignoffMessage(nodeRunID, value)
 		if err != nil {
 			unmet = append(unmet, UnmetSignoff{Path: reportPath, Reason: "invalid"})
 			continue

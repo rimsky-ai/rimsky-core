@@ -240,17 +240,17 @@ func setNodeAttributeForDebugOverride(
 	if latest == nil {
 		return false, nil
 	}
-	existing, err := deps.Persist.NodeAttributes().GetByRun(ctx, latest.RunID, tx)
+	existing, err := deps.Persist.NodeAttributes().GetByRun(ctx, latest.NodeRunID, tx)
 	if err != nil {
 		return false, err
 	}
 	if existing == nil {
-		if err := deps.Persist.NodeAttributes().Upsert(ctx, latest.RunID, n.ID, delta, tx); err != nil {
+		if err := deps.Persist.NodeAttributes().Upsert(ctx, latest.NodeRunID, n.ID, delta, tx); err != nil {
 			return false, err
 		}
 		return true, nil
 	}
-	if err := deps.Persist.NodeAttributes().MergeDelta(ctx, latest.RunID, delta, tx); err != nil {
+	if err := deps.Persist.NodeAttributes().MergeDelta(ctx, latest.NodeRunID, delta, tx); err != nil {
 		return false, err
 	}
 	return true, nil

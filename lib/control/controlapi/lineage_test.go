@@ -74,7 +74,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	child1RunID := uuid.New()
 	grandchild1RunID := uuid.New()
 
-	insertLeafRun := func(t *testing.T, runID, parentRunID uuid.UUID, observedAt time.Time) {
+	insertLeafRun := func(t *testing.T, runID, parentNodeRunID uuid.UUID, observedAt time.Time) {
 		t.Helper()
 		rec := map[string]any{
 			"run_id":               runID.String(),
@@ -82,8 +82,8 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 			"state":                "fresh",
 			"settling_signal_type": "terminal/success",
 		}
-		if parentRunID != uuid.Nil {
-			rec["parent_run_id"] = parentRunID.String()
+		if parentNodeRunID != uuid.Nil {
+			rec["parent_run_id"] = parentNodeRunID.String()
 		}
 		recBytes, err := json.Marshal(rec)
 		require.NoError(t, err)
@@ -174,7 +174,7 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 	child1RunID := uuid.New()
 	grandchild1RunID := uuid.New()
 
-	insertLeafRun := func(t *testing.T, runID uuid.UUID, parentRunID uuid.UUID, observedAt time.Time) {
+	insertLeafRun := func(t *testing.T, runID uuid.UUID, parentNodeRunID uuid.UUID, observedAt time.Time) {
 		t.Helper()
 		rec := map[string]any{
 			"run_id":               runID.String(),
@@ -182,11 +182,11 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 			"state":                "fresh",
 			"settling_signal_type": "terminal/success",
 		}
-		if parentRunID != uuid.Nil {
+		if parentNodeRunID != uuid.Nil {
 			rec["substitution_refs"] = []map[string]any{
 				{
 					"source_kind":          "run",
-					"source_version_or_id": parentRunID.String(),
+					"source_version_or_id": parentNodeRunID.String(),
 				},
 			}
 		}

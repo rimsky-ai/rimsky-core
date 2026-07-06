@@ -22,7 +22,7 @@ func TestCallbackRegistry_RegisterPopRoundTrip(t *testing.T) {
 	want := runtime.AsyncContext{
 		NodeID:       shared.UUID(uuid.New()),
 		InstanceID:   shared.UUID(uuid.New()),
-		DispatchID:   shared.UUID(uuid.New()),
+		NodeRunID:    shared.UUID(uuid.New()),
 		SupervisorID: "sup-1",
 		NodeType:     "worker",
 		Executor:     "stub",

@@ -26,10 +26,10 @@ func insertHeldClaimHoldersAtAcquire(
 	}
 	frameID := cand.FrameID
 	if err := args.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-		ID:            uuid.New(),
-		ClaimHandleID: claimHandleID,
-		HolderRunID:   cand.DispatchID,
-		FrameID:       &frameID,
+		ID:              uuid.New(),
+		ClaimHandleID:   claimHandleID,
+		HolderNodeRunID: cand.NodeRunID,
+		FrameID:         &frameID,
 	}, tx); err != nil {
 		return fmt.Errorf("insertHeldClaimHoldersAtAcquire: Insert: %w", err)
 	}
@@ -73,10 +73,10 @@ func insertCoHolderClaimHoldersAtAcquire(
 			continue
 		}
 		if err := args.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:            uuid.New(),
-			ClaimHandleID: lh.ID,
-			HolderRunID:   cand.DispatchID,
-			FrameID:       &frameID,
+			ID:              uuid.New(),
+			ClaimHandleID:   lh.ID,
+			HolderNodeRunID: cand.NodeRunID,
+			FrameID:         &frameID,
 		}, tx); err != nil {
 			return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: holds: %w", err)
 		}

@@ -31,7 +31,7 @@ func acquireFanOutIfDeclared(
 	// @concept: fan-out
 	// @concept: run-scope
 	if scopes := args.Persist.RunScopes(); scopes != nil {
-		if rs, err := scopes.GetByID(ctx, tx, out.RunScopeID); err == nil && rs != nil && rs.ParentRunID != nil {
+		if rs, err := scopes.GetByID(ctx, tx, out.RunScopeID); err == nil && rs != nil && rs.ParentNodeRunID != nil {
 			return nil
 		}
 	}
@@ -65,7 +65,7 @@ func acquireFanOutIfDeclared(
 		ParentClaimHandleID: parent.ClaimHandleID,
 		ParentClaimScope:    parent.ClaimResult.ClaimScope,
 		ProducerName:        parentClaimSpec.ProducerName,
-		NodeRunID:           cand.DispatchID,
+		NodeRunID:           cand.NodeRunID,
 		HolderNodeID:        cand.NodeID,
 		HolderSupervisorID:  args.SupervisorID,
 		InstanceID:          instanceID,
@@ -111,7 +111,7 @@ func substituteFanOutPartitionRequest(
 	}
 	resolveCtx, err := buildResolveContextForAcquisition(
 		ctx, args, tx,
-		frameID, out.DispatchID,
+		frameID, out.NodeRunID,
 		out.TemplateHash,
 		instanceParamsRaw(out),
 		claims,
@@ -149,10 +149,10 @@ func loadScratchIntoAcquisition(
 	ctx context.Context, args RunArgs, tx persistence.Tx, out *acquisition,
 	cand persistence.Candidate,
 ) {
-	inline, handle, handleBackend, err := args.Queue.LoadScratchInTx(ctx, tx, cand.DispatchID)
+	inline, handle, handleBackend, err := args.Queue.LoadScratchInTx(ctx, tx, cand.NodeRunID)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: LoadScratchInTx failed; passing empty scratch to executor",
-			"dispatch_id", cand.DispatchID.String(), "error", err.Error())
+			"dispatch_id", cand.NodeRunID.String(), "error", err.Error())
 		return
 	}
 	if handle == "" {

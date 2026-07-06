@@ -31,9 +31,9 @@ type FrameStuck struct {
 }
 
 type OrphanFrameDispatch struct {
-	DispatchID shared.UUID
-	ClaimedBy  string
-	FrameID    shared.UUID
+	NodeRunID shared.UUID
+	ClaimedBy string
+	FrameID   shared.UUID
 }
 
 type FrameRow struct {

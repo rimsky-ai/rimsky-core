@@ -186,16 +186,16 @@ func runReapOrphanFrameDispatches(ctx context.Context, store persistence.Tables,
 	}
 
 	for _, o := range orphans {
-		if err := queue.ReleaseClaim(ctx, o.DispatchID, o.ClaimedBy); err != nil {
+		if err := queue.ReleaseClaim(ctx, o.NodeRunID, o.ClaimedBy); err != nil {
 			logger.Warn("frame.orphan_dispatch.release_failed",
-				"dispatch_id", o.DispatchID,
+				"dispatch_id", o.NodeRunID,
 				"frame_id", o.FrameID,
 				"prior_claimed_by", o.ClaimedBy,
 				"error", err.Error())
 			continue
 		}
 		logger.Warn("frame.orphan_dispatch.reaped",
-			"dispatch_id", o.DispatchID,
+			"dispatch_id", o.NodeRunID,
 			"frame_id", o.FrameID,
 			"prior_claimed_by", o.ClaimedBy)
 	}

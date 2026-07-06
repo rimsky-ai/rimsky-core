@@ -50,7 +50,7 @@ type LineageTable interface {
 
 	Query(ctx context.Context, q LineageQuery, pag ListPagination) (PaginatedListResult[LineageRow], error)
 
-	QueryByParentRunID(ctx context.Context, parentRunID shared.UUID, limit int) ([]LineageRow, error)
+	QueryByParentNodeRunID(ctx context.Context, parentNodeRunID shared.UUID, limit int) ([]LineageRow, error)
 
 	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 

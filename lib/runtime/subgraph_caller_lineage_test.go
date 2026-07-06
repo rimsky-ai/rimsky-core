@@ -133,8 +133,8 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		}
 		frameID = fid
 		callerRunID = shared.UUID(uuid.New())
-		if err := backend.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-			RunID:        callerRunID,
+		if err := backend.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+			NodeRunID:    callerRunID,
 			NodeID:       callerNode.ID,
 			FrameID:      frameID,
 			RunScopeID:   mainScopeID,
@@ -142,7 +142,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		return backend.RunTree().UpdateStateAndOutcome(ctx, tx, callerRunID,
+		return backend.NodeRunTree().UpdateStateAndOutcome(ctx, tx, callerRunID,
 			cascade.NodeStateRunning, nil)
 	}))
 
@@ -151,7 +151,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 	require.Equal(t, "staging", nodeDef.Delegate, "node def must carry the delegate target")
 
 	acq := &acquisition{
-		DispatchID:       callerRunID,
+		NodeRunID:        callerRunID,
 		NodeID:           callerNode.ID,
 		InstanceID:       inst.ID,
 		NodeType:         "outer-caller",
@@ -205,14 +205,14 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		"the row must discriminate as terminal_kind=subgraph_call")
 	require.Equal(t, string(cascade.NodeStateRunning), rec.State,
 		"state must be `running` (parent stays running across the internal cascade)")
-	require.Equal(t, callerRunID, rec.RunID)
+	require.Equal(t, callerRunID, rec.NodeRunID)
 	require.Equal(t, "outer-caller", rec.NodeAlias)
 	require.Empty(t, rec.ExecutorName)
 	require.True(t, rec.Changed, "changed=true threaded through from terminalEvent")
 	require.NotEmpty(t, rec.ParamsSnapshotHash, "params snapshot hash must be populated from acq.InstanceParams")
 	require.NotEmpty(t, rec.AttributesHash, "attributes hash must be populated from acq.MergedAttributes")
 	require.Equal(t, tmplHash, rec.TemplateHash, "template_hash must be threaded through from acq.TemplateHash")
-	require.Empty(t, rec.ParentRunID)
+	require.Empty(t, rec.ParentNodeRunID)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(row.Record, &raw))
 	_, hasParent := raw["parent_run_id"]

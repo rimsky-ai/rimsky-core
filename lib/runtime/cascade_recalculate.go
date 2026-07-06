@@ -119,30 +119,30 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	}
 	// @concept: executor
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		var priorDispatchID *shared.UUID
+		var priorNodeRunID *shared.UUID
 		inFlightTarget := false
 		if inFlightID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, target.ID, runScopeID); err != nil {
 			return err
 		} else if ok {
 			idCopy := inFlightID
-			priorDispatchID = &idCopy
+			priorNodeRunID = &idCopy
 			inFlightTarget = true
 		}
-		if priorDispatchID == nil {
+		if priorNodeRunID == nil {
 			recentID, ok, err := args.Queue.GetMostRecentRunForNodeInScope(ctx, tx, target.ID, runScopeID)
 			if err != nil {
 				return fmt.Errorf("recalculate prior lookup: %w", err)
 			}
 			if ok && recentID != (shared.UUID{}) {
 				idCopy := recentID
-				priorDispatchID = &idCopy
+				priorNodeRunID = &idCopy
 			}
 		}
 		var scratchInline []byte
 		var scratchHandle, scratchBackend string
-		if !inFlightTarget && priorDispatchID != nil && *priorDispatchID != (shared.UUID{}) {
+		if !inFlightTarget && priorNodeRunID != nil && *priorNodeRunID != (shared.UUID{}) {
 			var lerr error
-			scratchInline, scratchHandle, scratchBackend, lerr = args.Queue.LoadScratchInTx(ctx, tx, *priorDispatchID)
+			scratchInline, scratchHandle, scratchBackend, lerr = args.Queue.LoadScratchInTx(ctx, tx, *priorNodeRunID)
 			if lerr != nil {
 				return fmt.Errorf("load prior scratch: %w", lerr)
 			}
@@ -154,7 +154,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			EnqueuedAt:                  args.Clock.Now(),
 			FrameID:                     *runningFrID,
 			RunScopeID:                  runScopeID,
-			PriorDispatchID:             priorDispatchID,
+			PriorNodeRunID:              priorNodeRunID,
 			PriorDispatchDisposition:    "recalculate",
 			InitialScratchInline:        scratchInline,
 			InitialScratchHandle:        scratchHandle,

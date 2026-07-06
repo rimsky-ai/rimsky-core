@@ -23,9 +23,9 @@ import (
 // @decision: mode-default-most-recent
 func evaluateGatesAfterDrain(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	frameID, senderRunID foundationshared.UUID,
+	frameID, senderNodeRunID foundationshared.UUID,
 ) error {
-	receiverIDs, err := args.Persist.WaitSet().ListPendingReceiversForDrainedSender(ctx, frameID, senderRunID, tx)
+	receiverIDs, err := args.Persist.WaitSet().ListPendingReceiversForDrainedSender(ctx, frameID, senderNodeRunID, tx)
 	if err != nil {
 		return fmt.Errorf("evaluateGatesAfterDrain: list receivers: %w", err)
 	}
@@ -41,16 +41,16 @@ func evaluateGatesAfterDrain(
 // @concept: cascade-mode
 // @decision: mode-default-most-recent
 func evaluateOneGate(
-	ctx context.Context, args RunArgs, tx persistence.Tx, receiverRunID foundationshared.UUID,
+	ctx context.Context, args RunArgs, tx persistence.Tx, receiverNodeRunID foundationshared.UUID,
 ) error {
-	row, err := args.Persist.Nodes().GetRunForGate(ctx, tx, receiverRunID)
+	row, err := args.Persist.Nodes().GetRunForGate(ctx, tx, receiverNodeRunID)
 	if err != nil {
 		return fmt.Errorf("get run: %w", err)
 	}
 	if row == nil || row.State != cascade.NodeStatePending {
 		return nil
 	}
-	undrained, err := args.Persist.WaitSet().HasUndrainedRowsForReceiver(ctx, row.FrameID, row.RunID, tx)
+	undrained, err := args.Persist.WaitSet().HasUndrainedRowsForReceiver(ctx, row.FrameID, row.NodeRunID, tx)
 	if err != nil {
 		return fmt.Errorf("undrained probe: %w", err)
 	}
@@ -84,22 +84,22 @@ func evaluateOneGate(
 		return fmt.Errorf("mode rule: %w", err)
 	}
 	if drop {
-		return args.Persist.Nodes().DropPendingRun(ctx, tx, row.RunID)
+		return args.Persist.Nodes().DropPendingRun(ctx, tx, row.NodeRunID)
 	}
-	advancedSibling, err := args.Persist.Nodes().HasAdvancedSiblingInScope(ctx, tx, row.NodeID, row.RunScopeID, row.RunID)
+	advancedSibling, err := args.Persist.Nodes().HasAdvancedSiblingInScope(ctx, tx, row.NodeID, row.RunScopeID, row.NodeRunID)
 	if err != nil {
 		return fmt.Errorf("advanced sibling probe: %w", err)
 	}
 	if advancedSibling {
 		return nil
 	}
-	if err := args.Persist.NodeAttributes().Upsert(ctx, row.RunID, row.NodeID, resolved, tx); err != nil {
+	if err := args.Persist.NodeAttributes().Upsert(ctx, row.NodeRunID, row.NodeID, resolved, tx); err != nil {
 		return fmt.Errorf("seed live bag: %w", err)
 	}
-	if err := args.Persist.NodeAttributes().SetDispatchInputBag(ctx, tx, row.RunID, row.NodeID, resolved); err != nil {
+	if err := args.Persist.NodeAttributes().SetDispatchInputBag(ctx, tx, row.NodeRunID, row.NodeID, resolved); err != nil {
 		return fmt.Errorf("persist dispatch bag: %w", err)
 	}
-	return args.Persist.Nodes().TransitionPendingToStale(ctx, tx, row.RunID, args.Clock.Now())
+	return args.Persist.Nodes().TransitionPendingToStale(ctx, tx, row.NodeRunID, args.Clock.Now())
 }
 
 // @concept: attribute
@@ -149,11 +149,11 @@ func routeSubstitutionFailureAtGate(
 	}, tx); err != nil {
 		return fmt.Errorf("route substitution failure: append event: %w", err)
 	}
-	if err := args.Persist.Nodes().TransitionPendingToStale(ctx, tx, row.RunID, args.Clock.Now()); err != nil {
+	if err := args.Persist.Nodes().TransitionPendingToStale(ctx, tx, row.NodeRunID, args.Clock.Now()); err != nil {
 		return fmt.Errorf("route substitution failure: pending->stale: %w", err)
 	}
 	acq := &acquisition{
-		DispatchID: row.RunID,
+		NodeRunID:  row.NodeRunID,
 		NodeID:     row.NodeID,
 		InstanceID: receiverNode.InstanceID,
 		NodeType:   receiverNode.NodeType,
@@ -196,7 +196,7 @@ func buildResolvedBagAtGateEvalCarry(
 	if schema == nil {
 		return map[string]any{}, nil
 	}
-	deps, err := BuildAttributeDeps(ctx, tx, args, row.RunID, row.FrameID)
+	deps, err := BuildAttributeDeps(ctx, tx, args, row.NodeRunID, row.FrameID)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +321,7 @@ func loadReceiverCarryForward(
 	if prior == nil {
 		return map[string]any{}, nil
 	}
-	priorBag, err := args.Persist.NodeAttributes().GetByRun(ctx, prior.RunID, tx)
+	priorBag, err := args.Persist.NodeAttributes().GetByRun(ctx, prior.NodeRunID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("prior attrs: %w", err)
 	}
@@ -379,7 +379,7 @@ func modeDropIfPriorEqual(
 		return false, fmt.Errorf("prior stale: %w", err)
 	}
 	if priorStale != nil {
-		return bagsEqual(ctx, args, tx, priorStale.RunID, bag)
+		return bagsEqual(ctx, args, tx, priorStale.NodeRunID, bag)
 	}
 	if !includeSettled {
 		return false, nil
@@ -391,7 +391,7 @@ func modeDropIfPriorEqual(
 	if priorSettled == nil {
 		return false, nil
 	}
-	return bagsEqual(ctx, args, tx, priorSettled.RunID, bag)
+	return bagsEqual(ctx, args, tx, priorSettled.NodeRunID, bag)
 }
 
 // @concept: cascade

@@ -38,7 +38,7 @@ func testListRunsForInstanceByStates(t *testing.T, d persistence.Database) {
 	}
 
 	rows := list("stale-state", fix.InstanceID, []cascade.NodeState{cascade.NodeStateStale})
-	if len(rows) != 1 || rows[0].RunID != runID {
+	if len(rows) != 1 || rows[0].NodeRunID != runID {
 		t.Errorf("stale-state: rows=%+v want one row for runID=%s", rows, runID)
 	}
 
@@ -48,7 +48,7 @@ func testListRunsForInstanceByStates(t *testing.T, d persistence.Database) {
 
 	if rows := list("multi-state", fix.InstanceID, []cascade.NodeState{
 		cascade.NodeStateRunning, cascade.NodeStateStale, cascade.NodeStateHeld, cascade.NodeStateParked,
-	}); len(rows) != 1 || rows[0].RunID != runID {
+	}); len(rows) != 1 || rows[0].NodeRunID != runID {
 		t.Errorf("multi-state: rows=%+v want one row for runID=%s", rows, runID)
 	}
 

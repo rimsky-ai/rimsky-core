@@ -38,7 +38,7 @@ func applyTerminalScratchInTx(
 			if args.Logger != nil {
 				args.Logger.Warn("applyTerminalScratchInTx: blob spill failed; falling back to inline",
 					"node_id", acq.NodeID.String(),
-					"dispatch_id", acq.DispatchID.String(),
+					"dispatch_id", acq.NodeRunID.String(),
 					"error", err.Error())
 			}
 			inline = scratch
@@ -49,7 +49,7 @@ func applyTerminalScratchInTx(
 	} else {
 		inline = scratch
 	}
-	if err := args.Queue.WriteScratchInTx(ctx, tx, acq.DispatchID, inline, handle, handleBackend); err != nil {
+	if err := args.Queue.WriteScratchInTx(ctx, tx, acq.NodeRunID, inline, handle, handleBackend); err != nil {
 		return fmt.Errorf("applyTerminalScratchInTx: %w", err)
 	}
 	return nil

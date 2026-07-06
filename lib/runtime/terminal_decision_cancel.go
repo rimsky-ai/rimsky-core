@@ -83,7 +83,7 @@ func cancelInFlightSiblings(
 			hint.FrameID = *sib.FrameID
 		}
 		if sib.NodeRunID != nil {
-			hint.RunID = *sib.NodeRunID
+			hint.NodeRunID = *sib.NodeRunID
 		}
 		if acquirer, aErr := args.Persist.Nodes().Get(ctx, sib.HolderNodeID, tx); aErr == nil && acquirer != nil {
 			hint.InstanceID = acquirer.InstanceID
@@ -156,7 +156,7 @@ func cancelDescendantClaims(
 			hint.FrameID = *d.FrameID
 		}
 		if d.NodeRunID != nil {
-			hint.RunID = *d.NodeRunID
+			hint.NodeRunID = *d.NodeRunID
 		}
 		if acquirer, aErr := args.Persist.Nodes().Get(ctx, d.HolderNodeID, tx); aErr == nil && acquirer != nil {
 			hint.InstanceID = acquirer.InstanceID

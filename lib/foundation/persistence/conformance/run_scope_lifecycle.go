@@ -50,21 +50,21 @@ func testRunScopeCreate_MainAndChild(t *testing.T, d persistence.Database) {
 	if got.ParentRunScopeID != nil {
 		t.Fatalf("main scope: parent_run_scope_id = %v, want nil", got.ParentRunScopeID)
 	}
-	if got.ParentRunID != nil {
-		t.Fatalf("main scope: parent_run_id = %v, want nil", got.ParentRunID)
+	if got.ParentNodeRunID != nil {
+		t.Fatalf("main scope: parent_run_id = %v, want nil", got.ParentNodeRunID)
 	}
 	if got.GraphName != spec.MainGraphName {
 		t.Fatalf("main scope: graph_name = %q, want %q", got.GraphName, spec.MainGraphName)
 	}
 
-	parentRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+	parentNodeRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
 	childScopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               childScopeID,
 			ParentRunScopeID: &mainScopeID,
-			ParentRunID:      &parentRunID,
+			ParentNodeRunID:  &parentNodeRunID,
 			GraphName:        "subgraph",
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "part-a",
@@ -86,8 +86,8 @@ func testRunScopeCreate_MainAndChild(t *testing.T, d persistence.Database) {
 	if got.ParentRunScopeID == nil || *got.ParentRunScopeID != mainScopeID {
 		t.Fatalf("child scope: parent_run_scope_id = %v, want %v", got.ParentRunScopeID, mainScopeID)
 	}
-	if got.ParentRunID == nil || *got.ParentRunID != parentRunID {
-		t.Fatalf("child scope: parent_run_id = %v, want %v", got.ParentRunID, parentRunID)
+	if got.ParentNodeRunID == nil || *got.ParentNodeRunID != parentNodeRunID {
+		t.Fatalf("child scope: parent_run_id = %v, want %v", got.ParentNodeRunID, parentNodeRunID)
 	}
 }
 
@@ -190,14 +190,14 @@ func testRunScopeFanoutPartitionUniqueness(t *testing.T, d persistence.Database)
 		t.Fatalf("Create main: %v", err)
 	}
 
-	parentRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+	parentNodeRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
 	firstID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               firstID,
 			ParentRunScopeID: &mainScopeID,
-			ParentRunID:      &parentRunID,
+			ParentNodeRunID:  &parentNodeRunID,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "key-a",
@@ -211,7 +211,7 @@ func testRunScopeFanoutPartitionUniqueness(t *testing.T, d persistence.Database)
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               secondID,
 			ParentRunScopeID: &mainScopeID,
-			ParentRunID:      &parentRunID,
+			ParentNodeRunID:  &parentNodeRunID,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "key-a",
@@ -243,7 +243,7 @@ func testRunScopeListParentChain(t *testing.T, d persistence.Database) {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               midID,
 			ParentRunScopeID: &mainID,
-			ParentRunID:      &parent1,
+			ParentNodeRunID:  &parent1,
 			GraphName:        "subgraph-mid",
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "",
@@ -258,7 +258,7 @@ func testRunScopeListParentChain(t *testing.T, d persistence.Database) {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               leafID,
 			ParentRunScopeID: &midID,
-			ParentRunID:      &parent2,
+			ParentNodeRunID:  &parent2,
 			GraphName:        "subgraph-leaf",
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "",

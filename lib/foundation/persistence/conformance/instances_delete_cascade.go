@@ -37,7 +37,7 @@ func testInstancesDeleteCascadeRunScopeTree(
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               fanoutScopeID,
 			ParentRunScopeID: &fix.MainRunScopeID,
-			ParentRunID:      &mainScopeRunID,
+			ParentNodeRunID:  &mainScopeRunID,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "part-a",
@@ -48,15 +48,15 @@ func testInstancesDeleteCascadeRunScopeTree(
 
 	fanoutRunID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
-			RunID:        fanoutRunID,
+		return store.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+			NodeRunID:    fanoutRunID,
 			NodeID:       fix.NodeID,
 			FrameID:      fix.FrameID,
 			RunScopeID:   fanoutScopeID,
 			ExecutorName: "test-executor",
 		})
 	}); err != nil {
-		t.Fatalf("CreateChildRun fanout: %v", err)
+		t.Fatalf("CreateChildNodeRun fanout: %v", err)
 	}
 
 	subgraphScopeID := shared.UUID(uuid.New())
@@ -64,7 +64,7 @@ func testInstancesDeleteCascadeRunScopeTree(
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               subgraphScopeID,
 			ParentRunScopeID: &fanoutScopeID,
-			ParentRunID:      &fanoutRunID,
+			ParentNodeRunID:  &fanoutRunID,
 			GraphName:        "subgraph",
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "",
@@ -75,15 +75,15 @@ func testInstancesDeleteCascadeRunScopeTree(
 
 	subgraphRunID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
-			RunID:        subgraphRunID,
+		return store.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+			NodeRunID:    subgraphRunID,
 			NodeID:       fix.NodeID,
 			FrameID:      fix.FrameID,
 			RunScopeID:   subgraphScopeID,
 			ExecutorName: "test-executor",
 		})
 	}); err != nil {
-		t.Fatalf("CreateChildRun subgraph: %v", err)
+		t.Fatalf("CreateChildNodeRun subgraph: %v", err)
 	}
 
 	parentClaimHandleID := shared.UUID(uuid.New())
@@ -122,9 +122,9 @@ func testInstancesDeleteCascadeRunScopeTree(
 			return err
 		}
 		return store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:            holderID,
-			ClaimHandleID: childClaimHandleID,
-			HolderRunID:   subgraphRunID,
+			ID:              holderID,
+			ClaimHandleID:   childClaimHandleID,
+			HolderNodeRunID: subgraphRunID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("seed claim handles + holder: %v", err)

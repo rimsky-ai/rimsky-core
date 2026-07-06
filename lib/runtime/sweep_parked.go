@@ -105,7 +105,7 @@ func sweepParkedByReason(ctx context.Context, args ParkedSweepArgs, now time.Tim
 			}
 			var runScopeID shared.UUID
 			if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				rt, err := args.Persist.RunTree().GetByID(ctx, tx, d.DispatchID)
+				rt, err := args.Persist.NodeRunTree().GetByID(ctx, tx, d.NodeRunID)
 				if err != nil || rt == nil {
 					return err
 				}
@@ -157,7 +157,7 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 	}
 	var runScopeID shared.UUID
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rt, err := args.Persist.RunTree().GetByID(ctx, tx, row.DispatchID)
+		rt, err := args.Persist.NodeRunTree().GetByID(ctx, tx, row.NodeRunID)
 		if err != nil || rt == nil {
 			return err
 		}
@@ -167,17 +167,17 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 		return err
 	}
 	if runScopeID == (shared.UUID{}) {
-		return fmt.Errorf("failOverdueParkedRow: no run scope for parked run %s", row.DispatchID)
+		return fmt.Errorf("failOverdueParkedRow: no run scope for parked run %s", row.NodeRunID)
 	}
 	var post postCommitFn
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		parkTimeoutSig := "terminal/error/park_timeout"
-		if err := args.Persist.Nodes().UpdateState(ctx, row.DispatchID,
+		if err := args.Persist.Nodes().UpdateState(ctx, row.NodeRunID,
 			cascade.NodeStateFailed, cascade.ReasonParkTimeout, &parkTimeoutSig, tx); err != nil {
 			return err
 		}
 		// @concept: wait-set
-		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, row.FrameID, row.DispatchID, tx); err != nil {
+		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, row.FrameID, row.NodeRunID, tx); err != nil {
 			return err
 		}
 		if args.ClaimHandles != nil && args.StoreRegistry != nil {

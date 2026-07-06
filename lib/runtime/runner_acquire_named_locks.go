@@ -68,11 +68,11 @@ func acquireNamedLock(
 	}
 	rowID := uuid.New()
 	frameID := cand.FrameID
-	dispatchID := cand.DispatchID
+	nodeRunID := cand.NodeRunID
 	nameCopy := spec.Name
 	in := persistence.ClaimHandleInsertInput{
 		ID:                 rowID,
-		NodeRunID:          &dispatchID,
+		NodeRunID:          &nodeRunID,
 		LockKind:           persistence.LockKindNamed,
 		LockName:           &nameCopy,
 		HolderSupervisorID: args.SupervisorID,

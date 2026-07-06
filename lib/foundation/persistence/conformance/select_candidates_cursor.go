@@ -60,7 +60,7 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 				AcceptedClaimProducers: []string{},
 				Limit:                  limit,
 				CursorEnqueuedAfter:    curAt,
-				CursorAfterDispatchID:  curID,
+				CursorAfterNodeRunID:   curID,
 			})
 			if err != nil {
 				return err
@@ -85,9 +85,9 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 				i, cur.EnqueuedAt, prev.EnqueuedAt)
 		}
 		if cur.EnqueuedAt.Equal(prev.EnqueuedAt) &&
-			bytes.Compare(cur.DispatchID[:], prev.DispatchID[:]) <= 0 {
+			bytes.Compare(cur.NodeRunID[:], prev.NodeRunID[:]) <= 0 {
 			t.Fatalf("equal-timestamp id tiebreak violated at index %d: %s after %s",
-				i, cur.DispatchID, prev.DispatchID)
+				i, cur.NodeRunID, prev.NodeRunID)
 		}
 	}
 	for i := 0; i < 3; i++ {
@@ -103,7 +103,7 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 	}
 
 	sameCandidate := func(a, b persistence.Candidate) bool {
-		return a.DispatchID == b.DispatchID && a.NodeID == b.NodeID && a.EnqueuedAt.Equal(b.EnqueuedAt)
+		return a.NodeRunID == b.NodeRunID && a.NodeID == b.NodeID && a.EnqueuedAt.Equal(b.EnqueuedAt)
 	}
 	assertSuffix := func(got, want []persistence.Candidate, op string) {
 		t.Helper()
@@ -113,14 +113,14 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 		for i := range want {
 			if !sameCandidate(got[i], want[i]) {
 				t.Fatalf("%s: candidate %d mismatch: got %s@%v want %s@%v",
-					op, i, got[i].DispatchID, got[i].EnqueuedAt, want[i].DispatchID, want[i].EnqueuedAt)
+					op, i, got[i].NodeRunID, got[i].EnqueuedAt, want[i].NodeRunID, want[i].EnqueuedAt)
 			}
 		}
 	}
 
 	for i := range full {
-		got := selectPage(100, full[i].EnqueuedAt, full[i].DispatchID)
-		assertSuffix(got, full[i+1:], "suffix after row "+full[i].DispatchID.String())
+		got := selectPage(100, full[i].EnqueuedAt, full[i].NodeRunID)
+		assertSuffix(got, full[i+1:], "suffix after row "+full[i].NodeRunID.String())
 	}
 
 	var paged []persistence.Candidate
@@ -135,17 +135,17 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 		}
 		paged = append(paged, page...)
 		last := page[len(page)-1]
-		curAt, curID = last.EnqueuedAt, last.DispatchID
+		curAt, curID = last.EnqueuedAt, last.NodeRunID
 		if len(paged) > len(full) {
 			t.Fatalf("paging: returned more rows than exist (duplicate rows)")
 		}
 	}
 	assertSuffix(paged, full, "limit-2 paging")
 
-	got := selectPage(100, full[2].EnqueuedAt, full[2].DispatchID)
+	got := selectPage(100, full[2].EnqueuedAt, full[2].NodeRunID)
 	assertSuffix(got, full[3:], "skip equal-timestamp batch")
 
-	if got := selectPage(100, full[4].EnqueuedAt, full[4].DispatchID); len(got) != 0 {
+	if got := selectPage(100, full[4].EnqueuedAt, full[4].NodeRunID); len(got) != 0 {
 		t.Fatalf("cursor past the last row returned %d candidates, want 0", len(got))
 	}
 }

@@ -46,31 +46,31 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("seed nodes: %v", err)
 	}
-	receiverRunID := seedConformanceRunForNode(ctx, t, d, receiverID, fix.FrameID)
+	receiverNodeRunID := seedConformanceRunForNode(ctx, t, d, receiverID, fix.FrameID)
 	senderARunID := seedConformanceRunForNode(ctx, t, d, senderAID, fix.FrameID)
 	senderBRunID := seedConformanceRunForNode(ctx, t, d, senderBID, fix.FrameID)
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
-			SenderRunID: senderARunID,
-			TopicKind:   "state",
+			FrameID: fix.FrameID, ReceiverNodeRunID: receiverNodeRunID,
+			SenderNodeRunID: senderARunID,
+			TopicKind:       "state",
 		}, tx); err != nil {
 			return err
 		}
 		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
-			SenderRunID: senderARunID,
-			TopicKind:   "state",
+			FrameID: fix.FrameID, ReceiverNodeRunID: receiverNodeRunID,
+			SenderNodeRunID: senderARunID,
+			TopicKind:       "state",
 		}, tx); err != nil {
 			return err
 		}
 		filter, _ := json.Marshal(map[string]string{"name": "result"})
 		return store.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
-			SenderRunID: senderBRunID,
-			TopicKind:   "attribute",
-			TopicFilter: filter,
+			FrameID: fix.FrameID, ReceiverNodeRunID: receiverNodeRunID,
+			SenderNodeRunID: senderBRunID,
+			TopicKind:       "attribute",
+			TopicFilter:     filter,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("wait_set insert: %v", err)
@@ -78,7 +78,7 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 
 	var byReceiver []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverRunID, tx)
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverNodeRunID, tx)
 		byReceiver = rows
 		return err
 	}); err != nil {
@@ -112,7 +112,7 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	}
 	var afterDrainA []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverRunID, tx)
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverNodeRunID, tx)
 		afterDrainA = rows
 		return err
 	}); err != nil {
@@ -123,7 +123,7 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	}
 	var senderADrained, senderBDrained *persistence.WaitSetRow
 	for i := range afterDrainA {
-		switch afterDrainA[i].SenderRunID {
+		switch afterDrainA[i].SenderNodeRunID {
 		case senderARunID:
 			senderADrained = &afterDrainA[i]
 		case senderBRunID:
@@ -151,14 +151,14 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	}
 	var afterReRun []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverRunID, tx)
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverNodeRunID, tx)
 		afterReRun = rows
 		return err
 	}); err != nil {
 		t.Fatalf("ListForReceiver after re-run: %v", err)
 	}
 	for _, r := range afterReRun {
-		if r.SenderRunID != senderARunID {
+		if r.SenderNodeRunID != senderARunID {
 			continue
 		}
 		if r.DrainedAt == nil || !r.DrainedAt.Equal(priorDrainedAt) {
@@ -190,7 +190,7 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 
 	var drainedAttrs []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		rows, err := store.WaitSet().ListDrainedAttributeRowsForReceiver(ctx, fix.FrameID, receiverRunID, tx)
+		rows, err := store.WaitSet().ListDrainedAttributeRowsForReceiver(ctx, fix.FrameID, receiverNodeRunID, tx)
 		drainedAttrs = rows
 		return err
 	}); err != nil {
@@ -199,8 +199,8 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	if len(drainedAttrs) != 1 {
 		t.Fatalf("ListDrainedAttributeRowsForReceiver: got %d rows want 1 (only the attribute-topic row should match)", len(drainedAttrs))
 	}
-	if drainedAttrs[0].SenderRunID != senderBRunID {
-		t.Fatalf("drained-attr row sender=%v want %v", drainedAttrs[0].SenderRunID, senderBRunID)
+	if drainedAttrs[0].SenderNodeRunID != senderBRunID {
+		t.Fatalf("drained-attr row sender=%v want %v", drainedAttrs[0].SenderNodeRunID, senderBRunID)
 	}
 	if drainedAttrs[0].TopicKind != "attribute" {
 		t.Fatalf("drained-attr row topic=%q want attribute", drainedAttrs[0].TopicKind)

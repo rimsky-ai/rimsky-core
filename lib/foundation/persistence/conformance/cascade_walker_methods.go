@@ -27,7 +27,7 @@ func testTwoLegClaimPromoteContract(t *testing.T, d persistence.Database) {
 	store := d.Tables()
 	q := d.Queue()
 
-	var dispatchID shared.UUID
+	var nodeRunID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
@@ -50,8 +50,8 @@ func testTwoLegClaimPromoteContract(t *testing.T, d persistence.Database) {
 		if len(cands) == 0 {
 			t.Fatalf("two-leg contract: candidate not surfaced")
 		}
-		dispatchID = cands[0].DispatchID
-		ok, err := q.ClaimDispatchRow(ctx, tx, dispatchID, "two-leg-sup")
+		nodeRunID = cands[0].NodeRunID
+		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, "two-leg-sup")
 		if err != nil {
 			return err
 		}
@@ -83,7 +83,7 @@ func testTwoLegClaimPromoteContract(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := q.PromoteClaimedToRunning(ctx, tx, dispatchID, "two-leg-sup")
+		_, err := q.PromoteClaimedToRunning(ctx, tx, nodeRunID, "two-leg-sup")
 		return err
 	}); err != nil {
 		t.Fatalf("two-leg contract: promote leg: %v", err)
@@ -138,8 +138,8 @@ func testCreateCascadePendingAndFindLatest(t *testing.T, d persistence.Database)
 	if found == nil {
 		t.Fatalf("FindLatestCascadePending returned nil after CreateCascadePending")
 	}
-	if found.RunID != pendingID {
-		t.Fatalf("FindLatestCascadePending returned %s want %s", found.RunID, pendingID)
+	if found.NodeRunID != pendingID {
+		t.Fatalf("FindLatestCascadePending returned %s want %s", found.NodeRunID, pendingID)
 	}
 	if found.State != cascade.NodeStatePending {
 		t.Fatalf("FindLatestCascadePending returned state %q want 'pending'", found.State)
@@ -194,8 +194,8 @@ func testCreateNonCascadeStaleCarriesForward(t *testing.T, d persistence.Databas
 		if latest == nil {
 			t.Fatalf("CreateNonCascadeStale: no latest run found")
 		}
-		priorRunID = latest.RunID
-		return store.NodeAttributes().Upsert(ctx, latest.RunID, fix.NodeID, priorData, tx)
+		priorRunID = latest.NodeRunID
+		return store.NodeAttributes().Upsert(ctx, latest.NodeRunID, fix.NodeID, priorData, tx)
 	}); err != nil {
 		t.Fatalf("seed prior run: %v", err)
 	}

@@ -61,13 +61,13 @@ func (s *Store) SetIdleTimeout(d time.Duration) {
 	s.idleTimeout = d
 }
 
-func (s *Store) RegisterDispatch(dispatchID string) {
+func (s *Store) RegisterDispatch(nodeRunID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec, ok := s.traces[dispatchID]
+	rec, ok := s.traces[nodeRunID]
 	if !ok {
 		rec = &traceRecord{}
-		s.traces[dispatchID] = rec
+		s.traces[nodeRunID] = rec
 	}
 	rec.registered = true
 }
@@ -95,18 +95,18 @@ func (s *Store) StreamTrace(req *genv1.StreamTraceRequest, stream genv1.Executor
 	if req.GetDispatchId() == "" {
 		return status.Error(codes.InvalidArgument, "dispatch_id required")
 	}
-	dispatchID := req.GetDispatchId()
-	sub, exists := s.subscribe(dispatchID)
+	nodeRunID := req.GetDispatchId()
+	sub, exists := s.subscribe(nodeRunID)
 	if !exists {
 		return stream.Send(TraceCompleteEvent())
 	}
-	defer s.unsubscribe(dispatchID, sub)
+	defer s.unsubscribe(nodeRunID, sub)
 	cursor := 0
 	s.mu.RLock()
 	idle := s.idleTimeout
 	s.mu.RUnlock()
 	for {
-		events, terminal := s.drainFrom(dispatchID, cursor)
+		events, terminal := s.drainFrom(nodeRunID, cursor)
 		cursor += len(events)
 		for _, ev := range events {
 			if err := stream.Send(ev); err != nil {
@@ -126,7 +126,7 @@ func (s *Store) StreamTrace(req *genv1.StreamTraceRequest, stream genv1.Executor
 		case <-stream.Context().Done():
 			return nil
 		case <-sub.done:
-			tail, _ := s.drainFrom(dispatchID, cursor)
+			tail, _ := s.drainFrom(nodeRunID, cursor)
 			for _, ev := range tail {
 				if err := stream.Send(ev); err != nil {
 					return err
@@ -140,38 +140,38 @@ func (s *Store) StreamTrace(req *genv1.StreamTraceRequest, stream genv1.Executor
 	}
 }
 
-func (s *Store) subscribe(dispatchID string) (*subscriber, bool) {
+func (s *Store) subscribe(nodeRunID string) (*subscriber, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.traces[dispatchID]; !ok {
+	if _, ok := s.traces[nodeRunID]; !ok {
 		return nil, false
 	}
 	sub := &subscriber{
 		wake: make(chan struct{}, 1),
 		done: make(chan struct{}),
 	}
-	if s.subs[dispatchID] == nil {
-		s.subs[dispatchID] = map[*subscriber]struct{}{}
+	if s.subs[nodeRunID] == nil {
+		s.subs[nodeRunID] = map[*subscriber]struct{}{}
 	}
-	s.subs[dispatchID][sub] = struct{}{}
+	s.subs[nodeRunID][sub] = struct{}{}
 	return sub, true
 }
 
-func (s *Store) unsubscribe(dispatchID string, sub *subscriber) {
+func (s *Store) unsubscribe(nodeRunID string, sub *subscriber) {
 	if sub == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if subs, ok := s.subs[dispatchID]; ok {
+	if subs, ok := s.subs[nodeRunID]; ok {
 		delete(subs, sub)
 	}
 }
 
-func (s *Store) drainFrom(dispatchID string, cursor int) ([]*genv1.TraceEvent, bool) {
+func (s *Store) drainFrom(nodeRunID string, cursor int) ([]*genv1.TraceEvent, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rec, ok := s.traces[dispatchID]
+	rec, ok := s.traces[nodeRunID]
 	if !ok {
 		return nil, true
 	}
@@ -183,15 +183,15 @@ func (s *Store) drainFrom(dispatchID string, cursor int) ([]*genv1.TraceEvent, b
 	return out, rec.terminal
 }
 
-func (s *Store) AppendEvent(dispatchID string, ev *genv1.TraceEvent) {
+func (s *Store) AppendEvent(nodeRunID string, ev *genv1.TraceEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec, ok := s.traces[dispatchID]
+	rec, ok := s.traces[nodeRunID]
 	if !ok || !rec.registered {
 		return
 	}
 	rec.events = append(rec.events, ev)
-	for sub := range s.subs[dispatchID] {
+	for sub := range s.subs[nodeRunID] {
 		select {
 		case sub.wake <- struct{}{}:
 		default:
@@ -199,9 +199,9 @@ func (s *Store) AppendEvent(dispatchID string, ev *genv1.TraceEvent) {
 	}
 }
 
-func (s *Store) MarkTerminal(dispatchID string) {
+func (s *Store) MarkTerminal(nodeRunID string) {
 	s.mu.Lock()
-	rec, ok := s.traces[dispatchID]
+	rec, ok := s.traces[nodeRunID]
 	if !ok || !rec.registered {
 		s.mu.Unlock()
 		return
@@ -212,8 +212,8 @@ func (s *Store) MarkTerminal(dispatchID string) {
 	}
 	rec.terminal = true
 	rec.terminalAt = time.Now()
-	subs := s.subs[dispatchID]
-	delete(s.subs, dispatchID)
+	subs := s.subs[nodeRunID]
+	delete(s.subs, nodeRunID)
 	s.mu.Unlock()
 	for sub := range subs {
 		close(sub.done)
@@ -230,10 +230,10 @@ func (s *Store) SweepEvicted(now time.Time) {
 	}
 }
 
-func (s *Store) forceTerminalAt(dispatchID string, at time.Time) {
+func (s *Store) forceTerminalAt(nodeRunID string, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if rec, ok := s.traces[dispatchID]; ok {
+	if rec, ok := s.traces[nodeRunID]; ok {
 		rec.terminalAt = at
 	}
 }
@@ -271,16 +271,16 @@ func MountTraceBridge(mux *http.ServeMux, store *Store) {
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/observability/v1/trace/")
 		isStream := strings.HasSuffix(path, "/stream")
-		dispatchID := strings.TrimSuffix(path, "/stream")
-		if dispatchID == "" || strings.Contains(dispatchID, "/") {
+		nodeRunID := strings.TrimSuffix(path, "/stream")
+		if nodeRunID == "" || strings.Contains(nodeRunID, "/") {
 			http.Error(w, "bad dispatch_id", http.StatusBadRequest)
 			return
 		}
 		if isStream {
-			HandleTraceStreamHTTP(w, r, store, dispatchID)
+			HandleTraceStreamHTTP(w, r, store, nodeRunID)
 			return
 		}
-		trace, err := store.GetTrace(r.Context(), &genv1.GetTraceRequest{DispatchId: dispatchID})
+		trace, err := store.GetTrace(r.Context(), &genv1.GetTraceRequest{DispatchId: nodeRunID})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -289,7 +289,7 @@ func MountTraceBridge(mux *http.ServeMux, store *Store) {
 	})
 }
 
-func HandleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, store *Store, dispatchID string) {
+func HandleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, store *Store, nodeRunID string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -305,18 +305,18 @@ func HandleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, store *Store,
 		}
 		return nil
 	}
-	sub, exists := store.subscribe(dispatchID)
+	sub, exists := store.subscribe(nodeRunID)
 	if !exists {
 		_ = send(TraceCompleteEvent())
 		return
 	}
-	defer store.unsubscribe(dispatchID, sub)
+	defer store.unsubscribe(nodeRunID, sub)
 	cursor := 0
 	store.mu.RLock()
 	idle := store.idleTimeout
 	store.mu.RUnlock()
 	for {
-		events, terminal := store.drainFrom(dispatchID, cursor)
+		events, terminal := store.drainFrom(nodeRunID, cursor)
 		cursor += len(events)
 		for _, ev := range events {
 			if err := send(ev); err != nil {
@@ -337,7 +337,7 @@ func HandleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, store *Store,
 		case <-r.Context().Done():
 			return
 		case <-sub.done:
-			tail, _ := store.drainFrom(dispatchID, cursor)
+			tail, _ := store.drainFrom(nodeRunID, cursor)
 			for _, ev := range tail {
 				if err := send(ev); err != nil {
 					return

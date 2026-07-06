@@ -27,13 +27,13 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	store := d.Tables()
 	q := d.Queue()
 
-	parentRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+	parentNodeRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	partitionScopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               partitionScopeID,
 			ParentRunScopeID: &fix.MainRunScopeID,
-			ParentRunID:      &parentRunID,
+			ParentNodeRunID:  &parentNodeRunID,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "part-recovery",
@@ -68,7 +68,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 		t.Fatalf("EnqueueInTx (original): %v", err)
 	}
 
-	var originalDispatchID shared.UUID
+	var originalNodeRunID shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
@@ -80,7 +80,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 		}
 		for _, c := range cands {
 			if c.NodeID == childNodeID {
-				originalDispatchID = c.DispatchID
+				originalNodeRunID = c.NodeRunID
 				return nil
 			}
 		}
@@ -93,17 +93,17 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	scratchFixture := []byte("scratch-bytes-fixture")
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, originalDispatchID, "sup-stale")
+		ok, err := q.ClaimDispatchRow(ctx, tx, originalNodeRunID, "sup-stale")
 		if err != nil {
 			return err
 		}
 		if !ok {
 			t.Fatalf("ClaimDispatchRow(original) did not claim")
 		}
-		if err := q.WriteScratchInTx(ctx, tx, originalDispatchID, scratchFixture, "", ""); err != nil {
+		if err := q.WriteScratchInTx(ctx, tx, originalNodeRunID, scratchFixture, "", ""); err != nil {
 			return err
 		}
-		if err := store.Nodes().UpdateState(ctx, originalDispatchID,
+		if err := store.Nodes().UpdateState(ctx, originalNodeRunID,
 			cascade.NodeStateFailed, cascade.ReasonInstanceKilled, nil, tx); err != nil {
 			return err
 		}
@@ -113,7 +113,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		scratchInline, scratchHandle, scratchBackend, lerr := q.LoadScratchInTx(ctx, tx, originalDispatchID)
+		scratchInline, scratchHandle, scratchBackend, lerr := q.LoadScratchInTx(ctx, tx, originalNodeRunID)
 		if lerr != nil {
 			return lerr
 		}
@@ -124,7 +124,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 			EnqueuedAt:                  time.Now().Add(-time.Second),
 			FrameID:                     fix.FrameID,
 			RunScopeID:                  partitionScopeID,
-			PriorDispatchID:             &originalDispatchID,
+			PriorNodeRunID:              &originalNodeRunID,
 			PriorDispatchDisposition:    "stale_recovery",
 			InitialScratchInline:        scratchInline,
 			InitialScratchHandle:        scratchHandle,
@@ -159,11 +159,11 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	if !found {
 		t.Fatalf("recovery dispatch not surfaced by SelectCandidates")
 	}
-	if got.PriorDispatchID == nil {
-		t.Fatalf("Candidate.PriorDispatchID = nil; want %v", originalDispatchID)
+	if got.PriorNodeRunID == nil {
+		t.Fatalf("Candidate.PriorNodeRunID = nil; want %v", originalNodeRunID)
 	}
-	if *got.PriorDispatchID != originalDispatchID {
-		t.Fatalf("Candidate.PriorDispatchID = %v; want %v", *got.PriorDispatchID, originalDispatchID)
+	if *got.PriorNodeRunID != originalNodeRunID {
+		t.Fatalf("Candidate.PriorNodeRunID = %v; want %v", *got.PriorNodeRunID, originalNodeRunID)
 	}
 	if got.PriorDispatchDisposition != "stale_recovery" {
 		t.Fatalf("Candidate.PriorDispatchDisposition = %q; want stale_recovery", got.PriorDispatchDisposition)
@@ -173,7 +173,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	var gotHandle, gotBackend string
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var lerr error
-		gotInline, gotHandle, gotBackend, lerr = q.LoadScratchInTx(ctx, tx, got.DispatchID)
+		gotInline, gotHandle, gotBackend, lerr = q.LoadScratchInTx(ctx, tx, got.NodeRunID)
 		return lerr
 	}); err != nil {
 		t.Fatalf("LoadScratchInTx (recovery): %v", err)

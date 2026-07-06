@@ -94,13 +94,13 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 		 LIMIT 1
 	`, []any{iid}, &partitionScopeID)
 
-	var dispatchID shared.UUID
+	var nodeRunID shared.UUID
 	require.Eventually(t, func() bool {
 		err := h.Pool.QueryRow(h.Ctx, `
 			SELECT id FROM rimsky_node_runs
 			 WHERE node_id = $1 AND run_scope_id = $2
 			   AND state IN ('running', 'held')
-		`, parentNode.ID, partitionScopeID).Scan(&dispatchID)
+		`, parentNode.ID, partitionScopeID).Scan(&nodeRunID)
 		return err == nil
 	}, 30*time.Second, 100*time.Millisecond,
 		"partition-child dispatch row should reach phase ∈ {active, held}")
@@ -131,7 +131,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 		var phase string
 		err := h.Pool.QueryRow(h.Ctx, `
 			SELECT state FROM rimsky_node_runs WHERE id = $1
-		`, dispatchID).Scan(&phase)
+		`, nodeRunID).Scan(&phase)
 		if err != nil {
 			return false
 		}
@@ -151,7 +151,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	reg.Register("ack-2", runtime.AsyncContext{
 		NodeID:       parentNode.ID,
 		InstanceID:   iid,
-		DispatchID:   dispatchID,
+		NodeRunID:    nodeRunID,
 		SupervisorID: "scenario-supervisor",
 		NodeType:     "fan-parent",
 		Executor:     "stub",
@@ -176,8 +176,8 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 }
 
 type callbackAckBody struct {
-	AckStatus         string  `json:"ack_status"`
-	CurrentDispatchID *string `json:"current_dispatch_id,omitempty"`
+	AckStatus        string  `json:"ack_status"`
+	CurrentNodeRunID *string `json:"current_dispatch_id,omitempty"`
 }
 
 func postCallbackBody(t *testing.T, url string, body []byte, timeout time.Duration) (int, []byte) {

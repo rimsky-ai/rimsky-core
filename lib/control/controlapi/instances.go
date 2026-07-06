@@ -679,12 +679,12 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			}
 			for _, r := range runs {
 				sig := "terminal/error/instance_killed"
-				if err := deps.Persist.Nodes().UpdateState(ctx, r.RunID,
+				if err := deps.Persist.Nodes().UpdateState(ctx, r.NodeRunID,
 					cascade.NodeStateFailed, cascade.ReasonInstanceKilled, &sig, tx); err != nil {
 					return err
 				}
 				if r.State == cascade.NodeStateHeld {
-					failHeldHolderClaims(ctx, deps, r.RunID, tx)
+					failHeldHolderClaims(ctx, deps, r.NodeRunID, tx)
 				}
 				abandonInFlightClaims(ctx, deps, r.NodeID, tx)
 			}
@@ -741,15 +741,15 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 
 // @concept: claim-handle
 // @decision: held-as-state-not-phase
-func failHeldHolderClaims(ctx context.Context, deps AppDeps, holderRunID foundationshared.UUID, tx persistence.Tx) {
+func failHeldHolderClaims(ctx context.Context, deps AppDeps, holderNodeRunID foundationshared.UUID, tx persistence.Tx) {
 	if deps.Persist.ClaimHolders() == nil {
 		return
 	}
-	holders, err := deps.Persist.ClaimHolders().ListByHolderRun(ctx, holderRunID, tx)
+	holders, err := deps.Persist.ClaimHolders().ListByHolderRun(ctx, holderNodeRunID, tx)
 	if err != nil {
 		if deps.Logger != nil {
 			deps.Logger.Warn("handleTerminateInstance: list claim holders for held kill failed",
-				"holder_run_id", holderRunID.String(), "error", err.Error())
+				"holder_run_id", holderNodeRunID.String(), "error", err.Error())
 		}
 		return
 	}

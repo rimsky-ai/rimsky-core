@@ -70,9 +70,9 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if q.tables == nil {
 		return fmt.Errorf("postgres.Enqueue: queue not wired with tables (cannot snapshot dispatch_input_bag)")
 	}
-	var priorID any
-	if req.PriorDispatchID != nil {
-		priorID = *req.PriorDispatchID
+	var priorRunPtr any
+	if req.PriorNodeRunID != nil {
+		priorRunPtr = *req.PriorNodeRunID
 	}
 	priorDisposition := nullableText(req.PriorDispatchDisposition)
 	creationReason := req.CreationReason
@@ -92,7 +92,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		 RETURNING id`,
 		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID, req.RunScopeID,
 		string(creationReason),
-		priorID, priorDisposition,
+		priorRunPtr, priorDisposition,
 		nilIfEmpty(req.InitialScratchInline), nilIfEmptyStr(req.InitialScratchHandle), nilIfEmptyStr(req.InitialScratchHandleBackend),
 	).Scan(&newRunID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -188,7 +188,7 @@ func (q *queueImpl) SelectCandidates(
 		  LIMIT $3
 		  FOR UPDATE OF d SKIP LOCKED`,
 		acceptedClaimProducers, acceptedExecutors, limit, req.LateBindExecutorProxy, req.LateBindClaimProducerProxy,
-		req.CursorEnqueuedAfter, req.CursorAfterDispatchID,
+		req.CursorEnqueuedAfter, req.CursorAfterNodeRunID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("postgres.SelectCandidates: %w", err)
@@ -200,14 +200,14 @@ func (q *queueImpl) SelectCandidates(
 		var (
 			c                persistence.Candidate
 			executorName     *string
-			priorID          *shared.UUID
+			priorRunPtr      *shared.UUID
 			priorDisposition *string
 			preClaimState    *string
 		)
 		if err := rows.Scan(
-			&c.DispatchID, &c.NodeID, &c.NodeType,
+			&c.NodeRunID, &c.NodeID, &c.NodeType,
 			&executorName, &c.RequiredClaimProducers, &c.EnqueuedAt, &c.FrameID,
-			&priorID, &priorDisposition, &preClaimState,
+			&priorRunPtr, &priorDisposition, &preClaimState,
 		); err != nil {
 			return nil, fmt.Errorf("postgres.SelectCandidates: scan: %w", err)
 		}
@@ -217,7 +217,7 @@ func (q *queueImpl) SelectCandidates(
 		if c.RequiredClaimProducers == nil {
 			c.RequiredClaimProducers = []string{}
 		}
-		c.PriorDispatchID = priorID
+		c.PriorNodeRunID = priorRunPtr
 		if priorDisposition != nil {
 			c.PriorDispatchDisposition = *priorDisposition
 		}
@@ -233,7 +233,7 @@ func (q *queueImpl) SelectCandidates(
 }
 
 func (q *queueImpl) ClaimDispatchRow(
-	ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, supervisorID string,
+	ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, supervisorID string,
 ) (bool, error) {
 	if tx == nil {
 		return false, errors.New("postgres.ClaimDispatchRow: tx required")
@@ -249,7 +249,7 @@ func (q *queueImpl) ClaimDispatchRow(
 		         AND other.id <> rimsky_node_runs.id
 		         AND (other.claimed_by IS NOT NULL OR other.state IN ('held','parked'))
 		    )`,
-		supervisorID, dispatchID,
+		supervisorID, nodeRunID,
 	)
 	if err != nil {
 		return false, fmt.Errorf("postgres.ClaimDispatchRow: %w", err)
@@ -258,7 +258,7 @@ func (q *queueImpl) ClaimDispatchRow(
 }
 
 func (q *queueImpl) PromoteClaimedToRunning(
-	ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, supervisorID string,
+	ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, supervisorID string,
 ) (bool, error) {
 	if tx == nil {
 		return false, errors.New("postgres.PromoteClaimedToRunning: tx required")
@@ -267,7 +267,7 @@ func (q *queueImpl) PromoteClaimedToRunning(
 		`UPDATE rimsky_node_runs
 		    SET state = 'running', last_progress_at = NOW()
 		  WHERE id = $1 AND claimed_by = $2 AND state = 'stale'`,
-		dispatchID, supervisorID,
+		nodeRunID, supervisorID,
 	)
 	if err != nil {
 		return false, fmt.Errorf("postgres.PromoteClaimedToRunning: %w", err)
@@ -275,7 +275,7 @@ func (q *queueImpl) PromoteClaimedToRunning(
 	return cmd.RowsAffected() == 1, nil
 }
 
-func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
+func (q *queueImpl) Complete(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.pool.Exec(ctx,
 			`UPDATE rimsky_node_runs
@@ -283,7 +283,7 @@ func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expect
 			        active_terminal_at = NOW()
 			  WHERE id = $1
 			    AND claimed_by = $2`,
-			dispatchID, expectedClaimedBy,
+			nodeRunID, expectedClaimedBy,
 		)
 		return err
 	}
@@ -292,7 +292,7 @@ func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expect
 		    SET claimed_by = NULL,
 		        active_terminal_at = NOW()
 		  WHERE id = $1`,
-		dispatchID,
+		nodeRunID,
 	)
 	return err
 }
@@ -364,13 +364,13 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 	return out, nil
 }
 
-func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
+func (q *queueImpl) ReleaseClaim(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.pool.Exec(ctx,
 			`UPDATE rimsky_node_runs
 			    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
 			  WHERE id = $1 AND claimed_by = $2`,
-			dispatchID, expectedClaimedBy,
+			nodeRunID, expectedClaimedBy,
 		)
 		return err
 	}
@@ -378,19 +378,19 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
 		  WHERE id = $1`,
-		dispatchID,
+		nodeRunID,
 	)
 	return err
 }
 
-func (q *queueImpl) GetDispatchNode(ctx context.Context, dispatchID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+func (q *queueImpl) GetDispatchNode(ctx context.Context, nodeRunID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
 	var (
 		nodeID    shared.UUID
 		claimedBy *string
 	)
 	err := q.pool.QueryRow(ctx,
 		`SELECT node_id, claimed_by FROM rimsky_node_runs WHERE id = $1`,
-		dispatchID,
+		nodeRunID,
 	).Scan(&nodeID, &claimedBy)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -404,11 +404,11 @@ func (q *queueImpl) GetDispatchNode(ctx context.Context, dispatchID shared.UUID)
 	return nodeID, persistence.ClaimOwnership{Kind: "claimed_by", SupervisorID: *claimedBy}, nil
 }
 
-func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (persistence.ClaimOwnership, error) {
+func (q *queueImpl) GetClaimedBy(ctx context.Context, nodeRunID shared.UUID) (persistence.ClaimOwnership, error) {
 	var claimedBy *string
 	err := q.pool.QueryRow(ctx,
 		`SELECT claimed_by FROM rimsky_node_runs WHERE id = $1`,
-		dispatchID,
+		nodeRunID,
 	).Scan(&claimedBy)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

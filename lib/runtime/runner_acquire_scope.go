@@ -15,8 +15,8 @@ import (
 )
 
 type acqScopeTuple struct {
-	ParentRunID  *shared.UUID
-	PartitionKey string
+	ParentNodeRunID *shared.UUID
+	PartitionKey    string
 }
 
 func resolveAcqScope(ctx context.Context, args RunArgs, acq *acquisition) acqScopeTuple {
@@ -58,9 +58,9 @@ func resolveAcqScopeInTx(
 		return acqScopeTuple{}, nil
 	}
 	out := acqScopeTuple{PartitionKey: rs.PartitionKey}
-	if rs.ParentRunID != nil {
-		pid := *rs.ParentRunID
-		out.ParentRunID = &pid
+	if rs.ParentNodeRunID != nil {
+		pid := *rs.ParentNodeRunID
+		out.ParentNodeRunID = &pid
 	}
 	return out, nil
 }

@@ -67,10 +67,10 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	require.NoError(t, err)
 	defer rows.Close()
 	for rows.Next() {
-		var dispatchID, frameID uuid.UUID
-		require.NoError(t, rows.Scan(&dispatchID, &frameID))
+		var nodeRunID, frameID uuid.UUID
+		require.NoError(t, rows.Scan(&nodeRunID, &frameID))
 		require.NotEqual(t, uuid.Nil, frameID,
-			"dispatch %s has zero frame_id", dispatchID)
+			"dispatch %s has zero frame_id", nodeRunID)
 	}
 	require.NoError(t, rows.Err())
 }

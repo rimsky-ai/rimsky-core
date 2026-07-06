@@ -8,7 +8,7 @@ import "testing"
 
 func makeEntry(runID string) *TokenEntry {
 	return &TokenEntry{
-		RunID:             runID,
+		SessionID:         runID,
 		AttributesAtSpawn: map[string]any{},
 		DispatchContext:   NewDispatchContextSnapshot("d-1", "rs-1", "", "", nil),
 		CancelToken:       "ct",
@@ -57,10 +57,10 @@ func TestDispatchContextSnapshotWarnsOnMissingDisposition(t *testing.T) {
 	if warned == nil {
 		t.Fatal("expected wire-contract warning")
 	}
-	if warned.PriorDispatchID != "prior-1" || warned.Kind != "wire_contract_violation" {
+	if warned.PriorNodeRunID != "prior-1" || warned.Kind != "wire_contract_violation" {
 		t.Fatalf("unexpected warning %+v", warned)
 	}
-	if snap.PriorDispatchID == nil || *snap.PriorDispatchID != "prior-1" {
+	if snap.PriorNodeRunID == nil || *snap.PriorNodeRunID != "prior-1" {
 		t.Fatalf("expected prior id preserved, got %+v", snap)
 	}
 	if snap.PriorDispatchDisposition != nil {
@@ -88,7 +88,7 @@ func TestDispatchContextSnapshotNoPriorMeansNoWarning(t *testing.T) {
 	snap := NewDispatchContextSnapshot("d-1", "rs-1", "", "", func(WireContractViolation) {
 		t.Fatal("unexpected warning without a prior dispatch id")
 	})
-	if snap.PriorDispatchID != nil || snap.PriorDispatchDisposition != nil {
+	if snap.PriorNodeRunID != nil || snap.PriorDispatchDisposition != nil {
 		t.Fatalf("expected nil prior fields, got %+v", snap)
 	}
 }

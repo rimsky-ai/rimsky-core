@@ -21,13 +21,13 @@ func emitSignalInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	senderID foundationshared.UUID,
 	senderNodeType string,
-	senderRunID foundationshared.UUID,
+	senderNodeRunID foundationshared.UUID,
 	instanceID foundationshared.UUID,
 	senderFrameID foundationshared.UUID,
 	sig signalpkg.Signal,
 	visited map[foundationshared.UUID]struct{},
 ) error {
-	return emitSignalInTxWithFilter(ctx, args, tx, senderID, senderNodeType, senderRunID,
+	return emitSignalInTxWithFilter(ctx, args, tx, senderID, senderNodeType, senderNodeRunID,
 		instanceID, senderFrameID, sig, visited, nil)
 }
 
@@ -37,7 +37,7 @@ func emitSignalInTxWithFilter(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	senderID foundationshared.UUID,
 	senderNodeType string,
-	senderRunID foundationshared.UUID,
+	senderNodeRunID foundationshared.UUID,
 	instanceID foundationshared.UUID,
 	senderFrameID foundationshared.UUID,
 	sig signalpkg.Signal,
@@ -48,9 +48,9 @@ func emitSignalInTxWithFilter(
 		return fmt.Errorf("emitSignalInTx: %w", err)
 	}
 	var zeroUUID foundationshared.UUID
-	if senderRunID != zeroUUID && senderFrameID != zeroUUID {
+	if senderNodeRunID != zeroUUID && senderFrameID != zeroUUID {
 		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
-			senderID, senderNodeType, senderRunID, instanceID, senderFrameID, sig, visited, filter); err != nil {
+			senderID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, sig, visited, filter); err != nil {
 			return err
 		}
 	}
@@ -62,11 +62,11 @@ func emitSignalInTxOnce(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	senderID foundationshared.UUID,
 	senderNodeType string,
-	senderRunID foundationshared.UUID,
+	senderNodeRunID foundationshared.UUID,
 	instanceID foundationshared.UUID,
 	senderFrameID foundationshared.UUID,
 	sig signalpkg.Signal,
 ) error {
-	return emitSignalInTx(ctx, args, tx, senderID, senderNodeType, senderRunID,
+	return emitSignalInTx(ctx, args, tx, senderID, senderNodeType, senderNodeRunID,
 		instanceID, senderFrameID, sig, map[foundationshared.UUID]struct{}{})
 }

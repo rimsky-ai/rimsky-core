@@ -80,7 +80,7 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 			return err
 		}
 		require.NotNil(t, latest, "seedPauseModeHitForTest: expected in-flight run row after Affirm")
-		runID := latest.RunID
+		runID := latest.NodeRunID
 		_, _, err = h.persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
 			BreakpointID: bpID,
 			InstanceID:   instanceID,
@@ -280,7 +280,7 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 		if latest == nil {
 			return fmt.Errorf("expected in-flight run row after Affirm")
 		}
-		inFlightRunID = latest.RunID
+		inFlightRunID = latest.NodeRunID
 		return nil
 	}))
 
@@ -333,7 +333,7 @@ func TestDebugOverride_SetAttributeWritesAttribute(t *testing.T) {
 			return err
 		}
 		require.NotNil(t, latest)
-		inFlightRunID = latest.RunID
+		inFlightRunID = latest.NodeRunID
 		return h.persist.NodeAttributes().Upsert(ctx, inFlightRunID, rootNode.ID, map[string]any{"seed": "yes"}, tx)
 	}))
 

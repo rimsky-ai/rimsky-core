@@ -345,7 +345,7 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 
 	instID, claimID, producerNodeID, frameID := ah.seedAsset(t, "asset-del-busy")
 
-	holderRunID := uuid.New()
+	holderNodeRunID := uuid.New()
 	var mainScopeID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
@@ -354,11 +354,11 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 		INSERT INTO rimsky_node_runs
 			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
-	`, holderRunID, producerNodeID, frameID, mainScopeID)
+	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
 		VALUES ($1, $2, $3, 'active', $4)
-	`, uuid.New(), claimID, holderRunID, frameID)
+	`, uuid.New(), claimID, holderNodeRunID, frameID)
 
 	status, out := ah.harness.httpJSON(t, "DELETE", "/v1/instances/"+instID.String()+"/assets/producer.dataset", nil)
 	require.Equal(t, http.StatusConflict, status, out)

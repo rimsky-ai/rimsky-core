@@ -158,14 +158,14 @@ func testNodeAttributesPerRunDenormConsistency(t *testing.T, d persistence.Datab
 	}
 
 	var attrRow *persistence.NodeAttributesRow
-	var runRow *persistence.RunTreeRow
+	var runRow *persistence.NodeRunTreeRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		a, err := store.NodeAttributes().GetByRun(ctx, runID, tx)
 		if err != nil {
 			return err
 		}
 		attrRow = a
-		r, err := store.RunTree().GetByID(ctx, tx, runID)
+		r, err := store.NodeRunTree().GetByID(ctx, tx, runID)
 		runRow = r
 		return err
 	}); err != nil {

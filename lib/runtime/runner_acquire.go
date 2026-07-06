@@ -41,7 +41,7 @@ func graphContainingNodeType(graphs []spec.GraphSpec, nodeType string) string {
 }
 
 type acquisition struct {
-	DispatchID shared.UUID
+	NodeRunID  shared.UUID
 	NodeID     shared.UUID
 	InstanceID shared.UUID
 	NodeType   string
@@ -53,7 +53,7 @@ type acquisition struct {
 	RunScopeID shared.UUID
 
 	// @concept: run-scope
-	PriorDispatchID *shared.UUID
+	PriorNodeRunID *shared.UUID
 	// @concept: run-scope
 	PriorDispatchDisposition string
 
@@ -134,7 +134,7 @@ func acquireCandidate(ctx context.Context, args RunArgs, livenessInterval time.D
 			return acquisition{}, false, nil
 		}
 		last := candidates[len(candidates)-1]
-		cursorEnqueued, cursorID = last.EnqueuedAt, last.DispatchID
+		cursorEnqueued, cursorID = last.EnqueuedAt, last.NodeRunID
 	}
 }
 
@@ -145,7 +145,7 @@ func tryAcquireBatch(
 	for _, cand := range candidates {
 		if cand.FrameID == (shared.UUID{}) {
 			args.Logger.Warn("acquireCandidate: skipping candidate with nil frame_id",
-				"dispatch_id", cand.DispatchID.String(),
+				"dispatch_id", cand.NodeRunID.String(),
 				"node_id", cand.NodeID.String(),
 				"reason", "frame_id_null")
 			continue
@@ -166,7 +166,7 @@ func tryAcquireBatch(
 		}
 		var promoted bool
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			p, err := args.Queue.PromoteClaimedToRunning(ctx, tx, acq.DispatchID, args.SupervisorID)
+			p, err := args.Queue.PromoteClaimedToRunning(ctx, tx, acq.NodeRunID, args.SupervisorID)
 			promoted = p
 			return err
 		}); err != nil {
@@ -186,7 +186,7 @@ func tryAcquireBatch(
 				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 				Kind: events.KindWorkStarted(), Payload: map[string]any{
 					"supervisor_id": args.SupervisorID,
-					"dispatch_id":   acq.DispatchID.String(),
+					"dispatch_id":   acq.NodeRunID.String(),
 				},
 			}, tx); err != nil {
 				return err
@@ -199,7 +199,7 @@ func tryAcquireBatch(
 			return nil
 		}); err != nil {
 			args.Logger.Warn("tryAcquire: post-acquisition audit tx failed; work_started/lock_acquired events lost",
-				"dispatch_id", acq.DispatchID.String(),
+				"dispatch_id", acq.NodeRunID.String(),
 				"node_id", acq.NodeID.String(),
 				"error", err.Error())
 		}
@@ -245,7 +245,7 @@ func acquireOneCandidateWithRetry(
 		}
 		if err == errAcquireRestampLost {
 			args.Logger.Info("tryAcquire: sub-claim holder restamp lost CAS to concurrent supervisor; skipping candidate",
-				"dispatch_id", cand.DispatchID.String(),
+				"dispatch_id", cand.NodeRunID.String(),
 				"node_id", cand.NodeID.String())
 			return acquisition{}, false, nil
 		}
@@ -273,7 +273,7 @@ func selectCandidatesShortTx(
 			LateBindExecutorProxy:      args.LateBindServiceProxies["executor"],
 			LateBindClaimProducerProxy: args.LateBindServiceProxies["claim_producer"],
 			CursorEnqueuedAfter:        cursorEnqueued,
-			CursorAfterDispatchID:      cursorID,
+			CursorAfterNodeRunID:       cursorID,
 		})
 		if err != nil {
 			return err
@@ -350,21 +350,21 @@ func tryAcquire(
 		graphName = graphContainingNodeType(tmpl.Graphs, nd.NodeType)
 	}
 	var runScopeID shared.UUID
-	if rt := args.Persist.RunTree(); rt != nil {
-		row, err := rt.GetByID(ctx, tx, cand.DispatchID)
+	if rt := args.Persist.NodeRunTree(); rt != nil {
+		row, err := rt.GetByID(ctx, tx, cand.NodeRunID)
 		if err != nil {
 			return acquisition{}, false, fmt.Errorf("tryAcquire: run-tree GetByID: %w", err)
 		}
 		if row == nil {
 			args.Logger.Info("tryAcquire: run row absent (retired between selection and acquire); skipping candidate",
-				"dispatch_id", cand.DispatchID.String(),
+				"dispatch_id", cand.NodeRunID.String(),
 				"node_id", cand.NodeID.String())
 			return acquisition{}, false, nil
 		}
 		runScopeID = row.RunScopeID
 	}
 	// @decision: walker-rule-per-sender-node
-	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst, cand.DispatchID, cand.FrameID, runScopeID)
+	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst, cand.NodeRunID, cand.FrameID, runScopeID)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
 			"node_id", cand.NodeID.String(), "error", err.Error())
@@ -376,7 +376,7 @@ func tryAcquire(
 		return acquisition{}, false, err
 	}
 
-	claimed, err := args.Queue.ClaimDispatchRow(ctx, tx, cand.DispatchID, args.SupervisorID)
+	claimed, err := args.Queue.ClaimDispatchRow(ctx, tx, cand.NodeRunID, args.SupervisorID)
 	if err != nil {
 		return acquisition{}, false, fmt.Errorf("tryAcquire: ClaimDispatchRow: %w", err)
 	}
@@ -392,14 +392,14 @@ func tryAcquire(
 		if res == openResultErrored {
 			erroredSpec, _ := sp.(claimproducer.ClaimSpec)
 			out := acquisition{
-				DispatchID:                cand.DispatchID,
+				NodeRunID:                 cand.NodeRunID,
 				NodeID:                    cand.NodeID,
 				InstanceID:                nd.InstanceID,
 				NodeType:                  nd.NodeType,
 				Executor:                  nd.Executor,
 				GraphName:                 graphName,
 				RunScopeID:                runScopeID,
-				PriorDispatchID:           cand.PriorDispatchID,
+				PriorNodeRunID:            cand.PriorNodeRunID,
 				PriorDispatchDisposition:  cand.PriorDispatchDisposition,
 				FrameID:                   cand.FrameID,
 				NodeDef:                   nodeDef,
@@ -425,14 +425,14 @@ func tryAcquire(
 		case openResultUnavailable:
 			unavailableSpec, _ := sp.(claimproducer.ClaimSpec)
 			out := acquisition{
-				DispatchID:                cand.DispatchID,
+				NodeRunID:                 cand.NodeRunID,
 				NodeID:                    cand.NodeID,
 				InstanceID:                nd.InstanceID,
 				NodeType:                  nd.NodeType,
 				Executor:                  nd.Executor,
 				GraphName:                 graphName,
 				RunScopeID:                runScopeID,
-				PriorDispatchID:           cand.PriorDispatchID,
+				PriorNodeRunID:            cand.PriorNodeRunID,
 				PriorDispatchDisposition:  cand.PriorDispatchDisposition,
 				FrameID:                   cand.FrameID,
 				NodeDef:                   nodeDef,
@@ -454,14 +454,14 @@ func tryAcquire(
 	}
 
 	out := acquisition{
-		DispatchID:                cand.DispatchID,
+		NodeRunID:                 cand.NodeRunID,
 		NodeID:                    cand.NodeID,
 		InstanceID:                nd.InstanceID,
 		NodeType:                  nd.NodeType,
 		Executor:                  nd.Executor,
 		GraphName:                 graphName,
 		RunScopeID:                runScopeID,
-		PriorDispatchID:           cand.PriorDispatchID,
+		PriorNodeRunID:            cand.PriorNodeRunID,
 		PriorDispatchDisposition:  cand.PriorDispatchDisposition,
 		FrameID:                   cand.FrameID,
 		Locks:                     acquiredLocks,
@@ -504,7 +504,7 @@ func restampLinkedSubClaimHolders(
 	if ch == nil {
 		return nil
 	}
-	rows, err := ch.ListByNodeRun(ctx, cand.DispatchID, tx)
+	rows, err := ch.ListByNodeRun(ctx, cand.NodeRunID, tx)
 	if err != nil {
 		return fmt.Errorf("restampLinkedSubClaimHolders: ListByNodeRun: %w", err)
 	}
@@ -537,10 +537,10 @@ func bindLeafCandidateHandles(ctx context.Context, args RunArgs, tx persistence.
 	if ch == nil {
 		return
 	}
-	rows, err := ch.ListByNodeRun(ctx, cand.DispatchID, tx)
+	rows, err := ch.ListByNodeRun(ctx, cand.NodeRunID, tx)
 	if err != nil {
 		args.Logger.Warn("bindLeafCandidateHandles: ListByNodeRun failed; leaf candidate_handle left empty",
-			"run_id", cand.DispatchID.String(),
+			"run_id", cand.NodeRunID.String(),
 			"error", err.Error())
 		return
 	}

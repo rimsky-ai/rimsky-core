@@ -40,10 +40,10 @@ func TestInProcessClient_HonorsCallerDeadline(t *testing.T) {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
 
-	dispatchID := shared.UUID(uuid.New()).String()
+	nodeRunID := shared.UUID(uuid.New()).String()
 	nodeID := shared.UUID(uuid.New()).String()
 	req := &genv1.ExecuteRequest{
-		DispatchId: dispatchID,
+		DispatchId: nodeRunID,
 		NodeId:     nodeID,
 	}
 

@@ -22,7 +22,7 @@ func seedClaimedRunForNode(
 ) shared.UUID {
 	t.Helper()
 	q := d.Queue()
-	var dispatchID shared.UUID
+	var nodeRunID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                 nodeID,
@@ -46,17 +46,17 @@ func seedClaimedRunForNode(
 			if c.NodeID != nodeID {
 				continue
 			}
-			ok, err := q.ClaimDispatchRow(ctx, tx, c.DispatchID, supID)
+			ok, err := q.ClaimDispatchRow(ctx, tx, c.NodeRunID, supID)
 			if err != nil {
 				return err
 			}
 			if !ok {
 				t.Fatalf("seedClaimedRunForNode: claim was not successful")
 			}
-			if _, err := q.PromoteClaimedToRunning(ctx, tx, c.DispatchID, supID); err != nil {
+			if _, err := q.PromoteClaimedToRunning(ctx, tx, c.NodeRunID, supID); err != nil {
 				return err
 			}
-			dispatchID = c.DispatchID
+			nodeRunID = c.NodeRunID
 			return nil
 		}
 		t.Fatalf("seedClaimedRunForNode: candidate not surfaced for node %s", nodeID)
@@ -64,7 +64,7 @@ func seedClaimedRunForNode(
 	}); err != nil {
 		t.Fatalf("seedClaimedRunForNode: %v", err)
 	}
-	return dispatchID
+	return nodeRunID
 }
 
 func seedExtraNode(ctx context.Context, t *testing.T, d persistence.Database, fix fixtureSet, nodeType string) shared.UUID {
@@ -89,33 +89,33 @@ func parkRun(ctx context.Context, t *testing.T, d persistence.Database, in persi
 		if err := d.Queue().ParkActiveInTx(ctx, tx, in); err != nil {
 			return err
 		}
-		row, err := d.Tables().Nodes().GetRunForGate(ctx, tx, in.DispatchID)
+		row, err := d.Tables().Nodes().GetRunForGate(ctx, tx, in.NodeRunID)
 		if err != nil {
 			return err
 		}
 		if row == nil {
 			return nil
 		}
-		return d.Tables().Nodes().UpdateState(ctx, in.DispatchID,
+		return d.Tables().Nodes().UpdateState(ctx, in.NodeRunID,
 			cascade.NodeStateParked, cascade.ReasonHandlerPark, nil, tx)
 	}); err != nil {
-		t.Fatalf("ParkActiveInTx(%s): %v", in.DispatchID, err)
+		t.Fatalf("ParkActiveInTx(%s): %v", in.NodeRunID, err)
 	}
 }
 
-func resumeRunInTx(ctx context.Context, d persistence.Database, tx persistence.Tx, dispatchID shared.UUID) (bool, error) {
-	resumed, err := d.Queue().ResumeParkedInTx(ctx, tx, dispatchID)
+func resumeRunInTx(ctx context.Context, d persistence.Database, tx persistence.Tx, nodeRunID shared.UUID) (bool, error) {
+	resumed, err := d.Queue().ResumeParkedInTx(ctx, tx, nodeRunID)
 	if err != nil || !resumed {
 		return resumed, err
 	}
-	row, err := d.Tables().Nodes().GetRunForGate(ctx, tx, dispatchID)
+	row, err := d.Tables().Nodes().GetRunForGate(ctx, tx, nodeRunID)
 	if err != nil {
 		return false, err
 	}
 	if row == nil {
 		return true, nil
 	}
-	if err := d.Tables().Nodes().UpdateState(ctx, dispatchID,
+	if err := d.Tables().Nodes().UpdateState(ctx, nodeRunID,
 		cascade.NodeStateStale, cascade.ReasonDeadlineResume, nil, tx); err != nil {
 		return false, err
 	}
@@ -145,17 +145,17 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 	}
 
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
-		DispatchID: runA, ExpectedClaimedBy: parkResumeSup,
+		NodeRunID: runA, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-3 * time.Hour), ResumeAt: now.Add(-2 * time.Hour),
 		Reason: "snooze",
 	})
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
-		DispatchID: runB, ExpectedClaimedBy: parkResumeSup,
+		NodeRunID: runB, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-3 * time.Hour), ResumeAt: now.Add(-1 * time.Hour),
 		Reason: "snooze",
 	})
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
-		DispatchID: runC, ExpectedClaimedBy: parkResumeSup,
+		NodeRunID: runC, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-1 * time.Hour), ResumeAt: now.Add(24 * time.Hour),
 		Reason: "await_callback",
 	})
@@ -164,7 +164,7 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("ListParkedReadyForResume(mid cutoff): %v", err)
 	}
-	if len(ready) != 1 || ready[0].DispatchID != runA {
+	if len(ready) != 1 || ready[0].NodeRunID != runA {
 		t.Fatalf("mid-cutoff ready set = %+v, want exactly [runA=%s]", ready, runA)
 	}
 
@@ -172,7 +172,7 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("ListParkedReadyForResume(now): %v", err)
 	}
-	if len(ready) != 2 || ready[0].DispatchID != runA || ready[1].DispatchID != runB {
+	if len(ready) != 2 || ready[0].NodeRunID != runA || ready[1].NodeRunID != runB {
 		t.Fatalf("ready set = %+v, want [runA=%s, runB=%s] ascending", ready, runA, runB)
 	}
 
@@ -180,7 +180,7 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("ListParkedReadyForResume(limit 1): %v", err)
 	}
-	if len(ready) != 1 || ready[0].DispatchID != runA {
+	if len(ready) != 1 || ready[0].NodeRunID != runA {
 		t.Fatalf("limit-1 ready set = %+v, want [runA=%s]", ready, runA)
 	}
 
@@ -188,7 +188,7 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("ListParkedOverdue: %v", err)
 	}
-	if len(overdue) != 1 || overdue[0].DispatchID != runC {
+	if len(overdue) != 1 || overdue[0].NodeRunID != runC {
 		t.Fatalf("overdue set = %+v, want exactly [runC=%s]", overdue, runC)
 	}
 
@@ -216,12 +216,12 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 
 	resumeA := now.Add(2 * time.Hour)
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
-		DispatchID: runA, ExpectedClaimedBy: parkResumeSup,
+		NodeRunID: runA, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-3 * time.Hour), ResumeAt: resumeA,
 		Reason: "snooze", ReasonNote: "diag note A",
 	})
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
-		DispatchID: runB, ExpectedClaimedBy: parkResumeSup,
+		NodeRunID: runB, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-1 * time.Hour), ResumeAt: now.Add(4 * time.Hour),
 		Reason: "await_callback",
 	})
@@ -247,7 +247,7 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 	}
 
 	got := listDiag("")
-	if len(got) != 2 || got[0].DispatchID != runA || got[1].DispatchID != runB {
+	if len(got) != 2 || got[0].NodeRunID != runA || got[1].NodeRunID != runB {
 		t.Fatalf("diagnostic set = %+v, want [runA=%s, runB=%s] parked_at-ascending", got, runA, runB)
 	}
 	a := got[0]
@@ -261,10 +261,10 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 		t.Fatalf("diagnostic resume_at = %v drifted from %v", a.ResumeAt, resumeA)
 	}
 
-	if got := listDiag("snooze"); len(got) != 1 || got[0].DispatchID != runA {
+	if got := listDiag("snooze"); len(got) != 1 || got[0].NodeRunID != runA {
 		t.Fatalf("snooze-filtered set = %+v, want exactly [runA=%s]", got, runA)
 	}
-	if got := listDiag("await_callback"); len(got) != 1 || got[0].DispatchID != runB {
+	if got := listDiag("await_callback"); len(got) != 1 || got[0].NodeRunID != runB {
 		t.Fatalf("await_callback-filtered set = %+v, want exactly [runB=%s]", got, runB)
 	}
 	if got := listDiag("no_such_reason"); len(got) != 0 {
@@ -297,7 +297,7 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 	}
 
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
-		DispatchID: runA, ExpectedClaimedBy: parkResumeSup,
+		NodeRunID: runA, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(1 * time.Hour),
 		Reason: "snooze",
 	})
@@ -306,7 +306,7 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 	}
 
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
-		DispatchID: runB, ExpectedClaimedBy: parkResumeSup,
+		NodeRunID: runB, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(1 * time.Hour),
 		Reason: "await_callback",
 	})
@@ -336,7 +336,7 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	runID := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, parkResumeSup)
 	parkedAt := now.Add(-30 * time.Minute)
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
-		DispatchID:        runID,
+		NodeRunID:         runID,
 		ExpectedClaimedBy: parkResumeSup,
 		ParkedAt:          parkedAt,
 		ResumeAt:          now.Add(-1 * time.Minute),
@@ -348,7 +348,7 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetParkedByNode: %v", err)
 	}
-	if parked == nil || parked.DispatchID != runID {
+	if parked == nil || parked.NodeRunID != runID {
 		t.Fatalf("GetParkedByNode = %+v, want run %s", parked, runID)
 	}
 	if parked.Reason != "snooze" || parked.ReasonNote != "free-form note" {
@@ -398,7 +398,7 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 			return err
 		}
 		for _, c := range cands {
-			if c.DispatchID == runID {
+			if c.NodeRunID == runID {
 				return nil
 			}
 		}

@@ -75,10 +75,10 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 	require.True(t, h.WaitForDispatch(worker.ID, 10*time.Second),
 		"scheduler should enqueue the worker's dispatch row")
 
-	var dispatchID uuid.UUID
+	var nodeRunID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1`, worker.ID,
-	).Scan(&dispatchID))
+	).Scan(&nodeRunID))
 
 	decoyID := uuid.New()
 	decoyName := "bail-decoy-lock"
@@ -132,7 +132,7 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 				"at hook time the producer must not have seen an Abandon yet (verb fires in the bail, after the steal)")
 			tag, uerr := h.Pool.Exec(ctx,
 				`UPDATE rimsky_node_runs SET claimed_by = 'thief-supervisor', claimed_at = NOW() WHERE id = $1`,
-				dispatchID,
+				nodeRunID,
 			)
 			require.NoError(t, uerr)
 			require.Equal(t, int64(1), tag.RowsAffected(),
@@ -205,7 +205,7 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 		`SELECT count(*) FROM rimsky_events
 		  WHERE kind = 'orphaned_claim_lost_race'
 		    AND payload->>'dispatch_id' = $1`,
-		dispatchID.String(),
+		nodeRunID.String(),
 	).Scan(&orphanCount))
 	require.Equal(t, 1, orphanCount,
 		"the bail must emit exactly one orphaned_claim_lost_race event for the stolen dispatch")

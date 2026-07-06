@@ -17,16 +17,16 @@ type scratchRecorder struct {
 	persistence.Queue
 	writes int
 	last   struct {
-		dispatchID    shared.UUID
+		nodeRunID     shared.UUID
 		inline        []byte
 		handle        string
 		handleBackend string
 	}
 }
 
-func (r *scratchRecorder) WriteScratchInTx(_ context.Context, _ persistence.Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error {
+func (r *scratchRecorder) WriteScratchInTx(_ context.Context, _ persistence.Tx, nodeRunID shared.UUID, inline []byte, handle, handleBackend string) error {
 	r.writes++
-	r.last.dispatchID = dispatchID
+	r.last.nodeRunID = nodeRunID
 	r.last.inline = append([]byte(nil), inline...)
 	r.last.handle = handle
 	r.last.handleBackend = handleBackend
@@ -38,8 +38,8 @@ func TestApplyTerminalScratchInTx_EmptyScratchIsNoOp(t *testing.T) {
 	rec := &scratchRecorder{}
 	args := RunArgs{Queue: rec}
 	acq := &acquisition{
-		DispatchID: shared.UUID{1},
-		NodeID:     shared.UUID{2},
+		NodeRunID: shared.UUID{1},
+		NodeID:    shared.UUID{2},
 	}
 
 	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, nil); err != nil {
@@ -62,9 +62,9 @@ func TestApplyTerminalScratchInTx_SubgraphExitIsNoOp(t *testing.T) {
 	rec := &scratchRecorder{}
 	args := RunArgs{Queue: rec}
 	acq := &acquisition{
-		DispatchID: shared.UUID{1},
-		NodeID:     shared.UUID{2},
-		NodeDef:    &node.TemplateNodeDef{IsSubgraphExit: true},
+		NodeRunID: shared.UUID{1},
+		NodeID:    shared.UUID{2},
+		NodeDef:   &node.TemplateNodeDef{IsSubgraphExit: true},
 	}
 	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, []byte("ignored")); err != nil {
 		t.Fatalf("applyTerminalScratchInTx exit: %v", err)
@@ -79,8 +79,8 @@ func TestApplyTerminalScratchInTx_NonEmptyWritesInline(t *testing.T) {
 	rec := &scratchRecorder{}
 	args := RunArgs{Queue: rec}
 	acq := &acquisition{
-		DispatchID: shared.UUID{1},
-		NodeID:     shared.UUID{2},
+		NodeRunID: shared.UUID{1},
+		NodeID:    shared.UUID{2},
 	}
 	payload := []byte("scratch-bytes")
 	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, payload); err != nil {
@@ -96,7 +96,7 @@ func TestApplyTerminalScratchInTx_NonEmptyWritesInline(t *testing.T) {
 		t.Fatalf("expected empty handle/backend for inline write, got handle=%q backend=%q",
 			rec.last.handle, rec.last.handleBackend)
 	}
-	if rec.last.dispatchID != acq.DispatchID {
-		t.Fatalf("dispatch id mismatch: got %v want %v", rec.last.dispatchID, acq.DispatchID)
+	if rec.last.nodeRunID != acq.NodeRunID {
+		t.Fatalf("dispatch id mismatch: got %v want %v", rec.last.nodeRunID, acq.NodeRunID)
 	}
 }

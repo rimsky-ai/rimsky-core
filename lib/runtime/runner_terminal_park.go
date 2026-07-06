@@ -54,7 +54,7 @@ func applyTerminalPark(
 
 	now := args.Clock.Now()
 	in := persistence.ParkActiveInput{
-		DispatchID:        acq.DispatchID,
+		NodeRunID:         acq.NodeRunID,
 		ExpectedClaimedBy: args.SupervisorID,
 		ParkedAt:          now,
 		ResumeAt:          t.ParkResumeAt,
@@ -71,22 +71,22 @@ func applyTerminalPark(
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
 	if maxParkSec != nil || maxRetries != nil {
-		if err := args.Queue.UpdateDispatchTuningInTx(ctx, tx, acq.DispatchID, maxParkSec, maxRetries); err != nil {
+		if err := args.Queue.UpdateDispatchTuningInTx(ctx, tx, acq.NodeRunID, maxParkSec, maxRetries); err != nil {
 			return nil, fmt.Errorf("applyTerminalPark: %w", err)
 		}
 	}
 	// @concept: signal
 	parkSigType := string(parkTerminalSignal(t).Type)
-	if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
+	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 		cascade.NodeStateParked, cascade.ReasonHandlerPark, &parkSigType, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
 	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 		nil, nil); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
-	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeRunID); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
 	// @concept: signal
@@ -96,13 +96,13 @@ func applyTerminalPark(
 		return nil, fmt.Errorf("applyTerminalPark: emit signal: %w", err)
 	}
 
-	dispatchID := acq.DispatchID
+	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
 		scope := resolveAcqScope(ctx, args, acq)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
-			RunID:              dispatchID,
+			NodeRunID:          nodeRunID,
 			NodeID:             acq.NodeID,
 			State:              string(cascade.NodeStateParked),
 			SettlingSignalType: parkSigType,
@@ -113,15 +113,15 @@ func applyTerminalPark(
 			Params:             acq.InstanceParams,
 			AttributesMerged:   acq.MergedAttributes,
 			HeldClaims:         HeldClaimsForLineage(acq),
-			ParentRunID:        scope.ParentRunID,
+			ParentNodeRunID:    scope.ParentNodeRunID,
 			ChildKey:           scope.PartitionKey,
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
 		propagateSig := parkSigType
-		if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
 			cascade.NodeStateParked, &propagateSig); err != nil {
 			args.Logger.Warn("applyTerminalPark: run-tree propagation failed",
-				"run_id", dispatchID.String(), "error", err.Error())
+				"run_id", nodeRunID.String(), "error", err.Error())
 		}
 	}
 	return post, nil

@@ -199,18 +199,18 @@ func emitDeferredHeldCascade(
 	var post postCommitFn
 	visited := map[foundationshared.UUID]struct{}{}
 	for _, h := range holders {
-		visited[h.HolderRunID] = struct{}{}
-		pc, err := transitionHolderIfFullyResolved(ctx, args, tx, h.HolderRunID, td)
+		visited[h.HolderNodeRunID] = struct{}{}
+		pc, err := transitionHolderIfFullyResolved(ctx, args, tx, h.HolderNodeRunID, td)
 		if err != nil {
-			return nil, fmt.Errorf("emitDeferredHeldCascade: holder %s: %w", h.HolderRunID, err)
+			return nil, fmt.Errorf("emitDeferredHeldCascade: holder %s: %w", h.HolderNodeRunID, err)
 		}
 		post = chainPostCommit(post, pc)
 	}
-	if td.LineageHint.RunID != (foundationshared.UUID{}) {
-		if _, seen := visited[td.LineageHint.RunID]; !seen {
-			pc, err := transitionHolderIfFullyResolved(ctx, args, tx, td.LineageHint.RunID, td)
+	if td.LineageHint.NodeRunID != (foundationshared.UUID{}) {
+		if _, seen := visited[td.LineageHint.NodeRunID]; !seen {
+			pc, err := transitionHolderIfFullyResolved(ctx, args, tx, td.LineageHint.NodeRunID, td)
 			if err != nil {
-				return nil, fmt.Errorf("emitDeferredHeldCascade: acquirer %s: %w", td.LineageHint.RunID, err)
+				return nil, fmt.Errorf("emitDeferredHeldCascade: acquirer %s: %w", td.LineageHint.NodeRunID, err)
 			}
 			post = chainPostCommit(post, pc)
 		}
@@ -223,7 +223,7 @@ func emitDeferredHeldCascade(
 func transitionThisHolderIfFullyResolved(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition,
 ) (postCommitFn, error) {
-	status, err := evaluateHolderPortfolio(ctx, args, tx, acq.DispatchID)
+	status, err := evaluateHolderPortfolio(ctx, args, tx, acq.NodeRunID)
 	if err != nil {
 		return nil, err
 	}
@@ -237,28 +237,28 @@ func transitionThisHolderIfFullyResolved(
 	td := TerminalDecision{
 		ClaimHandleID: foundationshared.UUID{},
 		Outcome:       outcome,
-		LineageHint:   ClaimLineageHint{RunID: acq.DispatchID},
+		LineageHint:   ClaimLineageHint{NodeRunID: acq.NodeRunID},
 	}
-	return transitionHolderIfFullyResolved(ctx, args, tx, acq.DispatchID, td)
+	return transitionHolderIfFullyResolved(ctx, args, tx, acq.NodeRunID, td)
 }
 
 // @concept: claim-handle
 // @decision: held-as-state-not-phase
 func transitionHolderIfFullyResolved(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	holderRunID foundationshared.UUID, td TerminalDecision,
+	holderNodeRunID foundationshared.UUID, td TerminalDecision,
 ) (postCommitFn, error) {
-	if holderRunID == (foundationshared.UUID{}) {
+	if holderNodeRunID == (foundationshared.UUID{}) {
 		return nil, nil
 	}
-	holderRun, err := args.Persist.Nodes().GetRunForGate(ctx, tx, holderRunID)
+	holderRun, err := args.Persist.Nodes().GetRunForGate(ctx, tx, holderNodeRunID)
 	if err != nil {
 		return nil, fmt.Errorf("GetRunForGate: %w", err)
 	}
 	if holderRun == nil || holderRun.State != cascade.NodeStateHeld {
 		return nil, nil
 	}
-	status, err := evaluateHolderPortfolio(ctx, args, tx, holderRunID)
+	status, err := evaluateHolderPortfolio(ctx, args, tx, holderNodeRunID)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +284,7 @@ func transitionHolderIfFullyResolved(
 		sig = signalpkg.BuildTerminalSuccessSignal(false, nil, changeSummary, nil)
 	}
 	if err := args.Persist.Nodes().UpdateState(
-		ctx, holderRunID, newState, reason, &sigType, tx,
+		ctx, holderNodeRunID, newState, reason, &sigType, tx,
 	); err != nil {
 		return nil, fmt.Errorf("UpdateState: %w", err)
 	}
@@ -299,14 +299,14 @@ func transitionHolderIfFullyResolved(
 	filter := subgraphNonMemberFilter(tmplSpec, holderNode.NodeType)
 	visited := map[foundationshared.UUID]struct{}{}
 	if err := emitSignalInTxWithFilter(ctx, args, tx,
-		holderRun.NodeID, holderNode.NodeType, holderRun.RunID,
+		holderRun.NodeID, holderNode.NodeType, holderRun.NodeRunID,
 		holderNode.InstanceID, holderRun.FrameID, sig, visited, filter); err != nil {
 		return nil, fmt.Errorf("emit signal: %w", err)
 	}
-	if err := drainWaitSetOnSettled(ctx, args, tx, holderRun.FrameID, holderRun.RunID); err != nil {
+	if err := drainWaitSetOnSettled(ctx, args, tx, holderRun.FrameID, holderRun.NodeRunID); err != nil {
 		return nil, err
 	}
-	runID := holderRun.RunID
+	runID := holderRun.NodeRunID
 	logSigType := sigType
 	post := func(ctx context.Context) {
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, runID, newState, &logSigType); err != nil {

@@ -77,13 +77,13 @@ func (f *fakeStreamTraceServer) snapshot() []*genv1.TraceEvent {
 }
 
 func TestStoreStreamTraceNoDropUnderConcurrentAppend(t *testing.T) {
-	const dispatchID = "race-d1"
+	const nodeRunID = "race-d1"
 	const goroutines = 16
 	const eventsPer = 25
 	s := NewStore()
-	s.RegisterDispatch(dispatchID)
+	s.RegisterDispatch(nodeRunID)
 	for i := 0; i < 5; i++ {
-		s.AppendEvent(dispatchID, MakeEvent(fmt.Sprintf("seed-%d", i), "", "log", "", genv1.Severity_INFO, nil))
+		s.AppendEvent(nodeRunID, MakeEvent(fmt.Sprintf("seed-%d", i), "", "log", "", genv1.Severity_INFO, nil))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -91,7 +91,7 @@ func TestStoreStreamTraceNoDropUnderConcurrentAppend(t *testing.T) {
 	stream := &fakeStreamTraceServer{ctx: ctx}
 	streamDone := make(chan error, 1)
 	go func() {
-		streamDone <- s.StreamTrace(&genv1.StreamTraceRequest{DispatchId: dispatchID}, stream)
+		streamDone <- s.StreamTrace(&genv1.StreamTraceRequest{DispatchId: nodeRunID}, stream)
 	}()
 
 	var wg sync.WaitGroup
@@ -100,7 +100,7 @@ func TestStoreStreamTraceNoDropUnderConcurrentAppend(t *testing.T) {
 		go func(gid int) {
 			defer wg.Done()
 			for i := 0; i < eventsPer; i++ {
-				s.AppendEvent(dispatchID, MakeEvent(
+				s.AppendEvent(nodeRunID, MakeEvent(
 					fmt.Sprintf("g%d-e%d", gid, i), "",
 					"step_started", "",
 					genv1.Severity_INFO,
@@ -111,7 +111,7 @@ func TestStoreStreamTraceNoDropUnderConcurrentAppend(t *testing.T) {
 	}
 	wg.Wait()
 
-	s.MarkTerminal(dispatchID)
+	s.MarkTerminal(nodeRunID)
 
 	select {
 	case <-streamDone:

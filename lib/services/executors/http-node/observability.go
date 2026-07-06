@@ -42,15 +42,15 @@ func (s *ObservabilityServer) SetHTTPBridgeURL(u string) {
 
 func (s *ObservabilityServer) SetIdleTimeout(d time.Duration) { s.store.SetIdleTimeout(d) }
 
-func (s *ObservabilityServer) RegisterDispatch(dispatchID string) {
-	s.store.RegisterDispatch(dispatchID)
+func (s *ObservabilityServer) RegisterDispatch(nodeRunID string) {
+	s.store.RegisterDispatch(nodeRunID)
 }
 
-func (s *ObservabilityServer) AppendEvent(dispatchID string, ev *genv1.TraceEvent) {
-	s.store.AppendEvent(dispatchID, ev)
+func (s *ObservabilityServer) AppendEvent(nodeRunID string, ev *genv1.TraceEvent) {
+	s.store.AppendEvent(nodeRunID, ev)
 }
 
-func (s *ObservabilityServer) MarkTerminal(dispatchID string) { s.store.MarkTerminal(dispatchID) }
+func (s *ObservabilityServer) MarkTerminal(nodeRunID string) { s.store.MarkTerminal(nodeRunID) }
 
 func (s *ObservabilityServer) SweepEvicted(now time.Time) { s.store.SweepEvicted(now) }
 

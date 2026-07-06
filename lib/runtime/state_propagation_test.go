@@ -19,7 +19,7 @@ import (
 )
 
 type fakeRunTreeTable struct {
-	rows   map[shared.UUID]*persistence.RunTreeRow
+	rows   map[shared.UUID]*persistence.NodeRunTreeRow
 	scopes *fakeRunScopeTable
 }
 
@@ -30,7 +30,7 @@ type fakeRunScopeTable struct {
 func newFakes() (*fakeRunTreeTable, *fakeRunScopeTable) {
 	scopes := &fakeRunScopeTable{rows: make(map[shared.UUID]*persistence.RunScopeRow)}
 	tree := &fakeRunTreeTable{
-		rows:   make(map[shared.UUID]*persistence.RunTreeRow),
+		rows:   make(map[shared.UUID]*persistence.NodeRunTreeRow),
 		scopes: scopes,
 	}
 	return tree, scopes
@@ -53,9 +53,9 @@ func (f *fakeRunScopeTable) GetByID(_ context.Context, _ persistence.Tx, id shar
 	return &c, nil
 }
 
-func (f *fakeRunScopeTable) GetFanoutPartition(_ context.Context, _ persistence.Tx, parentRunID shared.UUID, partitionKey string) (*persistence.RunScopeRow, error) {
+func (f *fakeRunScopeTable) GetFanoutPartition(_ context.Context, _ persistence.Tx, parentNodeRunID shared.UUID, partitionKey string) (*persistence.RunScopeRow, error) {
 	for _, r := range f.rows {
-		if r.ParentRunID != nil && *r.ParentRunID == parentRunID && r.PartitionKey == partitionKey && r.ClosedAt == nil {
+		if r.ParentNodeRunID != nil && *r.ParentNodeRunID == parentNodeRunID && r.PartitionKey == partitionKey && r.ClosedAt == nil {
 			c := *r
 			return &c, nil
 		}
@@ -75,10 +75,10 @@ func (f *fakeRunScopeTable) Close(_ context.Context, _ persistence.Tx, id shared
 	return nil
 }
 
-func (f *fakeRunScopeTable) ListChildScopes(_ context.Context, _ persistence.Tx, parentRunID shared.UUID) ([]persistence.RunScopeRow, error) {
+func (f *fakeRunScopeTable) ListChildScopes(_ context.Context, _ persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.RunScopeRow, error) {
 	var out []persistence.RunScopeRow
 	for _, r := range f.rows {
-		if r.ParentRunID != nil && *r.ParentRunID == parentRunID {
+		if r.ParentNodeRunID != nil && *r.ParentNodeRunID == parentNodeRunID {
 			out = append(out, *r)
 		}
 	}
@@ -102,9 +102,9 @@ func (f *fakeRunScopeTable) ListParentChain(_ context.Context, _ persistence.Tx,
 	return out, nil
 }
 
-func (f *fakeRunTreeTable) CreateRootRun(_ context.Context, _ persistence.Tx, in persistence.CreateRootRunInput) error {
-	f.rows[in.RunID] = &persistence.RunTreeRow{
-		RunID:             in.RunID,
+func (f *fakeRunTreeTable) CreateRootNodeRun(_ context.Context, _ persistence.Tx, in persistence.CreateRootNodeRunInput) error {
+	f.rows[in.NodeRunID] = &persistence.NodeRunTreeRow{
+		NodeRunID:         in.NodeRunID,
 		NodeID:            in.NodeID,
 		FrameID:           in.FrameID,
 		RunScopeID:        in.RunScopeID,
@@ -114,9 +114,9 @@ func (f *fakeRunTreeTable) CreateRootRun(_ context.Context, _ persistence.Tx, in
 	return nil
 }
 
-func (f *fakeRunTreeTable) CreateChildRun(_ context.Context, _ persistence.Tx, in persistence.CreateChildRunInput) error {
-	f.rows[in.RunID] = &persistence.RunTreeRow{
-		RunID:             in.RunID,
+func (f *fakeRunTreeTable) CreateChildNodeRun(_ context.Context, _ persistence.Tx, in persistence.CreateChildNodeRunInput) error {
+	f.rows[in.NodeRunID] = &persistence.NodeRunTreeRow{
+		NodeRunID:         in.NodeRunID,
 		NodeID:            in.NodeID,
 		FrameID:           in.FrameID,
 		RunScopeID:        in.RunScopeID,
@@ -126,7 +126,7 @@ func (f *fakeRunTreeTable) CreateChildRun(_ context.Context, _ persistence.Tx, i
 	return nil
 }
 
-func (f *fakeRunTreeTable) GetByID(_ context.Context, _ persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
+func (f *fakeRunTreeTable) GetByID(_ context.Context, _ persistence.Tx, runID shared.UUID) (*persistence.NodeRunTreeRow, error) {
 	row, ok := f.rows[runID]
 	if !ok {
 		return nil, nil
@@ -135,18 +135,18 @@ func (f *fakeRunTreeTable) GetByID(_ context.Context, _ persistence.Tx, runID sh
 	return &c, nil
 }
 
-func (f *fakeRunTreeTable) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
+func (f *fakeRunTreeTable) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.NodeRunTreeRow, error) {
 	return f.GetByID(ctx, tx, runID)
 }
 
-func (f *fakeRunTreeTable) ListChildren(_ context.Context, _ persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
+func (f *fakeRunTreeTable) ListChildren(_ context.Context, _ persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.NodeRunTreeRow, error) {
 	matchingScopes := make(map[shared.UUID]struct{})
 	for _, s := range f.scopes.rows {
-		if s.ParentRunID != nil && *s.ParentRunID == parentRunID {
+		if s.ParentNodeRunID != nil && *s.ParentNodeRunID == parentNodeRunID {
 			matchingScopes[s.ID] = struct{}{}
 		}
 	}
-	var out []persistence.RunTreeRow
+	var out []persistence.NodeRunTreeRow
 	for _, r := range f.rows {
 		if _, ok := matchingScopes[r.RunScopeID]; ok {
 			out = append(out, *r)
@@ -179,12 +179,12 @@ func (f *fakeRunTreeTable) UpdateAggregationPolicy(_ context.Context, _ persiste
 
 func newUUID() shared.UUID { return shared.UUID(uuid.New()) }
 
-func (f *fakeRunScopeTable) makeChildScope(parentScopeID, parentRunID shared.UUID, partition, graphName string) shared.UUID {
+func (f *fakeRunScopeTable) makeChildScope(parentScopeID, parentNodeRunID shared.UUID, partition, graphName string) shared.UUID {
 	id := newUUID()
 	f.rows[id] = &persistence.RunScopeRow{
 		ID:               id,
 		ParentRunScopeID: &parentScopeID,
-		ParentRunID:      &parentRunID,
+		ParentNodeRunID:  &parentNodeRunID,
 		GraphName:        graphName,
 		PartitionKey:     partition,
 		CreatedAt:        time.Now(),
@@ -213,29 +213,29 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	c1, c2 := newUUID(), newUUID()
 	ctx := context.Background()
 
-	if err := rt.CreateRootRun(ctx, nil, persistence.CreateRootRunInput{
-		RunID:             root,
+	if err := rt.CreateRootNodeRun(ctx, nil, persistence.CreateRootNodeRunInput{
+		NodeRunID:         root,
 		NodeID:            newUUID(),
 		FrameID:           frame,
 		RunScopeID:        rootScope,
 		AggregationPolicy: spec.AggregationPolicy{Kind: "strict"},
 	}); err != nil {
-		t.Fatalf("CreateRootRun: %v", err)
+		t.Fatalf("CreateRootNodeRun: %v", err)
 	}
 	c1Scope := scopes.makeChildScope(rootScope, root, "a", "main")
 	c2Scope := scopes.makeChildScope(rootScope, root, "b", "main")
-	if err := rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
-		RunID: c1, NodeID: newUUID(), FrameID: frame, RunScopeID: c1Scope,
+	if err := rt.CreateChildNodeRun(ctx, nil, persistence.CreateChildNodeRunInput{
+		NodeRunID: c1, NodeID: newUUID(), FrameID: frame, RunScopeID: c1Scope,
 	}); err != nil {
-		t.Fatalf("CreateChildRun c1: %v", err)
+		t.Fatalf("CreateChildNodeRun c1: %v", err)
 	}
-	if err := rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
-		RunID: c2, NodeID: newUUID(), FrameID: frame, RunScopeID: c2Scope,
+	if err := rt.CreateChildNodeRun(ctx, nil, persistence.CreateChildNodeRunInput{
+		NodeRunID: c2, NodeID: newUUID(), FrameID: frame, RunScopeID: c2Scope,
 	}); err != nil {
-		t.Fatalf("CreateChildRun c2: %v", err)
+		t.Fatalf("CreateChildNodeRun c2: %v", err)
 	}
 
-	args := PropagationArgs{RunTree: rt, RunScopes: scopes}
+	args := PropagationArgs{NodeRunTree: rt, RunScopes: scopes}
 	successSig := strPtr("terminal/success")
 
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateFresh, successSig)
@@ -272,8 +272,8 @@ func TestPropagateFromChildState_StrictCancelSiblings(t *testing.T) {
 	c1, c2 := newUUID(), newUUID()
 	ctx := context.Background()
 
-	_ = rt.CreateRootRun(ctx, nil, persistence.CreateRootRunInput{
-		RunID:             root,
+	_ = rt.CreateRootNodeRun(ctx, nil, persistence.CreateRootNodeRunInput{
+		NodeRunID:         root,
 		NodeID:            newUUID(),
 		FrameID:           frame,
 		RunScopeID:        rootScope,
@@ -281,17 +281,17 @@ func TestPropagateFromChildState_StrictCancelSiblings(t *testing.T) {
 	})
 	c1Scope := scopes.makeChildScope(rootScope, root, "a", "main")
 	c2Scope := scopes.makeChildScope(rootScope, root, "b", "main")
-	_ = rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
-		RunID: c1, NodeID: newUUID(), FrameID: frame, RunScopeID: c1Scope,
+	_ = rt.CreateChildNodeRun(ctx, nil, persistence.CreateChildNodeRunInput{
+		NodeRunID: c1, NodeID: newUUID(), FrameID: frame, RunScopeID: c1Scope,
 	})
-	_ = rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
-		RunID: c2, NodeID: newUUID(), FrameID: frame, RunScopeID: c2Scope,
+	_ = rt.CreateChildNodeRun(ctx, nil, persistence.CreateChildNodeRunInput{
+		NodeRunID: c2, NodeID: newUUID(), FrameID: frame, RunScopeID: c2Scope,
 	})
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateRunning, nil)
 
 	failedSig := strPtr("terminal/error/test_failure")
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFailed, failedSig)
-	actions, _, err := PropagateFromChildState(context.Background(), PropagationArgs{RunTree: rt, RunScopes: scopes}, nil,
+	actions, _, err := PropagateFromChildState(context.Background(), PropagationArgs{NodeRunTree: rt, RunScopes: scopes}, nil,
 		c2, cascade.NodeStateFailed, failedSig)
 	if err != nil {
 		t.Fatalf("PropagateFromChildState c2: %v", err)
@@ -317,28 +317,28 @@ func TestPropagateFromChildState_NestedTree(t *testing.T) {
 	leaf1, leaf2 := newUUID(), newUUID()
 	ctx := context.Background()
 
-	_ = rt.CreateRootRun(ctx, nil, persistence.CreateRootRunInput{
-		RunID:             root,
+	_ = rt.CreateRootNodeRun(ctx, nil, persistence.CreateRootNodeRunInput{
+		NodeRunID:         root,
 		NodeID:            newUUID(),
 		FrameID:           frame,
 		RunScopeID:        rootScope,
 		AggregationPolicy: spec.AggregationPolicy{Kind: "strict"},
 	})
 	midScope := scopes.makeChildScope(rootScope, root, "m", "main")
-	_ = rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
-		RunID: mid, NodeID: newUUID(), FrameID: frame, RunScopeID: midScope,
+	_ = rt.CreateChildNodeRun(ctx, nil, persistence.CreateChildNodeRunInput{
+		NodeRunID: mid, NodeID: newUUID(), FrameID: frame, RunScopeID: midScope,
 		AggregationPolicy: spec.AggregationPolicy{Kind: "strict"},
 	})
 	leaf1Scope := scopes.makeChildScope(midScope, mid, "a", "main")
 	leaf2Scope := scopes.makeChildScope(midScope, mid, "b", "main")
-	_ = rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
-		RunID: leaf1, NodeID: newUUID(), FrameID: frame, RunScopeID: leaf1Scope,
+	_ = rt.CreateChildNodeRun(ctx, nil, persistence.CreateChildNodeRunInput{
+		NodeRunID: leaf1, NodeID: newUUID(), FrameID: frame, RunScopeID: leaf1Scope,
 	})
-	_ = rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
-		RunID: leaf2, NodeID: newUUID(), FrameID: frame, RunScopeID: leaf2Scope,
+	_ = rt.CreateChildNodeRun(ctx, nil, persistence.CreateChildNodeRunInput{
+		NodeRunID: leaf2, NodeID: newUUID(), FrameID: frame, RunScopeID: leaf2Scope,
 	})
 
-	args := PropagationArgs{RunTree: rt, RunScopes: scopes}
+	args := PropagationArgs{NodeRunTree: rt, RunScopes: scopes}
 	successSig := strPtr("terminal/success")
 
 	_ = rt.UpdateStateAndOutcome(ctx, nil, leaf1, cascade.NodeStateFresh, successSig)

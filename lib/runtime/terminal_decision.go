@@ -82,7 +82,7 @@ type TerminalDecision struct {
 type ClaimLineageHint struct {
 	InstanceID   shared.UUID
 	FrameID      shared.UUID
-	RunID        shared.UUID
+	NodeRunID    shared.UUID
 	NodeID       shared.UUID
 	ProducerName string
 	VersionID    string

@@ -82,7 +82,7 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 		t.Fatalf("claim tx: %v", err)
 	}
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
-		DispatchID: runID, ExpectedClaimedBy: frameSettlementSup,
+		NodeRunID: runID, ExpectedClaimedBy: frameSettlementSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(1 * time.Hour),
 		Reason: "snooze",
 	})
@@ -269,7 +269,7 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 	}
 
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
-		DispatchID: runID, ExpectedClaimedBy: frameSettlementSup,
+		NodeRunID: runID, ExpectedClaimedBy: frameSettlementSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(1 * time.Hour),
 		Reason: "snooze",
 	})
@@ -555,7 +555,7 @@ func testFrameSettlementOrphanDispatches(t *testing.T, d persistence.Database) {
 		t.Fatalf("terminal tx: %v", err)
 	}
 	got := listOrphans()
-	if len(got) != 1 || got[0].DispatchID != claimedRun || got[0].ClaimedBy != frameSettlementSup {
+	if len(got) != 1 || got[0].NodeRunID != claimedRun || got[0].ClaimedBy != frameSettlementSup {
 		t.Fatalf("orphan set = %+v, want exactly [{%s %s %s}]", got, claimedRun, frameSettlementSup, fix.FrameID)
 	}
 

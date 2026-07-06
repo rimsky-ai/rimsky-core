@@ -208,7 +208,7 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 		if r.InstanceID, err = uuid.Parse(instIDStr); err != nil {
 			return nil, err
 		}
-		if r.RunID, err = uuid.Parse(runIDStr); err != nil {
+		if r.NodeRunID, err = uuid.Parse(runIDStr); err != nil {
 			return nil, err
 		}
 		if r.RunScopeID, err = uuid.Parse(runScopeStr); err != nil {
@@ -548,7 +548,7 @@ func (s *nodesImpl) HasAdvancedSiblingInScope(
 // @concept: cascade
 // @concept: run-scope
 func (s *nodesImpl) ListPendingSiblingRunsInScope(
-	ctx context.Context, tx persistence.Tx, senderRunID foundationshared.UUID,
+	ctx context.Context, tx persistence.Tx, senderNodeRunID foundationshared.UUID,
 ) ([]foundationshared.UUID, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT pending.id
@@ -559,7 +559,7 @@ func (s *nodesImpl) ListPendingSiblingRunsInScope(
 		    AND pending.id <> sender.id
 		    AND pending.state = 'pending'
 		  ORDER BY pending.sequence ASC`,
-		senderRunID.String(),
+		senderNodeRunID.String(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ListPendingSiblingRunsInScope: %w", err)
@@ -645,7 +645,7 @@ func (s *nodesImpl) ListPendingRunsInScopeForNodes(
 	return out, rows.Err()
 }
 
-func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
+func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, nodeRunID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	var (
 		r          persistence.NodeRunForCallback
 		idStr      string
@@ -656,7 +656,7 @@ func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID 
 	)
 	err := s.q(tx).QueryRowContext(ctx,
 		`SELECT id, node_id, run_scope_id, frame_id, state
-		   FROM rimsky_node_runs WHERE id = ?`, dispatchID.String(),
+		   FROM rimsky_node_runs WHERE id = ?`, nodeRunID.String(),
 	).Scan(&idStr, &nodeIDStr, &scopeIDStr, &frameIDStr, &stateStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -912,7 +912,7 @@ func (s *nodesImpl) ListRunsForInstanceByStates(
 		if err := rows.Scan(&runIDStr, &nodeIDStr, &runScopeIDStr, &frameIDStr, &r.Sequence, &state, &sigType, &claimedBy); err != nil {
 			return nil, fmt.Errorf("ListRunsForInstanceByStates: scan: %w", err)
 		}
-		if r.RunID, err = uuid.Parse(runIDStr); err != nil {
+		if r.NodeRunID, err = uuid.Parse(runIDStr); err != nil {
 			return nil, fmt.Errorf("ListRunsForInstanceByStates: parse run_id: %w", err)
 		}
 		if r.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
@@ -956,7 +956,7 @@ func scanLatestRow(row *sql.Row) (*persistence.NodeRunLatest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scanLatestRow: %w", err)
 	}
-	r.RunID, err = uuid.Parse(runIDStr)
+	r.NodeRunID, err = uuid.Parse(runIDStr)
 	if err != nil {
 		return nil, err
 	}
@@ -1114,9 +1114,9 @@ func (s *nodesImpl) CreateNonCascadeStale(
 		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: creation_reason required")
 	}
 	storesJSON := marshalStringArray(in.RequiredClaimProducers)
-	var priorID any
-	if in.PriorDispatchID != nil {
-		priorID = in.PriorDispatchID.String()
+	var priorRunPtr any
+	if in.PriorNodeRunID != nil {
+		priorRunPtr = in.PriorNodeRunID.String()
 	}
 	var scratchInline any
 	if len(in.InitialScratchInline) > 0 {
@@ -1136,7 +1136,7 @@ func (s *nodesImpl) CreateNonCascadeStale(
 		newID.String(), in.NodeID.String(), nullableString(in.ExecutorName), storesJSON, formatTime(in.EnqueuedAt), string(in.CreationReason),
 		in.NodeID.String(), in.RunScopeID.String(),
 		in.FrameID.String(),
-		priorID, nullableString(in.PriorDispatchDisposition),
+		priorRunPtr, nullableString(in.PriorDispatchDisposition),
 		scratchInline, nullableString(in.InitialScratchHandle), nullableString(in.InitialScratchHandleBackend),
 		in.RunScopeID.String(),
 	)
@@ -1205,7 +1205,7 @@ func scanGateRow(row *sql.Row) (*persistence.NodeRunForGate, error) {
 		return nil, fmt.Errorf("scanGateRow: frame_id: %w", err)
 	}
 	return &persistence.NodeRunForGate{
-		RunID:          runID,
+		NodeRunID:      runID,
 		NodeID:         nodeID,
 		RunScopeID:     runScope,
 		FrameID:        frameID,

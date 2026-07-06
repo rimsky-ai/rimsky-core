@@ -40,7 +40,7 @@ func (e *BreakpointInfraError) Unwrap() error { return e.Cause }
 type CheckpointContext struct {
 	InstanceID       shared.UUID
 	NodeID           shared.UUID
-	DispatchID       shared.UUID
+	NodeRunID        shared.UUID
 	FrameID          shared.UUID
 	Executor         string
 	NodeType         string
@@ -100,8 +100,8 @@ func EvaluateBreakpoints(
 			nodeRunIDPt *shared.UUID
 			frameIDPt   *shared.UUID
 		)
-		if cc.DispatchID != (shared.UUID{}) {
-			id := cc.DispatchID
+		if cc.NodeRunID != (shared.UUID{}) {
+			id := cc.NodeRunID
 			nodeRunIDPt = &id
 		}
 		if cc.FrameID != (shared.UUID{}) {

@@ -36,9 +36,9 @@ func makeTestSigner(t *testing.T) *testSigner {
 	return &testSigner{publicKeyPEM: pemText, privateKey: priv}
 }
 
-func (s *testSigner) sign(t *testing.T, dispatchID string, value any) string {
+func (s *testSigner) sign(t *testing.T, nodeRunID string, value any) string {
 	t.Helper()
-	msg, err := BuildSignoffMessage(dispatchID, value)
+	msg, err := BuildSignoffMessage(nodeRunID, value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestVerifyRequiredSignoffsSupportsRootSignature(t *testing.T) {
 }
 
 type wireCompatVector struct {
-	DispatchID   string `json:"dispatch_id"`
+	NodeRunID    string `json:"dispatch_id"`
 	ValueJSON    string `json:"value_json"`
 	Canonical    string `json:"canonical"`
 	SignatureB64 string `json:"signature_b64"`
@@ -230,11 +230,11 @@ func assertWireCompat(t *testing.T, publicKeyPEM string, vector wireCompatVector
 		t.Fatal(err)
 	}
 
-	msg, err := BuildSignoffMessage(vector.DispatchID, value)
+	msg, err := BuildSignoffMessage(vector.NodeRunID, value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantMsg := SignoffDomain + "\n" + vector.DispatchID + "\n" + vector.Canonical
+	wantMsg := SignoffDomain + "\n" + vector.NodeRunID + "\n" + vector.Canonical
 	if string(msg) != wantMsg {
 		t.Fatalf("canonical message mismatch:\n got: %q\nwant: %q", msg, wantMsg)
 	}
@@ -242,7 +242,7 @@ func assertWireCompat(t *testing.T, publicKeyPEM string, vector wireCompatVector
 	delta := map[string]any{"payload": value}
 	res := VerifyRequiredSignoffs(
 		[]RequiredSignoff{{PublicKey: publicKeyPEM, Path: "payload"}},
-		delta, vector.DispatchID, []string{vector.SignatureB64},
+		delta, vector.NodeRunID, []string{vector.SignatureB64},
 	)
 	if !res.OK {
 		t.Fatalf("TypeScript-minted signature rejected by Go verifier: %+v", res)

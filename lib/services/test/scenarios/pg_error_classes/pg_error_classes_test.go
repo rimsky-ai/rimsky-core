@@ -83,8 +83,7 @@ func testClaimUnavailableDelivered(t *testing.T) {
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance":               true,
-							"type":                   "terminal/error/*",
+							"node": "worker", "type": "terminal/error/*",
 							"force_upstream_refresh": false,
 						},
 					},
@@ -159,8 +158,7 @@ func testSwapFailedDelivered(t *testing.T) {
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance":               true,
-							"type":                   "terminal/error/*",
+							"node": "worker", "type": "terminal/error/*",
 							"force_upstream_refresh": false,
 						},
 					},

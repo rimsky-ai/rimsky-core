@@ -210,7 +210,7 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 		RunScopeID: f.mainScopeID,
 	}))
 
-	var dispatchID shared.UUID
+	var nodeRunID shared.UUID
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		candidates, err := f.queue.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"worker"},
@@ -221,8 +221,8 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 			return err
 		}
 		require.Len(t, candidates, 1)
-		dispatchID = candidates[0].DispatchID
-		ok, err := f.queue.ClaimDispatchRow(ctx, tx, dispatchID, "sup-dead")
+		nodeRunID = candidates[0].NodeRunID
+		ok, err := f.queue.ClaimDispatchRow(ctx, tx, nodeRunID, "sup-dead")
 		if err != nil {
 			return err
 		}
@@ -236,12 +236,12 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 		        async_ack_id = 'orphan-test-ack',
 		        effective_max_quiet_period_seconds = 75
 		  WHERE id = $1`,
-		dispatchID,
+		nodeRunID,
 	)
 
 	require.NoError(t, tick(ctx, f.schedConfig(), nil))
 
-	own, err := f.queue.GetClaimedBy(ctx, dispatchID)
+	own, err := f.queue.GetClaimedBy(ctx, nodeRunID)
 	require.NoError(t, err)
 	assert.Equal(t, "unclaimed", own.Kind,
 		"expected orphan claim to be released")

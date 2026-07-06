@@ -348,7 +348,7 @@ func getInFlightRunID(t *testing.T, h *scenario.Harness, nodeID shared.UUID) *sh
 		if latest == nil {
 			return nil
 		}
-		runID := latest.RunID
+		runID := latest.NodeRunID
 		out = &runID
 		return nil
 	}))

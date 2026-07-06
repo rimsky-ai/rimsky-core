@@ -60,8 +60,8 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("EnqueueInTx commit: %v", err)
 	}
 
-	dispatchID := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID)
-	if dispatchID == (shared.UUID{}) {
+	nodeRunID := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID)
+	if nodeRunID == (shared.UUID{}) {
 		t.Fatalf("EnqueueInTx commit: row not visible after commit")
 	}
 
@@ -77,7 +77,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("GetDispatchNode not_found: nodeID=%v want zero", gotNode)
 	}
 
-	gotNode, owner, err = q.GetDispatchNode(ctx, dispatchID)
+	gotNode, owner, err = q.GetDispatchNode(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetDispatchNode unclaimed: err: %v", err)
 	}
@@ -90,19 +90,19 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 
 	supID := "queue-in-tx-supervisor"
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, dispatchID, supID)
+		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, supID)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			t.Errorf("ClaimDispatchRow returned !ok on unclaimed row")
 		}
-		_, err = q.PromoteClaimedToRunning(ctx, tx, dispatchID, supID)
+		_, err = q.PromoteClaimedToRunning(ctx, tx, nodeRunID, supID)
 		return err
 	}); err != nil {
 		t.Fatalf("claim tx: %v", err)
 	}
-	gotNode, owner, err = q.GetDispatchNode(ctx, dispatchID)
+	gotNode, owner, err = q.GetDispatchNode(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetDispatchNode claimed_by: err: %v", err)
 	}
@@ -124,7 +124,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}); !errors.Is(err, rollbackErr) {
 		t.Fatalf("RemoveForNodeInTx rollback: expected rollbackErr, got %v", err)
 	}
-	_, owner, err = q.GetDispatchNode(ctx, dispatchID)
+	_, owner, err = q.GetDispatchNode(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetDispatchNode after rollback: err: %v", err)
 	}
@@ -138,7 +138,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("RemoveForNodeInTx wrong sup: %v", err)
 	}
-	_, owner, err = q.GetDispatchNode(ctx, dispatchID)
+	_, owner, err = q.GetDispatchNode(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetDispatchNode after wrong-sup remove: err: %v", err)
 	}
@@ -147,7 +147,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.Nodes().UpdateState(ctx, dispatchID,
+		if err := store.Nodes().UpdateState(ctx, nodeRunID,
 			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx); err != nil {
 			return err
 		}
@@ -155,7 +155,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("RemoveForNodeInTx commit: %v", err)
 	}
-	_, owner, err = q.GetDispatchNode(ctx, dispatchID)
+	_, owner, err = q.GetDispatchNode(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetDispatchNode after retire: err: %v", err)
 	}
@@ -196,7 +196,7 @@ func selectCandidateIDForNode(ctx context.Context, t *testing.T,
 		}
 		for _, c := range cands {
 			if c.NodeID == nodeID {
-				found = c.DispatchID
+				found = c.NodeRunID
 				break
 			}
 		}

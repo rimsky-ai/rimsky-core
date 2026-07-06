@@ -24,7 +24,7 @@ func TestLeafRunRecordCreation(t *testing.T) {
 	frameID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
 	rec := runtime.LeafRunRecord{
-		RunID:              shared.UUID(uuid.New()),
+		NodeRunID:          shared.UUID(uuid.New()),
 		NodeID:             shared.UUID(uuid.New()),
 		FrameID:            frameID,
 		ChildKey:           "partition-7",
@@ -51,7 +51,7 @@ func TestLeafRunRecordCreation(t *testing.T) {
 	if err := json.Unmarshal(row.Record, &decoded); err != nil {
 		t.Fatalf("payload not JSON-decodable: %v", err)
 	}
-	if decoded.RunID != rec.RunID || decoded.ChildKey != "partition-7" || decoded.State != "fresh" {
+	if decoded.NodeRunID != rec.NodeRunID || decoded.ChildKey != "partition-7" || decoded.State != "fresh" {
 		t.Errorf("payload roundtrip mismatch: %+v", decoded)
 	}
 }
@@ -60,8 +60,8 @@ func TestLeafRunRecordCreation_RequiresState(t *testing.T) {
 	t.Parallel()
 	lt := &fakeLineage{}
 	rec := runtime.LeafRunRecord{
-		RunID:   shared.UUID(uuid.New()),
-		FrameID: shared.UUID(uuid.New()),
+		NodeRunID: shared.UUID(uuid.New()),
+		FrameID:   shared.UUID(uuid.New()),
 	}
 	err := runtime.WriteLeafRunLineage(context.Background(), nil, lt,
 		shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec)

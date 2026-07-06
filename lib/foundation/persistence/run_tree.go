@@ -16,8 +16,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-type RunTreeRow struct {
-	RunID              shared.UUID            `json:"run_id"`
+type NodeRunTreeRow struct {
+	NodeRunID          shared.UUID            `json:"run_id"`
 	NodeID             shared.UUID            `json:"node_id"`
 	FrameID            shared.UUID            `json:"frame_id"`
 	RunScopeID         shared.UUID            `json:"run_scope_id"`
@@ -26,8 +26,8 @@ type RunTreeRow struct {
 	AggregationPolicy  spec.AggregationPolicy `json:"aggregation_policy,omitempty"`
 }
 
-type CreateRootRunInput struct {
-	RunID                  shared.UUID
+type CreateRootNodeRunInput struct {
+	NodeRunID              shared.UUID
 	NodeID                 shared.UUID
 	FrameID                shared.UUID
 	RunScopeID             shared.UUID
@@ -36,8 +36,8 @@ type CreateRootRunInput struct {
 	RequiredClaimProducers []string
 }
 
-type CreateChildRunInput struct {
-	RunID                  shared.UUID
+type CreateChildNodeRunInput struct {
+	NodeRunID              shared.UUID
 	NodeID                 shared.UUID
 	FrameID                shared.UUID
 	RunScopeID             shared.UUID
@@ -47,15 +47,15 @@ type CreateChildRunInput struct {
 }
 
 type RunTreeTable interface {
-	CreateRootRun(ctx context.Context, tx Tx, in CreateRootRunInput) error
+	CreateRootNodeRun(ctx context.Context, tx Tx, in CreateRootNodeRunInput) error
 
-	CreateChildRun(ctx context.Context, tx Tx, in CreateChildRunInput) error
+	CreateChildNodeRun(ctx context.Context, tx Tx, in CreateChildNodeRunInput) error
 
-	GetByID(ctx context.Context, tx Tx, runID shared.UUID) (*RunTreeRow, error)
+	GetByID(ctx context.Context, tx Tx, runID shared.UUID) (*NodeRunTreeRow, error)
 
-	LockTreeForUpdate(ctx context.Context, tx Tx, runID shared.UUID) (*RunTreeRow, error)
+	LockTreeForUpdate(ctx context.Context, tx Tx, runID shared.UUID) (*NodeRunTreeRow, error)
 
-	ListChildren(ctx context.Context, tx Tx, parentRunID shared.UUID) ([]RunTreeRow, error)
+	ListChildren(ctx context.Context, tx Tx, parentNodeRunID shared.UUID) ([]NodeRunTreeRow, error)
 
 	UpdateStateAndOutcome(ctx context.Context, tx Tx, runID shared.UUID, state cascade.NodeState, settlingSignalType *string) error
 

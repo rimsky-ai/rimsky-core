@@ -182,7 +182,7 @@ func seedConformanceRunForNode(
 		}
 		for _, c := range cands {
 			if c.NodeID == nodeID {
-				runID = c.DispatchID
+				runID = c.NodeRunID
 				return nil
 			}
 		}
@@ -240,7 +240,7 @@ func inTx(ctx context.Context, store persistence.Tables, fn func(tx persistence.
 func forceRunStateToFresh(
 	ctx context.Context, tx persistence.Tx, store persistence.Tables, runID shared.UUID,
 ) error {
-	row, err := store.RunTree().GetByID(ctx, tx, runID)
+	row, err := store.NodeRunTree().GetByID(ctx, tx, runID)
 	if err != nil || row == nil {
 		return err
 	}

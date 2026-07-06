@@ -37,12 +37,12 @@ type SubstitutionRef struct {
 }
 
 type LeafRunRecord struct {
-	RunID              shared.UUID        `json:"run_id"`
+	NodeRunID          shared.UUID        `json:"run_id"`
 	NodeID             shared.UUID        `json:"node_id"`
 	FrameID            shared.UUID        `json:"frame_id"`
 	ChildKey           string             `json:"child_key,omitempty"`
 	NodeAlias          string             `json:"node_alias,omitempty"`
-	ParentRunID        string             `json:"parent_run_id,omitempty"`
+	ParentNodeRunID    string             `json:"parent_run_id,omitempty"`
 	FrameTriggerKind   string             `json:"frame_trigger_kind,omitempty"`
 	TriggerMessageID   string             `json:"trigger_message_id,omitempty"`
 	HeldClaims         []LeafRunHeldClaim `json:"held_claims,omitempty"`
@@ -64,7 +64,7 @@ type LeafRunRecord struct {
 
 type ClaimTerminalRecord struct {
 	ClaimHandleID       shared.UUID    `json:"claim_handle_id"`
-	RunID               shared.UUID    `json:"run_id"`
+	NodeRunID           shared.UUID    `json:"run_id"`
 	NodeID              shared.UUID    `json:"node_id"`
 	FrameID             shared.UUID    `json:"frame_id"`
 	ParentClaimHandleID *shared.UUID   `json:"parent_claim_handle_id,omitempty"`
@@ -142,7 +142,7 @@ func HashBytes(b []byte) string {
 type LeafRunEmitInput struct {
 	InstanceID         shared.UUID
 	FrameID            shared.UUID
-	RunID              shared.UUID
+	NodeRunID          shared.UUID
 	NodeID             shared.UUID
 	ChildKey           string
 	State              string
@@ -155,7 +155,7 @@ type LeafRunEmitInput struct {
 	Params             map[string]any
 	AttributesMerged   map[string]any
 	HeldClaims         []LeafRunHeldClaim
-	ParentRunID        *shared.UUID
+	ParentNodeRunID    *shared.UUID
 	TemplateHash       string
 	SubstitutionRefs   []SubstitutionRef
 }
@@ -172,28 +172,28 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 	if perr != nil && args.Logger != nil {
 		args.Logger.Warn("lineage_writer.HashCanonicalJSON failed",
 			"field", "params",
-			"run_id", in.RunID.String(),
+			"run_id", in.NodeRunID.String(),
 			"error", perr.Error())
 	}
 	attributesHash, uerr := HashCanonicalJSON(in.AttributesMerged)
 	if uerr != nil && args.Logger != nil {
 		args.Logger.Warn("lineage_writer.HashCanonicalJSON failed",
 			"field", "attributes",
-			"run_id", in.RunID.String(),
+			"run_id", in.NodeRunID.String(),
 			"error", uerr.Error())
 	}
-	parentRunID := ""
-	if in.ParentRunID != nil {
-		parentRunID = in.ParentRunID.String()
+	parentNodeRunID := ""
+	if in.ParentNodeRunID != nil {
+		parentNodeRunID = in.ParentNodeRunID.String()
 	}
 	rec := LeafRunRecord{
-		RunID:              in.RunID,
+		NodeRunID:          in.NodeRunID,
 		NodeID:             in.NodeID,
 		FrameID:            in.FrameID,
 		ChildKey:           in.ChildKey,
 		NodeAlias:          in.NodeAlias,
 		TemplateNodeAlias:  in.NodeAlias,
-		ParentRunID:        parentRunID,
+		ParentNodeRunID:    parentNodeRunID,
 		ExecutorName:       in.ExecutorName,
 		TemplateHash:       in.TemplateHash,
 		ParamsSnapshotHash: paramsHash,
@@ -212,7 +212,7 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 	}); err != nil {
 		if args.Logger != nil {
 			args.Logger.Warn("EmitLeafRunLineage: write failed",
-				"run_id", in.RunID.String(),
+				"run_id", in.NodeRunID.String(),
 				"error", err.Error())
 		}
 	}
@@ -350,14 +350,14 @@ func mostRecentRunIDForNode(ctx context.Context, lt persistence.LineageTable, up
 	for i := len(page.Rows) - 1; i >= 0; i-- {
 		r := page.Rows[i]
 		var rec struct {
-			NodeID string `json:"node_id"`
-			RunID  string `json:"run_id"`
+			NodeID    string `json:"node_id"`
+			NodeRunID string `json:"run_id"`
 		}
 		if err := json.Unmarshal(r.Record, &rec); err != nil {
 			continue
 		}
-		if rec.NodeID == upstreamNodeID.String() && rec.RunID != "" {
-			if u, err := uuid.Parse(rec.RunID); err == nil {
+		if rec.NodeID == upstreamNodeID.String() && rec.NodeRunID != "" {
+			if u, err := uuid.Parse(rec.NodeRunID); err == nil {
 				return shared.UUID(u)
 			}
 		}

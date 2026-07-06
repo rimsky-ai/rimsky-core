@@ -27,9 +27,9 @@ func TestSplitScopeEmitsNSubClaims_InputProjectsOnePartitionPerSubScope(t *testi
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "sa-east-1"},
 	}
 	in := runtime.ChildExecutionInput{
-		ParentRunID: parentRun,
-		FrameID:     frameID,
-		Partitions:  runtime.FanOutPartitions(subClaims),
+		ParentNodeRunID: parentRun,
+		FrameID:         frameID,
+		Partitions:      runtime.FanOutPartitions(subClaims),
 		Children: []runtime.ChildRunSpec{{
 			NodeID:                 parentNode,
 			Executor:               "my-loader",
@@ -39,8 +39,8 @@ func TestSplitScopeEmitsNSubClaims_InputProjectsOnePartitionPerSubScope(t *testi
 	if len(in.Partitions) != len(subClaims) {
 		t.Fatalf("partitions: %d (want %d, one per sub-claim)", len(in.Partitions), len(subClaims))
 	}
-	if in.ParentRunID != parentRun {
-		t.Errorf("in.ParentRunID: %s (want %s)", in.ParentRunID, parentRun)
+	if in.ParentNodeRunID != parentRun {
+		t.Errorf("in.ParentNodeRunID: %s (want %s)", in.ParentNodeRunID, parentRun)
 	}
 	if in.FrameID != frameID {
 		t.Errorf("in.FrameID: %s (want %s)", in.FrameID, frameID)

@@ -23,7 +23,7 @@ func (s *claimHoldersImpl) Insert(ctx context.Context, in persistence.ClaimHolde
 	_, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
 		 VALUES ($1, $2, $3, 'active', $4)`,
-		in.ID, in.ClaimHandleID, in.HolderRunID, in.FrameID,
+		in.ID, in.ClaimHandleID, in.HolderNodeRunID, in.FrameID,
 	)
 	if err != nil {
 		return fmt.Errorf("claim_holders.Insert: %w", err)
@@ -60,12 +60,12 @@ func (s *claimHoldersImpl) ListByClaimHandleID(ctx context.Context, claimHandleI
 	return collectClaimHolders(rows)
 }
 
-func (s *claimHoldersImpl) ListByHolderRun(ctx context.Context, holderRunID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
+func (s *claimHoldersImpl) ListByHolderRun(ctx context.Context, holderNodeRunID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
 		 WHERE holder_run_id = $1
-		 ORDER BY id ASC`, holderRunID,
+		 ORDER BY id ASC`, holderNodeRunID,
 	)
 	if err != nil {
 		return nil, err
@@ -104,7 +104,7 @@ func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state p
 }
 
 func (s *claimHoldersImpl) CompleteByClaimHandleAndRun(
-	ctx context.Context, claimHandleID, holderRunID shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx,
+	ctx context.Context, claimHandleID, holderNodeRunID shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx,
 ) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
@@ -114,7 +114,7 @@ func (s *claimHoldersImpl) CompleteByClaimHandleAndRun(
 		  WHERE claim_handle_id = $1
 		    AND holder_run_id = $2
 		    AND state = 'active'`,
-		claimHandleID, holderRunID, string(state),
+		claimHandleID, holderNodeRunID, string(state),
 	)
 	if err != nil {
 		return fmt.Errorf("claim_holders.CompleteByClaimHandleAndRun: %w", err)
@@ -152,7 +152,7 @@ func scanClaimHolder(sc scannable) (persistence.ClaimHolderRow, error) {
 		completedAt *time.Time
 	)
 	if err := sc.Scan(
-		&r.ID, &r.ClaimHandleID, &r.HolderRunID,
+		&r.ID, &r.ClaimHandleID, &r.HolderNodeRunID,
 		&state, &completedAt,
 	); err != nil {
 		return persistence.ClaimHolderRow{}, err

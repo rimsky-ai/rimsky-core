@@ -94,7 +94,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 			return err
 		}
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: claimHandleID, HolderRunID: acqRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: claimHandleID, HolderNodeRunID: acqRunID,
 		}, tx)
 	}))
 
@@ -256,7 +256,7 @@ func seedRunForNodeAsset(
 		}
 		for _, c := range cands {
 			if c.NodeID == nodeID {
-				out = c.DispatchID
+				out = c.NodeRunID
 				return nil
 			}
 		}

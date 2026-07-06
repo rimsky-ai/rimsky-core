@@ -64,7 +64,7 @@ func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               scopeB,
 			ParentRunScopeID: &fix.MainRunScopeID,
-			ParentRunID:      &parentRun,
+			ParentNodeRunID:  &parentRun,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "scope-b",

@@ -198,7 +198,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 				},
 			}
 			if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				if err := dctx.Args.Queue.RegisterAsyncAck(ctx, tx, acq.DispatchID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec); err != nil {
+				if err := dctx.Args.Queue.RegisterAsyncAck(ctx, tx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec); err != nil {
 					return fmt.Errorf("register async ack: %w", err)
 				}
 				return signalaudit.EmitSignal(ctx, dctx.Args.Persist.Events(),
@@ -215,7 +215,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 			Async:      true,
 			AsyncAckID: asyncAck,
 			NodeID:     acq.NodeID,
-			DispatchID: acq.DispatchID,
+			NodeRunID:  acq.NodeRunID,
 		}, nil
 	}
 	return terminal, nil, nil
@@ -229,7 +229,7 @@ func registerAsyncIfSet(dctx dispatchContext, asyncAck string) {
 	dctx.RegisterAsync(asyncAck, AsyncContext{
 		NodeID:             acq.NodeID,
 		InstanceID:         acq.InstanceID,
-		DispatchID:         acq.DispatchID,
+		NodeRunID:          acq.NodeRunID,
 		SupervisorID:       dctx.Args.SupervisorID,
 		StoreRegistry:      dctx.Args.StoreRegistry,
 		FrameID:            acq.FrameID,
@@ -436,7 +436,7 @@ func evaluateBeforeDispatchBreakpoints(
 	bpResolved, bpErr := EvaluateBreakpoints(ctx, args, CheckpointContext{
 		InstanceID:       acq.InstanceID,
 		NodeID:           acq.NodeID,
-		DispatchID:       acq.DispatchID,
+		NodeRunID:        acq.NodeRunID,
 		FrameID:          acq.FrameID,
 		Executor:         acq.Executor,
 		NodeType:         acq.NodeType,
@@ -455,7 +455,7 @@ func evaluateBeforeDispatchBreakpoints(
 			if args.Logger != nil {
 				args.Logger.Warn("runner_dispatch: breakpoint infra failure; dispatching with pre-breakpoint bag",
 					"node_id", acq.NodeID.String(),
-					"dispatch_id", acq.DispatchID.String(),
+					"dispatch_id", acq.NodeRunID.String(),
 					"phase", infraErr.Phase,
 					"error", bpErr.Error())
 			}
@@ -798,7 +798,7 @@ func loadDispatchBag(ctx context.Context, args RunArgs, acq *acquisition) (map[s
 	}
 	var bag map[string]any
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		raw, err := args.Persist.NodeAttributes().GetDispatchInputBag(ctx, tx, acq.DispatchID)
+		raw, err := args.Persist.NodeAttributes().GetDispatchInputBag(ctx, tx, acq.NodeRunID)
 		if err != nil {
 			return err
 		}
@@ -808,7 +808,7 @@ func loadDispatchBag(ctx context.Context, args RunArgs, acq *acquisition) (map[s
 		return nil, schema, err
 	}
 	if bag == nil {
-		return nil, schema, fmt.Errorf("loadDispatchBag: dispatch_input_bag missing for run %s (invariant: every dispatched run must carry a snapshot bag)", acq.DispatchID)
+		return nil, schema, fmt.Errorf("loadDispatchBag: dispatch_input_bag missing for run %s (invariant: every dispatched run must carry a snapshot bag)", acq.NodeRunID)
 	}
 	return bag, schema, nil
 }
@@ -864,7 +864,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		return nil, err
 	}
 
-	cancelToken := dctx.Args.SupervisorID + ":" + acq.DispatchID.String()
+	cancelToken := dctx.Args.SupervisorID + ":" + acq.NodeRunID.String()
 	req := &genv1.ExecuteRequest{
 		NodeId:     acq.NodeID.String(),
 		InstanceId: acq.InstanceID.String(),
@@ -876,12 +876,12 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		ClaimProducers:   claimProducers,
 		CallbackUrl:      dctx.Args.CallbackURL,
 		CancelToken:      cancelToken,
-		DispatchId:       acq.DispatchID.String(),
+		DispatchId:       acq.NodeRunID.String(),
 		// @concept: executor
 		Scratch: acq.Scratch,
 	}
-	if acq.PriorDispatchID != nil {
-		pid := acq.PriorDispatchID.String()
+	if acq.PriorNodeRunID != nil {
+		pid := acq.PriorNodeRunID.String()
 		req.PriorDispatchId = &pid
 	}
 	if acq.PriorDispatchDisposition != "" {

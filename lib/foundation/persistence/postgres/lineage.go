@@ -118,13 +118,13 @@ SELECT id, record_kind, instance_id, frame_id, observed_at, record, outcome
  ORDER BY observed_at ASC, id ASC
  LIMIT $2`
 
-func (b *lineageImpl) QueryByParentRunID(ctx context.Context, parentRunID shared.UUID, limit int) ([]persistence.LineageRow, error) {
+func (b *lineageImpl) QueryByParentNodeRunID(ctx context.Context, parentNodeRunID shared.UUID, limit int) ([]persistence.LineageRow, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := (*tablesImpl)(b).pool.Query(ctx, queryByParentRunIDSQL, parentRunID.String(), limit)
+	rows, err := (*tablesImpl)(b).pool.Query(ctx, queryByParentRunIDSQL, parentNodeRunID.String(), limit)
 	if err != nil {
-		return nil, fmt.Errorf("postgres.Lineage.QueryByParentRunID: %w", err)
+		return nil, fmt.Errorf("postgres.Lineage.QueryByParentNodeRunID: %w", err)
 	}
 	defer rows.Close()
 	return collectLineage(rows)

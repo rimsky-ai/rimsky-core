@@ -20,7 +20,7 @@ func nodeRunSnapshotForBreakpoint(acq *acquisition) map[string]any {
 		return map[string]any{}
 	}
 	out := map[string]any{
-		"dispatch_id":   acq.DispatchID.String(),
+		"dispatch_id":   acq.NodeRunID.String(),
 		"node_id":       acq.NodeID.String(),
 		"instance_id":   acq.InstanceID.String(),
 		"node_type":     acq.NodeType,
@@ -30,8 +30,8 @@ func nodeRunSnapshotForBreakpoint(acq *acquisition) map[string]any {
 		"run_scope_id":  acq.RunScopeID.String(),
 		"template_hash": acq.TemplateHash,
 	}
-	if acq.PriorDispatchID != nil {
-		out["prior_dispatch_id"] = acq.PriorDispatchID.String()
+	if acq.PriorNodeRunID != nil {
+		out["prior_dispatch_id"] = acq.PriorNodeRunID.String()
 	}
 	if acq.PriorDispatchDisposition != "" {
 		out["prior_dispatch_disposition"] = acq.PriorDispatchDisposition
@@ -75,7 +75,7 @@ func openWaitSetSummaryForBreakpoint(ctx context.Context, args RunArgs, acq *acq
 	}
 	out := []map[string]any{}
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := args.Persist.WaitSet().ListForReceiver(ctx, acq.FrameID, acq.DispatchID, tx)
+		rows, err := args.Persist.WaitSet().ListForReceiver(ctx, acq.FrameID, acq.NodeRunID, tx)
 		if err != nil {
 			return err
 		}
@@ -84,7 +84,7 @@ func openWaitSetSummaryForBreakpoint(ctx context.Context, args RunArgs, acq *acq
 				continue
 			}
 			entry := map[string]any{
-				"sender_run_id": r.SenderRunID.String(),
+				"sender_run_id": r.SenderNodeRunID.String(),
 				"topic_kind":    r.TopicKind,
 			}
 			if len(r.TopicFilter) > 0 {
@@ -98,7 +98,7 @@ func openWaitSetSummaryForBreakpoint(ctx context.Context, args RunArgs, acq *acq
 		return nil
 	}); err != nil && args.Logger != nil {
 		args.Logger.Warn("openWaitSetSummaryForBreakpoint: wait-set list failed; snapshot will omit",
-			"dispatch_id", acq.DispatchID.String(),
+			"dispatch_id", acq.NodeRunID.String(),
 			"frame_id", acq.FrameID.String(),
 			"error", err.Error())
 	}

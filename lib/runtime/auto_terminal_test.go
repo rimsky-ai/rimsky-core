@@ -64,7 +64,7 @@ func seedRunForNode(
 		}
 		for _, c := range cands {
 			if c.NodeID == nodeID {
-				out = c.DispatchID
+				out = c.NodeRunID
 				return nil
 			}
 		}
@@ -200,12 +200,12 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 			return err
 		}
 		if err := backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderRunID: acqRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeRunID: acqRunID,
 		}, tx); err != nil {
 			return err
 		}
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderRunID: inhRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeRunID: inhRunID,
 		}, tx)
 	}))
 
@@ -315,7 +315,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 			return err
 		}
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: claimHandleID, HolderRunID: acqRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: claimHandleID, HolderNodeRunID: acqRunID,
 		}, tx)
 	}))
 
@@ -383,7 +383,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 
 func seedFanOutParentAndSubclaims(
 	ctx context.Context, t *testing.T, backend persistence.Tables,
-	parentRunID, parentNodeID shared.UUID, supervisorID string,
+	parentNodeRunID, parentNodeID shared.UUID, supervisorID string,
 	producerName string, policy spec.AggregationPolicy, n int,
 ) (shared.UUID, []shared.UUID) {
 	t.Helper()
@@ -404,7 +404,7 @@ func seedFanOutParentAndSubclaims(
 			HolderSupervisorID: supervisorID,
 			HolderNodeID:       parentNodeID,
 			ExpiresAt:          time.Now().Add(10 * time.Minute),
-			NodeRunID:          &parentRunID,
+			NodeRunID:          &parentNodeRunID,
 			AggregationPolicy:  policyBytes,
 		}, tx); err != nil {
 			return err
@@ -422,7 +422,7 @@ func seedFanOutParentAndSubclaims(
 				HolderSupervisorID:  supervisorID,
 				HolderNodeID:        parentNodeID,
 				ExpiresAt:           time.Now().Add(10 * time.Minute),
-				NodeRunID:           &parentRunID,
+				NodeRunID:           &parentNodeRunID,
 				ParentClaimHandleID: &parent,
 			}, tx); err != nil {
 				return err
@@ -514,7 +514,7 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 	}))
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("be-store", claimproducer.Capabilities{
@@ -531,7 +531,7 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindBestEffort}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
-		ctx, t, backend, parentRunID, parentNode.ID, "sup-BE",
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-BE",
 		"be-store", policy, 2,
 	)
 	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeAbandon)
@@ -571,7 +571,7 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 	}))
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("th-store", claimproducer.Capabilities{
@@ -588,7 +588,7 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindThreshold, MaxFailures: 2}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
-		ctx, t, backend, parentRunID, parentNode.ID, "sup-TH",
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-TH",
 		"th-store", policy, 3,
 	)
 	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeCommit)
@@ -629,7 +629,7 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 	}))
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("st-store", claimproducer.Capabilities{
@@ -646,7 +646,7 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
-		ctx, t, backend, parentRunID, parentNode.ID, "sup-ST",
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-ST",
 		"st-store", policy, 2,
 	)
 	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeCommit)
@@ -693,7 +693,7 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 	}))
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 	coRunID := seedRunForNode(ctx, t, backend, d.Queue(), coNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -711,12 +711,12 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
-		ctx, t, backend, parentRunID, parentNode.ID, "sup-HP",
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-HP",
 		"hp-store", policy, 2,
 	)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: parentID, HolderRunID: coRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: parentID, HolderNodeRunID: coRunID,
 		}, tx)
 	}))
 
@@ -784,7 +784,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 	}))
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("cq-store", claimproducer.Capabilities{
@@ -801,7 +801,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
-		ctx, t, backend, parentRunID, parentNode.ID, "sup-CQ",
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-CQ",
 		"cq-store", policy, 2,
 	)
 
@@ -810,12 +810,12 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 	parentHolderID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: parentHolderID, ClaimHandleID: parentID, HolderRunID: parentRunID,
+			ID: parentHolderID, ClaimHandleID: parentID, HolderNodeRunID: parentNodeRunID,
 		}, tx)
 	}))
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHolders().CompleteByClaimHandleAndRun(
-			ctx, parentID, parentRunID, persistence.ClaimHolderStateCompleted, tx,
+			ctx, parentID, parentNodeRunID, persistence.ClaimHolderStateCompleted, tx,
 		)
 	}))
 
@@ -907,12 +907,12 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 			return err
 		}
 		if err := backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderRunID: acqRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeRunID: acqRunID,
 		}, tx); err != nil {
 			return err
 		}
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderRunID: inhRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeRunID: inhRunID,
 		}, tx)
 	}))
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -997,7 +997,7 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 	}))
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("be-dur-store", claimproducer.Capabilities{
@@ -1014,7 +1014,7 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindBestEffort}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
-		ctx, t, backend, parentRunID, parentNode.ID, "sup-BD",
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-BD",
 		"be-dur-store", policy, 2,
 	)
 	resolveSubclaimWithLifetime(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeCommit, spec.ClaimLifetimeDurable)
@@ -1066,7 +1066,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 	}))
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("cs-store", claimproducer.Capabilities{
@@ -1086,7 +1086,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 		CancelSiblings: true,
 	}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
-		ctx, t, backend, parentRunID, parentNode.ID, "sup-CS",
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-CS",
 		"cs-store", policy, 3,
 	)
 
@@ -1155,7 +1155,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 	}))
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("cs-dur-store", claimproducer.Capabilities{
@@ -1175,7 +1175,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 		CancelSiblings: true,
 	}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
-		ctx, t, backend, parentRunID, parentNode.ID, "sup-CD",
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-CD",
 		"cs-dur-store", policy, 3,
 	)
 
@@ -1265,7 +1265,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 	}))
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
-	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
 	store := storetest.NewFake("cs-rec-store", claimproducer.Capabilities{
@@ -1285,7 +1285,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 		CancelSiblings: true,
 	}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
-		ctx, t, backend, parentRunID, parentNode.ID, "sup-CR",
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-CR",
 		"cs-rec-store", policy, 2,
 	)
 
@@ -1306,7 +1306,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 				HolderSupervisorID:  "sup-CR",
 				HolderNodeID:        parentNode.ID,
 				ExpiresAt:           time.Now().Add(10 * time.Minute),
-				NodeRunID:           &parentRunID,
+				NodeRunID:           &parentNodeRunID,
 				ParentClaimHandleID: &sub1Parent,
 			}, tx); err != nil {
 				return err

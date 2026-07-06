@@ -38,7 +38,7 @@ func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition
 		"source":        "acquire_unavailable",
 		"unavailable":   producerNameForSpec(acq.UnavailableSpec),
 		"partial_locks": len(acq.PartialLocks),
-		"dispatch_id":   cand.DispatchID.String(),
+		"dispatch_id":   cand.NodeRunID.String(),
 		"node_id":       cand.NodeID.String(),
 		"node_type":     acq.NodeType,
 	}
@@ -65,7 +65,7 @@ func handleAcquireProducerError(ctx context.Context, args RunArgs, acq acquisiti
 		"source":        "acquire_producer_error",
 		"producer":      producerNameForSpec(acq.ErroredSpec),
 		"partial_locks": len(acq.PartialLocks),
-		"dispatch_id":   cand.DispatchID.String(),
+		"dispatch_id":   cand.NodeRunID.String(),
 		"node_id":       cand.NodeID.String(),
 		"node_type":     acq.NodeType,
 	}
@@ -84,7 +84,7 @@ func runAcquireErrorPolicy(
 	}); err != nil {
 		args.Logger.Warn(site+": applyErrorPolicy failed",
 			"node_id", acq.NodeID.String(),
-			"dispatch_id", acq.DispatchID.String(),
+			"dispatch_id", acq.NodeRunID.String(),
 			"error", err.Error())
 		return nil
 	}
@@ -100,20 +100,20 @@ func runAcquireErrorPolicy(
 func reclaimDispatchRowShortTx(ctx context.Context, args RunArgs, cand persistence.Candidate, site string) bool {
 	var claimed bool
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		c, err := args.Queue.ClaimDispatchRow(ctx, tx, cand.DispatchID, args.SupervisorID)
+		c, err := args.Queue.ClaimDispatchRow(ctx, tx, cand.NodeRunID, args.SupervisorID)
 		claimed = c
 		return err
 	}); err != nil {
 		args.Logger.Warn(site+": re-claim dispatch row failed; skipping policy resolution this cycle",
 			"node_id", cand.NodeID.String(),
-			"dispatch_id", cand.DispatchID.String(),
+			"dispatch_id", cand.NodeRunID.String(),
 			"error", err.Error())
 		return false
 	}
 	if !claimed {
 		args.Logger.Info(site+": dispatch row no longer claimable; another resolution owns it",
 			"node_id", cand.NodeID.String(),
-			"dispatch_id", cand.DispatchID.String())
+			"dispatch_id", cand.NodeRunID.String())
 		return false
 	}
 	return true

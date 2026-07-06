@@ -25,13 +25,13 @@ func BuildAttributeDeps(
 	ctx context.Context,
 	tx persistence.Tx,
 	args RunArgs,
-	receiverRunID foundationshared.UUID,
+	receiverNodeRunID foundationshared.UUID,
 	frameID foundationshared.UUID,
 ) (map[string]json.RawMessage, error) {
 	out := make(map[string]json.RawMessage)
 
-	if receiverRunID != (foundationshared.UUID{}) {
-		if err := populateSubscribedSenderDeps(ctx, tx, args, receiverRunID, out); err != nil {
+	if receiverNodeRunID != (foundationshared.UUID{}) {
+		if err := populateSubscribedSenderDeps(ctx, tx, args, receiverNodeRunID, out); err != nil {
 			return nil, err
 		}
 	}
@@ -65,9 +65,9 @@ func BuildAttributeDeps(
 // @concept: cascade
 func populateSubscribedSenderDeps(
 	ctx context.Context, tx persistence.Tx, args RunArgs,
-	receiverRunID foundationshared.UUID, out map[string]json.RawMessage,
+	receiverNodeRunID foundationshared.UUID, out map[string]json.RawMessage,
 ) error {
-	rec, err := args.Persist.Nodes().GetRunForGate(ctx, tx, receiverRunID)
+	rec, err := args.Persist.Nodes().GetRunForGate(ctx, tx, receiverNodeRunID)
 	if err != nil {
 		return fmt.Errorf("populateSubscribedSenderDeps: get receiver run: %w", err)
 	}
@@ -121,7 +121,7 @@ func populateSubscribedSenderDeps(
 		if latest == nil {
 			continue
 		}
-		attrRow, err := args.Persist.NodeAttributes().GetByRun(ctx, latest.RunID, tx)
+		attrRow, err := args.Persist.NodeAttributes().GetByRun(ctx, latest.NodeRunID, tx)
 		if err != nil {
 			return fmt.Errorf("populateSubscribedSenderDeps: attribute row for %s: %w", n.NodeType, err)
 		}
@@ -142,12 +142,12 @@ func populateSubscribedSenderDeps(
 
 func buildResolveContextForAcquisition(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	frameID, receiverRunID foundationshared.UUID,
+	frameID, receiverNodeRunID foundationshared.UUID,
 	templateHash string,
 	params json.RawMessage,
 	claims map[string]claimproducer.ClaimResult,
 ) (attributes.ResolveContext, error) {
-	deps, err := BuildAttributeDeps(ctx, tx, args, receiverRunID, frameID)
+	deps, err := BuildAttributeDeps(ctx, tx, args, receiverNodeRunID, frameID)
 	if err != nil {
 		return attributes.ResolveContext{}, fmt.Errorf("buildResolveContextForAcquisition: %w", err)
 	}

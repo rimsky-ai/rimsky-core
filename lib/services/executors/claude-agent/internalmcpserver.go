@@ -398,7 +398,7 @@ func (p *callbackToolProvider) callTool(name string, arguments json.RawMessage) 
 			log.Warn("mcp.unknown_token", "tool", tool)
 			return nil, toolResultText("unknown_token", true)
 		}
-		log.Info("mcp.tool_called", "tool", tool, "run_id", entry.RunID)
+		log.Info("mcp.tool_called", "tool", tool, "run_id", entry.SessionID)
 		return entry, nil
 	}
 

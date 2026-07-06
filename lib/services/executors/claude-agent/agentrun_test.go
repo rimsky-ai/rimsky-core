@@ -166,7 +166,7 @@ func (r *fakeRunner) waitForSpawn(t *testing.T) CliSpawnRequest {
 
 func baseRunOpts(runner CliRunner) AgentRunOptions {
 	return AgentRunOptions{
-		RunID:        "run-1",
+		SessionID:    "run-1",
 		NodeID:       "node-a",
 		NodeType:     "claude-agent",
 		InstanceID:   "instance-1",
@@ -174,7 +174,7 @@ func baseRunOpts(runner CliRunner) AgentRunOptions {
 		SystemPrompt: "S",
 		UserPrompt:   "U",
 		Attributes:   map[string]any{},
-		DispatchID:   "disp-1",
+		NodeRunID:    "disp-1",
 		RunScopeID:   "rs-1",
 		CallbackURL:  "http://supervisor.invalid/cb",
 		CancelToken:  "ct-1",

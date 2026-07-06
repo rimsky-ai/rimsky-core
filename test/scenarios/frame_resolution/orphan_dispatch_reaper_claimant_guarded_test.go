@@ -25,7 +25,7 @@ func TestOrphanDispatchReaper_ReleasesTerminalFrameClaim(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true})
 
-	dispatchID := seedTerminalFrameAndDispatch(t, h, "stale-sup")
+	nodeRunID := seedTerminalFrameAndDispatch(t, h, "stale-sup")
 
 	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(),
 		slog.New(slog.NewTextHandler(io.Discard, nil))))
@@ -33,7 +33,7 @@ func TestOrphanDispatchReaper_ReleasesTerminalFrameClaim(t *testing.T) {
 	var claimedBy *string
 	h.QueryRowSQL(
 		`SELECT claimed_by FROM rimsky_node_runs WHERE id = $1`,
-		[]any{dispatchID}, &claimedBy)
+		[]any{nodeRunID}, &claimedBy)
 	require.Nil(t, claimedBy,
 		"orphan reaper should release dispatch claim when joined frame is terminal")
 }
@@ -42,16 +42,16 @@ func TestOrphanDispatchReaper_ClaimantGuardedRelease(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true})
 
-	dispatchID := seedTerminalFrameAndDispatch(t, h, "fresh-sup")
+	nodeRunID := seedTerminalFrameAndDispatch(t, h, "fresh-sup")
 
-	priorOwner, err := h.Driver.Queue().GetClaimedBy(h.Ctx, dispatchID)
+	priorOwner, err := h.Driver.Queue().GetClaimedBy(h.Ctx, nodeRunID)
 	require.NoError(t, err)
 	require.Equal(t, "claimed_by", priorOwner.Kind)
 	require.Equal(t, "fresh-sup", priorOwner.SupervisorID)
 
-	require.NoError(t, h.Driver.Queue().ReleaseClaim(h.Ctx, dispatchID, "stale-sup"))
+	require.NoError(t, h.Driver.Queue().ReleaseClaim(h.Ctx, nodeRunID, "stale-sup"))
 
-	owner, err := h.Driver.Queue().GetClaimedBy(h.Ctx, dispatchID)
+	owner, err := h.Driver.Queue().GetClaimedBy(h.Ctx, nodeRunID)
 	require.NoError(t, err)
 	require.Equal(t, "claimed_by", owner.Kind,
 		"live supervisor's claim must remain after stale-claimant release")
@@ -103,10 +103,10 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 		INSERT INTO rimsky_frames (frame_id, instance_id, triggering_message_id, state, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
 		VALUES ($1, $2, $3, 'completed', $4, $4, 600000, $5)
 	`, frameID, instanceID, messageID, now, mainScopeID)
-	dispatchID := uuid.New()
+	nodeRunID := uuid.New()
 	h.ExecSQL(`
 		INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, claimed_by, frame_id, run_scope_id, sequence, state)
 		VALUES ($1, $2, NULL, '{}', $3, $4, $5, 1, 'running')
-	`, dispatchID, nodeID, claimedBy, frameID, mainScopeID)
-	return dispatchID
+	`, nodeRunID, nodeID, claimedBy, frameID, mainScopeID)
+	return nodeRunID
 }

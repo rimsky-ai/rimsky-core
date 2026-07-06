@@ -50,8 +50,8 @@ func emitTerminalForensics(
 	}
 	rec := ClaimTerminalRecord{
 		ClaimHandleID:       td.ClaimHandleID,
-		RunID:               td.LineageHint.RunID,
-		OpenLineageRunRef:   td.LineageHint.RunID.String(),
+		NodeRunID:           td.LineageHint.NodeRunID,
+		OpenLineageRunRef:   td.LineageHint.NodeRunID.String(),
 		NodeID:              td.LineageHint.NodeID,
 		FrameID:             td.LineageHint.FrameID,
 		ParentClaimHandleID: td.ParentClaimHandleID,
@@ -79,7 +79,7 @@ func emitTerminalForensics(
 	kind := events.KindClaimResolutionCommit()
 	payload := map[string]any{
 		"claim_handle_id":       td.ClaimHandleID.String(),
-		"run_id":                td.LineageHint.RunID.String(),
+		"run_id":                td.LineageHint.NodeRunID.String(),
 		"frame_id":              td.LineageHint.FrameID.String(),
 		"producer_name":         td.LineageHint.ProducerName,
 		"claim_scope_data_hash": rec.ClaimScopeDataHash,

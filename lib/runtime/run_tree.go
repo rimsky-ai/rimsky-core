@@ -202,7 +202,7 @@ func aggregateChanged(children []ChildState) bool {
 	return false
 }
 
-func CreateRootRun(
+func CreateRootNodeRun(
 	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable,
 	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
 	executor string, requiredClaimProducers []string,
@@ -212,8 +212,8 @@ func CreateRootRun(
 	if policy.Kind == "" {
 		policy.Kind = spec.AggregationKindStrict
 	}
-	if err := rt.CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-		RunID:                  runID,
+	if err := rt.CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		NodeRunID:              runID,
 		NodeID:                 nodeID,
 		FrameID:                frameID,
 		RunScopeID:             runScopeID,
@@ -221,12 +221,12 @@ func CreateRootRun(
 		RequiredClaimProducers: requiredClaimProducers,
 		AggregationPolicy:      policy,
 	}); err != nil {
-		return shared.UUID{}, fmt.Errorf("CreateRootRun: %w", err)
+		return shared.UUID{}, fmt.Errorf("CreateRootNodeRun: %w", err)
 	}
 	return runID, nil
 }
 
-func CreateChildRun(
+func CreateChildNodeRun(
 	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable, queue persistence.Queue,
 	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
 	executor string, requiredClaimProducers []string, policy spec.AggregationPolicy,
@@ -234,7 +234,7 @@ func CreateChildRun(
 	if queue != nil {
 		existing, ok, err := queue.GetInFlightRunForNode(ctx, tx, nodeID, runScopeID)
 		if err != nil {
-			return shared.UUID{}, fmt.Errorf("CreateChildRun: lookup in-flight: %w", err)
+			return shared.UUID{}, fmt.Errorf("CreateChildNodeRun: lookup in-flight: %w", err)
 		}
 		if ok {
 			return existing, nil
@@ -244,8 +244,8 @@ func CreateChildRun(
 	if policy.Kind == "" {
 		policy.Kind = spec.AggregationKindStrict
 	}
-	if err := rt.CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
-		RunID:                  runID,
+	if err := rt.CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+		NodeRunID:              runID,
 		NodeID:                 nodeID,
 		FrameID:                frameID,
 		RunScopeID:             runScopeID,
@@ -253,7 +253,7 @@ func CreateChildRun(
 		RequiredClaimProducers: requiredClaimProducers,
 		AggregationPolicy:      policy,
 	}); err != nil {
-		return shared.UUID{}, fmt.Errorf("CreateChildRun: %w", err)
+		return shared.UUID{}, fmt.Errorf("CreateChildNodeRun: %w", err)
 	}
 	return runID, nil
 }
@@ -261,7 +261,7 @@ func CreateChildRun(
 func GetRunTree(
 	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable,
 	runID shared.UUID,
-) ([]persistence.RunTreeRow, error) {
+) ([]persistence.NodeRunTreeRow, error) {
 	root, err := rt.GetByID(ctx, tx, runID)
 	if err != nil {
 		return nil, fmt.Errorf("GetRunTree: load root: %w", err)
@@ -269,7 +269,7 @@ func GetRunTree(
 	if root == nil {
 		return nil, nil
 	}
-	out := []persistence.RunTreeRow{*root}
+	out := []persistence.NodeRunTreeRow{*root}
 	queue := []shared.UUID{runID}
 	for len(queue) > 0 {
 		current := queue[0]
@@ -280,7 +280,7 @@ func GetRunTree(
 		}
 		for _, c := range children {
 			out = append(out, c)
-			queue = append(queue, c.RunID)
+			queue = append(queue, c.NodeRunID)
 		}
 	}
 	return out, nil

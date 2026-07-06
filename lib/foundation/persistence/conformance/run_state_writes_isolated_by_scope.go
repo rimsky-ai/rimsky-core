@@ -42,7 +42,7 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               scopeB,
 			ParentRunScopeID: &scopeA,
-			ParentRunID:      &runA,
+			ParentNodeRunID:  &runA,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "scope-b",
@@ -98,7 +98,7 @@ func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runI
 	q := d.Queue()
 	var out runRowSnapshot
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.RunTree().GetByID(ctx, tx, runID)
+		r, err := store.NodeRunTree().GetByID(ctx, tx, runID)
 		if err != nil {
 			return err
 		}
@@ -110,7 +110,7 @@ func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runI
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("snapshotRun.RunTree: %v", err)
+		t.Fatalf("snapshotRun.NodeRunTree: %v", err)
 	}
 	row, err := q.GetByID(ctx, runID)
 	if err != nil {
@@ -184,10 +184,10 @@ func testRunStateWritesIsolated_ClearSettlingSignalType(t *testing.T, d persiste
 
 	successSig := "terminal/success"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFresh, &successSig); err != nil {
+		if err := store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFresh, &successSig); err != nil {
 			return err
 		}
-		return store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFresh, &successSig)
+		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFresh, &successSig)
 	}); err != nil {
 		t.Fatalf("seed settling_signal_type: %v", err)
 	}
@@ -211,10 +211,10 @@ func testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t *testing
 
 	failedSig := "terminal/error/aggregate/strict_failed"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFailed, &failedSig); err != nil {
+		if err := store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFailed, &failedSig); err != nil {
 			return err
 		}
-		return store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFailed, &failedSig)
+		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFailed, &failedSig)
 	}); err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}
@@ -286,7 +286,7 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 			return err
 		}
 		if err := q.ParkActiveInTx(ctx, tx, persistence.ParkActiveInput{
-			DispatchID:        f.runB,
+			NodeRunID:         f.runB,
 			ExpectedClaimedBy: "sup-B",
 			ParkedAt:          time.Now(),
 			Reason:            "snooze",

@@ -86,14 +86,14 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 		return nil
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.DispatchID)
+		resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.NodeRunID)
 		if err != nil {
 			return err
 		}
 		if !resumed {
 			return nil
 		}
-		if err := args.Persist.Nodes().UpdateState(ctx, parked.DispatchID,
+		if err := args.Persist.Nodes().UpdateState(ctx, parked.NodeRunID,
 			cascade.NodeStateStale, cascade.ReasonDeadlineResume, nil, tx); err != nil {
 			return err
 		}

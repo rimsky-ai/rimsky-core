@@ -90,7 +90,7 @@ func CheckAndFireResolution(
 		hint.FrameID = *row.FrameID
 	}
 	if row.NodeRunID != nil {
-		hint.RunID = *row.NodeRunID
+		hint.NodeRunID = *row.NodeRunID
 	}
 	if acquirer, aErr := args.Persist.Nodes().Get(ctx, row.HolderNodeID, tx); aErr == nil && acquirer != nil {
 		hint.InstanceID = acquirer.InstanceID
@@ -132,9 +132,9 @@ func routeHeldClaimVerbError(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	row *persistence.ClaimHandleRow, td TerminalDecision, errorClass string,
 ) error {
-	var senderRunID, senderFrameID shared.UUID
+	var senderNodeRunID, senderFrameID shared.UUID
 	if row.NodeRunID != nil {
-		senderRunID = *row.NodeRunID
+		senderNodeRunID = *row.NodeRunID
 	}
 	if row.FrameID != nil {
 		senderFrameID = *row.FrameID
@@ -149,7 +149,7 @@ func routeHeldClaimVerbError(
 		"claim_handle_id": td.ClaimHandleID.String(),
 	}, nil, nil, "give_up", 0, 0)
 	if err := emitSignalInTxOnce(ctx, args, tx,
-		row.HolderNodeID, holderNodeType, senderRunID, td.LineageHint.InstanceID,
+		row.HolderNodeID, holderNodeType, senderNodeRunID, td.LineageHint.InstanceID,
 		senderFrameID, sig); err != nil {
 		return fmt.Errorf("emit claim-terminal error signal: %w", err)
 	}
@@ -214,7 +214,7 @@ func expectedInheritorsMissing(
 	}
 	holderTypes := make(map[string]struct{}, len(holders))
 	for _, h := range holders {
-		nodeID, _, err := args.Queue.GetDispatchNode(ctx, h.HolderRunID)
+		nodeID, _, err := args.Queue.GetDispatchNode(ctx, h.HolderNodeRunID)
 		if err != nil || nodeID == (shared.UUID{}) {
 			continue
 		}

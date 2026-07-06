@@ -51,7 +51,7 @@ func resolveLinkedSubClaimsInTx(
 	if args.ClaimHandles == nil {
 		return nil, nil
 	}
-	rows, err := args.ClaimHandles.ListByNodeRun(ctx, acq.DispatchID, tx)
+	rows, err := args.ClaimHandles.ListByNodeRun(ctx, acq.NodeRunID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("resolveLinkedSubClaims: ListByNodeRun: %w", err)
 	}
@@ -83,7 +83,7 @@ func resolveLinkedSubClaimsInTx(
 		hint := ClaimLineageHint{
 			InstanceID:   acq.InstanceID,
 			FrameID:      acq.FrameID,
-			RunID:        acq.DispatchID,
+			NodeRunID:    acq.NodeRunID,
 			NodeID:       acq.NodeID,
 			ProducerName: producerName,
 			VersionID:    row.VersionID,
@@ -133,7 +133,7 @@ func releaseClaim(
 ) (postCommitFn, error) {
 	held := isAliasHeld(acq.HeldSubgraphs, acq.NodeType, claimSpec.Alias)
 	if held {
-		if err := markClaimHolderForRun(ctx, args, tx, lk.ClaimHandleID, acq.DispatchID, success); err != nil {
+		if err := markClaimHolderForRun(ctx, args, tx, lk.ClaimHandleID, acq.NodeRunID, success); err != nil {
 			return nil, err
 		}
 		if !success {
@@ -170,7 +170,7 @@ func releaseClaim(
 	hint := ClaimLineageHint{
 		InstanceID: acq.InstanceID,
 		FrameID:    acq.FrameID,
-		RunID:      acq.DispatchID,
+		NodeRunID:  acq.NodeRunID,
 		NodeID:     acq.NodeID,
 	}
 	if row != nil && row.ProducerName != nil {
@@ -217,13 +217,13 @@ func releaseClaim(
 func releaseInheritedClaimsInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, success bool,
 ) (postCommitFn, error) {
-	inherited, err := findInheritedAliasesForRun(ctx, args, tx, acq.HeldSubgraphs, acq.NodeType, acq.DispatchID, acq.InstanceID)
+	inherited, err := findInheritedAliasesForRun(ctx, args, tx, acq.HeldSubgraphs, acq.NodeType, acq.NodeRunID, acq.InstanceID)
 	if err != nil {
 		return nil, err
 	}
 	var post postCommitFn
 	for _, ia := range inherited {
-		if err := markClaimHolderForRun(ctx, args, tx, ia.ClaimHandleID, acq.DispatchID, success); err != nil {
+		if err := markClaimHolderForRun(ctx, args, tx, ia.ClaimHandleID, acq.NodeRunID, success); err != nil {
 			return nil, err
 		}
 		pc, err := CheckAndFireResolution(ctx, args, tx, ia.ClaimHandleID)

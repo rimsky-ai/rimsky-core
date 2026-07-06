@@ -26,7 +26,7 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	instanceID := uuid.New()
 	frameID := uuid.New()
 	nodeID := uuid.New()
-	dispatchID := uuid.New()
+	nodeRunID := uuid.New()
 
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_templates (id, spec, state, source) VALUES (?, '{}', 'registered', 'direct')`,
@@ -82,7 +82,7 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
 		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'parked', 'cascade', 1, ?, ?)`,
-		dispatchID.String(), nodeID.String(), frameID.String(), scopeID,
+		nodeRunID.String(), nodeID.String(), frameID.String(), scopeID,
 	); err != nil {
 		t.Fatalf("seed parked node-run: %v", err)
 	}

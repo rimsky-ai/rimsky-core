@@ -23,7 +23,7 @@ type runTreeImpl tablesImpl
 
 var _ persistence.RunTreeTable = (*runTreeImpl)(nil)
 
-func (s *tablesImpl) RunTree() persistence.RunTreeTable { return (*runTreeImpl)(s) }
+func (s *tablesImpl) NodeRunTree() persistence.RunTreeTable { return (*runTreeImpl)(s) }
 
 func (b *runTreeImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
@@ -31,13 +31,13 @@ const sqliteRunTreeCols = `
   id, node_id, frame_id, run_scope_id,
   state, settling_signal_type, aggregation_policy`
 
-func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in persistence.CreateRootRunInput) error {
+func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, in persistence.CreateRootNodeRunInput) error {
 	if in.RunScopeID == (shared.UUID{}) {
-		return errors.New("sqlite.run_tree.CreateRootRun: run_scope_id required")
+		return errors.New("sqlite.run_tree.CreateRootNodeRun: run_scope_id required")
 	}
 	policy, err := persistence.MarshalAggregationPolicy(in.AggregationPolicy)
 	if err != nil {
-		return fmt.Errorf("sqlite.run_tree.CreateRootRun: marshal policy: %w", err)
+		return fmt.Errorf("sqlite.run_tree.CreateRootNodeRun: marshal policy: %w", err)
 	}
 	stores := in.RequiredClaimProducers
 	if stores == nil {
@@ -59,29 +59,29 @@ func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in p
 		   COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = ?), 0) + 1,
 		   ?)
 		 ON CONFLICT(id) DO NOTHING`,
-		in.RunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
+		in.NodeRunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
 		formatTime(time.Now().UTC()), in.FrameID.String(), in.RunScopeID.String(),
 		in.NodeID.String(), in.RunScopeID.String(),
 		policyArg,
 	)
 	if err != nil {
-		return fmt.Errorf("sqlite.run_tree.CreateRootRun: %w", err)
+		return fmt.Errorf("sqlite.run_tree.CreateRootNodeRun: %w", err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 1 {
-		if err := (*nodeAttributesImpl)((*tablesImpl)(b)).SnapshotBagForNewRun(ctx, tx, in.RunID, in.NodeID, in.RunScopeID); err != nil {
-			return fmt.Errorf("sqlite.run_tree.CreateRootRun: snapshot bag: %w", err)
+		if err := (*nodeAttributesImpl)((*tablesImpl)(b)).SnapshotBagForNewRun(ctx, tx, in.NodeRunID, in.NodeID, in.RunScopeID); err != nil {
+			return fmt.Errorf("sqlite.run_tree.CreateRootNodeRun: snapshot bag: %w", err)
 		}
 	}
 	return nil
 }
 
-func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in persistence.CreateChildRunInput) error {
+func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx, in persistence.CreateChildNodeRunInput) error {
 	if in.RunScopeID == (shared.UUID{}) {
-		return errors.New("sqlite.run_tree.CreateChildRun: run_scope_id required")
+		return errors.New("sqlite.run_tree.CreateChildNodeRun: run_scope_id required")
 	}
 	policy, err := persistence.MarshalAggregationPolicy(in.AggregationPolicy)
 	if err != nil {
-		return fmt.Errorf("sqlite.run_tree.CreateChildRun: marshal policy: %w", err)
+		return fmt.Errorf("sqlite.run_tree.CreateChildNodeRun: marshal policy: %w", err)
 	}
 	stores := in.RequiredClaimProducers
 	if stores == nil {
@@ -108,24 +108,24 @@ func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in 
 		     WHERE node_id = ? AND run_scope_id = ?
 		       AND state IN ('running','held','parked')
 		  )`,
-		in.RunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
+		in.NodeRunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
 		formatTime(time.Now().UTC()), in.FrameID.String(), in.RunScopeID.String(),
 		in.NodeID.String(), in.RunScopeID.String(),
 		policyArg,
 		in.NodeID.String(), in.RunScopeID.String(),
 	)
 	if err != nil {
-		return fmt.Errorf("sqlite.run_tree.CreateChildRun: %w", err)
+		return fmt.Errorf("sqlite.run_tree.CreateChildNodeRun: %w", err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 1 {
-		if err := (*nodeAttributesImpl)((*tablesImpl)(b)).SnapshotBagForNewRun(ctx, tx, in.RunID, in.NodeID, in.RunScopeID); err != nil {
-			return fmt.Errorf("sqlite.run_tree.CreateChildRun: snapshot bag: %w", err)
+		if err := (*nodeAttributesImpl)((*tablesImpl)(b)).SnapshotBagForNewRun(ctx, tx, in.NodeRunID, in.NodeID, in.RunScopeID); err != nil {
+			return fmt.Errorf("sqlite.run_tree.CreateChildNodeRun: snapshot bag: %w", err)
 		}
 	}
 	return nil
 }
 
-func (b *runTreeImpl) GetByID(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
+func (b *runTreeImpl) GetByID(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.NodeRunTreeRow, error) {
 	row, err := scanSqliteRunTreeRow(b.q(tx).QueryRowContext(ctx,
 		`SELECT `+sqliteRunTreeCols+` FROM rimsky_node_runs WHERE id = ?`, runID.String()))
 	if err != nil {
@@ -137,14 +137,14 @@ func (b *runTreeImpl) GetByID(ctx context.Context, tx persistence.Tx, runID shar
 	return row, nil
 }
 
-func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
+func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.NodeRunTreeRow, error) {
 	if tx == nil {
 		return nil, errors.New("sqlite.run_tree.LockTreeForUpdate: tx required")
 	}
 	return b.GetByID(ctx, tx, runID)
 }
 
-func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
+func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.NodeRunTreeRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
 		`SELECT nr.id, nr.node_id, nr.frame_id, nr.run_scope_id,
 		        nr.state, nr.settling_signal_type, nr.aggregation_policy
@@ -152,12 +152,12 @@ func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, paren
 		   JOIN rimsky_run_scopes rs ON rs.id = nr.run_scope_id
 		  WHERE rs.parent_run_id = ?
 		  ORDER BY rs.partition_key, nr.enqueued_at`,
-		parentRunID.String())
+		parentNodeRunID.String())
 	if err != nil {
 		return nil, fmt.Errorf("sqlite.run_tree.ListChildren: %w", err)
 	}
 	defer rows.Close()
-	var out []persistence.RunTreeRow
+	var out []persistence.NodeRunTreeRow
 	for rows.Next() {
 		row, err := scanSqliteRunTreeRow(rows)
 		if err != nil {
@@ -212,7 +212,7 @@ func (b *runTreeImpl) UpdateAggregationPolicy(
 	return nil
 }
 
-func scanSqliteRunTreeRow(s scannable) (*persistence.RunTreeRow, error) {
+func scanSqliteRunTreeRow(s scannable) (*persistence.NodeRunTreeRow, error) {
 	var (
 		idStr, nodeIDStr, frameIDStr, runScopeIDStr string
 		state                                       string
@@ -222,7 +222,7 @@ func scanSqliteRunTreeRow(s scannable) (*persistence.RunTreeRow, error) {
 	if err := s.Scan(&idStr, &nodeIDStr, &frameIDStr, &runScopeIDStr, &state, &settlingSignal, &policyText); err != nil {
 		return nil, err
 	}
-	out := &persistence.RunTreeRow{
+	out := &persistence.NodeRunTreeRow{
 		State: cascade.NodeState(state),
 	}
 	if settlingSignal.Valid {
@@ -233,7 +233,7 @@ func scanSqliteRunTreeRow(s scannable) (*persistence.RunTreeRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse id: %w", err)
 	}
-	out.RunID = shared.UUID(id)
+	out.NodeRunID = shared.UUID(id)
 	nodeID, err := uuid.Parse(nodeIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("parse node_id: %w", err)

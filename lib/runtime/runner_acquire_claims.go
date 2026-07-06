@@ -55,14 +55,14 @@ func acquireClaim(
 
 	rowID := uuid.New()
 	frameID := cand.FrameID
-	dispatchID := cand.DispatchID
+	nodeRunID := cand.NodeRunID
 	producerNameCopy := spec.ProducerName
 	intentCopy := string(spec.Intent)
 	subgraph, hasSubgraph := findHoldingSubgraphForAcquirer(heldSubgraphs, cand.NodeType, spec.Alias)
 	isHeld := hasSubgraph && subgraph.IsHeld()
 	in := persistence.ClaimHandleInsertInput{
 		ID:                 rowID,
-		NodeRunID:          &dispatchID,
+		NodeRunID:          &nodeRunID,
 		LockKind:           persistence.LockKindScope,
 		ProducerName:       &producerNameCopy,
 		ClaimScopeData:     scopeInitial,

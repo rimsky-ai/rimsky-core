@@ -18,7 +18,7 @@ type PureCascadeReadyRow struct {
 	NodeID     shared.UUID
 	InstanceID shared.UUID
 	NodeType   string
-	RunID      shared.UUID
+	NodeRunID  shared.UUID
 	RunScopeID shared.UUID
 	FrameID    shared.UUID
 }
@@ -98,7 +98,7 @@ type NodeTable interface {
 
 	// @concept: cascade
 	// @concept: run-scope
-	ListPendingSiblingRunsInScope(ctx context.Context, tx Tx, senderRunID shared.UUID) ([]shared.UUID, error)
+	ListPendingSiblingRunsInScope(ctx context.Context, tx Tx, senderNodeRunID shared.UUID) ([]shared.UUID, error)
 
 	// @concept: cascade
 	// @concept: run-scope
@@ -108,7 +108,7 @@ type NodeTable interface {
 	// @decision: mode-default-most-recent
 	HasLaterCascadePending(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, afterSeq int64) (bool, error)
 
-	GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID shared.UUID, tx Tx) (*NodeRunForCallback, error)
+	GetRunByDispatchIDForUpdate(ctx context.Context, nodeRunID shared.UUID, tx Tx) (*NodeRunForCallback, error)
 
 	// @concept: cascade
 	// @decision: mode-default-most-recent
@@ -165,7 +165,7 @@ type NodeTable interface {
 
 // @concept: node-run
 type NodeRunLatest struct {
-	RunID              shared.UUID
+	NodeRunID          shared.UUID
 	NodeID             shared.UUID
 	RunScopeID         shared.UUID
 	FrameID            shared.UUID
@@ -178,7 +178,7 @@ type NodeRunLatest struct {
 // @concept: cascade
 // @decision: walker-rule-per-sender-node
 type NodeRunForGate struct {
-	RunID          shared.UUID
+	NodeRunID      shared.UUID
 	NodeID         shared.UUID
 	RunScopeID     shared.UUID
 	FrameID        shared.UUID
@@ -198,7 +198,7 @@ type NonCascadeStaleInput struct {
 	RequiredClaimProducers      []string
 	EnqueuedAt                  time.Time
 	CreationReason              cascade.CreationReason
-	PriorDispatchID             *shared.UUID
+	PriorNodeRunID              *shared.UUID
 	PriorDispatchDisposition    string
 	InitialScratchInline        []byte
 	InitialScratchHandle        string

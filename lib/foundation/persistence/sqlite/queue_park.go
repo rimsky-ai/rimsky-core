@@ -43,7 +43,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		formatTime(in.ParkedAt), resumeAt,
 		nullableString(in.Reason), nullableString(in.ReasonNote),
 		nullableString(in.ReasonLabel),
-		in.DispatchID.String(), in.ExpectedClaimedBy,
+		in.NodeRunID.String(), in.ExpectedClaimedBy,
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.ParkActiveInTx: %w", err)
@@ -53,7 +53,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		return fmt.Errorf("sqlite.ParkActiveInTx: rows affected: %w", err)
 	}
 	if rowsAffected != 1 {
-		return fmt.Errorf("sqlite.ParkActiveInTx: row %s not in expected (active, claimed_by=%s) state", in.DispatchID, in.ExpectedClaimedBy)
+		return fmt.Errorf("sqlite.ParkActiveInTx: row %s not in expected (active, claimed_by=%s) state", in.NodeRunID, in.ExpectedClaimedBy)
 	}
 	return nil
 }
@@ -160,11 +160,11 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 		if err := rows.Scan(&dispatchStr, &instID, &nodeID, &frameID, &parkedAtStr, &resumeAtStr, &reason, &reasonNote); err != nil {
 			return nil, err
 		}
-		dispatchID, err := uuid.Parse(dispatchStr)
+		nodeRunID, err := uuid.Parse(dispatchStr)
 		if err != nil {
 			return nil, fmt.Errorf("sqlite.ListParkedDiagnostic: parse dispatch id: %w", err)
 		}
-		r.DispatchID = dispatchID
+		r.NodeRunID = nodeRunID
 		if instID.Valid {
 			r.InstanceID = instID.String
 		}
@@ -220,7 +220,7 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, run
 	return r, nil
 }
 
-func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) (bool, error) {
+func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID) (bool, error) {
 	if tx == nil {
 		return false, errors.New("sqlite.ResumeParkedInTx: tx required")
 	}
@@ -231,7 +231,7 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 		        resume_at = NULL
 		  WHERE id = ?
 		    AND state = 'parked'`,
-		dispatchID.String(),
+		nodeRunID.String(),
 	)
 	if err != nil {
 		return false, fmt.Errorf("sqlite.ResumeParkedInTx: %w", err)
@@ -245,14 +245,14 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 
 func (q *queueImpl) RebindRunFrameInTx(
 	ctx context.Context, tx persistence.Tx,
-	dispatchID, newFrameID shared.UUID,
+	nodeRunID, newFrameID shared.UUID,
 ) error {
 	if tx == nil {
 		return errors.New("sqlite.RebindRunFrameInTx: tx required")
 	}
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs SET frame_id = ? WHERE id = ?`,
-		newFrameID.String(), dispatchID.String(),
+		newFrameID.String(), nodeRunID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.RebindRunFrameInTx: %w", err)
@@ -262,12 +262,12 @@ func (q *queueImpl) RebindRunFrameInTx(
 		return fmt.Errorf("sqlite.RebindRunFrameInTx: rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("sqlite.RebindRunFrameInTx: %s: %w", dispatchID, persistence.ErrRunRowMissing)
+		return fmt.Errorf("sqlite.RebindRunFrameInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
 	}
 	return nil
 }
 
-func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (int, *int, error) {
+func (q *queueImpl) GetRetryNoProgress(ctx context.Context, nodeRunID shared.UUID) (int, *int, error) {
 	var (
 		count    int
 		override sql.NullInt64
@@ -276,7 +276,7 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 		`SELECT consecutive_retries_no_progress, max_retries_without_progress
 		   FROM rimsky_node_runs
 		  WHERE id = ?`,
-		dispatchID.String(),
+		nodeRunID.String(),
 	).Scan(&count, &override)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -291,7 +291,7 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 	return count, nil, nil
 }
 
-func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, count int) error {
+func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, count int) error {
 	if tx == nil {
 		return errors.New("sqlite.SetRetryNoProgressForRunInTx: tx required")
 	}
@@ -299,7 +299,7 @@ func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persist
 		`UPDATE rimsky_node_runs
 		    SET consecutive_retries_no_progress = ?
 		  WHERE id = ?`,
-		count, dispatchID.String(),
+		count, nodeRunID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.SetRetryNoProgressForRunInTx: %w", err)
@@ -307,7 +307,7 @@ func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persist
 	return nil
 }
 
-func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error {
+func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error {
 	var park, retries any
 	if maxParkDurationSeconds != nil {
 		park = *maxParkDurationSeconds
@@ -320,7 +320,7 @@ func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence
 		    SET max_park_duration_seconds = ?,
 		        max_retries_without_progress = ?
 		  WHERE id = ?`,
-		park, retries, dispatchID.String(),
+		park, retries, nodeRunID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.UpdateDispatchTuningInTx: %w", err)
@@ -329,7 +329,7 @@ func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence
 }
 
 // @concept: executor
-func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) ([]byte, string, string, error) {
+func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID) ([]byte, string, string, error) {
 	if tx == nil {
 		return nil, "", "", errors.New("sqlite.LoadScratchInTx: tx required")
 	}
@@ -342,7 +342,7 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, disp
 		`SELECT scratch_inline, scratch_handle, scratch_handle_backend
 		   FROM rimsky_node_runs
 		  WHERE id = ?`,
-		dispatchID.String(),
+		nodeRunID.String(),
 	).Scan(&inline, &handle, &backend)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -361,7 +361,7 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, disp
 }
 
 // @concept: executor
-func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error {
+func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, inline []byte, handle, handleBackend string) error {
 	if tx == nil {
 		return errors.New("sqlite.WriteScratchInTx: tx required")
 	}
@@ -378,7 +378,7 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dis
 		        scratch_handle         = ?,
 		        scratch_handle_backend = ?
 		  WHERE id = ?`,
-		inlineArg, nullableString(handle), nullableString(handleBackend), dispatchID.String(),
+		inlineArg, nullableString(handle), nullableString(handleBackend), nodeRunID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.WriteScratchInTx: %w", err)
@@ -388,7 +388,7 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dis
 		return fmt.Errorf("sqlite.WriteScratchInTx: rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("sqlite.WriteScratchInTx: %s: %w", dispatchID, persistence.ErrRunRowMissing)
+		return fmt.Errorf("sqlite.WriteScratchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
 	}
 	return nil
 }
@@ -453,7 +453,7 @@ func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 		return nil, err
 	}
 	out := &persistence.ParkedRow{
-		DispatchID:               disp,
+		NodeRunID:                disp,
 		NodeID:                   node,
 		FrameID:                  frame,
 		ParkedAt:                 parkedAt,
