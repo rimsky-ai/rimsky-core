@@ -2503,3 +2503,55 @@ func TestValidateTemplate_Error_SendsMessage_RequiredMismatch(t *testing.T) {
 		t.Fatalf("expected required-set mismatch diagnostic, got %+v", res.Errors)
 	}
 }
+
+func coalesceWarningSpec(mode string, types ...string) *TemplateSpec {
+	msgs := make([]MessageSchema, 0, len(types))
+	for _, tp := range types {
+		msgs = append(msgs, MessageSchema{Type: tp})
+	}
+	return &TemplateSpec{
+		Name:             "demo",
+		Version:          "1.0.0",
+		MessageQueueMode: mode,
+		Messages:         msgs,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "handler.a",
+		}},
+	}
+}
+
+func coalesceCrossTypeWarnings(res ValidationResult) []ValidationWarning {
+	var out []ValidationWarning
+	for _, w := range res.Warnings {
+		if w.Path == "message_queue_mode" {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func TestValidateMessageQueueMode_Warning_CoalesceWithMultipleTypes(t *testing.T) {
+	spec := coalesceWarningSpec("coalesce", "job/start", "job/stop")
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	assert.True(t, res.Ok(), "warning must not block registration; errors: %+v", res.Errors)
+	warns := coalesceCrossTypeWarnings(res)
+	require.Len(t, warns, 1)
+	assert.Contains(t, warns[0].Msg, "cancels ALL")
+	assert.Contains(t, warns[0].Msg, "job/start")
+	assert.Contains(t, warns[0].Msg, "job/stop")
+}
+
+func TestValidateMessageQueueMode_NoWarning_CoalesceSingleType(t *testing.T) {
+	spec := coalesceWarningSpec("coalesce", "job/start")
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	assert.Empty(t, coalesceCrossTypeWarnings(res))
+}
+
+func TestValidateMessageQueueMode_NoWarning_BacklogWithMultipleTypes(t *testing.T) {
+	spec := coalesceWarningSpec("backlog", "job/start", "job/stop")
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	assert.Empty(t, coalesceCrossTypeWarnings(res))
+}

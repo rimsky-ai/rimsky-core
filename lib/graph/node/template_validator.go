@@ -255,7 +255,32 @@ func validateMessageQueueMode(spec *TemplateSpec, res *ValidationResult) {
 			Msg: fmt.Sprintf("message_queue_mode = %q; want one of backlog | coalesce (default backlog)",
 				spec.MessageQueueMode),
 		})
+		return
 	}
+	if spec.MessageQueueMode != "coalesce" {
+		return
+	}
+	distinct := make(map[string]struct{}, len(spec.Messages))
+	for _, m := range spec.Messages {
+		if m.Type != "" {
+			distinct[m.Type] = struct{}{}
+		}
+	}
+	if len(distinct) < 2 {
+		return
+	}
+	types := make([]string, 0, len(distinct))
+	for t := range distinct {
+		types = append(types, t)
+	}
+	sort.Strings(types)
+	res.Warnings = append(res.Warnings, ValidationWarning{
+		Path: "message_queue_mode",
+		Msg: fmt.Sprintf("message_queue_mode = coalesce with %d declared message types %v: coalesce cancels ALL "+
+			"pending messages per instance regardless of type — a newly received message of one type cancels pending "+
+			"messages of every other type; use backlog if distinct message types must not cancel each other",
+			len(types), types),
+	})
 }
 
 // @concept: node
