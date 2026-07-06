@@ -987,8 +987,8 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	if n.Delegate != "" {
 		nd["delegate"] = n.Delegate
 	}
-	if n.EmitsMessage != "" {
-		nd["emits_message"] = n.EmitsMessage
+	if n.SendsMessage != "" {
+		nd["sends_message"] = n.SendsMessage
 	}
 	if len(n.Holds) > 0 {
 		holds := map[string]any{}

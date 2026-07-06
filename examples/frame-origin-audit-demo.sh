@@ -161,9 +161,9 @@ if grep -q 'sender=<missing>' "${SELF_CHECK_LOG}"; then
 fi
 
 # @constraint: at least one operator-posted origin AND at least one
-# cascade-emit origin must appear — the kick is operator and the
-# emit-node's audit/loop is cascade-emit, so seeing both exercises the
-# spec's "operator message, publisher message, or cascade-emit"
+# cascade-send origin must appear — the kick is operator and the
+# emit-node's audit/loop is cascade-send, so seeing both exercises the
+# spec's "operator message, publisher message, or cascade-send"
 # enumeration end-to-end; without both, the demo only proved one half
 # of the origin surface.
 if ! grep -q ' kind=operator' "${SELF_CHECK_LOG}"; then
@@ -171,7 +171,7 @@ if ! grep -q ' kind=operator' "${SELF_CHECK_LOG}"; then
     exit 1
 fi
 if ! grep -q ' kind=instance' "${SELF_CHECK_LOG}"; then
-    echo "frame-origin-audit-demo: no cascade-emit (sender_kind=instance) origin frame observed" >&2
+    echo "frame-origin-audit-demo: no cascade-send (sender_kind=instance) origin frame observed" >&2
     echo "frame-origin-audit-demo: the emit-node back-edge did not fire" >&2
     exit 1
 fi

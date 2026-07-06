@@ -146,7 +146,7 @@ they don't share a delta the way Cluster 1 does.
   (exact-class → family-class, then fall-through to give-up).
   node-run lines 28 and 95 cursor descriptions both shrunk to the single
   per-dispatch `retry_counter`.
-- [x] **concept:message-emitter-node** — invariant says the envelope
+- [x] **concept:message-sender-node** — invariant says the envelope
   inserts in the same tx as the node's terminal-resolution;
   `emitCascadeMessage` (`lib/runtime/runner_emit_message.go:32`) opens
   its own tx. Atomicity is the deterministic idempotency key, not tx

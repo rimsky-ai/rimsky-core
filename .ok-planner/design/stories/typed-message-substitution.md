@@ -19,7 +19,7 @@ so that I can disambiguate when a node could react to several types, and message
 
 ## Acceptance
 
-A receiver node's attribute schema substitutes from a specific message type by naming the type in the substitution grammar, parallel to substituting from a specific node's attribute by naming the node-type. A message-emitter node's attributes compose the destination message body by the same substitution grammar (sources can be other nodes' attributes, instance params, the triggering signal's payload). The substitution engine validates references at template registration in both directions: a receiver reading a field the declared body schema doesn't have rejects; an emitter declaring an attribute field the destination type's body schema doesn't have rejects. The runtime resolves message-body reads through the same code path that resolves attribute reads.
+A receiver node's attribute schema substitutes from a specific message type by naming the type in the substitution grammar, parallel to substituting from a specific node's attribute by naming the node-type. A message-sender node's attributes compose the destination message body by the same substitution grammar (sources can be other nodes' attributes, instance params, the triggering signal's payload). The substitution engine validates references at template registration in both directions: a receiver reading a field the declared body schema doesn't have rejects; an sender declaring an attribute field the destination type's body schema doesn't have rejects. The runtime resolves message-body reads through the same code path that resolves attribute reads.
 
 ## Falsifier
 

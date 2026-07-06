@@ -495,7 +495,7 @@ func (e RimskyEndpoint) PostJSONWithHeaders(t testing.TB, path string, body any,
 }
 
 // @decision: test-harness-create-instance-wakes-roots-after-create
-// @decision: compose-driver-emits-empty-message-after-create
+// @decision: compose-driver-sends-empty-message-after-create
 // @story: instance-create-is-idle
 func (e RimskyEndpoint) EmptyWakeAfterCreate(t testing.TB, instanceID, idempotencyKeyPrefix, instanceKey string) {
 	t.Helper()

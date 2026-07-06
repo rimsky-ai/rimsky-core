@@ -110,7 +110,7 @@ var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED:      "template_validation_failed",
 	genv1.OperationalKind_OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE:     "executor_schema_unavailable",
 	genv1.OperationalKind_OPERATIONAL_KIND_BREAKPOINT_HIT:                  "breakpoint.hit",
-	genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_EMITTED:                 "message_emitted",
+	genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT:                    "message_sent",
 	genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED:                "message_received",
 	genv1.OperationalKind_OPERATIONAL_KIND_FAN_OUT_DISPATCHED:              "fan_out_dispatched",
 	genv1.OperationalKind_OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED:         "fanout.children_created",
@@ -236,8 +236,8 @@ func KindExecutorSchemaUnavailable() Kind {
 func KindBreakpointHit() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_BREAKPOINT_HIT)
 }
-func KindMessageEmitted() Kind {
-	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_EMITTED)
+func KindMessageSent() Kind {
+	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT)
 }
 func KindMessageReceived() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED)

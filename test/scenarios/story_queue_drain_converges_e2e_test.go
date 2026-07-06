@@ -2,8 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @story: cascade-emit
-// @concept: message-emitter-node
+// @story: cascade-send
+// @concept: message-sender-node
 package scenarios
 
 import (
@@ -95,7 +95,7 @@ func TestStoryQueueDrainConverges_TerminatesViaCELGate(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{
 					Type:         "emitter",
-					EmitsMessage: "loop/iterate",
+					SendsMessage: "loop/iterate",
 					Subscribes: []node.SubscriptionEntry{
 						{
 							Node:                 "b",
@@ -158,7 +158,7 @@ func TestStoryQueueDrainConverges_TerminatesViaCELGate(t *testing.T) {
 		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
 		[]any{aNode.ID}, &finalARuns)
 	require.Equal(t, 0, iterateMsgs,
-		"emit-node's CEL on b.terminal/success evaluates false against should_loop=false; "+
+		"send-node's CEL on b.terminal/success evaluates false against should_loop=false; "+
 			"no loop/iterate can emit and the queue drains to empty. got %d loop/iterate messages", iterateMsgs)
 	require.Equal(t, 1, finalARuns,
 		"A must run exactly once — the initial wake — because no back-edge iterate was emitted. got %d", finalARuns)
@@ -233,7 +233,7 @@ func TestStoryQueueDrainConverges_LoopsWithoutGate(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{
 					Type:         "emitter",
-					EmitsMessage: "loop/iterate",
+					SendsMessage: "loop/iterate",
 					Subscribes: []node.SubscriptionEntry{
 						{
 							Node:                 "b",

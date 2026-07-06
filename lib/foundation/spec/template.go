@@ -86,8 +86,8 @@ type TemplateNodeDef struct {
 
 	Delegate string `yaml:"delegate,omitempty" json:"delegate,omitempty"`
 
-	// @concept: message-emitter-node
-	EmitsMessage string `yaml:"emits_message,omitempty" json:"emits_message,omitempty"`
+	// @concept: message-sender-node
+	SendsMessage string `yaml:"sends_message,omitempty" json:"sends_message,omitempty"`
 
 	Holds map[string]HoldsBinding `yaml:"holds,omitempty" json:"holds,omitempty"`
 

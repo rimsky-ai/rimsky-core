@@ -176,7 +176,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		fmt.Fprintf(os.Stdout, "instance_id=%s\n", inst.UUID())
 	}
 
-	// @decision: compose-driver-emits-empty-message-after-create
+	// @decision: compose-driver-sends-empty-message-after-create
 	hasRoot, err := cli.TemplateHasStructuralRoot(bootCtx, c, hash)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky run: inspect template:", err)

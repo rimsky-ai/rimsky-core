@@ -4,7 +4,7 @@
 
 // @story: one-shot-to-terminal
 // @story: audit-artifact
-// @decision: compose-driver-emits-empty-message-after-create
+// @decision: compose-driver-sends-empty-message-after-create
 package scenarios
 
 import (

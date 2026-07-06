@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The message envelope's `kind` field renames to `type` and carries the message type-path (matching the receiver's subscription target and the emitter's `emits_message:` value). The publisher-subscription's `message_kind` field similarly renames to `message_type`.
+The message envelope's `kind` field renames to `type` and carries the message type-path (matching the receiver's subscription target and the sender's `sends_message:` value). The publisher-subscription's `message_kind` field similarly renames to `message_type`.
 
 ## Rationale
 

@@ -15,7 +15,7 @@ Each instance carries a `message_queue_mode` setting whose value is one of `back
 
 ## Business value
 
-Under frame isolation each message opens one frame and only one frame runs at a time per instance. If the instance's message-emitter cadence outpaces its frame runtime, un-delivered messages pile up in the instance's queue and a slow instance falls arbitrarily far behind. `coalesce` lets an operator declare "for this instance, I only care about the latest wake — every older one is stale by the time we get to it," bounding the queue at one pending message regardless of upstream cadence. `backlog` keeps the traditional every-message-runs semantic for instances whose messages carry payload data downstream depends on.
+Under frame isolation each message opens one frame and only one frame runs at a time per instance. If the instance's message-sender cadence outpaces its frame runtime, un-delivered messages pile up in the instance's queue and a slow instance falls arbitrarily far behind. `coalesce` lets an operator declare "for this instance, I only care about the latest wake — every older one is stale by the time we get to it," bounding the queue at one pending message regardless of upstream cadence. `backlog` keeps the traditional every-message-runs semantic for instances whose messages carry payload data downstream depends on.
 
 ## Acceptance
 

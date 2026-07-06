@@ -12,11 +12,11 @@ A message-schema is the template-level registry of accepted message types for in
 
 ## Purpose
 
-Give messages a typed contract instead of opaque envelopes. An instance receiving a message of an undeclared type refuses the request with an unknown-type response. The body shape is what receivers substitute from and what message-emitter nodes match their attribute schemas against; both surfaces share the same engine.
+Give messages a typed contract instead of opaque envelopes. An instance receiving a message of an undeclared type refuses the request with an unknown-type response. The body shape is what receivers substitute from and what message-sender nodes match their attribute schemas against; both surfaces share the same engine.
 
 ## Boundaries
 
-Owns: the registry's persisted shape (content-addressed into the template spec), the per-entry fields (the type-path and the body-schema declaration), the registration-time validation pass that checks substitution references against declared types and validates message-emitter nodes' attribute schemas against the destination type's body schema, the receipt-time registry lookup gate. Does NOT own: the message envelope (see `concept:message`), the message-emitter node-kind (see `concept:message-emitter-node`), receiver-side subscription (see `concept:node-subscription`), substitution into bodies (see `concept:attribute`).
+Owns: the registry's persisted shape (content-addressed into the template spec), the per-entry fields (the type-path and the body-schema declaration), the registration-time validation pass that checks substitution references against declared types and validates message-sender nodes' attribute schemas against the destination type's body schema, the receipt-time registry lookup gate. Does NOT own: the message envelope (see `concept:message`), the message-sender node-kind (see `concept:message-sender-node`), receiver-side subscription (see `concept:node-subscription`), substitution into bodies (see `concept:attribute`).
 
 ## Invariants
 

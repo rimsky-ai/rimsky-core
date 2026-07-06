@@ -3,11 +3,11 @@ decision: idempotency-key-header-universal
 status: as-is
 ---
 
-# Idempotency on message emit
+# Idempotency on message send
 
 ## Choice
 
-A mandatory idempotency-key header on the universal message-emit endpoint (see `concept:message`, `concept:control-api`).
+A mandatory idempotency-key header on the universal message-send endpoint (see `concept:message`, `concept:control-api`).
 
 ## Rationale
 

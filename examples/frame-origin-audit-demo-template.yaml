@@ -84,7 +84,7 @@ nodes:
   - type: emitter
     emits_message: audit/loop
     description: |
-      The cascade-emit origin: emitter subscribes to A's terminal/
+      The cascade-send origin: emitter subscribes to A's terminal/
       success and emits an audit/loop message whose body carries the
       `checks` array and the `rows` array forwarded from A's
       attribute set, plus a step counter. R subscribes to audit/loop
@@ -117,7 +117,7 @@ nodes:
   - type: r
     executor: verifier-shape-checks
     description: |
-      R is the cascade-emit receiver: it subscribes to audit/loop (a
+      R is the cascade-send receiver: it subscribes to audit/loop (a
       message type, addressed as a virtual node) and pulls its
       verification inputs from the typed-message body. This is the
       cascade-emitted frame's load-bearing dispatch.

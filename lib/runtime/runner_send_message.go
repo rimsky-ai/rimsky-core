@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @concept: message-emitter-node
+// @concept: message-sender-node
 // @concept: message
 
 package runtime
@@ -17,53 +17,53 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// @story: cascade-emit
-// @concept: message-emitter-node
-func emitCascadeMessage(
+// @story: cascade-send
+// @concept: message-sender-node
+func sendCascadeMessage(
 	ctx context.Context,
 	tables persistence.Tables,
 	instanceID, nodeID, frameID shared.UUID,
-	emitMessageType string,
+	sendMessageType string,
 	body []byte,
 ) (shared.UUID, bool, error) {
 	var messageID shared.UUID
 	var replayed bool
 	err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var ierr error
-		messageID, replayed, ierr = emitCascadeMessageInTx(ctx, tables, tx,
-			instanceID, nodeID, frameID, emitMessageType, body)
+		messageID, replayed, ierr = sendCascadeMessageInTx(ctx, tables, tx,
+			instanceID, nodeID, frameID, sendMessageType, body)
 		return ierr
 	})
 	return messageID, replayed, err
 }
 
-// @story: cascade-emit
-// @concept: message-emitter-node
-func emitCascadeMessageInTx(
+// @story: cascade-send
+// @concept: message-sender-node
+func sendCascadeMessageInTx(
 	ctx context.Context,
 	tables persistence.Tables,
 	tx persistence.Tx,
 	instanceID, nodeID, frameID shared.UUID,
-	emitMessageType string,
+	sendMessageType string,
 	body []byte,
 ) (shared.UUID, bool, error) {
 	if instanceID == (shared.UUID{}) {
-		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: instance_id required")
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: instance_id required")
 	}
 	if nodeID == (shared.UUID{}) {
-		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: node_id required")
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: node_id required")
 	}
 	if frameID == (shared.UUID{}) {
-		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: frame_id required")
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: frame_id required")
 	}
-	if emitMessageType == "" {
-		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: emits_message type required")
+	if sendMessageType == "" {
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: sends_message type required")
 	}
 	if body == nil {
 		body = []byte(`{}`)
 	}
 
-	idempotencyKey := fmt.Sprintf("cascade-emit:%s:%s", nodeID.String(), frameID.String())
+	idempotencyKey := fmt.Sprintf("cascade-send:%s:%s", nodeID.String(), frameID.String())
 	senderKind := "instance"
 	sender := "instance:" + instanceID.String()
 
@@ -78,7 +78,7 @@ func emitCascadeMessageInTx(
 		MessageID:      candidateID,
 	})
 	if err != nil {
-		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: idempotency upsert: %w", err)
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: idempotency upsert: %w", err)
 	}
 	if !inserted {
 		return dedupRow.MessageID, true, nil
@@ -87,13 +87,13 @@ func emitCascadeMessageInTx(
 	enqueueReq := persistence.EnqueueMessageRequest{
 		ID:         candidateID,
 		InstanceID: instanceID,
-		Type:       emitMessageType,
+		Type:       sendMessageType,
 		Sender:     sender,
 		SenderKind: senderKind,
 		Payload:    body,
 	}
 	if err := EnqueueMessage(ctx, tx, tables, enqueueReq); err != nil {
-		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: insert envelope: %w", err)
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: insert envelope: %w", err)
 	}
 	return candidateID, false, nil
 }

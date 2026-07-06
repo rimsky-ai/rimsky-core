@@ -158,7 +158,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateExecutorCoherence(n, base, hooks, &res)
 		validateExecutorDeclared(n, base, hooks, &res)
 		validateKindDeclaration(n, base, hooks, &res)
-		validateEmitsMessage(n, base, spec, declaredMessages, &res)
+		validateSendsMessage(n, base, spec, declaredMessages, &res)
 		validateClaimProducers(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, spec, hooks, &res)
@@ -756,7 +756,7 @@ func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (sugg
 func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
 	hasExecutor := n.Executor != ""
 	hasDelegate := n.Delegate != ""
-	hasEmitsMessage := n.EmitsMessage != ""
+	hasSendsMessage := n.SendsMessage != ""
 	if hasExecutor && hasDelegate && !n.IsSubgraphEntryAbsorbed {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: fmt.Sprintf("%s.delegate", base),
@@ -765,23 +765,23 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHoo
 				n.Executor, n.Delegate),
 		})
 	}
-	if hasExecutor && hasEmitsMessage {
+	if hasExecutor && hasSendsMessage {
 		res.Errors = append(res.Errors, ValidationError{
-			Path: fmt.Sprintf("%s.emits_message", base),
+			Path: fmt.Sprintf("%s.sends_message", base),
 			Msg: fmt.Sprintf(
-				"emits_message and executor are mutually exclusive (executor=%q, emits_message=%q)",
-				n.Executor, n.EmitsMessage),
+				"sends_message and executor are mutually exclusive (executor=%q, sends_message=%q)",
+				n.Executor, n.SendsMessage),
 		})
 	}
-	if hasDelegate && hasEmitsMessage {
+	if hasDelegate && hasSendsMessage {
 		res.Errors = append(res.Errors, ValidationError{
-			Path: fmt.Sprintf("%s.emits_message", base),
+			Path: fmt.Sprintf("%s.sends_message", base),
 			Msg: fmt.Sprintf(
-				"emits_message and delegate are mutually exclusive (delegate=%q, emits_message=%q)",
-				n.Delegate, n.EmitsMessage),
+				"sends_message and delegate are mutually exclusive (delegate=%q, sends_message=%q)",
+				n.Delegate, n.SendsMessage),
 		})
 	}
-	if !hasExecutor && !hasDelegate && !hasEmitsMessage && effectiveExecutor(n, hooks) == "" {
+	if !hasExecutor && !hasDelegate && !hasSendsMessage && effectiveExecutor(n, hooks) == "" {
 		if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 			res.Warnings = append(res.Warnings, ValidationWarning{
 				Path: fmt.Sprintf("%s.attributes", base),
@@ -848,16 +848,16 @@ func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHook
 	})
 }
 
-// @concept: message-emitter-node
-func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, declaredMessages map[string]struct{}, res *ValidationResult) {
-	if n.EmitsMessage == "" {
+// @concept: message-sender-node
+func validateSendsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, declaredMessages map[string]struct{}, res *ValidationResult) {
+	if n.SendsMessage == "" {
 		return
 	}
-	mt := strings.TrimSpace(n.EmitsMessage)
+	mt := strings.TrimSpace(n.SendsMessage)
 	if mt == "" {
 		res.Errors = append(res.Errors, ValidationError{
-			Path: base + ".emits_message",
-			Msg:  "emits_message must not be whitespace-only",
+			Path: base + ".sends_message",
+			Msg:  "sends_message must not be whitespace-only",
 		})
 		return
 	}
@@ -868,9 +868,9 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 		}
 		sort.Strings(declaredList)
 		res.Errors = append(res.Errors, ValidationError{
-			Path: base + ".emits_message",
+			Path: base + ".sends_message",
 			Msg: fmt.Sprintf(
-				"emits_message references unknown message type %q (declared types: %v)",
+				"sends_message references unknown message type %q (declared types: %v)",
 				mt, declaredList),
 		})
 		return
@@ -886,9 +886,9 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 	}
 	if dest == nil {
 		res.Errors = append(res.Errors, ValidationError{
-			Path: base + ".emits_message",
+			Path: base + ".sends_message",
 			Msg: fmt.Sprintf(
-				"emits_message %q is in the declared set but not resolvable in messages: registry (internal validator drift)",
+				"sends_message %q is in the declared set but not resolvable in messages: registry (internal validator drift)",
 				mt),
 		})
 		return
@@ -897,7 +897,7 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 	if n.Attributes != nil {
 		nodeSchema = n.Attributes.Schema
 	}
-	// @concept: message-emitter-node
+	// @concept: message-sender-node
 	var bodyShape map[string]any
 	if len(dest.BodySchema) > 0 {
 		var raw any
@@ -907,17 +907,17 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 			}
 		}
 	}
-	bodyProps := emitsMessageProperties(bodyShape)
-	nodeProps := emitsMessageProperties(nodeSchema)
-	bodyRequired := emitsMessageRequiredSet(bodyShape)
-	nodeRequired := emitsMessageRequiredSet(nodeSchema)
+	bodyProps := sendsMessageProperties(bodyShape)
+	nodeProps := sendsMessageProperties(nodeSchema)
+	bodyRequired := sendsMessageRequiredSet(bodyShape)
+	nodeRequired := sendsMessageRequiredSet(nodeSchema)
 
 	for name := range nodeProps {
 		if _, ok := bodyProps[name]; !ok {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: fmt.Sprintf("%s.attributes.schema.properties.%s", base, name),
 				Msg: fmt.Sprintf(
-					"emit-node attribute %q is not declared in destination message type %q's body_schema (the attribute set must match the body shape exactly)",
+					"send-node attribute %q is not declared in destination message type %q's body_schema (the attribute set must match the body shape exactly)",
 					name, mt),
 			})
 		}
@@ -927,7 +927,7 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 			res.Errors = append(res.Errors, ValidationError{
 				Path: fmt.Sprintf("%s.attributes.schema.properties", base),
 				Msg: fmt.Sprintf(
-					"emit-node attributes schema is missing field %q declared in destination message type %q's body_schema (the attribute set must match the body shape exactly)",
+					"send-node attributes schema is missing field %q declared in destination message type %q's body_schema (the attribute set must match the body shape exactly)",
 					name, mt),
 			})
 		}
@@ -943,7 +943,7 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 			res.Errors = append(res.Errors, ValidationError{
 				Path: fmt.Sprintf("%s.attributes.schema.properties.%s.type", base, name),
 				Msg: fmt.Sprintf(
-					"emit-node attribute %q declares type %v but destination message type %q's body_schema declares type %v (types must match exactly)",
+					"send-node attribute %q declares type %v but destination message type %q's body_schema declares type %v (types must match exactly)",
 					name, npType, mt, bpType),
 			})
 		}
@@ -953,7 +953,7 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 			res.Errors = append(res.Errors, ValidationError{
 				Path: fmt.Sprintf("%s.attributes.schema.required", base),
 				Msg: fmt.Sprintf(
-					"emit-node requires %q but destination message type %q's body_schema does not require it (required: sets must match exactly)",
+					"send-node requires %q but destination message type %q's body_schema does not require it (required: sets must match exactly)",
 					r, mt),
 			})
 		}
@@ -963,14 +963,14 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 			res.Errors = append(res.Errors, ValidationError{
 				Path: fmt.Sprintf("%s.attributes.schema.required", base),
 				Msg: fmt.Sprintf(
-					"destination message type %q's body_schema requires %q but emit-node attributes schema does not require it (required: sets must match exactly)",
+					"destination message type %q's body_schema requires %q but send-node attributes schema does not require it (required: sets must match exactly)",
 					mt, r),
 			})
 		}
 	}
 }
 
-func emitsMessageProperties(schema map[string]any) map[string]map[string]any {
+func sendsMessageProperties(schema map[string]any) map[string]map[string]any {
 	out := map[string]map[string]any{}
 	if schema == nil {
 		return out
@@ -989,7 +989,7 @@ func emitsMessageProperties(schema map[string]any) map[string]map[string]any {
 	return out
 }
 
-func emitsMessageRequiredSet(schema map[string]any) map[string]struct{} {
+func sendsMessageRequiredSet(schema map[string]any) map[string]struct{} {
 	out := map[string]struct{}{}
 	if schema == nil {
 		return out

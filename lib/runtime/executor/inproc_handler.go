@@ -14,8 +14,8 @@ import (
 // @concept: executor
 type HandlerContext struct {
 	Scratch *ScratchWriter
-	// @concept: message-emitter-node
-	EmitCascadeMessage func(ctx context.Context, body []byte) (messageID shared.UUID, replayed bool, err error)
+	// @concept: message-sender-node
+	SendCascadeMessage func(ctx context.Context, body []byte) (messageID shared.UUID, replayed bool, err error)
 }
 
 // @concept: executor
@@ -30,7 +30,7 @@ type DispatchExtras struct {
 	InstanceID      shared.UUID
 	NodeID          shared.UUID
 	FrameID         shared.UUID
-	EmitMessageType string
+	SendMessageType string
 }
 
 func WithDispatchExtras(ctx context.Context, x DispatchExtras) context.Context {

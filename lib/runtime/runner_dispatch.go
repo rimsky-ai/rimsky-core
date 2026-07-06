@@ -157,16 +157,16 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		ctx, cancel = context.WithTimeout(ctx, deadline)
 		defer cancel()
 	}
-	// @concept: message-emitter-node
-	emitMessageType := ""
+	// @concept: message-sender-node
+	sendMessageType := ""
 	if acq.NodeDef != nil {
-		emitMessageType = acq.NodeDef.EmitsMessage
+		sendMessageType = acq.NodeDef.SendsMessage
 	}
 	ctx = executor.WithDispatchExtras(ctx, executor.DispatchExtras{
 		InstanceID:      acq.InstanceID,
 		NodeID:          acq.NodeID,
 		FrameID:         acq.FrameID,
-		EmitMessageType: emitMessageType,
+		SendMessageType: sendMessageType,
 	})
 	outcome, err := client.Execute(ctx, req)
 	if err != nil {

@@ -55,19 +55,19 @@ func CanonicalizeKindSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
 	}
 }
 
-// @concept: message-emitter-node
+// @concept: message-sender-node
 // @concept: node
-func CanonicalizeEmitMessageSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
+func CanonicalizeSendMessageSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
 	if tspec == nil || aliases == nil {
 		return
 	}
-	alias, ok := aliases.Resolve("emit_message")
+	alias, ok := aliases.Resolve("send_message")
 	if !ok {
 		return
 	}
 	for i := range tspec.Nodes {
 		n := &tspec.Nodes[i]
-		if n.EmitsMessage == "" {
+		if n.SendsMessage == "" {
 			continue
 		}
 		if n.Executor != "" {

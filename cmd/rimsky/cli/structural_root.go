@@ -13,7 +13,7 @@ import (
 )
 
 // @decision: structural-root-edge-injection-at-registration
-// @decision: compose-driver-emits-empty-message-after-create
+// @decision: compose-driver-sends-empty-message-after-create
 func TemplateHasStructuralRoot(ctx context.Context, c *Client, hash string) (bool, error) {
 	if hash == "" {
 		return true, nil

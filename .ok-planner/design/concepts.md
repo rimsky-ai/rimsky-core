@@ -45,7 +45,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `lineage` — A persisted projection of computational + data-promotion records.
 - `lineage-record` — An append-only record in the lineage projection (see `concept:lineage`).
 - `message` — A typed envelope whose arrival at an instance opens a frame.
-- `message-emitter-node` — A message-emitter-node is a node-type whose dispatch mode is "build a message envelope from the node's attributes and insert it into the message ledger."
+- `message-sender-node` — A message-sender-node is a node-type whose dispatch mode is "build a message envelope from the node's attributes and insert it into the message ledger."
 - `message-schema` — A message-schema is the template-level registry of accepted message types for instances of that template.
 - `module-layout` (aliases: workspace-layout) — The Go workspace ties five modules into one build.
 - `named-lock` — A named lock is a producer-independent capacity-counter primitive.
@@ -83,7 +83,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 The slugs below are not live concept entries — each has been replaced by one or more current concepts. The retirement notes live under `concepts/_retired/<slug>.md`.
 
 - See `concepts/_retired/backfill.md` — replaced by typed-message machinery; backfill is now a use case of `concept:message`, `concept:message-schema`, and `concept:fan-out`, not a dedicated primitive.
-- See `concepts/_retired/invalidate.md` — the "sole graph-level message" framing dissolved into typed messages; every message arrival is structurally an invalidate. Replaced by `concept:message`, `concept:message-schema`, and `concept:message-emitter-node`.
+- See `concepts/_retired/invalidate.md` — the "sole graph-level message" framing dissolved into typed messages; every message arrival is structurally an invalidate. Replaced by `concept:message`, `concept:message-schema`, and `concept:message-sender-node`.
 - See `concepts/_retired/last-outcome.md` — per-resolution cascade-gate projection on the node-run, replaced by `concept:signal` (cascade-fire is subscriber-driven via a settling-signal-type field carrying a canonical signal type-path).
 - See `concepts/_retired/lifecycle-handler.md` — the three per-node template slots (acquire-unavailable, executor-complete, executor-errored), replaced by `concept:error-policy` (acquisition failure folds in via synthetic class `acquire/*`, with `pass` an action in the error-policy chain) and `concept:node-subscription` (cascade-fire selectivity expressed as receiver-side CEL predicates).
 - See `concepts/_retired/named-event.md` — replaced by `concept:terminal-tag`; tags ride on the settling terminal verdict and per-emission data on `attributes_delta`.

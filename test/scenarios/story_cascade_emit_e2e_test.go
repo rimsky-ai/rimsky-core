@@ -2,8 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @story: cascade-emit
-// @concept: message-emitter-node
+// @story: cascade-send
+// @concept: message-sender-node
 package scenarios
 
 import (
@@ -30,10 +30,10 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 
 	h.Stub.WhenType("pong").Success(map[string]any{"status": "needs_work"}, true, "produced status")
 
-	h.Stub.WhenType("tail").Success(map[string]any{"observed": "ok"}, true, "saw cascade-emit")
+	h.Stub.WhenType("tail").Success(map[string]any{"observed": "ok"}, true, "saw cascade-send")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "story-cascade-emit", Version: "1",
+		Name: "story-cascade-send", Version: "1",
 		Messages: []spec.MessageSchema{
 			{
 				Type: "initial/wakeup",
@@ -72,7 +72,7 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{
 					Type:         "emitter",
-					EmitsMessage: "ping/recheck",
+					SendsMessage: "ping/recheck",
 					Subscribes: []node.SubscriptionEntry{
 						{Node: "pong", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
 						{Node: "pong", Type: "attribute/status/changed", ForceUpstreamRefresh: node.BoolPtr(false)},
@@ -111,7 +111,7 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 		},
 	})
 
-	iid := h.CreateInstance(tid, "ck-story-cascade-emit", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-story-cascade-send", map[string]any{})
 	require.NotEqual(t, shared.UUID{}, iid)
 
 	resp := postMessage(t, h.ControlBase, iid, map[string]any{
@@ -134,7 +134,7 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 
 	require.True(t,
 		h.WaitForEventKind(tailNode.ID, "terminal/success", 30*time.Second),
-		"tail did not emit terminal/success — cascade-emit pipeline broken (pong → emitter → emit-message → tail)")
+		"tail did not emit terminal/success — cascade-send pipeline broken (pong → emitter → emit-message → tail)")
 	_ = pongNode
 	_ = emitterNode
 
@@ -148,22 +148,22 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 		  ORDER BY received_at DESC
 		  LIMIT 1`,
 		[]any{iid}, &emittedMsgID, &emittedSender, &emittedSenderKind, &emittedBody)
-	require.NotEmpty(t, emittedMsgID, "no cascade-emit envelope landed in the ledger")
+	require.NotEmpty(t, emittedMsgID, "no cascade-send envelope landed in the ledger")
 	require.Equal(t, "instance", emittedSenderKind,
-		"cascade-emit must carry sender_kind=instance per concept:message-emitter-node")
+		"cascade-send must carry sender_kind=instance per concept:message-sender-node")
 	require.True(t, strings.HasPrefix(emittedSender, "instance:"),
-		"cascade-emit sender must be instance:<id>, got %q", emittedSender)
+		"cascade-send sender must be instance:<id>, got %q", emittedSender)
 
 	var bodyDecoded map[string]any
 	require.NoError(t, json.Unmarshal(emittedBody, &bodyDecoded),
-		"emit-node body must marshal as JSON object")
+		"send-node body must marshal as JSON object")
 	require.Equal(t, "needs_work", bodyDecoded["pong_status"],
-		"emit-node body must reflect the substituted upstream attribute value; got %v",
+		"send-node body must reflect the substituted upstream attribute value; got %v",
 		bodyDecoded)
 
 	frames := getFrames(t, h.ControlBase, iid, emittedMsgID)
 	require.NotEmpty(t, frames,
-		"no frame carries triggering_message_id = %s (the cascade-emit envelope)",
+		"no frame carries triggering_message_id = %s (the cascade-send envelope)",
 		emittedMsgID)
 	require.Equal(t, "ping/recheck", frames[0].MessageType,
 		"the cascade-opened frame must carry the emit-message-type on its join")
@@ -173,9 +173,9 @@ func TestStoryCascadeEmit_SchemaMismatchRejectsAtRegistration(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// @concept: message-emitter-node
+	// @concept: message-sender-node
 	specMap := map[string]any{
-		"name":    "story-cascade-emit-mismatch",
+		"name":    "story-cascade-send-mismatch",
 		"version": "1",
 		"messages": []map[string]any{{
 			"type": "ping/recheck",
@@ -189,7 +189,7 @@ func TestStoryCascadeEmit_SchemaMismatchRejectsAtRegistration(t *testing.T) {
 		}},
 		"nodes": []map[string]any{{
 			"type":          "bad-emitter",
-			"emits_message": "ping/recheck",
+			"sends_message": "ping/recheck",
 			"attributes": map[string]any{
 				"schema": map[string]any{
 					"type": "object",

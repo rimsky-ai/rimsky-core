@@ -475,11 +475,11 @@ payloads are the ONLY cross-frame carrier.
    Send = push to a destination (an instance's message queue,
    idempotency-keyed, one frame each); emit = broadcast into the
    subscription fabric (receivers opt in by type-path + predicate).
-   "A node emits a message" becomes visibly wrong on its face — the
+   "A node sends a message" becomes visibly wrong on its face — the
    vocabulary marks the layer. Sweep in one change per the uniformity
-   rule: `concept:message-emitter-node` rename, "message-emit endpoint" /
-   "cascade-emitted / operator-emitted / publisher-emitted" phrasings in
-   `concept:message` + `concept:frame`, "universal message-emit surface"
+   rule: `concept:message-sender-node` rename, "message-send endpoint" /
+   "cascade-sent / operator-sent / publisher-sent" phrasings in
+   `concept:message` + `concept:frame`, "universal message-send surface"
    in `story:empty-message-wakes-roots`, code symbol
    `EmitCascadeMessage` (~15 non-test sites). Signal-side emit
    (`EmitSignal`, diff-gated emission) already correct, untouched.

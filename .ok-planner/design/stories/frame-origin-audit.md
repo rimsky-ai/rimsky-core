@@ -11,7 +11,7 @@ As an operator,
 
 ## Capability
 
-I can see for every frame what triggered it (an operator message, a publisher message, or a cascade-emitted message) through the existing frame observability surface,
+I can see for every frame what triggered it (an operator message, a publisher message, or a cascade-sent message) through the existing frame observability surface,
 
 ## Business value
 

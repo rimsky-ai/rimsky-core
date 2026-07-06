@@ -13,7 +13,7 @@
 - **Invocation:** `go test ./test/scenarios -run TestStoryMessageSchema_DeclaredAndUndeclaredTypes -count=1 -v`
 - **Status:** EXHIBITS WORKING.
 
-### STORY-cascade-emit — emit-node dispatches, body carries substituted values, schema mismatch rejects at registration
+### STORY-cascade-send — emit-node dispatches, body carries substituted values, schema mismatch rejects at registration
 
 - **Artifact:** `test/scenarios/story_cascade_emit_e2e_test.go`
 - **Exhibits:** Deploys a template with an `executor: stub` producer (`pong`) and a downstream `emits_message: ping/recheck` emit-node whose attributes pull from `{{nodes.pong.attribute.status}}`. Drives a wake-up message; asserts (a) the producer's `terminal/success`, (b) a new envelope appears in `rimsky_messages` with the substituted `status` field, (c) the next frame opens carrying `triggering_message_id` = the cascade-emitted envelope's id, and (d) a separate sub-test that registers a template whose emit-node declares a body field the destination `body_schema` lacks gets rejected at registration.
@@ -24,7 +24,7 @@
 
 - **Artifacts (executable):** `test/scenarios/story_cross_frame_coupling_e2e_test.go`
 - **Artifacts (demo):** `examples/cross-frame-coupling-demo.sh` + `examples/cross-frame-coupling-demo-template.yaml`, driven from `lib/services/test/scenarios/cross_frame_coupling_demo_e2e_test.go`
-- **Exhibits:** The executable file pins two scenarios — a 2-cycle A → B → E (emit) → message → A reading B's data via `{{messages.<type>.<field>}}`, and a self-emit drain converging when the body's `changed` field flips false. The demo runs the same template against `rimsky-all-in-one` plus the bundled `verifier-shape-checks` executor; the shell script self-checks that both the wake frame (operator origin) and the iterate frame (instance origin) appear; the wrapping test asserts `exit 0` and also reaches into the API to confirm the cascade-emit envelope landed with `sender_kind=instance`.
+- **Exhibits:** The executable file pins two scenarios — a 2-cycle A → B → E (emit) → message → A reading B's data via `{{messages.<type>.<field>}}`, and a self-emit drain converging when the body's `changed` field flips false. The demo runs the same template against `rimsky-all-in-one` plus the bundled `verifier-shape-checks` executor; the shell script self-checks that both the wake frame (operator origin) and the iterate frame (instance origin) appear; the wrapping test asserts `exit 0` and also reaches into the API to confirm the cascade-send envelope landed with `sender_kind=instance`.
 - **Invocation:**
   - `go test ./test/scenarios -run TestStoryCrossFrameCoupling -count=1 -v`
   - `go test ./lib/services/test/scenarios -run TestCrossFrameCouplingDemo_RunExitsZero -count=1 -v`
@@ -60,7 +60,7 @@
 
 ## 2. Technical decisions kept
 
-### TD-emit-as-node-kind — cascade-driven emission lives on a dedicated node-kind declared by `emits_message:`
+### TD-send-as-node-kind — cascade-driven emission lives on a dedicated node-kind declared by `emits_message:`
 
 - Field on the template DSL: `lib/foundation/spec/template.go:229` adds `EmitsMessage string` to `TemplateNodeDef`.
 - Mutual-exclusion validation (`executor` / `delegate` / `emits_message` exactly one): `lib/graph/node/template_validator.go` validator pass on the node definitions.
@@ -74,7 +74,7 @@
 ### TD-single-frame-creation-path — frames open only at the message-delivery boundary
 
 - One frame producer: `lib/graph/frame/producer.go::EnqueueFrame` is the sole entry point; `EnqueueOrCoalesce` is gone.
-- Call sites: `lib/runtime/cascade_invalidate.go` (operator/synthetic), `lib/runtime/runner_emit_message.go:214` (cascade-emit), `lib/runtime/synthetic_envelope.go:117` (wake-park synthetic envelopes), `lib/graph/scheduler/scheduler.go:170` (pure-cascade sweep). None live inside the cascade walker.
+- Call sites: `lib/runtime/cascade_invalidate.go` (operator/synthetic), `lib/runtime/runner_emit_message.go:214` (cascade-send), `lib/runtime/synthetic_envelope.go:117` (wake-park synthetic envelopes), `lib/graph/scheduler/scheduler.go:170` (pure-cascade sweep). None live inside the cascade walker.
 - The cascade walker (`lib/runtime/runner_terminal.go`) carries no `frame.EnqueueFrame` call; the prior `case node.FrameNext:` arm is deleted.
 
 ### TD-debug-channel-gate-paused-or-breakpoint — legal iff paused or pause-mode breakpoint hit
@@ -102,10 +102,10 @@
 
 ## 3. Technical decisions diverged
 
-### TD-emit-as-node-kind — idempotency-key shape
+### TD-send-as-node-kind — idempotency-key shape
 
 - **Spec said:** Envelope's `Idempotency-Key` deterministic on the dispatching node-run's `node_run_id` (spec §Components, plan task 32).
-- **Implemented:** `cascade-emit:<node_id>:<frame_id>` (the emit-node's static UUID plus the frame id), per `lib/runtime/runner_emit_message.go:166`.
+- **Implemented:** `cascade-send:<node_id>:<frame_id>` (the emit-node's static UUID plus the frame id), per `lib/runtime/runner_emit_message.go:166`.
 - **Flavor:** improved.
 - **Reason:** Interim-review finding 9 surfaced that `node_run_id` is regenerated on every fresh stale-mark / supervisor hard-failure re-enqueue, so the spec's shape would have duplicated envelopes on every infra retry. `(node_id, frame_id)` is stable across re-enqueue and collapses the retry onto the same dedup row. The load-bearing property (one envelope per logical emit even on retry) is satisfied by this shape; the spec's shape would have failed it.
 
@@ -184,6 +184,6 @@ Two architectural questions surfaced during the walk but were intentionally defe
 ## Coverage check
 
 - **Stories exhibited:** 7 / 7 in manifest. No GAPs.
-- **Technical decisions accounted for:** 7 / 7 in manifest (7 kept + 2 diverged; TD-emit-as-node-kind appears in both columns — kept as a kind, diverged on idempotency-key shape; TD-debug-channel-gate-paused-or-breakpoint appears in both — kept on the gate predicate, diverged on the action-name segment count). All seven TDs are explicitly enumerated. No silent attestations.
+- **Technical decisions accounted for:** 7 / 7 in manifest (7 kept + 2 diverged; TD-send-as-node-kind appears in both columns — kept as a kind, diverged on idempotency-key shape; TD-debug-channel-gate-paused-or-breakpoint appears in both — kept on the gate predicate, diverged on the action-name segment count). All seven TDs are explicitly enumerated. No silent attestations.
 - **Necessitated work surfaced:** 4 active items (synthetic-envelope helper, MCP descriptor refresh, debug-override `mutated` guard, separate migration 011) — flagged with rationale. A fifth item (parked-aware `advanceOneFrame` wake) was originally listed but has been backed out per Section 4; the entry survives in Section 3 with the backout recorded in Section 4.
 - **Process defects:** none. The publisher / sensor cross-stack proof gap originally surfaced as a divergence was corrected mid-walk (proofs RESTORED, see Section 4) and the misleading divergence entry has been removed. The interim-review findings (sketch `2026-06-14-interim-review-findings.md`) were resolved during execution and the divergences they motivated are accounted for above.

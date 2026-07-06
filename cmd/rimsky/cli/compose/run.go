@@ -201,7 +201,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		return coord.Drain(context.Background(), ReasonAnyFailure)
 	}
 
-	// @decision: compose-driver-emits-empty-message-after-create
+	// @decision: compose-driver-sends-empty-message-after-create
 	// @story: one-shot-to-terminal
 	rootByHash := map[string]bool{}
 	for _, ci := range created {

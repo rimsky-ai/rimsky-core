@@ -73,7 +73,7 @@ enum OperationalKind {
   OPERATIONAL_KIND_BREAKPOINT_HIT = 50;
   // Message bus (operational-side audit of message activity, distinct
   // from the signal-class `message/...` topology).
-  OPERATIONAL_KIND_MESSAGE_EMITTED = 60;
+  OPERATIONAL_KIND_MESSAGE_SENT = 60;
   OPERATIONAL_KIND_MESSAGE_RECEIVED = 61;
   // Fan-out + sub-claim + sub-graph dispatch.
   OPERATIONAL_KIND_FAN_OUT_DISPATCHED = 70;
@@ -134,7 +134,7 @@ message Event {
   // removed from the 40+ block and a new one slots into 28/29 instead.
   reserved 28, 29;
   oneof payload {
-    MessageEmittedPayload message_emitted = 10;
+    MessageSentPayload message_sent = 10;
     MessageReceivedPayload message_received = 11;
     StateTransitionPayload state_transition = 12;
     ErrorPayload error = 13;
@@ -171,7 +171,7 @@ message Event {
   google.protobuf.Struct payload_raw = 30;
 }
 
-message MessageEmittedPayload {
+message MessageSentPayload {
   string type = 1;            // "invalidate" | "recalculate"
   string source_node_id = 2;
   string target_node_id = 3;

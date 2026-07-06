@@ -222,12 +222,12 @@ func Start(cfg Config) (*Handle, error) {
 				Logger:         loggerCap,
 			},
 		}
-		if extras, ok := executor.DispatchExtrasFromContext(ctx); ok && extras.EmitMessageType != "" {
-			msgType := extras.EmitMessageType
+		if extras, ok := executor.DispatchExtrasFromContext(ctx); ok && extras.SendMessageType != "" {
+			msgType := extras.SendMessageType
 			instanceID := extras.InstanceID
 			frameID := extras.FrameID
-			hctx.EmitCascadeMessage = func(ctx context.Context, body []byte) (shared.UUID, bool, error) {
-				return emitCascadeMessage(ctx, persistCap, instanceID, nodeID, frameID, msgType, body)
+			hctx.SendCascadeMessage = func(ctx context.Context, body []byte) (shared.UUID, bool, error) {
+				return sendCascadeMessage(ctx, persistCap, instanceID, nodeID, frameID, msgType, body)
 			}
 		}
 		return hctx

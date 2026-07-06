@@ -42,7 +42,7 @@ Both tangles share the same shape: **cross-frame coupling is wearing the in-fram
 
 ## The layer
 
-Insert a **message schema** between messages and nodes — a template-level declaration (call the block `messages:`) that does for inbound messages what the `attributes:` block does for node I/O. Add a **cascade-emit declaration** on senders (call the block `emits:`) that mirrors the `publishers:` block for outbound cascade-driven emissions. Together they replace both tangle surfaces:
+Insert a **message schema** between messages and nodes — a template-level declaration (call the block `messages:`) that does for inbound messages what the `attributes:` block does for node I/O. Add a **cascade-send declaration** on senders (call the block `emits:`) that mirrors the `publishers:` block for outbound cascade-driven emissions. Together they replace both tangle surfaces:
 
 ```
                 today                                           proposed
@@ -153,7 +153,7 @@ The combined win: every kind of reactivity finally lives on the surface that mat
 
 - **In-frame node↔node coupling** (frame-synchronous, pull-on-recompute): `subscribes:`. With the companion `sketch:2026-06-13-explicit-substitution-cascade-behavior` reforming this block's flags (drop implicit auto-subscribe, add `wake_on_change` + `force_upstream_refresh`), this block has one clean job.
 - **External instance←message coupling** (boundary-crossing, frame-creating): `messages:` (schema) + `publishers:` (binding).
-- **Internal cascade-emit coupling** (frame-creating from within): `emits:` (sender) + `messages:` (receiver).
+- **Internal cascade-send coupling** (frame-creating from within): `emits:` (sender) + `messages:` (receiver).
 
 That layering is exactly the one `concept:named-event` already draws in prose (*"events are internal-to-rimsky and frame-synchronous; distinct from messages — external, frame-bounded"*) but the code blurs by putting both in `subscribes:` and by hiding cross-frame triggers under `frame: next`.
 
@@ -228,7 +228,7 @@ Per `attribute/<key>/changed`'s current behavior — the cascade walker emits th
 
 GitHub issue #19 reports that in `serial_queue` mode, a 2-cycle node A → B → A drops the back-edge: B's `terminal/success` does not re-dispatch A even though A's subscription matches. The author traced the cause to runtime source: the cascade walker's settled-this-frame guard at `code:lib/runtime/runner_terminal.go:869` suppresses the dispatch because A already ran in the current frame, and the guard bypasses self-edges but not multi-node back-edges. The documented affordance — `frame: next` on A's subscription — is buried in `concept:frame`'s self-subscription discussion and isn't named as the load-bearing fix for the general N-cycle case.
 
-This sketch resolves the issue not by patching the guard but by retiring `frame: next` entirely and replacing it with the cascade-emit primitive:
+This sketch resolves the issue not by patching the guard but by retiring `frame: next` entirely and replacing it with the cascade-send primitive:
 
 - The author writes pong's terminal/success as an `emits:` declaration: `{ on: terminal/success, type: ping/recheck, body: { ... } }`.
 - ping's `messages:` block accepts the type and declares itself as the invalidation target.
@@ -278,7 +278,7 @@ This sketch resolves the issue not by patching the guard but by retiring `frame:
 - **`concept:signal`:** drop the `message/*` subscribable type-path (keep an audit-only emit if wanted).
 - **Persistence:** message-ledger delivery path (`code:lib/runtime/message_delivery.go`) goes one-per-frame; `col:rimsky_instances.frame_delivery_mode` reconsidered; the boundary subscription-walk (`concept:message` "subscription-walk at frame boundary") replaced by a schema lookup. The cascade walker's `EnqueueOrCoalesce` call retires.
 - **Substitution:** `{{trigger.message.payload.X}}` → `{{trigger.message.body.X}}` (rename-sketch direction); `buildResolveContextForDispatch` populates the single trigger message unconditionally (no coalesce carve-out). New substitution-source kind for emit-body construction at sender's settle (open: see body-build context above).
-- **Concepts in scope:** `message`, `node-subscription`, `signal`, `frame`, `invalidate`, `backfill`, `publisher-subscription`, `cascade`, plus a **new** `message-schema` concept and a **new** `cascade-emit` concept (or an extension of `message`). `attribute` adjacent (the substitution surface). `named-event` unaffected (internal, already correctly distinct).
+- **Concepts in scope:** `message`, `node-subscription`, `signal`, `frame`, `invalidate`, `backfill`, `publisher-subscription`, `cascade`, plus a **new** `message-schema` concept and a **new** `cascade-send` concept (or an extension of `message`). `attribute` adjacent (the substitution surface). `named-event` unaffected (internal, already correctly distinct).
 - **Tensions touched:** `event-vocabulary-implies-delivery` (the message half), `serial-queue-per-instance`, `substitution-introspection-site-count` (if a receipt gate is added).
 
 ## Explicit non-goals

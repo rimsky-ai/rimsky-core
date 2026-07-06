@@ -303,7 +303,7 @@
    // structural roots wake and the wait-for-terminal loop has work to
    // observe. The Idempotency-Key is deterministic on the instance key
    // so a manifest re-run does not enqueue a second wake frame.
-   // @decision: compose-driver-emits-empty-message-after-create
+   // @decision: compose-driver-sends-empty-message-after-create
    // @story: one-shot-to-terminal
    for _, ci := range created {
        if ci.ID == "" {
@@ -361,13 +361,13 @@
 **Files:**
 - `.ok-planner/design/decisions/node-reset-as-pure-retry-budget-clear.md` (new)
 - `.ok-planner/design/decisions/asset-materialize-endpoint-retired.md` (new)
-- `.ok-planner/design/decisions/compose-driver-emits-empty-message-after-create.md` (new)
+- `.ok-planner/design/decisions/compose-driver-sends-empty-message-after-create.md` (new)
 
 **Steps:**
 
 1. Create `decisions/node-reset-as-pure-retry-budget-clear.md` with frontmatter and three sections (Choice / Rationale / Alternatives considered) per the spec's Design changes entry.
 2. Create `decisions/asset-materialize-endpoint-retired.md` similarly per the spec.
-3. Create `decisions/compose-driver-emits-empty-message-after-create.md` similarly per the spec.
+3. Create `decisions/compose-driver-sends-empty-message-after-create.md` similarly per the spec.
 
 ### Task 23: Add `Harness.PostInstanceMessage` helper + wire it into CreateInstance for the wake step
 
@@ -660,7 +660,7 @@ For each file:
 
 1. Read the current file.
 2. Replace the "Two external emit sites and one internal" invariant paragraph with:
-   > Two external emit sites and one internal: operator API (`POST /instances/{id}/messages` with `sender_kind: operator`), publisher emissions (the same endpoint with `sender_kind: publisher` + a publisher-subscription capability token), and cascade-emit (a message-emitter-node's dispatch, with `sender_kind: instance` and sender `instance:<id>`). All three paths land in the same ledger and follow the same delivery rules. `sender_kind: instance` is unambiguously cascade-emit; the runtime synthesizes no envelopes.
+   > Two external emit sites and one internal: operator API (`POST /instances/{id}/messages` with `sender_kind: operator`), publisher emissions (the same endpoint with `sender_kind: publisher` + a publisher-subscription capability token), and cascade-send (a message-sender-node's dispatch, with `sender_kind: instance` and sender `instance:<id>`). All three paths land in the same ledger and follow the same delivery rules. `sender_kind: instance` is unambiguously cascade-send; the runtime synthesizes no envelopes.
 3. Replace the type-lookup invariant with:
    > Type lookup at receipt: a message whose `type` is not declared in the target template's message-schema registry is refused with an unknown-type response; loud miss, not silent dead-letter. Every template's declared-types set carries an implicit `""` entry seeded at registration, so empty-typed messages pass receipt under the same uniform check.
 4. Write the file.

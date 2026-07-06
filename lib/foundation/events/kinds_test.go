@@ -50,7 +50,7 @@ func TestOperationalKindRoundTrip(t *testing.T) {
 		{"template_validation_failed", genv1.OperationalKind_OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED, "template_validation_failed"},
 		{"executor_schema_unavailable", genv1.OperationalKind_OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE, "executor_schema_unavailable"},
 		{"breakpoint.hit", genv1.OperationalKind_OPERATIONAL_KIND_BREAKPOINT_HIT, "breakpoint.hit"},
-		{"message_emitted", genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_EMITTED, "message_emitted"},
+		{"message_sent", genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT, "message_sent"},
 		{"message_received", genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED, "message_received"},
 		{"fan_out_dispatched", genv1.OperationalKind_OPERATIONAL_KIND_FAN_OUT_DISPATCHED, "fan_out_dispatched"},
 		{"fanout.children_created", genv1.OperationalKind_OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED, "fanout.children_created"},

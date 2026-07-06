@@ -7,7 +7,7 @@ status: as-is
 
 ## Role
 
-As an operator wiring an object-store-driven message into a workflow, I can use the bundled object-store sensor to poll a bucket-and-prefix at a fixed interval, emit a message per newly-discovered object (with the object's metadata surfaced into the message payload), and persist discovery state so restarts don't re-emit objects already discovered, so that I react to new objects landing in an external store without writing a custom publisher.
+As an operator wiring an object-store-driven message into a workflow, I can use the bundled object-store sensor to poll a bucket-and-prefix at a fixed interval, send a message per newly-discovered object (with the object's metadata surfaced into the message payload), and persist discovery state so restarts don't re-send objects already discovered, so that I react to new objects landing in an external store without writing a custom publisher.
 
 ## Capability
 
@@ -15,15 +15,15 @@ Bundled object-store sensor publisher: bucket-and-prefix polling; per-object dis
 
 ## Business value
 
-Operators react to new objects landing in an external store without writing a custom publisher; restart doesn't re-emit objects already discovered.
+Operators react to new objects landing in an external store without writing a custom publisher; restart doesn't re-send objects already discovered.
 
 ## Acceptance
 
-An object-store-sensor instance polling a real bucket and prefix discovers a new object dropped after the last poll and emits exactly one message carrying that object's metadata; downstream nodes consume the message; a process restart preserves discovery state and doesn't re-emit objects already discovered. Backend kinds are pluggable.
+An object-store-sensor instance polling a real bucket and prefix discovers a new object dropped after the last poll and sends exactly one message carrying that object's metadata; downstream nodes consume the message; a process restart preserves discovery state and doesn't re-send objects already discovered. Backend kinds are pluggable.
 
 ## Falsifier
 
-Restart re-emits already-discovered objects, OR the configured backend is ignored, OR metadata in the emitted message is canned.
+Restart re-sends already-discovered objects, OR the configured backend is ignored, OR metadata in the sent message is canned.
 
 ## Proof
 

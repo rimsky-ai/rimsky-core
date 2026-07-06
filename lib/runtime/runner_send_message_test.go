@@ -56,7 +56,7 @@ func seedEmitInstance(t *testing.T, ctx context.Context, d persistence.Database)
 			}`),
 		}},
 		Nodes: []spec.TemplateNodeDef{
-			{Type: "n", EmitsMessage: "ping/recheck"},
+			{Type: "n", SendsMessage: "ping/recheck"},
 		},
 	}
 
@@ -100,7 +100,7 @@ func countMessages(t *testing.T, ctx context.Context, d persistence.Database, in
 	return len(page.Rows)
 }
 
-func TestEmitCascadeMessageInTx_HappyPath(t *testing.T) {
+func TestSendCascadeMessageInTx_HappyPath(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openEmitTestDB(t)
@@ -110,7 +110,7 @@ func TestEmitCascadeMessageInTx_HappyPath(t *testing.T) {
 
 	var msgID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
+		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
 			[]byte(`{"pong_status":"needs_work"}`))
 		if err != nil {
@@ -154,7 +154,7 @@ func TestEmitCascadeMessageInTx_HappyPath(t *testing.T) {
 	}
 }
 
-func TestEmitCascadeMessageInTx_RollbackAtomic(t *testing.T) {
+func TestSendCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openEmitTestDB(t)
@@ -166,7 +166,7 @@ func TestEmitCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 
 	sentinelErr := errors.New("forced rollback after emit")
 	err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, emitErr := emitCascadeMessageInTx(ctx, d.Tables(), tx,
+		id, replayed, emitErr := sendCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
 			[]byte(`{"pong_status":"ok"}`))
 		if emitErr != nil {
@@ -190,7 +190,7 @@ func TestEmitCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 	}
 }
 
-func TestEmitCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
+func TestSendCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openEmitTestDB(t)
@@ -202,7 +202,7 @@ func TestEmitCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	var firstReplayed, secondReplayed bool
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
+		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
 			[]byte(`{"pong_status":"v1"}`))
 		if err != nil {
@@ -220,7 +220,7 @@ func TestEmitCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
+		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
 			[]byte(`{"pong_status":"v2-IGNORED"}`))
 		if err != nil {
@@ -260,7 +260,7 @@ func TestEmitCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	}
 }
 
-func TestEmitCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
+func TestSendCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openEmitTestDB(t)
@@ -270,7 +270,7 @@ func TestEmitCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 
 	var msgID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
+		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
 			[]byte(`{"pong_status":"needs_work"}`))
 		if err != nil {
@@ -300,7 +300,7 @@ func TestEmitCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 	}
 }
 
-func TestEmitCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) {
+func TestSendCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openEmitTestDB(t)
@@ -310,7 +310,7 @@ func TestEmitCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) 
 
 	for i := 0; i < 2; i++ {
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			_, _, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
+			_, _, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
 				instanceID, nodeID, frameID, "ping/recheck",
 				[]byte(`{"pong_status":"v"}`))
 			return err
@@ -324,7 +324,7 @@ func TestEmitCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) 
 	}
 }
 
-func TestEmitCascadeMessageInTx_DistinctNodeFramePairProducesDistinctEnvelopes(t *testing.T) {
+func TestSendCascadeMessageInTx_DistinctNodeFramePairProducesDistinctEnvelopes(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openEmitTestDB(t)
@@ -334,7 +334,7 @@ func TestEmitCascadeMessageInTx_DistinctNodeFramePairProducesDistinctEnvelopes(t
 		nodeID := shared.UUID(uuid.New())
 		frameID := shared.UUID(uuid.New())
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			_, _, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
+			_, _, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
 				instanceID, nodeID, frameID, "ping/recheck",
 				[]byte(`{"pong_status":"v"}`))
 			return err

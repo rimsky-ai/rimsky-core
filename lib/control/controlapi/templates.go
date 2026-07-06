@@ -217,7 +217,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		staticWarnings := staticWarningsToFindings(res.Warnings)
 		node.ApplyFrameResolutionDefaults(&spec)
 		node.CanonicalizeKindSugar(&spec, deps.KindAliases)
-		node.CanonicalizeEmitMessageSugar(&spec, deps.KindAliases)
+		node.CanonicalizeSendMessageSugar(&spec, deps.KindAliases)
 		node.CanonicalizeAggregationPolicyDefault(&spec)
 
 		tHash := time.Now()
@@ -371,7 +371,7 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 
 		node.ApplyFrameResolutionDefaults(&spec)
 		node.CanonicalizeKindSugar(&spec, deps.KindAliases)
-		node.CanonicalizeEmitMessageSugar(&spec, deps.KindAliases)
+		node.CanonicalizeSendMessageSugar(&spec, deps.KindAliases)
 		node.CanonicalizeAggregationPolicyDefault(&spec)
 
 		hash, err := canonical.CanonicalSpecHash(spec)

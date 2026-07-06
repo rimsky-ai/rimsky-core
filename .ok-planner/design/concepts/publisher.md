@@ -8,7 +8,7 @@ aliases: []
 
 ## Definition
 
-A publisher is a peer service that publishes messages into rimsky. Publishers implement the publisher protocol (four verbs: a capabilities handshake, subscribe, unsubscribe, and list-subscriptions) and POST message envelopes to the universal operator message-emit endpoint, identifying themselves as publishers and presenting a per-subscription capability token.
+A publisher is a peer service that publishes messages into rimsky. Publishers implement the publisher protocol (four verbs: a capabilities handshake, subscribe, unsubscribe, and list-subscriptions) and POST message envelopes to the universal operator message-send endpoint, identifying themselves as publishers and presenting a per-subscription capability token.
 
 Publishers are peer-services in the same trust perimeter as executors and claim-producers: out-of-process, addressed at startup via the publisher service registry in `concept:rimsky-yml`, and exclusively responsible for their own state and HA posture.
 
@@ -16,11 +16,11 @@ A publisher service is a provider of broadcasters: one service process serves ma
 
 ## Purpose
 
-To give rimsky a uniform way to accept inbound messages from peer services — sensors, schedulers, change-data-capture pipes — without each implementation needing its own bespoke deposit route. The publisher protocol is the single message-emit surface for peer services; operators only ever fire messages via the universal message-emit endpoint.
+To give rimsky a uniform way to accept inbound messages from peer services — sensors, schedulers, change-data-capture pipes — without each implementation needing its own bespoke deposit route. The publisher protocol is the single message-send surface for peer services; operators only ever fire messages via the universal message-send endpoint.
 
 ## Boundaries
 
-Owns: the protocol surface, the peer client, the rimsky-side dispatch helpers, the operator dial path, and the capability check on the universal message-emit surface.
+Owns: the protocol surface, the peer client, the rimsky-side dispatch helpers, the operator dial path, and the capability check on the universal message-send surface.
 
 Does NOT own: the publisher's substrate (cron clock, HTTP endpoint, object-store, etc.), per-publisher state persistence (each publisher owns its own state DB; see `concept:sensor`), the message envelope shape (that's `concept:message`), or the deployment-tier replica posture (that's `concept:replica`).
 
@@ -29,8 +29,8 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 ## Invariants
 
 - Publishers are advertised in the publisher service registry of `concept:rimsky-yml`. Their declared protocol membership must include the publisher protocol.
-- The subscribe verb carries the message type the publisher will stamp on every emitted envelope; the subscribe surface carries no receiver-routing field — delivery routes by message type against node-subscription edges. The publisher persists the type and copies it onto each emitted message envelope.
-- Emit-time messages identify the sender as a publisher and present the per-subscription capability token. Rimsky derives the sender name from the publisher-subscription row; the request's declared sender is ignored for trust.
+- The subscribe verb carries the message type the publisher will stamp on every sent envelope; the subscribe surface carries no receiver-routing field — delivery routes by message type against node-subscription edges. The publisher persists the type and copies it onto each sent message envelope.
+- Send-time messages identify the sender as a publisher and present the per-subscription capability token. Rimsky derives the sender name from the publisher-subscription row; the request's declared sender is ignored for trust.
 - A reconciliation worker drives the subscribe verb for mounting subscriptions with backoff and no attempt cap; the failed state is reserved for non-retryable errors (per `concept:publisher-subscription`).
 - Replicas are not coordinated by rimsky. Single-replica is the v1 contract per `concept:replica`.
 - invariant: message-inertness — payload bytes flow from publisher → message envelope → consumer's substitution leaf without inspection.

@@ -62,7 +62,7 @@ func NewInMemoryState() *InMemoryState {
 	}
 }
 
-// @decision: compose-driver-emits-empty-message-after-create
+// @decision: compose-driver-sends-empty-message-after-create
 func (s *InMemoryState) RecordInstanceMessage(instanceID, idempotencyKey string) (messageID string, fresh bool) {
 	if idempotencyKey == "" {
 		panic("clitest.RecordInstanceMessage: empty idempotencyKey — boundary gate bypassed")

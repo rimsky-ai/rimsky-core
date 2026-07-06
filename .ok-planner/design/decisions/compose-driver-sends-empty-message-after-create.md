@@ -1,13 +1,13 @@
 ---
-decision: compose-driver-emits-empty-message-after-create
+decision: compose-driver-sends-empty-message-after-create
 status: as-is
 ---
 
-# Compose driver emits an empty message after each instance create
+# Compose driver sends an empty message after each instance create
 
 ## Choice
 
-The compose driver emits an empty message per declared instance after creating it, via the same HTTP client path it already uses for instance-create, with a deterministic idempotency key derived from the instance key. The wake emit precedes the wait-for-terminal loop.
+The compose driver sends an empty message per declared instance after creating it, via the same HTTP client path it already uses for instance-create, with a deterministic idempotency key derived from the instance key. The wake send precedes the wait-for-terminal loop.
 
 ## Rationale
 

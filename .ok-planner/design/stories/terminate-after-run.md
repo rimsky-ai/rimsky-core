@@ -46,7 +46,7 @@ A template with a single executor node, deployed and instantiated
 with the terminate-after-run flag enabled on the create body. The
 initial frame dispatches the node, the executor settles a real
 terminal-success signal, and at the frame-end the instance's
-termination timestamp is non-null. A subsequent message emit
+termination timestamp is non-null. A subsequent message send
 against the now-terminated instance is rejected as a
 terminal-state conflict. An equivalent run without the flag
 leaves the instance's termination timestamp unset past node
@@ -70,7 +70,7 @@ real assembled product, create an instance with the
 terminate-after-run flag enabled, drive the executor to a real
 terminal-success through the bundled stub, then read the instance
 back and assert the instance's termination timestamp is set and a
-follow-up message emit is rejected as a terminal-state conflict.
+follow-up message send is rejected as a terminal-state conflict.
 The durable-by-default counter-shape is pinned by the sibling
 proof on `story:sensor-http`, which exercises the no-flag path and
 asserts the instance stays alive across N real fires. Together

@@ -93,11 +93,11 @@ recent commit `065af196`) is the working precedent.
   Send = push to a destination (instance's message queue,
   idempotency-keyed, one frame each); emit = broadcast into the
   subscription fabric (receivers opt in by type-path + predicate). "A
-  node emits a message" reads as visibly wrong. Sweep in ONE change per
-  the uniformity rule: `concept:message-emitter-node` rename,
-  "message-emit endpoint" / "cascade-emitted / operator-emitted /
-  publisher-emitted" phrasings in `concept:message` + `concept:frame`,
-  "universal message-emit surface" in `story:empty-message-wakes-roots`,
+  node sends a message" reads as visibly wrong. Sweep in ONE change per
+  the uniformity rule: `concept:message-sender-node` rename,
+  "message-send endpoint" / "cascade-sent / operator-sent /
+  publisher-sent" phrasings in `concept:message` + `concept:frame`,
+  "universal message-send surface" in `story:empty-message-wakes-roots`,
   code symbol `EmitCascadeMessage` (~15 non-test call sites).
   Signal-side emit (`EmitSignal`, diff-gated emission) already correct,
   untouched.
@@ -242,7 +242,7 @@ Passes:
 - **`code:lib/graph/frame/engine.go`** — replace `runAdvanceQueued` (promote-queued) with `runOpenNewFrames` (pick oldest pending message per idle instance, create running frame directly).
 - **`code:lib/runtime/message_delivery.go::EnqueueMessage`** — signature widens from `(tx, MessagesTable, req)` → `(tx, EnqueueMessageDeps, req)` where `EnqueueMessageDeps` is a narrow interface exposing `Instances()` + `Messages()`. Under `message_queue_mode == "coalesce"`, calls `CancelPendingForInstance` in the same tx as the insert.
 - **`code:lib/control/controlapi/messages.go`** — drop the `frame.EnqueueFrame` call at receipt; `runtime.EnqueueMessage` handles the coalesce path (message-only, no frame).
-- **`code:lib/runtime/runner_emit_message.go`** — drop the `frame.EnqueueFrame` call at cascade-emit; the emitted message sits pending on the target instance's queue and the frame engine picks it up.
+- **`code:lib/runtime/runner_emit_message.go`** — drop the `frame.EnqueueFrame` call at cascade-send; the sent message sits pending on the target instance's queue and the frame engine picks it up.
 - **`code:lib/foundation/spec/template.go`** — add `TemplateSpec.MessageQueueMode` (yaml: `message_queue_mode`, default empty → normalized to `backlog`).
 - **`code:lib/graph/node/template_validator.go`** — `validateMessageQueueMode` rejects any value other than `""`, `backlog`, `coalesce`.
 - **`code:lib/control/controlapi/instances.go`** — instance creation reads template's `MessageQueueMode`, materializes on the instance row.
@@ -307,11 +307,11 @@ Executed as one pass — the intra-frame self-edge pattern demanded a driver-att
 - **`code:test/scenarios/sequenced_preserves_cascade_rounds_test.go::TestSequencedPreservesCascadeRounds`** (item 3a) — a self-cascades three rounds emitting `attribute/x/changed` (r1, r2, r3); b has `cascade_mode=sequenced` subscribing to `attribute/x/changed`; b dispatches three times, each seeing a's final r3 value at gate-eval time. Story-level intent shift: **sequenced's guarantee under intra-frame semantics is queue CARDINALITY (one dispatch per cascade round), not per-round bag content.** Bag content resolves at gate-eval time, so all queued runs see the latest upstream state.
 - **`code:test/scenarios/idempotent_mode_dedupes_test.go::TestIdempotentModeDedupes_QueueComparison`** (item 3b) — a self-cascades four rounds via `counter` (drives self-refire) while keeping `stable` constant; b subscribes to a's `terminal/success` + `attribute/stable/changed` with `cascade_mode=idempotent-queue` and reads only `stable` via substitution. Four b pendings queue (one per a-round's terminal/success), but each has identical resolved input bag. At reeval, only the highest-seq survives; b invoked exactly once.
 - **`code:test/scenarios/most_recent_coalesces_cascades_test.go::TestMostRecentCoalescesCascades`** (item-2's mechanism proof) — a self-cascades five rounds; b with `cascade_mode=most-recent` subscribes to `attribute/x/changed`. Five b pendings created; `HasLaterCascadePending` drops the earlier four when evaluated; b invoked exactly once with a's LATEST value (r5).
-- **`code:test/scenarios/story_cross_frame_coupling_e2e_test.go::TestStoryCrossFrameCoupling_SelfDrainConvergesViaDiffGate`** (item 4's convergence proof, not the split) — worker + emit-node cross-frame loop bounded by diff-gate. First frame: worker sets step=1, `attribute/step/changed` fires, emit-node emits `drain/tick`. Second frame: worker sets step=1 again, diff-gate compares against first frame's worker (via the widened GetPriorRunData), no diff, no cascade, loop ends. Worker runs exactly twice; emit-node exactly once; exactly one `drain/tick` message in the ledger.
+- **`code:test/scenarios/story_cross_frame_coupling_e2e_test.go::TestStoryCrossFrameCoupling_SelfDrainConvergesViaDiffGate`** (item 4's convergence proof, not the split) — worker + send-node cross-frame loop bounded by diff-gate. First frame: worker sets step=1, `attribute/step/changed` fires, send-node emits `drain/tick`. Second frame: worker sets step=1 again, diff-gate compares against first frame's worker (via the widened GetPriorRunData), no diff, no cascade, loop ends. Worker runs exactly twice; send-node exactly once; exactly one `drain/tick` message in the ledger.
 
 **Story-level judgment call — divergence from the ledger's item-4 recommendation:** the ledger proposed dissolving the self-drain-diff-gate acceptance clause on the theory that "the diff-gate's power is 'no cascade occurs', never 'no more frames open'". After tracing the actual code path, that framing is right about cascade (it stays intra-frame) but wrong about diff-gate emission (whose meaning is genuinely global for a given node's history — "did this executor produce a different value than last time" doesn't care about frame boundaries). The correct fix is to make the diff-gate cross-frame (widen the prior lookup) so the story's convergence claim holds honestly. Kept the acceptance clause; kept the test. Documented the widened semantics on `concept:signal`.
 
-**Adjacent test made robust:** `code:test/scenarios/story_cross_frame_coupling_e2e_test.go::TestStoryCrossFrameCoupling_BackEdgeCycle` — pre-existing race in the "should_loop=false" assertion (originally required 0 loop/iterate messages; the emit-node's ungated `attribute/*/changed` subs guarantee at least one iterate escapes on the first settle, but the original CEL only ever needed to prevent a second frame from CONTINUING the loop). Under the added `reevalDownstreamReceiverGates` the emit-node dispatches slightly faster and the race closed. Reframed the assertion to check the story's actual promise — bounded iteration — with `iterateMsgs ≤ 1` and `A runs ≤ 2`. Story is honest to the mechanism.
+**Adjacent test made robust:** `code:test/scenarios/story_cross_frame_coupling_e2e_test.go::TestStoryCrossFrameCoupling_BackEdgeCycle` — pre-existing race in the "should_loop=false" assertion (originally required 0 loop/iterate messages; the send-node's ungated `attribute/*/changed` subs guarantee at least one iterate escapes on the first settle, but the original CEL only ever needed to prevent a second frame from CONTINUING the loop). Under the added `reevalDownstreamReceiverGates` the send-node dispatches slightly faster and the race closed. Reframed the assertion to check the story's actual promise — bounded iteration — with `iterateMsgs ≤ 1` and `A runs ≤ 2`. Story is honest to the mechanism.
 
 Verification:
 
@@ -328,7 +328,7 @@ Executed the story split after tracing the actual code paths. The ledger's origi
 
 - **`story:iterative-workflows-converge`** (new) — intra-frame graph cycles bounded by CEL `when:`, diff-gate, or `cascade_mode`. Load-bearing proof: `code:test/scenarios/cascade_two_node_backedge_in_frame_test.go` (two-node A → B → A cycle closed in one frame, terminated by pong's CEL predicate against ping's payload.tags). The intra-frame self-cascade cluster proofs (sequenced / idempotent / signal-blind / most-recent / defers-during-flight) keep their existing specific-mechanism story citations per Plumbline's annotate-where-enforced rule.
 - **`story:queue-drain-converges`** (new) — multi-frame queue-drain workflows bounded by CEL `when:` or the widened cross-frame diff-gate. Proofs: the three tests in `code:test/scenarios/story_queue_drain_converges_e2e_test.go` (renamed) + `code:lib/services/test/scenarios/queue_drain_converges_demo_e2e_test.go` (services-level demo, renamed) + shipped example `file:examples/queue-drain-converges-demo.{sh,yaml}` (renamed).
-- **`story:cascade-emit`** (existing, unchanged) — declares an emit-node node-type; the message-layer mechanism piece of the original `cross-frame-coupling` story was already covered here.
+- **`story:cascade-send`** (existing, unchanged) — declares an send-node node-type; the message-layer mechanism piece of the original `cross-frame-coupling` story was already covered here.
 - **`story:cross-frame-coupling`** — retired (file + `stories.md` TOC entry deleted).
 
 **Passes:**
@@ -346,7 +346,7 @@ Verification:
 - Full scenario suite green.
 - `make core-images && make service-images` green; renamed services demo test green.
 
-**Story-level judgment call — divergence from the ledger's item 4 recommendation:** the ledger proposed splitting into "cascade layer" vs "message layer" with the diff-gate-convergence acceptance clause dissolved. Tracing the actual code showed that (a) the message-layer piece was already covered by `story:cascade-emit`, so no new "message-layer" story was needed; (b) the diff-gate widening from items 3a/3b/5/6 made cross-frame convergence a genuine capability worth its own story (`queue-drain-converges`); (c) the intra-frame promise the ledger described — first-class iterative graph shapes bounded declaratively — remains a distinct story worth naming (`iterative-workflows-converge`), with the two-node back-edge test as its natural load-bearing proof. Split executed accordingly.
+**Story-level judgment call — divergence from the ledger's item 4 recommendation:** the ledger proposed splitting into "cascade layer" vs "message layer" with the diff-gate-convergence acceptance clause dissolved. Tracing the actual code showed that (a) the message-layer piece was already covered by `story:cascade-send`, so no new "message-layer" story was needed; (b) the diff-gate widening from items 3a/3b/5/6 made cross-frame convergence a genuine capability worth its own story (`queue-drain-converges`); (c) the intra-frame promise the ledger described — first-class iterative graph shapes bounded declaratively — remains a distinct story worth naming (`iterative-workflows-converge`), with the two-node back-edge test as its natural load-bearing proof. Split executed accordingly.
 
 ### Frame-isolation restoration (2026-07-05, correction to items 3a/3b/5/6 + item 4)
 
@@ -365,7 +365,7 @@ The correction is not "narrow the fallback back down" — it's "there is no fall
 - `concept:wait-set` — qualified the gate-evaluator's substitution lookup as "in the current frame."
 - `concept:cascade-graph` — corrected the frames-read description ("each message triggers at most one frame").
 - **New decision: `decision:frame-isolation-is-structural`** — the anchor. Names frame isolation as a structural, load-bearing invariant that is not tunable, not per-node opt-in-able, not per-signal exception-able. Every runtime surface intra-frame by construction. Records the widening as the rejected alternative with a case-study explanation of why it was wrong.
-- **Stories**: retired `story:queue-drain-converges` — under frame isolation the story's promise (workflow terminates via cross-frame diff-gate) is impossible AND redundant. Queue-drain workflows converge naturally: no message emits, queue empties, no more frames open. The mechanism is already `story:cascade-emit` (the emit-node type). Rewrote `story:cascade-signal-blind` to qualify every "prior run" reference as intra-frame cascade-round semantics.
+- **Stories**: retired `story:queue-drain-converges` — under frame isolation the story's promise (workflow terminates via cross-frame diff-gate) is impossible AND redundant. Queue-drain workflows converge naturally: no message emits, queue empties, no more frames open. The mechanism is already `story:cascade-send` (the send-node type). Rewrote `story:cascade-signal-blind` to qualify every "prior run" reference as intra-frame cascade-round semantics.
 - **Decisions**: rewrote `decision:substitution-deps-from-persisted-senders` (added the frame-scoped qualifier); `decision:non-cascade-direct-to-stale` (message-delivery carry-forward now correctly described as schema-defaults + message-body overlay, not "the immediately-prior run's persisted live bag" from a prior frame); `decision:attribute-carry-forward` (added the frame-boundary note).
 
 **Code / schema unwind**:
@@ -374,9 +374,9 @@ The correction is not "narrow the fallback back down" — it's "there is no fall
 - **Persistence code**: narrowed `GetPriorRunData` in both postgres and sqlite to same-RunScope only (deleted the `cross_instance` CTE — its very existence was the misnomer that led me astray, per the earlier code review). Removed `SetFrameID` from the `NodeTable` interface and both implementations. Removed `NodeRow.FrameID`. Removed every `UPDATE rimsky_nodes SET frame_id = ...` in `enforceAndUpdate`, `CreateCascadePending`, and `MarkSourceNodeStale` (both drivers). Also stopped bumping `rimsky_nodes.updated_at` from frame processing.
 - **Runtime code**: rewrote `RecalculateNode` and `SettleFromDelegate` (`code:lib/runtime/child_execution.go`) to obtain the current running frame from `Frames().GetRunningFrameID(instanceID)` rather than reading `node.FrameID`. Recalculate refuses when no frame is running or when the node's most-recent run belongs to a different frame.
 - **Test-harness**: added `scenario.Harness.GetRunningFrameID` — replaces every test-side `worker.FrameID` read. Test files that manually `UPDATE rimsky_nodes SET frame_id = ...` had those SQL statements deleted (they were mirrors of the frame-processing writes we removed).
-- **Tests**: deleted `TestStoryQueueDrainConverges_TerminatesViaDiffGate` (the illegitimate mechanism it proved is gone); reshaped `TestStoryQueueDrainConverges_TerminatesViaCELGate` (removed the unconditional `attribute/*/changed` subs — under intra-frame-only diff-gate they fire every frame, so the CEL-terminates test now uses only the CEL-gated `terminal/success` sub with static-default emit-node attributes; the story-level intent — "queue drains to empty when CEL says stop" — holds cleanly); deleted `TestPullHardDepUpstreams_DoesNotWakeParkedUpstream` (its scenario — a parked run in a completed prior frame — cannot exist under frame isolation, since parked is in-flight and holds the frame open); reassigned the two surviving `TestStoryQueueDrainConverges_*` tests to `@story: cascade-emit`.
+- **Tests**: deleted `TestStoryQueueDrainConverges_TerminatesViaDiffGate` (the illegitimate mechanism it proved is gone); reshaped `TestStoryQueueDrainConverges_TerminatesViaCELGate` (removed the unconditional `attribute/*/changed` subs — under intra-frame-only diff-gate they fire every frame, so the CEL-terminates test now uses only the CEL-gated `terminal/success` sub with static-default send-node attributes; the story-level intent — "queue drains to empty when CEL says stop" — holds cleanly); deleted `TestPullHardDepUpstreams_DoesNotWakeParkedUpstream` (its scenario — a parked run in a completed prior frame — cannot exist under frame isolation, since parked is in-flight and holds the frame open); reassigned the two surviving `TestStoryQueueDrainConverges_*` tests to `@story: cascade-send`.
 
-**Story-level clarification from the user during this pass:** "queue-drain-converges has a queue. so when the queue is empty, no message emits." That single sentence names what the queue-drain-converges "story" was — no separate mechanism, no cross-frame observation, no diff-gate role at all. Just: the queue drains when no message emits, and that termination is `story:cascade-emit` at work. The story slug we introduced at commit `51f21d65` retired without a replacement.
+**Story-level clarification from the user during this pass:** "queue-drain-converges has a queue. so when the queue is empty, no message emits." That single sentence names what the queue-drain-converges "story" was — no separate mechanism, no cross-frame observation, no diff-gate role at all. Just: the queue drains when no message emits, and that termination is `story:cascade-send` at work. The story slug we introduced at commit `51f21d65` retired without a replacement.
 
 Verification:
 
@@ -545,29 +545,29 @@ supersede item 9 with the expanded scope here.
 - **[12a] Message-send verb sweep.** All "emit" for a message action
   becomes "send"; all "emit" for an event/signal stays "emit". Blast
   radius:
-  - Concept slug: `message-emitter-node` → `message-sender-node` (25+
+  - Concept slug: `message-sender-node` → `message-sender-node` (25+
     citing files across concepts / decisions / stories / code).
-  - Decision slug: `compose-driver-emits-empty-message-after-create` →
+  - Decision slug: `compose-driver-sends-empty-message-after-create` →
     `compose-driver-sends-empty-message-after-create` (7 citing sites).
-  - Story slug: `cascade-emit` → `cascade-send` (open — the noun
-    "cascade-emit envelope" is a first-class term). Discuss during
+  - Story slug: `cascade-send` → `cascade-send` (open — the noun
+    "cascade-send envelope" is a first-class term). Discuss during
     execution.
   - Prose in ~25 design files (`concept:message`, `concept:frame`,
     `concept:instance`, `concept:cascade`, `concept:publisher`,
-    `concept:sensor`, `concept:message-emitter-node`,
+    `concept:sensor`, `concept:message-sender-node`,
     `concept:message-schema`, `concept:publisher-subscription`, plus
     stories for publisher, sensor, node-admin, typed-message,
     empty-message-wake, frame-origin-audit, and decisions for
-    `emit-as-node-kind`, `attribute-set-as-body`, `idempotency-key-header-universal`,
+    `send-as-node-kind`, `attribute-set-as-body`, `idempotency-key-header-universal`,
     `envelope-type-discriminator`).
   - DSL/YAML surface: `TemplateNodeDef.EmitsMessage` (Go field name
-    with `yaml:"emits_message"` tag) → `TemplateNodeDef.SendsMessage`
+    with `yaml:"sends_message"` tag) → `TemplateNodeDef.SendsMessage`
     (yaml `sends_message`).
   - Executor SDK: `HandlerContext.EmitCascadeMessage` /
     `EmitMessageType` → `SendCascadeMessage` / `SendMessageType`.
-  - Built-in executor package: `lib/runtime/executor/builtin/emit_message/`
-    → `.../send_message/`; alias `rimsky.emit_message` →
-    `rimsky.send_message`; constant `KindName = "emit_message"` →
+  - Built-in executor package: `lib/runtime/executor/builtin/send_message/`
+    → `.../send_message/`; alias `rimsky.send_message` →
+    `rimsky.send_message`; constant `KindName = "send_message"` →
     `"send_message"`; `InProcURL` string mirrors.
   - Wire proto: `OPERATIONAL_KIND_MESSAGE_EMITTED = 60` →
     `OPERATIONAL_KIND_MESSAGE_SENT`; `MessageEmittedPayload` →
@@ -580,7 +580,7 @@ supersede item 9 with the expanded scope here.
     field rename.
   - CLI stderr strings and MCP tool schema description
     (`code:lib/control/controlapi/mcp_route.go#88` "treated as a
-    publisher emit; otherwise as an operator emit").
+    publisher send; otherwise as an operator emit").
   - Test names, comments, error strings (~18 hits across 9 files).
   - Outlier: `story:message-bus` — file/story spelling "bus" instead
     of "queue" throughout. Rename story to `story:message-queue` or
@@ -637,7 +637,7 @@ alongside since the slug renames it references.
     helpers).
   - `examples/queue-drain-converges-demo.{sh,yaml}` (shipped example
     filenames + in-file comments).
-  Test files re-tagged to `@story: cascade-emit` internally in
+  Test files re-tagged to `@story: cascade-send` internally in
   commit `1ad171c2`, but the filenames still cite the retired slug.
   Rename to reflect the actual story (`cascade_emit_*` /
   `emit-demo` — TBD during the pass).

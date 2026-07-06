@@ -2324,7 +2324,7 @@ func TestBuildSubscriptionEdges_ImplicitFromMessageRef(t *testing.T) {
 	}
 }
 
-func emitsMessageOKSpec(t *testing.T) *TemplateSpec {
+func sendsMessageOKSpec(t *testing.T) *TemplateSpec {
 	t.Helper()
 	return &TemplateSpec{
 		Name:    "demo",
@@ -2341,7 +2341,7 @@ func emitsMessageOKSpec(t *testing.T) *TemplateSpec {
 		}},
 		Nodes: []TemplateNodeDef{{
 			Type:         "ping-recheck-emitter",
-			EmitsMessage: "ping/recheck",
+			SendsMessage: "ping/recheck",
 			Attributes: &NodeAttributesDef{
 				Schema: map[string]any{
 					"type": "object",
@@ -2355,27 +2355,27 @@ func emitsMessageOKSpec(t *testing.T) *TemplateSpec {
 	}
 }
 
-func TestValidateTemplate_Ok_EmitsMessage_ExactShape(t *testing.T) {
-	spec := emitsMessageOKSpec(t)
+func TestValidateTemplate_Ok_SendsMessage_ExactShape(t *testing.T) {
+	spec := sendsMessageOKSpec(t)
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	if !res.Ok() {
 		t.Fatalf("expected ok, got errors: %+v", res.Errors)
 	}
 }
 
-func TestValidateTemplate_Error_EmitsMessage_UnknownType(t *testing.T) {
+func TestValidateTemplate_Error_SendsMessage_UnknownType(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:         "bad-emitter",
-			EmitsMessage: "unknown/type",
+			SendsMessage: "unknown/type",
 			Attributes:   &NodeAttributesDef{Schema: map[string]any{}},
 		}},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].emits_message")
+	hasErrorAt(t, res, "nodes[0].sends_message")
 	found := false
 	for _, e := range res.Errors {
 		if strings.Contains(e.Msg, "unknown message type") {
@@ -2387,40 +2387,40 @@ func TestValidateTemplate_Error_EmitsMessage_UnknownType(t *testing.T) {
 	}
 }
 
-func TestValidateTemplate_Error_EmitsMessage_MutexWithExecutor(t *testing.T) {
-	spec := emitsMessageOKSpec(t)
+func TestValidateTemplate_Error_SendsMessage_MutexWithExecutor(t *testing.T) {
+	spec := sendsMessageOKSpec(t)
 	spec.Nodes[0].Executor = "handler.a"
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	found := false
 	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "emits_message and executor are mutually exclusive") {
+		if strings.Contains(e.Msg, "sends_message and executor are mutually exclusive") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected mutual-exclusion error executor vs emits_message, got %+v", res.Errors)
+		t.Fatalf("expected mutual-exclusion error executor vs sends_message, got %+v", res.Errors)
 	}
 }
 
-func TestValidateTemplate_Error_EmitsMessage_MutexWithDelegate(t *testing.T) {
-	spec := emitsMessageOKSpec(t)
+func TestValidateTemplate_Error_SendsMessage_MutexWithDelegate(t *testing.T) {
+	spec := sendsMessageOKSpec(t)
 	spec.Nodes[0].Delegate = "sub"
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	found := false
 	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "emits_message and delegate are mutually exclusive") {
+		if strings.Contains(e.Msg, "sends_message and delegate are mutually exclusive") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected mutual-exclusion error delegate vs emits_message, got %+v", res.Errors)
+		t.Fatalf("expected mutual-exclusion error delegate vs sends_message, got %+v", res.Errors)
 	}
 }
 
-func TestValidateTemplate_Error_EmitsMessage_AttributeSuperset(t *testing.T) {
-	spec := emitsMessageOKSpec(t)
+func TestValidateTemplate_Error_SendsMessage_AttributeSuperset(t *testing.T) {
+	spec := sendsMessageOKSpec(t)
 	spec.Nodes[0].Attributes.Schema = map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -2442,8 +2442,8 @@ func TestValidateTemplate_Error_EmitsMessage_AttributeSuperset(t *testing.T) {
 	}
 }
 
-func TestValidateTemplate_Error_EmitsMessage_AttributeSubset_MissingField(t *testing.T) {
-	spec := emitsMessageOKSpec(t)
+func TestValidateTemplate_Error_SendsMessage_AttributeSubset_MissingField(t *testing.T) {
+	spec := sendsMessageOKSpec(t)
 	spec.Nodes[0].Attributes.Schema = map[string]any{
 		"type":       "object",
 		"properties": map[string]any{},
@@ -2461,8 +2461,8 @@ func TestValidateTemplate_Error_EmitsMessage_AttributeSubset_MissingField(t *tes
 	}
 }
 
-func TestValidateTemplate_Error_EmitsMessage_AttributeTypeMismatch(t *testing.T) {
-	spec := emitsMessageOKSpec(t)
+func TestValidateTemplate_Error_SendsMessage_AttributeTypeMismatch(t *testing.T) {
+	spec := sendsMessageOKSpec(t)
 	spec.Nodes[0].Attributes.Schema = map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -2483,8 +2483,8 @@ func TestValidateTemplate_Error_EmitsMessage_AttributeTypeMismatch(t *testing.T)
 	}
 }
 
-func TestValidateTemplate_Error_EmitsMessage_RequiredMismatch(t *testing.T) {
-	spec := emitsMessageOKSpec(t)
+func TestValidateTemplate_Error_SendsMessage_RequiredMismatch(t *testing.T) {
+	spec := sendsMessageOKSpec(t)
 	spec.Nodes[0].Attributes.Schema = map[string]any{
 		"type": "object",
 		"properties": map[string]any{

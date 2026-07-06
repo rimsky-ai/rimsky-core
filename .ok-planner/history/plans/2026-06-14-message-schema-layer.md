@@ -469,7 +469,7 @@ type MessageSchema struct {
 
 **Load-bearing properties:**
 - **Envelope insert is atomic with the sender's terminal-resolution tx.** Test: induce a forced tx-rollback after the emit-node's body composition; assert no envelope in `rimsky_messages`.
-- **Idempotency on cascade-emit is deterministic on `node_run_id`.** Test: invoke the terminal-resolution path twice with the same `node_run_id`; assert one and only one envelope in the ledger.
+- **Idempotency on cascade-send is deterministic on `node_run_id`.** Test: invoke the terminal-resolution path twice with the same `node_run_id`; assert one and only one envelope in the ledger.
 
 ### Task 30: Add `EmitsMessage` field to `TemplateNodeDef`
 
@@ -508,7 +508,7 @@ type MessageSchema struct {
    - `Sender`: `instance:<instance_id>`.
    - `InstanceID`: the running instance.
    - `Payload`: the serialized attribute set (JSON-marshal the resolved attributes).
-   - `Idempotency-Key`: derive deterministically from the node-run's `ID` (e.g., `cascade-emit:<node_run_id>` so the dedup tuple `(instance_id, sender_kind, sender, sender_subject, idempotency_key)` collapses on retry).
+   - `Idempotency-Key`: derive deterministically from the node-run's `ID` (e.g., `cascade-send:<node_run_id>` so the dedup tuple `(instance_id, sender_kind, sender, sender_subject, idempotency_key)` collapses on retry).
 3. Insert the envelope through the same `EnqueueMessage` helper that operator-API and publisher emits use. The insert IS in the sender's tx — if the tx rolls back, the envelope rolls back.
 4. After the envelope inserts and the node's terminal commits, the next-frame-boundary sweep (Pass 2's `SweepDeliverMessagesForRunningFrames`) picks up the new envelope and opens the next frame.
 5. Update tests: a focused unit test that exercises the dispatch path with `emits_message` and asserts the envelope lands in the ledger atomically.
@@ -631,7 +631,7 @@ type MessageSchema struct {
 
 **Scope:** Tasks 40–46
 
-**Falsifier:** the `concepts.md` TOC has entries pointing at files that no longer exist (the retired ones), OR is missing the new entries (message-schema, message-emitter-node); OR `concepts/invalidate.md` still lives at its original path (must be at `concepts/_retired/invalidate.md`); OR `stories/_retired/` does not exist and `stories/backfill-ops.md` still lives at its original path; OR any new artifact body cites a file path or external doc (violates self-containment); OR any artifact body contains a `## Notes` / `## History` / `## Changelog` section or backward-looking / forward-looking phrasing (violates current-state-only rule); OR a tension's `## Resolution candidates` section was not converted to a resolution block.
+**Falsifier:** the `concepts.md` TOC has entries pointing at files that no longer exist (the retired ones), OR is missing the new entries (message-schema, message-sender-node); OR `concepts/invalidate.md` still lives at its original path (must be at `concepts/_retired/invalidate.md`); OR `stories/_retired/` does not exist and `stories/backfill-ops.md` still lives at its original path; OR any new artifact body cites a file path or external doc (violates self-containment); OR any artifact body contains a `## Notes` / `## History` / `## Changelog` section or backward-looking / forward-looking phrasing (violates current-state-only rule); OR a tension's `## Resolution candidates` section was not converted to a resolution block.
 
 ### Task 40: Mutate concept files (7 files)
 
@@ -660,23 +660,23 @@ For each file, run `git diff <file>` after the edit and confirm only the named s
 1. `git mv .ok-planner/design/concepts/invalidate.md .ok-planner/design/concepts/_retired/invalidate.md`.
 2. `git mv .ok-planner/design/concepts/backfill.md .ok-planner/design/concepts/_retired/backfill.md`.
 3. Edit each retired file's body. The new body is a minimal redirect, current-state-only, no Notes / History sections. Use the spec's directives:
-   - `_retired/invalidate.md`: a one-paragraph redirect note pointing to `concept:message`, `concept:message-schema`, `concept:message-emitter-node` as the successor concepts.
+   - `_retired/invalidate.md`: a one-paragraph redirect note pointing to `concept:message`, `concept:message-schema`, `concept:message-sender-node` as the successor concepts.
    - `_retired/backfill.md`: a one-paragraph redirect note pointing to `concept:message`, `concept:message-schema`, `concept:fan-out`.
 4. Update frontmatter: `status: retired` on each.
 
 ### Task 42: Create new concept files (2 files)
 
-**Files:** `.ok-planner/design/concepts/message-schema.md` (new), `.ok-planner/design/concepts/message-emitter-node.md` (new)
+**Files:** `.ok-planner/design/concepts/message-schema.md` (new), `.ok-planner/design/concepts/message-sender-node.md` (new)
 
 **Steps:**
 
 1. Create `concepts/message-schema.md` with frontmatter (`concept: message-schema`, `status: as-is`) and the body verbatim from the spec's `## Design changes` directive for this concept. Sections: Definition, Purpose, Boundaries, Invariants. Path-free.
-2. Create `concepts/message-emitter-node.md` with frontmatter and body verbatim from the spec's directive. Sections: Definition, Purpose, Boundaries, Invariants. Path-free.
+2. Create `concepts/message-sender-node.md` with frontmatter and body verbatim from the spec's directive. Sections: Definition, Purpose, Boundaries, Invariants. Path-free.
 3. Verify neither file cites code paths, file paths, or external docs.
 
 ### Task 43: Create story files (7 files), mutate one (1 file), retire two (2 files)
 
-**Files:** `.ok-planner/design/stories/message-schema.md`, `cascade-emit.md`, `cross-frame-coupling.md`, `one-message-per-frame.md`, `frame-origin-audit.md`, `typed-message-substitution.md`, `debug-channel.md` (all new); `stories/message-bus.md` (mutate); `stories/_retired/backfill-ops.md`, `stories/_retired/claim-handoff-across-frames.md` (new directory + moves)
+**Files:** `.ok-planner/design/stories/message-schema.md`, `cascade-send.md`, `cross-frame-coupling.md`, `one-message-per-frame.md`, `frame-origin-audit.md`, `typed-message-substitution.md`, `debug-channel.md` (all new); `stories/message-bus.md` (mutate); `stories/_retired/backfill-ops.md`, `stories/_retired/claim-handoff-across-frames.md` (new directory + moves)
 
 **Steps:**
 
@@ -684,11 +684,11 @@ For each file, run `git diff <file>` after the edit and confirm only the named s
 2. Mutate `stories/message-bus.md`: replace Acceptance and Falsifier sections per the spec's directive.
 3. Create the directory `.ok-planner/design/stories/_retired/`: `mkdir -p .ok-planner/design/stories/_retired/`.
 4. Retire backfill-ops: `git mv .ok-planner/design/stories/backfill-ops.md .ok-planner/design/stories/_retired/backfill-ops.md`. Update frontmatter `status: retired`.
-5. Retire claim-handoff-across-frames: `git mv .ok-planner/design/stories/claim-handoff-across-frames.md .ok-planner/design/stories/_retired/claim-handoff-across-frames.md`. Update frontmatter `status: retired`. The story's body relies on the retired `frame: next` and `instance: true → frame: next` DSL surfaces (Pass 3 retired the `frame:` modifier and Pass 11 reframes cross-frame coupling through message-emitter nodes); its proof artifact (`test/scenarios/claim_handoff_across_frames_e2e_test.go`) was deleted in Pass 3. Replace the body with a one-paragraph retirement note: "This story's cross-frame coupling shape (`frame: next` + `instance: true → frame: next`) retires with the `frame:` modifier. Cross-frame coupling under the message-schema-layer redesign is expressed through message-emitter nodes (`concept:message-emitter-node`) whose dispatch lands a message that opens the next frame. The original claim-lifetime-across-frames concern survives as the surviving `concept:claim-handle` invariant — a held claim's lifetime is governed by the holding subgraph, not by the frame. → `story:cross-frame-coupling`, `concept:message-emitter-node`, `concept:claim-handle`."
+5. Retire claim-handoff-across-frames: `git mv .ok-planner/design/stories/claim-handoff-across-frames.md .ok-planner/design/stories/_retired/claim-handoff-across-frames.md`. Update frontmatter `status: retired`. The story's body relies on the retired `frame: next` and `instance: true → frame: next` DSL surfaces (Pass 3 retired the `frame:` modifier and Pass 11 reframes cross-frame coupling through message-emitter nodes); its proof artifact (`test/scenarios/claim_handoff_across_frames_e2e_test.go`) was deleted in Pass 3. Replace the body with a one-paragraph retirement note: "This story's cross-frame coupling shape (`frame: next` + `instance: true → frame: next`) retires with the `frame:` modifier. Cross-frame coupling under the message-schema-layer redesign is expressed through message-emitter nodes (`concept:message-sender-node`) whose dispatch lands a message that opens the next frame. The original claim-lifetime-across-frames concern survives as the surviving `concept:claim-handle` invariant — a held claim's lifetime is governed by the holding subgraph, not by the frame. → `story:cross-frame-coupling`, `concept:message-sender-node`, `concept:claim-handle`."
 
 ### Task 44: Create decision files (7 files)
 
-**Files:** `.ok-planner/design/decisions/emit-as-node-kind.md`, `attribute-set-as-body.md`, `single-frame-creation-path.md`, `debug-channel-gate-paused-or-breakpoint.md`, `envelope-type-discriminator.md`, `one-message-per-frame.md`, `pre-v1-pure-removal-for-retired-surfaces.md` (all new)
+**Files:** `.ok-planner/design/decisions/send-as-node-kind.md`, `attribute-set-as-body.md`, `single-frame-creation-path.md`, `debug-channel-gate-paused-or-breakpoint.md`, `envelope-type-discriminator.md`, `one-message-per-frame.md`, `pre-v1-pure-removal-for-retired-surfaces.md` (all new)
 
 **Steps:**
 
@@ -718,7 +718,7 @@ For each file, run `git diff <file>` after the edit and confirm only the named s
 
 ---
 
-## Pass 11: Acceptance — schema, emit, cascade, substitution, audit stories (acceptance pass — STORY-message-schema, STORY-cascade-emit, STORY-cross-frame-coupling, STORY-one-message-per-frame, STORY-frame-origin-audit, STORY-typed-message-substitution)
+## Pass 11: Acceptance — schema, emit, cascade, substitution, audit stories (acceptance pass — STORY-message-schema, STORY-cascade-send, STORY-cross-frame-coupling, STORY-one-message-per-frame, STORY-frame-origin-audit, STORY-typed-message-substitution)
 
 **Goal:** Deliver the six template-DSL stories end-to-end. The mechanism passes (1–10) built all the pieces; this pass adds the final integrating wiring (if any) and the proof artifacts that exhibit each story through the assembled product. Each proof boots a real rimsky stack (testcontainers) and drives the real surface the story names.
 
@@ -743,11 +743,11 @@ For each file, run `git diff <file>` after the edit and confirm only the named s
    - POST with an undeclared type → assert HTTP 400, assert the response body names the rejected type and lists the declared set, assert no row in `rimsky_messages`.
 3. Run `go test ./test/scenarios/story_message_schema_e2e_test.go -count=1 -v` and confirm.
 
-### Task 48: STORY-cascade-emit acceptance — emit-node dispatches a message
+### Task 48: STORY-cascade-send acceptance — emit-node dispatches a message
 
 **Files:** `test/scenarios/story_cascade_emit_e2e_test.go` (new)
 
-**Story:** STORY-cascade-emit
+**Story:** STORY-cascade-send
 **Proof form (from spec):** Executable proof. Emit-node dispatches when its subscriptions fire; resulting message body contains the expected substituted values; mismatched schemas reject at registration.
 
 **Steps:**

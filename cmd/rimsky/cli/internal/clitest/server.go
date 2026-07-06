@@ -490,7 +490,7 @@ func nodeCountForSpec(spec map[string]any) int {
 	return 0
 }
 
-// @decision: compose-driver-emits-empty-message-after-create
+// @decision: compose-driver-sends-empty-message-after-create
 func (s *Server) handleCreateInstanceMessage(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
 	if s.maybeFail(w, r, "/v1/instances/"+idOrKey+"/messages") {

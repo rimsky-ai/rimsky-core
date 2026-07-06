@@ -213,7 +213,7 @@ func RunRunRemote(ctx context.Context, common *CommonFlags, endpoint string, rf 
 		fmt.Fprintf(os.Stdout, "instance_id=%s\n", inst.UUID())
 	}
 
-	// @decision: compose-driver-emits-empty-message-after-create
+	// @decision: compose-driver-sends-empty-message-after-create
 	hasRoot, rerr := TemplateHasStructuralRoot(ctx, c, hash)
 	if rerr != nil {
 		return reportError(rerr)

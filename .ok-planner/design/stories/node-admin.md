@@ -15,7 +15,7 @@ Operator-driven node administration: inspect state, clear retry budget on failed
 
 ## Business value
 
-Operators restore an errored node's acquisition eligibility so a subsequent invalidate-via-message can re-attempt dispatch, and observe what state the node is in to inform that decision. Driving a healthy-but-stalled node back through the cascade is a different operator workflow — sending a typed message the template declares for that purpose, via the universal message-emit surface (`story:message-schema`, `story:message-bus`), or the empty-message trigger (`story:empty-message-wakes-roots`). Force-stale on a paused or breakpointed instance lives at the debug-override surface (`story:debug-channel`).
+Operators restore an errored node's acquisition eligibility so a subsequent invalidate-via-message can re-attempt dispatch, and observe what state the node is in to inform that decision. Driving a healthy-but-stalled node back through the cascade is a different operator workflow — sending a typed message the template declares for that purpose, via the universal message-send surface (`story:message-schema`, `story:message-bus`), or the empty-message trigger (`story:empty-message-wakes-roots`). Force-stale on a paused or breakpointed instance lives at the debug-override surface (`story:debug-channel`).
 
 ## Acceptance
 

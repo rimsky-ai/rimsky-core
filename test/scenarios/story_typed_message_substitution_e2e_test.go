@@ -96,13 +96,13 @@ func TestStoryTypedMessageSubstitution_RejectsEmitterExtraFieldAtRegistration(t 
 		}},
 		"nodes": []map[string]any{{
 			"type":          "bad-emitter",
-			"emits_message": "ping/recheck",
+			"sends_message": "ping/recheck",
 			"attributes": map[string]any{
 				"schema": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"pong_status": map[string]any{"type": "string"},
-						// @concept: message-emitter-node
+						// @concept: message-sender-node
 						"extra_field": map[string]any{"type": "string"},
 					},
 					"required": []any{"pong_status"},

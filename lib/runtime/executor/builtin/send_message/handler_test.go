@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package emit_message
+package send_message
 
 import (
 	"context"
@@ -28,17 +28,17 @@ func TestExecute_NilEmitCallbackReturnsNamedError(t *testing.T) {
 	}
 	outcome, err := h.Execute(context.Background(), req, executor.HandlerContext{})
 	if err == nil {
-		t.Fatalf("expected error for nil EmitCascadeMessage, got nil")
+		t.Fatalf("expected error for nil SendCascadeMessage, got nil")
 	}
 	if outcome != nil {
 		t.Errorf("expected nil outcome on error, got %v", outcome)
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "EmitCascadeMessage is nil") {
-		t.Errorf("error message %q does not name the nil EmitCascadeMessage callback", msg)
+	if !strings.Contains(msg, "SendCascadeMessage is nil") {
+		t.Errorf("error message %q does not name the nil SendCascadeMessage callback", msg)
 	}
-	if !strings.Contains(msg, "emits_message") {
-		t.Errorf("error message %q does not name the emits_message contract", msg)
+	if !strings.Contains(msg, "sends_message") {
+		t.Errorf("error message %q does not name the sends_message contract", msg)
 	}
 }
 
@@ -68,7 +68,7 @@ func TestExecute_CallbackReceivesMarshaledAttributes(t *testing.T) {
 		return shared.UUID(uuid.New()), false, nil
 	}
 	h := New()
-	outcome, err := h.Execute(context.Background(), req, executor.HandlerContext{EmitCascadeMessage: emit})
+	outcome, err := h.Execute(context.Background(), req, executor.HandlerContext{SendCascadeMessage: emit})
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestExecute_CallbackReceivesMarshaledAttributes(t *testing.T) {
 		t.Fatalf("Execute returned nil outcome")
 	}
 	if capturedBody == nil {
-		t.Fatalf("EmitCascadeMessage callback was not invoked")
+		t.Fatalf("SendCascadeMessage callback was not invoked")
 	}
 	var got map[string]any
 	if err := json.Unmarshal(capturedBody, &got); err != nil {
@@ -97,7 +97,7 @@ func TestExecute_OutcomeIsSuccessWithChangedFalse(t *testing.T) {
 		return shared.UUID(uuid.New()), false, nil
 	}
 	h := New()
-	outcome, err := h.Execute(context.Background(), req, executor.HandlerContext{EmitCascadeMessage: emit})
+	outcome, err := h.Execute(context.Background(), req, executor.HandlerContext{SendCascadeMessage: emit})
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}

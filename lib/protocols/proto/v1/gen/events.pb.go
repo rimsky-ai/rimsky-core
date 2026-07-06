@@ -86,7 +86,7 @@ const (
 	OperationalKind_OPERATIONAL_KIND_BREAKPOINT_HIT OperationalKind = 50
 	// Message bus (operational-side audit of message activity, distinct
 	// from the signal-class `message/...` topology).
-	OperationalKind_OPERATIONAL_KIND_MESSAGE_EMITTED  OperationalKind = 60
+	OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT     OperationalKind = 60
 	OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED OperationalKind = 61
 	// Fan-out + sub-claim + sub-graph dispatch.
 	OperationalKind_OPERATIONAL_KIND_FAN_OUT_DISPATCHED              OperationalKind = 70
@@ -143,7 +143,7 @@ var (
 		45: "OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED",
 		46: "OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE",
 		50: "OPERATIONAL_KIND_BREAKPOINT_HIT",
-		60: "OPERATIONAL_KIND_MESSAGE_EMITTED",
+		60: "OPERATIONAL_KIND_MESSAGE_SENT",
 		61: "OPERATIONAL_KIND_MESSAGE_RECEIVED",
 		70: "OPERATIONAL_KIND_FAN_OUT_DISPATCHED",
 		71: "OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED",
@@ -190,7 +190,7 @@ var (
 		"OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED":      45,
 		"OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE":     46,
 		"OPERATIONAL_KIND_BREAKPOINT_HIT":                  50,
-		"OPERATIONAL_KIND_MESSAGE_EMITTED":                 60,
+		"OPERATIONAL_KIND_MESSAGE_SENT":                    60,
 		"OPERATIONAL_KIND_MESSAGE_RECEIVED":                61,
 		"OPERATIONAL_KIND_FAN_OUT_DISPATCHED":              70,
 		"OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED":         71,
@@ -254,7 +254,7 @@ type Event struct {
 	Kind       string                 `protobuf:"bytes,5,opt,name=kind,proto3" json:"kind,omitempty"`
 	// Types that are valid to be assigned to Payload:
 	//
-	//	*Event_MessageEmitted
+	//	*Event_MessageSent
 	//	*Event_MessageReceived
 	//	*Event_StateTransition
 	//	*Event_Error
@@ -357,10 +357,10 @@ func (x *Event) GetPayload() isEvent_Payload {
 	return nil
 }
 
-func (x *Event) GetMessageEmitted() *MessageEmittedPayload {
+func (x *Event) GetMessageSent() *MessageSentPayload {
 	if x != nil {
-		if x, ok := x.Payload.(*Event_MessageEmitted); ok {
-			return x.MessageEmitted
+		if x, ok := x.Payload.(*Event_MessageSent); ok {
+			return x.MessageSent
 		}
 	}
 	return nil
@@ -566,8 +566,8 @@ type isEvent_Payload interface {
 	isEvent_Payload()
 }
 
-type Event_MessageEmitted struct {
-	MessageEmitted *MessageEmittedPayload `protobuf:"bytes,10,opt,name=message_emitted,json=messageEmitted,proto3,oneof"`
+type Event_MessageSent struct {
+	MessageSent *MessageSentPayload `protobuf:"bytes,10,opt,name=message_sent,json=messageSent,proto3,oneof"`
 }
 
 type Event_MessageReceived struct {
@@ -658,7 +658,7 @@ type Event_TemplateResolutionFailed struct {
 	TemplateResolutionFailed *TemplateResolutionFailedPayload `protobuf:"bytes,49,opt,name=template_resolution_failed,json=templateResolutionFailed,proto3,oneof"`
 }
 
-func (*Event_MessageEmitted) isEvent_Payload() {}
+func (*Event_MessageSent) isEvent_Payload() {}
 
 func (*Event_MessageReceived) isEvent_Payload() {}
 
@@ -702,7 +702,7 @@ func (*Event_ClaimResolved) isEvent_Payload() {}
 
 func (*Event_TemplateResolutionFailed) isEvent_Payload() {}
 
-type MessageEmittedPayload struct {
+type MessageSentPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"` // "invalidate" | "recalculate"
 	SourceNodeId  string                 `protobuf:"bytes,2,opt,name=source_node_id,json=sourceNodeId,proto3" json:"source_node_id,omitempty"`
@@ -712,20 +712,20 @@ type MessageEmittedPayload struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *MessageEmittedPayload) Reset() {
-	*x = MessageEmittedPayload{}
+func (x *MessageSentPayload) Reset() {
+	*x = MessageSentPayload{}
 	mi := &file_events_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *MessageEmittedPayload) String() string {
+func (x *MessageSentPayload) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*MessageEmittedPayload) ProtoMessage() {}
+func (*MessageSentPayload) ProtoMessage() {}
 
-func (x *MessageEmittedPayload) ProtoReflect() protoreflect.Message {
+func (x *MessageSentPayload) ProtoReflect() protoreflect.Message {
 	mi := &file_events_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -737,33 +737,33 @@ func (x *MessageEmittedPayload) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use MessageEmittedPayload.ProtoReflect.Descriptor instead.
-func (*MessageEmittedPayload) Descriptor() ([]byte, []int) {
+// Deprecated: Use MessageSentPayload.ProtoReflect.Descriptor instead.
+func (*MessageSentPayload) Descriptor() ([]byte, []int) {
 	return file_events_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *MessageEmittedPayload) GetType() string {
+func (x *MessageSentPayload) GetType() string {
 	if x != nil {
 		return x.Type
 	}
 	return ""
 }
 
-func (x *MessageEmittedPayload) GetSourceNodeId() string {
+func (x *MessageSentPayload) GetSourceNodeId() string {
 	if x != nil {
 		return x.SourceNodeId
 	}
 	return ""
 }
 
-func (x *MessageEmittedPayload) GetTargetNodeId() string {
+func (x *MessageSentPayload) GetTargetNodeId() string {
 	if x != nil {
 		return x.TargetNodeId
 	}
 	return ""
 }
 
-func (x *MessageEmittedPayload) GetParams() *structpb.Struct {
+func (x *MessageSentPayload) GetParams() *structpb.Struct {
 	if x != nil {
 		return x.Params
 	}
@@ -2161,7 +2161,7 @@ var File_events_proto protoreflect.FileDescriptor
 
 const file_events_proto_rawDesc = "" +
 	"\n" +
-	"\fevents.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xfb\x10\n" +
+	"\fevents.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf2\x10\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
@@ -2169,9 +2169,9 @@ const file_events_proto_rawDesc = "" +
 	"\anode_id\x18\x03 \x01(\tR\x06nodeId\x12;\n" +
 	"\voccurred_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"occurredAt\x12\x12\n" +
-	"\x04kind\x18\x05 \x01(\tR\x04kind\x12K\n" +
-	"\x0fmessage_emitted\x18\n" +
-	" \x01(\v2 .rimsky.v1.MessageEmittedPayloadH\x00R\x0emessageEmitted\x12N\n" +
+	"\x04kind\x18\x05 \x01(\tR\x04kind\x12B\n" +
+	"\fmessage_sent\x18\n" +
+	" \x01(\v2\x1d.rimsky.v1.MessageSentPayloadH\x00R\vmessageSent\x12N\n" +
 	"\x10message_received\x18\v \x01(\v2!.rimsky.v1.MessageReceivedPayloadH\x00R\x0fmessageReceived\x12N\n" +
 	"\x10state_transition\x18\f \x01(\v2!.rimsky.v1.StateTransitionPayloadH\x00R\x0fstateTransition\x12/\n" +
 	"\x05error\x18\r \x01(\v2\x17.rimsky.v1.ErrorPayloadH\x00R\x05error\x12B\n" +
@@ -2197,8 +2197,8 @@ const file_events_proto_rawDesc = "" +
 	"\x1atemplate_resolution_failed\x181 \x01(\v2*.rimsky.v1.TemplateResolutionFailedPayloadH\x00R\x18templateResolutionFailed\x128\n" +
 	"\vpayload_raw\x18\x1e \x01(\v2\x17.google.protobuf.StructR\n" +
 	"payloadRawB\t\n" +
-	"\apayloadJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b\x1a\x10\x1bJ\x04\b\x1b\x10\x1cJ\x04\b\x1c\x10\x1dJ\x04\b\x1d\x10\x1eR\x06commitR\x13quality_rule_failedR\x0eheartbeat_lostR\x0eschedule_firedR\x13pure_cascade_commitR\x18schedule_dispatch_failed\"\xa8\x01\n" +
-	"\x15MessageEmittedPayload\x12\x12\n" +
+	"\apayloadJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b\x1a\x10\x1bJ\x04\b\x1b\x10\x1cJ\x04\b\x1c\x10\x1dJ\x04\b\x1d\x10\x1eR\x06commitR\x13quality_rule_failedR\x0eheartbeat_lostR\x0eschedule_firedR\x13pure_cascade_commitR\x18schedule_dispatch_failed\"\xa5\x01\n" +
+	"\x12MessageSentPayload\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12$\n" +
 	"\x0esource_node_id\x18\x02 \x01(\tR\fsourceNodeId\x12$\n" +
 	"\x0etarget_node_id\x18\x03 \x01(\tR\ftargetNodeId\x12/\n" +
@@ -2303,7 +2303,7 @@ const file_events_proto_rawDesc = "" +
 	"\tdirective\x18\x01 \x01(\tR\tdirective\x12\x12\n" +
 	"\x04site\x18\x02 \x01(\tR\x04site\x12\x14\n" +
 	"\x05field\x18\x03 \x01(\tR\x05field\x12\x16\n" +
-	"\x06reason\x18\x04 \x01(\tR\x06reason*\xfc\x0e\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason*\xf9\x0e\n" +
 	"\x0fOperationalKind\x12 \n" +
 	"\x1cOPERATIONAL_KIND_UNSPECIFIED\x10\x00\x12*\n" +
 	"&OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED\x10\x01\x12'\n" +
@@ -2338,8 +2338,8 @@ const file_events_proto_rawDesc = "" +
 	"+OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED\x10,\x12/\n" +
 	"+OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED\x10-\x120\n" +
 	",OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE\x10.\x12#\n" +
-	"\x1fOPERATIONAL_KIND_BREAKPOINT_HIT\x102\x12$\n" +
-	" OPERATIONAL_KIND_MESSAGE_EMITTED\x10<\x12%\n" +
+	"\x1fOPERATIONAL_KIND_BREAKPOINT_HIT\x102\x12!\n" +
+	"\x1dOPERATIONAL_KIND_MESSAGE_SENT\x10<\x12%\n" +
 	"!OPERATIONAL_KIND_MESSAGE_RECEIVED\x10=\x12'\n" +
 	"#OPERATIONAL_KIND_FAN_OUT_DISPATCHED\x10F\x12,\n" +
 	"(OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED\x10G\x12-\n" +
@@ -2369,7 +2369,7 @@ var file_events_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_events_proto_goTypes = []any{
 	(OperationalKind)(0),                      // 0: rimsky.v1.OperationalKind
 	(*Event)(nil),                             // 1: rimsky.v1.Event
-	(*MessageEmittedPayload)(nil),             // 2: rimsky.v1.MessageEmittedPayload
+	(*MessageSentPayload)(nil),                // 2: rimsky.v1.MessageSentPayload
 	(*MessageReceivedPayload)(nil),            // 3: rimsky.v1.MessageReceivedPayload
 	(*StateTransitionPayload)(nil),            // 4: rimsky.v1.StateTransitionPayload
 	(*ErrorPayload)(nil),                      // 5: rimsky.v1.ErrorPayload
@@ -2396,7 +2396,7 @@ var file_events_proto_goTypes = []any{
 }
 var file_events_proto_depIdxs = []int32{
 	24, // 0: rimsky.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
-	2,  // 1: rimsky.v1.Event.message_emitted:type_name -> rimsky.v1.MessageEmittedPayload
+	2,  // 1: rimsky.v1.Event.message_sent:type_name -> rimsky.v1.MessageSentPayload
 	3,  // 2: rimsky.v1.Event.message_received:type_name -> rimsky.v1.MessageReceivedPayload
 	4,  // 3: rimsky.v1.Event.state_transition:type_name -> rimsky.v1.StateTransitionPayload
 	5,  // 4: rimsky.v1.Event.error:type_name -> rimsky.v1.ErrorPayload
@@ -2419,7 +2419,7 @@ var file_events_proto_depIdxs = []int32{
 	22, // 21: rimsky.v1.Event.claim_resolved:type_name -> rimsky.v1.ClaimResolvedPayload
 	23, // 22: rimsky.v1.Event.template_resolution_failed:type_name -> rimsky.v1.TemplateResolutionFailedPayload
 	25, // 23: rimsky.v1.Event.payload_raw:type_name -> google.protobuf.Struct
-	25, // 24: rimsky.v1.MessageEmittedPayload.params:type_name -> google.protobuf.Struct
+	25, // 24: rimsky.v1.MessageSentPayload.params:type_name -> google.protobuf.Struct
 	25, // 25: rimsky.v1.MessageReceivedPayload.params:type_name -> google.protobuf.Struct
 	25, // 26: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
 	24, // 27: rimsky.v1.OrphanedClaimReleasedPayload.claimed_at:type_name -> google.protobuf.Timestamp
@@ -2440,7 +2440,7 @@ func file_events_proto_init() {
 		return
 	}
 	file_events_proto_msgTypes[0].OneofWrappers = []any{
-		(*Event_MessageEmitted)(nil),
+		(*Event_MessageSent)(nil),
 		(*Event_MessageReceived)(nil),
 		(*Event_StateTransition)(nil),
 		(*Event_Error)(nil),

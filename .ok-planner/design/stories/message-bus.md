@@ -3,15 +3,15 @@ story: message-bus
 status: as-is
 ---
 
-# Sender emits idempotent messages into instance bus
+# Sender sends idempotent messages into instance bus
 
 ## Role
 
-As an operator or publisher, I can emit messages into a live instance's bus with a mandatory dedup key, see those messages in the instance's message history, retrieve a specific one by ID, and have a replay return the original message without producing a duplicate, so that downstream nodes consume the bus reliably and no replay slips through.
+As an operator or publisher, I can send messages into a live instance's bus with a mandatory dedup key, see those messages in the instance's message history, retrieve a specific one by ID, and have a replay return the original message without producing a duplicate, so that downstream nodes consume the bus reliably and no replay slips through.
 
 ## Capability
 
-Reliable message emission into a live instance's bus, with mandatory idempotency, per-sender isolation, and observable history.
+Reliable message send into a live instance's bus, with mandatory idempotency, per-sender isolation, and observable history.
 
 ## Business value
 
@@ -19,7 +19,7 @@ Downstream nodes consume the bus reliably without duplicate processing on retry;
 
 ## Acceptance
 
-A sender (operator or publisher) emits a message through the control-api's instance-message-emit surface (or its MCP equivalent) carrying a dedup key; the message is persisted and visible in the instance's message history. A second emission with the same key returns the original message identifier and produces no second envelope. A request with no dedup key is refused. Senders with structurally distinct identities (operator vs. publisher; one operator key vs. another) do not replay each other when they happen to choose the same dedup key.
+A sender (operator or publisher) sends a message through the control-api's instance-message-send surface (or its MCP equivalent) carrying a dedup key; the message is persisted and visible in the instance's message history. A second emission with the same key returns the original message identifier and produces no second envelope. A request with no dedup key is refused. Senders with structurally distinct identities (operator vs. publisher; one operator key vs. another) do not replay each other when they happen to choose the same dedup key.
 
 ## Falsifier
 

@@ -15,7 +15,7 @@ As a template author, I can declare which message types instances of this templa
 
 **Proof:** Executable proof against a running rimsky instance — declared type opens a frame and stale-marks subscribed receivers; undeclared type refuses with the expected error.
 
-### STORY-cascade-emit
+### STORY-cascade-send
 
 As a template author, I can declare a node-type whose dispatch is to emit a message of a given type, so that cross-frame coupling is explicit as a graph object I can point at.
 
@@ -29,7 +29,7 @@ As a template author, I can declare a node-type whose dispatch is to emit a mess
 
 As a template author, I can express cross-frame coupling (back-edges in cycles, self-drain-my-queue) through emit-nodes plus the message schema, with the receiver reading the sender's data via the message body, so that patterns that previously failed silently now work cleanly.
 
-**Acceptance:** I write a 2-cycle A → B → A where B's settlement triggers a message-emitter-node whose dispatch emits a message that A subscribes to. When B settles, the emit-node runs, the message lands in the ledger, the next frame opens with A stale-marked, and A reads B's data through `{{messages.<type>.<field>}}` in its attribute schema. Separately, I write a self-emit (a message-emitter-node that subscribes to its own emit-source with `when: payload.changed`) and the loop drains until convergence.
+**Acceptance:** I write a 2-cycle A → B → A where B's settlement triggers a message-sender-node whose dispatch emits a message that A subscribes to. When B settles, the emit-node runs, the message lands in the ledger, the next frame opens with A stale-marked, and A reads B's data through `{{messages.<type>.<field>}}` in its attribute schema. Separately, I write a self-emit (a message-sender-node that subscribes to its own emit-source with `when: payload.changed`) and the loop drains until convergence.
 
 **Falsifier:** A multi-node back-edge cycle silently drops the dispatch — the message envelope appears in the ledger but no frame opens for the receiver; OR the receiver re-runs but cannot read the sender's data; OR the self-drain loops infinitely without converging.
 
@@ -85,7 +85,7 @@ Every frame opens because exactly one message — operator-posted, publisher-emi
   /{id}/messages   ──▶│  (template-level)       │── unknown type ──▶ refuse
   (operator |         │                         │
    publisher |        │   type T:               │
-   cascade-emit)      │     body_schema         │   declared type
+   cascade-send)      │     body_schema         │   declared type
                       └─────────────────────────┘         │
                                                           ▼
                                                   ┌────────────────┐
@@ -372,7 +372,7 @@ The cross-stack proof surface is intentionally retired; the in-process surface i
 
 ## Technical decisions
 
-### TD-emit-as-node-kind
+### TD-send-as-node-kind
 
 **Choice:** Cascade-driven message emission lives on a dedicated node-kind, declared by `emits_message: <type>` instead of `executor:` on a node-type. Per-node-type `emits:` block is not introduced.
 
@@ -438,11 +438,11 @@ Per `.ok-planner/CLAUDE.md`'s spec-driven mutation model, the following changes 
 
 Replace Boundaries with:
 
-> Owns: the envelope shape and the message ledger; the one-message-per-frame delivery rule; the subscription-walk-as-virtual-node at frame boundary (each message type is a virtual node-type emitting `terminal/success` on arrival); the dead-letter audit (no-subscriber landings still write a ledger row with a `terminal/success` emission); the universal `Idempotency-Key` dedup ledger; the registry lookup gate on receipt. Does NOT own: the type registry itself (see `concept:message-schema`); cascade walks within a frame (see `concept:cascade`); event emissions from executors (see `concept:named-event`); the frame creation mechanics (see `concept:frame`); the publisher's substrate state (see `concept:publisher` / `concept:publisher-subscription`); the emit-node's dispatch (see `concept:message-emitter-node`). Adjacent: `concept:frame`, `concept:node-subscription`, `concept:publisher`, `concept:publisher-subscription`, `concept:sensor`, `concept:message-schema`, `concept:message-emitter-node`.
+> Owns: the envelope shape and the message ledger; the one-message-per-frame delivery rule; the subscription-walk-as-virtual-node at frame boundary (each message type is a virtual node-type emitting `terminal/success` on arrival); the dead-letter audit (no-subscriber landings still write a ledger row with a `terminal/success` emission); the universal `Idempotency-Key` dedup ledger; the registry lookup gate on receipt. Does NOT own: the type registry itself (see `concept:message-schema`); cascade walks within a frame (see `concept:cascade`); event emissions from executors (see `concept:named-event`); the frame creation mechanics (see `concept:frame`); the publisher's substrate state (see `concept:publisher` / `concept:publisher-subscription`); the emit-node's dispatch (see `concept:message-sender-node`). Adjacent: `concept:frame`, `concept:node-subscription`, `concept:publisher`, `concept:publisher-subscription`, `concept:sensor`, `concept:message-schema`, `concept:message-sender-node`.
 
 Replace Invariants with:
 
-> - Two external emit sites and one internal: operator API (the message-emit endpoint with `sender_kind: "operator"`), publisher emissions (the same endpoint with `sender_kind: "publisher"` + a publisher-subscription capability token), and cascade-emit (a message-emitter node's dispatch, with `sender_kind: "instance"` + sender `instance:<id>`). All three paths land in the same ledger and follow the same delivery rules.
+> - Two external emit sites and one internal: operator API (the message-emit endpoint with `sender_kind: "operator"`), publisher emissions (the same endpoint with `sender_kind: "publisher"` + a publisher-subscription capability token), and cascade-send (a message-emitter node's dispatch, with `sender_kind: "instance"` + sender `instance:<id>`). All three paths land in the same ledger and follow the same delivery rules.
 > - One message per frame. At each frame boundary, exactly one pending message delivers; the rest stay pending until the next frame.
 > - Type lookup at receipt: a message whose `type` is not declared in the target template's message-schema registry is refused with an unknown-type response; loud miss, not silent dead-letter.
 > - Delivery at frame boundary: the message-virtual-node settles in the new frame and emits `terminal/success`; nodes subscribing to that virtual node-type stale-mark; the message's `delivered_at` and `frame_id` populate.
@@ -507,7 +507,7 @@ Drop the "Self-subscription is first-class in both `frame: in` and `frame: next`
 
 **Mutate `concepts/cascade-graph.md` in place** — small mutation. Extend the "What it is" paragraph's enumeration of read-endpoint coverage to include forward and reverse joins by triggering message: given a `triggering_message_id`, list the frames it produced; given a frame, return its triggering message.
 
-**Retire `concepts/invalidate.md`** — move to `concepts/_retired/invalidate.md` with a retirement note: "The 'sole graph-level message' framing dissolves into the typed-message machinery; every message arrival is structurally an invalidate by virtue of cascade subscribers to the message-virtual-node. The `frame: in | next` discipline retires; cross-frame coupling is expressed by message-emitter nodes. → `concept:message`, `concept:message-schema`, `concept:message-emitter-node`."
+**Retire `concepts/invalidate.md`** — move to `concepts/_retired/invalidate.md` with a retirement note: "The 'sole graph-level message' framing dissolves into the typed-message machinery; every message arrival is structurally an invalidate by virtue of cascade subscribers to the message-virtual-node. The `frame: in | next` discipline retires; cross-frame coupling is expressed by message-emitter nodes. → `concept:message`, `concept:message-schema`, `concept:message-sender-node`."
 
 **Retire `concepts/backfill.md`** — move to `concepts/_retired/backfill.md` with a retirement note: "Backfill is a use case of the typed-message machinery: a template declares a message type whose body carries the partition-request override; a fan-out node's `partition_request:` substitutes from the message body. No dedicated primitive. → `concept:message`, `concept:message-schema`, `concept:fan-out`."
 
@@ -523,7 +523,7 @@ Purpose:
 
 Boundaries:
 
-> Owns: the registry's persisted shape (content-addressed into the template spec), the per-entry fields (`type:`, `body_schema:`), the registration-time validation pass that checks substitution references against declared types and validates message-emitter nodes' attribute schemas against the destination type's body schema, the receipt-time registry lookup gate. Does NOT own: the message envelope (see `concept:message`), the message-emitter node-kind (see `concept:message-emitter-node`), receiver-side subscription (see `concept:node-subscription`), substitution into bodies (see `concept:attribute`).
+> Owns: the registry's persisted shape (content-addressed into the template spec), the per-entry fields (`type:`, `body_schema:`), the registration-time validation pass that checks substitution references against declared types and validates message-emitter nodes' attribute schemas against the destination type's body schema, the receipt-time registry lookup gate. Does NOT own: the message envelope (see `concept:message`), the message-emitter node-kind (see `concept:message-sender-node`), receiver-side subscription (see `concept:node-subscription`), substitution into bodies (see `concept:attribute`).
 
 Invariants:
 
@@ -533,11 +533,11 @@ Invariants:
 > - Receipt-time lookup against the registry is the gate: unknown type refuses with an unknown-type response.
 > - The body-schema is documentation and a registration-time check on substitution references; the actual body bytes are validated at the receiver's dispatch via the existing attribute-validation machinery. The body remains inert at receipt (see `@blessed-invariant: 21`).
 
-**Create `concepts/message-emitter-node.md`** from the template, with:
+**Create `concepts/message-sender-node.md`** from the template, with:
 
 Definition:
 
-> A message-emitter-node is a node-type whose dispatch mode is "build a message envelope from the node's attributes and insert it into the message ledger." Declared on a node-type by `emits_message: <type>` instead of `executor: <name>` or `delegate: <graph-name>`. The node carries `subscribes:` and `attributes:` blocks like any other node; what makes it an emit-node is its dispatch field.
+> A message-sender-node is a node-type whose dispatch mode is "build a message envelope from the node's attributes and insert it into the message ledger." Declared on a node-type by `emits_message: <type>` instead of `executor: <name>` or `delegate: <graph-name>`. The node carries `subscribes:` and `attributes:` blocks like any other node; what makes it an emit-node is its dispatch field.
 
 Purpose:
 
@@ -565,7 +565,7 @@ The seven new story files match the structured-heading format of existing files 
 - Falsifier: A message of an undeclared type lands in the ledger and is silently dropped; OR a declared message arrives and no subscribed node is marked stale.
 - Proof: Executable proof. Declared type opens a frame and stale-marks subscribed receivers; undeclared type refuses with the expected error.
 
-**Create `stories/cascade-emit.md`** with:
+**Create `stories/cascade-send.md`** with:
 - Role: As a template author,
 - Capability: I can declare a node-type whose dispatch is to emit a message of a given type,
 - Business value: so that cross-frame coupling is explicit as a graph object I can point at.
@@ -627,7 +627,7 @@ Replace Falsifier with:
 
 The seven new decision files match the format of existing files in `design/decisions/` (Choice / Rationale / Alternatives as named subsections). Each body is path-free.
 
-**Create `decisions/emit-as-node-kind.md`** with:
+**Create `decisions/send-as-node-kind.md`** with:
 - Choice: Cascade-driven message emission lives on a dedicated node-kind, declared on a node-type by `emits_message: <type>` instead of `executor:`. A per-node-type `emits:` block is not introduced.
 - Rationale: The emit becomes a first-class graph object — visible in topology, audit, and the operator dashboard. Aggregation across multiple senders works through the standard subscription and attribute machinery (the emit-node subscribes to multiple senders; its attributes pull from each). No new validation or substitution machinery; every check reuses the existing attribute and subscription validators.
 - Alternatives considered: A per-node-type `emits:` block in which any node could embed an emission directive. Rejected: aggregation is unnatural (the only node where a multi-source body composes is one that already had all sources as upstreams, coincidental rather than designed); the emit is hidden inside the sender's settle behavior rather than visible as a graph object.
@@ -679,7 +679,7 @@ The seven new decision files match the format of existing files in `design/decis
 ### Stories
 
 - **STORY-message-schema** — template author declares accepted message types; unknown types refused at receipt (Proof: executable proof)
-- **STORY-cascade-emit** — message-emitter-node dispatches a message when subscribed signals fire (Proof: executable proof)
+- **STORY-cascade-send** — message-sender-node dispatches a message when subscribed signals fire (Proof: executable proof)
 - **STORY-cross-frame-coupling** — back-edge cycles and self-drain express through emit-nodes plus message schema (Proof: all-of-the-above)
 - **STORY-one-message-per-frame** — substitution from a message body is always well-defined (Proof: executable proof)
 - **STORY-frame-origin-audit** — every frame has a pointer to the triggering message, surfaced through the frames-read observability endpoint (Proof: demo)
@@ -688,7 +688,7 @@ The seven new decision files match the format of existing files in `design/decis
 
 ### Technical decisions
 
-- **TD-emit-as-node-kind** — `emits_message:` dispatch mode on a node-type
+- **TD-send-as-node-kind** — `emits_message:` dispatch mode on a node-type
 - **TD-attribute-set-as-body** — emit-node attributes are the body, exact shape match
 - **TD-single-frame-creation-path** — frames open only at message-delivery boundary
 - **TD-debug-channel-gate-paused-or-breakpoint** — override legal only when paused or breakpoint-stopped
@@ -701,15 +701,15 @@ The seven new decision files match the format of existing files in `design/decis
 **Concepts:**
 - Mutate: `message`, `frame`, `cascade`, `node-subscription`, `signal`, `publisher-subscription`, `cascade-graph` (small)
 - Retire: `invalidate`, `backfill`
-- Create: `message-schema`, `message-emitter-node`
+- Create: `message-schema`, `message-sender-node`
 
 **Stories:**
-- Create: `message-schema`, `cascade-emit`, `cross-frame-coupling`, `one-message-per-frame`, `frame-origin-audit`, `typed-message-substitution`, `debug-channel`
+- Create: `message-schema`, `cascade-send`, `cross-frame-coupling`, `one-message-per-frame`, `frame-origin-audit`, `typed-message-substitution`, `debug-channel`
 - Mutate: `message-bus`
 - Retire: `backfill-ops`
 
 **Decisions:**
-- Create: `emit-as-node-kind`, `attribute-set-as-body`, `single-frame-creation-path`, `debug-channel-gate-paused-or-breakpoint`, `envelope-type-discriminator`, `one-message-per-frame`, `pre-v1-pure-removal-for-retired-surfaces`
+- Create: `send-as-node-kind`, `attribute-set-as-body`, `single-frame-creation-path`, `debug-channel-gate-paused-or-breakpoint`, `envelope-type-discriminator`, `one-message-per-frame`, `pre-v1-pure-removal-for-retired-surfaces`
 
 **Tensions:**
 - Resolve: `serial-queue-per-instance`, `coalesced-fire-observability-gap`, `frame-lookup-on-every-enqueue`

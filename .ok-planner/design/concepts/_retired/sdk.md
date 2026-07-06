@@ -15,7 +15,7 @@ aliases:
 The Go-side SDK is the canonical implementer-facing surface for building services that rimsky talks to. It is a peer Go module within the rimsky repo, alongside the protocols module and the foundation module. Houses:
 
 - Server scaffolding for claim-producer / executor / lifecycle-subscriber / blob-backend / publisher protocols
-- Publisher-side helpers (message-emit retry+backoff, idempotency-key header, callback POST handling)
+- Publisher-side helpers (message-send retry+backoff, idempotency-key header, callback POST handling)
 - A conformance library — invocable from service authors' Go tests in addition to the thin per-protocol CLI conformance wrappers
 - Testcontainer helpers — plain Postgres provisioning for services testing their own state-DB schema. (Migrations-applying variants stay rimsky-internal, since they import the persistence layer, which the SDK-purity import boundary forbids in the SDK.)
 - Ops glue — structured-logging setup, healthcheck HTTP endpoint, DSN env-var parser

@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-A frame is a self-contained unit of cascade resolution. No node-run, RunScope, attribute bag, or message ever crosses a frame boundary. A message can only ever land in the frame it itself triggered; nothing in an already-running frame is observable to or mutable by a different frame. Cross-frame coupling, when needed, is expressed by a message-emitter node whose dispatch lands a message in the ledger, with the next frame opening on the standard delivery path per `decision:single-frame-creation-path`.
+A frame is a self-contained unit of cascade resolution. No node-run, RunScope, attribute bag, or message ever crosses a frame boundary. A message can only ever land in the frame it itself triggered; nothing in an already-running frame is observable to or mutable by a different frame. Cross-frame coupling, when needed, is expressed by a message-sender node whose dispatch lands a message in the ledger, with the next frame opening on the standard delivery path per `decision:single-frame-creation-path`.
 
 ## Rationale
 

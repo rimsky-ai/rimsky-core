@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package emit_message
+package send_message
 
 import (
 	"context"
@@ -16,28 +16,28 @@ import (
 )
 
 // @concept: executor
-// @concept: message-emitter-node
+// @concept: message-sender-node
 type Handler struct{}
 
 func New() *Handler { return &Handler{} }
 
 func (h *Handler) Execute(ctx context.Context, req *genv1.ExecuteRequest, hctx executor.HandlerContext) (*genv1.Outcome, error) {
-	if hctx.EmitCascadeMessage == nil {
-		return nil, fmt.Errorf("emit_message: HandlerContext.EmitCascadeMessage is nil — runtime did not bind the emit callback for this dispatch (node-def must declare emits_message)")
+	if hctx.SendCascadeMessage == nil {
+		return nil, fmt.Errorf("send_message: HandlerContext.SendCascadeMessage is nil — runtime did not bind the send callback for this dispatch (node-def must declare sends_message)")
 	}
 	attrs := req.GetAttributes()
 	body, err := marshalAttributes(attrs)
 	if err != nil {
-		return nil, fmt.Errorf("emit_message: marshal body: %w", err)
+		return nil, fmt.Errorf("send_message: marshal body: %w", err)
 	}
-	if _, _, err := hctx.EmitCascadeMessage(ctx, body); err != nil {
-		return nil, fmt.Errorf("emit_message: emit cascade message: %w", err)
+	if _, _, err := hctx.SendCascadeMessage(ctx, body); err != nil {
+		return nil, fmt.Errorf("send_message: emit cascade message: %w", err)
 	}
 	return &genv1.Outcome{
 		Outcome: &genv1.Outcome_Success{
 			Success: &genv1.Success{
 				Changed:       false,
-				ChangeSummary: "emit_message",
+				ChangeSummary: "send_message",
 			},
 		},
 	}, nil
