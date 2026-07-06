@@ -676,3 +676,42 @@ Two open ledger fallout tests (`TestAttributeOverridesMatchOverlay*`,
 pass (the first two directly; the third is from item 1 and may or
 may not survive the pass — revisit).
 
+#### Services-integration regressions caught by the rename sweep
+
+Two services-integration e2e tests were surfaced as failing during
+the 12b+12c rerun. Neither was caused by the rename; both are
+undiscovered regressions from earlier deliberate changes in this
+same ledger. Recording them so the trace is durable.
+
+- **`TestSubscriberOpenlineage` — regression since commit `80a11733`**
+  (item 1, empty-message-wake unification, 2026-07-04). That commit
+  introduced the empty-type message-receiver node via
+  `receiverTypes = append(receiverTypes, "")` at
+  `lib/control/controlapi/instances.go`. From then on, that node's
+  runs emit lineage with `NodeAlias == ""`, and the OpenLineage
+  subscriber's `MakeLeafRunEvent` fell through to `job.name == ""` —
+  an OpenLineage-spec violation. Item 1 swept the runtime + delivery
+  path but not the observability layer. Fix (commit `bf8d306b`):
+  added an `"empty-message-receiver"` fallback in
+  `lib/services/subscribers/openlineage/emitter.go`.
+
+- **`TestPGErrorClasses_Delivered` — regression since commit
+  `c6907c29`** (pre-work for item 1: cross-cutting `instance: true`
+  subscription retirement, 2026-07-04). That commit swept 36 files
+  including graph, runtime, `test/scenarios/`, but missed
+  `lib/services/test/scenarios/pg_error_classes/`. Two templates in
+  that file kept `"instance": true`, and their `POST /templates`
+  requests returned 400 from that commit forward. Fix (commit
+  `bf8d306b` + `55dc4fcd`): converted both subscriptions to
+  per-sender-node form (`"node": "worker"` for the claim_unavailable
+  template, `"node": "acquirer"` for the swap_failed template).
+
+Both regressions share a shape: a deliberate refactor swept its
+immediate consumers but not its downstream services-integration
+consumers. Neither test runs in the default `make test-all` loop —
+both require `make core-images && make service-images` first — which
+is why they went undetected for several days. Worth folding into a
+guardrail item: any change that removes a template-spec field or
+adds a runtime-implicit node should trigger the full services e2e
+suite before landing.
+
