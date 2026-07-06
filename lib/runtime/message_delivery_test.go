@@ -157,9 +157,6 @@ func (n *nilInstancesTable) ListTerminatedWithLifecycleRows(context.Context, int
 func (n *nilInstancesTable) CountByActive(context.Context, persistence.Tx) (int, int, error) {
 	return 0, 0, nil
 }
-func (n *nilInstancesTable) IncrementAttributeOverrideMatchCounts(context.Context, shared.UUID, []int, persistence.Tx) error {
-	return nil
-}
 func (n *nilInstancesTable) SetPaused(context.Context, shared.UUID, bool, persistence.Tx) (bool, error) {
 	return false, nil
 }

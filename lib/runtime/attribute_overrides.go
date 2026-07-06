@@ -7,6 +7,7 @@ package runtime
 import (
 	"context"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/matcher"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -131,15 +132,15 @@ func evaluateMatcher(
 	}, logger, entryIndex)
 }
 
-type matchCounterPersist interface {
+type matchEventPersist interface {
 	Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error
-	Instances() persistence.InstanceTable
+	Events() persistence.EventTable
 }
 
 // @concept: attribute
-func incrementMatchCountersAfterMerge(
+func emitOverrideMatchEventsAfterMerge(
 	ctx context.Context,
-	persist matchCounterPersist,
+	persist matchEventPersist,
 	logger shared.Logger,
 	instanceID shared.UUID,
 	matched []int,
@@ -148,10 +149,19 @@ func incrementMatchCountersAfterMerge(
 		return
 	}
 	err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return persist.Instances().IncrementAttributeOverrideMatchCounts(ctx, instanceID, matched, tx)
+		for _, idx := range matched {
+			if err := persist.Events().Append(ctx, persistence.EventAppendInput{
+				InstanceID: &instanceID,
+				Kind:       events.KindAttributeOverrideMatched(),
+				Payload:    map[string]any{"override_index": idx},
+			}, tx); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil && logger != nil {
-		logger.Warn("instance.attribute_overrides_counter_increment_failed",
+		logger.Warn("instance.attribute_override_match_event_failed",
 			"instance_id", instanceID.String(),
 			"matched_indices", matched,
 			"error", err.Error())

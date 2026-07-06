@@ -53,9 +53,6 @@ func (f *fakeInstancesForEnqueue) ListTerminatedWithLifecycleRows(context.Contex
 func (f *fakeInstancesForEnqueue) CountByActive(context.Context, persistence.Tx) (int, int, error) {
 	return 0, 0, nil
 }
-func (f *fakeInstancesForEnqueue) IncrementAttributeOverrideMatchCounts(context.Context, shared.UUID, []int, persistence.Tx) error {
-	return nil
-}
 func (f *fakeInstancesForEnqueue) SetPaused(context.Context, shared.UUID, bool, persistence.Tx) (bool, error) {
 	return false, nil
 }

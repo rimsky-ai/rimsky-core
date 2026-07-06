@@ -5,13 +5,11 @@
 package scenarios
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -102,16 +100,7 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 		"inner-exit lives in graph=worker; matcher graph=worker MUST fire")
 
 	require.Eventually(t, func() bool {
-		var inst *persistence.InstanceRow
-		err := h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-			r, err := h.Persist.Instances().Get(ctx, iid, tx)
-			inst = r
-			return err
-		})
-		if err != nil || inst == nil {
-			return false
-		}
-		c := inst.AttributeOverridesMatchCounts
+		c := attributeOverrideMatchCounts(t, h, iid, 2)
 		return len(c) == 2 && c[0] == 1 && c[1] == 1
 	}, 10*time.Second, 50*time.Millisecond,
 		"AttributeOverridesMatchCounts mismatch (want [1, 1])")

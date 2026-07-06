@@ -399,7 +399,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	)
 	filled = merged
 	acq.MergedAttributes = filled
-	incrementMatchCountersAfterMerge(ctx, args.Persist, args.Logger, acq.InstanceID, matched)
+	emitOverrideMatchEventsAfterMerge(ctx, args.Persist, args.Logger, acq.InstanceID, matched)
 	bpFilled, bpErr := evaluateBeforeDispatchBreakpoints(ctx, args, acq, scope.PartitionKey, filled, schema)
 	if bpErr != nil {
 		return nil, schema, bpErr

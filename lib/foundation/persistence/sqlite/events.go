@@ -325,6 +325,31 @@ func (s *eventsImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int
 	return int(n), nil
 }
 
+func (s *eventsImpl) CountAttributeOverrideMatchesByIndex(
+	ctx context.Context, instanceID shared.UUID, tx persistence.Tx,
+) (map[int64]int64, error) {
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT CAST(json_extract(payload, '$.override_index') AS INTEGER) AS idx, count(*)
+		   FROM rimsky_events
+		  WHERE instance_id = ?
+		    AND kind = 'attribute_override_matched'
+		  GROUP BY idx`,
+		instanceID.String())
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.Events.CountAttributeOverrideMatchesByIndex: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64]int64{}
+	for rows.Next() {
+		var idx, cnt int64
+		if err := rows.Scan(&idx, &cnt); err != nil {
+			return nil, fmt.Errorf("sqlite.Events.CountAttributeOverrideMatchesByIndex: scan: %w", err)
+		}
+		out[idx] = cnt
+	}
+	return out, rows.Err()
+}
+
 type eventCursor struct {
 	O time.Time `json:"o"`
 	I int64     `json:"i"`

@@ -5,14 +5,12 @@
 package scenarios
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -74,17 +72,8 @@ func TestAttributeOverridesMatchOverlayFlatTemplateGraphResolution_ResolvesToMai
 	require.Equal(t, "outer", cli["where"],
 		"matcher graph=main MUST fire for flat-Nodes template")
 
-	var inst *persistence.InstanceRow
 	require.Eventually(t, func() bool {
-		err := h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-			r, err := h.Persist.Instances().Get(ctx, iid, tx)
-			inst = r
-			return err
-		})
-		if err != nil || inst == nil {
-			return false
-		}
-		c := inst.AttributeOverridesMatchCounts
+		c := attributeOverrideMatchCounts(t, h, iid, 1)
 		return len(c) == 1 && c[0] == 1
 	}, 5*time.Second, 50*time.Millisecond, "match-counts should be [1] after dispatch")
 }

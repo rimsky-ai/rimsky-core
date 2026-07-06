@@ -38,6 +38,10 @@ func (f *fakeEvents) DeleteOlderThan(_ context.Context, _ time.Time) (int, error
 	return 0, nil
 }
 
+func (f *fakeEvents) CountAttributeOverrideMatchesByIndex(_ context.Context, _ shared.UUID, _ persistence.Tx) (map[int64]int64, error) {
+	return nil, nil
+}
+
 func TestEmitSignal_WritesCanonicalRow(t *testing.T) {
 	events := &fakeEvents{}
 	instanceID := uuid.New()

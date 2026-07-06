@@ -91,7 +91,7 @@ type instanceSubscriptionItem struct {
 	FailureReason string    `json:"failure_reason,omitempty"`
 }
 
-func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
+func toInstanceItem(r persistence.InstanceRow, redact []string, matchCounts []int64) instanceItem {
 	out := instanceItem{
 		ID:           r.ID.String(),
 		TemplateHash: r.TemplateHash,
@@ -104,14 +104,39 @@ func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 	if len(r.AttributeOverrides) > 0 {
 		out.AttributeOverrides = r.AttributeOverrides
 	}
-	if len(r.AttributeOverridesMatchCounts) > 0 {
-		out.AttributeOverridesMatchCounts = r.AttributeOverridesMatchCounts
+	if len(matchCounts) > 0 {
+		out.AttributeOverridesMatchCounts = matchCounts
 	}
 	if len(r.ServiceBindings) > 0 {
 		out.ServiceBindings = r.ServiceBindings
 	}
 	if r.CreatedByAPIKeyID != nil {
 		out.CreatedByAPIKeyID = r.CreatedByAPIKeyID.String()
+	}
+	return out
+}
+
+func overrideMatchCountsFor(ctx context.Context, deps AppDeps, r persistence.InstanceRow) []int64 {
+	byMatch, _ := r.AttributeOverrides["by_match"].([]any)
+	if len(byMatch) == 0 {
+		return nil
+	}
+	var countsByIdx map[int64]int64
+	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		countsByIdx, err = deps.Persist.Events().CountAttributeOverrideMatchesByIndex(ctx, r.ID, tx)
+		return err
+	}); err != nil {
+		deps.Logger.Warn("instance.attribute_override_match_events_query_failed",
+			"instance_id", r.ID.String(), "error", err.Error())
+		return make([]int64, len(byMatch))
+	}
+	out := make([]int64, len(byMatch))
+	for idx, cnt := range countsByIdx {
+		if idx < 0 || int(idx) >= len(out) {
+			continue
+		}
+		out[idx] = cnt
 	}
 	return out
 }
@@ -278,20 +303,13 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					return nil
 				}
 			}
-			var initialMatchCounts []int64
-			if raw, ok := body.AttributeOverrides["by_match"]; ok {
-				if list, ok := raw.([]any); ok {
-					initialMatchCounts = make([]int64, len(list))
-				}
-			}
 			provisioned, err := provisionInstanceTx(ctx, deps, tx, row, provisionArgs{
-				InstanceKey:                   body.InstanceKey,
-				Params:                        params,
-				AttributeOverrides:            body.AttributeOverrides,
-				AttributeOverridesMatchCounts: initialMatchCounts,
-				Paused:                        body.Paused,
-				ServiceBindings:               body.ServiceBindings,
-				CreatedByAPIKeyID:             ident.KeyID,
+				InstanceKey:        body.InstanceKey,
+				Params:             params,
+				AttributeOverrides: body.AttributeOverrides,
+				Paused:             body.Paused,
+				ServiceBindings:    body.ServiceBindings,
+				CreatedByAPIKeyID:  ident.KeyID,
 			})
 			if err != nil {
 				return err
@@ -447,7 +465,7 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 				}
 				redactCache[r.TemplateHash] = redact
 			}
-			items = append(items, toInstanceItem(r, redact))
+			items = append(items, toInstanceItem(r, redact, overrideMatchCountsFor(req.Context(), deps, r)))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"instances":   items,
@@ -486,7 +504,7 @@ func handleGetInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
-		item := toInstanceItem(*inst, redact)
+		item := toInstanceItem(*inst, redact, overrideMatchCountsFor(req.Context(), deps, *inst))
 		// @concept: publisher-subscription
 		subs, err := deps.Persist.PublisherSubscriptions().ListByInstance(req.Context(), inst.ID)
 		if err != nil {
@@ -622,7 +640,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}
 		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
 		if inst.TerminatedAt != nil {
-			writeJSON(w, http.StatusOK, toInstanceItem(*inst, redact))
+			writeJSON(w, http.StatusOK, toInstanceItem(*inst, redact, overrideMatchCountsFor(req.Context(), deps, *inst)))
 			return
 		}
 		var body struct {
@@ -731,7 +749,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, toInstanceItem(*updated, redact))
+		writeJSON(w, http.StatusOK, toInstanceItem(*updated, redact, overrideMatchCountsFor(req.Context(), deps, *updated)))
 	}
 }
 
@@ -833,13 +851,12 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 }
 
 type provisionArgs struct {
-	InstanceKey                   *string
-	Params                        map[string]any
-	AttributeOverrides            map[string]any
-	AttributeOverridesMatchCounts []int64
-	Paused                        bool
-	ServiceBindings               json.RawMessage
-	CreatedByAPIKeyID             *foundationshared.UUID
+	InstanceKey        *string
+	Params             map[string]any
+	AttributeOverrides map[string]any
+	Paused             bool
+	ServiceBindings    json.RawMessage
+	CreatedByAPIKeyID  *foundationshared.UUID
 }
 
 func provisionInstanceTx(
@@ -855,16 +872,15 @@ func provisionInstanceTx(
 		queueMode = "backlog"
 	}
 	inst, err := deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID:                            instanceID,
-		TemplateHash:                  tpl.ID,
-		InstanceKey:                   args.InstanceKey,
-		Params:                        args.Params,
-		AttributeOverrides:            args.AttributeOverrides,
-		AttributeOverridesMatchCounts: args.AttributeOverridesMatchCounts,
-		Paused:                        args.Paused,
-		ServiceBindings:               args.ServiceBindings,
-		CreatedByAPIKeyID:             args.CreatedByAPIKeyID,
-		MessageQueueMode:              queueMode,
+		ID:                 instanceID,
+		TemplateHash:       tpl.ID,
+		InstanceKey:        args.InstanceKey,
+		Params:             args.Params,
+		AttributeOverrides: args.AttributeOverrides,
+		Paused:             args.Paused,
+		ServiceBindings:    args.ServiceBindings,
+		CreatedByAPIKeyID:  args.CreatedByAPIKeyID,
+		MessageQueueMode:   queueMode,
 	}, tx)
 	if err != nil {
 		return createInstanceResponse{}, err

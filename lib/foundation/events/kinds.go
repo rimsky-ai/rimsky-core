@@ -106,6 +106,7 @@ var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_COMMITTED:            "attributes_committed",
 	genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED:    "attributes_validation_failed",
 	genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED:        "attributes_schema_failed",
+	genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED:      "attribute_override_matched",
 	genv1.OperationalKind_OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED:      "template_resolution_failed",
 	genv1.OperationalKind_OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED:      "template_validation_failed",
 	genv1.OperationalKind_OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE:     "executor_schema_unavailable",
@@ -238,6 +239,9 @@ func KindBreakpointHit() Kind {
 }
 func KindMessageSent() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT)
+}
+func KindAttributeOverrideMatched() Kind {
+	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED)
 }
 func KindMessageReceived() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED)

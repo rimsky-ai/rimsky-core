@@ -18,10 +18,8 @@ type InstanceRow struct {
 	InstanceKey        *string        `json:"instance_key"`
 	Params             map[string]any `json:"params"`
 	AttributeOverrides map[string]any `json:"attribute_overrides"`
-	// @concept: attribute
-	AttributeOverridesMatchCounts []int64    `json:"attribute_overrides_match_counts,omitempty"`
-	CreatedAt                     time.Time  `json:"created_at"`
-	TerminatedAt                  *time.Time `json:"terminated_at"`
+	CreatedAt          time.Time      `json:"created_at"`
+	TerminatedAt       *time.Time     `json:"terminated_at"`
 	// @concept: breakpoint
 	Paused            bool            `json:"paused"`
 	ServiceBindings   json.RawMessage `json:"service_bindings,omitempty"`
@@ -41,18 +39,16 @@ type InstanceTable interface {
 	CountActiveByTemplate(ctx context.Context, templateHash string, tx Tx) (int, error)
 	ListTerminatedWithLifecycleRows(ctx context.Context, limit int, tx Tx) ([]InstanceRow, error)
 	CountByActive(ctx context.Context, tx Tx) (active int, terminated int, err error)
-	IncrementAttributeOverrideMatchCounts(ctx context.Context, instanceID shared.UUID, indices []int, tx Tx) error
 	// @concept: breakpoint
 	SetPaused(ctx context.Context, instanceID shared.UUID, paused bool, tx Tx) (priorValue bool, err error)
 }
 
 type InstanceCreateInput struct {
-	ID                            shared.UUID
-	TemplateHash                  string
-	InstanceKey                   *string
-	Params                        map[string]any
-	AttributeOverrides            map[string]any
-	AttributeOverridesMatchCounts []int64
+	ID                 shared.UUID
+	TemplateHash       string
+	InstanceKey        *string
+	Params             map[string]any
+	AttributeOverrides map[string]any
 	// @concept: breakpoint
 	Paused            bool
 	ServiceBindings   json.RawMessage

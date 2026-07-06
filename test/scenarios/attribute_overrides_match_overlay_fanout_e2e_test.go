@@ -5,14 +5,12 @@
 package scenarios
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -178,16 +176,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 	}
 
 	require.Eventually(t, func() bool {
-		var inst *persistence.InstanceRow
-		err := h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-			r, err := h.Persist.Instances().Get(ctx, iid, tx)
-			inst = r
-			return err
-		})
-		if err != nil || inst == nil {
-			return false
-		}
-		c := inst.AttributeOverridesMatchCounts
+		c := attributeOverrideMatchCounts(t, h, iid, 3)
 		return len(c) == 3 && c[0] == 1 && c[1] == 1 && c[2] == 1
 	}, 10*time.Second, 50*time.Millisecond,
 		"AttributeOverridesMatchCounts mismatch (want [1, 1, 1])")

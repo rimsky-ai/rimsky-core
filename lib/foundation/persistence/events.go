@@ -57,6 +57,9 @@ type EventTable interface {
 	List(ctx context.Context, filter EventListFilter, pag ListPagination, tx Tx) (EventListResult, error)
 	LastTerminalByNodes(ctx context.Context, nodeIDs []shared.UUID, tx Tx) (map[shared.UUID]EventRow, error)
 
+	// @concept: attribute
+	CountAttributeOverrideMatchesByIndex(ctx context.Context, instanceID shared.UUID, tx Tx) (map[int64]int64, error)
+
 	// @concept: event-log
 	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 }

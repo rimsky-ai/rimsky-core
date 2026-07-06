@@ -962,9 +962,6 @@ func (f *fakeInstancesDeps) ListTerminatedWithLifecycleRows(_ context.Context, _
 func (f *fakeInstancesDeps) CountByActive(_ context.Context, _ persistence.Tx) (int, int, error) {
 	return 0, 0, nil
 }
-func (f *fakeInstancesDeps) IncrementAttributeOverrideMatchCounts(_ context.Context, _ shared.UUID, _ []int, _ persistence.Tx) error {
-	return nil
-}
 func (f *fakeInstancesDeps) SetPaused(_ context.Context, _ shared.UUID, _ bool, _ persistence.Tx) (bool, error) {
 	return false, nil
 }

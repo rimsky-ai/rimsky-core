@@ -19,7 +19,7 @@ import (
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, attribute_overrides_match_counts, paused, service_bindings, created_by_api_key_id, message_queue_mode`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, paused, service_bindings, created_by_api_key_id, message_queue_mode`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	if in.Params == nil {
@@ -35,13 +35,6 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	overridesBytes, err := json.Marshal(in.AttributeOverrides)
 	if err != nil {
 		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal attribute_overrides: %w", err)
-	}
-	if in.AttributeOverridesMatchCounts == nil {
-		in.AttributeOverridesMatchCounts = []int64{}
-	}
-	matchCountsBytes, err := json.Marshal(in.AttributeOverridesMatchCounts)
-	if err != nil {
-		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal attribute_overrides_match_counts: %w", err)
 	}
 	if in.ID == (foundationshared.UUID{}) {
 		return persistence.InstanceRow{}, errInstanceIDRequired
@@ -64,10 +57,10 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		messageQueueMode = "backlog"
 	}
 	row := s.q(tx).QueryRowContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, created_at, attribute_overrides_match_counts, paused, service_bindings, created_by_api_key_id, message_queue_mode)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, created_at, paused, service_bindings, created_by_api_key_id, message_queue_mode)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 RETURNING `+instanceCols,
-		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), nowUTC(), string(matchCountsBytes), pausedArg, serviceBindingsArg, createdByAPIKeyArg, messageQueueMode,
+		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), nowUTC(), pausedArg, serviceBindingsArg, createdByAPIKeyArg, messageQueueMode,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -238,62 +231,6 @@ func (s *instancesImpl) CountActiveByTemplate(ctx context.Context, templateHash 
 	return n, nil
 }
 
-// @concept: attribute
-func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
-	ctx context.Context,
-	instanceID foundationshared.UUID,
-	indices []int,
-	tx persistence.Tx,
-) error {
-	if len(indices) == 0 {
-		return nil
-	}
-	q := s.q(tx)
-	var arrLen sql.NullInt64
-	if err := q.QueryRowContext(ctx,
-		`SELECT json_array_length(attribute_overrides_match_counts)
-		   FROM rimsky_instances WHERE id = ?`,
-		instanceID.String(),
-	).Scan(&arrLen); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		return fmt.Errorf("instances.incrementAttributeOverrideMatchCounts: %w", err)
-	}
-	maxIdx := int(arrLen.Int64)
-	deltas := map[int]int{}
-	order := make([]int, 0, len(indices))
-	for _, idx := range indices {
-		if idx < 0 || idx >= maxIdx {
-			continue
-		}
-		if _, seen := deltas[idx]; !seen {
-			order = append(order, idx)
-		}
-		deltas[idx]++
-	}
-	if len(order) == 0 {
-		return nil
-	}
-	for _, idx := range order {
-		path := fmt.Sprintf("$[%d]", idx)
-		query := fmt.Sprintf(
-			`UPDATE rimsky_instances
-			   SET attribute_overrides_match_counts = json_set(
-			       attribute_overrides_match_counts,
-			       '%s',
-			       coalesce(json_extract(attribute_overrides_match_counts, '%s'), 0) + %d
-			   )
-			 WHERE id = ?`,
-			path, path, deltas[idx],
-		)
-		if _, err := q.ExecContext(ctx, query, instanceID.String()); err != nil {
-			return fmt.Errorf("instances.incrementAttributeOverrideMatchCounts: %w", err)
-		}
-	}
-	return nil
-}
-
 // @concept: breakpoint
 func (s *instancesImpl) SetPaused(ctx context.Context, instanceID foundationshared.UUID, paused bool, tx persistence.Tx) (bool, error) {
 	q := s.q(tx)
@@ -379,13 +316,12 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		overridesStr         string
 		createdAtStr         string
 		terminatedAtStr      sql.NullString
-		matchCountsStr       string
 		pausedInt            int64
 		serviceBindingsStr   sql.NullString
 		createdByAPIKeyIDStr sql.NullString
 		messageQueueMode     string
 	)
-	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &createdAtStr, &terminatedAtStr, &matchCountsStr, &pausedInt, &serviceBindingsStr, &createdByAPIKeyIDStr, &messageQueueMode); err != nil {
+	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &createdAtStr, &terminatedAtStr, &pausedInt, &serviceBindingsStr, &createdByAPIKeyIDStr, &messageQueueMode); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	id, err := uuid.Parse(idStr)
@@ -404,25 +340,18 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 			return persistence.InstanceRow{}, fmt.Errorf("unmarshal attribute_overrides: %w", err)
 		}
 	}
-	mc := []int64{}
-	if matchCountsStr != "" {
-		if err := json.Unmarshal([]byte(matchCountsStr), &mc); err != nil {
-			return persistence.InstanceRow{}, fmt.Errorf("unmarshal attribute_overrides_match_counts: %w", err)
-		}
-	}
 	createdAt, err := parseTime(createdAtStr)
 	if err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	out := persistence.InstanceRow{
-		ID:                            id,
-		TemplateHash:                  templateHash,
-		Params:                        m,
-		AttributeOverrides:            overrides,
-		AttributeOverridesMatchCounts: mc,
-		CreatedAt:                     createdAt,
-		Paused:                        pausedInt != 0,
-		MessageQueueMode:              messageQueueMode,
+		ID:                 id,
+		TemplateHash:       templateHash,
+		Params:             m,
+		AttributeOverrides: overrides,
+		CreatedAt:          createdAt,
+		Paused:             pausedInt != 0,
+		MessageQueueMode:   messageQueueMode,
 	}
 	if instanceKey.Valid {
 		k := instanceKey.String

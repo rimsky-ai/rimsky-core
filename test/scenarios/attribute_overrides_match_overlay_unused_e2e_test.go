@@ -5,14 +5,12 @@
 package scenarios
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -69,24 +67,10 @@ func TestAttributeOverridesMatchOverlayUnused_CounterZeroForNonFiringEntries(t *
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
-	var inst *persistence.InstanceRow
+	var lastCounts []int64
 	require.Eventually(t, func() bool {
-		err := h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-			r, err := h.Persist.Instances().Get(ctx, iid, tx)
-			inst = r
-			return err
-		})
-		if err != nil || inst == nil {
-			return false
-		}
-		c := inst.AttributeOverridesMatchCounts
-		return len(c) == 5 && c[0] == 1 && c[1] == 0 && c[2] == 1 && c[3] == 0 && c[4] == 0
+		lastCounts = attributeOverrideMatchCounts(t, h, iid, 5)
+		return len(lastCounts) == 5 && lastCounts[0] == 1 && lastCounts[1] == 0 && lastCounts[2] == 1 && lastCounts[3] == 0 && lastCounts[4] == 0
 	}, 5*time.Second, 50*time.Millisecond,
-		"match-counts should be [1, 0, 1, 0, 0]; got=%v",
-		func() any {
-			if inst == nil {
-				return nil
-			}
-			return inst.AttributeOverridesMatchCounts
-		}())
+		"match-counts should be [1, 0, 1, 0, 0]; got=%v", &lastCounts)
 }
