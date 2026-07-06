@@ -20,7 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-func TestQueueDrainConvergesDemo_RunExitsZero(t *testing.T) {
+func TestCascadeSendDemo_RunExitsZero(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -33,22 +33,22 @@ func TestQueueDrainConvergesDemo_RunExitsZero(t *testing.T) {
 		harness.WithExecutor("verifier-shape-checks", verifierEP),
 	)
 
-	demoScript := repoExampleSpecPath(t, "examples/queue-drain-converges-demo.sh")
-	templatePath := repoExampleSpecPath(t, "examples/queue-drain-converges-demo-template.yaml")
+	demoScript := repoExampleSpecPath(t, "examples/cascade-send-demo.sh")
+	templatePath := repoExampleSpecPath(t, "examples/cascade-send-demo-template.yaml")
 
-	stdout, exitCode := runQueueDrainDemoScript(t, ctx, demoScript, ep.BaseURL, 180*time.Second)
+	stdout, exitCode := runCascadeSendDemoScript(t, ctx, demoScript, ep.BaseURL, 180*time.Second)
 	if exitCode != 0 {
-		t.Fatalf("queue-drain-converges-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
+		t.Fatalf("cascade-send-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
 	}
 
 	if _, err := os.Stat(templatePath); err != nil {
-		t.Fatalf("shipped template %s missing on disk: %v — the queue-drain-converges demo's template is broken", templatePath, err)
+		t.Fatalf("shipped template %s missing on disk: %v — the cascade-send demo's template is broken", templatePath, err)
 	}
 
-	requireQueueDrainInstanceEmittedIterate(t, ep, 60*time.Second)
+	requireCascadeSendInstanceSentIterate(t, ep, 60*time.Second)
 }
 
-func runQueueDrainDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string, timeout time.Duration) (string, int) {
+func runCascadeSendDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string, timeout time.Duration) (string, int) {
 	t.Helper()
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -70,12 +70,12 @@ func runQueueDrainDemoScript(t *testing.T, ctx context.Context, scriptPath, base
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
-		t.Fatalf("queue-drain-converges-demo.sh run error (not an exit error): %v\ncombined:\n%s", err, combined)
+		t.Fatalf("cascade-send-demo.sh run error (not an exit error): %v\ncombined:\n%s", err, combined)
 	}
 	return combined, exitErr.ExitCode()
 }
 
-func requireQueueDrainInstanceEmittedIterate(t *testing.T, ep harness.RimskyEndpoint, deadline time.Duration) {
+func requireCascadeSendInstanceSentIterate(t *testing.T, ep harness.RimskyEndpoint, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var lastBody string
@@ -117,5 +117,5 @@ func requireQueueDrainInstanceEmittedIterate(t *testing.T, ep harness.RimskyEndp
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("no instance exhibited a loop/iterate frame with sender_kind=instance within %v — the queue-drain-converges back-edge did not fire end-to-end\nlast /v1/instances body:\n%s", deadline, lastBody)
+	t.Fatalf("no instance exhibited a loop/iterate frame with sender_kind=instance within %v — the cascade-send back-edge did not fire end-to-end\nlast /v1/instances body:\n%s", deadline, lastBody)
 }

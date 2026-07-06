@@ -21,7 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-func TestStoryQueueDrainConverges_TerminatesViaCELGate(t *testing.T) {
+func TestStoryCascadeSend_TerminatesViaCELGate(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
@@ -35,7 +35,7 @@ func TestStoryQueueDrainConverges_TerminatesViaCELGate(t *testing.T) {
 	}, true, "b ran")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "story-queue-drain-converges-cycle", Version: "1",
+		Name: "story-cascade-send-cycle", Version: "1",
 		Messages: []spec.MessageSchema{
 			{
 				Type: "loop/wake",
@@ -94,7 +94,7 @@ func TestStoryQueueDrainConverges_TerminatesViaCELGate(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{
-					Type:         "emitter",
+					Type:         "sender",
 					SendsMessage: "loop/iterate",
 					Subscribes: []node.SubscriptionEntry{
 						{
@@ -159,12 +159,12 @@ func TestStoryQueueDrainConverges_TerminatesViaCELGate(t *testing.T) {
 		[]any{aNode.ID}, &finalARuns)
 	require.Equal(t, 0, iterateMsgs,
 		"send-node's CEL on b.terminal/success evaluates false against should_loop=false; "+
-			"no loop/iterate can emit and the queue drains to empty. got %d loop/iterate messages", iterateMsgs)
+			"no loop/iterate can be sent and the queue drains to empty. got %d loop/iterate messages", iterateMsgs)
 	require.Equal(t, 1, finalARuns,
-		"A must run exactly once — the initial wake — because no back-edge iterate was emitted. got %d", finalARuns)
+		"A must run exactly once — the initial wake — because no back-edge iterate was sent. got %d", finalARuns)
 }
 
-func TestStoryQueueDrainConverges_LoopsWithoutGate(t *testing.T) {
+func TestStoryCascadeSend_LoopsWithoutGate(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
@@ -178,7 +178,7 @@ func TestStoryQueueDrainConverges_LoopsWithoutGate(t *testing.T) {
 	}, true, "b ran")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "story-queue-drain-converges-loops", Version: "1",
+		Name: "story-cascade-send-loops", Version: "1",
 		Messages: []spec.MessageSchema{
 			{
 				Type: "loop/wake",
@@ -232,7 +232,7 @@ func TestStoryQueueDrainConverges_LoopsWithoutGate(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{
-					Type:         "emitter",
+					Type:         "sender",
 					SendsMessage: "loop/iterate",
 					Subscribes: []node.SubscriptionEntry{
 						{
