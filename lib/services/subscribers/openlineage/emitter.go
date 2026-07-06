@@ -94,6 +94,9 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 	if jobName == "" {
 		jobName = rec.NodeAlias
 	}
+	if jobName == "" {
+		jobName = "empty-message-receiver"
+	}
 	inputs := make([]DatasetRef, 0, len(rec.HeldClaims))
 	for _, hc := range rec.HeldClaims {
 		inputs = append(inputs, DatasetRef{

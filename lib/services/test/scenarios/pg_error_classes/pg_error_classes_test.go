@@ -158,7 +158,7 @@ func testSwapFailedDelivered(t *testing.T) {
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"node": "worker", "type": "terminal/error/*",
+							"node": "acquirer", "type": "terminal/error/*",
 							"force_upstream_refresh": false,
 						},
 					},
