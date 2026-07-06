@@ -3,7 +3,7 @@ tension: event-vocabulary-implies-delivery
 category: vocabulary-drift
 status: open
 affects:
-  - named-event
+  - signal
   - node-subscription
 ---
 
