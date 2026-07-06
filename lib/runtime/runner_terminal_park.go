@@ -77,7 +77,7 @@ func applyTerminalPark(
 	}
 	// @concept: signal
 	parkSigType := string(parkTerminalSignal(t).Type)
-	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+	if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
 		cascade.NodeStateParked, cascade.ReasonHandlerPark, &parkSigType, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}

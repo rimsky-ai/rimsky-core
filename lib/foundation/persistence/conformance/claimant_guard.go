@@ -811,7 +811,7 @@ func testClaimantGuardRunEmptyClaimantCarveOut(t *testing.T, d persistence.Datab
 		t.Fatalf("empty-claimant Complete did not release A's row: %s/%s", cowner.Kind, cowner.SupervisorID)
 	}
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return d.Tables().Nodes().UpdateState(ctx, fix.NodeID, fix.MainRunScopeID,
+		return d.Tables().Nodes().UpdateState(ctx, dispatchID,
 			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx)
 	}); err != nil {
 		t.Fatalf("settle row after empty Complete: %v", err)

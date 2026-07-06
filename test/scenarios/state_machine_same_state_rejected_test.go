@@ -7,11 +7,13 @@ package scenarios
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -31,13 +33,31 @@ func TestStateMachineSameStateRejected(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
+	scopeID := h.GetMainRunScopeID(iid)
+	frameID := h.GetRunningFrameID(iid)
+
+	var runID shared.UUID
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		return h.Persist.Nodes().UpdateState(h.Ctx, n.ID, h.GetMainRunScopeID(iid),
+		id, err := h.Persist.Nodes().CreateNonCascadeStale(h.Ctx, tx, persistence.NonCascadeStaleInput{
+			NodeID:                 n.ID,
+			RunScopeID:             scopeID,
+			FrameID:                frameID,
+			ExecutorName:           "stub",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now(),
+			CreationReason:         cascade.CreationReasonOperatorInvalidate,
+		})
+		runID = id
+		return err
+	}))
+
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		return h.Persist.Nodes().UpdateState(h.Ctx, runID,
 			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
 	}))
 
 	err := h.InTx(func(tx persistence.Tx) error {
-		return h.Persist.Nodes().UpdateState(h.Ctx, n.ID, h.GetMainRunScopeID(iid),
+		return h.Persist.Nodes().UpdateState(h.Ctx, runID,
 			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
 	})
 	require.Error(t, err)

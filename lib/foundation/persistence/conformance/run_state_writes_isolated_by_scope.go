@@ -135,7 +135,7 @@ func testRunStateWritesIsolated_UpdateState(t *testing.T, d persistence.Database
 
 	before := snapshotRun(ctx, t, d, f.runB)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().UpdateState(ctx, f.fix.NodeID, f.scopeA,
+		return store.Nodes().UpdateState(ctx, f.runA,
 			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
 	}); err != nil {
 		t.Fatalf("UpdateState(A): %v", err)
@@ -293,7 +293,7 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 		}); err != nil {
 			return err
 		}
-		return d.Tables().Nodes().UpdateState(ctx, f.fix.NodeID, f.scopeB,
+		return d.Tables().Nodes().UpdateState(ctx, f.runB,
 			cascade.NodeStateParked, cascade.ReasonHandlerPark, nil, tx)
 	}); err != nil {
 		t.Fatalf("seed park B: %v", err)

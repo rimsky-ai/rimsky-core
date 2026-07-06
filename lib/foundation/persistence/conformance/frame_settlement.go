@@ -114,7 +114,7 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 	nodeB := seedExtraNode(ctx, t, d, fix, "settlement-node-b")
 	runB := seedClaimedRunForNode(ctx, t, d, fix, nodeB, frameSettlementSup)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().UpdateState(ctx, nodeB, fix.MainRunScopeID,
+		return store.Nodes().UpdateState(ctx, runB,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx)
 	}); err != nil {
 		t.Fatalf("fail run %s: %v", runB, err)
@@ -143,13 +143,13 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 		return failed
 	}
 
-	_ = seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, frameSettlementSup)
+	runToFail := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, frameSettlementSup)
 	if hasFailed(fix.FrameID) {
 		t.Fatalf("HasFailedNode = true with only a claimed running run")
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().UpdateState(ctx, fix.NodeID, fix.MainRunScopeID,
+		return store.Nodes().UpdateState(ctx, runToFail,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx)
 	}); err != nil {
 		t.Fatalf("UpdateState(failed): %v", err)

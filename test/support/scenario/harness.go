@@ -687,48 +687,6 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState, 
 	return false
 }
 
-// @concept: node-run
-func (h *Harness) WaitForRunState(runID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
-	h.T.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		var row *persistence.NodeRunForGate
-		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().GetRunForGate(ctx, tx, runID)
-			row = r
-			return err
-		}); err != nil && h.T != nil {
-			h.T.Logf("WaitForRunState: run probe for %s failed: %v", runID.String(), err)
-		}
-		if row != nil && row.State == state {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return false
-}
-
-// @concept: node-run
-func (h *Harness) WaitForLatestRunState(nodeID, runScopeID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
-	h.T.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		var latest *persistence.NodeRunLatest
-		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-			l, err := h.Persist.Nodes().GetLatestRunInScope(ctx, tx, nodeID, runScopeID)
-			latest = l
-			return err
-		}); err != nil && h.T != nil {
-			h.T.Logf("WaitForLatestRunState: probe failed for node=%s scope=%s: %v", nodeID.String(), runScopeID.String(), err)
-		}
-		if latest != nil && latest.State == state {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return false
-}
-
 func (h *Harness) hasRunEvent(nodeID shared.UUID) bool {
 	var count int
 	err := h.Pool.QueryRow(h.Ctx, `

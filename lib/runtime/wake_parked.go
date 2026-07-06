@@ -93,7 +93,7 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 		if !resumed {
 			return nil
 		}
-		if err := args.Persist.Nodes().UpdateState(ctx, target.ID, targetRunScopeID,
+		if err := args.Persist.Nodes().UpdateState(ctx, parked.DispatchID,
 			cascade.NodeStateStale, cascade.ReasonDeadlineResume, nil, tx); err != nil {
 			return err
 		}

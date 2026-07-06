@@ -197,7 +197,7 @@ func applyTerminalComplete(
 	if heldBeforeRelease {
 		// @concept: claim-handle
 		// @decision: held-as-state-not-phase
-		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
 			cascade.NodeStateHeld, cascade.ReasonHandlerHeld, settlingSignalType, tx); err != nil {
 			return nil, err
 		}
@@ -271,7 +271,7 @@ func applyTerminalComplete(
 	if portfolio.Poisoned {
 		return applyTerminalCompletePoisoned(ctx, args, acq, t, tx)
 	}
-	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+	if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
 		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, settlingSignalType, tx); err != nil {
 		return nil, err
 	}
@@ -348,7 +348,7 @@ func applyTerminalCompletePoisoned(
 ) (postCommitFn, error) {
 	abandonedType := string(signalpkg.TypePath("terminal/error/abandoned"))
 	settlingSignalType := &abandonedType
-	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+	if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
 		cascade.NodeStateFailed, cascade.ReasonAutoTerminalAbandon, settlingSignalType, tx); err != nil {
 		return nil, err
 	}

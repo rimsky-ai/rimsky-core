@@ -144,7 +144,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		}
 		// @concept: fan-out
 		// @decision: held-as-state-not-phase
-		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
 			cascade.NodeStateHeld, cascade.ReasonFanoutDispatched, nil, tx); err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: parent → held: %w", err)
 		}

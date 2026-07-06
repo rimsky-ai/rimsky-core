@@ -285,74 +285,39 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[ca
 
 func (s *nodesImpl) UpdateState(
 	ctx context.Context,
-	id foundationshared.UUID,
-	runScopeID foundationshared.UUID,
+	nodeRunID foundationshared.UUID,
 	state cascade.NodeState,
 	reason cascade.TransitionReason,
 	settlingSignalType *string,
 	tx persistence.Tx,
 ) error {
-	return s.enforceAndUpdate(ctx, s.q(tx), id, runScopeID, state, reason, settlingSignalType)
+	return s.enforceAndUpdate(ctx, s.q(tx), nodeRunID, state, reason, settlingSignalType)
 }
 
 func (s *nodesImpl) enforceAndUpdate(
 	ctx context.Context,
 	ex querier,
-	id foundationshared.UUID,
-	runScopeID foundationshared.UUID,
+	nodeRunID foundationshared.UUID,
 	state cascade.NodeState,
 	reason cascade.TransitionReason,
 	settlingSignalType *string,
 ) error {
 	var (
-		current    cascade.NodeState = cascade.NodeStateFresh
-		runID      *foundationshared.UUID
-		runFrameID *foundationshared.UUID
+		stateScan   string
+		frameIDScan foundationshared.UUID
 	)
-	var (
-		runIDScan      *foundationshared.UUID
-		stateScan      *string
-		runFrameIDScan *foundationshared.UUID
-	)
-	err := ex.QueryRow(ctx,
-		`SELECT id, state, frame_id
+	if err := ex.QueryRow(ctx,
+		`SELECT state, frame_id
 		   FROM rimsky_node_runs
-		  WHERE node_id = $1
-		    AND run_scope_id = $2
-		    AND state IN ('pending','stale','running','held','parked')
-		  ORDER BY CASE state
-		             WHEN 'running' THEN 0
-		             WHEN 'held' THEN 1
-		             WHEN 'parked' THEN 2
-		             WHEN 'stale' THEN 3
-		             WHEN 'pending' THEN 4
-		           END,
-		           sequence ASC
-		  LIMIT 1
-		  FOR UPDATE`, id, runScopeID,
-	).Scan(&runIDScan, &stateScan, &runFrameIDScan)
-	switch {
-	case err == nil:
-		runID = runIDScan
-		if stateScan != nil {
-			current = cascade.NodeState(*stateScan)
+		  WHERE id = $1
+		  FOR UPDATE`, nodeRunID,
+	).Scan(&stateScan, &frameIDScan); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("nodes.updateState: no node_run row for id %s", nodeRunID)
 		}
-		runFrameID = runFrameIDScan
-	case errors.Is(err, pgx.ErrNoRows):
-		var failedScan *string
-		if err := ex.QueryRow(ctx,
-			`SELECT state FROM rimsky_node_runs
-			  WHERE node_id = $1 AND state = 'failed'
-			  ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC
-			  LIMIT 1`, id,
-		).Scan(&failedScan); err == nil && failedScan != nil {
-			current = cascade.NodeState(*failedScan)
-		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("nodes.updateState: select failed run: %w", err)
-		}
-	default:
 		return fmt.Errorf("nodes.updateState: select run row: %w", err)
 	}
+	current := cascade.NodeState(stateScan)
 	expected, err := cascade.NextState(current, reason)
 	if err != nil {
 		return err
@@ -361,7 +326,7 @@ func (s *nodesImpl) enforceAndUpdate(
 		return foundationshared.Wrap(cascade.ErrIllegalTransition,
 			"illegal state transition target",
 			map[string]any{
-				"id": id, "from": current, "requested": state,
+				"node_run_id": nodeRunID, "from": current, "requested": state,
 				"computed": expected, "reason": reason.Kind,
 			})
 	}
@@ -371,28 +336,20 @@ func (s *nodesImpl) enforceAndUpdate(
 	} else {
 		settlingArg = *settlingSignalType
 	}
-	switch {
-	case runID != nil:
-		if _, err := ex.Exec(ctx,
-			`UPDATE rimsky_node_runs
-			   SET state = $2,
-			       settling_signal_type = COALESCE($3::text, settling_signal_type)
-			 WHERE id = $1`,
-			*runID, string(state), settlingArg,
-		); err != nil {
-			return fmt.Errorf("nodes.updateState: run-row update: %w", err)
-		}
-	case state == cascade.NodeStateFresh:
-	default:
-		return fmt.Errorf("nodes.updateState: no in-flight run row for node %s on transition to %q (reason %q); use CreateNonCascadeStale or the cascade walker to create a new run", id, state, reason.Kind)
+	if _, err := ex.Exec(ctx,
+		`UPDATE rimsky_node_runs
+		   SET state = $2,
+		       settling_signal_type = COALESCE($3::text, settling_signal_type)
+		 WHERE id = $1`,
+		nodeRunID, string(state), settlingArg,
+	); err != nil {
+		return fmt.Errorf("nodes.updateState: run-row update: %w", err)
 	}
-	if runFrameID != nil {
-		if _, err := ex.Exec(ctx,
-			`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`,
-			*runFrameID,
-		); err != nil {
-			return fmt.Errorf("nodes.updateState: refresh frame progress: %w", err)
-		}
+	if _, err := ex.Exec(ctx,
+		`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`,
+		frameIDScan,
+	); err != nil {
+		return fmt.Errorf("nodes.updateState: refresh frame progress: %w", err)
 	}
 	return nil
 }
@@ -841,23 +798,6 @@ func (s *nodesImpl) GetLatestRunForNode(
 		           enqueued_at DESC, sequence DESC, id DESC
 		  LIMIT 1`,
 		nodeID,
-	)
-	return scanLatestRow(row)
-}
-
-// @concept: node-run
-func (s *nodesImpl) GetLatestRunInScope(
-	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID,
-) (*persistence.NodeRunLatest, error) {
-	row := s.q(tx).QueryRow(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state,
-		        settling_signal_type, COALESCE(claimed_by, '')
-		   FROM rimsky_node_runs
-		  WHERE node_id = $1 AND run_scope_id = $2
-		  ORDER BY CASE WHEN state IN ('pending','stale','running','held','parked') THEN 0 ELSE 1 END,
-		           sequence DESC
-		  LIMIT 1`,
-		nodeID, runScopeID,
 	)
 	return scanLatestRow(row)
 }

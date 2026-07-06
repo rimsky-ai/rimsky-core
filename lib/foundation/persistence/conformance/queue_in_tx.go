@@ -147,7 +147,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.Nodes().UpdateState(ctx, fix.NodeID, fix.MainRunScopeID,
+		if err := store.Nodes().UpdateState(ctx, dispatchID,
 			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx); err != nil {
 			return err
 		}

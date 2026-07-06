@@ -103,7 +103,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 		if err := q.WriteScratchInTx(ctx, tx, originalDispatchID, scratchFixture, "", ""); err != nil {
 			return err
 		}
-		if err := store.Nodes().UpdateState(ctx, childNodeID, partitionScopeID,
+		if err := store.Nodes().UpdateState(ctx, originalDispatchID,
 			cascade.NodeStateFailed, cascade.ReasonInstanceKilled, nil, tx); err != nil {
 			return err
 		}

@@ -57,17 +57,18 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 		VALUES ($1, $2, 'running', now(), 600000, $3)
 		RETURNING frame_id
 	`, uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)).Scan(&frameID))
-	_, err = h.Pool.Exec(h.Ctx, `
+	var seededRunID uuid.UUID
+	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
 		INSERT INTO rimsky_node_runs
 		    (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, frame_id, run_scope_id)
 		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'running', 1, $2, $3)
-	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
-	require.NoError(t, err)
+		RETURNING id
+	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID)).Scan(&seededRunID))
 
 	// @decision: non-cascade-direct-to-stale
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		if err := h.Persist.Nodes().UpdateState(h.Ctx,
-			worker.ID, mainScopeID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx); err != nil {
+			shared.UUID(seededRunID), cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx); err != nil {
 			return err
 		}
 		_, err := h.Persist.Nodes().CreateNonCascadeStale(h.Ctx, tx, persistence.NonCascadeStaleInput{

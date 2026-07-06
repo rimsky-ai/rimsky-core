@@ -248,17 +248,17 @@ func forceRunStateToFresh(
 	case cascade.NodeStateFresh, cascade.NodeStateFailed:
 		return nil
 	case cascade.NodeStateStale:
-		if err := store.Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+		if err := store.Nodes().UpdateState(ctx, runID,
 			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx); err != nil {
 			return err
 		}
-		return store.Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+		return store.Nodes().UpdateState(ctx, runID,
 			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx)
 	case cascade.NodeStateRunning:
-		return store.Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+		return store.Nodes().UpdateState(ctx, runID,
 			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx)
 	case cascade.NodeStateHeld:
-		return store.Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+		return store.Nodes().UpdateState(ctx, runID,
 			cascade.NodeStateFresh, cascade.ReasonAutoTerminalCommit, nil, tx)
 	}
 	return nil

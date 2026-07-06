@@ -284,7 +284,7 @@ func transitionHolderIfFullyResolved(
 		sig = signalpkg.BuildTerminalSuccessSignal(false, nil, changeSummary, nil)
 	}
 	if err := args.Persist.Nodes().UpdateState(
-		ctx, holderRun.NodeID, holderRun.RunScopeID, newState, reason, &sigType, tx,
+		ctx, holderRunID, newState, reason, &sigType, tx,
 	); err != nil {
 		return nil, fmt.Errorf("UpdateState: %w", err)
 	}

@@ -691,7 +691,7 @@ func (f *fakeNodesDeps) ListPureCascadeReady(_ context.Context, _ persistence.Tx
 func (f *fakeNodesDeps) CountByState(_ context.Context, _ persistence.Tx) (map[cascade.NodeState]int, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) UpdateState(_ context.Context, _ shared.UUID, _ shared.UUID, _ cascade.NodeState, _ cascade.TransitionReason, _ *string, _ persistence.Tx) error {
+func (f *fakeNodesDeps) UpdateState(_ context.Context, _ shared.UUID, _ cascade.NodeState, _ cascade.TransitionReason, _ *string, _ persistence.Tx) error {
 	return nil
 }
 func (f *fakeNodesDeps) UpdateError(_ context.Context, _ shared.UUID, _ spec.EvaluatorState, _ persistence.Tx) error {
@@ -737,9 +737,6 @@ func (f *fakeNodesDeps) LockReceiverCascade(_ context.Context, _ persistence.Tx,
 	return nil
 }
 func (f *fakeNodesDeps) GetLatestRunForNode(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.NodeRunLatest, error) {
-	return nil, nil
-}
-func (f *fakeNodesDeps) GetLatestRunInScope(_ context.Context, _ persistence.Tx, _, _ shared.UUID) (*persistence.NodeRunLatest, error) {
 	return nil, nil
 }
 func (f *fakeNodesDeps) ListRunsForInstanceByStates(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []cascade.NodeState) ([]persistence.NodeRunLatest, error) {

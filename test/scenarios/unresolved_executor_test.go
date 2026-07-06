@@ -22,12 +22,15 @@ import (
 
 func TestUnresolvedExecutor(t *testing.T) {
 	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{NoSupervisor: true})
+	h := scenario.Start(t, scenario.HarnessOpts{
+		NoSupervisor:      true,
+		RefValidationMode: node.RefValidateNone,
+	})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "ghost", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "ghost", Executor: "stub"}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "ghost", Executor: "does_not_exist_unknown"}),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-ghost", map[string]any{})
@@ -35,19 +38,12 @@ func TestUnresolvedExecutor(t *testing.T) {
 	n := h.FindNode(iid, "ghost")
 	require.NotNil(t, n)
 
-	_, err := h.Pool.Exec(h.Ctx,
-		`UPDATE rimsky_nodes SET executor = $1 WHERE id = $2`,
-		"does_not_exist_unknown", n.ID,
-	)
-	require.NoError(t, err)
-
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	_, err = h.Pool.Exec(h.Ctx,
+	_, err := h.Pool.Exec(h.Ctx,
 		`UPDATE rimsky_node_runs
-		    SET executor_name = 'stub',
-		        required_stores = '{}',
+		    SET required_stores = '{}',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
 		        enqueued_at = NOW() - INTERVAL '5 seconds'
@@ -73,7 +69,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},
 		SupervisorID:      "scenario-runner",
-		AcceptedExecutors: []string{"stub"},
+		AcceptedExecutors: []string{"does_not_exist_unknown"},
 		Pool:              pool,
 		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
 		LivenessInterval:  100 * time.Millisecond,

@@ -172,7 +172,7 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 	var post postCommitFn
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		parkTimeoutSig := "terminal/error/park_timeout"
-		if err := args.Persist.Nodes().UpdateState(ctx, row.NodeID, runScopeID,
+		if err := args.Persist.Nodes().UpdateState(ctx, row.DispatchID,
 			cascade.NodeStateFailed, cascade.ReasonParkTimeout, &parkTimeoutSig, tx); err != nil {
 			return err
 		}

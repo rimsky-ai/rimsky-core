@@ -89,7 +89,7 @@ func (noopNodes) ListPureCascadeReady(context.Context, persistence.Tx) ([]persis
 func (noopNodes) CountByState(context.Context, persistence.Tx) (map[cascade.NodeState]int, error) {
 	return nil, nil
 }
-func (noopNodes) UpdateState(context.Context, shared.UUID, shared.UUID, cascade.NodeState, cascade.TransitionReason, *string, persistence.Tx) error {
+func (noopNodes) UpdateState(context.Context, shared.UUID, cascade.NodeState, cascade.TransitionReason, *string, persistence.Tx) error {
 	return nil
 }
 func (noopNodes) UpdateError(context.Context, shared.UUID, spec.EvaluatorState, persistence.Tx) error {
@@ -136,9 +136,6 @@ func (noopNodes) LockReceiverCascade(context.Context, persistence.Tx, shared.UUI
 	return nil
 }
 func (noopNodes) GetLatestRunForNode(context.Context, persistence.Tx, shared.UUID) (*persistence.NodeRunLatest, error) {
-	return nil, nil
-}
-func (noopNodes) GetLatestRunInScope(context.Context, persistence.Tx, shared.UUID, shared.UUID) (*persistence.NodeRunLatest, error) {
 	return nil, nil
 }
 func (noopNodes) ListRunsForInstanceByStates(context.Context, persistence.Tx, shared.UUID, []cascade.NodeState) ([]persistence.NodeRunLatest, error) {

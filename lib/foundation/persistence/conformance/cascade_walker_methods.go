@@ -201,12 +201,11 @@ func testCreateNonCascadeStaleCarriesForward(t *testing.T, d persistence.Databas
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.Nodes().UpdateState(ctx, fix.NodeID, fix.MainRunScopeID,
+		return store.Nodes().UpdateState(ctx, priorRunID,
 			cascade.NodeStateFresh, cascade.ReasonPureCascade, nil, tx)
 	}); err != nil {
 		t.Fatalf("settle prior run: %v", err)
 	}
-	_ = priorRunID
 
 	var newRunID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

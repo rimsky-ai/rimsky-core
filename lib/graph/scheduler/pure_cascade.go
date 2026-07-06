@@ -67,7 +67,7 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 	sb := args.Persist
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pureCascadeSig := "terminal/success"
-		if err := sb.Nodes().UpdateState(ctx, n.NodeID, n.RunScopeID, cascade.NodeStateFresh, cascade.ReasonPureCascade, &pureCascadeSig, tx); err != nil {
+		if err := sb.Nodes().UpdateState(ctx, n.RunID, cascade.NodeStateFresh, cascade.ReasonPureCascade, &pureCascadeSig, tx); err != nil {
 			return err
 		}
 		if err := args.Queue.RemoveForNodeInTx(ctx, n.NodeID, n.RunScopeID, "", tx); err != nil {

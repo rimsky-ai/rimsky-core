@@ -98,37 +98,31 @@ func applyErrorPolicyWithScratch(
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
 	settlingSig := string(sig.Type)
+	run, rerr := args.Persist.Nodes().GetRunForGate(ctx, tx, acq.DispatchID)
+	if rerr != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: run lookup: %w", rerr)
+	}
+	var curState cascade.NodeState
+	if run != nil {
+		curState = run.State
+	}
 	if resolved.Kind == spec.ActionPass {
-		latest, lerr := args.Persist.Nodes().GetLatestRunInScope(ctx, tx, acq.NodeID, acq.RunScopeID)
-		if lerr != nil {
-			return nil, fmt.Errorf("applyErrorPolicy: latest run lookup: %w", lerr)
-		}
-		var curState cascade.NodeState
-		if latest != nil {
-			curState = latest.State
-		}
 		switch curState {
 		case cascade.NodeStateRunning:
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
 				cascade.NodeStateFresh, cascade.ReasonHandlerPass, &settlingSig, tx); err != nil {
 				return nil, err
 			}
 		case cascade.NodeStateStale:
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
 				cascade.NodeStateFresh, cascade.ReasonAcquirePass, &settlingSig, tx); err != nil {
 				return nil, err
 			}
 		}
-	} else {
-		latest, lerr := args.Persist.Nodes().GetLatestRunInScope(ctx, tx, acq.NodeID, acq.RunScopeID)
-		if lerr != nil {
-			return nil, fmt.Errorf("applyErrorPolicy: latest run lookup: %w", lerr)
-		}
-		if latest != nil && (latest.State == cascade.NodeStateRunning || latest.State == cascade.NodeStateStale) {
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-				cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
-				return nil, err
-			}
+	} else if curState == cascade.NodeStateRunning || curState == cascade.NodeStateStale {
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
+			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
+			return nil, err
 		}
 	}
 	if err := emitSignalInTxOnce(ctx, args, tx,
@@ -232,12 +226,12 @@ func applyInfraGiveUp(
 		return nil, fmt.Errorf("applyInfraGiveUp: %w", err)
 	}
 	settlingSig := "terminal/error/" + errorClass
-	latest, lerr := args.Persist.Nodes().GetLatestRunInScope(ctx, tx, acq.NodeID, acq.RunScopeID)
-	if lerr != nil {
-		return nil, fmt.Errorf("applyInfraGiveUp: latest run lookup: %w", lerr)
+	run, rerr := args.Persist.Nodes().GetRunForGate(ctx, tx, acq.DispatchID)
+	if rerr != nil {
+		return nil, fmt.Errorf("applyInfraGiveUp: run lookup: %w", rerr)
 	}
-	if latest != nil && (latest.State == cascade.NodeStateRunning || latest.State == cascade.NodeStateStale) {
-		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+	if run != nil && (run.State == cascade.NodeStateRunning || run.State == cascade.NodeStateStale) {
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.DispatchID,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
 			return nil, err
 		}

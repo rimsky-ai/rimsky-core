@@ -679,7 +679,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			}
 			for _, r := range runs {
 				sig := "terminal/error/instance_killed"
-				if err := deps.Persist.Nodes().UpdateState(ctx, r.NodeID, r.RunScopeID,
+				if err := deps.Persist.Nodes().UpdateState(ctx, r.RunID,
 					cascade.NodeStateFailed, cascade.ReasonInstanceKilled, &sig, tx); err != nil {
 					return err
 				}

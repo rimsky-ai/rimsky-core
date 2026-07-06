@@ -96,7 +96,7 @@ func parkRun(ctx context.Context, t *testing.T, d persistence.Database, in persi
 		if row == nil {
 			return nil
 		}
-		return d.Tables().Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+		return d.Tables().Nodes().UpdateState(ctx, in.DispatchID,
 			cascade.NodeStateParked, cascade.ReasonHandlerPark, nil, tx)
 	}); err != nil {
 		t.Fatalf("ParkActiveInTx(%s): %v", in.DispatchID, err)
@@ -115,7 +115,7 @@ func resumeRunInTx(ctx context.Context, d persistence.Database, tx persistence.T
 	if row == nil {
 		return true, nil
 	}
-	if err := d.Tables().Nodes().UpdateState(ctx, row.NodeID, row.RunScopeID,
+	if err := d.Tables().Nodes().UpdateState(ctx, dispatchID,
 		cascade.NodeStateStale, cascade.ReasonDeadlineResume, nil, tx); err != nil {
 		return false, err
 	}

@@ -77,7 +77,7 @@ type NodeTable interface {
 	CountDistinctNodesWithRuns(ctx context.Context, tx Tx) (int, error)
 	ListPureCascadeReady(ctx context.Context, tx Tx) ([]PureCascadeReadyRow, error)
 	CountByState(ctx context.Context, tx Tx) (map[cascade.NodeState]int, error)
-	UpdateState(ctx context.Context, id shared.UUID, runScopeID shared.UUID, state cascade.NodeState, reason cascade.TransitionReason, settlingSignalType *string, tx Tx) error
+	UpdateState(ctx context.Context, nodeRunID shared.UUID, state cascade.NodeState, reason cascade.TransitionReason, settlingSignalType *string, tx Tx) error
 	// @concept: error-policy
 	UpdateRunEvaluatorState(ctx context.Context, runID shared.UUID, es spec.EvaluatorState, tx Tx) error
 	// @concept: error-policy
@@ -134,9 +134,6 @@ type NodeTable interface {
 
 	// @concept: node-run
 	GetLatestRunForNode(ctx context.Context, tx Tx, nodeID shared.UUID) (*NodeRunLatest, error)
-
-	// @concept: node-run
-	GetLatestRunInScope(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID) (*NodeRunLatest, error)
 
 	// @concept: node-run
 	ListRunsForInstanceByStates(ctx context.Context, tx Tx, instanceID shared.UUID, states []cascade.NodeState) ([]NodeRunLatest, error)
