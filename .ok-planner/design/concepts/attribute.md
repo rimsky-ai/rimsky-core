@@ -64,6 +64,8 @@ Carry-forward is bounded by the RunScope, and RunScopes never span frames (per `
 
 The canonical stateful-property pattern for a receiver reading its own prior work within one frame's cascade rounds is `readOnly: true` plus executor writeback; carry-forward is its expected behavior. Authors expecting state to persist across frames explicitly thread it through the message payload — no persisted attribute row is ever consulted across a frame boundary.
 
+Clarifying note on when defaults materialize: the fresh-scope defaults guarantee is realized in two steps, not one. At row creation the per-run attribute row is written with an empty bag — there is no prior run in the scope to copy, and schema defaults are not materialized at this moment. The effective bag — schema defaults overlaid by resolved substitution sources — is computed and persisted at the substitution moment (see the substitution-timing invariant above): for cascade rows that is the pending→stale gate transition, so a pending row's ledger entry reads empty until its gate fires; for non-cascade rows the two steps coincide in the row-creation transaction. Execution-time behavior always matches the guarantee — no dispatch ever runs against the empty bag — but a reader inspecting the raw ledger row of a not-yet-gated run sees an empty bag, not the defaults. Do not read the ledger expecting defaults to be present before the substitution moment.
+
 ## Static-default properties
 
 A schema property declared with a static default and no source binding is a static-default property. Its value is set from the effective schema at registration; instance-level executor-keyed and node-keyed overrides replace the default at dispatch.
