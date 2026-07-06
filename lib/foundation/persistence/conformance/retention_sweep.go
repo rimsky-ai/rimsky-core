@@ -110,7 +110,7 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 	}
 	terminate := func(fid shared.UUID, label string) {
 		frameOp(ctx, t, d, "terminate "+label, func(tx persistence.Tx) error {
-			transitioned, err := frames.MarkRunningFrameTerminal(ctx, fid, persistence.FrameStateCompleted, tx)
+			transitioned, err := frames.MarkFrameEnded(ctx, fid, tx)
 			if err != nil {
 				return err
 			}
@@ -199,7 +199,7 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 	}
 	frameOp(ctx, t, d, "running frame survives everything", func(tx persistence.Tx) error {
 		row, err := frames.GetForObservability(ctx, runningF, tx)
-		if err != nil || row == nil || row.State != persistence.FrameStateRunning {
+		if err != nil || row == nil || row.State != "running" {
 			t.Fatalf("running frame after sweeps: row=%+v err=%v, want state=running", row, err)
 		}
 		return nil

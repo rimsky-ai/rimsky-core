@@ -53,8 +53,8 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	require.NoError(t, err)
 	var frameID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, started_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, 'running', now(), 600000, $3)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, started_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, now(), 600000, $3)
 		RETURNING frame_id
 	`, uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)).Scan(&frameID))
 	var seededRunID uuid.UUID
@@ -95,7 +95,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
 		SELECT count(*) FROM rimsky_node_runs r
 		JOIN rimsky_frames f ON f.frame_id = r.frame_id
-		WHERE f.state = 'running'
+		WHERE f.ended_at IS NULL
 		  AND r.state IN ('pending','stale','running','held','parked')
 		  AND r.state IN ('stale','running')
 	`).Scan(&inflight))

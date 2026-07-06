@@ -57,7 +57,7 @@ func TestMessageQueueCoalesce_DropsPriorPendingOnReceipt(t *testing.T) {
 	for time.Now().Before(deadline) {
 		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_messages WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE`,
 			[]any{iid}, &pending)
-		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 			[]any{iid}, &running)
 		if pending == 0 && running == 0 {
 			break
@@ -123,7 +123,7 @@ func TestMessageQueueCoalesce_BacklogModePreservesEveryMessage(t *testing.T) {
 	for time.Now().Before(deadline) {
 		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_messages WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE`,
 			[]any{iid}, &pending)
-		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 			[]any{iid}, &running)
 		if pending == 0 && running == 0 {
 			break

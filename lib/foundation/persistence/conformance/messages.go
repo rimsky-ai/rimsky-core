@@ -30,7 +30,7 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 	frameBMsgID := shared.UUID(uuid.New())
 	var frameB shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if _, err := store.Frames().MarkRunningFrameTerminal(ctx, frameA, persistence.FrameStateCompleted, tx); err != nil {
+		if _, err := store.Frames().MarkFrameEnded(ctx, frameA, tx); err != nil {
 			return err
 		}
 		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{

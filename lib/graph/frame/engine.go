@@ -70,22 +70,22 @@ func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger 
 
 func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, instanceID shared.UUID, logger Logger, metrics MetricsHook) error {
 	var transitioned bool
-	var finalState persistence.FrameState
+	var finalState string
 	var startedAt, endedAt *time.Time
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		anyFailed, err := store.Frames().HasFailedNode(ctx, instanceID, frameID, tx)
 		if err != nil {
 			return err
 		}
-		finalState = persistence.FrameStateCompleted
+		finalState = "completed"
 		if anyFailed {
-			finalState = persistence.FrameStateFailed
+			finalState = "failed"
 		}
 		row, gerr := store.Frames().GetForObservability(ctx, frameID, tx)
 		if gerr != nil {
 			return gerr
 		}
-		moved, err := store.Frames().MarkRunningFrameTerminal(ctx, frameID, finalState, tx)
+		moved, err := store.Frames().MarkFrameEnded(ctx, frameID, tx)
 		if err != nil {
 			return err
 		}

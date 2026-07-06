@@ -43,8 +43,8 @@ func TestFrameStartAtomicity(t *testing.T) {
 		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, started_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, 'running', now(), 600000, $3)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, started_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, now(), 600000, $3)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)}, &frameID)
 	h.ExecSQL(`
@@ -70,7 +70,7 @@ func TestFrameStartAtomicity(t *testing.T) {
 	var state string
 	var startedAt *time.Time
 	h.QueryRowSQL(
-		`SELECT state, started_at FROM rimsky_frames WHERE frame_id = $1`,
+		`SELECT CASE WHEN f.ended_at IS NULL THEN 'running' WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed' ELSE 'completed' END, f.started_at FROM rimsky_frames f WHERE frame_id = $1`,
 		[]any{frameID}, &state, &startedAt)
 	require.Equal(t, "running", state)
 	require.NotNil(t, startedAt, "running frame must have started_at set atomically")

@@ -97,7 +97,7 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 	var frameCount, receiverRuns int
 	for time.Now().Before(deadline) {
 		h.QueryRowSQL(
-			`SELECT count(*) FROM rimsky_frames WHERE instance_id = $1 AND state IN ('completed','failed')`,
+			`SELECT count(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NOT NULL`,
 			[]any{iid}, &frameCount)
 		h.QueryRowSQL(
 			`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,

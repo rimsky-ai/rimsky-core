@@ -56,7 +56,7 @@ func seedFrameForTest(
 			return err
 		}
 		if priorRunning != nil {
-			if _, err := h.persist.Frames().MarkRunningFrameTerminal(ctx, *priorRunning, persistence.FrameStateCompleted, tx); err != nil {
+			if _, err := h.persist.Frames().MarkFrameEnded(ctx, *priorRunning, tx); err != nil {
 				return err
 			}
 		}

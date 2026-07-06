@@ -371,7 +371,8 @@ func handleListFrames(deps Deps) http.HandlerFunc {
 			filter.InstanceID = &id
 		}
 		if s := r.URL.Query().Get("state"); s != "" {
-			filter.State = persistence.FrameState(s)
+			unresolved := s == "running"
+			filter.Unresolved = &unresolved
 		}
 		var res persistence.PaginatedListResult[persistence.FrameRow]
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {

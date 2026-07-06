@@ -211,7 +211,7 @@ WITH ranked AS (
        AND NOT EXISTS (
            SELECT 1 FROM rimsky_frames f
             WHERE f.instance_id = m.instance_id
-              AND f.state = 'running'
+              AND f.ended_at IS NULL
        )
 )
 SELECT instance_id, id FROM ranked WHERE rn = 1`

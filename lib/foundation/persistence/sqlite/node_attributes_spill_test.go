@@ -223,8 +223,8 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	}
 	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, started_at, frame_timeout_ms)
-		 VALUES (?, ?, ?, ?, 'running',
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, frame_timeout_ms)
+		 VALUES (?, ?, ?, ?,
 		         datetime('now'), 600000)`,
 		frameID, instanceID, msgID, scopeID,
 	)

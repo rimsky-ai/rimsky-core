@@ -27,8 +27,7 @@ func testQueueRebindRunFrameInTx(t *testing.T, d persistence.Database) {
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := store.Frames().MarkRunningFrameTerminal(ctx, fix.FrameID,
-			persistence.FrameStateCompleted, tx)
+		_, err := store.Frames().MarkFrameEnded(ctx, fix.FrameID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("mark original frame completed: %v", err)

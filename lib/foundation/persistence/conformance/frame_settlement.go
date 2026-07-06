@@ -158,7 +158,7 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 
 	var otherFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if _, err := frames.MarkRunningFrameTerminal(ctx, fix.FrameID, persistence.FrameStateFailed, tx); err != nil {
+		if _, err := frames.MarkFrameEnded(ctx, fix.FrameID, tx); err != nil {
 			return err
 		}
 		otherScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
@@ -226,7 +226,7 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 
 	var otherFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if _, err := frames.MarkRunningFrameTerminal(ctx, fix.FrameID, persistence.FrameStateCompleted, tx); err != nil {
+		if _, err := frames.MarkFrameEnded(ctx, fix.FrameID, tx); err != nil {
 			return err
 		}
 		otherScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
@@ -389,12 +389,12 @@ func testFrameSettlementOrphanDispatches(t *testing.T, d persistence.Database) {
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		transitioned, err := frames.MarkRunningFrameTerminal(ctx, fix.FrameID, persistence.FrameStateCompleted, tx)
+		transitioned, err := frames.MarkFrameEnded(ctx, fix.FrameID, tx)
 		if err != nil {
 			return err
 		}
 		if !transitioned {
-			t.Fatalf("MarkRunningFrameTerminal did not transition")
+			t.Fatalf("MarkFrameEnded did not transition")
 		}
 		return nil
 	}); err != nil {

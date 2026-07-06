@@ -54,8 +54,8 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 		    VALUES ($1, $2, 'fixture/retention-sweep', 'operator', 'operator')`,
 			messageID, instanceID)
 		h.ExecSQL(`INSERT INTO rimsky_frames
-		    (frame_id, instance_id, triggering_message_id, state, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
-		    VALUES ($1, $2, $3, 'completed',
+		    (frame_id, instance_id, triggering_message_id, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
+		    VALUES ($1, $2, $3,
 		            $4, $4, 600000, $5)`,
 			frameID, instanceID, messageID, endedAt, uuid.UUID(scopeID))
 
@@ -81,8 +81,8 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	    VALUES ($1, $2, 'fixture/retention-sweep-stale', 'operator', 'operator')`,
 		staleMessageID, instanceID)
 	h.ExecSQL(`INSERT INTO rimsky_frames
-	    (frame_id, instance_id, triggering_message_id, state, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
-	    VALUES ($1, $2, $3, 'completed',
+	    (frame_id, instance_id, triggering_message_id, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
+	    VALUES ($1, $2, $3,
 	            $4, $4, 600000, $5)`,
 		staleFrameID, instanceID, staleMessageID, base, uuid.UUID(scopeID))
 

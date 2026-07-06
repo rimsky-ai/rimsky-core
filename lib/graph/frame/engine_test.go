@@ -120,9 +120,9 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 		[]any{instanceID}, &rootScope)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, started_at, ended_at, frame_timeout_ms, last_progress_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    `, id, instanceID, triggeringMessageID, rootScope, state, startedAt, endedAt, timeoutMs, progressAt)
+            (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, ended_at, frame_timeout_ms, last_progress_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, id, instanceID, triggeringMessageID, rootScope, startedAt, endedAt, timeoutMs, progressAt)
 	return id
 }
 
@@ -162,7 +162,13 @@ func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {
 
 	var state string
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &state)
+		`SELECT
+		    CASE
+		        WHEN f.ended_at IS NULL THEN 'running'
+		        WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
+		        ELSE 'completed'
+		    END
+		   FROM rimsky_frames f WHERE frame_id = $1`, []any{frameID}, &state)
 	require.Equal(t, "completed", state)
 }
 
@@ -182,7 +188,13 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 
 	var state string
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &state)
+		`SELECT
+		    CASE
+		        WHEN f.ended_at IS NULL THEN 'running'
+		        WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
+		        ELSE 'completed'
+		    END
+		   FROM rimsky_frames f WHERE frame_id = $1`, []any{frameID}, &state)
 	require.Equal(t, "failed", state)
 }
 
@@ -208,13 +220,13 @@ func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
 
 	var running int
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 		[]any{instanceID}, &running)
 	require.Equal(t, 1, running, "at most one running frame per instance")
 
 	var openedTriggeringID string
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT triggering_message_id::text FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+		`SELECT triggering_message_id::text FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 		[]any{instanceID}, &openedTriggeringID)
 	require.Equal(t, msgID.String(), openedTriggeringID,
 		"oldest pending message opens the running frame")
@@ -245,7 +257,13 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 
 	var fState, nState string
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &fState)
+		`SELECT
+		    CASE
+		        WHEN f.ended_at IS NULL THEN 'running'
+		        WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
+		        ELSE 'completed'
+		    END
+		   FROM rimsky_frames f WHERE frame_id = $1`, []any{frameID}, &fState)
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT COALESCE(r.state, 'fresh')
 		   FROM rimsky_nodes n

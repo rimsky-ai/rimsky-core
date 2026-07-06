@@ -24,7 +24,7 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
 	rows, err := s.q(tx).QueryContext(ctx, `
         SELECT f.frame_id, f.instance_id
         FROM rimsky_frames f
-        WHERE f.state = 'running'
+        WHERE f.ended_at IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM rimsky_node_runs r
               WHERE r.frame_id = f.frame_id
@@ -78,19 +78,16 @@ func (s *framesImpl) HasFailedNode(ctx context.Context, instanceID, frameID shar
 	return anyFailed != 0, nil
 }
 
-func (s *framesImpl) MarkRunningFrameTerminal(
-	ctx context.Context, frameID shared.UUID, finalState persistence.FrameState, tx persistence.Tx,
+func (s *framesImpl) MarkFrameEnded(
+	ctx context.Context, frameID shared.UUID, tx persistence.Tx,
 ) (bool, error) {
-	if finalState != persistence.FrameStateCompleted && finalState != persistence.FrameStateFailed {
-		return false, fmt.Errorf("frames.MarkRunningFrameTerminal: invalid finalState %q", finalState)
-	}
 	res, err := s.q(tx).ExecContext(ctx, `
         UPDATE rimsky_frames
-        SET state = ?, ended_at = ?
-        WHERE frame_id = ? AND state = 'running'
-    `, string(finalState), nowUTC(), frameID.String())
+        SET ended_at = ?
+        WHERE frame_id = ? AND ended_at IS NULL
+    `, nowUTC(), frameID.String())
 	if err != nil {
-		return false, fmt.Errorf("frames.MarkRunningFrameTerminal: %w", err)
+		return false, fmt.Errorf("frames.MarkFrameEnded: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
@@ -123,7 +120,7 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
                            ORDER BY COALESCE(f.ended_at, f.started_at) DESC, f.frame_id DESC
                        ) AS rk
                   FROM rimsky_frames f
-                 WHERE f.state IN ('completed','failed')
+                 WHERE f.ended_at IS NOT NULL
             ) ranked
             WHERE ranked.rk > ?
                OR (ranked.ended_at IS NOT NULL AND ranked.ended_at < ?)
@@ -144,7 +141,7 @@ func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UU
 	err := s.q(tx).QueryRowContext(ctx, `
         SELECT frame_id
           FROM rimsky_frames
-         WHERE instance_id = ? AND state = 'running'
+         WHERE instance_id = ? AND ended_at IS NULL
          ORDER BY started_at DESC
          LIMIT 1
     `, instanceID.String()).Scan(&frameIDStr)
@@ -219,7 +216,7 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
 	rows, err := s.q(tx).QueryContext(ctx, `
         SELECT f.frame_id, f.instance_id, f.frame_timeout_ms, f.last_progress_at
         FROM rimsky_frames f
-        WHERE f.state = 'running'
+        WHERE f.ended_at IS NULL
           AND f.last_progress_at IS NOT NULL
           AND NOT EXISTS (
               SELECT 1 FROM rimsky_node_runs d
@@ -279,7 +276,7 @@ func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persisten
         FROM rimsky_node_runs d
         JOIN rimsky_frames f ON f.frame_id = d.frame_id
         WHERE d.claimed_by IS NOT NULL
-          AND f.state IN ('completed','failed')
+          AND f.ended_at IS NOT NULL
     `)
 	if err != nil {
 		return nil, fmt.Errorf("frames.ListOrphanFrameDispatches: %w", err)
@@ -336,8 +333,8 @@ func (s *framesImpl) InsertRunningFrame(
 	now := nowUTC()
 	_, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, triggering_message_id, root_run_scope_id, state, started_at, frame_timeout_ms, last_progress_at)
-        VALUES (?, ?, ?, ?, 'running', ?, ?, ?)
+            (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, frame_timeout_ms, last_progress_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     `, frameID.String(), instanceID.String(), triggeringMessageID.String(), rootRunScopeID.String(),
 		now, frameTimeoutMs, now)
 	if err != nil {
@@ -351,12 +348,16 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 	if limit <= 0 {
 		limit = 50
 	}
-	var instArg, stateArg, triggerArg any
+	var instArg, unresolvedArg, triggerArg any
 	if filter.InstanceID != nil {
 		instArg = filter.InstanceID.String()
 	}
-	if filter.State != "" {
-		stateArg = string(filter.State)
+	if filter.Unresolved != nil {
+		if *filter.Unresolved {
+			unresolvedArg = 1
+		} else {
+			unresolvedArg = 0
+		}
 	}
 	if filter.TriggeringMessageID != nil {
 		triggerArg = filter.TriggeringMessageID.String()
@@ -371,15 +372,21 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		cursorFid = fid.String()
 	}
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT frame_id, instance_id, state, triggering_message_id, root_run_scope_id, started_at, ended_at, last_progress_at, frame_timeout_ms
-		   FROM rimsky_frames
-		  WHERE (? IS NULL OR instance_id = ?)
-		    AND (? IS NULL OR state = ?)
-		    AND (? IS NULL OR (started_at, frame_id) < (?, ?))
-		    AND (? IS NULL OR triggering_message_id = ?)
-		  ORDER BY started_at DESC, frame_id DESC
+		`SELECT f.frame_id, f.instance_id,
+		        CASE
+		            WHEN f.ended_at IS NULL THEN 'running'
+		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
+		            ELSE 'completed'
+		        END AS state,
+		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms
+		   FROM rimsky_frames f
+		  WHERE (? IS NULL OR f.instance_id = ?)
+		    AND (? IS NULL OR (? = 1 AND f.ended_at IS NULL) OR (? = 0 AND f.ended_at IS NOT NULL))
+		    AND (? IS NULL OR (f.started_at, f.frame_id) < (?, ?))
+		    AND (? IS NULL OR f.triggering_message_id = ?)
+		  ORDER BY f.started_at DESC, f.frame_id DESC
 		  LIMIT ?`,
-		instArg, instArg, stateArg, stateArg, cursorQAt, cursorQAt, cursorFid, triggerArg, triggerArg, limit,
+		instArg, instArg, unresolvedArg, unresolvedArg, unresolvedArg, cursorQAt, cursorQAt, cursorFid, triggerArg, triggerArg, limit,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.FrameRow]{}, err
@@ -416,7 +423,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		}
 		r.FrameID = fid
 		r.InstanceID = iid
-		r.State = persistence.FrameState(state)
+		r.State = state
 		r.TriggeringMessageID = mid
 		if rootScope != "" {
 			rsid, err := uuid.Parse(rootScope)
@@ -499,7 +506,7 @@ func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (in
 		`SELECT COUNT(DISTINCT f.frame_id)
 		   FROM rimsky_frames f
 		   JOIN rimsky_node_runs d ON d.frame_id = f.frame_id
-		  WHERE f.state = 'running' AND d.state = 'parked'`,
+		  WHERE f.ended_at IS NULL AND d.state = 'parked'`,
 	).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("frames.CountHeldFrames: %w", err)
@@ -512,16 +519,22 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 		r              persistence.FrameRow
 		fidStr         string
 		iidStr         string
-		state          string
 		triggeringMsg  string
 		rootScope      string
 		startedAt      sql.NullString
 		endedAt        sql.NullString
 		lastProgressAt sql.NullString
 	)
+	var state string
 	err := s.q(tx).QueryRowContext(ctx,
-		`SELECT frame_id, instance_id, state, triggering_message_id, root_run_scope_id, started_at, ended_at, last_progress_at, frame_timeout_ms
-		   FROM rimsky_frames WHERE frame_id = ?`,
+		`SELECT f.frame_id, f.instance_id,
+		        CASE
+		            WHEN f.ended_at IS NULL THEN 'running'
+		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
+		            ELSE 'completed'
+		        END AS state,
+		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms
+		   FROM rimsky_frames f WHERE f.frame_id = ?`,
 		frameID.String(),
 	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs)
 	if err != nil {
@@ -544,7 +557,7 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 	}
 	r.FrameID = fid
 	r.InstanceID = iid
-	r.State = persistence.FrameState(state)
+	r.State = state
 	r.TriggeringMessageID = mid
 	if rootScope != "" {
 		rsid, err := uuid.Parse(rootScope)
@@ -579,7 +592,6 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 		r              persistence.FrameRowWithMessage
 		fidStr         string
 		iidStr         string
-		state          string
 		triggeringMsg  string
 		rootScope      string
 		startedAt      sql.NullString
@@ -589,8 +601,15 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 		mSender        sql.NullString
 		mKind          sql.NullString
 	)
+	var state string
 	err := s.q(tx).QueryRowContext(ctx,
-		`SELECT f.frame_id, f.instance_id, f.state, f.triggering_message_id, f.root_run_scope_id,
+		`SELECT f.frame_id, f.instance_id,
+		        CASE
+		            WHEN f.ended_at IS NULL THEN 'running'
+		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
+		            ELSE 'completed'
+		        END AS state,
+		        f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms,
 		        m.type, m.sender, m.sender_kind
 		   FROM rimsky_frames f
@@ -619,7 +638,7 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 	}
 	r.FrameID = fid
 	r.InstanceID = iid
-	r.State = persistence.FrameState(state)
+	r.State = state
 	r.TriggeringMessageID = mid
 	if rootScope != "" {
 		rsid, err := uuid.Parse(rootScope)
@@ -663,12 +682,16 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 	if limit <= 0 {
 		limit = 50
 	}
-	var instArg, stateArg, triggerArg any
+	var instArg, unresolvedArg, triggerArg any
 	if filter.InstanceID != nil {
 		instArg = filter.InstanceID.String()
 	}
-	if filter.State != "" {
-		stateArg = string(filter.State)
+	if filter.Unresolved != nil {
+		if *filter.Unresolved {
+			unresolvedArg = 1
+		} else {
+			unresolvedArg = 0
+		}
 	}
 	if filter.TriggeringMessageID != nil {
 		triggerArg = filter.TriggeringMessageID.String()
@@ -683,18 +706,24 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		cursorFid = fid.String()
 	}
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT f.frame_id, f.instance_id, f.state, f.triggering_message_id, f.root_run_scope_id,
+		`SELECT f.frame_id, f.instance_id,
+		        CASE
+		            WHEN f.ended_at IS NULL THEN 'running'
+		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
+		            ELSE 'completed'
+		        END AS state,
+		        f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms,
 		        m.type, m.sender, m.sender_kind
 		   FROM rimsky_frames f
 		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
 		  WHERE (? IS NULL OR f.instance_id = ?)
-		    AND (? IS NULL OR f.state = ?)
+		    AND (? IS NULL OR (? = 1 AND f.ended_at IS NULL) OR (? = 0 AND f.ended_at IS NOT NULL))
 		    AND (? IS NULL OR (f.started_at, f.frame_id) < (?, ?))
 		    AND (? IS NULL OR f.triggering_message_id = ?)
 		  ORDER BY f.started_at DESC, f.frame_id DESC
 		  LIMIT ?`,
-		instArg, instArg, stateArg, stateArg, cursorQAt, cursorQAt, cursorFid, triggerArg, triggerArg, limit,
+		instArg, instArg, unresolvedArg, unresolvedArg, unresolvedArg, cursorQAt, cursorQAt, cursorFid, triggerArg, triggerArg, limit,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
@@ -735,7 +764,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		}
 		r.FrameID = fid
 		r.InstanceID = iid
-		r.State = persistence.FrameState(state)
+		r.State = state
 		r.TriggeringMessageID = mid
 		if rootScope != "" {
 			rsid, err := uuid.Parse(rootScope)

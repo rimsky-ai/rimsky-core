@@ -69,8 +69,9 @@ func SweepDeliverMessagesForRunningFrames(
 	for {
 		var page persistence.PaginatedListResult[persistence.FrameRow]
 		if err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			unresolved := true
 			p, err := persist.Frames().ListForObservability(ctx,
-				persistence.FrameListFilter{State: persistence.FrameStateRunning},
+				persistence.FrameListFilter{Unresolved: &unresolved},
 				pag, tx)
 			page = p
 			return err

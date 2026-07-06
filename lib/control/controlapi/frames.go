@@ -55,7 +55,8 @@ func handleListInstanceFrames(deps AppDeps) http.HandlerFunc {
 		instUUID := shared.UUID(instanceID)
 		filter.InstanceID = &instUUID
 		if s := q.Get("state"); s != "" {
-			filter.State = persistence.FrameState(s)
+			unresolved := s == "running"
+			filter.Unresolved = &unresolved
 		}
 		if tm := q.Get("triggering_message_id"); tm != "" {
 			parsed, perr := uuid.Parse(tm)

@@ -28,10 +28,16 @@ func listFrames(t *testing.T, h *scenario.Harness, instanceID shared.UUID) []fra
 	t.Helper()
 	var out []frameRow
 	h.QuerySQL(`
-		SELECT frame_id, instance_id, state, triggering_message_id, started_at, ended_at, frame_timeout_ms
-		FROM rimsky_frames
-		WHERE instance_id = $1
-		ORDER BY started_at ASC
+		SELECT f.frame_id, f.instance_id,
+		       CASE
+		           WHEN f.ended_at IS NULL THEN 'running'
+		           WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
+		           ELSE 'completed'
+		       END,
+		       f.triggering_message_id, f.started_at, f.ended_at, f.frame_timeout_ms
+		FROM rimsky_frames f
+		WHERE f.instance_id = $1
+		ORDER BY f.started_at ASC
 	`, []any{uuid.UUID(instanceID)}, func(scan func(...any) error) error {
 		var r frameRow
 		if err := scan(
@@ -50,7 +56,13 @@ func countFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.UUI
 	t.Helper()
 	var n int
 	h.QueryRowSQL(`
-		SELECT count(*) FROM rimsky_frames WHERE instance_id = $1 AND state = $2
+		SELECT count(*) FROM rimsky_frames f
+		 WHERE instance_id = $1
+		   AND CASE
+		         WHEN f.ended_at IS NULL THEN 'running'
+		         WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
+		         ELSE 'completed'
+		       END = $2
 	`, []any{uuid.UUID(instanceID), state}, &n)
 	return n
 }

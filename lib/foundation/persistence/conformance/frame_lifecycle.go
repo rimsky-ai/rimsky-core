@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -28,14 +29,14 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 	frames := d.Tables().Frames()
 
 	frameOp(ctx, t, d, "MarkRunningFrameTerminal (initial)", func(tx persistence.Tx) error {
-		transitioned, err := frames.MarkRunningFrameTerminal(ctx, fix.FrameID, persistence.FrameStateCompleted, tx)
+		transitioned, err := frames.MarkFrameEnded(ctx, fix.FrameID, tx)
 		if err != nil {
 			return err
 		}
 		if !transitioned {
 			t.Fatalf("MarkRunningFrameTerminal did not transition the running frame")
 		}
-		transitioned, err = frames.MarkRunningFrameTerminal(ctx, fix.FrameID, persistence.FrameStateCompleted, tx)
+		transitioned, err = frames.MarkFrameEnded(ctx, fix.FrameID, tx)
 		if err != nil {
 			return err
 		}
@@ -49,7 +50,7 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		if err != nil {
 			return err
 		}
-		if row == nil || row.State != persistence.FrameStateCompleted || row.EndedAt == nil {
+		if row == nil || row.State != "completed" || row.EndedAt == nil {
 			t.Fatalf("terminal frame row = %+v, want state=completed with ended_at", row)
 		}
 		return nil
@@ -87,7 +88,7 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		if err != nil {
 			return err
 		}
-		if row == nil || row.State != persistence.FrameStateRunning || row.StartedAt == nil {
+		if row == nil || row.State != "running" || row.StartedAt == nil {
 			t.Fatalf("running frame row = %+v, want state=running with started_at", row)
 		}
 		id, err := frames.GetRunningFrameID(ctx, fix.InstanceID, tx)
@@ -115,19 +116,25 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		t.Fatalf("InsertRunningFrame while another running frame exists must fail; got nil")
 	}
 
-	frameOp(ctx, t, d, "MarkRunningFrameTerminal failed", func(tx persistence.Tx) error {
-		transitioned, err := frames.MarkRunningFrameTerminal(ctx, f2, persistence.FrameStateFailed, tx)
+	failedRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, f2)
+	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
+		return d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, failedRunID, cascade.NodeStateFailed, nil)
+	}); err != nil {
+		t.Fatalf("seed failed node_run for f2: %v", err)
+	}
+	frameOp(ctx, t, d, "MarkFrameEnded (failed derivation)", func(tx persistence.Tx) error {
+		transitioned, err := frames.MarkFrameEnded(ctx, f2, tx)
 		if err != nil {
 			return err
 		}
 		if !transitioned {
-			t.Fatalf("failed-state MarkRunningFrameTerminal did not transition")
+			t.Fatalf("MarkFrameEnded did not transition f2")
 		}
 		row, err := frames.GetForObservability(ctx, f2, tx)
 		if err != nil {
 			return err
 		}
-		if row == nil || row.State != persistence.FrameStateFailed || row.EndedAt == nil {
+		if row == nil || row.State != "failed" || row.EndedAt == nil {
 			t.Fatalf("failed frame row = %+v, want state=failed with ended_at", row)
 		}
 		return nil

@@ -46,8 +46,8 @@ func TestFrameTimeoutWarning(t *testing.T) {
 		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, started_at, last_progress_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, 'running', now() - interval '3 minutes', now() - interval '2 minutes', 60000, $3)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, started_at, last_progress_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, now() - interval '3 minutes', now() - interval '2 minutes', 60000, $3)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)}, &frameID)
 
@@ -69,7 +69,7 @@ func TestFrameTimeoutWarning(t *testing.T) {
 		"warning should mention frame_id %s; got %q", frameID.String(), logged)
 
 	var state string
-	h.QueryRowSQL(`SELECT state FROM rimsky_frames WHERE frame_id = $1`,
+	h.QueryRowSQL(`SELECT CASE WHEN f.ended_at IS NULL THEN 'running' WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed' ELSE 'completed' END FROM rimsky_frames f WHERE frame_id = $1`,
 		[]any{frameID}, &state)
 	require.Equal(t, "running", state,
 		"stuck-frame warning must not transition the frame to terminal")

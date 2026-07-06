@@ -100,8 +100,8 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 		VALUES ($1, $2, 'fixture/orphan-reaper', 'operator', 'operator')
 	`, messageID, instanceID)
 	h.ExecSQL(`
-		INSERT INTO rimsky_frames (frame_id, instance_id, triggering_message_id, state, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, $3, 'completed', $4, $4, 600000, $5)
+		INSERT INTO rimsky_frames (frame_id, instance_id, triggering_message_id, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, $3, $4, $4, 600000, $5)
 	`, frameID, instanceID, messageID, now, mainScopeID)
 	nodeRunID := uuid.New()
 	h.ExecSQL(`

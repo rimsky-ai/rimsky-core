@@ -236,14 +236,14 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 	{
 		var count int
 		pgtest.QueryRowForTest(ctx, t, f.driver,
-			`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+			`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 			[]any{instanceID}, &count)
 		var fid shared.UUID
 		if count == 0 {
 			fid = pcSeedFrame(ctx, t, f, instanceID, id)
 		} else {
 			pgtest.QueryRowForTest(ctx, t, f.driver,
-				`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND state = 'running' LIMIT 1`,
+				`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL LIMIT 1`,
 				[]any{instanceID}, &fid)
 		}
 		frameN = sql.NullString{String: fid.String(), Valid: true}
@@ -263,7 +263,7 @@ func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, no
 	t.Helper()
 	var count int
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 		[]any{instanceID}, &count)
 	var frameID shared.UUID
 	if count == 0 {
@@ -279,14 +279,14 @@ func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, no
         `, msgID, instanceID)
 		pgtest.QueryRowForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_frames
-                (instance_id, triggering_message_id, root_run_scope_id, state, started_at, frame_timeout_ms)
-            VALUES ($1, $2, $3, 'running', now(), 600000)
+                (instance_id, triggering_message_id, root_run_scope_id, started_at, frame_timeout_ms)
+            VALUES ($1, $2, $3, now(), 600000)
             RETURNING frame_id
         `, []any{instanceID, msgID, rootScope}, &frameID)
 		_ = nodeID
 	} else {
 		pgtest.QueryRowForTest(ctx, t, f.driver,
-			`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND state = 'running' LIMIT 1`,
+			`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL LIMIT 1`,
 			[]any{instanceID}, &frameID)
 	}
 	_ = nodeID

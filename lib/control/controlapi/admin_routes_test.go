@@ -175,8 +175,8 @@ func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID s
 		msgID, instID,
 	)
 	pgtest.QueryRowForTest(ctx, t, h.driver,
-		`INSERT INTO rimsky_frames(instance_id, triggering_message_id, root_run_scope_id, state, started_at, last_progress_at, frame_timeout_ms)
-		 VALUES ($1, $2, $3, 'running', now(), now(), 600000)
+		`INSERT INTO rimsky_frames(instance_id, triggering_message_id, root_run_scope_id, started_at, last_progress_at, frame_timeout_ms)
+		 VALUES ($1, $2, $3, now(), now(), 600000)
 		 RETURNING frame_id`,
 		[]any{instID, msgID, mainScopeID}, &frameID,
 	)

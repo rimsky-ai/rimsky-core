@@ -44,8 +44,8 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, started_at, last_progress_at, frame_timeout_ms, root_run_scope_id)
-		VALUES ($1, $2, 'running', now() - interval '5 minutes', now() - interval '5 minutes', $3, $4)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, started_at, last_progress_at, frame_timeout_ms, root_run_scope_id)
+		VALUES ($1, $2, now() - interval '5 minutes', now() - interval '5 minutes', $3, $4)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), messageID, int64(timeoutMs), uuid.UUID(mainScopeID)}, &frameID)
 	h.ExecSQL(`
@@ -60,7 +60,7 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 		h.ExecSQL(`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`, frameID)
 		require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(), progressLogger))
 		var state string
-		h.QueryRowSQL(`SELECT state FROM rimsky_frames WHERE frame_id = $1`,
+		h.QueryRowSQL(`SELECT CASE WHEN f.ended_at IS NULL THEN 'running' WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed' ELSE 'completed' END FROM rimsky_frames f WHERE frame_id = $1`,
 			[]any{frameID}, &state)
 		require.Equal(t, "running", state,
 			"progressing frame stays running — iteration %d", i)
@@ -77,7 +77,7 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 		"once last_progress_at falls outside the timeout window, the observer must warn; got logger output: %q",
 		stuckBuf.String())
 	var finalState string
-	h.QueryRowSQL(`SELECT state FROM rimsky_frames WHERE frame_id = $1`,
+	h.QueryRowSQL(`SELECT CASE WHEN f.ended_at IS NULL THEN 'running' WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed' ELSE 'completed' END FROM rimsky_frames f WHERE frame_id = $1`,
 		[]any{frameID}, &finalState)
 	require.Equal(t, "running", finalState,
 		"observer is non-destructive; frame must stay running even after the warning fires")

@@ -451,8 +451,8 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	frameID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, state, started_at, triggering_message_id, root_run_scope_id, frame_timeout_ms)
-        VALUES ($1, $2, 'running', now(), $3, $4, 60000)
+            (frame_id, instance_id, started_at, triggering_message_id, root_run_scope_id, frame_timeout_ms)
+        VALUES ($1, $2, now(), $3, $4, 60000)
     `, frameID, inst.ID, msgID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs

@@ -11,14 +11,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-type FrameState string
-
-const (
-	FrameStateRunning   FrameState = "running"
-	FrameStateCompleted FrameState = "completed"
-	FrameStateFailed    FrameState = "failed"
-)
-
 type FramePending struct {
 	FrameID    shared.UUID
 	InstanceID shared.UUID
@@ -39,7 +31,7 @@ type OrphanFrameDispatch struct {
 type FrameRow struct {
 	FrameID             shared.UUID `json:"frame_id"`
 	InstanceID          shared.UUID `json:"instance_id"`
-	State               FrameState  `json:"state"`
+	State               string      `json:"state"`
 	TriggeringMessageID shared.UUID `json:"triggering_message_id"`
 	RootRunScopeID      shared.UUID `json:"root_run_scope_id"`
 	StartedAt           *time.Time  `json:"started_at,omitempty"`
@@ -57,7 +49,7 @@ type FrameRowWithMessage struct {
 
 type FrameListFilter struct {
 	InstanceID          *shared.UUID
-	State               FrameState
+	Unresolved          *bool
 	TriggeringMessageID *shared.UUID
 }
 
@@ -66,7 +58,7 @@ type FrameTable interface {
 
 	HasFailedNode(ctx context.Context, instanceID, frameID shared.UUID, tx Tx) (bool, error)
 
-	MarkRunningFrameTerminal(ctx context.Context, frameID shared.UUID, finalState FrameState, tx Tx) (transitioned bool, err error)
+	MarkFrameEnded(ctx context.Context, frameID shared.UUID, tx Tx) (transitioned bool, err error)
 
 	GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx Tx) (*shared.UUID, error)
 

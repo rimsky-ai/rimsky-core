@@ -67,9 +67,9 @@ func seedWaitSetParentsPG(
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, state,
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id,
 		    frame_timeout_ms, started_at)
-		 VALUES ($1, $2, $3, $4, 'running', 60000, now())`,
+		 VALUES ($1, $2, $3, $4, 60000, now())`,
 		frame, instanceID, messageID, mainRunScopeID,
 	)
 	pgtest.ExecForTest(ctx, t, d,
