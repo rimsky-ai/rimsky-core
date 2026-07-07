@@ -266,7 +266,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 	callbackToken := uuid.NewString()
 	renderedUser := opts.UserPrompt + "\n\n---\n" +
 		"callback_token: " + callbackToken + "\n" +
-		"binding_id: " + opts.SessionID + "\n" +
+		"binding_id: " + opts.NodeRunID + "\n" +
 		"---\n"
 
 	dispatchMcp, err := StartInternalMcpServer(InternalMcpOpts{Host: "127.0.0.1", Logger: logger})
