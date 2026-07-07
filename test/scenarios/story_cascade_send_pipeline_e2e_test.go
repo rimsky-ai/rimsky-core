@@ -24,7 +24,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
+func TestStoryCascadeSend_SendsAndOpensNextFrame(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
@@ -71,7 +71,7 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{
-					Type:         "emitter",
+					Type:         "sender",
 					SendsMessage: "ping/recheck",
 					Subscribes: []node.SubscriptionEntry{
 						{Node: "pong", Type: "terminal/success", ForceUpstreamRefresh: node.BoolPtr(false)},
@@ -127,19 +127,15 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 
 	tailNode := h.FindNode(iid, "tail")
 	require.NotNil(t, tailNode)
-	pongNode := h.FindNode(iid, "pong")
-	require.NotNil(t, pongNode)
-	emitterNode := h.FindNode(iid, "emitter")
-	require.NotNil(t, emitterNode)
+	require.NotNil(t, h.FindNode(iid, "pong"))
+	require.NotNil(t, h.FindNode(iid, "sender"))
 
 	require.True(t,
 		h.WaitForEventKind(tailNode.ID, "terminal/success", 30*time.Second),
-		"tail did not emit terminal/success — cascade-send pipeline broken (pong → emitter → emit-message → tail)")
-	_ = pongNode
-	_ = emitterNode
+		"tail did not emit terminal/success — cascade-send pipeline broken (pong → sender → sent message → tail)")
 
-	var emittedMsgID, emittedSender, emittedSenderKind string
-	var emittedBody []byte
+	var sentMsgID, sentSender, sentSenderKind string
+	var sentBody []byte
 	h.QueryRowSQL(
 		`SELECT id::text, sender, sender_kind, payload
 		   FROM rimsky_messages
@@ -147,29 +143,29 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 		    AND type = 'ping/recheck'
 		  ORDER BY received_at DESC
 		  LIMIT 1`,
-		[]any{iid}, &emittedMsgID, &emittedSender, &emittedSenderKind, &emittedBody)
-	require.NotEmpty(t, emittedMsgID, "no cascade-send envelope landed in the ledger")
-	require.Equal(t, "instance", emittedSenderKind,
+		[]any{iid}, &sentMsgID, &sentSender, &sentSenderKind, &sentBody)
+	require.NotEmpty(t, sentMsgID, "no cascade-send envelope landed in the ledger")
+	require.Equal(t, "instance", sentSenderKind,
 		"cascade-send must carry sender_kind=instance per concept:message-sender-node")
-	require.True(t, strings.HasPrefix(emittedSender, "instance:"),
-		"cascade-send sender must be instance:<id>, got %q", emittedSender)
+	require.True(t, strings.HasPrefix(sentSender, "instance:"),
+		"cascade-send sender must be instance:<id>, got %q", sentSender)
 
 	var bodyDecoded map[string]any
-	require.NoError(t, json.Unmarshal(emittedBody, &bodyDecoded),
+	require.NoError(t, json.Unmarshal(sentBody, &bodyDecoded),
 		"send-node body must marshal as JSON object")
 	require.Equal(t, "needs_work", bodyDecoded["pong_status"],
 		"send-node body must reflect the substituted upstream attribute value; got %v",
 		bodyDecoded)
 
-	frames := getFrames(t, h.ControlBase, iid, emittedMsgID)
+	frames := getFrames(t, h.ControlBase, iid, sentMsgID)
 	require.NotEmpty(t, frames,
 		"no frame carries triggering_message_id = %s (the cascade-send envelope)",
-		emittedMsgID)
+		sentMsgID)
 	require.Equal(t, "ping/recheck", frames[0].MessageType,
-		"the cascade-opened frame must carry the emit-message-type on its join")
+		"the cascade-opened frame must carry the sent message type on its join")
 }
 
-func TestStoryCascadeEmit_SchemaMismatchRejectsAtRegistration(t *testing.T) {
+func TestStoryCascadeSend_SchemaMismatchRejectsAtRegistration(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
@@ -188,7 +184,7 @@ func TestStoryCascadeEmit_SchemaMismatchRejectsAtRegistration(t *testing.T) {
 			},
 		}},
 		"nodes": []map[string]any{{
-			"type":          "bad-emitter",
+			"type":          "bad-sender",
 			"sends_message": "ping/recheck",
 			"attributes": map[string]any{
 				"schema": map[string]any{

@@ -28,20 +28,20 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	frames := d.Tables().Frames()
 
-	frameOp(ctx, t, d, "MarkRunningFrameTerminal (initial)", func(tx persistence.Tx) error {
+	frameOp(ctx, t, d, "MarkFrameEnded (initial)", func(tx persistence.Tx) error {
 		transitioned, err := frames.MarkFrameEnded(ctx, fix.FrameID, tx)
 		if err != nil {
 			return err
 		}
 		if !transitioned {
-			t.Fatalf("MarkRunningFrameTerminal did not transition the running frame")
+			t.Fatalf("MarkFrameEnded did not transition the running frame")
 		}
 		transitioned, err = frames.MarkFrameEnded(ctx, fix.FrameID, tx)
 		if err != nil {
 			return err
 		}
 		if transitioned {
-			t.Fatalf("second MarkRunningFrameTerminal reported transitioned=true on a terminal frame")
+			t.Fatalf("second MarkFrameEnded reported transitioned=true on an ended frame")
 		}
 		return nil
 	})
@@ -150,4 +150,56 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		}
 		return nil
 	})
+}
+
+// @decision: frame-isolation-is-structural
+func testFrameRowCascadeImmutable(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	frames := d.Tables().Frames()
+
+	var before *persistence.FrameRow
+	frameOp(ctx, t, d, "snapshot running frame", func(tx persistence.Tx) error {
+		row, err := frames.GetForObservability(ctx, fix.FrameID, tx)
+		before = row
+		return err
+	})
+	if before == nil || before.State != "running" || before.EndedAt != nil {
+		t.Fatalf("pre-cascade frame row = %+v, want state=running with ended_at unset", before)
+	}
+
+	frameOp(ctx, t, d, "cascade write set: MarkSourceNodeStale", func(tx persistence.Tx) error {
+		_, err := frames.MarkSourceNodeStale(ctx, fix.InstanceID, fix.NodeID, fix.FrameID, tx)
+		return err
+	})
+	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+	frameOp(ctx, t, d, "cascade write set: run state transitions", func(tx persistence.Tx) error {
+		if err := d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateRunning, nil); err != nil {
+			return err
+		}
+		return d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateFresh, nil)
+	})
+
+	var after *persistence.FrameRow
+	frameOp(ctx, t, d, "re-read frame row after cascade writes", func(tx persistence.Tx) error {
+		row, err := frames.GetForObservability(ctx, fix.FrameID, tx)
+		after = row
+		return err
+	})
+	if after == nil {
+		t.Fatalf("frame row vanished after cascade writes")
+	}
+	if after.FrameID != before.FrameID ||
+		after.InstanceID != before.InstanceID ||
+		after.TriggeringMessageID != before.TriggeringMessageID ||
+		after.RootRunScopeID != before.RootRunScopeID ||
+		after.FrameTimeoutMs != before.FrameTimeoutMs {
+		t.Fatalf("cascade writes mutated frame identity columns:\nbefore=%+v\nafter=%+v", before, after)
+	}
+	if before.StartedAt == nil || after.StartedAt == nil || !after.StartedAt.Equal(*before.StartedAt) {
+		t.Fatalf("cascade writes mutated started_at: before=%v after=%v", before.StartedAt, after.StartedAt)
+	}
+	if after.EndedAt != nil || after.State != "running" {
+		t.Fatalf("cascade writes ended the frame: row=%+v — only the frame-engine reaper may stamp ended_at", after)
+	}
 }

@@ -23,14 +23,14 @@ This example covers each protocol surface:
   view against the publisher's. The example uses a mutex-guarded
   in-memory map; a real publisher persists subscriptions so a process
   restart doesn't drop them.
-- **Capabilities** — advertises the publisher kinds this service emits.
+- **Capabilities** — advertises the publisher kinds this service sends.
   rimsky validates a template's `publishers:` kind references against
   this set; an unadvertised kind is refused at template registration.
-- **Message emit through `POST /v1/instances/{id}/messages`** — message
-  emission is NOT part of the gRPC surface. The publisher POSTs to
+- **Message send through `POST /v1/instances/{id}/messages`** — message
+  sending is NOT part of the gRPC surface. The publisher POSTs to
   rimsky's universal message endpoint with `sender_kind: "publisher"`,
   the captured `publisher_subscription_id`, and the mandatory
-  `Idempotency-Key` HTTP header (any emission without the header is
+  `Idempotency-Key` HTTP header (any send without the header is
   refused at the request boundary; the dedup guarantee is platform-
   enforced, not a publisher convention). The bundled
   `lib/protocols/publisherkit` carries the canonical retry + idempotency
@@ -199,7 +199,7 @@ SSH tunnel:
 
 The test ALSO stands up a tiny inline stub executor on a second host
 port so the reactor node has a reachable executor to dispatch through
-— the load-bearing observable is "did the publisher emit cause a NEW
+— the load-bearing observable is "did the publisher send cause a NEW
 dispatch on the subscribing node", not "did the dispatch do real work".
 
 The restart leg uses the harness's `RimskyHandle.Restart` method,
@@ -222,7 +222,7 @@ boot recorded.
    for the universal retry-with-idempotency-header envelope so your
    publisher matches the bundled sensors' behavior.
 4. Adjust `Capabilities` to advertise the real message kinds your
-   publisher emits. rimsky's template validator will refuse a
+   publisher sends. rimsky's template validator will refuse a
    template whose `publishers:` block names a kind your service
    doesn't advertise.
 5. Drop the per-call counters (`subscribeCalls` / `unsubscribeCalls`

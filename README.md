@@ -51,7 +51,7 @@ fit.
 
 **Watching external state and reacting.** Sensors observe external
 systems — S3 prefixes, HTTP endpoints, cron schedules, inbound webhooks
-— and emit messages into the graph. The cascade fires downstream nodes
+— and send messages into the graph. The cascade fires downstream nodes
 whose subscriptions match. The reactive logic lives in the graph
 itself, not in code the consumer writes around a workflow engine. Where
 a workflow engine asks you to write the reactive layer as orchestration
@@ -118,8 +118,9 @@ contains. Every domain-shaped piece of a deployment — the templates,
 the userdata, the MCP catalogs the agents access, the audit-trail
 content — lives in the consumer's repository, not in rimsky's.
 
-The platform treats six byte streams as inert: userdata, claim scope,
-claim payload, blob content, named-event payload, and message payload.
+The platform treats its carrier byte streams as inert: userdata, claim
+scope, claim address, claim payload, blob content, attribute values,
+scratch, executor error payloads, and message payloads.
 Rimsky does not log them, normalize them, index them, validate them
 beyond the schema gates, attach them to traces, or include them in
 error messages. Inertness is not minimalism; it is what keeps rimsky
@@ -143,8 +144,9 @@ carried downstream is whatever the upstream nodes wrote. Non-trivial
 transformations run through executors like any other work. Patterns
 that look like they would benefit from a special node type — agent
 self-blocks where an agent emits a structured failure and a downstream
-node routes on the failure class, confidence-driven branching where
-named events fire only the matching subscriber — are all expressed
+node routes on the failure class, confidence-driven branching where a
+CEL `when:` predicate fires only the matching subscriber — are all
+expressed
 through the existing executor and subscription surfaces. Rimsky has no
 special-cased "deterministic node" type because the cascade,
 substitution, retry policy, and claim semantics are already correct for
@@ -176,12 +178,12 @@ for graph definitions and a mutable surface for execution.
 **Cascade.** When a node's outputs change, cascade decides which
 dependents become stale and recompute. The walk is driven by per-node
 subscriptions declaring `type:` (a canonical signal type-path under
-`terminal/*`, `transient/*`, `attribute/*`, `event/*`, or `message/*`)
+`terminal/*`, `transient/*`, `attribute/*`, or `message/*`)
 and an optional CEL `when:` predicate over the signal payload. Subscriber
 match is itself the cascade-fire gate; senders emit signals, receivers
 decide. This is the killer primitive: it makes a graph reactive without
 making the executor responsible for routing. Reactivity to external
-change (sensors emitting messages) is the same machinery as reactivity
+change (sensors sending messages) is the same machinery as reactivity
 to internal change. In service to the watching-external-state pattern.
 
 **Claims and locks.** A claim is a node's request to access a

@@ -10,11 +10,11 @@
 # acceptance property: "every frame, its triggering message" through
 # the user-observable surface.
 #
-# The shape is the same two-frame bounded back-edge the cross-frame-
-# coupling demo uses:
+# The shape is the same two-frame bounded back-edge the cascade-send
+# demo uses:
 #
 #   frame 1 (trigger=audit/kick, sender_kind=operator):
-#     A (verifier-shape-checks) runs → emit-node E fires → audit/loop
+#     A (verifier-shape-checks) runs → the send-node fires → audit/loop
 #     envelope lands in rimsky_messages.
 #
 #   frame 2 (trigger=audit/loop, sender_kind=instance):
@@ -23,14 +23,14 @@
 #
 # Both frames carry triggering_message_id; the demo proves the
 # observability surface answers "why did this frame open" for both
-# operator-posted and cascade-emitted origins.
+# operator-posted and cascade-sent origins.
 name: frame-origin-audit-demo
 version: "1"
 description: |
   STORY-frame-origin-audit proof template. A two-frame bounded cascade
-  (operator-posted kick → A → emit → cascade-emitted audit/loop → R)
+  (operator-posted kick → A → send-node → cascade-sent audit/loop → R)
   so the frames-read endpoint exhibits both operator-posted and
-  cascade-emitted frame origins in one run.
+  cascade-sent frame origins in one run.
 
 messages:
   - type: audit/kick
@@ -57,8 +57,8 @@ nodes:
     description: |
       A subscribes to the kick message and runs the bundled
       verifier-shape-checks executor against a real inline dataset.
-      Real dispatch — no stub. A's terminal/success drives the emit-
-      node E.
+      Real dispatch — no stub. A's terminal/success drives the send-
+      node.
     subscribes:
       - node: audit/kick
         type: terminal/success
@@ -81,11 +81,11 @@ nodes:
               - { id: row2, value: 2 }
         required: [checks, rows]
 
-  - type: emitter
+  - type: sender
     sends_message: audit/loop
     description: |
-      The cascade-send origin: emitter subscribes to A's terminal/
-      success and emits an audit/loop message whose body carries the
+      The cascade-send origin: sender subscribes to A's terminal/
+      success and sends an audit/loop message whose body carries the
       `checks` array and the `rows` array forwarded from A's
       attribute set, plus a step counter. R subscribes to audit/loop
       and reads its inputs via the typed-message substitution grammar.
@@ -120,7 +120,7 @@ nodes:
       R is the cascade-send receiver: it subscribes to audit/loop (a
       message type, addressed as a virtual node) and pulls its
       verification inputs from the typed-message body. This is the
-      cascade-emitted frame's load-bearing dispatch.
+      cascade-sent frame's load-bearing dispatch.
     subscribes:
       - node: audit/loop
         type: terminal/success

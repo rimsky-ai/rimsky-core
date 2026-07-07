@@ -10,11 +10,15 @@
 --
 -- SQLite CHECK constraints reference state (chk_running_has_started,
 -- chk_terminal_has_ended) and can only be dropped via a table rebuild.
--- The rebuild preserves all frame rows; DROP TABLE + RENAME under
+-- The rebuild preserves all frame rows AND all child rows because the
+-- migrator applies every migration on a connection with foreign_keys
+-- OFF (see migrate.go): with foreign_keys ON, DROP TABLE performs an
+-- implicit DELETE that would fire ON DELETE CASCADE into
+-- rimsky_node_runs and the wait tables. DROP TABLE + RENAME under
 -- sqlite's modern ALTER TABLE semantics automatically updates FK
 -- references in child tables (rimsky_messages, rimsky_node_runs,
 -- rimsky_breakpoint_hits, rimsky_wait_sets) to point at the renamed
--- table.
+-- table, and the migrator runs PRAGMA foreign_key_check before commit.
 
 DROP INDEX IF EXISTS uq_rimsky_frames_running;
 

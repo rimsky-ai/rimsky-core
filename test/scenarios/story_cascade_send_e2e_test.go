@@ -308,6 +308,7 @@ func TestStoryCascadeSend_LoopsWithoutGate(t *testing.T) {
 			"every frame must have a non-empty triggering_message_id; got %+v", fr)
 		seen[fr.TriggeringMessageID] = true
 	}
-	require.GreaterOrEqual(t, len(seen), 2,
-		"distinct triggering_message_id values must exist across frames")
+	require.Equal(t, len(frames), len(seen),
+		"every frame must carry a DISTINCT triggering_message_id — one message = one frame, no frame reuse; got %d frames but only %d distinct triggers",
+		len(frames), len(seen))
 }

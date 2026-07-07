@@ -114,6 +114,7 @@ func Suite(
 	})
 	t.Run("FrameLifecycle", func(t *testing.T) {
 		t.Run("Default", func(t *testing.T) { testFrameLifecycleSerialQueue(t, factory(t)) })
+		t.Run("CascadeImmutableRow", func(t *testing.T) { testFrameRowCascadeImmutable(t, factory(t)) })
 	})
 	t.Run("FrameSettlement", func(t *testing.T) {
 		t.Run("NoPendingNodes", func(t *testing.T) { testFrameSettlementNoPendingNodes(t, factory(t)) })

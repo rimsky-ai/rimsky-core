@@ -112,6 +112,14 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 	require.GreaterOrEqual(t, receiverRuns, N,
 		"receiver must run %d times; got %d (one-message-per-frame broken)", N, receiverRuns)
 
+	var totalFrames int
+	h.QueryRowSQL(
+		`SELECT count(*) FROM rimsky_frames WHERE instance_id = $1`,
+		[]any{iid}, &totalFrames)
+	require.Equal(t, N, totalFrames,
+		"exactly %d frames must exist for %d posted messages — one message = one frame, no extra frames; got %d",
+		N, N, totalFrames)
+
 	var msgCount int
 	h.QueryRowSQL(
 		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'ping/recheck'`,
@@ -123,8 +131,8 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 	h.QueryRowSQL(
 		`SELECT count(DISTINCT triggering_message_id) FROM rimsky_frames WHERE instance_id = $1`,
 		[]any{iid}, &distinctTriggers)
-	require.GreaterOrEqual(t, distinctTriggers, N,
-		"each posted message must produce a distinct frame; got %d distinct triggering_message_id values for %d posted messages",
+	require.Equal(t, N, distinctTriggers,
+		"each posted message must produce exactly one frame with a distinct trigger; got %d distinct triggering_message_id values for %d posted messages",
 		distinctTriggers, N)
 
 	frames := getFrames(t, h.ControlBase, iid, "")

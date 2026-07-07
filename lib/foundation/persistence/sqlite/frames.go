@@ -393,7 +393,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 	}
 	defer rows.Close()
 	var out []persistence.FrameRow
-	var lastQAt time.Time
+	var lastStarted time.Time
 	for rows.Next() {
 		var (
 			r              persistence.FrameRow
@@ -452,7 +452,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		}
 		if startedAt.Valid {
 			if t, err := parseTime(startedAt.String); err == nil {
-				lastQAt = t
+				lastStarted = t
 			}
 		}
 		out = append(out, r)
@@ -462,18 +462,18 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
-		nextCursor = encodeFrameCursor(lastQAt, out[len(out)-1].FrameID)
+		nextCursor = encodeFrameCursor(lastStarted, out[len(out)-1].FrameID)
 	}
 	return persistence.PaginatedListResult[persistence.FrameRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
 type frameCursor struct {
-	Q time.Time   `json:"q"`
-	F shared.UUID `json:"f"`
+	StartedAt time.Time   `json:"s"`
+	F         shared.UUID `json:"f"`
 }
 
-func encodeFrameCursor(queued time.Time, fid shared.UUID) string {
-	b, _ := json.Marshal(frameCursor{Q: queued, F: fid})
+func encodeFrameCursor(started time.Time, fid shared.UUID) string {
+	b, _ := json.Marshal(frameCursor{StartedAt: started, F: fid})
 	return base64.StdEncoding.EncodeToString(b)
 }
 
@@ -486,7 +486,7 @@ func decodeFrameCursor(s string) (time.Time, shared.UUID, error) {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return time.Time{}, shared.UUID{}, err
 	}
-	return c.Q, c.F, nil
+	return c.StartedAt, c.F, nil
 }
 
 func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, tx persistence.Tx) error {
@@ -730,7 +730,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 	}
 	defer rows.Close()
 	var out []persistence.FrameRowWithMessage
-	var lastQAt time.Time
+	var lastStarted time.Time
 	for rows.Next() {
 		var (
 			r              persistence.FrameRowWithMessage
@@ -802,7 +802,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		}
 		if startedAt.Valid {
 			if t, err := parseTime(startedAt.String); err == nil {
-				lastQAt = t
+				lastStarted = t
 			}
 		}
 		out = append(out, r)
@@ -812,7 +812,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
-		nextCursor = encodeFrameCursor(lastQAt, out[len(out)-1].FrameID)
+		nextCursor = encodeFrameCursor(lastStarted, out[len(out)-1].FrameID)
 	}
 	return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{Rows: out, NextCursor: nextCursor}, nil
 }

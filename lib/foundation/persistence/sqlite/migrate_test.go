@@ -34,6 +34,72 @@ func TestSQLiteMigrationApplies(t *testing.T) {
 	}
 }
 
+func TestSQLiteMigration021RebuildPreservesChildRows(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	d, err := persistence.Open(ctx, persistence.Config{
+		Driver: "sqlite",
+		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(dir, "state.db")},
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	db := sqlitepersist.DBFromDatabase(d)
+	seed := []string{
+		`INSERT INTO rimsky_templates (id, spec, state) VALUES ('tpl-021', '{}', 'deployed')`,
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key) VALUES ('inst-021', 'tpl-021', 'ck-021')`,
+		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id)
+		 VALUES ('scope-021', 'main', '', 'inst-021')`,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES ('msg-021', 'inst-021', 'loop/wake', 'op', 'operator')`,
+		`INSERT INTO rimsky_frames (frame_id, instance_id, triggering_message_id, root_run_scope_id,
+		                            started_at, ended_at, frame_timeout_ms)
+		 VALUES ('frame-021', 'inst-021', 'msg-021', 'scope-021', datetime('now'), datetime('now'), 60000)`,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES ('node-021', 'inst-021', 'n1')`,
+		`INSERT INTO rimsky_node_runs (id, node_id, frame_id, sequence, run_scope_id)
+		 VALUES ('run-021', 'node-021', 'frame-021', 1, 'scope-021')`,
+	}
+	for _, stmt := range seed {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed: %v\n%s", err, stmt)
+		}
+	}
+
+	if _, err := db.ExecContext(ctx,
+		`DELETE FROM rimsky_migrations WHERE filename = '021-retire-frame-state-column.sql'`); err != nil {
+		t.Fatalf("unmark 021: %v", err)
+	}
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("re-apply 021 against populated db: %v", err)
+	}
+
+	var frames, runs int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM rimsky_frames`).Scan(&frames); err != nil {
+		t.Fatalf("count frames: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM rimsky_node_runs`).Scan(&runs); err != nil {
+		t.Fatalf("count node_runs: %v", err)
+	}
+	if frames != 1 || runs != 1 {
+		t.Fatalf("021 table rebuild lost rows: frames=%d node_runs=%d (want 1/1) — DROP TABLE must not cascade-delete children",
+			frames, runs)
+	}
+	var runFrame string
+	if err := db.QueryRowContext(ctx,
+		`SELECT frame_id FROM rimsky_node_runs WHERE id = 'run-021'`).Scan(&runFrame); err != nil {
+		t.Fatalf("read surviving node_run: %v", err)
+	}
+	if runFrame != "frame-021" {
+		t.Fatalf("surviving node_run points at %q, want frame-021", runFrame)
+	}
+}
+
 func TestSQLiteMigration002Tags(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
