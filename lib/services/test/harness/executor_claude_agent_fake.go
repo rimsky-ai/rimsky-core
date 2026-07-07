@@ -63,7 +63,7 @@ func StartClaudeAgentFakeOnNetwork(
 	}
 
 	fakeClaudeBuildMu.Lock()
-	c, err := testcontainers.Run(ctx, "",
+	c, err := runWithRetry(ctx, "",
 		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
 			Context:    repoRoot(),
 			Dockerfile: "lib/services/test/scenarios/claude_agent_fake_cli/Dockerfile.fake-claude-agent",

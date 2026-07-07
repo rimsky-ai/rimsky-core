@@ -33,7 +33,7 @@ func StartFreshPostgres(ctx context.Context, t testing.TB) string {
 func StartFreshPostgresWithAlias(ctx context.Context, t testing.TB, networkName, alias string) (internalDSN, hostDSN string) {
 	t.Helper()
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
-	c, err := pgmodule.Run(ctx,
+	c, err := runPostgresWithRetry(ctx,
 		"postgres:15-alpine",
 		pgmodule.WithDatabase("rimsky_test"),
 		pgmodule.WithUsername("test"),

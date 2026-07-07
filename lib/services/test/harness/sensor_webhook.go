@@ -41,7 +41,7 @@ func StartSensorWebhook(ctx context.Context, t testing.TB, networkName, alias, r
 			wait.ForListeningPort("9184/tcp").WithStartupTimeout(60 * time.Second),
 		),
 	}
-	c, err := testcontainers.Run(ctx, sensorWebhookImage, opts...)
+	c, err := runWithRetry(ctx, sensorWebhookImage, opts...)
 	if err != nil {
 		t.Fatalf("harness: start sensor-webhook: %v", err)
 	}

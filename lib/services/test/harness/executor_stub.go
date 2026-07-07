@@ -62,7 +62,7 @@ func launchExecutorStub(ctx context.Context, networkName, alias string, forceErr
 	}
 	stubBuildMu.Lock()
 	defer stubBuildMu.Unlock()
-	_, err := testcontainers.Run(ctx, "",
+	_, err := runWithRetry(ctx, "",
 		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
 			Context:    repoRoot(),
 			Dockerfile: "lib/services/test/stubexecutor/Dockerfile.stubexecutor",

@@ -18,7 +18,7 @@ import (
 func StartOverlapClaimProducerOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (endpoint string) {
 	t.Helper()
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
-	c, err := testcontainers.Run(ctx, "",
+	c, err := runWithRetry(ctx, "",
 		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
 			Context:    repoRoot(),
 			Dockerfile: "lib/services/test/overlapproducer/Dockerfile.overlapproducer",

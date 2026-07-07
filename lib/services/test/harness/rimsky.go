@@ -358,7 +358,7 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 
 func startPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (hostDSN, internalDSN string) {
 	t.Helper()
-	pgContainer, err := pgmodule.Run(ctx,
+	pgContainer, err := runPostgresWithRetry(ctx,
 		"postgres:15-alpine",
 		pgmodule.WithDatabase("rimsky"),
 		pgmodule.WithUsername("rimsky"),
@@ -421,7 +421,7 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 	if len(cb.hostAccessPorts) > 0 {
 		rimskyOpts = append(rimskyOpts, testcontainers.WithHostPortAccess(cb.hostAccessPorts...))
 	}
-	rimsky, err := testcontainers.Run(ctx, rimskyAllImage, rimskyOpts...)
+	rimsky, err := runWithRetry(ctx, rimskyAllImage, rimskyOpts...)
 	if err != nil {
 		t.Fatalf("harness: start rimsky/all: %v", err)
 	}

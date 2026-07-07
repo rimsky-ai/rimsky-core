@@ -70,7 +70,7 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 		exposedPorts = append(exposedPorts, "9110/tcp")
 	}
 
-	c, err := testcontainers.Run(ctx, storeFilesystemImage,
+	c, err := runWithRetry(ctx, storeFilesystemImage,
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"STORE_FILESYSTEM_CONFIG": "/etc/store/config.yml",

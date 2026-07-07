@@ -21,7 +21,7 @@ func StartVerifierShapeChecksOnNetwork(ctx context.Context, t testing.TB, networ
 	t.Helper()
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 
-	c, err := testcontainers.Run(ctx, verifierShapeChecksImage,
+	c, err := runWithRetry(ctx, verifierShapeChecksImage,
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_HOST": "0.0.0.0",

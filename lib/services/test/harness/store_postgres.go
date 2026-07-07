@@ -27,7 +27,7 @@ type PostgresOnNetwork struct {
 func StartPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) PostgresOnNetwork {
 	t.Helper()
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
-	c, err := pgmodule.Run(ctx,
+	c, err := runPostgresWithRetry(ctx,
 		"postgres:15-alpine",
 		pgmodule.WithDatabase("storedb"),
 		pgmodule.WithUsername("store"),
@@ -83,7 +83,7 @@ func StartPostgresStore(ctx context.Context, t testing.TB, networkName, alias st
 
 	configYAML := renderPostgresStoreConfig(spec)
 
-	c, err := testcontainers.Run(ctx, storePostgresImage,
+	c, err := runWithRetry(ctx, storePostgresImage,
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"STORE_POSTGRES_CONFIG": "/etc/store/config.yml",

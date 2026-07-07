@@ -107,7 +107,7 @@ func runSensorHTTPContainer(ctx context.Context, t testing.TB, networkName, alia
 	if len(hostAccessPorts) > 0 {
 		opts = append(opts, testcontainers.WithHostPortAccess(hostAccessPorts...))
 	}
-	c, err := testcontainers.Run(ctx, sensorHTTPImage, opts...)
+	c, err := runWithRetry(ctx, sensorHTTPImage, opts...)
 	if err != nil {
 		t.Fatalf("harness: start sensor-http: %v", err)
 	}

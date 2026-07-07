@@ -83,7 +83,7 @@ func runSensorCronContainer(ctx context.Context, t testing.TB, networkName, alia
 	if stateDSN != "" {
 		env["RIMSKY_SENSOR_CRON_STATE_DSN"] = stateDSN
 	}
-	c, err := testcontainers.Run(ctx, sensorCronImage,
+	c, err := runWithRetry(ctx, sensorCronImage,
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9081/tcp"),

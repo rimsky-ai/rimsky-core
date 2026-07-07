@@ -98,7 +98,7 @@ func runSensorObjectStoreContainer(ctx context.Context, t testing.TB, networkNam
 		// @story: sensor-object-store
 		env["RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN"] = stateDSN
 	}
-	c, err := testcontainers.Run(ctx, sensorObjectStoreImage,
+	c, err := runWithRetry(ctx, sensorObjectStoreImage,
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9083/tcp"),

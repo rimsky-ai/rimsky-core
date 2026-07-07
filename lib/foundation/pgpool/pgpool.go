@@ -26,6 +26,8 @@ const (
 	portMappingMaxAttempts = 8
 	portMappingMaxBackoff  = 2 * time.Second
 	startupTimeout         = 300 * time.Second
+	bootMaxAttempts        = 3
+	bootRetryBackoff       = 5 * time.Second
 )
 
 type Config struct {
@@ -104,13 +106,14 @@ func (p *Pool) cloneAndRegisterCleanup(ctx context.Context, t testing.TB, fromTe
 	return dsn
 }
 
-func (p *Pool) boot(ctx context.Context) error {
-	p.bootOnce.Do(func() {
+func runPostgresWithRetry(ctx context.Context, cfg Config) (*pgmodule.PostgresContainer, error) {
+	var lastErr error
+	for attempt := 1; attempt <= bootMaxAttempts; attempt++ {
 		container, err := pgmodule.Run(ctx,
-			p.cfg.Image,
-			pgmodule.WithDatabase(p.cfg.Database),
-			pgmodule.WithUsername(p.cfg.User),
-			pgmodule.WithPassword(p.cfg.Password),
+			cfg.Image,
+			pgmodule.WithDatabase(cfg.Database),
+			pgmodule.WithUsername(cfg.User),
+			pgmodule.WithPassword(cfg.Password),
 			testcontainers.WithCmdArgs(
 				"-c", "synchronous_commit=off",
 				"-c", "full_page_writes=off",
@@ -124,6 +127,25 @@ func (p *Pool) boot(ctx context.Context) error {
 				),
 			),
 		)
+		if err == nil {
+			return container, nil
+		}
+		if container != nil {
+			termCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			_ = container.Terminate(termCtx)
+			cancel()
+		}
+		lastErr = err
+		if attempt < bootMaxAttempts {
+			time.Sleep(time.Duration(attempt) * bootRetryBackoff)
+		}
+	}
+	return nil, fmt.Errorf("after %d attempts: %w", bootMaxAttempts, lastErr)
+}
+
+func (p *Pool) boot(ctx context.Context) error {
+	p.bootOnce.Do(func() {
+		container, err := runPostgresWithRetry(ctx, p.cfg)
 		if err != nil {
 			p.bootErr = fmt.Errorf("start postgres: %w", err)
 			return

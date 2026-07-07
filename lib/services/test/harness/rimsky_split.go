@@ -108,7 +108,7 @@ func startSplitControlAPI(ctx context.Context, t testing.TB, cb *configBuilder, 
 	for k, v := range cb.extraEnv {
 		env[k] = v
 	}
-	c, err := testcontainers.Run(ctx, rimskyCoreImage,
+	c, err := runWithRetry(ctx, rimskyCoreImage,
 		testcontainers.WithCmd("rimsky-control-api"),
 		testcontainers.WithExposedPorts("8080/tcp"),
 		tcnet.WithNetworkName([]string{alias}, networkName),
@@ -171,7 +171,7 @@ func startSplitRole(ctx context.Context, t testing.TB, cb *configBuilder, spec s
 	for k, v := range cb.extraEnv {
 		env[k] = v
 	}
-	c, err := testcontainers.Run(ctx, rimskyCoreImage,
+	c, err := runWithRetry(ctx, rimskyCoreImage,
 		testcontainers.WithCmd(spec.role),
 		tcnet.WithNetworkName([]string{spec.alias}, spec.network),
 		testcontainers.WithEnv(env),

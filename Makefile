@@ -78,13 +78,33 @@ test-foundation:
 test-protocols:
 	cd lib/protocols && $(GOTEST_GUARD) -timeout 60s ./...
 
+# The services module carries the docker-stack e2e scenarios: each test
+# boots a real rimsky stack via testcontainers. go test's defaults run
+# GOMAXPROCS packages AND GOMAXPROCS in-package parallel tests at once —
+# a dozen concurrent stack boots saturate the docker daemon and starve
+# the stacks already running (observed as wait-strategy inspect stalls
+# and control-api requests timing out mid-demo). -p 2 / -parallel 4
+# bounds the concurrent stack count; 600s fits the serialized packages.
 test-services:
-	cd lib/services && $(GOTEST_GUARD) -timeout 120s ./...
+	cd lib/services && $(GOTEST_GUARD) -timeout 600s -p 2 -parallel 4 ./...
 
+# The examples module also carries docker-stack e2e proofs (claimproducer,
+# lifecyclesubscriber, validation, publisher) that boot real rimsky stacks;
+# 60s was sized for unit slices and guard-kills them. Same throttling
+# rationale as test-services.
 test-examples:
-	cd examples && $(GOTEST_GUARD) -timeout 60s ./...
+	cd examples && $(GOTEST_GUARD) -timeout 600s -p 2 -parallel 4 ./...
 
-test-all: test-root test-foundation test-protocols test-services test-examples
+# test-all builds the core + service images BEFORE running any module's
+# tests: the services scenarios under lib/services/test/ (and the examples
+# cross-stack proofs) pull rimsky-all-in-one:latest and the bundled-service
+# :latest tags from the LOCAL docker daemon. Without the image prerequisites,
+# those suites exercise whatever image happened to be on disk from a prior
+# build — a stale-image pass that silently waves through regressions in the
+# live source. Building first means every test-all run proves the source
+# tree as it stands. Docker layer caching keeps the rebuild cheap when
+# nothing image-relevant changed.
+test-all: core-images service-images test-root test-foundation test-protocols test-services test-examples
 
 # Local test-speed observability. Runs every Go test across all modules under
 # gotestsum, then prints the slowest tests across the whole run. Continues
@@ -337,15 +357,13 @@ push-images: check-clean buildx-builder
 #   scan           — docker scout cves against every locally-built image
 #   push-images    — buildx build + push with SBOM + provenance attestations
 #
-# Image builds come BEFORE test-all on purpose: the services scenarios under
-# lib/services/test/ pull rimsky-all-in-one:latest (and the bundled-service
-# :latest tags) from the LOCAL docker daemon — nothing is fetched from a
-# registry. If test-all ran first, the services scenarios would exercise
-# whatever image happened to be on disk from a prior build, not the source
-# tree we're about to release. That silently lets a regression in the live
-# code slip through the gate (or, if no prior image exists, fails the test
-# for a wholly unrelated reason). Building first means test-all always
-# exercises the same binaries that scan + push-images later ship.
+# test-all itself depends on core-images + service-images (see its comment
+# above): the services scenarios pull the :latest tags from the LOCAL docker
+# daemon, so images must be built from the current source before the suites
+# run. Listing the image targets explicitly here as well keeps the chain's
+# ordering self-documenting; make deduplicates the prerequisites, so each
+# image set builds once per invocation and test-all always exercises the
+# same binaries that scan + push-images later ship.
 #
 # Both `/release` (the skill, formal releases) and `make dev-release`
 # (mechanical dev channel) invoke this chain; dev-release overrides
