@@ -155,6 +155,13 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 		args = append(args, formatTime(*filter.DeliveredBefore))
 		conds = append(conds, "delivered_at < ?")
 	}
+	if filter.Pending != nil {
+		if *filter.Pending {
+			conds = append(conds, "delivered_at IS NULL AND cancelled = 0")
+		} else {
+			conds = append(conds, "(delivered_at IS NOT NULL OR cancelled = 1)")
+		}
+	}
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 100

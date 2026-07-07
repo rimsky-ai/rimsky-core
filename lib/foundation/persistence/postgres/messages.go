@@ -153,6 +153,13 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 		args = append(args, *filter.DeliveredBefore)
 		where += fmt.Sprintf(" AND delivered_at < $%d", len(args))
 	}
+	if filter.Pending != nil {
+		if *filter.Pending {
+			where += " AND delivered_at IS NULL AND cancelled = FALSE"
+		} else {
+			where += " AND (delivered_at IS NOT NULL OR cancelled = TRUE)"
+		}
+	}
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 100

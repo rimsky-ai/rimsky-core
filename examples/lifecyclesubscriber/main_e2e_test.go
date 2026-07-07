@@ -141,6 +141,8 @@ func exerciseOnInstanceCreatedLeg(t *testing.T, ep harness.RimskyEndpoint, rec *
 
 func exerciseOnRunScopeTerminalLeg(t *testing.T, ep harness.RimskyEndpoint, rec *recordingLifecycleSubscriber, state *lifecycleState) {
 	state.preTerminateIndex = rec.snapshot()
+	postEmptyWakeMessage(t, ep, state.adminKey, state.instanceID)
+	waitForFrame(t, ep, state.adminKey, state.instanceID, 30*time.Second)
 	terminateInstance(t, ep, state.adminKey, state.instanceID, "test_termination_reason")
 	call := waitForCall(t, rec, "OnRunScopeTerminal", state.preTerminateIndex, 60*time.Second,
 		"OnRunScopeTerminal must fire on POST /v1/instances/{id}/terminate")
@@ -661,6 +663,41 @@ func createLifecycleInstance(t *testing.T, ep harness.RimskyEndpoint, bearer, te
 		t.Fatalf("instance_id empty: %s", string(raw))
 	}
 	return resp.InstanceID
+}
+
+func postEmptyWakeMessage(t *testing.T, ep harness.RimskyEndpoint, bearer, instanceID string) {
+	t.Helper()
+	headers := authHeader(bearer)
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	headers["Idempotency-Key"] = "lifecycle-walk-wake-" + instanceID
+	statusCode, raw := ep.PostJSONWithHeaders(t, "/v1/instances/"+instanceID+"/messages",
+		map[string]any{}, headers)
+	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
+		t.Fatalf("POST empty wake message: %d %s", statusCode, string(raw))
+	}
+}
+
+func waitForFrame(t *testing.T, ep harness.RimskyEndpoint, bearer, instanceID string, deadline time.Duration) {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	var last string
+	for time.Now().Before(end) {
+		statusCode, raw := ep.GetJSON(t, "/v1/instances/"+instanceID+"/frames", bearer)
+		last = string(raw)
+		if statusCode == http.StatusOK {
+			var resp struct {
+				Frames []json.RawMessage `json:"frames"`
+			}
+			if json.Unmarshal(raw, &resp) == nil && len(resp.Frames) > 0 {
+				return
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("no frame opened for instance %s within %v — the empty wake message was never picked up; a frame's root run-scope is what OnRunScopeTerminal closes over\nlast frames body:\n%s",
+		instanceID, deadline, last)
 }
 
 func terminateInstance(t *testing.T, ep harness.RimskyEndpoint, bearer, instanceID, reason string) {

@@ -16,11 +16,18 @@ import (
 
 func RunWatch(ctx context.Context, args []string) int {
 	var pollInterval time.Duration
+	var until string
 	fs, common, endpoint, code := runWithCommon("watch", args, func(fs *flag.FlagSet) {
 		fs.DurationVar(&pollInterval, "poll-interval", time.Second, "polling interval")
+		fs.StringVar(&until, "until", "idle",
+			"exit condition: idle (no open frame and no pending messages) or terminated (operator-terminated instance)")
 	})
 	if code != 0 {
 		return code
+	}
+	if until != "idle" && until != "terminated" {
+		fmt.Fprintln(os.Stderr, "rimsky watch: --until must be idle or terminated")
+		return 2
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
@@ -43,6 +50,7 @@ func RunWatch(ctx context.Context, args []string) int {
 	defer cancel()
 
 	var lastSeenID int64
+	var consecutiveIdle int
 	for {
 		var batch []watchLine
 
@@ -93,6 +101,24 @@ func RunWatch(ctx context.Context, args []string) int {
 			printWatchTerminal(common.Format, inst)
 			return 0
 		}
+		if until == "idle" {
+			idle, err := instanceIsIdle(signalCtx, c, id)
+			if err != nil {
+				if signalCtx.Err() != nil {
+					return 0
+				}
+				return reportError(err)
+			}
+			if idle {
+				consecutiveIdle++
+				if consecutiveIdle >= idleConfirmPolls {
+					printWatchIdle(common.Format, inst)
+					return 0
+				}
+			} else {
+				consecutiveIdle = 0
+			}
+		}
 
 		select {
 		case <-signalCtx.Done():
@@ -100,6 +126,24 @@ func RunWatch(ctx context.Context, args []string) int {
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+const idleConfirmPolls = 2
+
+func instanceIsIdle(ctx context.Context, c *Client, id string) (bool, error) {
+	pending := true
+	msgs, err := c.ListInstanceMessages(ctx, id, ListMessagesQuery{Pending: &pending, Limit: 1})
+	if err != nil {
+		return false, err
+	}
+	if len(msgs.Messages) > 0 {
+		return false, nil
+	}
+	frames, err := c.ListInstanceFrames(ctx, id, "running")
+	if err != nil {
+		return false, err
+	}
+	return len(frames.Frames) == 0, nil
 }
 
 type watchLine struct {
@@ -145,4 +189,12 @@ func printWatchTerminal(format Format, inst *Instance) {
 		terminatedAt = *inst.TerminatedAt
 	}
 	fmt.Fprintf(os.Stdout, "%s\tterminal\tinstance %s terminated\n", terminatedAt, inst.UUID())
+}
+
+func printWatchIdle(format Format, inst *Instance) {
+	if format == FormatJSON {
+		_ = EmitJSON(os.Stdout, map[string]any{"source": "idle", "instance": inst})
+		return
+	}
+	fmt.Fprintf(os.Stdout, "idle\tinstance %s has no open frame and no pending messages\n", inst.UUID())
 }

@@ -70,3 +70,101 @@ func TestRunWatch_Chronological(t *testing.T) {
 			idxA, idxHit, idxB, out)
 	}
 }
+
+func TestRunWatch_ExitsOnIdleInstance(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "terminal/success",
+		OccurredAt: "2026-06-07T00:00:01Z", Payload: map[string]any{}})
+	srv.State.SetInstanceActivity(inst.ID, 0, 0)
+
+	done := make(chan int, 1)
+	exit := -1
+	out := captureStdout(t, func() {
+		go func() {
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "50ms", inst.ID})
+		}()
+		select {
+		case exit = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("watch did not exit on an idle instance (no open frame, no pending messages)")
+		}
+	})
+	if exit != 0 {
+		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
+	}
+	if !strings.Contains(out, "idle") {
+		t.Fatalf("watch output missing idle line; output:\n%s", out)
+	}
+}
+
+func TestRunWatch_UntilTerminatedIgnoresIdle(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+	srv.State.SetInstanceActivity(inst.ID, 0, 0)
+
+	done := make(chan int, 1)
+	exit := -1
+	out := captureStdout(t, func() {
+		go func() {
+			done <- cli.RunWatch(context.Background(),
+				[]string{"--poll-interval", "50ms", "--until", "terminated", inst.ID})
+		}()
+		select {
+		case exit = <-done:
+			t.Errorf("watch --until terminated exited (%d) on a merely-idle instance", exit)
+		case <-time.After(500 * time.Millisecond):
+		}
+		terminatedAt, err := time.Parse(time.RFC3339, "2026-06-07T00:00:04Z")
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv.State.SetInstanceTerminated(inst.ID, &terminatedAt)
+		select {
+		case exit = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("watch --until terminated did not exit after termination")
+		}
+	})
+	if exit != 0 {
+		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
+	}
+	if !strings.Contains(out, "terminated") {
+		t.Fatalf("watch output missing terminal line; output:\n%s", out)
+	}
+}
+
+func TestRunWatch_IdleWaitsForOpenFrame(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+	srv.State.SetInstanceActivity(inst.ID, 0, 1)
+
+	done := make(chan int, 1)
+	exit := -1
+	out := captureStdout(t, func() {
+		go func() {
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "50ms", inst.ID})
+		}()
+		select {
+		case exit = <-done:
+			t.Errorf("watch exited (%d) while a frame was still running", exit)
+		case <-time.After(500 * time.Millisecond):
+		}
+		srv.State.SetInstanceActivity(inst.ID, 0, 0)
+		select {
+		case exit = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("watch did not exit after the frame resolved")
+		}
+	})
+	if exit != 0 {
+		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
+	}
+	if !strings.Contains(out, "idle") {
+		t.Fatalf("watch output missing idle line; output:\n%s", out)
+	}
+}

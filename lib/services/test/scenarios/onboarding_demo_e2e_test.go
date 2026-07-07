@@ -23,7 +23,7 @@ import (
 
 var onboardingInstanceIDLine = regexp.MustCompile(`(?m)^instance_id=([0-9a-fA-F-]{36})\s*$`)
 
-func TestOnboardingDemo_RunReachesTerminal(t *testing.T) {
+func TestOnboardingDemo_RunSettlesIdle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -52,7 +52,7 @@ func TestOnboardingDemo_RunReachesTerminal(t *testing.T) {
 	}
 	instanceID := match[1]
 
-	requireOnboardingInstanceTerminated(t, ep, instanceID, 60*time.Second)
+	requireOnboardingInstanceIdle(t, ep, instanceID, 60*time.Second)
 
 	requireOnboardingNodeDispatched(t, ep, instanceID, "verifier", 60*time.Second)
 
@@ -124,33 +124,30 @@ func repoRootForOnboarding(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", ".."))
 }
 
-func requireOnboardingInstanceTerminated(t *testing.T, ep harness.RimskyEndpoint, instanceID string, deadline time.Duration) {
+func requireOnboardingInstanceIdle(t *testing.T, ep harness.RimskyEndpoint, instanceID string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
-	var lastBody string
+	var lastFrames, lastMessages string
 	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t, "/v1/instances/"+instanceID, "")
-		if status == http.StatusOK {
-			var resp struct {
-				Instance struct {
-					TerminatedAt *string `json:"terminated_at"`
-				} `json:"instance"`
-				TerminatedAt *string `json:"terminated_at"`
+		framesStatus, framesRaw := ep.GetJSON(t, "/v1/instances/"+instanceID+"/frames?state=running", "")
+		msgsStatus, msgsRaw := ep.GetJSON(t, "/v1/instances/"+instanceID+"/messages?pending=true", "")
+		if framesStatus == http.StatusOK && msgsStatus == http.StatusOK {
+			var frames struct {
+				Frames []json.RawMessage `json:"frames"`
 			}
-			lastBody = string(raw)
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				if resp.TerminatedAt != nil && *resp.TerminatedAt != "" {
-					return
-				}
-				if resp.Instance.TerminatedAt != nil && *resp.Instance.TerminatedAt != "" {
-					return
-				}
+			var msgs struct {
+				Messages []json.RawMessage `json:"messages"`
+			}
+			lastFrames, lastMessages = string(framesRaw), string(msgsRaw)
+			if json.Unmarshal(framesRaw, &frames) == nil && json.Unmarshal(msgsRaw, &msgs) == nil &&
+				len(frames.Frames) == 0 && len(msgs.Messages) == 0 {
+				return
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("instance %s did not reach terminated_at within %v — `rimsky run` printed an instance_id but the supervisor never settled the instance\nlast GET /v1/instances/%s body:\n%s",
-		instanceID, deadline, instanceID, lastBody)
+	t.Fatalf("instance %s did not settle idle (no running frame, no pending message) within %v — the run never resolved\nlast frames body:\n%s\nlast messages body:\n%s",
+		instanceID, deadline, lastFrames, lastMessages)
 }
 
 func requireOnboardingNodeDispatched(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {

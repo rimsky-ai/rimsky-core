@@ -684,6 +684,7 @@ type ListMessagesQuery struct {
 	SenderKind      string
 	DeliveredAfter  string
 	DeliveredBefore string
+	Pending         *bool
 	Cursor          string
 	Limit           int
 }
@@ -707,6 +708,9 @@ func (c *Client) ListInstanceMessages(ctx context.Context, instanceID string, q 
 	if q.DeliveredBefore != "" {
 		v.Set("delivered_before", q.DeliveredBefore)
 	}
+	if q.Pending != nil {
+		v.Set("pending", strconv.FormatBool(*q.Pending))
+	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
 	}
@@ -722,6 +726,36 @@ func (c *Client) ListInstanceMessages(ctx context.Context, instanceID string, q 
 		return nil, err
 	}
 	var out ListMessagesResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+type FrameItem struct {
+	FrameID             string `json:"frame_id"`
+	State               string `json:"state"`
+	TriggeringMessageID string `json:"triggering_message_id"`
+	MessageType         string `json:"message_type,omitempty"`
+}
+
+type ListFramesResponse struct {
+	Frames     []FrameItem `json:"frames"`
+	NextCursor string      `json:"next_cursor,omitempty"`
+}
+
+func (c *Client) ListInstanceFrames(ctx context.Context, instanceID, state string) (*ListFramesResponse, error) {
+	path := "/v1/instances/" + url.PathEscape(instanceID) + "/frames"
+	if state != "" {
+		v := url.Values{}
+		v.Set("state", state)
+		path += "?" + v.Encode()
+	}
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out ListFramesResponse
 	if err := c.do(req, &out); err != nil {
 		return nil, err
 	}

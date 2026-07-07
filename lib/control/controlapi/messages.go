@@ -319,6 +319,16 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 			}
 			filter.DeliveredBefore = &t
 		}
+		if s := q.Get("pending"); s != "" {
+			switch s {
+			case "true", "false":
+				pending := s == "true"
+				filter.Pending = &pending
+			default:
+				badRequest(w, "invalid pending (true or false required)")
+				return
+			}
+		}
 		pag := persistence.ListPagination{
 			Limit:  parseLimit(req, 100),
 			Cursor: q.Get("cursor"),

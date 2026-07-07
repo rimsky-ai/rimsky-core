@@ -92,7 +92,7 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 
 	msgA := enqueueAndDeliver(t, frameA, map[string]any{"partition_request_override": map[string]any{"a": 1}})
 	msgB := enqueueAndDeliver(t, frameB, map[string]any{"partition_request_override": map[string]any{"b": 2}})
-	_ = enqueueAndDeliver(t, shared.UUID{}, map[string]any{"partition_request_override": map[string]any{"c": 3}})
+	msgC := enqueueAndDeliver(t, shared.UUID{}, map[string]any{"partition_request_override": map[string]any{"c": 3}})
 
 	list := func(f persistence.MessageListFilter) []persistence.MessageRow {
 		t.Helper()
@@ -129,6 +129,29 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 	unknownFrame := shared.UUID(uuid.New())
 	if got := list(persistence.MessageListFilter{FrameID: &unknownFrame}); len(got) != 0 {
 		t.Fatalf("FrameID(unknown) = %d rows, want 0", len(got))
+	}
+
+	pending := true
+	settled := false
+	gotPending := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, Pending: &pending})
+	gotSettled := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, Pending: &settled})
+	if len(gotPending)+len(gotSettled) != 5 {
+		t.Fatalf("Pending=true (%d) + Pending=false (%d) must partition all 5 rows",
+			len(gotPending), len(gotSettled))
+	}
+	inRows := func(rows []persistence.MessageRow, id shared.UUID) bool {
+		for _, r := range rows {
+			if r.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !inRows(gotPending, msgC) {
+		t.Fatalf("undelivered msgC must appear under Pending=true; pending rows = %v", gotPending)
+	}
+	if !inRows(gotSettled, msgA) || !inRows(gotSettled, msgB) {
+		t.Fatalf("delivered msgA and msgB must appear under Pending=false; settled rows = %v", gotSettled)
 	}
 
 	var deliveredA []persistence.MessageRow

@@ -45,6 +45,7 @@ type MessageListFilter struct {
 	FrameID         *shared.UUID
 	DeliveredAfter  *time.Time
 	DeliveredBefore *time.Time
+	Pending         *bool
 }
 
 type PendingMessagePick struct {

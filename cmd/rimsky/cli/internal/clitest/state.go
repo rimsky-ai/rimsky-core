@@ -32,6 +32,9 @@ type InMemoryState struct {
 
 	messageIdem map[string]string
 	nextMessage int64
+
+	pendingMessages map[string]int
+	runningFrames   map[string]int
 }
 
 type storedTemplate struct {
@@ -251,6 +254,25 @@ func (s *InMemoryState) CreateInstance(hash string, key *string, params map[stri
 	s.nodes[id] = map[string]*cli.Node{}
 	cp := *row
 	return &cp, false, nil
+}
+
+func (s *InMemoryState) SetInstanceActivity(id string, pendingMessages, runningFrames int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingMessages == nil {
+		s.pendingMessages = map[string]int{}
+	}
+	if s.runningFrames == nil {
+		s.runningFrames = map[string]int{}
+	}
+	s.pendingMessages[id] = pendingMessages
+	s.runningFrames[id] = runningFrames
+}
+
+func (s *InMemoryState) InstanceActivity(id string) (pendingMessages, runningFrames int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pendingMessages[id], s.runningFrames[id]
 }
 
 func (s *InMemoryState) SetInstanceTerminated(id string, t *time.Time) {

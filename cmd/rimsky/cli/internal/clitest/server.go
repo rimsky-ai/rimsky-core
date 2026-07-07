@@ -105,6 +105,8 @@ func (s *Server) registerRoutes(r chi.Router) {
 	r.Get("/v1/instances/{idOrKey}/nodes", s.handleListInstanceNodes)
 	r.Get("/v1/instances/{idOrKey}/breakpoint-hits", s.handleListBreakpointHits)
 	r.Post("/v1/instances/{idOrKey}/messages", s.handleCreateInstanceMessage)
+	r.Get("/v1/instances/{idOrKey}/messages", s.handleListInstanceMessages)
+	r.Get("/v1/instances/{idOrKey}/frames", s.handleListInstanceFrames)
 
 	r.Get("/v1/nodes/{id}", s.handleGetNode)
 	r.Post("/v1/nodes/{id}/reset", s.handleResetNode)
@@ -491,6 +493,44 @@ func nodeCountForSpec(spec map[string]any) int {
 }
 
 // @decision: compose-driver-sends-empty-message-after-create
+func (s *Server) handleListInstanceMessages(w http.ResponseWriter, r *http.Request) {
+	idOrKey := chi.URLParam(r, "idOrKey")
+	inst := s.State.FindInstance(idOrKey)
+	if inst == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "instance not found"})
+		return
+	}
+	pendingCount, _ := s.State.InstanceActivity(inst.ID)
+	messages := []map[string]any{}
+	if r.URL.Query().Get("pending") == "true" {
+		for i := 0; i < pendingCount; i++ {
+			messages = append(messages, map[string]any{
+				"id": fmt.Sprintf("pending-%d", i), "instance_id": inst.ID, "type": "test/pending",
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
+}
+
+func (s *Server) handleListInstanceFrames(w http.ResponseWriter, r *http.Request) {
+	idOrKey := chi.URLParam(r, "idOrKey")
+	inst := s.State.FindInstance(idOrKey)
+	if inst == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "instance not found"})
+		return
+	}
+	_, runningCount := s.State.InstanceActivity(inst.ID)
+	frames := []map[string]any{}
+	if r.URL.Query().Get("state") == "running" {
+		for i := 0; i < runningCount; i++ {
+			frames = append(frames, map[string]any{
+				"frame_id": fmt.Sprintf("frame-%d", i), "instance_id": inst.ID, "state": "running",
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"frames": frames})
+}
+
 func (s *Server) handleCreateInstanceMessage(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
 	if s.maybeFail(w, r, "/v1/instances/"+idOrKey+"/messages") {
