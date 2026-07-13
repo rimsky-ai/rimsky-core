@@ -112,12 +112,13 @@ func TestSequencedPreservesCascadeRounds(t *testing.T) {
 			"emits no attribute change so no b4 pending is created.")
 
 	allB := bObs()
+	expected := []string{"r1", "r2", "r3"}
 	for i, obs := range allB {
-		require.Equal(t, "r3", obs.Attributes["snapshot_x"],
-			"under intra-frame semantics each queued b-run resolves its substituted bag "+
-				"at gate-eval time (once upstream a has quiesced), so every b dispatch "+
-				"sees a's LATEST value (r3). Sequenced mode's guarantee is queue "+
-				"CARDINALITY (one dispatch per cascade round), not per-round bag content. "+
-				"got %v at dispatch #%d", obs.Attributes["snapshot_x"], i+1)
+		require.Equal(t, expected[i], obs.Attributes["snapshot_x"],
+			"sequenced mode preserves per-round bag content: each queued b-run resolves "+
+				"its substituted bag from the specific a-run that drove its cascade round, "+
+				"pinned via the wait-set sender_run_id at enqueue time (b#1←a-r1, b#2←a-r2, "+
+				"b#3←a-r3), dispatched in sequence order. No two dispatches may see the same "+
+				"bag. got %v at dispatch #%d", obs.Attributes["snapshot_x"], i+1)
 	}
 }

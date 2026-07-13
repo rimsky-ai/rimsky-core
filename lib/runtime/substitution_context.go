@@ -63,6 +63,7 @@ func BuildAttributeDeps(
 
 // @concept: attribute
 // @concept: cascade
+// @story: sequenced-preserves-cascade-rounds
 func populateSubscribedSenderDeps(
 	ctx context.Context, tx persistence.Tx, args RunArgs,
 	receiverNodeRunID foundationshared.UUID, out map[string]json.RawMessage,
@@ -103,6 +104,10 @@ func populateSubscribedSenderDeps(
 	for _, t := range senderTypes {
 		senderTypeSet[t] = struct{}{}
 	}
+	pinned, err := pinnedSenderRunsForReceiver(ctx, tx, args, rec.FrameID, receiverNodeRunID)
+	if err != nil {
+		return err
+	}
 	instNodes, err := args.Persist.Nodes().ListByInstance(ctx, receiverNode.InstanceID, tx)
 	if err != nil {
 		return fmt.Errorf("populateSubscribedSenderDeps: list instance nodes: %w", err)
@@ -114,30 +119,75 @@ func populateSubscribedSenderDeps(
 		if _, ok := senderTypeSet[n.NodeType]; !ok {
 			continue
 		}
-		latest, err := args.Persist.Nodes().GetMostRecentSettledRun(ctx, tx, n.ID, rec.RunScopeID, math.MaxInt64)
-		if err != nil {
-			return fmt.Errorf("populateSubscribedSenderDeps: latest fresh run for %s: %w", n.NodeType, err)
-		}
-		if latest == nil {
-			continue
-		}
-		attrRow, err := args.Persist.NodeAttributes().GetByRun(ctx, latest.NodeRunID, tx)
-		if err != nil {
-			return fmt.Errorf("populateSubscribedSenderDeps: attribute row for %s: %w", n.NodeType, err)
-		}
-		var raw json.RawMessage
-		if attrRow == nil {
-			raw = json.RawMessage(`{}`)
-		} else {
-			marshaled, marshalErr := json.Marshal(attrRow.Data)
-			if marshalErr != nil {
-				return fmt.Errorf("populateSubscribedSenderDeps: marshal attrs for %s: %w", n.NodeType, marshalErr)
+		sourceRunID, pinnedRound := pinned[n.ID]
+		if !pinnedRound {
+			latest, latestErr := args.Persist.Nodes().GetMostRecentSettledRun(ctx, tx, n.ID, rec.RunScopeID, math.MaxInt64)
+			if latestErr != nil {
+				return fmt.Errorf("populateSubscribedSenderDeps: latest fresh run for %s: %w", n.NodeType, latestErr)
 			}
-			raw = marshaled
+			if latest == nil {
+				continue
+			}
+			sourceRunID = latest.NodeRunID
+		}
+		raw, rawErr := senderAttrsRaw(ctx, tx, args, sourceRunID, n.NodeType)
+		if rawErr != nil {
+			return rawErr
 		}
 		out[n.NodeType] = raw
 	}
 	return nil
+}
+
+// @concept: wait-set
+// @story: sequenced-preserves-cascade-rounds
+func pinnedSenderRunsForReceiver(
+	ctx context.Context, tx persistence.Tx, args RunArgs,
+	frameID, receiverNodeRunID foundationshared.UUID,
+) (map[foundationshared.UUID]foundationshared.UUID, error) {
+	rows, err := args.Persist.WaitSet().ListForReceiver(ctx, frameID, receiverNodeRunID, tx)
+	if err != nil {
+		return nil, fmt.Errorf("pinnedSenderRunsForReceiver: list wait-set: %w", err)
+	}
+	pinnedByNode := make(map[foundationshared.UUID]foundationshared.UUID)
+	seqByNode := make(map[foundationshared.UUID]int64)
+	seenRun := make(map[foundationshared.UUID]struct{})
+	for _, w := range rows {
+		if _, done := seenRun[w.SenderNodeRunID]; done {
+			continue
+		}
+		seenRun[w.SenderNodeRunID] = struct{}{}
+		senderRun, runErr := args.Persist.Nodes().GetRunForGate(ctx, tx, w.SenderNodeRunID)
+		if runErr != nil {
+			return nil, fmt.Errorf("pinnedSenderRunsForReceiver: get sender run: %w", runErr)
+		}
+		if senderRun == nil {
+			continue
+		}
+		if cur, ok := seqByNode[senderRun.NodeID]; !ok || senderRun.Sequence > cur {
+			pinnedByNode[senderRun.NodeID] = w.SenderNodeRunID
+			seqByNode[senderRun.NodeID] = senderRun.Sequence
+		}
+	}
+	return pinnedByNode, nil
+}
+
+func senderAttrsRaw(
+	ctx context.Context, tx persistence.Tx, args RunArgs,
+	runID foundationshared.UUID, nodeType string,
+) (json.RawMessage, error) {
+	attrRow, err := args.Persist.NodeAttributes().GetByRun(ctx, runID, tx)
+	if err != nil {
+		return nil, fmt.Errorf("populateSubscribedSenderDeps: attribute row for %s: %w", nodeType, err)
+	}
+	if attrRow == nil {
+		return json.RawMessage(`{}`), nil
+	}
+	marshaled, err := json.Marshal(attrRow.Data)
+	if err != nil {
+		return nil, fmt.Errorf("populateSubscribedSenderDeps: marshal attrs for %s: %w", nodeType, err)
+	}
+	return marshaled, nil
 }
 
 func buildResolveContextForAcquisition(
