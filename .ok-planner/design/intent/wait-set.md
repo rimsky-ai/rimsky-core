@@ -1,0 +1,71 @@
+# Intent Dossier: wait-set
+
+Distilled 2026-07-13 from session transcripts (2026-06-12..2026-07-13) and ok-planner
+history artifacts (2026-05-04..2026-06-11). Transcript tier outranks artifact tier;
+later intent supersedes earlier. Part of the drift-remediation intent ledger.
+
+## Net position
+
+- The wait-set is a persisted per-frame eligibility ledger keyed by run identity: sender and receiver columns are run ids (`sender_run_id`), giving frame isolation between in-flight runs of the same node type (2026-05-15, data-platform-extensions).
+- Wait-set rows carry no data. Their one job is to signal which receiver to evaluate — and, via the pinned `sender_run_id`, which upstream runs drove the round (2026-06-23 + 2026-07-13, transcripts). Signal payloads never propagate down the cascade; a signal payload's only consumers are the walk-time CEL predicate and the audit row (2026-06-23, 10cf843b, transcript, user).
+- Under the seven-state node-run model, a cascade creates/accumulates into a **pending** run; the gate evaluator runs synchronously in the terminal-handler transaction and transitions pending → stale only when the run's wait-set is fully drained AND no subscribed upstream has an in-flight run (in-flight = pending, stale, running, held, parked). At that transition the dispatch input bag is built (carry-forward from the prior run's persisted bag + drained-round overlay) and the node's cascade-mode rule applies (2026-06-20, 8a3b8c19, transcript).
+- Cascade walker accumulation rule (a): a cascade reaching a receiver with a pending run accumulates the sender into that pending's wait-set only if the sender **node** is not already represented there; if the same sender node re-cascades, a new pending run (a new round) is created. Inserts are deduped by `sender_run_id`. The walker never mutates existing in-flight runs; concurrent walkers serialize on an advisory lock per (node, scope, frame) (2026-06-20, 8a3b8c19, transcript, user).
+- Single insertion path: wait-set rows are inserted by the cascade walk when a sender transitions out of a settled state (2026-06-16, 4c42fe5b, transcript reversal). External signal sources (operator invalidate, cron ticks, time-wake, watchdogs) mark nodes stale without inserting rows — no graph-upstream waiter exists (2026-05-14, artifact).
+- Drain marks rather than deletes: settling a sender sets `drained_at`; eligibility means no undrained rows (2026-05-20, attribute-pull-resolution, artifact). One drain rule per (frame, sender) covers every topic kind (2026-05-14).
+- `topic_kind` is a closed set of three canonical kinds — terminal, transient, attribute — projecting the signal taxonomy's top-level kinds, plus `state` as a defensive fallback: four values total. `message` and `event` are retired and rejected by the migration CHECK (2026-06-23, 10cf843b, transcript correction).
+- Nodes may only block on events that can resolve within their current frame; cross-frame blocking on message arrival is forbidden (2026-06-15, 91ec93d1, transcript, user). Nodes do not park on other nodes; node-waiting-on-node coordination is exactly cascade and re-invalidation (2026-06-15, 91ec93d1, transcript, user).
+- Eligibility-as-empty-wait-set IS the any-of semantic; subscription cycles are legal defer-loops across frames (2026-05-14, artifact).
+
+## Required behaviors (open promises)
+
+- Dispatch eligibility: a run dispatches only after the pending → stale gate — wait-set fully drained plus no subscribed upstream in-flight — checked once at that transition; the dispatcher's SELECT keeps only state=stale and unclaimed, serialization enforced as CAS at claim attempt. A stale row is thereby guaranteed its upstream dependencies cleared and its input bag persisted (2026-06-20, 8a3b8c19, transcript). The earlier dispatch-time two-condition predicate (2026-06-11, last-mile-stability, artifact) is the same intent enforced at the earlier gate site.
+- Each of multiple invalidators contributes its own row; the receiver waits until all rows drain. In a diamond (A→B, A→C, B→D, C→D) there is exactly one pending D' per invalidation cycle whose wait-set accumulates B' and C'; per-event runs like D'_b / D'_c are never created; successive cycles are D', D'', D''' each with its own wait-set (2026-06-20, 8a3b8c19, transcript, user: "there should only be D'. D' is waiting on B', C'.").
+- Each enqueued node_run pins its own distinct set of upstream runs at enqueue time via the wait-set row's `sender_run_id` — runs, not nodes — and its substituted values must come from those pinned runs once they settle; carry-forward attributes come from the receiver's own last completed run at execution time (2026-07-13, 3f71f90a, transcript, user: "enqueued node_runs need some mechanism for snapshotting their upstream runs directly, not upstream nodes ... *at the time* the new run is enqueued").
+- Sequenced cascade mode preserves per-round attribute snapshots: when upstream A settles v1, v2, v3 while receiver B is held, B's three queued dispatches see v1, v2, v3 respectively. `populateSubscribedSenderDeps` resolves each round-driving sender's value from its pinned wait-set `sender_run_id` (any topic, run settled), falling back to GetMostRecentSettledRun only for subscribed senders that did not drive the round (2026-07-13, 3f71f90a, transcript; committed as 2d4952e4).
+- Wait-set insertion is gated by walk-time subscriber-match filter evaluation — cascade-fire IS subscriber match; there is no sender-side gate (2026-05-23, signal-taxonomy-and-policy-decoupling, artifact).
+- Walker rule (a) reads ALL wait-set sender rows for the receiver, not only drained ones; the natural-cascade insert dedupes by sender_run_id (2026-06-20/21, 8a3b8c19 / 10cf843b, transcripts). Idempotent-mode bag comparisons use JCS (RFC 8785) canonicalization (2026-06-21, 10cf843b, transcript).
+- The wait-set accumulation rule is separate from queue/mode semantics: modes apply only at pending → stale, when attributes are resolved; a new pending run missing some upstream is not a bug — accumulation picks it up if it later triggers (2026-06-20, 8a3b8c19, transcript, user).
+- The dispatch-time input bag is preserved in a separate `dispatch_input_bag` column, never overwritten by executor writeback: carry-forward reads the live bag, idempotency comparison reads the preserved input bag (2026-06-20, 8a3b8c19, transcript).
+- Rows are cleaned up with the frame (cascade delete at frame close) (2026-05-14, artifact-only).
+- A diagnostics endpoint returns the wait-set rows for a frame, optionally narrowed to one receiver, for debugging stuck frames (2026-05-14, subscription-cascade-and-quality-of-life, artifact-only), and the operator can query the live receiver-waiting-for-sender edges the supervisor is actually consulting (2026-06-08, corpus-bootstrap, artifact-only).
+- A parked receiver woken by an upstream cascade is handled in-transaction: parked → stale with the regular stale-mark and wait-set insert (2026-05-14, artifact-only; the walker's wake policy re-affirmed 2026-05-22, fan-out-safety-scope-first, artifact).
+- Every cascade-created node-run follows one uniform rule: no "pending-but-not-yet-claimed" special mode, and cascade events must never merge wait-set rows into an already-dispatched run (2026-06-20, 8a3b8c19, transcript, user: "we want this implementation simple and to avoid special cases").
+- The 2026-06-20 redesign's story set (cascade-defers-during-flight, most-recent-coalesces-cascades, sequenced-preserves-cascade-rounds, idempotent-mode-dedupes, etc.) each warrant a scenario test (2026-06-20, 8a3b8c19, transcript).
+
+## Intentional absences
+
+- **`dependencies:` as a node-template construct.** Retired; decomposed into substitution refs, explicit `subscribes:`, and the wait-set ledger (2026-05-14, subscription-cascade-and-quality-of-life). Deploy-time validation rejects the retired field as unknown.
+- **Deploy-time subscription-cycle rejection.** Cycles are defer-loops that terminate when no receiver has a wait-set row (2026-05-14).
+- **A separate any-of / first-fresh-of-set runtime feature.** Eligibility-as-empty-wait-set IS the any-of semantic (2026-05-14, rejection).
+- **`wake_on_change` subscription flag.** Removed entirely — struct field, validator requirement, walker branch, tests, examples, docs — "like it never existed"; subscriptions always wake; with substitution reading persisted sender stores directly it did literally nothing (2026-06-23, 10cf843b, transcript, user). Any doc naming wake-on-change as a required flag with a rejection invariant is drift (2026-07-11, 3f71f90a, transcript).
+- **`instance: true` cross-cutting subscriptions and the `subscription_scope` column.** Completely removed, migration 016; may remain only in git history (2026-07-05, 3f71f90a, transcript, user).
+- **`topic_kind` values `message` and `event`.** `message` retired with the no-cross-frame-blocking rule (migration 011, 2026-06-15); `event` dropped when event/<name> signals retired in favor of terminal tags (2026-06-17, b31002b8, transcript).
+- **Per-emission event-payload binding (`{{trigger.event.payload}}`).** Never built: the wait-set ON CONFLICT + shared visited set collapse N emissions into one dispatch, so there is no per-dispatch triggering emission to bind (2026-05-29, console-upstream-auth-audit-and-fixes, artifact).
+- **Within-frame park-on-terminal / nodes parking on nodes** (2026-06-15, 91ec93d1, transcript, user).
+- **The transitional `wait_set_pairs` pre-install at synthetic-frame promotion** and its blessed-invariant annotation — declared transitional at introduction and retired with the synthetic-envelope mechanism (2026-06-15/16, 4c42fe5b, transcript).
+
+## Corrections and restorations (drift-fight record)
+
+- **Sequenced per-round regression (finding 2337 — fix-code).** Commit bc3280d7 (Jun-22) incidentally switched sender value reads from the pinned `sender_run_id` to GetMostRecentSettledRun while fixing an unrelated substitution-set bug; July-5 frame-isolation work removed the timing that masked it; a test commit (47cea918) rationalized the regression as a "story-level intent shift" to cardinality-only. The user ruled this a regression against the original pre-June-22 design and had per-round pinning restored (2d4952e4), keeping bc3280d7's genuine fix (substitution sender set from template-declared subscriptions, not emission-gated rows) (2026-07-13, 3f71f90a, transcript). Precedent: a commit-message claim of intent shift does not outrank the recorded design.
+- **Snapshot-at-creation bug.** The user caught that snapshotting the bag at node-run creation captures while upstreams are still outstanding; forced the pending state and moved bag-build to pending → stale (2026-06-20, 8a3b8c19, transcript).
+- **Per-cascade-event pending-run over-generalization withdrawn** in favor of the diamond-correct accumulation rule (2026-06-20, 8a3b8c19, transcript).
+- **Drained-only read filter was a workaround**: ListSenderNodesForReceiver's drained_at filter removed; the pre-seed problem fixed at the insert site by sender_run_id dedupe (2026-06-20, 8a3b8c19, transcript).
+- **Mark-don't-delete migration missed the queue predicate**: SelectCandidates in both drivers needed a NOT EXISTS undrained-wait-set gate or the runner would select wait-set-blocked candidates (2026-05-20, attribute-pull-resolution divergences, artifact).
+- **Multi-parent early dispatch gap**: the settlement walk marked subscribers stale without seeding next-tier gates, letting a receiver dispatch after the first parent settled; closed by the in-flight-upstream eligibility condition (2026-06-11, last-mile-stability, artifact).
+- **Lossy topic_kind collapse**: the legacy 3-bucket adapter recorded terminal/transient/message all as 'state'; broadened by CHECK migration (2026-06-06), then re-narrowed as kinds retired; the decision doc listing `message` as canonical was wrong and corrected (2026-06-23, 10cf843b, transcript).
+
+## Superseded / historical
+
+- Pessimistic-invalidate (insert rows regardless of filter) and the sender-side `last_outcome == fresh_changed` cascade gate → walk-time subscriber-match filter evaluation (2026-05-23).
+- Wait-set keyed by node identity → run identity (2026-05-15).
+- `frame:next` wait-set row via deferred-invalidate queue → unrealizable (row could never drain); frame coalescing via EnqueueOrCoalesce instead (2026-05-14 reversal).
+- Wait-set rows as substitution data carriers (drained rows feeding the substitution-context builder, 2026-05-20; Deps map limited to settled-success senders) → substitution reads each subscribed upstream's persisted attribute bag via one unified BuildAttributeDeps (2026-06-23, 10cf843b, transcript, user: "the original code being too clever") → refined by per-round pinning for round-driving senders (2026-07-13).
+- Strict this-frame-only substitution with ErrMissingSource (2026-05-20, artifact) → the June model reads persisted sender bags / pinned runs.
+- The `hard_dep: true` attribute-source flag with hard-dep edge map and inline-invalidate (2026-05-20, artifact-only) → the record's later force-upstream mechanism is the `force_upstream_refresh` subscription handled by the walker's upstream-refresh-edge map (2026-06-15/16, transcripts); force_upstream_refresh "remains the only cascade flag of its kind" (2026-06-23). Do not treat the hard_dep grammar as currently promised.
+- Force-upstream substitution via pre-installed wait-set rows → read the upstream's most-recent fresh row in the receiver's run scope; wait-set purely eligibility-gating (2026-06-15, 4c42fe5b, transcript, user: "a."), with the pre-install fix retired (2026-06-16 reversal).
+- 5-value topic_kind taxonomy incl. message + event (2026-06-06/08, artifacts) → 3 canonical + state fallback (2026-06-23).
+- `no-op commit leaves dependents fresh` old-model assertion → pessimistic re-dispatch idempotence (2026-05-14) → itself folded into the walk-time-filter model (2026-05-23).
+
+## Conflicts needing human ruling
+
+- None left open by precedence. (The mark-don't-delete `drained_at` mechanism from 2026-05-20 was never explicitly retracted and the 2026-07-13 pinning work still reads wait-set rows post-drain; adjudicators should treat drained-row retention within the frame as current intent.)

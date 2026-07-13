@@ -36,17 +36,21 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
-	require.NoError(t, err)
 	frameID := h.GetRunningFrameID(iid)
 	nodeRunID := uuid.New()
 	mainScopeID := h.GetMainRunScopeID(iid)
-	_, err = h.Pool.Exec(h.Ctx,
+	tx, err := h.Pool.Begin(h.Ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(h.Ctx) }()
+	_, err = tx.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
+	require.NoError(t, err)
+	_, err = tx.Exec(h.Ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, frame_id, run_scope_id, sequence)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), $3, $4, 1)`,
 		nodeRunID, n.ID, frameID, mainScopeID,
 	)
 	require.NoError(t, err)
+	require.NoError(t, tx.Commit(h.Ctx))
 
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })

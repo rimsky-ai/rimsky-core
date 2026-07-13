@@ -1,0 +1,95 @@
+# Intent Dossier: parked-state
+
+Distilled 2026-07-13 from session transcripts (2026-06-12..2026-07-13) and ok-planner
+history artifacts (2026-05-04..2026-06-11). Transcript tier outranks artifact tier;
+later intent supersedes earlier. Part of the drift-remediation intent ledger.
+
+## Net position
+
+- Parked is a state on a **node_run**, never on the node; nodes carry no runtime state. It is one state in the unified single-column state model (no separate phase column).
+- Only an executor can park — park is exclusively an executor outcome. A fan-out/aggregation parent with no executor can never be parked (2026-06-24, 8a8539a4, transcript).
+- Parked carries exactly two load-bearing semantics: the parked run's claim is not released, and the enclosing frame cannot resolve until the run is unparked. Everything else formerly attached to park was decoration that belongs in attributes (2026-06-16, 055468fc, transcript).
+- Parking is strictly intra-frame: waking a parked run resumes the same frame it parked in; parked status never carries across frames (2026-06-15, 91ec93d1, transcript).
+- Parked runs are **sealed**: cascade, messages, and operator actions never wake or mutate a parked run. An upstream cascade during a park queues a NEW node_run behind the serialization gate; the parked run stays parked (2026-06-20/2026-06-22/2026-07-03, 8a3b8c19/10cf843b/3f71f90a, transcript).
+- Parked exits: time-wake on its own snooze deadline (parked→stale) and the park_timeout watchdog (parked→failed, error_class park_timeout) (2026-06-22, 10cf843b, transcript). (See Conflicts for the await_callback-reason exit question.)
+- Parked is a **resume** state, not a fresh dispatch: nothing in the parked run is updated at resume; the re-dispatch replays the persisted dispatch-time input bag (substitution snapshot); re-resolving from current upstream values at wake is a bug (2026-06-19, 8a3b8c19, transcript).
+- ParkReason is a closed two-value enum: `await_callback` (proto zero value, conservative default) and `snooze` (resume_at required iff snooze); the DB CHECK enforces the same set (2026-05-22, fan-out-safety-scope-first, artifact).
+- Park is not a terminal: the taxonomy is `transient/park/snooze` and `transient/park/await_callback` — audit-row only, never cascade-fires, subscriptions to park signals are rejected at registration; users can subscribe only to success and error (2026-06-24, 8a8539a4, transcript).
+- Park carries no `attributes_delta` (a parking executor writes no node attributes); executor state across a park boundary rides `park.scratch`, read back from `ExecuteRequest.scratch` on the next dispatch (2026-06-24, 8a8539a4, transcript; reaffirmed 2026-07-13, 3f71f90a, transcript). Tags remain on park signals for audit-row observability (2026-06-24).
+- The resume-context channel is gone: Park.payload, Park.session_token, ExecuteRequest.resume_context, the ResumeContext message, and the parked_payload_*/session_token/wake_reason columns are all deleted (2026-06-17, b31002b8, transcript).
+- The claim acquired at dispatch is held across the park and released only on a true run-terminal; claim contention against a parked holder uses regular lock semantics — contenders queue, no preemption (2026-05-08, platform-extensions, artifact; 2026-06-16, 055468fc, transcript).
+- Heartbeating pauses during a park and the orphan-claim reaper never reaps a parked row; dispatch candidate selection must never claim parked rows (2026-05-08, platform-extensions, artifact).
+- A frame ends only when no node_run remains stale, running, or parked; any "unresolved work" predicate counts parked, any "dispatchable now" predicate does not (2026-06-03, instance-lifecycle-durable-by-default, artifact).
+- Await-async-callback is NOT a park: the node-run stays `running` during a callback wait and inherits running-state in-flight protection (2026-06-20, 8a3b8c19, transcript; 2026-06-03, artifact).
+- Park is a last resort for template designers — for scheduler wake-up or external events only; inter-node communication and retriggering loops live in attributes (2026-06-14, 752fe200, transcript).
+- Parked is a legitimate waiting state, not a degenerate case; no operator-intervention carve-out — operator recovery runs through failed-terminal + retry-budget reset only (2026-06-16, 4c42fe5b, transcript).
+- A park emits no work_completed event: the run re-enters, and its eventual terminal emits the pairing event (2026-07-13, 3f71f90a, transcript).
+
+## Required behaviors (open promises)
+
+- Frame hold: a parked run holds its frame open, the held-frames diagnostic surfaces it, terminate_after_run waits, and instance termination fires only after the frame ends; async-callback-pending holds are a structurally distinct property — each has its own dedicated e2e test (2026-06-17, b95ff4a7, transcript).
+- Park-timeout safety valve: `max_park_duration` overrun transitions parked→failed with error_class park_timeout, resolving the node so the frame ends normally, and the failure must abandon held claims per the claim-resolution invariant (2026-06-03, instance-lifecycle-durable-by-default, artifact; 2026-05-08, platform-extensions, artifact).
+- Per-reason max park duration: fallback order per-row max_park_duration_seconds → deployment-level per-reason cap → no cap; config reason vocabulary must match the stored two-value enum (await_callback, snooze) so caps actually match rows (2026-06-15, 8c66c02c, transcript; 2026-06-02, rimsky-core-remediation, artifact).
+- Snooze sweep: a periodic parked-node sweep wakes rows whose resume_at has elapsed (default interval 30s, configurable) and enforces the timeout watchdog (2026-05-08, platform-extensions, artifact); the time-wake path re-dispatches the same parked row, so scratch needs no row-copy (2026-06-24, 8a8539a4, transcript).
+- Negative invariant, test-guarded: posting a typed message after a park does NOT wake the parked run and the instance does NOT terminate while it stays parked (TestParkedHoldsFrame_TypedMessageDoesNotWake) (2026-06-22, 10cf843b, transcript).
+- New-frame purity: since there is exactly one message per frame and each message starts a frame, no receiver in a newly started frame can be parked; message delivery must not probe prior-frame parked runs (2026-06-22, 10cf843b, transcript).
+- Static upstream view: a node-run's view of its upstreams is fixed for its lifetime — enforced by snapshot (dispatch-time substitution persisted, replayed on resume), not by ordering; the story resume-preserves-snapshot survives the seven-state redesign (2026-06-19, 8a3b8c19, transcript).
+- Bundled-executor park emitters: claude-agent auto-parks on 429 with a resume_at (2026-05-08, platform-extensions, artifact) and exposes a `report_park` MCP tool with typed reason (unspecified rejected); transient-vs-terminal classification of validator problems is the agent's call — report_park for unreachable, report_error for rejection (2026-06-04, claude-agent-signoff-gate, artifact). http-node parks on upstream 429 with PARK_REASON_SNOOZE and resume_at from Retry-After, reusing the existing park + auto-wake machinery (2026-06-06/2026-06-08, comprehensive-gap-closure/corpus-bootstrap, artifact).
+- Conformance: every bundled executor's stub mode handles the probe_park probe, emitting a Park whose reason validates against {await_callback, snooze} (park_reason_emission scenario) (2026-06-15, c60b550a, transcript).
+- Diagnostics: the operator can query parked nodes with resume reason (alongside wait-set edges, held frames, claim holders) to diagnose a wedged instance (2026-06-08, corpus-bootstrap, artifact). GET /admin/diagnostics/parked-nodes and held-frames endpoints with ?reason= filter validated against the enum, 400 with valid options on unknown values (2026-05-08 + 2026-05-14, platform-extensions / subscription-cascade-qol, artifact) (artifact-only in the endpoint specifics). CLI `parked list` with --reason/--older-than/--instance (2026-05-14, subscription-cascade-qol, artifact) (artifact-only). Dashboard parked-nodes view grouped by reason (2026-05-14, artifact) (artifact-only; predates the enum collapse — reason set is now two values).
+- parked_reason persists in lower_snake_case TEXT so diagnostics filters and metrics labels are stable across proto/storage/CLI surfaces (2026-05-14, subscription-cascade-qol, artifact).
+- Signal audit parity: park signal emissions land an audit row in the event log even though they never cascade (2026-06-10, cascade-and-claim-handoff, artifact).
+- Foundation does not auto-remediate held frames or long parks beyond max_park_duration — they are legitimately waiting; "too long" is the operator's domain logic (2026-05-08, platform-extensions, artifact).
+- compose run needs no parked special handling: park's own exits drive instances to terminal; park_timeout counts as failure for exit-code purposes (2026-06-13, 65667e33, transcript).
+- Test idioms: park entry is driven via a real executor; the two tests whose subject was ad-hoc invalidation of parked nodes were retired with the surface (2026-06-16, 4c42fe5b, transcript).
+
+## Intentional absences
+
+- **Every wake-parked-via-invalidate path.** The 2026-05-08 design (any invalidate wakes a parked node; admin node-invalidate endpoint keyed on state; "wake is what node:invalidate already does" 2026-05-15) is dead: ad-hoc node invalidation is not supported at all, for parked or non-parked nodes (2026-06-16, 4c42fe5b, transcript), and parked runs are sealed against cascade/message/operator wake (2026-06-20..22, transcript). Helpers wakeParkedReceiverInTx / wakeParkedReceiverIfPresentInTx / wakeParkedReceiverWithDepsInTx and the wake-parked-on-message path are deleted; the advanceOneFrame parked-aware wake branch was backed out as unreachable (2026-06-15, 91ec93d1, transcript).
+- Resume-context plumbing: Park.payload, session_token, resume_reason discriminator, ResumeContext, wake_reason column — removed 2026-06-17 (b31002b8, transcript); attribute carry-forward, then scratch, is the mechanism.
+- Park.attributes_delta — fully backed out of wire, persistence, and signal payload; deltas exist only on terminal/success and terminal/error (2026-06-24, 8a8539a4, transcript).
+- Subscriptions to park signals — rejected at registration; "subscribe to any event" doc language walked back (2026-06-24, 8a8539a4, transcript).
+- NodeStateResuming / ReasonDeadlineResume / IsResume / loadResumeAttributes (the distinct resuming state, shipped 2026-06-19) — abandoned into the seven-state redesign; decision parked-resume-distinct-state retired to _retired/ (2026-06-20, 8a3b8c19, transcript).
+- Removing parked entirely (branch feature/nopark) — considered and declined: park is a signal to the claim system, "hang on to my claim" (2026-06-16, 055468fc, transcript).
+- Cutting park-snooze for deliver-at timer messages / a timer node — proposed and reversed the same day; park-snooze stays as a baked-in primitive because every timer-node design reduced back to park (2026-06-16, 055468fc, transcript, 07:36 reverses 03:42).
+- Operator force-wake of an in-flight or parked run — no such verb in v1; operator invalidate queues behind the serialization gate; force = kill-instance (2026-06-20, 8a3b8c19, transcript).
+- Dropping cascade signals aimed at a parked receiver — rejected; cascade information arriving during a park must survive and produce a later dispatch (2026-06-19, 8a3b8c19, transcript).
+- Node-on-node parking / within-frame park-on-terminal mode — nodes never park on other nodes; that coordination is cascade + re-invalidation (2026-06-15, 91ec93d1, transcript).
+- PARK_REASON_OTHER and PARK_REASON_BARRIER_WAIT — deliberately never introduced (2026-05-14, subscription-cascade-qol, artifact); the whole 7-value taxonomy collapsed to 2 (2026-05-22, fan-out-safety-scope-first, artifact).
+- `Snooze` as the wire event name — the 2026-05-12 rename was reverted to `Park` on 2026-05-13 for cross-layer alignment; the state value 'parked' and this concept slug were never renamed.
+- Human review as a platform primitive (and the rimsky_review_history table) — a project concern composed of an indefinite park + external UI (2026-05-08, platform-extensions, artifact).
+- OnNodeParked lifecycle-subscriber event — explicitly deferred, not dropped (2026-05-14, subscription-cascade-qol, artifact).
+- report_await_async_callback MCP tool and the executor-hands-off-via-async-callback story — retired; AwaitAsyncCallback is the executor layer's envelope, never agent-emitted; report_park(await_callback) covers external waits (2026-06-19, 8e7e4c10, transcript).
+- Harness.InvalidateNode (both branches) and a test-only state-injection helper — retired/declined; tests use production mechanisms (2026-06-16, 4c42fe5b, transcript).
+- The legacy {type: ...} async-callback body discriminator — the supervisor accepts only the AsyncCallbackBody oneof (success/error/park + top-level events) (2026-05-19, crimefinder, artifact).
+
+## Corrections and restorations (drift-fight record)
+
+- **Recurring wake-parked resurrection.** Agents repeatedly re-added ways to wake parked runs (from messages, cascade, operator actions) after each removal; the user ruled the path "absolutely not a thing" and had the surfaces deleted and the old wake test inverted into a negative proof (2026-06-22, 10cf843b, transcript). This is the single strongest precedent on this concept: any rediscovered wake-parked path is drift, not a missing feature.
+- Wake-from-park was implemented as a fresh dispatch rebuilding substitution from current upstreams; ruled a bug — parked is a resume state; fixed via the snapshot model (2026-06-19, 8a3b8c19, transcript).
+- The synthetic terminal/success cascade walk after parked-resume (invalidationCascadeSignal, residue of the retired invalidate concept) caused a confirmed spurious dispatch (terminal/success subscriber firing when the sender parked then settled terminal/error); removed, file renamed to upstream-refresh-pull vocabulary (2026-06-18, 8a3b8c19, transcript).
+- The frame concept doc contradicted itself on whether parked holds a frame; code followed the wrong half so instances could terminate with a parked node. Both drivers' frame-end/instance-terminal predicates corrected to count parked (2026-06-03, instance-lifecycle-durable-by-default, artifact).
+- Per-reason park caps could never fire: config accepted reason keys that matched no stored value; vocabulary aligned to await_callback/snooze (2026-06-02, rimsky-core-remediation, artifact).
+- Public docs enumerated four node states; canonical count then was five including parked (2026-05-13, nomenclature-resolution, artifact).
+- 2026-05-08 execution-era bug fixes on machinery since redesigned, kept as precedents: SelectCandidates/ClaimDispatchRow claimed parked rows directly (phase predicate added — wake path must be the only route back to active); handler invalidates bypassed the unified parked-aware path; failOverdueParkedRow deleted rows without abandoning held claims; resume_reason hardcoded; SQLite park-resume silently broken (sql.NullTime scan swallowed); resume metadata cleared before the executor RPC succeeded (platform-extensions notes, artifact).
+- The plan's three-field ParkTerminal rename would have silently deleted the resume-roundtrip contract; caught and kept the full Park shape at the time (2026-05-22, fan-out-safety-scope-first, artifact) — the roundtrip fields were later removed deliberately (2026-06-17), which is the governing intent.
+- executor.md was the one doc missed by the June-24 session-token migration from attributes to scratch — adjudicated fix-doc, finding 56 (2026-07-13, 3f71f90a, transcript). Park emitting no work_completed adjudicated fix-doc, finding 2348 (2026-07-13, 3f71f90a, transcript).
+
+## Superseded / historical
+
+- Five-state model with parked joining fresh/stale/running/failed (2026-05-08) → unified seven-state node_run model; phase column dropped (2026-06-20, transcript).
+- "Cascade does not propagate from parked" invariant (2026-05-08) → explicitly retracted; propagation is subscriber-match-driven (2026-05-23, signal-taxonomy, artifact).
+- Free-form Park.reason string, empty accepted with WARN (2026-05-08) → typed 5-value enum + reason_note (2026-05-14) → superset 7 values (2026-05-15) → closed 2 values await_callback/snooze (2026-05-22).
+- ParkRequested → Snooze proto rename (2026-05-12) → reverted to Park (2026-05-13).
+- parked→running resume transition (2026-05-08 spec) → parked→stale under handler-resume (2026-05-08 notes) → cascade-driven parked→stale wake itself retired; only time-wake performs parked→stale (2026-06-19..22, transcript).
+- Cascade walker waking parked receivers in-transaction (parked_resume_started, 2026-05-14; wakeParkedReceiverInTx as walker policy, 2026-05-22) → sealed-parked model (2026-06-20, transcript).
+- State subscription `when: parked` with reason filter (2026-05-14) → park signals are not subscribable at all (2026-06-24, transcript).
+- Park + resume_payload as the build/validate-loop mechanism (assistant framing) → corrected: loops live in attributes; park is last-resort (2026-06-14, 752fe200, transcript).
+- Distinct resuming state (2026-06-19) → absorbed into seven-state model; outcome (snapshot replay) survives (2026-06-20).
+- terminal/park/* as a terminal signal family (2026-06-10, artifact) → transient/park/*; "terminal" means run-terminal only (2026-06-24, transcript).
+- Session token riding park.attributes_delta (interim June state) → rides park.scratch (2026-06-24, transcript).
+- Generic scratch as precondition for a possible future Park retirement (2026-06-14, 752fe200) → park confirmed staying (2026-06-16); scratch remains, but as the park state channel, not a retirement ramp.
+
+## Conflicts needing human ruling
+
+- **How an await_callback-reason park exits.** The reason taxonomy keeps `await_callback` (external-signal wake; proto zero value) (2026-05-22, artifact; 2026-06-24, transcript), and mid-June transcript work had the parked-state test drive park exit "via the real async-callback path" / "parked nodes wake via callbacks or timers, not messages" (2026-06-16, 4c42fe5b, transcript). But the later ruling enumerates exactly two exits — own-deadline time-wake and watchdog timeout (2026-06-22, 10cf843b, transcript) — and the artifact record says /v1/callback rejects parked runs (rejected_run_parked) because it serves AwaitAsyncCallback, not park (2026-06-03, artifact). The record never states what, other than the watchdog, ends an await_callback park under the sealed model. Adjudicators should not treat either "callback wakes parked" or "await_callback parks can only time out" as settled without a human ruling.

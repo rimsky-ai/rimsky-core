@@ -1,0 +1,82 @@
+# Intent Dossier: observability
+
+Distilled 2026-07-13 from session transcripts (2026-06-12..2026-07-13) and ok-planner
+history artifacts (2026-05-04..2026-06-11). Transcript tier outranks artifact tier;
+later intent supersedes earlier. Part of the drift-remediation intent ledger.
+
+## Net position
+
+- Observability is read-only and best-effort. Counters, metrics, and diagnostics never gate dispatch correctness — "the counter is observability, not control" (2026-05-21, attribute-overrides-matcher-overlay, artifact).
+- Executor-side observability is a separate optional gRPC service, `ExecutorObservability`, distinct from the required `NodeExecutor`; its RPC is `Capabilities` (renamed from `GetCapabilities` for symmetry with `ClaimProducerObservability.Capabilities`). Its Capabilities message describes the trace surface; the capability vocabulary executors advertise is `declared_tags` (renamed from `declared_events`) plus `declared_error_classes`.
+- The discovery cache is in-memory, filled by a strictly best-effort startup handshake (unreachable peers recorded as Unreachable, never aborting startup), kept eventually-consistent by a refresh loop (60s production default, deliberately kept; `RIMSKY_OBSERVABILITY_REFRESH_INTERVAL` overrides in tests).
+- The operator-facing node surface is a 4-bucket categorical `NodeRunSummary` (active = running+held+parked, pending = pending+stale, fresh, failed). There is no single-value node state; how to display runs is the dashboard's problem, not rimsky-core's (2026-06-20, 8a3b8c19, transcript, user: "NodeRunSummary is good and honest").
+- Executor liveness is progress-based (`last_progress_at`, bumped by writebacks and state transitions) plus RPC connection state. There are no heartbeats anywhere on the executor surface.
+- Frame lifecycle state is derived at read time from `ended_at` + node_run terminals; attribute-override match counts are derived from the event log at read time. Neither is stored.
+- Metric names are an external operator-facing surface and are never renamed silently (2026-05-13, nomenclature-resolution, artifact).
+- Observability HTTP routes are read-only (no handler mutates state), run in short fresh transactions, are gated by `observability:read`, and live under `/claim-producers` (not `/stores`).
+
+## Required behaviors (open promises)
+
+- Every rimsky process (scheduler, supervisor, control-api) exposes a Prometheus `/metrics` endpoint with `rimsky_*` counters, gauges, and histograms (2026-05-08, platform-extensions-for-agent-consumers, artifact-only): "Each rimsky process ... exposes a standard `/metrics` endpoint speaking Prometheus text format." The queue-depth gauge is `rimsky_node_runs_pending`; `rimsky_dispatches_total` and `rimsky_dispatch_latency_seconds` keep their names (2026-05-13, nomenclature-resolution, artifact-only). prometheus/client_golang is the sanctioned dependency (2026-05-08).
+- Named-lock acquisitions increment a labeled Prometheus counter distinguishable from producer-claim acquisitions, both acquired and unavailable outcomes (2026-06-11, last-mile-stability, artifact-only): "events are forensics, metrics are monitoring."
+- Diagnostics endpoints exist: `GET /admin/diagnostics/held-frames` and `GET /admin/diagnostics/parked-nodes` (2026-05-08, platform-extensions-for-agent-consumers, artifact-only), and `GET /admin/diagnostics/wait-sets?frame=&node=` returning wait-set rows for debugging stuck frames (2026-05-14, subscription-cascade-and-quality-of-life, artifact-only).
+- A parked node holds its enclosing frame open, surfaced by the held-frames diagnostic scoped to phase='parked'; an async-callback-pending node also holds its frame as a structurally distinct property; each property has its own dedicated e2e test (2026-06-17, b95ff4a7, transcript). (The entry's terminate_after_run clause is void — terminate_after_run was later retired, 2026-07-07, 3f71f90a.)
+- The operator-dashboard read backplane (system summary, event feed, frames, per-instance node state, dispatches) is read-only, each handler in a short fresh transaction, mounted at bare paths without `/v1/` prefix churn (2026-05-11, log-convergence, artifact-only), and gated behind `observability:read` — no key yields 401/403 through the real gate, and counts reflect real seeded runtime state (2026-06-02, acceptance-coverage-recovery, artifact-only).
+- At startup rimsky probes each service's observability gRPC protocol and caches advertised capabilities feeding the registration and dispatch validators; the refresh loop flips a dead peer to unreachable (2026-06-02, acceptance-coverage-recovery, artifact; refresh-interval env var and Restart-lifetime binding confirmed 2026-06-17, 9fb55f08, transcript).
+- Executors declare their tag vocabulary via `ObservabilityCapabilities.declared_tags`, enforced at two gates: template registration rejects subscriptions referencing undeclared tags, and the supervisor's terminal handler rejects settling outcomes carrying undeclared tags as an executor protocol violation — the runtime gate was explicitly ratified so it would not be silently dropped (2026-06-16, 055468fc, transcript).
+- Executors advertise `declared_error_classes` (trailing-`*` prefix patterns allowed); the registration validator range-checks template `error_types:` keys against the declared vocabulary, silent-skipping when the executor is unreachable (2026-05-23, signal-taxonomy-and-policy-decoupling, artifact; reaffirmed 2026-06-02, acceptance-coverage-recovery, artifact-only). Executors must register both `NodeExecutor` AND the observability gRPC service or their capabilities never reach the discovery cache (2026-05-08, platform-extensions notes, artifact).
+- Forensic last-attribute: after a node has executed, `GET /nodes/{id}` and the observability node surface return the node's most recent resolved attribute bag — the values actually dispatched, read from real persistence (2026-06-06 and 2026-06-08, comprehensive-gap-closure / corpus-bootstrap, artifact-only): "I can see what attribute values a node actually resolved on its last run without hand-reconstructing them."
+- The node surface exposes the 4-bucket `run_summary` with the explicit state-to-bucket mapping (2026-06-21, 10cf843b, transcript), and the control API surfaces the latest terminal run's `settling_signal_type` on both node detail GET and instance-nodes LIST; the CLI uses it as the printed failure reason (2026-06-22, 10cf843b, transcript).
+- Executor trace observability: for an executor advertising trace support, an operator can stream live structured trace events in flight and fetch the full trace after terminal (2026-06-08, corpus-bootstrap, artifact-only). Note the trace surface is what the ExecutorObservability Capabilities message actually describes (supports_trace_get, supports_trace_stream, retention_after_terminal_seconds, http_bridge_url) — the contract was misidentified twice in planning (2026-05-19, crimefinder divergences, artifact).
+- Claim-producer observability: fetch claim detail, stream live claim-state changes, paginate the producer's claim inventory, render producer-declared admin views (2026-06-08, corpus-bootstrap, artifact-only).
+- The control-api health route requires no authentication and is probe-fast (2026-06-08, corpus-bootstrap, artifact-only); `/v1/health` computes each supervisor's active node count on demand, keeping the JSON field name for CLI compatibility (2026-06-21, 21306ffe, transcript).
+- `compose run` live output defaults to per-node lifecycle lines (summary per instance start/end, one line per node-run terminal), `--quiet` / `--verbose` / `--json` variants; the `.db` artifact is the long-form record (2026-06-13, 65667e33, transcript). After exit, `.rimsky/latest/state.db` is a per-run sqlite database openable with stock sqlite3 (2026-06-14, f0176bde, transcript).
+- The debug channel (`POST /instances/{id}/debug/override`) emits a `debug.override.applied` audit event naming action and gate-state on every use (2026-06-14, bfc9febb, transcript); its mutated counter counts only rows actually modified, never attempts — "the audit trail cannot claim work that did not happen" (2026-06-15, 91ec93d1, transcript).
+- Every frame row carries NOT NULL `triggering_message_id`; the frame.start audit event carries it; observability supports frame-to-message and message-to-frames queries (2026-06-14, bfc9febb, transcript).
+- Every `work_started` event pairs with a `work_completed` at terminal application (parked / await-async re-entry excluded) so durations and did-everything-finish audits are computable (2026-06-11, last-mile-stability, artifact; park exclusion re-confirmed 2026-07-13, 3f71f90a, transcript).
+- Late or stale executor callbacks are ack-but-noop: HTTP 200 for accepted and rejected alike, body `ack_status` authoritative, with a structured log event (2026-05-22, fan-out-safety-scope-first, artifact-only).
+- Attribute-override match counts are event-derived: each match emits an `attribute_override_matched` operational event at dispatch time and the API aggregates at read time (2026-07-06, 3f71f90a, transcript, user: "option a"). The unused-entry signal survives: an entry with zero matches at instance terminal is the loud signal for a silent matcher miss (2026-05-21, attribute-overrides-matcher-overlay, artifact); match counts on match, not on successful dispatch.
+- Frame state (running/completed/failed) is derived at read time via SQL CASE; the operator API surface (state JSON field, `?state=` filter) is unchanged (2026-07-06, 3f71f90a, transcript).
+- Publisher observability is a message-table query: `GET /instances/{id}/messages?sender=<publisher_name>` with `received_at` as the timestamp (2026-05-17, sensor-messaging-unification, artifact-only).
+- Audit-log entries for park events record payload size and spill flag but never payload bytes (2026-05-08, platform-extensions notes, artifact-only).
+- Nodes support a `tags:` list so operators can filter dashboard/events surfaces to per-tool or per-role views (2026-05-19, crimefinder, artifact-only — distinct from terminal tags).
+- The persisted `claim_handle.is_held` column exists for observability and forward compatibility; the behavioral held-check is in-memory (2026-05-04, layer-crystallization, artifact-only).
+- Post-refactor `rimsky_claim_handles` answers "what claims existed and how did they resolve" directly within the retention window, complementing lineage (2026-05-17, post-data-platform-cleanup, artifact-only).
+- `frame_timeout_ms` means "no progress in window" (progress = state transitions in the frame), a soft structured-log warning only — no automatic frame-fail or reaping (2026-05-05, reactive-loops-and-lifecycle-handlers, artifact-only; `last_progress_at` survives the 2026-06-16 protocol reshape, where writeback bumps it and the orphan-reaper re-keys on it).
+
+## Intentional absences
+
+- **Executor heartbeats.** Rejected as the liveness mechanism and removed from the protocol (2026-06-16, 055468fc, transcript, user): "lazy implementations will just spin up a thread and send a heartbeat even as the main task stalls. seems silly." Vestigial plumbing deleted 2026-06-21 (21306ffe: active_node_count column, UpdateActiveNodeCount, livenessTick, heartbeat_interval_ms); proto remnants (HeartbeatLostPayload, HEARTBEAT_LOST) removed with field numbers reserved 2026-06-24 (8a8539a4). The host-agent-to-supervisor heartbeat is a different surface and stays.
+- **A synthesized single-value node `state` field.** Deliberately retired in favor of run_summary; restoring it was explicitly rejected and tests were rewritten to read run_summary (2026-06-29, 8a8539a4, transcript).
+- **A bundled watchdog runner.** Platform anomalies are foundation's job; domain watchdogs are project work as lifecycle-subscriber peers or watchdog graphs (2026-05-08, platform-extensions-for-agent-consumers, artifact).
+- **Live event-log subscription in the debugger** (2026-05-24, instance-debugger, artifact) and **SSE events streaming** — both out of scope for v1; poll-based /events and the pollable hits route are the accepted fallback (2026-06-18, 9fb55f08, transcript).
+- **Hard-erroring late/stale callbacks.** Declined to avoid executor retry storms (2026-05-22, fan-out-safety-scope-first, artifact).
+- **Persisted `rimsky_instances.attribute_overrides_match_counts` column.** Dropped in migration 020; event-derived instead (2026-07-06, 3f71f90a, transcript).
+- **Stored `rimsky_frames.state` column.** Retired; derived at read time (2026-07-06, 3f71f90a, transcript).
+- **`userdata_schema` and `declared_events`.** Both in the retired-mechanisms list that must not appear as current anywhere (2026-07-11, 3f71f90a, transcript); declared_events was renamed declared_tags (2026-06-16) and userdata validation retired with it.
+- **Per-subscription `last_observed_at`.** Dropped; publisher observability is the messages query (2026-05-17, sensor-messaging-unification, artifact).
+- **Cached supervisor active_node_count / livenessTick** (2026-06-21, 21306ffe, transcript, user: "odd to keep heartbeat around just for a health report that isn't even what controls reaping").
+
+## Corrections and restorations (drift-fight record)
+
+- claude-agent registered only NodeExecutor, not the observability service, so its capabilities silently never reached the discovery cache and dispatch-time validation fell through; executors must register both services (2026-05-08, platform-extensions notes, artifact).
+- The observability Capabilities contract was misidentified in two separate plans (userdata-schema shape vs actual trace-surface shape) — precedent that findings about this contract need proto-level verification (2026-05-08 and 2026-05-19, artifacts).
+- The stores → claim-producers rename left residues on the observability surface — e2e test hitting `/v1/observability/stores`, handler JSON tag `stores` — found and fixed; the rename must be complete on every surface (2026-06-19, 8a3b8c19, transcript, user: "rename them all" / "fix the two item 3 residues").
+- Heartbeat remnants surviving the intended complete removal were identified as incomplete-cleanup residue and excised, docs updated inline (2026-06-24, 8a8539a4, transcript).
+- `work_completed` was declared in the event catalog but never emitted — "a declared-but-never-emitted kind is a catalog lie" — fixed by pairing every work_started (2026-06-11, last-mile-stability, artifact).
+
+## Superseded / historical
+
+- `ExecutorObservability.GetCapabilities` → renamed `Capabilities` (2026-05-12, nomenclature-resolution).
+- `rimsky_dispatch_queue_depth` → `rimsky_node_runs_pending`; the other two dispatch metrics deliberately kept (2026-05-13, nomenclature-resolution).
+- `declared_events` → `declared_tags` (2026-06-16, 055468fc); the `RIMSKY_EXECUTOR_DECLARED_EVENTS` env-var override (2026-05-28, quality-of-life) retired with the named-event mechanism.
+- Per-peer `userdata_schema` two-gate validation (2026-05-11, log-convergence) → retired outright (2026-07-11 retired list).
+- Persisted match-count column with synchronous best-effort increment (2026-05-21) → event-derived counts (2026-07-06).
+- Derived per-node state via LATERAL JOIN with fan-out scope-priority heuristic → removed from NodeRow and persistence; NodeRunSummary only (2026-06-20, 8a3b8c19, transcript, user: "time to stop fiddling around with half measures").
+- `last_outcome` as dashboard-visible metadata and cascade gate (2026-05-05) → retired with the signal taxonomy (2026-05-23); `fresh_changed` is in the retired-mechanisms list (2026-07-11).
+- Smoke suite relocated wholesale to rimsky-services (2026-05-24, repo-reorganization-test-audit) → services reintegrated as lib/services with the harness at lib/services/test/ (2026-05-27).
+- Dashboard promises from May (parked-nodes view with awaiting_human styling, `/api/control/admin/*` proxy route, asset-primary reframe — 2026-05-14/15, artifact-only): no transcript corroboration and the June direction moved run-display responsibility out of rimsky-core; weigh accordingly.
+
+## Conflicts needing human ruling
+
+- None the precedence rules leave open. (The Capabilities-shape confusion is resolved historical drift; the trace-surface promise from 2026-06-08 was never retracted by the 2026-06-16 protocol reshape, whose removal list does not include the trace endpoints — adjudicators should treat trace support as promised but artifact-only.)
