@@ -68,4 +68,4 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 
 ## Conflicts needing human ruling
 
-- None left open by precedence. (The per-verb producer deadline remains a known, deliberately unlanded defensive fix — absence is not drift, but landing it would not contradict the record.)
+- None left open by precedence. (The per-verb producer deadline question was RESOLVED 2026-07-14 by user ruling — superseded by the durable ordered per-scope terminal-verb outbox; see the claim-producer dossier for the full design. The May-04 semantic timeout is dead; per-attempt deadlines are connection hygiene only.)

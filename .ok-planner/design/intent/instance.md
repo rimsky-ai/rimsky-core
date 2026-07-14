@@ -85,4 +85,4 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 
 ## Conflicts needing human ruling
 
-- The 2026-07-06 transcript says a terminated instance's queue "drains without effect" while the 2026-07-13 adjudication rules terminate must actively cancel pending messages (finding 437). The adjudication is later and explicit — cancel wins — but the ledger should confirm no surface still depends on passive draining.
+- **RESOLVED 2026-07-14 (user ruling, transcript tier): active cancel confirmed.** Terminate cancels pending messages — ruled in the finding-437 adjudication (2026-07-13) and re-ratified in the 2026-07-14 terminate-semantics ruling (control-api dossier). The 07-06 "drains without effect" phrasing is superseded. Phase 2 sweep item: find and fix anything (code, test, doc) that assumes a terminated instance's pending messages still deliver.

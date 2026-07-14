@@ -24,11 +24,12 @@ Actionable conventions for this codebase under the Plumbline methodology. The fu
 
 ## Comments
 
-- Code should be self-explanatory. The rule is: **no comments in source files**, with three narrow exemptions.
-- **Machine directives** are allowed: license headers (`SPDX-License-Identifier:`, `Copyright`, `Licensed under`, `Dual-licensed`), lint suppressions (`eslint-disable`, `ts-ignore` / `ts-expect-error` / `ts-nocheck`, `noqa`, `pylint:`, `nolint`, `biome-`, `prettier-`, `tslint:`, `deno-`), build tags (`go:`), generated-file markers, C-pragmas, shebangs.
-- **Configured citation tags** are allowed in slug-only form: tags declared in `.plumbline.json`'s `citations` array, where each entry pairs a tag with a structural resolution rule. Each line in a citation comment is `// @<tag>: <slug>` and nothing else — no em-dash tail, no continuation prose, no trailing punctuation. The slug names the design artifact; the artifact holds the explanation. Multiple clean citation lines may stack as one block (e.g. `// @concept: cascade` immediately followed by `// @story: parker`). Each line's slug is independently checked for resolution. Plumbline ships zero default citation tags — projects declare them.
-- **Documentation comments** are allowed only in files carrying the opt-in marker `// @plumbline:allow-docstrings` (or `# @plumbline:allow-docstrings`). With the marker, JSDoc-style block comments on TS/JS declarations and GoDoc-style line comments on Go declarations are exempt. Without the marker, they are not.
-- Everything else is residue. The default action for any other comment is **delete**. Load-bearing information — a constraint, an invariant, an intentional choice — belongs in a name, a type, an assertion with a message, or a test. Comments are the wrong layer for any of it.
+- **Do not write comments.** Default to zero. No prose comments — no narration, no "this does X", no "TODO", no rationale lines. The exemptions below are not invitations; write a comment only when something other than your own judgment requires it. The lint will catch leftovers, but the rule is prevention, not cleanup.
+- Load-bearing information — a constraint, an invariant, an intentional choice — belongs in a name, a type, an assertion with a message, or a test. Reaching for a comment is a signal to move the content into code instead.
+- **Machine directives** are written only when tooling requires one in that exact spot: license headers (`SPDX-License-Identifier:`, `Copyright`, `Licensed under`, `Dual-licensed`), lint suppressions (`eslint-disable`, `ts-ignore` / `ts-expect-error` / `ts-nocheck`, `noqa`, `pylint:`, `nolint`, `biome-`, `prettier-`, `tslint:`, `deno-`), build tags (`go:`), generated-file markers, C-pragmas, shebangs. Never add one as commentary.
+- **Configured citation tags** are written only when a separate standard (e.g. ok-planner's design citation convention, declared in `.plumbline.json`'s `citations` array) directs you to link this code to a specific design artifact. Never invent a tag, never add one on your own initiative as documentation. Each line is exactly `// @<tag>: <slug>` — no em-dash tail, no continuation prose, no trailing punctuation. Multiple clean lines may stack as one block (e.g. `// @concept: cascade` then `// @story: parker`). Each slug is independently resolved against the configured rule. Plumbline ships zero default citation tags.
+- **Documentation comments** are written only in files already carrying the opt-in marker `// @plumbline:allow-docstrings` (or `# @plumbline:allow-docstrings`). Do not add the marker yourself to license writing docstrings — it's set when the file is a public-API surface that needs documentation.
+- Everything else is residue. The default action for any other comment — yours or pre-existing — is **delete**.
 
 ## Uniformity
 
@@ -51,7 +52,6 @@ Actionable conventions for this codebase under the Plumbline methodology. The fu
 
 - Shared-code change: edit the one definition, let compiler + contract suites enumerate blast radius, fix all consumers in the same change
 - Idiom change: sweep all instances in the same change, add lint so the old idiom cannot return
-- Update `feature-index.md` when features/dependencies change
 
 ## Tooling
 
