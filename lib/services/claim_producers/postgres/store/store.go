@@ -175,7 +175,7 @@ func (s *Store) LookupClaim(claimID string) (ClaimLookup, bool) {
 	}, true
 }
 
-func (s *Store) Open(ctx context.Context, claimID, selector string) (claimproducer.OpenOutcome, error) {
+func (s *Store) Open(ctx context.Context, claimID, selector string, intent claimproducer.Intent) (claimproducer.OpenOutcome, error) {
 	if pp, ok := s.pickPolicies[selector]; ok {
 		out, err := s.openPickPolicy(ctx, claimID, pp)
 		if err == nil && out.Available {
@@ -183,7 +183,7 @@ func (s *Store) Open(ctx context.Context, claimID, selector string) (claimproduc
 		}
 		return out, err
 	}
-	if s.stagedScopeBytes(selector) {
+	if s.stagedScopeBytes(selector) && intent != claimproducer.IntentRead {
 		addr, scope, err := s.openStaging(ctx, claimID, selector)
 		if err != nil {
 			return claimproducer.OpenOutcome{}, err

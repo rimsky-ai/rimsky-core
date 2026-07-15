@@ -68,6 +68,11 @@ func (s *Store) openStaging(ctx context.Context, claimID, selector string) (json
 			"postgres store: staged claim selector %q is not a valid schema identifier "+
 				"(lowercase letters/digits/underscore; not starting with a digit)", selector)
 	}
+	if strings.HasPrefix(selector, stagingSchemaPrefix) {
+		return nil, nil, fmt.Errorf(
+			"postgres store: staged claim selector %q collides with the reserved staging prefix %q",
+			selector, stagingSchemaPrefix)
+	}
 	staging := stagingSchemaName(claimID)
 	stmt := "CREATE SCHEMA IF NOT EXISTS " + pgx.Identifier{staging}.Sanitize()
 	if _, err := s.pool.Exec(ctx, stmt); err != nil {
@@ -84,10 +89,27 @@ func (s *Store) openStaging(ctx context.Context, claimID, selector string) (json
 	return json.RawMessage(addr), json.RawMessage(scope), nil
 }
 
+func requireStagingSchemaIdent(staging string) error {
+	if !schemaIdentRegex.MatchString(staging) || !strings.HasPrefix(staging, stagingSchemaPrefix) {
+		return fmt.Errorf(
+			"postgres store: refusing to drop or rename schema %q: not a rimsky staging schema "+
+				"(must be a valid identifier carrying the %q prefix)", staging, stagingSchemaPrefix)
+	}
+	return nil
+}
+
 func (s *Store) commitStagingSwap(ctx context.Context, canonical, staging string) error {
 	swapFailed := func(err error) error { return &ClassedError{Class: SwapFailedClass, Err: err} }
 	if !schemaIdentRegex.MatchString(canonical) {
 		return swapFailed(fmt.Errorf("postgres store: canonical %q is not a valid schema identifier", canonical))
+	}
+	if strings.HasPrefix(canonical, stagingSchemaPrefix) {
+		return swapFailed(fmt.Errorf(
+			"postgres store: refusing swap into %q: canonical schema must not carry the reserved staging prefix %q",
+			canonical, stagingSchemaPrefix))
+	}
+	if err := requireStagingSchemaIdent(staging); err != nil {
+		return swapFailed(err)
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -100,10 +122,30 @@ func (s *Store) commitStagingSwap(ctx context.Context, canonical, staging string
 		}
 	}()
 
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", staging); err != nil {
+		return swapFailed(fmt.Errorf("postgres store: serialize swap on staging schema %q: %w", staging, err))
+	}
+	var stagingExists, canonicalExists bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1),
+		        EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $2)`,
+		staging, canonical,
+	).Scan(&stagingExists, &canonicalExists); err != nil {
+		return swapFailed(fmt.Errorf("postgres store: probe schemas for swap: %w", err))
+	}
+	if !stagingExists {
+		if canonicalExists {
+			return nil
+		}
+		return swapFailed(fmt.Errorf(
+			"postgres store: staging schema %q is gone and canonical %q does not exist; swap state is indeterminate",
+			staging, canonical))
+	}
+
 	canonicalID := pgx.Identifier{canonical}.Sanitize()
 	stagingID := pgx.Identifier{staging}.Sanitize()
 
-	if _, err := tx.Exec(ctx, "DROP SCHEMA IF EXISTS "+canonicalID); err != nil {
+	if _, err := tx.Exec(ctx, "DROP SCHEMA IF EXISTS "+canonicalID+" CASCADE"); err != nil {
 		return swapFailed(fmt.Errorf("postgres store: drop canonical schema %q for swap: %w", canonical, err))
 	}
 	if _, err := tx.Exec(ctx, "ALTER SCHEMA "+stagingID+" RENAME TO "+canonicalID); err != nil {
@@ -117,11 +159,8 @@ func (s *Store) commitStagingSwap(ctx context.Context, canonical, staging string
 }
 
 func (s *Store) dropStaging(ctx context.Context, staging string) error {
-	if staging == "" {
-		return nil
-	}
-	if !schemaIdentRegex.MatchString(staging) {
-		return fmt.Errorf("postgres store: drop staging: %q is not a valid schema identifier", staging)
+	if err := requireStagingSchemaIdent(staging); err != nil {
+		return err
 	}
 	stmt := "DROP SCHEMA IF EXISTS " + pgx.Identifier{staging}.Sanitize() + " CASCADE"
 	if _, err := s.pool.Exec(ctx, stmt); err != nil {

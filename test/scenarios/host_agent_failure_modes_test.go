@@ -75,7 +75,7 @@ func TestProxyReconnectAfterAgentRestart(t *testing.T) {
 	}
 	time.Sleep(300 * time.Millisecond)
 
-	cancel, done := startAgent(t, fx.proxyAddr, fx.ownerKeyID)
+	cancel, done := startAgent(t, fx.proxyAddr, fx.adminKey)
 	t.Cleanup(func() {
 		cancel()
 		<-done

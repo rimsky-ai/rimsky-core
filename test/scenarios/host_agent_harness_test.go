@@ -35,7 +35,6 @@ type hostAgentFixture struct {
 	proxyAddr   string
 	stubBinary  string
 	adminKey    string
-	ownerKeyID  string
 	cancelAgent context.CancelFunc
 	agentDone   chan struct{}
 }
@@ -91,13 +90,13 @@ func waitDialable(addr string, timeout time.Duration) bool {
 	return false
 }
 
-func startAgent(t *testing.T, proxyAddr, ownerKeyID string) (context.CancelFunc, chan struct{}) {
+func startAgent(t *testing.T, proxyAddr, apiKeyPlaintext string) (context.CancelFunc, chan struct{}) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	cfg := hostagent.LoadConfigFromEnv()
 	cfg.RimskyURL = proxyAddr
-	cfg.APIKey = ownerKeyID
+	cfg.APIKey = apiKeyPlaintext
 	cfg.AgentLabel = "scenario-agent"
 	go func() {
 		defer close(done)
@@ -132,12 +131,12 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		ClaimProducers:         opts.stores,
 	})
 
-	var adminKey, ownerKeyID, agentRoutingKey string
+	var adminKey, agentAPIKey string
 	if opts.anonymous {
-		agentRoutingKey = anonRoutingIdentity
+		agentAPIKey = anonRoutingIdentity
 	} else {
-		adminKey, ownerKeyID = h.MintAdminKey("scenario-admin")
-		agentRoutingKey = ownerKeyID
+		adminKey, _ = h.MintAdminKey("scenario-admin")
+		agentAPIKey = adminKey
 	}
 
 	controlURL, controlToken := h.ControlBase, adminKey
@@ -153,10 +152,9 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		proxyAddr:  proxyAddr,
 		stubBinary: stub,
 		adminKey:   adminKey,
-		ownerKeyID: ownerKeyID,
 	}
 	if opts.withAgent {
-		fx.cancelAgent, fx.agentDone = startAgent(t, proxyAddr, agentRoutingKey)
+		fx.cancelAgent, fx.agentDone = startAgent(t, proxyAddr, agentAPIKey)
 		time.Sleep(300 * time.Millisecond)
 	}
 	return fx

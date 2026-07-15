@@ -102,7 +102,7 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 
 	t.Run("Open reserves a distinct staging schema", func(t *testing.T) {
 		claimID := uuid.NewString()
-		out, err := st.Open(ctx, claimID, canonical)
+		out, err := st.Open(ctx, claimID, canonical, claimproducer.IntentReadWrite)
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
@@ -124,16 +124,11 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 		}
 	})
 
-	t.Run("Commit swaps staged rows into canonical and discards staging", func(t *testing.T) {
-		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+canonical+" CASCADE"); err != nil {
-			t.Fatalf("reset canonical schema: %v", err)
-		}
-		if _, err := pool.Exec(ctx, "CREATE SCHEMA "+canonical); err != nil {
-			t.Fatalf("recreate canonical schema: %v", err)
-		}
+	t.Run("Commit swaps staged rows into a populated canonical and discards staging", func(t *testing.T) {
+		resetCanonicalWithRows(t, pool, canonical, "('old','stale')")
 
 		claimID := uuid.NewString()
-		out, err := st.Open(ctx, claimID, canonical)
+		out, err := st.Open(ctx, claimID, canonical, claimproducer.IntentReadWrite)
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
@@ -148,21 +143,141 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 		}
 
 		if err := st.Commit(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
-			t.Fatalf("Commit: %v", err)
+			t.Fatalf("Commit over a populated canonical: %v", err)
 		}
 
-		var rowCount int
-		if err := pool.QueryRow(ctx,
-			"SELECT count(*) FROM "+canonical+".items").Scan(&rowCount); err != nil {
-			t.Fatalf("count canonical rows after Commit: %v", err)
-		}
-		if rowCount != 3 {
+		if got := canonicalItemCount(t, pool, canonical); got != 3 {
 			t.Fatalf("after Commit, canonical %q has %d rows; want 3 (atomic swap did not land staged rows)",
-				canonical, rowCount)
+				canonical, got)
+		}
+		var staleCount int
+		if err := pool.QueryRow(ctx,
+			"SELECT count(*) FROM "+canonical+".items WHERE id = 'old'").Scan(&staleCount); err != nil {
+			t.Fatalf("count stale rows after Commit: %v", err)
+		}
+		if staleCount != 0 {
+			t.Fatalf("after Commit, canonical %q still holds the pre-swap row; the swap must replace canonical wholesale",
+				canonical)
 		}
 
 		if schemaExists(t, pool, staging) {
 			t.Fatalf("after Commit, staging schema %q still exists; the swap must consume it", staging)
+		}
+	})
+
+	t.Run("re-publish over an already-committed canonical succeeds", func(t *testing.T) {
+		resetCanonicalWithRows(t, pool, canonical, "('seed','v0')")
+
+		publish := func(rows string) string {
+			t.Helper()
+			claimID := uuid.NewString()
+			out, err := st.Open(ctx, claimID, canonical, claimproducer.IntentReadWrite)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			staging := addressSchema(t, out.Result.Address)
+			if _, err := pool.Exec(ctx, "CREATE TABLE "+staging+".items (id TEXT, payload TEXT)"); err != nil {
+				t.Fatalf("create staged table: %v", err)
+			}
+			if _, err := pool.Exec(ctx,
+				"INSERT INTO "+staging+".items (id, payload) VALUES "+rows); err != nil {
+				t.Fatalf("seed staged rows: %v", err)
+			}
+			if err := st.Commit(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
+				t.Fatalf("Commit: %v", err)
+			}
+			return staging
+		}
+
+		publish("('a','v1'),('b','v1')")
+
+		if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS dependents_of_canonical"); err != nil {
+			t.Fatalf("create dependents schema: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			"CREATE VIEW dependents_of_canonical.items_view AS SELECT id FROM "+canonical+".items"); err != nil {
+			t.Fatalf("create cross-schema dependent view: %v", err)
+		}
+
+		publish("('c','v2'),('d','v2'),('e','v2')")
+
+		if got := canonicalItemCount(t, pool, canonical); got != 3 {
+			t.Fatalf("after re-publish, canonical %q has %d rows; want the 3 second-publish rows", canonical, got)
+		}
+		var v1Count int
+		if err := pool.QueryRow(ctx,
+			"SELECT count(*) FROM "+canonical+".items WHERE payload = 'v1'").Scan(&v1Count); err != nil {
+			t.Fatalf("count first-publish rows: %v", err)
+		}
+		if v1Count != 0 {
+			t.Fatalf("after re-publish, canonical %q still holds %d first-publish rows; want 0", canonical, v1Count)
+		}
+	})
+
+	t.Run("retried Commit after a successful swap is idempotent", func(t *testing.T) {
+		resetCanonicalWithRows(t, pool, canonical, "('old','stale')")
+
+		claimID := uuid.NewString()
+		out, err := st.Open(ctx, claimID, canonical, claimproducer.IntentReadWrite)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		staging := addressSchema(t, out.Result.Address)
+		if _, err := pool.Exec(ctx, "CREATE TABLE "+staging+".items (id TEXT, payload TEXT)"); err != nil {
+			t.Fatalf("create staged table: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			"INSERT INTO "+staging+".items (id, payload) VALUES ('a','x'),('b','y')"); err != nil {
+			t.Fatalf("seed staged rows: %v", err)
+		}
+
+		if err := st.Commit(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
+			t.Fatalf("first Commit: %v", err)
+		}
+		if err := st.Commit(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
+			t.Fatalf("retried Commit after a successful swap must succeed (idempotent in the claim id): %v", err)
+		}
+
+		if got := canonicalItemCount(t, pool, canonical); got != 2 {
+			t.Fatalf("after retried Commit, canonical %q has %d rows; want the 2 committed rows intact", canonical, got)
+		}
+		if schemaExists(t, pool, staging) {
+			t.Fatalf("after retried Commit, staging schema %q exists again; retry must not resurrect staging", staging)
+		}
+	})
+
+	t.Run("read-intent Open returns the canonical pre-stage snapshot, not a staging schema", func(t *testing.T) {
+		resetCanonicalWithRows(t, pool, canonical, "('keep','me')")
+
+		claimID := uuid.NewString()
+		out, err := st.Open(ctx, claimID, canonical, claimproducer.IntentRead)
+		if err != nil {
+			t.Fatalf("Open with intent r: %v", err)
+		}
+		if !out.Available {
+			t.Fatalf("Open with intent r: expected Available, got Unavailable")
+		}
+		addr := addressSchema(t, out.Result.Address)
+		if addr != canonical {
+			t.Fatalf("Open with intent r returned address %q; want the canonical schema %q (a reader must see the pre-stage snapshot)",
+				addr, canonical)
+		}
+		if schemaExists(t, pool, stagingSchemaName(claimID)) {
+			t.Fatalf("Open with intent r created staging schema %q; read claims must not reserve staging", stagingSchemaName(claimID))
+		}
+
+		if got := canonicalItemCount(t, pool, addr); got != 1 {
+			t.Fatalf("reading through the returned address %q sees %d rows; want 1", addr, got)
+		}
+
+		if err := st.Commit(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
+			t.Fatalf("Commit of a read claim: %v", err)
+		}
+		if !schemaExists(t, pool, canonical) {
+			t.Fatalf("Commit of a read claim removed the canonical schema %q; read terminals must not touch canonical", canonical)
+		}
+		if got := canonicalItemCount(t, pool, canonical); got != 1 {
+			t.Fatalf("after Commit of a read claim, canonical %q has %d rows; want 1 (unchanged)", canonical, got)
 		}
 	})
 
@@ -182,7 +297,7 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 		}
 
 		claimID := uuid.NewString()
-		out, err := st.Open(ctx, claimID, canonical)
+		out, err := st.Open(ctx, claimID, canonical, claimproducer.IntentReadWrite)
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
@@ -197,6 +312,9 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 
 		if err := st.Abandon(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
 			t.Fatalf("Abandon: %v", err)
+		}
+		if err := st.Abandon(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
+			t.Fatalf("retried Abandon must succeed (idempotent in the claim id): %v", err)
 		}
 
 		if schemaExists(t, pool, staging) {
@@ -221,46 +339,136 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 		}
 	})
 
-	t.Run("swap collision surfaces pg/swap_failed at the store boundary", func(t *testing.T) {
+	t.Run("indeterminate swap state surfaces pg/swap_failed at the store boundary", func(t *testing.T) {
 		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+canonical+" CASCADE"); err != nil {
 			t.Fatalf("reset canonical schema: %v", err)
 		}
-		if _, err := pool.Exec(ctx, "CREATE SCHEMA "+canonical); err != nil {
-			t.Fatalf("recreate canonical schema: %v", err)
-		}
 
 		claimID := uuid.NewString()
-		out, err := st.Open(ctx, claimID, canonical)
+		out, err := st.Open(ctx, claimID, canonical, claimproducer.IntentReadWrite)
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
 		staging := addressSchema(t, out.Result.Address)
-		if _, err := pool.Exec(ctx, "CREATE TABLE "+staging+".items (id TEXT, payload TEXT)"); err != nil {
-			t.Fatalf("create staged table: %v", err)
-		}
-		if _, err := pool.Exec(ctx,
-			"INSERT INTO "+staging+".items (id, payload) VALUES ('a','x')"); err != nil {
-			t.Fatalf("seed staged rows: %v", err)
-		}
-
-		collidingName := staging + "_swap_target_collision"
-		if _, err := pool.Exec(ctx, "CREATE SCHEMA "+collidingName); err != nil {
-			t.Fatalf("create colliding schema: %v", err)
-		}
-		if _, err := pool.Exec(ctx, "CREATE TABLE "+canonical+".pinned (n INT)"); err != nil {
-			t.Fatalf("create canonical pinned table: %v", err)
-		}
-		if _, err := pool.Exec(ctx,
-			"CREATE VIEW "+collidingName+".dep AS SELECT n FROM "+canonical+".pinned"); err != nil {
-			t.Fatalf("create blocking view: %v", err)
+		if _, err := pool.Exec(ctx, "DROP SCHEMA "+staging+" CASCADE"); err != nil {
+			t.Fatalf("drop staging schema out-of-band: %v", err)
 		}
 
 		err = st.Commit(ctx, claimID, out.Result.ClaimScope, out.Result.Address)
 		if err == nil {
-			t.Fatalf("Commit succeeded despite a forced swap collision; expected a pg/swap_failed error")
+			t.Fatalf("Commit succeeded with staging gone and canonical absent; expected a pg/swap_failed error")
 		}
 		if !strings.Contains(err.Error(), "pg/swap_failed") {
-			t.Fatalf("Commit collision error = %q; want it to name the pg/swap_failed class", err.Error())
+			t.Fatalf("Commit indeterminate-state error = %q; want it to name the pg/swap_failed class", err.Error())
+		}
+	})
+}
+
+func resetCanonicalWithRows(t *testing.T, pool *pgxpool.Pool, canonical, rows string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+canonical+" CASCADE"); err != nil {
+		t.Fatalf("reset canonical schema: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+canonical); err != nil {
+		t.Fatalf("recreate canonical schema: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "CREATE TABLE "+canonical+".items (id TEXT, payload TEXT)"); err != nil {
+		t.Fatalf("create canonical table: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO "+canonical+".items (id, payload) VALUES "+rows); err != nil {
+		t.Fatalf("seed canonical rows: %v", err)
+	}
+}
+
+func canonicalItemCount(t *testing.T, pool *pgxpool.Pool, schema string) int {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM "+schema+".items").Scan(&count); err != nil {
+		t.Fatalf("count rows in %s.items: %v", schema, err)
+	}
+	return count
+}
+
+func TestAtomicStaging_TerminalVerbsRejectNonStagingSchemas(t *testing.T) {
+	pool, st := bootStagingStore(t)
+	ctx := context.Background()
+
+	const victim = "victim_schema"
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+victim); err != nil {
+		t.Fatalf("create victim schema: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "CREATE TABLE "+victim+".items (id TEXT)"); err != nil {
+		t.Fatalf("create victim table: %v", err)
+	}
+
+	scope := json.RawMessage(`"analytics_production"`)
+	requireIntact := func(t *testing.T, schema string) {
+		t.Helper()
+		if !schemaExists(t, pool, schema) {
+			t.Fatalf("schema %q was dropped or renamed via a forged non-staging address", schema)
+		}
+	}
+
+	for _, forged := range []string{"public", victim} {
+		forgedAddr := json.RawMessage(`"` + forged + `"`)
+
+		t.Run("Abandon rejects forged address "+forged, func(t *testing.T) {
+			if err := st.Abandon(ctx, uuid.NewString(), scope, forgedAddr); err == nil {
+				t.Fatalf("Abandon accepted non-staging address %q; it must be rejected", forged)
+			}
+			requireIntact(t, forged)
+		})
+
+		t.Run("Release rejects forged address "+forged, func(t *testing.T) {
+			if err := st.Release(ctx, uuid.NewString(), scope, forgedAddr); err == nil {
+				t.Fatalf("Release accepted non-staging address %q; it must be rejected", forged)
+			}
+			requireIntact(t, forged)
+		})
+
+		t.Run("Commit rejects forged address "+forged, func(t *testing.T) {
+			err := st.Commit(ctx, uuid.NewString(), scope, forgedAddr)
+			if err == nil {
+				t.Fatalf("Commit accepted non-staging address %q as a rename source; it must be rejected", forged)
+			}
+			if !strings.Contains(err.Error(), "pg/swap_failed") {
+				t.Fatalf("Commit forged-address error = %q; want it to name the pg/swap_failed class", err.Error())
+			}
+			requireIntact(t, forged)
+		})
+	}
+
+	t.Run("Commit rejects a staging-prefixed canonical target", func(t *testing.T) {
+		claimID := uuid.NewString()
+		out, err := st.Open(ctx, claimID, "analytics_production", claimproducer.IntentReadWrite)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		staging := addressSchema(t, out.Result.Address)
+		otherStaging := stagingSchemaName("other_claim")
+		if _, err := pool.Exec(ctx, "CREATE SCHEMA "+otherStaging); err != nil {
+			t.Fatalf("create other staging schema: %v", err)
+		}
+		forgedScope := json.RawMessage(`"` + otherStaging + `"`)
+		err = st.Commit(ctx, claimID, forgedScope, out.Result.Address)
+		if err == nil {
+			t.Fatalf("Commit accepted a staging-prefixed canonical target %q; it must be rejected", otherStaging)
+		}
+		if !strings.Contains(err.Error(), "pg/swap_failed") {
+			t.Fatalf("Commit staging-target error = %q; want it to name the pg/swap_failed class", err.Error())
+		}
+		requireIntact(t, otherStaging)
+		requireIntact(t, staging)
+		if err := st.Abandon(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
+			t.Fatalf("Abandon (cleanup): %v", err)
+		}
+	})
+
+	t.Run("Open rejects a selector carrying the reserved staging prefix", func(t *testing.T) {
+		if _, err := st.Open(ctx, uuid.NewString(), stagingSchemaName("sneaky"), claimproducer.IntentReadWrite); err == nil {
+			t.Fatalf("Open accepted a selector carrying the reserved staging prefix; it must be rejected")
 		}
 	})
 }

@@ -8,17 +8,24 @@ set -euo pipefail
 
 RIMSKY_BIN="${RIMSKY_BIN:-rimsky}"
 RIMSKY_PROXY_BIN="${RIMSKY_PROXY_BIN:-rimsky-host-agent-proxy}"
+RIMSKY_MIGRATE_BIN="${RIMSKY_MIGRATE_BIN:-rimsky-migrate}"
+RIMSKY_CONTROL_API_BIN="${RIMSKY_CONTROL_API_BIN:-rimsky-control-api}"
 
 STATE_DIR="$( mktemp -d -t rimsky-agent-demo.XXXXXXXX )"
 
 BOGUS_PROXY="rimsky-agent-demo-bogus.invalid:65535"
 
 PROXY_PID=""
+CONTROL_PID=""
 cleanup() {
     local rc=$?
     if [ -n "${PROXY_PID}" ] && kill -0 "${PROXY_PID}" 2>/dev/null; then
         kill "${PROXY_PID}" 2>/dev/null || true
         wait "${PROXY_PID}" 2>/dev/null || true
+    fi
+    if [ -n "${CONTROL_PID}" ] && kill -0 "${CONTROL_PID}" 2>/dev/null; then
+        kill "${CONTROL_PID}" 2>/dev/null || true
+        wait "${CONTROL_PID}" 2>/dev/null || true
     fi
     "${RIMSKY_BIN}" agent stop --state-dir "${STATE_DIR}" >/dev/null 2>&1 || true
     rm -rf "${STATE_DIR}"
@@ -50,8 +57,7 @@ echo "host-agent-control-plane-demo: step 1 — agent start against bogus proxy 
 set +e
 FAIL_STDERR="$( "${RIMSKY_BIN}" agent start \
     --proxy "${BOGUS_PROXY}" \
-    --state-dir "${STATE_DIR}" \
-    --api-key "demo-key" 2>&1 >/dev/null )"
+    --state-dir "${STATE_DIR}" 2>&1 >/dev/null )"
 FAIL_RC=$?
 set -e
 
@@ -83,12 +89,44 @@ if [ -f "${STATE_DIR}/agent.pid" ]; then
 fi
 echo "host-agent-control-plane-demo: step 1 OK — failure path refused cleanly (rc=${FAIL_RC})"
 
+CONTROL_PORT="$( pick_free_port )"
+CONTROL_ADDR="127.0.0.1:${CONTROL_PORT}"
+CONTROL_URL="http://${CONTROL_ADDR}"
+RIMSKY_CONFIG_PATH="${STATE_DIR}/rimsky.yml"
+
+cat > "${RIMSKY_CONFIG_PATH}" <<EOF
+persistence:
+  driver: sqlite
+  sqlite:
+    path: ${STATE_DIR}/state.db
+
+claim_producers: {}
+named_locks: {}
+executors: {}
+EOF
+
+echo "host-agent-control-plane-demo: step 2 — booting control plane (anonymous mode) on ${CONTROL_ADDR}"
+
+RIMSKY_CONFIG="${RIMSKY_CONFIG_PATH}" "${RIMSKY_MIGRATE_BIN}" >/dev/null
+
+RIMSKY_CONFIG="${RIMSKY_CONFIG_PATH}" \
+RIMSKY_CONTROL_API_PORT="${CONTROL_PORT}" \
+RIMSKY_LOG_LEVEL=warn \
+"${RIMSKY_CONTROL_API_BIN}" >/dev/null 2>&1 &
+CONTROL_PID=$!
+
+if ! wait_dialable "${CONTROL_ADDR}" 10; then
+    echo "host-agent-control-plane-demo: FAIL — control api did not come up on ${CONTROL_ADDR} within 10s" >&2
+    exit 1
+fi
+
 PROXY_PORT="$( pick_free_port )"
 PROXY_ADDR="127.0.0.1:${PROXY_PORT}"
 
-echo "host-agent-control-plane-demo: step 2 — booting ${RIMSKY_PROXY_BIN} on ${PROXY_ADDR}"
+echo "host-agent-control-plane-demo: step 3 — booting ${RIMSKY_PROXY_BIN} on ${PROXY_ADDR}"
 
 RIMSKY_PROXY_GRPC_PORT="${PROXY_PORT}" \
+RIMSKY_CONTROL_API_URL="${CONTROL_URL}" \
 RIMSKY_LOG_LEVEL=warn \
 "${RIMSKY_PROXY_BIN}" >/dev/null 2>&1 &
 PROXY_PID=$!
@@ -98,12 +136,11 @@ if ! wait_dialable "${PROXY_ADDR}" 10; then
     exit 1
 fi
 
-echo "host-agent-control-plane-demo: step 3 — agent start --proxy ${PROXY_ADDR}"
+echo "host-agent-control-plane-demo: step 4 — agent start --proxy ${PROXY_ADDR} (anonymous mode, no api-key)"
 
 START_STDOUT="$( "${RIMSKY_BIN}" agent start \
     --proxy "${PROXY_ADDR}" \
-    --state-dir "${STATE_DIR}" \
-    --api-key "demo-key" )"
+    --state-dir "${STATE_DIR}" )"
 echo "${START_STDOUT}"
 
 case "${START_STDOUT}" in
@@ -115,7 +152,7 @@ esac
 AGENT_PID="$( cat "${STATE_DIR}/agent.pid" )"
 echo "host-agent-control-plane-demo: agent pid ${AGENT_PID}"
 
-echo "host-agent-control-plane-demo: step 4 — agent status (expect connected)"
+echo "host-agent-control-plane-demo: step 5 — agent status (expect connected)"
 
 STATUS_STDOUT="$( "${RIMSKY_BIN}" agent status --state-dir "${STATE_DIR}" )"
 echo "${STATUS_STDOUT}"
@@ -126,7 +163,7 @@ case "${STATUS_STDOUT}" in
        exit 1 ;;
 esac
 
-echo "host-agent-control-plane-demo: step 5 — agent stop (expect clean exit, no zombies)"
+echo "host-agent-control-plane-demo: step 6 — agent stop (expect clean exit, no zombies)"
 
 STOP_STDOUT="$( "${RIMSKY_BIN}" agent stop --state-dir "${STATE_DIR}" )"
 echo "${STOP_STDOUT}"

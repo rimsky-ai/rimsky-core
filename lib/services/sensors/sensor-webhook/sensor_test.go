@@ -174,6 +174,66 @@ func TestIdempotencyHeader_Deduplicates(t *testing.T) {
 	}
 }
 
+func TestIdempotencyHeader_FailedPostAllowsRetry(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		failing = true
+		pushed  int
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if failing {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		pushed++
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	router := chi.NewRouter()
+	s := NewSensorService(rimsky.URL, router, noopLogger{})
+	cfg := map[string]any{"path_prefix": "/wh/retry", "idempotency_header": "X-Idem"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", Kind: "webhook", ResolvedConfig: raw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	post := func() int {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/retry", bytes.NewReader([]byte(`{"event":"x"}`)))
+		req.Header.Set("X-Idem", "k1")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if code := post(); code != http.StatusBadGateway {
+		t.Errorf("failed delivery status: %d (want 502)", code)
+	}
+	mu.Lock()
+	failing = false
+	mu.Unlock()
+	if code := post(); code != http.StatusOK {
+		t.Errorf("retry status: %d (want 200)", code)
+	}
+	if code := post(); code != http.StatusOK {
+		t.Errorf("duplicate status: %d (want 200)", code)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if pushed != 1 {
+		t.Errorf("pushed: %d (want exactly 1: retry delivers, duplicate dedups)", pushed)
+	}
+}
+
 func TestUnsubscribeIdempotent(t *testing.T) {
 	router := chi.NewRouter()
 	s := NewSensorService("", router, noopLogger{})

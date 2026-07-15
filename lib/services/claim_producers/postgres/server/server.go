@@ -150,7 +150,7 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 	if intent := req.GetIntent(); intent != "r" && intent != "rw" {
 		return nil, fmt.Errorf("postgres.Open: intent must be \"r\" or \"rw\", got %q", intent)
 	}
-	outcome, err := s.store.Open(ctx, req.GetClaimId(), req.GetSelector())
+	outcome, err := s.store.Open(ctx, req.GetClaimId(), req.GetSelector(), claimproducer.Intent(req.GetIntent()))
 	if err != nil {
 		return nil, err
 	}

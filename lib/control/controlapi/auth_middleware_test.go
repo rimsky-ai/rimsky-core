@@ -30,6 +30,29 @@ type authTestHarness struct {
 
 func newAuthTestHarness(t *testing.T) authTestHarness {
 	t.Helper()
+	h := newUnseededAuthTestHarness(t)
+	ctx := context.Background()
+	plaintext, hash, err := auth.Mint()
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if err := h.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.tables.APIKeys().Insert(ctx, persistence.APIKey{
+			ID:          shared.UUID{9, 9, 9},
+			Name:        "seed",
+			KeyHash:     hash[:],
+			Permissions: []byte(`[{"action":"*"}]`),
+			CreatedAt:   h.state.Clock.Now(),
+		}, tx)
+	}); err != nil {
+		t.Fatalf("seed key: %v", err)
+	}
+	h.plaintext = plaintext
+	return h
+}
+
+func newUnseededAuthTestHarness(t *testing.T) authTestHarness {
+	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
 	d, err := persistence.Open(ctx, persistence.Config{
@@ -50,22 +73,7 @@ func newAuthTestHarness(t *testing.T) authTestHarness {
 		Clock:    clock,
 		Logger:   shared.SilentLogger{},
 	}
-	plaintext, hash, err := auth.Mint()
-	if err != nil {
-		t.Fatalf("mint: %v", err)
-	}
-	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return d.Tables().APIKeys().Insert(ctx, persistence.APIKey{
-			ID:          shared.UUID{9, 9, 9},
-			Name:        "seed",
-			KeyHash:     hash[:],
-			Permissions: []byte(`[{"action":"*"}]`),
-			CreatedAt:   clock.Now(),
-		}, tx)
-	}); err != nil {
-		t.Fatalf("seed key: %v", err)
-	}
-	return authTestHarness{state: state, tables: d.Tables(), plaintext: plaintext}
+	return authTestHarness{state: state, tables: d.Tables()}
 }
 
 func lastAttemptedRow(t *testing.T, tables persistence.Tables) map[string]any {

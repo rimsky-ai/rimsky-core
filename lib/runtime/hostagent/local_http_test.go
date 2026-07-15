@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,6 +84,42 @@ func TestLocalHTTPForwardRoundTrip(t *testing.T) {
 	}
 	if got := resp.Header.Get("X-Echo-Method"); got != http.MethodPost {
 		t.Fatalf("X-Echo-Method = %q, want POST", got)
+	}
+}
+
+func TestDeliverHTTPResponseNeverSendsOnClearedForward(t *testing.T) {
+	a := newAgent(Config{}, "", nil)
+	for i := 0; i < 10000; i++ {
+		forwardID := strconv.Itoa(i)
+		ch := a.registerForward(forwardID)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			a.deliverHTTPResponse(&genv1.LocalHttpResponse{ForwardId: forwardID, Status: http.StatusOK})
+		}()
+		go func() {
+			defer wg.Done()
+			a.clearForward(forwardID)
+		}()
+		wg.Wait()
+
+		a.forwardMu.Lock()
+		_, stillPending := a.pendingForwards[forwardID]
+		a.forwardMu.Unlock()
+		if stillPending {
+			t.Fatalf("iteration %d: forward %q still pending after deliver+clear", i, forwardID)
+		}
+
+		select {
+		case resp, ok := <-ch:
+			if ok && resp == nil {
+				t.Fatalf("iteration %d: delivered response is nil", i)
+			}
+		default:
+			t.Fatalf("iteration %d: channel neither closed nor delivered", i)
+		}
 	}
 }
 

@@ -348,28 +348,9 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 			s.mu.Unlock()
 			continue
 		}
-		switch cur.WatermarkField {
-		case "last_modified":
-			cur.WatermarkTime = o.LastModified
-		default:
-			cur.WatermarkName = o.Name
-		}
 		state := s.state
 		watermarkField := cur.WatermarkField
 		s.mu.Unlock()
-		if state != nil {
-			var err error
-			switch watermarkField {
-			case "last_modified":
-				err = state.UpdateWatermarkTime(ctx, w.SubscriptionID, o.LastModified)
-			default:
-				err = state.UpdateWatermarkName(ctx, w.SubscriptionID, o.Name)
-			}
-			if err != nil {
-				s.logger.Warn("sensor-object-store.poll.state_update_failed",
-					"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
-			}
-		}
 
 		obs := map[string]any{
 			"observed_at":   now.UTC().Format(time.RFC3339),
@@ -388,6 +369,34 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		if err := s.postMessage(ctx, w, obs, idemKey); err != nil {
 			s.logger.Warn("sensor-object-store.message_post_failed",
 				"publisher_subscription_id", w.SubscriptionID, "object_name", o.Name, "error", err.Error())
+			return
+		}
+
+		s.mu.Lock()
+		cur, exists = s.watches[w.SubscriptionID]
+		if !exists {
+			s.mu.Unlock()
+			return
+		}
+		switch watermarkField {
+		case "last_modified":
+			cur.WatermarkTime = o.LastModified
+		default:
+			cur.WatermarkName = o.Name
+		}
+		s.mu.Unlock()
+		if state != nil {
+			var err error
+			switch watermarkField {
+			case "last_modified":
+				err = state.UpdateWatermarkTime(ctx, w.SubscriptionID, o.LastModified)
+			default:
+				err = state.UpdateWatermarkName(ctx, w.SubscriptionID, o.Name)
+			}
+			if err != nil {
+				s.logger.Warn("sensor-object-store.poll.state_update_failed",
+					"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+			}
 		}
 	}
 }

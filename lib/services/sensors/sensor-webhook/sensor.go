@@ -52,6 +52,32 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state = state
+	if state == nil {
+		return
+	}
+	rows, err := state.ListAll(context.Background())
+	if err != nil {
+		s.logger.Warn("sensor-webhook.attach_state_db.list_failed", "error", err.Error())
+		return
+	}
+	for _, r := range rows {
+		w := &Watch{
+			SubscriptionID:    r.SubscriptionID,
+			InstanceID:        r.InstanceID,
+			PathPrefix:        r.PathPrefix,
+			IdempotencyHeader: r.IdempotencyHeader,
+			MessageType:       r.MessageType,
+			StartedAt:         s.clock(),
+			LastIdempotency:   r.LastIdempotencyKey,
+		}
+		s.watches[r.SubscriptionID] = w
+		s.pathToWatch[r.PathPrefix] = w
+		s.logger.Info("sensor-webhook.state_recovered",
+			"publisher_subscription_id", r.SubscriptionID,
+			"instance_id", r.InstanceID,
+			"path", r.PathPrefix,
+			"restored_idempotency", r.LastIdempotencyKey != "")
+	}
 }
 
 type logger interface {
@@ -178,21 +204,11 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 		inboundIdem = req.Header.Get(w.IdempotencyHeader)
 		if inboundIdem != "" {
 			w.mu.Lock()
-			if w.LastIdempotency == inboundIdem {
-				w.mu.Unlock()
+			seen := w.LastIdempotency == inboundIdem
+			w.mu.Unlock()
+			if seen {
 				rw.WriteHeader(http.StatusOK)
 				return
-			}
-			w.LastIdempotency = inboundIdem
-			w.mu.Unlock()
-			s.mu.Lock()
-			state := s.state
-			s.mu.Unlock()
-			if state != nil {
-				if err := state.UpdateLastIdempotency(req.Context(), w.SubscriptionID, inboundIdem); err != nil {
-					s.logger.Warn("sensor-webhook.serve.state_update_failed",
-						"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
-				}
 			}
 		}
 	}
@@ -222,6 +238,20 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		http.Error(rw, "rimsky push failed", http.StatusBadGateway)
 		return
+	}
+	if inboundIdem != "" {
+		w.mu.Lock()
+		w.LastIdempotency = inboundIdem
+		w.mu.Unlock()
+		s.mu.Lock()
+		state := s.state
+		s.mu.Unlock()
+		if state != nil {
+			if err := state.UpdateLastIdempotency(req.Context(), w.SubscriptionID, inboundIdem); err != nil {
+				s.logger.Warn("sensor-webhook.serve.state_update_failed",
+					"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+			}
+		}
 	}
 	rw.WriteHeader(http.StatusOK)
 }

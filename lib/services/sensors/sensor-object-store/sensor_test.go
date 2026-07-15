@@ -242,6 +242,79 @@ func TestTick_LastModifiedWatermark(t *testing.T) {
 	}
 }
 
+func TestTick_FailedPostDoesNotAdvanceWatermark(t *testing.T) {
+	var (
+		mu        sync.Mutex
+		failing   = true
+		delivered []string
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		fail := failing
+		mu.Unlock()
+		if fail {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		payload, _ := body["payload"].(map[string]any)
+		name, _ := payload["object_name"].(string)
+		mu.Lock()
+		delivered = append(delivered, name)
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	lister := NewMemoryLister()
+	s.SetBackend("memory", lister)
+	lister.Put("test-bucket", ObjectMeta{Name: "events/a.json", LastModified: pin.Add(-1 * time.Hour), Size: 10, ETag: "etag-a"})
+	lister.Put("test-bucket", ObjectMeta{Name: "events/b.json", LastModified: pin.Add(-30 * time.Minute), Size: 20, ETag: "etag-b"})
+
+	cfg := map[string]any{"backend": "memory", "bucket": "test-bucket", "prefix": "events/", "poll_interval": "10s"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Tick(context.Background())
+	s.mu.Lock()
+	watermark := s.watches["w1"].WatermarkName
+	s.mu.Unlock()
+	if watermark != "" {
+		t.Errorf("watermark advanced past failed delivery: %q", watermark)
+	}
+	mu.Lock()
+	if len(delivered) != 0 {
+		t.Errorf("delivered during failure: %v", delivered)
+	}
+	failing = false
+	mu.Unlock()
+
+	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
+	s.Tick(context.Background())
+	mu.Lock()
+	got := append([]string(nil), delivered...)
+	mu.Unlock()
+	if len(got) != 2 || got[0] != "events/a.json" || got[1] != "events/b.json" {
+		t.Errorf("delivered after recovery: %v (want [events/a.json events/b.json])", got)
+	}
+	s.mu.Lock()
+	watermark = s.watches["w1"].WatermarkName
+	s.mu.Unlock()
+	if watermark != "events/b.json" {
+		t.Errorf("watermark after recovery: %q (want events/b.json)", watermark)
+	}
+}
+
 func TestUnsubscribeIdempotent(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	s.mu.Lock()

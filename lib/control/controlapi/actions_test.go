@@ -307,19 +307,9 @@ func TestRegistryCoversRouter(t *testing.T) {
 		}
 	}
 
-	exempt := func(method, pattern string) bool {
-		if method == http.MethodGet && pattern == "/v1/health" {
-			return true
-		}
-		if strings.HasPrefix(pattern, "/v1/observability") {
-			return true
-		}
-		return false
-	}
-
 	var missing []string
 	walkErr := chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		if exempt(method, route) {
+		if gateExemptRoute(method, route) || identityEchoRoute(method, route) {
 			return nil
 		}
 		if _, ok := byRoutePattern[method+" "+route]; !ok {
@@ -379,18 +369,9 @@ func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 	srv := httptest.NewServer(app)
 	t.Cleanup(srv.Close)
 
-	exempt := func(method, pattern string) bool {
-		if method == http.MethodGet && pattern == "/v1/health" {
-			return true
-		}
-		if strings.HasPrefix(pattern, "/v1/observability") {
-			return true
-		}
-		return false
-	}
 	var ungated []string
 	walkErr := chi.Walk(app.(chi.Routes), func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		if exempt(method, route) {
+		if gateExemptRoute(method, route) {
 			return nil
 		}
 		url := substituteChiParams(route)
@@ -438,6 +419,17 @@ func TestV1Registry_ExposesDebuggerTools(t *testing.T) {
 			t.Errorf("tool catalog missing %q (action registry didn't auto-expose the debugger surface)", want)
 		}
 	}
+}
+
+func gateExemptRoute(method, pattern string) bool {
+	if method == http.MethodGet && pattern == "/v1/health" {
+		return true
+	}
+	return strings.HasPrefix(pattern, "/v1/observability")
+}
+
+func identityEchoRoute(method, pattern string) bool {
+	return method == http.MethodGet && pattern == "/v1/auth/whoami"
 }
 
 func substituteChiParams(route string) string {

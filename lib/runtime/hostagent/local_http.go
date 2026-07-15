@@ -96,13 +96,11 @@ func (a *agent) clearForward(forwardID string) {
 
 func (a *agent) deliverHTTPResponse(resp *genv1.LocalHttpResponse) {
 	a.forwardMu.Lock()
+	defer a.forwardMu.Unlock()
 	ch, ok := a.pendingForwards[resp.GetForwardId()]
-	a.forwardMu.Unlock()
 	if !ok {
 		return
 	}
-	select {
-	case ch <- resp:
-	default:
-	}
+	delete(a.pendingForwards, resp.GetForwardId())
+	ch <- resp
 }

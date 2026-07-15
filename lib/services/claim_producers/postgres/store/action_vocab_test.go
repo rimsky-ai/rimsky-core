@@ -140,7 +140,7 @@ func TestPGAction_Pop_RowDeleted(t *testing.T) {
 	}
 	t.Cleanup(st.Close)
 
-	o, err := st.Open(context.Background(), "claim-1", "@q")
+	o, err := st.Open(context.Background(), "claim-1", "@q", claimproducer.IntentReadWrite)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestPGAction_Pop_RowDeleted(t *testing.T) {
 		t.Errorf("expected 0 rows after Pop; got %d", count)
 	}
 
-	o2, err := st.Open(context.Background(), "claim-2", "@q")
+	o2, err := st.Open(context.Background(), "claim-2", "@q", claimproducer.IntentReadWrite)
 	if err != nil {
 		t.Fatalf("Open #2: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestPGAction_Recycle_RowReturnsToQueue(t *testing.T) {
 		t.Fatalf("capture seqBefore: %v", err)
 	}
 
-	o, err := st.Open(context.Background(), "claim-1", "@q")
+	o, err := st.Open(context.Background(), "claim-1", "@q", claimproducer.IntentReadWrite)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestPGAction_Recycle_RowReturnsToQueue(t *testing.T) {
 		t.Errorf("sequence after Recycle = %d, expected > %d (nextval bumps it)", seqAfter, seqBefore)
 	}
 
-	o2, err := st.Open(context.Background(), "claim-2", "@q")
+	o2, err := st.Open(context.Background(), "claim-2", "@q", claimproducer.IntentReadWrite)
 	if err != nil {
 		t.Fatalf("Open #2: %v", err)
 	}

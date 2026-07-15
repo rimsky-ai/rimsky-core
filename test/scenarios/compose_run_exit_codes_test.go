@@ -25,7 +25,7 @@ func TestComposeRunExitCodes_ThreeClasses(t *testing.T) {
 	binDir := t.TempDir()
 	rimskyBin := filepath.Join(binDir, "rimsky")
 	stubBin := filepath.Join(binDir, "stub-executor")
-	buildRimskyCLIBinary(t, rimskyBin)
+	buildRepoBinary(t, "./cmd/rimsky", rimskyBin)
 	buildComposeStubExecutorBinary(t, stubBin)
 
 	t.Run("success_exit_0", func(t *testing.T) {

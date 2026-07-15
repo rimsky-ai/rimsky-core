@@ -391,6 +391,24 @@ func handleAuthStatus(deps AppDeps) http.HandlerFunc {
 	}
 }
 
+func handleWhoAmI() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ident, ok := IdentityFromContextOK(r.Context())
+		if !ok {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "no identity"})
+			return
+		}
+		resp := map[string]any{
+			"kind":     string(ident.Kind),
+			"key_name": ident.KeyName,
+		}
+		if ident.KeyID != nil {
+			resp["key_id"] = ident.KeyID.String()
+		}
+		writeJSON(w, http.StatusOK, resp)
+	}
+}
+
 func lookupByNameOrID(ctx context.Context, t persistence.APIKeyTable, nameOrID string) (persistence.APIKey, bool, error) {
 	if id, err := uuid.Parse(nameOrID); err == nil {
 		return t.GetByID(ctx, id, nil)

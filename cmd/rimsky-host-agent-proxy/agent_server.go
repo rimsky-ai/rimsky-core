@@ -21,12 +21,13 @@ const proxyVersion = "v1"
 
 type agentServer struct {
 	genv1.UnimplementedHostAgentServer
-	state    *proxyState
-	forwards *httpForwarder
+	state          *proxyState
+	forwards       *httpForwarder
+	verifyIdentity registerIdentityVerifier
 }
 
-func newAgentServer(state *proxyState) *agentServer {
-	return &agentServer{state: state, forwards: newHTTPForwarder(state)}
+func newAgentServer(state *proxyState, verifyIdentity registerIdentityVerifier) *agentServer {
+	return &agentServer{state: state, forwards: newHTTPForwarder(state), verifyIdentity: verifyIdentity}
 }
 
 func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
@@ -43,7 +44,12 @@ func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 	}
 
 	// @concept: host-agent-proxy
-	apiKeyID := reg.GetApiKey()
+	// @concept: api-key
+	apiKeyID, err := s.verifyIdentity(stream.Context(), reg.GetApiKey())
+	if err != nil {
+		slog.Warn("agent register rejected", "agent_label", reg.GetAgentLabel(), "error", err)
+		return err
+	}
 	conn, prior, displaced := s.state.registerAgent(apiKeyID, reg.GetAgentLabel(), reg.GetLocalCallbackBaseUrl())
 	if displaced && prior != nil {
 		prior.close()

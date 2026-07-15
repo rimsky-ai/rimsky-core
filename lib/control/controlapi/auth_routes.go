@@ -25,4 +25,5 @@ func registerAuthRoutes(r chi.Router, deps AppDeps) {
 		deps.AuthState.gateByAction("auth:rotate", handleRotateKey(deps)))
 	r.Get("/auth/status",
 		deps.AuthState.gateByAction("auth:read", handleAuthStatus(deps)))
+	r.Get("/auth/whoami", handleWhoAmI())
 }

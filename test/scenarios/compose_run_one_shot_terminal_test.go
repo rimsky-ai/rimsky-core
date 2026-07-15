@@ -31,7 +31,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	binDir := t.TempDir()
 	rimskyBin := filepath.Join(binDir, "rimsky")
 	stubBin := filepath.Join(binDir, "stub-executor")
-	buildRimskyCLIBinary(t, rimskyBin)
+	buildRepoBinary(t, "./cmd/rimsky", rimskyBin)
 	buildComposeStubExecutorBinary(t, stubBin)
 
 	work := t.TempDir()

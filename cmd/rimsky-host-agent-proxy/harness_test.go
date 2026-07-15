@@ -31,7 +31,7 @@ func newProxyTestServer(t *testing.T, fetch instanceFetcher) *proxyTestServer {
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()
 
-	genv1.RegisterHostAgentServer(srv, newAgentServer(state))
+	genv1.RegisterHostAgentServer(srv, newAgentServer(state, presentedKeyIsIdentity))
 
 	cfg := Config{SpawnReadyTimeout: 2 * time.Second, ReapTimeout: 2 * time.Second}
 	if fetch == nil {
@@ -56,6 +56,10 @@ func newProxyTestServer(t *testing.T, fetch instanceFetcher) *proxyTestServer {
 		return conn
 	}
 	return &proxyTestServer{state: state, hostConn: dial(), supConn: dial()}
+}
+
+func presentedKeyIsIdentity(_ context.Context, presentedAPIKey string) (string, error) {
+	return presentedAPIKey, nil
 }
 
 type dispatchHandler func(protocol string, payload []byte) [][]byte

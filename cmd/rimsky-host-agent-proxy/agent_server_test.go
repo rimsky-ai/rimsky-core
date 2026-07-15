@@ -21,10 +21,15 @@ import (
 
 func newAgentTestServer(t *testing.T) (*proxyState, genv1.HostAgentClient) {
 	t.Helper()
+	return newAgentTestServerWithVerifier(t, presentedKeyIsIdentity)
+}
+
+func newAgentTestServerWithVerifier(t *testing.T, verify registerIdentityVerifier) (*proxyState, genv1.HostAgentClient) {
+	t.Helper()
 	state := newProxyState()
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()
-	genv1.RegisterHostAgentServer(srv, newAgentServer(state))
+	genv1.RegisterHostAgentServer(srv, newAgentServer(state, verify))
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 

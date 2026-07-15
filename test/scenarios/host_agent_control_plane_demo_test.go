@@ -29,12 +29,16 @@ var connectedLineRE = regexp.MustCompile(`rimsky agent started \(pid (\d+), conn
 func TestHostAgentControlPlaneDemo(t *testing.T) {
 	binPath := filepath.Join(t.TempDir(), "rimsky")
 	proxyBin := filepath.Join(t.TempDir(), "rimsky-host-agent-proxy")
-	buildRimskyCLIBinary(t, binPath)
-	buildHostAgentProxyBinary(t, proxyBin)
+	migrateBin := filepath.Join(t.TempDir(), "rimsky-migrate")
+	controlAPIBin := filepath.Join(t.TempDir(), "rimsky-control-api")
+	buildRepoBinary(t, "./cmd/rimsky", binPath)
+	buildRepoBinary(t, "./cmd/rimsky-host-agent-proxy", proxyBin)
+	buildRepoBinary(t, "./cmd/rimsky-migrate", migrateBin)
+	buildRepoBinary(t, "./cmd/rimsky-control-api", controlAPIBin)
 
 	scriptPath := repoFilePath(t, demoScriptRelPath)
 
-	out, code := runHostAgentDemoScript(t, scriptPath, binPath, proxyBin, 60*time.Second)
+	out, code := runHostAgentDemoScript(t, scriptPath, binPath, proxyBin, migrateBin, controlAPIBin, 120*time.Second)
 	if code != 0 {
 		t.Fatalf("host-agent-control-plane-demo.sh exited %d (want 0)\noutput:\n%s", code, out)
 	}
@@ -65,7 +69,7 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 	fx := newHostAgentFixture(t, fixtureOpts{withAgent: false})
 
 	binPath := filepath.Join(t.TempDir(), "rimsky")
-	buildRimskyCLIBinary(t, binPath)
+	buildRepoBinary(t, "./cmd/rimsky", binPath)
 
 	stateDir := t.TempDir()
 	termLog := filepath.Join(t.TempDir(), "stubchild-term.log")
@@ -80,7 +84,7 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 		[]string{"agent", "start",
 			"--proxy", fx.proxyAddr,
 			"--state-dir", stateDir,
-			"--api-key", fx.ownerKeyID,
+			"--api-key", fx.adminKey,
 		}, startEnv, 30*time.Second)
 	if startCode != 0 {
 		t.Fatalf("rimsky agent start exited %d\nstdout:\n%s\nstderr:\n%s", startCode, startOut, startErr)
@@ -140,7 +144,7 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 	}
 }
 
-func runHostAgentDemoScript(t *testing.T, scriptPath, binPath, proxyBin string, timeout time.Duration) (string, int) {
+func runHostAgentDemoScript(t *testing.T, scriptPath, binPath, proxyBin, migrateBin, controlAPIBin string, timeout time.Duration) (string, int) {
 	t.Helper()
 	runCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -148,6 +152,8 @@ func runHostAgentDemoScript(t *testing.T, scriptPath, binPath, proxyBin string, 
 	cmd.Env = append(os.Environ(),
 		"RIMSKY_BIN="+binPath,
 		"RIMSKY_PROXY_BIN="+proxyBin,
+		"RIMSKY_MIGRATE_BIN="+migrateBin,
+		"RIMSKY_CONTROL_API_BIN="+controlAPIBin,
 		"HOME="+t.TempDir(),
 	)
 	var out, errBuf bytes.Buffer
@@ -168,25 +174,14 @@ func runHostAgentDemoScript(t *testing.T, scriptPath, binPath, proxyBin string, 
 	return combined, exitErr.ExitCode()
 }
 
-func buildRimskyCLIBinary(t *testing.T, binPath string) {
+func buildRepoBinary(t *testing.T, pkg, binPath string) {
 	t.Helper()
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/rimsky")
+	cmd := exec.Command("go", "build", "-o", binPath, pkg)
 	cmd.Dir = repoRoot(t)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("go build ./cmd/rimsky: %v\nstderr:\n%s", err, stderr.String())
-	}
-}
-
-func buildHostAgentProxyBinary(t *testing.T, binPath string) {
-	t.Helper()
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/rimsky-host-agent-proxy")
-	cmd.Dir = repoRoot(t)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("go build ./cmd/rimsky-host-agent-proxy: %v\nstderr:\n%s", err, stderr.String())
+		t.Fatalf("go build %s: %v\nstderr:\n%s", pkg, err, stderr.String())
 	}
 }
 

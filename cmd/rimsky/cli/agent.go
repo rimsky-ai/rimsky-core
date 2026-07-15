@@ -54,7 +54,7 @@ func runAgentStart(args []string) int {
 	allowPaths := fs.String("allow-paths", "", "comma-separated glob patterns for binary path validation")
 	listen := fs.String("listen", "", "agent local listener addr (default 127.0.0.1:0)")
 	proxy := fs.String("proxy", "", "host-agent-proxy endpoint host:port (overrides $RIMSKY_URL)")
-	apiKey := fs.String("api-key", "", "api-key presented to the proxy on Register (overrides $RIMSKY_API_KEY)")
+	apiKey := fs.String("api-key", "", "api-key plaintext presented to the proxy on Register (overrides $RIMSKY_API_KEY); omit to register anonymously")
 	stateDir := fs.String("state-dir", "", "directory for pid and status files (default ~/.rimsky)")
 	foreground := fs.Bool("foreground", false, "run in foreground (don't daemonize)")
 	if err := parseInterspersed(fs, args); err != nil {

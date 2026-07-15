@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -29,7 +31,8 @@ func main() {
 	state := newProxyState()
 	grpcSrv := grpc.NewServer()
 
-	genv1.RegisterHostAgentServer(grpcSrv, newAgentServer(state))
+	verifyIdentity := newControlAPIRegisterIdentityVerifier(&http.Client{Timeout: 10 * time.Second}, cfg.ControlAPIURL)
+	genv1.RegisterHostAgentServer(grpcSrv, newAgentServer(state, verifyIdentity))
 
 	genv1.RegisterExecutorServer(grpcSrv, newExecutorHandler(state, cfg))
 	genv1.RegisterExecutorObservabilityServer(grpcSrv, newExecutorObsHandler())
