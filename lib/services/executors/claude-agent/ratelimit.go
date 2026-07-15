@@ -20,7 +20,7 @@ type RateLimitSignal struct {
 var (
 	http429Re    = regexp.MustCompile(`\b429\b`)
 	retryAfterRe = regexp.MustCompile(`(?i)retry-after:\s*(\d+)`)
-	epochResetRe = regexp.MustCompile(`(?i)anthropic-ratelimit(?:-tokens)?-reset:\s*(\d+)`)
+	epochResetRe = regexp.MustCompile(`(?i)anthropic-ratelimit(?:-tokens|-requests)?-reset:\s*(\d+)`)
 	isoResetRe   = regexp.MustCompile(`(?i)resetat[:= ]\s*([0-9T:\-+.Z]+)`)
 )
 

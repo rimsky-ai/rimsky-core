@@ -56,6 +56,19 @@ func TestDetectRateLimitParsesAnthropicResetEpoch(t *testing.T) {
 	}
 }
 
+func TestDetectRateLimitParsesRequestsResetEpoch(t *testing.T) {
+	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+	future := now.Unix() + 300
+	r := DetectRateLimit(fmt.Sprintf("429 rate_limit_error\nanthropic-ratelimit-requests-reset: %d", future), now)
+	if !r.Detected || r.ResumeAt == nil {
+		t.Fatalf("expected resumeAt from requests-reset header, got %+v", r)
+	}
+	want := time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC)
+	if !r.ResumeAt.Equal(want) {
+		t.Fatalf("resumeAt = %v, want %v", r.ResumeAt, want)
+	}
+}
+
 func TestDetectRateLimitNoResetSignal(t *testing.T) {
 	r := DetectRateLimit("rate limit but nothing else", time.Now())
 	if !r.Detected || r.ResumeAt != nil {

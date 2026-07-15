@@ -94,14 +94,14 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
 	})
 
-	t.Run("declared error class agent/rate_limited routes verbatim", func(t *testing.T) {
+	t.Run("upstream rate-limit (stderr + non-zero exit) parks the node as snooze", func(t *testing.T) {
 		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-rate-limited",
 			"scenario:rate_limited",
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-rate-limited")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+		waitNodeParkedSnoozeClaudeAgent(t, ep, nodeID)
 	})
 
 	t.Run("expose-env allowlist reaches the agent; rimsky never sees the plaintext", func(t *testing.T) {
@@ -282,6 +282,29 @@ func waitNodeSettledClaudeAgent(
 	}
 	t.Fatalf("node %s did not settle to categorical state=%q within %v; last_state=%q last_body=%s",
 		nodeID, wantState, deadline, lastState, lastBody)
+}
+
+func waitNodeParkedSnoozeClaudeAgent(t *testing.T, ep harness.RimskyEndpoint, nodeID string) {
+	t.Helper()
+	for {
+		status, raw := ep.GetJSON(t, "/v1/diagnostics/parked?reason=snooze", "")
+		if status == http.StatusOK {
+			var resp struct {
+				ParkedNodes []struct {
+					NodeID string `json:"node_id"`
+					Reason string `json:"reason"`
+				} `json:"parked_nodes"`
+			}
+			if json.Unmarshal(raw, &resp) == nil {
+				for _, p := range resp.ParkedNodes {
+					if p.NodeID == nodeID && p.Reason == "snooze" {
+						return
+					}
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // @concept: node

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 type ModuleMcpTool struct {
@@ -74,19 +76,20 @@ func (p *moduleToolProvider) callTool(name string, arguments json.RawMessage) (m
 	return nil, &jsonRPCError{Code: -32602, Message: "Unknown tool: " + name}
 }
 
-func standUpModuleLoopback(serverName string, specifier string, logger *slog.Logger) (url string, teardown func() error, err error) {
+func standUpModuleLoopback(serverName string, specifier string, logger *slog.Logger) (url string, bearerToken string, teardown func() error, err error) {
 	factory, ok := lookupMcpModule(specifier)
 	if !ok {
-		return "", nil, &CliConfigError{Message: "mcp server \"" + serverName + "\" module \"" + specifier +
+		return "", "", nil, &CliConfigError{Message: "mcp server \"" + serverName + "\" module \"" + specifier +
 			"\" is not a registered MCP module (register it via RegisterMcpModule)"}
 	}
 	module := factory()
+	token := uuid.NewString()
 	srv, err := startMcpHTTPServer(
 		&moduleToolProvider{module: module},
-		mcpHTTPServerOpts{logger: logger.With("component", "mcp-module", "module_server", serverName)},
+		mcpHTTPServerOpts{logger: logger.With("component", "mcp-module", "module_server", serverName), bearerToken: token},
 	)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
-	return srv.URL, srv.Close, nil
+	return srv.URL, token, srv.Close, nil
 }

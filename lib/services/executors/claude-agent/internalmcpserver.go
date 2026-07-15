@@ -87,6 +87,7 @@ type mcpHTTPServerOpts struct {
 	port        int
 	logger      *slog.Logger
 	sessionIdle time.Duration
+	bearerToken string
 }
 
 // @decision: internal-mcp-server-net-http
@@ -120,8 +121,14 @@ func startMcpHTTPServer(provider mcpToolProvider, opts mcpHTTPServerOpts) (*mcpH
 		stop:     make(chan struct{}),
 	}
 
+	bearerToken := opts.bearerToken
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+		if bearerToken != "" && r.Header.Get("Authorization") != "Bearer "+bearerToken {
+			log.Warn("mcp.unauthorized", "reason", "missing_or_wrong_bearer")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		serveMcpRequest(w, r, provider, sessions, log)
 	})
 	srv.server = &http.Server{Handler: mux}

@@ -6,10 +6,12 @@ package claudeagent
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -69,13 +71,19 @@ type CliSpawnRequest struct {
 }
 
 type CliResumeRequest struct {
-	SessionID      string
-	Prompt         string
-	Tools          []CliToolConfig
-	AllowedTools   []string
-	Env            map[string]string
-	ExposeEnvNames []string
-	Cwd            string
+	SessionID       string
+	Prompt          string
+	Tools           []CliToolConfig
+	Model           string
+	AllowedTools    []string
+	DisallowedTools []string
+	PermissionMode  string
+	Bare            bool
+	AddDirs         []string
+	MaxBudgetUSD    string
+	Env             map[string]string
+	ExposeEnvNames  []string
+	Cwd             string
 }
 
 type ExitResult struct {
@@ -103,57 +111,105 @@ type CliArgPaths struct {
 	McpConfigPath    string
 }
 
-func BuildClaudeCliArgs(req CliSpawnRequest, paths CliArgPaths) []string {
-	permissionMode := req.PermissionMode
+type cliSessionConfig struct {
+	Model           string
+	PermissionMode  string
+	Bare            bool
+	AllowedTools    []string
+	DisallowedTools []string
+	AddDirs         []string
+	MaxBudgetUSD    string
+}
+
+func rejectFlagLike(field, value string) error {
+	if strings.HasPrefix(value, "-") {
+		return &CliConfigError{Message: fmt.Sprintf(
+			"cli config %s value %q begins with '-'; refusing to splice a node-supplied value that the claude CLI would parse as a flag",
+			field, value)}
+	}
+	return nil
+}
+
+func sessionConfigArgs(cfg cliSessionConfig) ([]string, error) {
+	permissionMode := cfg.PermissionMode
 	if permissionMode == "" {
 		permissionMode = "bypassPermissions"
 	}
-	maxBudgetUSD := req.MaxBudgetUSD
+	maxBudgetUSD := cfg.MaxBudgetUSD
 	if maxBudgetUSD == "" {
 		maxBudgetUSD = os.Getenv("RIMSKY_DISPATCH_MAX_USD")
 	}
-	args := []string{
-		"--print",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--model", req.Model,
-		"--permission-mode", permissionMode,
+	if err := rejectFlagLike("model", cfg.Model); err != nil {
+		return nil, err
 	}
-	if req.SessionID != "" {
-		args = append(args, "--session-id", req.SessionID)
+	if err := rejectFlagLike("permission_mode", permissionMode); err != nil {
+		return nil, err
 	}
-	if req.Bare {
+	if err := rejectFlagLike("max_budget_usd", maxBudgetUSD); err != nil {
+		return nil, err
+	}
+	for _, dir := range cfg.AddDirs {
+		if err := rejectFlagLike("add_dirs", dir); err != nil {
+			return nil, err
+		}
+	}
+	args := []string{"--model", cfg.Model, "--permission-mode", permissionMode}
+	if cfg.Bare {
 		args = append(args, "--bare")
 	}
-	args = append(args, "--allowedTools", joinTools(BuildAllowedTools(req.AllowedTools)))
-	if len(req.DisallowedTools) > 0 {
-		args = append(args, "--disallowedTools", joinTools(req.DisallowedTools))
+	args = append(args, "--allowedTools", joinTools(BuildAllowedTools(cfg.AllowedTools)))
+	if len(cfg.DisallowedTools) > 0 {
+		args = append(args, "--disallowedTools", joinTools(cfg.DisallowedTools))
 	}
-	if len(req.AddDirs) > 0 {
+	if len(cfg.AddDirs) > 0 {
 		args = append(args, "--add-dir")
-		args = append(args, req.AddDirs...)
+		args = append(args, cfg.AddDirs...)
 	}
-	args = append(args,
-		"--system-prompt-file", paths.SystemPromptPath,
-		"--mcp-config", paths.McpConfigPath,
-	)
 	if maxBudgetUSD != "" {
 		args = append(args, "--max-budget-usd", maxBudgetUSD)
 	}
-	args = append(args, "-p", req.UserPrompt)
-	return args
+	return args, nil
 }
 
-func BuildClaudeCliResumeArgs(req CliResumeRequest, paths CliArgPaths) []string {
-	return []string{
-		"--resume", req.SessionID,
-		"--print",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--allowedTools", joinTools(BuildAllowedTools(req.AllowedTools)),
-		"--mcp-config", paths.McpConfigPath,
-		"-p", req.Prompt,
+func BuildClaudeCliArgs(req CliSpawnRequest, paths CliArgPaths) ([]string, error) {
+	block, err := sessionConfigArgs(cliSessionConfig{
+		Model:           req.Model,
+		PermissionMode:  req.PermissionMode,
+		Bare:            req.Bare,
+		AllowedTools:    req.AllowedTools,
+		DisallowedTools: req.DisallowedTools,
+		AddDirs:         req.AddDirs,
+		MaxBudgetUSD:    req.MaxBudgetUSD,
+	})
+	if err != nil {
+		return nil, err
 	}
+	args := []string{"--print", "--output-format", "stream-json", "--verbose"}
+	if req.SessionID != "" {
+		args = append(args, "--session-id", req.SessionID)
+	}
+	args = append(args, block...)
+	args = append(args, "--system-prompt-file", paths.SystemPromptPath, "--mcp-config", paths.McpConfigPath)
+	return args, nil
+}
+
+func BuildClaudeCliResumeArgs(req CliResumeRequest, paths CliArgPaths) ([]string, error) {
+	block, err := sessionConfigArgs(cliSessionConfig{
+		Model:           req.Model,
+		PermissionMode:  req.PermissionMode,
+		Bare:            req.Bare,
+		AllowedTools:    req.AllowedTools,
+		DisallowedTools: req.DisallowedTools,
+		AddDirs:         req.AddDirs,
+		MaxBudgetUSD:    req.MaxBudgetUSD,
+	})
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"--resume", req.SessionID, "--print", "--output-format", "stream-json", "--verbose"}
+	args = append(args, block...)
+	args = append(args, "--mcp-config", paths.McpConfigPath)
+	return args, nil
 }
 
 func joinTools(tools []string) string {
@@ -252,15 +308,19 @@ func (r *claudeCliRunner) Spawn(req CliSpawnRequest) (CliHandle, error) {
 		_ = os.RemoveAll(tmp)
 		return nil, err
 	}
-	args := BuildClaudeCliArgs(req, CliArgPaths{
-		SystemPromptPath: systemPromptPath,
-		McpConfigPath:    mcpConfigPath,
-	})
 	cleanup := func() {
 		_ = os.RemoveAll(tmp)
 		authEnv.Cleanup()
 	}
-	return spawnChild(r.binary, args, req.Cwd, mergeEnv(collectExposedEnv(req.ExposeEnvNames), authEnv.Env, req.Env), cleanup)
+	args, err := BuildClaudeCliArgs(req, CliArgPaths{
+		SystemPromptPath: systemPromptPath,
+		McpConfigPath:    mcpConfigPath,
+	})
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	return spawnChild(r.binary, args, req.Cwd, mergeEnv(collectExposedEnv(req.ExposeEnvNames), authEnv.Env, req.Env), req.UserPrompt, cleanup)
 }
 
 func (r *claudeCliRunner) Resume(req CliResumeRequest) (CliHandle, error) {
@@ -283,12 +343,16 @@ func (r *claudeCliRunner) Resume(req CliResumeRequest) (CliHandle, error) {
 		_ = os.RemoveAll(tmp)
 		return nil, err
 	}
-	args := BuildClaudeCliResumeArgs(req, CliArgPaths{McpConfigPath: mcpConfigPath})
 	cleanup := func() {
 		_ = os.RemoveAll(tmp)
 		authEnv.Cleanup()
 	}
-	return spawnChild(r.binary, args, req.Cwd, mergeEnv(collectExposedEnv(req.ExposeEnvNames), authEnv.Env, req.Env), cleanup)
+	args, err := BuildClaudeCliResumeArgs(req, CliArgPaths{McpConfigPath: mcpConfigPath})
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	return spawnChild(r.binary, args, req.Cwd, mergeEnv(collectExposedEnv(req.ExposeEnvNames), authEnv.Env, req.Env), req.Prompt, cleanup)
 }
 
 func mergeEnv(layers ...map[string]string) []string {
@@ -318,11 +382,11 @@ type realCliHandle struct {
 	done       chan struct{}
 }
 
-func spawnChild(binary string, args []string, cwd string, env []string, cleanup func()) (CliHandle, error) {
+func spawnChild(binary string, args []string, cwd string, env []string, stdin string, cleanup func()) (CliHandle, error) {
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = cwd
 	cmd.Env = env
-	cmd.Stdin = nil
+	cmd.Stdin = strings.NewReader(stdin)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cleanup()

@@ -18,6 +18,7 @@ import (
 type mcpTestClient struct {
 	t          *testing.T
 	url        string
+	authHeader string
 	sessionID  string
 	nextID     int
 	serverName string
@@ -49,6 +50,9 @@ func (c *mcpTestClient) post(body string, sessionID string) (*http.Response, []b
 		c.t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.authHeader != "" {
+		req.Header.Set("Authorization", c.authHeader)
+	}
 	if sessionID != "" {
 		req.Header.Set("Mcp-Session-Id", sessionID)
 	}

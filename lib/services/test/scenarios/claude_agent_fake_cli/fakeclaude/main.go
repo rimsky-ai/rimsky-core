@@ -30,7 +30,8 @@ const witnessPath = "/tmp/fake-claude-validator-header.txt"
 func main() {
 	argv := os.Args[1:]
 	sessionID := readArg(argv, "--session-id")
-	userPrompt := readArg(argv, "-p")
+	promptBytes, _ := io.ReadAll(os.Stdin)
+	userPrompt := string(promptBytes)
 	resumeToken := readArg(argv, "--resume")
 	mcpConfigPath := readArg(argv, "--mcp-config")
 
@@ -63,10 +64,8 @@ func main() {
 	case strings.Contains(userPrompt, "scenario:signoff_missing"):
 		scenarioSignoffMissing(client)
 	case strings.Contains(userPrompt, "scenario:rate_limited"):
-		client.callTool("report_error", map[string]any{
-			"error_class": "agent/rate_limited",
-			"payload":     map[string]any{"reason": "fake-claude scripted upstream 429"},
-		})
+		fmt.Fprintln(os.Stderr, "API Error: 429 rate_limit_error; anthropic-ratelimit-requests-reset: 4070908800")
+		os.Exit(1)
 	case strings.Contains(userPrompt, "scenario:env_ref_witness"):
 		scenarioEnvRefWitness(client, sessionID)
 	case strings.Contains(userPrompt, "scenario:session_resume"):

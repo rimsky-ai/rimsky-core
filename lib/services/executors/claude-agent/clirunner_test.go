@@ -32,9 +32,18 @@ func baseReq(overrides func(*CliSpawnRequest)) CliSpawnRequest {
 	return req
 }
 
+func mustArgs(t *testing.T, req CliSpawnRequest) []string {
+	t.Helper()
+	args, err := BuildClaudeCliArgs(req, testPaths)
+	if err != nil {
+		t.Fatalf("BuildClaudeCliArgs: %v", err)
+	}
+	return args
+}
+
 func TestBuildClaudeCliArgsEmitsFixedCoreWithDefaults(t *testing.T) {
 	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
-	args := BuildClaudeCliArgs(baseReq(nil), testPaths)
+	args := mustArgs(t, baseReq(nil))
 	want := []string{
 		"--print",
 		"--output-format", "stream-json",
@@ -44,15 +53,36 @@ func TestBuildClaudeCliArgsEmitsFixedCoreWithDefaults(t *testing.T) {
 		"--allowedTools", strings.Join(RequiredCallbackTools(), " "),
 		"--system-prompt-file", "/tmp/sys.md",
 		"--mcp-config", "/tmp/mcp.json",
-		"-p", "U",
 	}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %v\nwant %v", args, want)
 	}
+	if slices.Contains(args, "-p") {
+		t.Fatalf("user prompt must not appear on argv (delivered via stdin): %v", args)
+	}
+}
+
+func TestBuildClaudeCliArgsRejectsFlagLikeConfigValues(t *testing.T) {
+	cases := []struct {
+		name     string
+		override func(*CliSpawnRequest)
+	}{
+		{"add_dirs", func(r *CliSpawnRequest) { r.AddDirs = []string{"--mcp-config", "/agent-writable.json"} }},
+		{"model", func(r *CliSpawnRequest) { r.Model = "--dangerously-skip-permissions" }},
+		{"permission_mode", func(r *CliSpawnRequest) { r.PermissionMode = "--add-dir" }},
+		{"max_budget_usd", func(r *CliSpawnRequest) { r.MaxBudgetUSD = "--foo" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := BuildClaudeCliArgs(baseReq(tc.override), testPaths); err == nil {
+				t.Fatalf("expected a flag-injection rejection for %s beginning with '-'", tc.name)
+			}
+		})
+	}
 }
 
 func TestBuildClaudeCliArgsSplicesBare(t *testing.T) {
-	args := BuildClaudeCliArgs(baseReq(func(r *CliSpawnRequest) { r.Bare = true }), testPaths)
+	args := mustArgs(t, baseReq(func(r *CliSpawnRequest) { r.Bare = true }))
 	i := slices.Index(args, "--bare")
 	if i < 0 {
 		t.Fatal("expected --bare")
@@ -60,13 +90,13 @@ func TestBuildClaudeCliArgsSplicesBare(t *testing.T) {
 	if args[i-1] != "bypassPermissions" {
 		t.Fatalf("--bare not after permission mode: %v", args)
 	}
-	if slices.Contains(BuildClaudeCliArgs(baseReq(nil), testPaths), "--bare") {
+	if slices.Contains(mustArgs(t, baseReq(nil)), "--bare") {
 		t.Fatal("expected no --bare when unset")
 	}
 }
 
 func TestBuildClaudeCliArgsUsesSuppliedPermissionMode(t *testing.T) {
-	args := BuildClaudeCliArgs(baseReq(func(r *CliSpawnRequest) { r.PermissionMode = "acceptEdits" }), testPaths)
+	args := mustArgs(t, baseReq(func(r *CliSpawnRequest) { r.PermissionMode = "acceptEdits" }))
 	i := slices.Index(args, "--permission-mode")
 	if args[i+1] != "acceptEdits" {
 		t.Fatalf("permission mode = %q", args[i+1])
@@ -74,10 +104,10 @@ func TestBuildClaudeCliArgsUsesSuppliedPermissionMode(t *testing.T) {
 }
 
 func TestBuildClaudeCliArgsMergesAllowedToolsAndJoinsDisallowed(t *testing.T) {
-	args := BuildClaudeCliArgs(baseReq(func(r *CliSpawnRequest) {
+	args := mustArgs(t, baseReq(func(r *CliSpawnRequest) {
 		r.AllowedTools = []string{"Read", "Edit", "mcp__rimsky-callback__report_complete"}
 		r.DisallowedTools = []string{"Bash"}
-	}), testPaths)
+	}))
 	aIdx := slices.Index(args, "--allowedTools")
 	if aIdx < 0 {
 		t.Fatal("expected --allowedTools")
@@ -106,10 +136,10 @@ func TestBuildClaudeCliArgsMergesAllowedToolsAndJoinsDisallowed(t *testing.T) {
 }
 
 func TestBuildClaudeCliArgsAlwaysEmitsCallbackSurface(t *testing.T) {
-	args := BuildClaudeCliArgs(baseReq(func(r *CliSpawnRequest) {
+	args := mustArgs(t, baseReq(func(r *CliSpawnRequest) {
 		r.AllowedTools = []string{}
 		r.DisallowedTools = []string{}
-	}), testPaths)
+	}))
 	aIdx := slices.Index(args, "--allowedTools")
 	if args[aIdx+1] != strings.Join(RequiredCallbackTools(), " ") {
 		t.Fatalf("allowed = %q", args[aIdx+1])
@@ -141,9 +171,9 @@ func TestRequiredCallbackToolsDerivedFromDefinitions(t *testing.T) {
 }
 
 func TestBuildClaudeCliArgsForwardsAddDirs(t *testing.T) {
-	args := BuildClaudeCliArgs(baseReq(func(r *CliSpawnRequest) {
+	args := mustArgs(t, baseReq(func(r *CliSpawnRequest) {
 		r.AddDirs = []string{"../specs", "../guidance"}
-	}), testPaths)
+	}))
 	i := slices.Index(args, "--add-dir")
 	if i < 0 || args[i+1] != "../specs" || args[i+2] != "../guidance" {
 		t.Fatalf("add dirs wrong: %v", args)
@@ -152,44 +182,48 @@ func TestBuildClaudeCliArgsForwardsAddDirs(t *testing.T) {
 
 func TestBuildClaudeCliArgsMaxBudgetPrecedence(t *testing.T) {
 	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "10.00")
-	args := BuildClaudeCliArgs(baseReq(func(r *CliSpawnRequest) { r.MaxBudgetUSD = "0.50" }), testPaths)
+	args := mustArgs(t, baseReq(func(r *CliSpawnRequest) { r.MaxBudgetUSD = "0.50" }))
 	i := slices.Index(args, "--max-budget-usd")
 	if i < 0 || args[i+1] != "0.50" {
 		t.Fatalf("expected request budget to win: %v", args)
 	}
 
-	args = BuildClaudeCliArgs(baseReq(nil), testPaths)
+	args = mustArgs(t, baseReq(nil))
 	i = slices.Index(args, "--max-budget-usd")
 	if i < 0 || args[i+1] != "10.00" {
 		t.Fatalf("expected env fallback: %v", args)
 	}
 
 	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
-	args = BuildClaudeCliArgs(baseReq(nil), testPaths)
+	args = mustArgs(t, baseReq(nil))
 	if slices.Contains(args, "--max-budget-usd") {
 		t.Fatal("expected no budget flag when neither source set")
 	}
 }
 
 func TestBuildClaudeCliArgsSessionID(t *testing.T) {
-	args := BuildClaudeCliArgs(baseReq(func(r *CliSpawnRequest) {
+	args := mustArgs(t, baseReq(func(r *CliSpawnRequest) {
 		r.SessionID = "550e8400-e29b-41d4-a716-446655440000"
-	}), testPaths)
+	}))
 	i := slices.Index(args, "--session-id")
 	if i < 0 || args[i+1] != "550e8400-e29b-41d4-a716-446655440000" {
 		t.Fatalf("session id wrong: %v", args)
 	}
-	if slices.Contains(BuildClaudeCliArgs(baseReq(nil), testPaths), "--session-id") {
+	if slices.Contains(mustArgs(t, baseReq(nil)), "--session-id") {
 		t.Fatal("expected no --session-id when unset")
 	}
 }
 
 func TestBuildClaudeCliResumeArgs(t *testing.T) {
-	args := BuildClaudeCliResumeArgs(CliResumeRequest{
+	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
+	args, err := BuildClaudeCliResumeArgs(CliResumeRequest{
 		SessionID: "550e8400-e29b-41d4-a716-446655440000",
 		Prompt:    "finish what you started",
 		Tools:     []CliToolConfig{{Kind: CliToolKindMcpHTTP, Name: "rimsky-callback", URL: "http://x/mcp"}},
 	}, CliArgPaths{McpConfigPath: "/tmp/mcp.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	mcpIdx := slices.Index(args, "--mcp-config")
 	if mcpIdx < 0 || args[mcpIdx+1] != "/tmp/mcp.json" {
@@ -198,8 +232,8 @@ func TestBuildClaudeCliResumeArgs(t *testing.T) {
 	if args[0] != "--resume" || args[1] != "550e8400-e29b-41d4-a716-446655440000" || args[2] != "--print" {
 		t.Fatalf("resume prefix wrong: %v", args)
 	}
-	if args[len(args)-2] != "-p" || args[len(args)-1] != "finish what you started" {
-		t.Fatalf("resume suffix wrong: %v", args)
+	if slices.Contains(args, "-p") {
+		t.Fatalf("resume prompt must not appear on argv (delivered via stdin): %v", args)
 	}
 	if slices.Contains(args, "--system-prompt-file") {
 		t.Fatal("resume must not carry --system-prompt-file")
@@ -210,18 +244,69 @@ func TestBuildClaudeCliResumeArgs(t *testing.T) {
 	}
 }
 
-func TestBuildClaudeCliArgsPromptAlwaysLast(t *testing.T) {
+func TestBuildClaudeCliResumeArgsCarriesRestrictionsAndBudget(t *testing.T) {
+	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
+	args, err := BuildClaudeCliResumeArgs(CliResumeRequest{
+		SessionID:       "550e8400-e29b-41d4-a716-446655440000",
+		Prompt:          "resume",
+		Model:           "claude-sonnet-4-6",
+		PermissionMode:  "acceptEdits",
+		Bare:            true,
+		DisallowedTools: []string{"Bash"},
+		AddDirs:         []string{"../specs"},
+		MaxBudgetUSD:    "0.50",
+	}, CliArgPaths{McpConfigPath: "/tmp/mcp.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dIdx := slices.Index(args, "--disallowedTools")
+	if dIdx < 0 || args[dIdx+1] != "Bash" {
+		t.Fatalf("resume must carry --disallowedTools (restriction survives resume): %v", args)
+	}
+	bIdx := slices.Index(args, "--max-budget-usd")
+	if bIdx < 0 || args[bIdx+1] != "0.50" {
+		t.Fatalf("resume must carry --max-budget-usd (cap survives resume): %v", args)
+	}
+	if !slices.Contains(args, "--bare") {
+		t.Fatalf("resume must carry --bare: %v", args)
+	}
+	mIdx := slices.Index(args, "--model")
+	if mIdx < 0 || args[mIdx+1] != "claude-sonnet-4-6" {
+		t.Fatalf("resume must carry --model: %v", args)
+	}
+	if pIdx := slices.Index(args, "--permission-mode"); pIdx < 0 || args[pIdx+1] != "acceptEdits" {
+		t.Fatalf("resume must carry --permission-mode: %v", args)
+	}
+	if addIdx := slices.Index(args, "--add-dir"); addIdx < 0 || args[addIdx+1] != "../specs" {
+		t.Fatalf("resume must carry --add-dir: %v", args)
+	}
+}
+
+func TestBuildClaudeCliResumeArgsRejectsFlagLikeAddDir(t *testing.T) {
+	if _, err := BuildClaudeCliResumeArgs(CliResumeRequest{
+		SessionID: "s",
+		Prompt:    "p",
+		AddDirs:   []string{"--mcp-config"},
+	}, CliArgPaths{McpConfigPath: "/tmp/mcp.json"}); err == nil {
+		t.Fatal("expected resume to reject a flag-like add_dir")
+	}
+}
+
+func TestBuildClaudeCliArgsPromptStaysOffArgv(t *testing.T) {
 	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "5.00")
-	args := BuildClaudeCliArgs(baseReq(func(r *CliSpawnRequest) {
+	args := mustArgs(t, baseReq(func(r *CliSpawnRequest) {
 		r.Bare = true
 		r.PermissionMode = "acceptEdits"
 		r.AllowedTools = []string{"Read"}
 		r.DisallowedTools = []string{"Bash"}
 		r.AddDirs = []string{"../specs"}
 		r.MaxBudgetUSD = "1.00"
-	}), testPaths)
-	if args[0] != "--print" || args[len(args)-2] != "-p" || args[len(args)-1] != "U" {
+	}))
+	if args[0] != "--print" {
 		t.Fatalf("ordering wrong: %v", args)
+	}
+	if slices.Contains(args, "-p") || slices.Contains(args, "U") {
+		t.Fatalf("user prompt must not appear on argv: %v", args)
 	}
 }
 

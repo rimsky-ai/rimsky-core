@@ -562,13 +562,19 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 	if opts.SessionToken != "" {
 		logger.Info("cli.resume_with_session_token", "run_id", opts.SessionID, "session_token", opts.SessionToken)
 		handle, spawnErr = opts.CliRunner.Resume(CliResumeRequest{
-			SessionID:      opts.SessionToken,
-			Prompt:         renderedUser,
-			Tools:          tools,
-			AllowedTools:   allowedToolsUnion,
-			Env:            callbackEnv,
-			ExposeEnvNames: cliConfig.ExposeEnv,
-			Cwd:            cwd,
+			SessionID:       opts.SessionToken,
+			Prompt:          renderedUser,
+			Tools:           tools,
+			Model:           opts.Model,
+			AllowedTools:    allowedToolsUnion,
+			DisallowedTools: cliConfig.DisallowedTools,
+			PermissionMode:  cliConfig.PermissionMode,
+			Bare:            cliConfig.Bare,
+			AddDirs:         cliConfig.AddDirs,
+			MaxBudgetUSD:    cliConfig.MaxBudgetUSD,
+			Env:             callbackEnv,
+			ExposeEnvNames:  cliConfig.ExposeEnv,
+			Cwd:             cwd,
 		})
 	} else {
 		handle, spawnErr = opts.CliRunner.Spawn(CliSpawnRequest{
@@ -624,15 +630,18 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 			logger.Info("cli.stdout", "run_id", opts.SessionID, "chunk", truncateChunk(chunk))
 		}
 	}
-	handle.OnStdout(func(chunk string) { handleStdoutChunk(chunk, false) })
-	handle.OnStderr(func(chunk string) {
-		logger.Warn("cli.stderr", "run_id", opts.SessionID, "chunk", truncateChunk(chunk))
+	appendStderr := func(chunk string) {
 		state.mu.Lock()
 		state.stderrBuf += chunk
 		if len(state.stderrBuf) > 16*1024 {
 			state.stderrBuf = state.stderrBuf[len(state.stderrBuf)-16*1024:]
 		}
 		state.mu.Unlock()
+	}
+	handle.OnStdout(func(chunk string) { handleStdoutChunk(chunk, false) })
+	handle.OnStderr(func(chunk string) {
+		logger.Warn("cli.stderr", "run_id", opts.SessionID, "chunk", truncateChunk(chunk))
+		appendStderr(chunk)
 	})
 
 	teardownAndResolve := func(outcome AgentOutcome) {
@@ -710,34 +719,41 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 		state.mu.Unlock()
 
 		handleRateLimits := cliConfig.HandleRateLimits == nil || *cliConfig.HandleRateLimits
-		if result.ExitCode != nil && *result.ExitCode != 0 && stderrBuf != "" {
-			signalRL := DetectRateLimit(stderrBuf, time.Now())
-			if signalRL.Detected && !handleRateLimits {
+		tryResolveRateLimit := func(exit ExitResult, stderr string) bool {
+			if exit.ExitCode == nil || *exit.ExitCode == 0 || stderr == "" {
+				return false
+			}
+			signalRL := DetectRateLimit(stderr, time.Now())
+			if !signalRL.Detected {
+				return false
+			}
+			if !handleRateLimits {
 				logger.Warn("cli.rate_limit_detected; handle_rate_limits=false → emitting agent/rate_limited Error",
-					"run_id", opts.SessionID, "exit_code", *result.ExitCode, "signal", result.Signal)
+					"run_id", opts.SessionID, "exit_code", *exit.ExitCode, "signal", exit.Signal)
 				state.safeResolve(erroredOutcome("agent/rate_limited", map[string]any{
-					"exitCode":  *result.ExitCode,
-					"signal":    result.Signal,
+					"exitCode":  *exit.ExitCode,
+					"signal":    exit.Signal,
 					"resume_at": isoOrNil(signalRL.ResumeAt),
 				}))
-				return
+				return true
 			}
-			if signalRL.Detected && handleRateLimits {
-				logger.Warn("cli.rate_limit_detected; emitting park_requested",
-					"run_id", opts.SessionID, "exit_code", *result.ExitCode, "signal", result.Signal)
-				note := signalRL.Reason
-				if note == "" {
-					note = "claude cli rate-limit detected; resume_at=" + isoOrIndefinite(signalRL.ResumeAt)
-				}
-				state.safeResolve(AgentOutcome{
-					Kind:         OutcomeParkRequested,
-					Reason:       "snooze",
-					ReasonNote:   note,
-					ResumeAt:     signalRL.ResumeAt,
-					SessionToken: opts.SessionID,
-				})
-				return
+			logger.Warn("cli.rate_limit_detected; emitting park_requested",
+				"run_id", opts.SessionID, "exit_code", *exit.ExitCode, "signal", exit.Signal)
+			note := signalRL.Reason
+			if note == "" {
+				note = "claude cli rate-limit detected; resume_at=" + isoOrIndefinite(signalRL.ResumeAt)
 			}
+			state.safeResolve(AgentOutcome{
+				Kind:         OutcomeParkRequested,
+				Reason:       "snooze",
+				ReasonNote:   note,
+				ResumeAt:     signalRL.ResumeAt,
+				SessionToken: opts.SessionID,
+			})
+			return true
+		}
+		if tryResolveRateLimit(result, stderrBuf) {
+			return
 		}
 
 		if result.ExitCode != nil && *result.ExitCode == 0 && result.Signal == "" {
@@ -751,13 +767,19 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 			logger.Warn("cli.clean_exit_no_report; attempting resume",
 				"run_id", opts.SessionID, "exit_code", 0, "duration_ms", time.Since(spawnedAt).Milliseconds())
 			retryHandle, retryErr := opts.CliRunner.Resume(CliResumeRequest{
-				SessionID:      opts.SessionID,
-				Prompt:         reminderPrompt,
-				Tools:          tools,
-				AllowedTools:   allowedToolsUnion,
-				Env:            callbackEnv,
-				ExposeEnvNames: cliConfig.ExposeEnv,
-				Cwd:            cwd,
+				SessionID:       opts.SessionID,
+				Prompt:          reminderPrompt,
+				Tools:           tools,
+				Model:           opts.Model,
+				AllowedTools:    allowedToolsUnion,
+				DisallowedTools: cliConfig.DisallowedTools,
+				PermissionMode:  cliConfig.PermissionMode,
+				Bare:            cliConfig.Bare,
+				AddDirs:         cliConfig.AddDirs,
+				MaxBudgetUSD:    cliConfig.MaxBudgetUSD,
+				Env:             callbackEnv,
+				ExposeEnvNames:  cliConfig.ExposeEnv,
+				Cwd:             cwd,
 			})
 			if retryErr != nil {
 				logger.Warn("cli.resume_failed", "run_id", opts.SessionID, "error", retryErr.Error())
@@ -777,6 +799,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 			retryHandle.OnStdout(func(chunk string) { handleStdoutChunk(chunk, true) })
 			retryHandle.OnStderr(func(chunk string) {
 				logger.Warn("cli.stderr", "run_id", opts.SessionID, "retry", true, "chunk", truncateChunk(chunk))
+				appendStderr(chunk)
 			})
 			retryStartedAt := time.Now()
 			retryResult := retryHandle.WaitExit()
@@ -795,6 +818,12 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 				time.Sleep(10 * time.Millisecond)
 			}
 			if state.resolved.Load() {
+				return
+			}
+			state.mu.Lock()
+			retryStderr := state.stderrBuf
+			state.mu.Unlock()
+			if tryResolveRateLimit(retryResult, retryStderr) {
 				return
 			}
 			state.safeResolve(erroredOutcome("agent/subprocess_exit/before_complete", map[string]any{
@@ -953,12 +982,17 @@ func resolveHostServers(
 			if s.Module == "" {
 				return nil, nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers entry %q (%s) requires a non-empty module specifier", s.Name, s.Transport)}
 			}
-			url, teardown, err := standUpModuleLoopback(s.Name, s.Module, logger)
+			url, bearerToken, teardown, err := standUpModuleLoopback(s.Name, s.Module, logger)
 			if err != nil {
 				return nil, nil, err
 			}
 			*teardowns = append(*teardowns, teardown)
-			tools = append(tools, CliToolConfig{Kind: CliToolKindMcpHTTP, Name: s.Name, URL: url})
+			tools = append(tools, CliToolConfig{
+				Kind:    CliToolKindMcpHTTP,
+				Name:    s.Name,
+				URL:     url,
+				Headers: map[string]string{"Authorization": "Bearer " + bearerToken},
+			})
 		default:
 			return nil, nil, &CliConfigError{Message: fmt.Sprintf(
 				"cli.mcp_servers entry %q has unknown transport %q (expected http | stdio | module | http-loopback)", s.Name, s.Transport)}

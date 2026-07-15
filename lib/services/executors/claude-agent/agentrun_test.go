@@ -6,6 +6,7 @@ package claudeagent
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -61,6 +62,18 @@ func (h *fakeHandle) emitStderr(chunk string) {
 	h.mu.Unlock()
 	for _, cb := range cbs {
 		cb(chunk)
+	}
+}
+
+func (h *fakeHandle) waitStderrRegistered() {
+	for {
+		h.mu.Lock()
+		n := len(h.stderrCbs)
+		h.mu.Unlock()
+		if n > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -474,6 +487,10 @@ func TestRunAgentMcpServersReachSpawnAcrossTransports(t *testing.T) {
 	if req.Tools[3].Kind != CliToolKindMcpHTTP || !strings.HasPrefix(req.Tools[3].URL, "http://127.0.0.1:") {
 		t.Fatalf("module server must be a loopback http url: %v", req.Tools[3])
 	}
+	moduleAuth := req.Tools[3].Headers["Authorization"]
+	if !strings.HasPrefix(moduleAuth, "Bearer ") {
+		t.Fatalf("module loopback tool config must carry a bearer Authorization header: %v", req.Tools[3].Headers)
+	}
 	found := false
 	for _, tool := range req.AllowedTools {
 		if tool == "mcp__search__query" {
@@ -484,7 +501,12 @@ func TestRunAgentMcpServersReachSpawnAcrossTransports(t *testing.T) {
 		t.Fatalf("expected mcp__search__query in allowed tools: %v", req.AllowedTools)
 	}
 
-	witnessClient := &mcpTestClient{t: t, url: req.Tools[3].URL}
+	unauth := &mcpTestClient{t: t, url: req.Tools[3].URL}
+	if resp, _ := unauth.post(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, ""); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("module loopback must reject a request with no bearer token, got status %d", resp.StatusCode)
+	}
+
+	witnessClient := &mcpTestClient{t: t, url: req.Tools[3].URL, authHeader: moduleAuth}
 	witnessClient.initialize()
 	if witnessClient.serverName != "loopback" {
 		t.Fatalf("module server name = %q", witnessClient.serverName)
@@ -631,6 +653,40 @@ func TestRunAgentCleanExitTriggersResumeReminder(t *testing.T) {
 	payload := outcome.Payload.(map[string]any)
 	if payload["retry_attempted"] != true {
 		t.Fatalf("payload = %v", payload)
+	}
+}
+
+func TestRunAgentRetryLegRateLimitParks(t *testing.T) {
+	first := newFakeHandle(true)
+	retry := newFakeHandle(true)
+	runner := &fakeRunner{spawnHandles: []*fakeHandle{first}, resumeHandles: []*fakeHandle{retry}}
+	opts := baseRunOpts(runner)
+	done := make(chan AgentOutcome, 1)
+	go func() { done <- RunAgent(opts) }()
+	runner.waitForSpawn(t)
+	code := 0
+	first.exit(ExitResult{ExitCode: &code})
+
+	for {
+		runner.mu.Lock()
+		n := len(runner.resumes)
+		runner.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	retry.waitStderrRegistered()
+	retry.emitStderr("API Error: 429 rate_limit_error; anthropic-ratelimit-requests-reset: 4070908800")
+	retryCode := 1
+	retry.exit(ExitResult{ExitCode: &retryCode})
+
+	outcome := <-done
+	if outcome.Kind != OutcomeParkRequested || outcome.Reason != "snooze" {
+		t.Fatalf("a rate limit on the retry leg must park (snooze), got %+v", outcome)
+	}
+	if outcome.ResumeAt == nil {
+		t.Fatalf("expected resume_at parsed from anthropic-ratelimit-requests-reset (1856), got nil")
 	}
 }
 
