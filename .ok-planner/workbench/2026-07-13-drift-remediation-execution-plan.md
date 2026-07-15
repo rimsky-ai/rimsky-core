@@ -34,13 +34,10 @@ that Track 0a is complete.
   CONFIRMED, 62 REFUTED, 2 DUPLICATE, 1,147 unverified). REFUTED and duplicates
   are closed/skipped; unverified rows get verified as a side effect of
   adjudication. This is the Phase 1–3 work.
-- **Security ledger** — `review-findings-security-2026-07-06.csv`: **40 rows**,
-  a **separate track**. Handled distinctly (dedicated security review, its own
-  disclosure discipline) — NOT part of the Phase 1–3 fleet, and not to be pulled
-  into a general-remediation context. Two of the 40 are already fixed in Track 0b
-  (proxy Register auth; the schema-drop prefix guard); the rest are open. Do not
-  describe these findings in shared prose/commit messages beyond what the fix
-  requires; keep the security track's material in its own ledger and review.
+- **Security ledger** — `review-findings-security-2026-07-06.csv` (40 rows): a
+  **separate track**, NOT part of the Phase 1–3 fleet. Worked on the
+  security-cleared model per its own doc (`2026-07-15-security-remediation.md`).
+  Do not pull it into this general-remediation context.
 
 ## Environment & verification discipline (hard-won — do not relearn)
 
