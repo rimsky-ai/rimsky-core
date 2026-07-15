@@ -33,6 +33,18 @@ This applies to all work: feature development, code review, debugging, testing, 
 
 Do not use workarounds. If a function doesn't persist a field, fix the function — don't update the database directly. Workarounds mask bugs.
 
+## Tests Are Deterministic — There Are No Flakes
+A test that passes sometimes and fails sometimes is a defect, not a weather condition. It is either a bug in the test (it asserts on something nondeterministic) or a bug in the system (a real race the test caught intermittently). Both must be fixed at the root. **Never "tune" a test to make it pass** — bumping a deadline, adding a `sleep`, raising a retry count, or loosening an assertion hides which of the two bugs you have and guarantees the failure returns on a slower machine.
+
+Rules:
+- **Synchronize on the event, not on wall-clock time.** Block on the channel / `WaitGroup` / condition the code signals when the awaited thing happens. A test that waits for a real signal passes in 3ms or 3s identically.
+- **No wall-clock constant in the pass/fail path — not even a "generous" one.** A per-assertion timeout that can fire on correct-but-slow execution is a load-dependent verdict, i.e. nondeterministic; raising 5s→30s only lengthens the fuse, and any finite value is an unprovable guess about the load ceiling ("why 30 and not 29?" has no answer — that is the tell). Block on the signal with a **bare receive** (`<-ch`) or **poll the condition in a loop that only exits on success** (small inter-poll sleep for CPU politeness is fine; a deadline that returns false/fails is not). A correct system always delivers the awaited signal, so blocking forever is safe and passes fast; a broken one never delivers and hangs.
+- **The only sanctioned hang backstop is the suite-level `go test -timeout`.** It is a harness-layer failsafe, not a verdict input: it fails loud with a stack dump naming the hung test, and it is load-independent in outcome (correct code → pass; broken code → hang → killed). Load changes how long a pass takes, never whether it passes. Never put the hang backstop inside the test's verdict logic.
+- **No `time.Sleep` to "let things settle"** in a test. Replace with an explicit synchronization point. No bare `time.Now()` in logic under test — inject the `Clock` abstraction the codebase already provides.
+- **Isolate per-test state:** unique DB schema/namespace, `t.TempDir()`, OS-assigned ephemeral ports, no package-level mutable state shared across tests.
+- **`-race` always in CI**; deterministic seeds for anything randomized (vary by index, never by wall-clock).
+- When you touch a test that has ever flaked, fix its nondeterminism at the root as part of that change ("Fix Every Bug You Find" applies to flaky tests).
+
 ## Project-agnostic
 Rimsky is a self-contained orchestration platform intended to be embedded by many consumers (as a Go module, as Docker images, or as a git submodule). No code, doc, comment, test fixture, or example may name or assume a specific consumer. Templates and examples must use generic, illustrative names (`project-alpha`, `analytics_production`, `items`, `category`). If a real consumer's terminology has leaked in, scrub it.
 

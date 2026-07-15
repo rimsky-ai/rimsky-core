@@ -34,10 +34,16 @@ func takeNamedAdvisoryLocks(ctx context.Context, args RunArgs, tx persistence.Tx
 func acquireOneLock(
 	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
 	sp any, cand persistence.Candidate, livenessInterval time.Duration,
-	heldSubgraphs []node.HoldingSubgraph,
+	heldSubgraphs []node.HoldingSubgraph, acquired []AcquiredLock,
 ) (AcquiredLock, openResult, error) {
 	switch spec := sp.(type) {
 	case locks.NamedLockSpec:
+		// @concept: parked-state
+		if al, reused, err := reuseHeldNamedLock(ctx, args, tx, spec, cand, acquired, livenessInterval); err != nil {
+			return AcquiredLock{}, openResultBail, err
+		} else if reused {
+			return al, openResultAcquired, nil
+		}
 		al, ok, err := acquireNamedLock(ctx, args, tx, spec, cand, livenessInterval)
 		if err != nil {
 			return AcquiredLock{}, openResultBail, err
@@ -47,7 +53,7 @@ func acquireOneLock(
 		}
 		return al, openResultAcquired, nil
 	case claimproducer.ClaimSpec:
-		return acquireClaim(ctx, args, tx, instanceID, spec, cand, livenessInterval, heldSubgraphs)
+		return acquireClaim(ctx, args, tx, instanceID, spec, cand, livenessInterval, heldSubgraphs, acquired)
 	}
 	return AcquiredLock{}, openResultBail, fmt.Errorf("acquireOneLock: unknown spec kind %T", sp)
 }

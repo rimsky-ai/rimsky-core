@@ -664,27 +664,40 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 }
 
 // @concept: node-run
+func (h *Harness) nodeReachedState(nodeID shared.UUID, state cascade.NodeState) bool {
+	var latest *persistence.NodeRunLatest
+	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		l, err := h.Persist.Nodes().GetLatestRunForNode(ctx, tx, nodeID)
+		latest = l
+		return err
+	}); err != nil && h.T != nil {
+		h.T.Logf("WaitForNodeState: latest-run probe for %s failed; retrying next poll: %v", nodeID.String(), err)
+	}
+	if latest != nil && latest.State == state {
+		if state != cascade.NodeStateFresh || h.hasRunEvent(nodeID) {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
 	h.T.Helper()
 	deadline := time.Now().Add(timeout)
-	requireRun := state == cascade.NodeStateFresh
 	for time.Now().Before(deadline) {
-		var latest *persistence.NodeRunLatest
-		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-			l, err := h.Persist.Nodes().GetLatestRunForNode(ctx, tx, nodeID)
-			latest = l
-			return err
-		}); err != nil && h.T != nil {
-			h.T.Logf("WaitForNodeState: latest-run probe for %s failed; retrying next poll: %v", nodeID.String(), err)
-		}
-		if latest != nil && latest.State == state {
-			if !requireRun || h.hasRunEvent(nodeID) {
-				return true
-			}
+		if h.nodeReachedState(nodeID, state) {
+			return true
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	return false
+}
+
+func (h *Harness) WaitForNodeStateForever(nodeID shared.UUID, state cascade.NodeState) {
+	h.T.Helper()
+	for !h.nodeReachedState(nodeID, state) {
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func (h *Harness) hasRunEvent(nodeID shared.UUID) bool {

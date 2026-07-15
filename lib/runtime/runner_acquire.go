@@ -313,12 +313,15 @@ func tryAcquireWithTx(
 		return acq, false, errAcquireProducerErrored
 	}
 	if err == errAcquireRestampLost {
+		abandonPartialLocks(ctx, args, acq.PartialLocks)
 		return acquisition{}, false, errAcquireRestampLost
 	}
 	if err != nil && err != errTryAcquireRollback {
+		abandonPartialLocks(ctx, args, acq.PartialLocks)
 		return acquisition{}, false, fmt.Errorf("tryAcquireWithTx: %w", err)
 	}
 	if err == errTryAcquireRollback {
+		abandonPartialLocks(ctx, args, acq.PartialLocks)
 		return acquisition{}, false, nil
 	}
 	return acq, ok, nil
@@ -388,7 +391,7 @@ func tryAcquire(
 
 	acquiredLocks := make([]AcquiredLock, 0, len(specs))
 	for _, sp := range specs {
-		al, res, err := acquireOneLock(ctx, args, tx, nd.InstanceID, sp, cand, livenessInterval, heldSubgraphs)
+		al, res, err := acquireOneLock(ctx, args, tx, nd.InstanceID, sp, cand, livenessInterval, heldSubgraphs, acquiredLocks)
 		if res == openResultErrored {
 			erroredSpec, _ := sp.(claimproducer.ClaimSpec)
 			out := acquisition{
@@ -417,7 +420,7 @@ func tryAcquire(
 			return out, false, errAcquireProducerErrored
 		}
 		if err != nil {
-			return acquisition{}, false, err
+			return acquisition{PartialLocks: acquiredLocks}, false, err
 		}
 		switch res {
 		case openResultAcquired:
@@ -449,7 +452,7 @@ func tryAcquire(
 			}
 			return out, false, errAcquireUnavailable
 		case openResultBail:
-			return acquisition{}, false, nil
+			return acquisition{PartialLocks: acquiredLocks}, false, nil
 		}
 	}
 
@@ -478,16 +481,16 @@ func tryAcquire(
 		out.HeldClaims = held
 	}
 	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, livenessInterval); err != nil {
-		return acquisition{}, false, err
+		return acquisition{PartialLocks: acquiredLocks}, false, err
 	}
 	if err := restampLinkedSubClaimHolders(ctx, args, tx, cand); err != nil {
-		return acquisition{}, false, err
+		return acquisition{PartialLocks: acquiredLocks}, false, err
 	}
 	// @concept: fan-out
 	bindLeafCandidateHandles(ctx, args, tx, &out, cand)
 	// @concept: claim-co-holdership
 	if err := insertCoHolderClaimHoldersAtAcquire(ctx, args, tx, cand, nodeDef, tmpl); err != nil {
-		return acquisition{}, false, fmt.Errorf("tryAcquire: co-holder rows: %w", err)
+		return acquisition{PartialLocks: acquiredLocks}, false, fmt.Errorf("tryAcquire: co-holder rows: %w", err)
 	}
 
 	// @concept: executor

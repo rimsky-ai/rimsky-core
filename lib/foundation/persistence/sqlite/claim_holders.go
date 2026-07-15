@@ -21,7 +21,8 @@ const claimHolderCols = `id, claim_handle_id, holder_run_id, state, completed_at
 func (s *claimHoldersImpl) Insert(ctx context.Context, in persistence.ClaimHolderInsertInput, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
-		 VALUES (?, ?, ?, 'active', ?)`,
+		 VALUES (?, ?, ?, 'active', ?)
+		 ON CONFLICT (claim_handle_id, holder_run_id) DO NOTHING`,
 		in.ID.String(), in.ClaimHandleID.String(), in.HolderNodeRunID.String(), nullableUUID(in.FrameID),
 	)
 	if err != nil {

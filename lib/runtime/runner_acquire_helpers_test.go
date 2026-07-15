@@ -779,6 +779,9 @@ func (f *fakeNodesDeps) TransitionPendingToStale(_ context.Context, _ persistenc
 func (f *fakeNodesDeps) DropPendingRun(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
 	return nil
 }
+func (f *fakeNodesDeps) SetRunRequiredStores(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []string) (bool, error) {
+	return false, nil
+}
 func (f *fakeNodesDeps) CreateNonCascadeStale(_ context.Context, _ persistence.Tx, _ persistence.NonCascadeStaleInput) (shared.UUID, error) {
 	return shared.UUID{}, nil
 }

@@ -156,6 +156,9 @@ type NodeTable interface {
 	TransitionPendingToStale(ctx context.Context, tx Tx, runID shared.UUID, enqueuedAt time.Time) error
 
 	// @concept: cascade
+	SetRunRequiredStores(ctx context.Context, tx Tx, runID shared.UUID, requiredStores []string) (bool, error)
+
+	// @concept: cascade
 	DropPendingRun(ctx context.Context, tx Tx, runID shared.UUID) error
 
 	// @concept: cascade

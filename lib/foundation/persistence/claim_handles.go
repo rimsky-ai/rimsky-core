@@ -85,6 +85,9 @@ type ClaimHandleTable interface {
 
 	ListByNodeRun(ctx context.Context, nodeRunID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
 	ListExpired(ctx context.Context, tx Tx) ([]ClaimHandleRow, error)
+
+	// @concept: orphan-reaper
+	RenewExpiryForHolderRun(ctx context.Context, nodeRunID shared.UUID, newExpiry time.Time, tx Tx) error
 	Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx Tx) error
 
 	CountByNamedLock(ctx context.Context, lockName string, tx Tx) (int, error)

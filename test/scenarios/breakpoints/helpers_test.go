@@ -121,18 +121,25 @@ func waitForHitOnBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID,
 	return persistence.BreakpointHitRow{}
 }
 
+func listHitsForBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID) []persistence.BreakpointHitRow {
+	t.Helper()
+	var hits []persistence.BreakpointHitRow
+	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.Persist.BreakpointHits().ListSinceForBreakpoint(ctx, bpID, 0, 1000, tx)
+		hits = r
+		return err
+	}); err != nil {
+		t.Fatalf("listHitsForBreakpoint: %v", err)
+	}
+	return hits
+}
+
 func waitForHitCount(t *testing.T, h *scenario.Harness, bpID shared.UUID, want int, timeout time.Duration) []persistence.BreakpointHitRow {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var hits []persistence.BreakpointHitRow
 	for time.Now().Before(deadline) {
-		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-			r, err := h.Persist.BreakpointHits().ListSinceForBreakpoint(ctx, bpID, 0, 1000, tx)
-			hits = r
-			return err
-		}); err != nil {
-			t.Fatalf("waitForHitCount: %v", err)
-		}
+		hits = listHitsForBreakpoint(t, h, bpID)
 		if len(hits) >= want {
 			return hits
 		}
@@ -140,6 +147,17 @@ func waitForHitCount(t *testing.T, h *scenario.Harness, bpID shared.UUID, want i
 	}
 	t.Fatalf("waitForHitCount: bp=%s want=%d got=%d within %v", bpID.String(), want, len(hits), timeout)
 	return hits
+}
+
+func waitForHitCountForever(t *testing.T, h *scenario.Harness, bpID shared.UUID, want int) []persistence.BreakpointHitRow {
+	t.Helper()
+	for {
+		hits := listHitsForBreakpoint(t, h, bpID)
+		if len(hits) >= want {
+			return hits
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func getBreakpointRow(t *testing.T, h *scenario.Harness, bpID shared.UUID) *persistence.BreakpointRow {

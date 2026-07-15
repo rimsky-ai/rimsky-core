@@ -47,9 +47,14 @@ type SubClaim struct {
 	ProducerCandidateHandle []byte
 }
 
+type begunSubClaimCandidate struct {
+	claimHandleID   string
+	candidateHandle []byte
+}
+
 func AcquireSubClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in AcquireSubClaimsInput,
-) ([]SubClaim, error) {
+) (result []SubClaim, retErr error) {
 	if in.ParentIntent == "" {
 		return nil, fmt.Errorf("AcquireSubClaims: ParentIntent must be set (got empty); "+
 			"caller must thread the parent claim's intent (producer=%q)", in.ProducerName)
@@ -71,6 +76,24 @@ func AcquireSubClaims(
 			dpClient = c
 		}
 	}
+	var begunCandidates []begunSubClaimCandidate
+	defer func() {
+		if retErr == nil || dpClient == nil {
+			return
+		}
+		for _, b := range begunCandidates {
+			if err := dpClient.AbandonCandidate(ctx, AbandonCandidateInput{
+				ProducerName:    in.ProducerName,
+				ClaimHandleID:   b.claimHandleID,
+				CandidateHandle: b.candidateHandle,
+			}); err != nil && args.Logger != nil {
+				args.Logger.Warn("AcquireSubClaims: AbandonCandidate on unwind failed",
+					"producer", in.ProducerName,
+					"sub_claim_handle_id", b.claimHandleID,
+					"error", err.Error())
+			}
+		}
+	}()
 	caps, err := producer.Capabilities(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("AcquireSubClaims: Capabilities(%s): %w", in.ProducerName, err)
@@ -136,6 +159,10 @@ func AcquireSubClaims(
 				return nil, fmt.Errorf("AcquireSubClaims: BeginCandidate(%s): %w", in.ProducerName, beginErr)
 			}
 			candidateHandle = beginOut.CandidateHandle
+			begunCandidates = append(begunCandidates, begunSubClaimCandidate{
+				claimHandleID:   subID.String(),
+				candidateHandle: candidateHandle,
+			})
 			emitSubclaimBeginCandidate(ctx, args, tx, parentID, subID, in.ProducerName, len(candidateHandle))
 		}
 		intent := in.ParentIntent

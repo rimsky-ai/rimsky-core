@@ -21,6 +21,8 @@ import (
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
+const batchLeaseIDPrefix = "batchlease~"
+
 func parseFromRight(name string) (folder, claimID string, claimedNanos int64, err error) {
 	lastDot := strings.LastIndexByte(name, '.')
 	if lastDot < 0 {
@@ -331,7 +333,7 @@ func (s *Store) popOne(claimID, selector string, pp *PickPolicy, availDir, inPro
 		folder := entry.Name()
 		src := filepath.Join(availDir, folder)
 		nowNanos := time.Now().UnixNano()
-		dst := filepath.Join(inProgDir, fmt.Sprintf("%s.%s.%d", folder, claimID, nowNanos))
+		dst := filepath.Join(inProgDir, fmt.Sprintf("%s.%s.%d", folder, batchLeaseIDPrefix+claimID, nowNanos))
 		if err := os.Rename(src, dst); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
@@ -430,8 +432,8 @@ func (s *Store) findByScope(scope []byte) (pp *PickPolicy, selector, entry, fold
 			continue
 		}
 		for _, e := range entries {
-			f, _, _, perr := parseFromRight(e.Name())
-			if perr != nil || f != wantFolder {
+			f, c, _, perr := parseFromRight(e.Name())
+			if perr != nil || f != wantFolder || !strings.HasPrefix(c, batchLeaseIDPrefix) {
 				continue
 			}
 			return candidate, sel, e.Name(), f

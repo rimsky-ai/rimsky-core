@@ -178,6 +178,8 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 		   JOIN rimsky_node_runs nr ON nr.node_id = n.id
 		  WHERE (n.executor IS NULL OR n.executor = '')
 		    AND nr.state = 'stale'
+		    AND nr.claimed_by IS NULL
+		    AND (nr.required_stores IS NULL OR nr.required_stores = '[]')
 		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_wait_set w
 		       WHERE w.frame_id = nr.frame_id AND w.receiver_run_id = nr.id
@@ -1097,6 +1099,30 @@ func (s *nodesImpl) TransitionPendingToStale(
 		return fmt.Errorf("TransitionPendingToStale: run %s not in pending state", runID)
 	}
 	return nil
+}
+
+// @concept: cascade
+func (s *nodesImpl) SetRunRequiredStores(
+	ctx context.Context, tx persistence.Tx, runID foundationshared.UUID, requiredStores []string,
+) (bool, error) {
+	res, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_node_runs
+		    SET required_stores = ?
+		  WHERE id = ? AND state = 'stale' AND claimed_by IS NULL
+		    AND EXISTS (
+		      SELECT 1 FROM rimsky_run_scopes rs
+		       WHERE rs.id = rimsky_node_runs.run_scope_id AND rs.closed_at IS NULL
+		    )`,
+		marshalStringArray(requiredStores), runID.String(),
+	)
+	if err != nil {
+		return false, fmt.Errorf("SetRunRequiredStores: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("SetRunRequiredStores: rows affected: %w", err)
+	}
+	return n == 1, nil
 }
 
 // @concept: cascade

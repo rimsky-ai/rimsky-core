@@ -25,7 +25,7 @@ import (
 func acquireClaim(
 	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
 	spec claimproducer.ClaimSpec, cand persistence.Candidate, livenessInterval time.Duration,
-	heldSubgraphs []node.HoldingSubgraph,
+	heldSubgraphs []node.HoldingSubgraph, acquired []AcquiredLock,
 ) (AcquiredLock, openResult, error) {
 	acquireStart := args.Clock.Now()
 	s, ok := args.StoreRegistry.GetWithContext(ctx, spec.ProducerName, instanceID.String())
@@ -38,6 +38,14 @@ func acquireClaim(
 	}
 	if err := args.AdvisoryLocker.TakeClaimScopeLockInTx(ctx, tx, spec.ProducerName, scopeInitial); err != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: TakeClaimScopeLockInTx: %w", err)
+	}
+	// @concept: parked-state
+	if al, reused, rErr := reuseHeldRunClaim(ctx, args, tx, spec, cand, scopeInitial, s, acquired, livenessInterval); rErr != nil {
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: reuse held run claim: %w", rErr)
+	} else if reused {
+		metricsOf(args).IncClaimAcquisition(spec.ProducerName, "acquired")
+		metricsOf(args).ObserveClaimAcquisitionLatency(spec.ProducerName, args.Clock.Now().Sub(acquireStart).Seconds())
+		return al, openResultAcquired, nil
 	}
 	// @story: claim-handoff-durable
 	conflicted, persistent, err := evaluateClaimScopeConflict(ctx, args, tx, s, spec, cand)

@@ -125,11 +125,32 @@ func abandonPartialLocks(ctx context.Context, args RunArgs, partial []AcquiredLo
 		if lk.Producer == nil {
 			continue
 		}
+		abandonBegunCandidate(ctx, args, lk)
 		scope := claimScope(lk)
 		address := claimAddress(lk)
 		if err := abandonOpenedClaim(ctx, lk.Producer, lk.ClaimHandleID, scope, address); err != nil {
-			args.Logger.Warn("handleAcquireUnavailable: Abandon failed",
+			args.Logger.Warn("abandonPartialLocks: Abandon failed",
 				"producer", producerNameForSpec(lk.Spec), "error", err.Error())
 		}
+	}
+}
+
+// @concept: data-processing
+func abandonBegunCandidate(ctx context.Context, args RunArgs, lk AcquiredLock) {
+	if len(lk.ProducerCandidateHandle) == 0 || args.DataProcessors == nil {
+		return
+	}
+	producerName := producerNameForSpec(lk.Spec)
+	dp, ok := args.DataProcessors.Get(producerName)
+	if !ok {
+		return
+	}
+	if err := dp.AbandonCandidate(ctx, AbandonCandidateInput{
+		ProducerName:    producerName,
+		ClaimHandleID:   lk.ClaimHandleID.String(),
+		CandidateHandle: lk.ProducerCandidateHandle,
+	}); err != nil {
+		args.Logger.Warn("abandonPartialLocks: AbandonCandidate failed",
+			"producer", producerName, "error", err.Error())
 	}
 }

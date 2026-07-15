@@ -5,6 +5,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -309,6 +311,139 @@ func TestCommit_Idempotent(t *testing.T) {
 	o, _ := st.Open(context.Background(), "c", "@r")
 	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
+}
+
+func TestCommit_StaleReclaimedClaimantDoesNotClobberSuccessor(t *testing.T) {
+	root := t.TempDir()
+	sub := "docs"
+	must(t, os.MkdirAll(filepath.Join(root, sub, "doomed"), 0o755))
+	pp := &PickPolicy{
+		Root:              sub,
+		OnCommit:          action.Action{Kind: action.PopAndDelete},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Millisecond,
+		SyncStrategy:      "on_open",
+	}
+	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
+	must(t, err)
+
+	stale, _ := st.Open(context.Background(), "stale", "@r")
+	if !stale.Available {
+		t.Fatal("stale claim should be Available")
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	must(t, st.sweepOnce())
+
+	fresh, _ := st.Open(context.Background(), "fresh", "@r")
+	if !fresh.Available {
+		t.Fatal("re-claim should be Available after sweep reclaim")
+	}
+
+	must(t, st.Commit(context.Background(), "stale", stale.Result.ClaimScope, stale.Result.Address))
+
+	if _, err := os.Stat(filepath.Join(root, sub, "doomed")); err != nil {
+		t.Fatalf("stale claimant's commit deleted the successor's live folder: %v", err)
+	}
+
+	inProg := filepath.Join(root, ".fs-store", "r", "in_progress")
+	entries, _ := os.ReadDir(inProg)
+	if len(entries) != 1 {
+		t.Fatalf("successor's in_progress entry should survive stale commit; got %d entries", len(entries))
+	}
+	_, c, _, perr := parseFromRight(entries[0].Name())
+	must(t, perr)
+	if c != "fresh" {
+		t.Fatalf("surviving in_progress entry claim_id = %q, want %q", c, "fresh")
+	}
+
+	must(t, st.Commit(context.Background(), "fresh", fresh.Result.ClaimScope, fresh.Result.Address))
+	if _, err := os.Stat(filepath.Join(root, sub, "doomed")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("successor's own commit should pop_and_delete the folder; stat err = %v", err)
+	}
+}
+
+func TestCommit_CoexistingScopedReaderDoesNotClobberPickEntry(t *testing.T) {
+	root := t.TempDir()
+	sub := "docs"
+	must(t, os.MkdirAll(filepath.Join(root, sub, "shared"), 0o755))
+	pp := &PickPolicy{
+		Root:              sub,
+		OnCommit:          action.Action{Kind: action.PopAndDelete},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "on_open",
+	}
+	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
+	must(t, err)
+
+	picker, _ := st.Open(context.Background(), "picker", "@r")
+	if !picker.Available {
+		t.Fatal("pick claim should be Available")
+	}
+
+	reader, _ := st.Open(context.Background(), "reader", filepath.Join(sub, "shared"))
+	if !reader.Available {
+		t.Fatal("scoped reader claim should be Available")
+	}
+	if !bytes.Equal(picker.Result.ClaimScope, reader.Result.ClaimScope) {
+		t.Fatalf("test premise broken: scopes must be byte-equal; picker=%s reader=%s",
+			picker.Result.ClaimScope, reader.Result.ClaimScope)
+	}
+
+	must(t, st.Commit(context.Background(), "reader", reader.Result.ClaimScope, reader.Result.Address))
+
+	if _, err := os.Stat(filepath.Join(root, sub, "shared")); err != nil {
+		t.Fatalf("scoped reader's commit clobbered the pick claim's live folder: %v", err)
+	}
+	inProg := filepath.Join(root, ".fs-store", "r", "in_progress")
+	entries, _ := os.ReadDir(inProg)
+	if len(entries) != 1 {
+		t.Fatalf("pick claim's in_progress entry should survive scoped reader's commit; got %d entries", len(entries))
+	}
+}
+
+func TestFindByScope_MatchesBatchLeaseNotSingleClaim(t *testing.T) {
+	root := t.TempDir()
+	sub := "docs"
+	for _, f := range []string{"single-folder", "batch-folder"} {
+		must(t, os.MkdirAll(filepath.Join(root, sub, f), 0o755))
+	}
+	pp := &PickPolicy{
+		Root:              sub,
+		OnCommit:          action.Action{Kind: action.Pop},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "on_drain",
+	}
+	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
+	must(t, err)
+
+	single, _ := st.Open(context.Background(), "single-claim", "@r")
+	if !single.Available {
+		t.Fatal("single claim should be Available")
+	}
+	if pp, _, _, _ := st.findByScope(single.Result.ClaimScope); pp != nil {
+		t.Fatal("findByScope must not resolve a single-claim in_progress entry")
+	}
+
+	items, err := st.BatchPop(context.Background(), "@r", []string{"lease-1"})
+	must(t, err)
+	if len(items) != 1 {
+		t.Fatalf("BatchPop returned %d items, want 1", len(items))
+	}
+	if ppMatched, _, entry, _ := st.findByScope(items[0].ClaimScopeBytes); ppMatched == nil {
+		t.Fatal("findByScope must resolve a batch-pop lease entry")
+	} else if !strings.HasPrefix(entryClaimID(t, entry), batchLeaseIDPrefix) {
+		t.Fatalf("matched entry %q is not a batch-pop lease", entry)
+	}
+}
+
+func entryClaimID(t *testing.T, entry string) string {
+	t.Helper()
+	_, c, _, err := parseFromRight(entry)
+	must(t, err)
+	return c
 }
 
 func TestSweep_ReclaimsExpired(t *testing.T) {

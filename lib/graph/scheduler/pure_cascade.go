@@ -6,7 +6,6 @@ package scheduler
 
 import (
 	"context"
-	"errors"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -42,17 +41,15 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 	for _, n := range ready {
 		def := lookupTemplateNodeDefByType(ctx, sb, n.InstanceID, n.NodeType)
 		if acquiresClaims(def) {
-			if err := enqueueNativeClaimOnly(ctx, args, n, def); err != nil {
-				if errors.Is(err, persistence.ErrRunScopeClosed) {
-					log.Debug("ProcessPureCascade: skip native claim-only enqueue: run scope closed",
-						"node_id", n.NodeID.String())
-					continue
-				}
-				log.Warn("ProcessPureCascade: enqueue native claim-only failed",
+			prepared, err := prepareNativeClaimRouting(ctx, args, n, def)
+			if err != nil {
+				log.Warn("ProcessPureCascade: prepare native claim routing failed",
 					"node_id", n.NodeID.String(), "error", err.Error())
 				continue
 			}
-			count++
+			if prepared {
+				count++
+			}
 			continue
 		}
 		if err := transitionPureCascade(ctx, args, n, log); err != nil {
@@ -84,18 +81,18 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 	return nil
 }
 
-func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n persistence.PureCascadeReadyRow, def *nodepkg.TemplateNodeDef) error {
+func prepareNativeClaimRouting(ctx context.Context, args PureCascadeArgs, n persistence.PureCascadeReadyRow, def *nodepkg.TemplateNodeDef) (bool, error) {
 	required := nodepkg.RequiredClaimProducers(*def)
 	if required == nil {
 		required = []string{}
 	}
-	return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
-		NodeID:                 n.NodeID,
-		RequiredClaimProducers: required,
-		EnqueuedAt:             args.Clock.Now(),
-		FrameID:                n.FrameID,
-		RunScopeID:             n.RunScopeID,
+	var prepared bool
+	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		ok, err := args.Persist.Nodes().SetRunRequiredStores(ctx, tx, n.NodeRunID, required)
+		prepared = ok
+		return err
 	})
+	return prepared, err
 }
 
 func lookupTemplateNodeDefByType(ctx context.Context, sb persistence.Tables, instanceID shared.UUID, nodeType string) *nodepkg.TemplateNodeDef {

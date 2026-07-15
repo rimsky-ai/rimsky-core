@@ -83,6 +83,7 @@ type CallbackServer struct {
 	Clock                       shared.Clock
 	Logger                      shared.Logger
 	SupervisorID                string
+	LivenessInterval            time.Duration
 	ResumeGrace                 time.Duration
 	Blob                        persistence.BlobBackend
 	BlobSpillThreshold          int

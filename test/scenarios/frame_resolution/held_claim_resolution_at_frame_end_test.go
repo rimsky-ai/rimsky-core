@@ -84,12 +84,19 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	require.Equal(t, runID, row.HolderNodeRunID)
 	require.Equal(t, persistence.ClaimHolderStateActive, row.State)
 
-	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:              shared.UUID(uuid.New()),
 			ClaimHandleID:   lockHolderID,
 			HolderNodeRunID: runID,
 		}, tx)
-	})
-	require.Error(t, err)
+	}), "re-inserting the same (claim_handle_id, holder_run_id) co-holder must be idempotent, not wedge on the UNIQUE constraint")
+
+	var holders []persistence.ClaimHolderRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		rows, err := h.Persist.ClaimHolders().ListByClaimHandleID(h.Ctx, lockHolderID, tx)
+		holders = rows
+		return err
+	}))
+	require.Len(t, holders, 1, "idempotent co-holder insert must leave exactly one holder row")
 }

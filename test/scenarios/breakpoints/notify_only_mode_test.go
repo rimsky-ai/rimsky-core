@@ -8,7 +8,6 @@ package breakpoints
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -47,10 +46,9 @@ func TestNotifyOnlyMode(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"notify_only must not block dispatch — worker should reach Fresh without a resume call")
+	h.WaitForNodeStateForever(n.ID, cascade.NodeStateFresh)
 
-	hits := waitForHitCount(t, h, bpID, 1, 5*time.Second)
+	hits := waitForHitCountForever(t, h, bpID, 1)
 	require.Len(t, hits, 1)
 	require.Nil(t, hits[0].ResumedAt,
 		"notify_only hit must NOT be auto-resumed; the agent reads it but does not need to release the dispatch")

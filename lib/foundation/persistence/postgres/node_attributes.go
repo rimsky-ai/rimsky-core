@@ -300,12 +300,31 @@ func (s *nodeAttributesImpl) SnapshotBagForNewRun(
 	if err != nil {
 		return fmt.Errorf("node_attributes.SnapshotBagForNewRun: load prior: %w", err)
 	}
+	priorHandleStr := ""
+	if priorHandle != nil {
+		priorHandleStr = *priorHandle
+	}
+	priorBackendStr := ""
+	if priorHandleBackend != nil {
+		priorBackendStr = *priorHandleBackend
+	}
+	carried, err := persistence.CarryForwardBag(ctx, (*tablesImpl)(s).blob,
+		persistence.BlobKey{NodeID: newRunID.String(), AttributeName: "data"},
+		priorData, priorHandleStr, priorBackendStr)
+	if err != nil {
+		return fmt.Errorf("node_attributes.SnapshotBagForNewRun: carry forward blob: %w", err)
+	}
+	var handleArg, backendArg any
+	if carried.Handle != "" {
+		handleArg = carried.Handle
+		backendArg = carried.Backend
+	}
 	if _, err := s.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_attributes
 		   (node_run_id, node_id, data, dispatch_input_bag, value_handle, value_handle_backend, updated_at)
-		 VALUES ($1, $2, $3::jsonb, $3::jsonb, $4, $5, NOW())
+		 VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, NOW())
 		 ON CONFLICT (node_run_id) DO NOTHING`,
-		newRunID, nodeID, priorData, priorHandle, priorHandleBackend,
+		newRunID, nodeID, carried.Data, carried.DispatchBag, handleArg, backendArg,
 	); err != nil {
 		return fmt.Errorf("node_attributes.SnapshotBagForNewRun: insert carry-forward: %w", err)
 	}

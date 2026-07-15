@@ -390,7 +390,7 @@ func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 	assert.Empty(t, q.snapshot())
 }
 
-func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
+func TestProcessPureCascade_NativeClaimOnly_ReusesStaleRunAcrossTicks(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newPureCascadeFixture(t)
@@ -411,10 +411,36 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	claimNode := pcCreateNode(ctx, t, f, inst.ID, "")
 	pcSeedFrame(ctx, t, f, inst.ID, claimNode.ID)
 
-	q := &fakeQueue{}
-	count, err := ProcessPureCascade(ctx, pcArgs(f.persist, q))
+	args := PureCascadeArgs{
+		Persist: f.persist, Queue: f.driver.Queue(),
+		Clock: shared.SystemClock{}, Logger: shared.SilentLogger{},
+	}
+
+	firstCount, err := ProcessPureCascade(ctx, args)
 	require.NoError(t, err)
-	assert.Equal(t, 1, count)
+	assert.Equal(t, 1, firstCount, "first tick prepares the existing stale run for claim routing")
+
+	for i := 0; i < 4; i++ {
+		c, err := ProcessPureCascade(ctx, args)
+		require.NoError(t, err)
+		assert.Equal(t, 0, c, "tick %d must not re-process an already-prepared claim run", i+2)
+	}
+
+	var inFlight int
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT COUNT(*) FROM rimsky_node_runs
+		  WHERE node_id = $1
+		    AND state IN ('pending','stale','running','held','parked')`,
+		[]any{claimNode.ID}, &inFlight)
+	assert.Equal(t, 1, inFlight, "five scheduler ticks must yield exactly one in-flight run, not one per tick")
+
+	var required []string
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT required_stores FROM rimsky_node_runs
+		  WHERE node_id = $1 AND state = 'stale'`,
+		[]any{claimNode.ID}, &required)
+	assert.ElementsMatch(t, []string{"alpha", "beta"}, required,
+		"the reused stale run carries the claim-producer routing")
 
 	var latest *persistence.NodeRunLatest
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
@@ -425,12 +451,6 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	require.NotNil(t, latest)
 	assert.Equal(t, cascade.NodeStateStale, latest.State)
 
-	enq := q.snapshot()
-	require.Len(t, enq, 1)
-	assert.Equal(t, claimNode.ID, enq[0].NodeID)
-	assert.Equal(t, "", enq[0].ExecutorName)
-	assert.ElementsMatch(t, []string{"alpha", "beta"}, enq[0].RequiredClaimProducers)
-
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
@@ -439,7 +459,7 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 		evs = r
 		return err
 	})
-	assert.Empty(t, evs.Events)
+	assert.Empty(t, evs.Events, "a claim-only node must not settle before its claims are acquired")
 }
 
 func TestProcessPureCascade_CascadesToDependents(t *testing.T) {

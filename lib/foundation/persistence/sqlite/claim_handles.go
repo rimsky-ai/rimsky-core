@@ -470,10 +470,16 @@ func qualifiedLockHolderCols(alias string) string {
 		alias + `.state, ` + alias + `.resolved_at`
 }
 
+// @concept: orphan-reaper
+// @concept: parked-state
 func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
 		 WHERE state = 'active' AND expires_at < ?
+		   AND NOT EXISTS (
+		     SELECT 1 FROM rimsky_node_runs nr
+		     WHERE nr.id = rimsky_claim_handles.node_run_id
+		       AND nr.state IN ('parked', 'held'))
 		 ORDER BY expires_at ASC`, nowUTC(),
 	)
 	if err != nil {
@@ -481,6 +487,20 @@ func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) (
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)
+}
+
+// @concept: orphan-reaper
+func (s *claimHandlesImpl) RenewExpiryForHolderRun(ctx context.Context, nodeRunID shared.UUID, newExpiry time.Time, tx persistence.Tx) error {
+	_, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_claim_handles
+		 SET expires_at = ?
+		 WHERE node_run_id = ? AND state = 'active'`,
+		formatTime(newExpiry), nodeRunID.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("lockholders.RenewExpiryForHolderRun: %w", err)
+	}
+	return nil
 }
 
 func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
@@ -530,7 +550,11 @@ func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, 
 		 WHERE id = ?
 		   AND `+claimantGuardClause+`
 		   AND expires_at < ?
-		   AND state = 'active'`,
+		   AND state = 'active'
+		   AND NOT EXISTS (
+		     SELECT 1 FROM rimsky_node_runs nr
+		     WHERE nr.id = rimsky_claim_handles.node_run_id
+		       AND nr.state IN ('parked', 'held'))`,
 		id.String(), supervisorID, nowUTC(),
 	)
 	if err != nil {

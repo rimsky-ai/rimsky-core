@@ -168,6 +168,9 @@ func (noopNodes) TransitionPendingToStale(context.Context, persistence.Tx, share
 func (noopNodes) DropPendingRun(context.Context, persistence.Tx, shared.UUID) error {
 	return nil
 }
+func (noopNodes) SetRunRequiredStores(context.Context, persistence.Tx, shared.UUID, []string) (bool, error) {
+	return false, nil
+}
 func (noopNodes) CreateNonCascadeStale(context.Context, persistence.Tx, persistence.NonCascadeStaleInput) (shared.UUID, error) {
 	return shared.UUID{}, nil
 }

@@ -6,6 +6,7 @@ package persistence
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -47,4 +48,46 @@ func QueueBlobOrphan(
 		OrphanedAt: now,
 		ReapAfter:  now.Add(retention),
 	}, tx)
+}
+
+type CarriedBag struct {
+	Data        []byte
+	DispatchBag []byte
+	Handle      string
+	Backend     string
+}
+
+func CarryForwardBag(
+	ctx context.Context,
+	bb BlobBackend,
+	key BlobKey,
+	priorData []byte,
+	priorHandle, priorBackend string,
+) (CarriedBag, error) {
+	if priorHandle == "" || bb == nil || priorBackend != bb.Name() {
+		return CarriedBag{
+			Data:        priorData,
+			DispatchBag: priorData,
+			Handle:      priorHandle,
+			Backend:     priorBackend,
+		}, nil
+	}
+	bytes, err := bb.Read(ctx, Handle(priorHandle))
+	if err != nil {
+		if errors.Is(err, ErrBlobNotFound) {
+			empty := []byte("{}")
+			return CarriedBag{Data: empty, DispatchBag: empty}, nil
+		}
+		return CarriedBag{}, err
+	}
+	fresh, err := bb.Write(ctx, key, bytes)
+	if err != nil {
+		return CarriedBag{}, err
+	}
+	return CarriedBag{
+		Data:        []byte("{}"),
+		DispatchBag: bytes,
+		Handle:      string(fresh),
+		Backend:     bb.Name(),
+	}, nil
 }

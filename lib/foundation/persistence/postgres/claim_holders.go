@@ -22,7 +22,8 @@ func (s *claimHoldersImpl) Insert(ctx context.Context, in persistence.ClaimHolde
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
-		 VALUES ($1, $2, $3, 'active', $4)`,
+		 VALUES ($1, $2, $3, 'active', $4)
+		 ON CONFLICT (claim_handle_id, holder_run_id) DO NOTHING`,
 		in.ID, in.ClaimHandleID, in.HolderNodeRunID, in.FrameID,
 	)
 	if err != nil {

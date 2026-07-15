@@ -147,6 +147,7 @@ func Start(cfg Config) (*Handle, error) {
 		Clock:                       cfg.Clock,
 		Logger:                      cfg.Logger,
 		SupervisorID:                cfg.SupervisorID,
+		LivenessInterval:            cfg.LivenessInterval,
 		Blob:                        cfg.Blob,
 		BlobSpillThreshold:          cfg.BlobSpillThreshold,
 		ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,

@@ -168,6 +168,95 @@ func testLockReceiverCascade_NoDeadlock(t *testing.T, d persistence.Database) {
 	}
 }
 
+// @concept: cascade
+func testSetRunRequiredStores_ReusesStaleRun(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+	q := d.Queue()
+
+	var runID shared.UUID
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		id, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		if err != nil {
+			return err
+		}
+		runID = id
+		return store.Nodes().TransitionPendingToStale(ctx, tx, id, time.Now().Add(-time.Second))
+	}); err != nil {
+		t.Fatalf("seed stale run: %v", err)
+	}
+
+	countRoutable := func(accepted []string) int {
+		n := 0
+		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+				AcceptedExecutors:      []string{"test-executor"},
+				AcceptedClaimProducers: accepted,
+				Limit:                  10,
+			})
+			if err != nil {
+				return err
+			}
+			for _, c := range cands {
+				if c.NodeID == fix.NodeID {
+					n++
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("SelectCandidates: %v", err)
+		}
+		return n
+	}
+
+	for i := 0; i < 3; i++ {
+		var ok bool
+		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			var e error
+			ok, e = store.Nodes().SetRunRequiredStores(ctx, tx, runID, []string{"alpha", "beta"})
+			return e
+		}); err != nil {
+			t.Fatalf("SetRunRequiredStores tick %d: %v", i, err)
+		}
+		if !ok {
+			t.Fatalf("SetRunRequiredStores tick %d: want true for a stale unclaimed run", i)
+		}
+	}
+
+	if got := countRoutable([]string{"alpha", "beta"}); got != 1 {
+		t.Fatalf("SetRunRequiredStores must update in place: want exactly 1 routable run after 3 ticks, got %d", got)
+	}
+	if got := countRoutable(nil); got != 0 {
+		t.Fatalf("a prepared run must route only to a supervisor hosting its claim producers; got %d", got)
+	}
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		ok, err := q.ClaimDispatchRow(ctx, tx, runID, "sup-a")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			t.Fatalf("ClaimDispatchRow returned !ok")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	var ok bool
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var e error
+		ok, e = store.Nodes().SetRunRequiredStores(ctx, tx, runID, []string{"gamma"})
+		return e
+	}); err != nil {
+		t.Fatalf("SetRunRequiredStores after claim: %v", err)
+	}
+	if ok {
+		t.Fatalf("SetRunRequiredStores must not touch a claimed run")
+	}
+}
+
 // @decision: non-cascade-direct-to-stale
 func testCreateNonCascadeStaleCarriesForward(t *testing.T, d persistence.Database) {
 	ctx := context.Background()

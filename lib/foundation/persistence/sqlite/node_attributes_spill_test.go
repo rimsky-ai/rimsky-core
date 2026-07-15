@@ -150,6 +150,123 @@ func TestNodeAttributesMergeDeltaSpill(t *testing.T) {
 	_ = verifySpill(t, rawDB, runID, mem.Name())
 }
 
+func TestSnapshotBagCarriesForwardSpilledBlobWithoutAliasing(t *testing.T) {
+	t.Setenv(persistence.ProcessRoleEnv, "unified")
+	d := openSQLite(t)
+	ctx := context.Background()
+	rawDB := sqlitedrv.DBFromDatabase(d)
+
+	mem := persistence.NewMemoryBackend()
+	d.SetBlobBackend(mem, 256, time.Hour)
+
+	store := d.Tables()
+	attrs := store.NodeAttributes()
+	orphans := store.BlobOrphans()
+
+	nodeID, priorRunID := seedFixtureNodeAndRun(t, rawDB)
+	scopeID := runScopeOf(t, rawDB, priorRunID)
+
+	bigVal := strings.Repeat("z", 500)
+	priorBag := map[string]any{"big": bigVal, "tag": "prior"}
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return attrs.Upsert(ctx, priorRunID, nodeID, priorBag, tx)
+	}); err != nil {
+		t.Fatalf("Upsert prior spilled: %v", err)
+	}
+	priorHandle := verifySpill(t, rawDB, priorRunID, mem.Name())
+
+	newRunID := seedSecondRun(t, rawDB, nodeID, priorRunID, scopeID, 2)
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return attrs.SnapshotBagForNewRun(ctx, tx, newRunID, nodeID, scopeID)
+	}); err != nil {
+		t.Fatalf("SnapshotBagForNewRun: %v", err)
+	}
+
+	newHandle := verifySpill(t, rawDB, newRunID, mem.Name())
+	if newHandle == priorHandle {
+		t.Fatalf("carry-forward aliased the blob handle across runs: both = %q", newHandle)
+	}
+
+	snap, err := readDispatchBag(t, store, newRunID)
+	if err != nil {
+		t.Fatalf("GetDispatchInputBag(new): %v", err)
+	}
+	if snap["big"] != bigVal || snap["tag"] != "prior" {
+		t.Fatalf("carried dispatch_input_bag lost spilled content: got %+v", snap)
+	}
+
+	newBag := map[string]any{"big": strings.Repeat("q", 500), "tag": "new"}
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return attrs.Upsert(ctx, newRunID, nodeID, newBag, tx)
+	}); err != nil {
+		t.Fatalf("Upsert on new run: %v", err)
+	}
+
+	orphRows, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), 100)
+	if err != nil {
+		t.Fatalf("orphans.DueBefore: %v", err)
+	}
+	for _, r := range orphRows {
+		if r.Handle == priorHandle {
+			t.Fatalf("Upsert on new run enrolled the prior run's still-referenced blob %q as an orphan", priorHandle)
+		}
+		if err := mem.Delete(ctx, persistence.Handle(r.Handle)); err != nil {
+			t.Fatalf("reap orphan %q: %v", r.Handle, err)
+		}
+	}
+
+	got := readData(t, store, priorRunID)
+	if got["big"] != bigVal || got["tag"] != "prior" {
+		t.Fatalf("prior run's spilled value was destroyed by new run's Upsert+reap: got %+v", got)
+	}
+}
+
+func runScopeOf(t *testing.T, rawDB *sql.DB, runID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var scope string
+	if err := rawDB.QueryRowContext(context.Background(),
+		`SELECT run_scope_id FROM rimsky_node_runs WHERE id = ?`, runID.String(),
+	).Scan(&scope); err != nil {
+		t.Fatalf("runScopeOf: %v", err)
+	}
+	id, err := uuid.Parse(scope)
+	if err != nil {
+		t.Fatalf("runScopeOf parse: %v", err)
+	}
+	return id
+}
+
+func seedSecondRun(t *testing.T, rawDB *sql.DB, nodeID, priorRunID, scopeID uuid.UUID, sequence int) uuid.UUID {
+	t.Helper()
+	var frameID string
+	if err := rawDB.QueryRowContext(context.Background(),
+		`SELECT frame_id FROM rimsky_node_runs WHERE id = ?`, priorRunID.String(),
+	).Scan(&frameID); err != nil {
+		t.Fatalf("seedSecondRun: read frame: %v", err)
+	}
+	newRunID := uuid.New()
+	if _, err := rawDB.ExecContext(context.Background(),
+		`INSERT INTO rimsky_node_runs
+		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'stale', 'cascade', ?, ?, ?)`,
+		newRunID.String(), nodeID.String(), sequence, frameID, scopeID.String(),
+	); err != nil {
+		t.Fatalf("seedSecondRun: insert run: %v", err)
+	}
+	return newRunID
+}
+
+func readDispatchBag(t *testing.T, store persistence.Tables, runID uuid.UUID) (map[string]any, error) {
+	t.Helper()
+	var out map[string]any
+	err := store.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		bag, err := store.NodeAttributes().GetDispatchInputBag(ctx, tx, runID)
+		out = bag
+		return err
+	})
+	return out, err
+}
+
 func verifyNoSpill(t *testing.T, rawDB *sql.DB, runID uuid.UUID) {
 	t.Helper()
 	h, _ := readSpillHandle(t, rawDB, runID)

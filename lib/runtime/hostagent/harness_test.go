@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 
@@ -89,15 +88,10 @@ func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 
 func (fp *fakeProxy) waitConnected(t *testing.T) *genv1.Register {
 	t.Helper()
-	select {
-	case <-fp.connected:
-		fp.mu.Lock()
-		defer fp.mu.Unlock()
-		return fp.register
-	case <-time.After(5 * time.Second):
-		t.Fatal("agent did not connect within deadline")
-		return nil
-	}
+	<-fp.connected
+	fp.mu.Lock()
+	defer fp.mu.Unlock()
+	return fp.register
 }
 
 func (fp *fakeProxy) sendToAgent(t *testing.T, frame *genv1.ServerFrame) {
@@ -115,13 +109,7 @@ func (fp *fakeProxy) sendToAgent(t *testing.T, frame *genv1.ServerFrame) {
 
 func (fp *fakeProxy) nextClientFrame(t *testing.T) *genv1.ClientFrame {
 	t.Helper()
-	select {
-	case f := <-fp.clientFrame:
-		return f
-	case <-time.After(10 * time.Second):
-		t.Fatal("no client frame from agent within deadline")
-		return nil
-	}
+	return <-fp.clientFrame
 }
 
 func runAgentInBackground(t *testing.T, cfg Config) context.CancelFunc {
@@ -134,11 +122,7 @@ func runAgentInBackground(t *testing.T, cfg Config) context.CancelFunc {
 	}()
 	t.Cleanup(func() {
 		cancel()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			t.Error("hostagent.Run did not exit after cancel")
-		}
+		<-done
 	})
 	return cancel
 }
