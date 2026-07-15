@@ -11,7 +11,8 @@ isolated is the whole point of the split.
 
 ## Status
 
-40 rows total. **11 fixed, 1 accepted, 1 awaiting a design ruling, 27 open.**
+40 rows total. **11 fixed, 2 accepted, 27 open.** The claude-agent executor
+cluster is fully closed (9 fixed + 2 accepted).
 
 - **2 fixed in Track 0b** of the drift work (id `1` proxy Register auth, `1801`
   unguarded schema drop/rename).
@@ -32,11 +33,14 @@ isolated is the whole point of the split.
   api-key file), so env-vs-file is marginal; `1840` removed the stdio-child
   inheritance vector under a closed allowlist. A file-based move needs a
   real-CLI OAuth test this repo can't run — deferred, not guessed.
-- **1 remaining design-call** (intent latitude a wrong guess would break —
-  awaiting user ruling):
-  - `1874` callback token registry has no TTL. A fixed TTL is an arbitrary
-    wall-clock constant that would reject a legitimate long-running dispatch;
-    "max dispatch lifetime" is a design question.
+- **`1874` ACCEPTED (user ruling A, 2026-07-15):** callback-token registry has
+  no TTL. Token is a random UUID on a loopback random port; a TTL is an arbitrary
+  wall-clock constant that would false-kill long/quiet runs, and an exploitable
+  token is exploitable within any window. Real defense = keep protocol endpoints
+  private in operator infra; a per-node liveness bound
+  (`cli.silence_timeout_ms`/`cli.tool_use_timeout_ms`) already tears down a
+  wedged run. If it ever becomes a genuine surface, derive the token as a hash of
+  an executor-held secret rather than adding a TTL.
 
 ## Approach
 
