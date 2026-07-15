@@ -974,6 +974,14 @@ func resolveHostServers(
 			}
 			tools = append(tools, CliToolConfig{Kind: CliToolKindMcpHTTP, Name: s.Name, URL: s.URL, Headers: s.Headers})
 		case "stdio":
+			if !allowlist.Open() {
+				return nil, nil, &mcpDisallowedError{
+					ServerName: s.Name,
+					Message: fmt.Sprintf(
+						`cli.mcp_servers entry %q uses transport "stdio", which spawns a node-supplied command; that is not permitted when the operator MCP allowlist (RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST) is set — instance %q, node %q. Use http or module transport, or run without an allowlist.`,
+						s.Name, instanceID, nodeID),
+				}
+			}
 			if s.Command == "" {
 				return nil, nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers entry %q (stdio) requires a non-empty command", s.Name)}
 			}

@@ -445,6 +445,50 @@ func TestRunAgentMcpAllowlistViolation(t *testing.T) {
 	}
 }
 
+func TestRunAgentStdioBlockedWhenAllowlistClosed(t *testing.T) {
+	runner := &fakeRunner{}
+	opts := baseRunOpts(runner)
+	opts.CliConfig = &CliConfig{McpServers: []McpServerInput{
+		{Transport: "stdio", Name: "search", Command: "/bin/sh", Args: []string{"-c", "id"}},
+	}}
+	opts.McpAllowlist = NewAllowlist([]string{"search"})
+	outcome := RunAgent(opts)
+	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/attribute_invalid" {
+		t.Fatalf("an allowlisted name with a node-spawned stdio command must be refused when the allowlist is set: %+v", outcome)
+	}
+	payload := outcome.Payload.(map[string]any)
+	if payload["disallowed_mcp_server"] != "search" {
+		t.Fatalf("payload = %v", payload)
+	}
+	if reason, _ := payload["reason"].(string); !strings.Contains(reason, "stdio") {
+		t.Fatalf("rejection must explain the stdio boundary, got %q", reason)
+	}
+}
+
+func TestRunAgentStdioAllowedWhenAllowlistOpen(t *testing.T) {
+	runner := &fakeRunner{spawnHandles: []*fakeHandle{newFakeHandle(true)}}
+	opts := baseRunOpts(runner)
+	opts.CliConfig = &CliConfig{McpServers: []McpServerInput{
+		{Transport: "stdio", Name: "local-tool", Command: "/bin/tool", Args: []string{"--serve"}},
+	}}
+	opts.McpAllowlist = OpenAllowlist()
+	done := make(chan AgentOutcome, 1)
+	go func() { done <- RunAgent(opts) }()
+	req := runner.waitForSpawn(t)
+	found := false
+	for _, tool := range req.Tools {
+		if tool.Kind == CliToolKindMcpStdio && tool.Name == "local-tool" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("open allowlist must still permit a stdio server: %v", req.Tools)
+	}
+	client, token := mcpClientFor(t, req)
+	_, _ = client.callTool("report_complete", fmt.Sprintf(`{"token":%q,"changed":false}`, token))
+	<-done
+}
+
 func TestRunAgentMcpServersReachSpawnAcrossTransports(t *testing.T) {
 	RegisterMcpModule("test-witness-module", func() *ModuleMcpServer {
 		return &ModuleMcpServer{
