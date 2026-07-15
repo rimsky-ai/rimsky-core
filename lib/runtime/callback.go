@@ -92,6 +92,7 @@ type CallbackServer struct {
 	Blob                        persistence.BlobBackend
 	BlobSpillThreshold          int
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
+	DeclaredTagsFor             func(executorName string) (tags []string, ok bool)
 	Metrics                     MetricsHook
 	LifecycleSubs               *locks.LifecycleRegistry
 	LifecyclePeersForSpec       func(tplSpec node.TemplateSpec) []string
@@ -514,6 +515,7 @@ func (c *CallbackServer) runArgs(supervisorID string, storeRegistry *locks.Regis
 		Blob:                        c.Blob,
 		BlobSpillThreshold:          c.BlobSpillThreshold,
 		ExpectedAttributesSchemaFor: c.ExpectedAttributesSchemaFor,
+		DeclaredTagsFor:             c.DeclaredTagsFor,
 		Metrics:                     c.Metrics,
 		LifecycleSubs:               c.LifecycleSubs,
 		LifecyclePeersForSpec:       c.LifecyclePeersForSpec,
@@ -650,6 +652,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		}
 		return false, nil
 	}
+	t = validateTags(ctx, dispatchContext{Args: args, Acquired: acq}, t)
 	if err := runApplyTerminal(ctx, args, acq, ac.ResolvedAttributes, ac.AttributesSchema, t, setup); err != nil {
 		return err
 	}

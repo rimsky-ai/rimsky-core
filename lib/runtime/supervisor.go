@@ -152,6 +152,7 @@ func Start(cfg Config) (*Handle, error) {
 		Blob:                        cfg.Blob,
 		BlobSpillThreshold:          cfg.BlobSpillThreshold,
 		ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
+		DeclaredTagsFor:             cfg.DeclaredTagsFor,
 		Metrics:                     cfg.Metrics,
 		LifecycleSubs:               cfg.LifecycleSubs,
 		LifecyclePeersForSpec:       cfg.LifecyclePeersForSpec,

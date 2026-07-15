@@ -11,8 +11,9 @@ isolated is the whole point of the split.
 
 ## Status
 
-40 rows total. **11 fixed, 2 accepted, 27 open.** The claude-agent executor
-cluster is fully closed (9 fixed + 2 accepted).
+40 rows total. **14 fixed, 2 accepted, 24 open.** The claude-agent executor
+cluster is fully closed (9 fixed + 2 accepted); the core validation-bypass
+cluster is fully closed (3 fixed).
 
 - **2 fixed in Track 0b** of the drift work (id `1` proxy Register auth, `1801`
   unguarded schema drop/rename).
@@ -41,6 +42,37 @@ cluster is fully closed (9 fixed + 2 accepted).
   (`cli.silence_timeout_ms`/`cli.tool_use_timeout_ms`) already tears down a
   wedged run. If it ever becomes a genuine surface, derive the token as a hash of
   an executor-held secret rather than adding a TTL.
+
+- **Core validation-bypass cluster FIXED (3 rows):**
+  - **`1329`** author-set internal flag: `is_subgraph_entry_absorbed` (and its
+    sibling `is_subgraph_exit`) round-trip from author YAML, so a flat-form
+    template could set the flag and skip the executor/delegate mutual-exclusion
+    check (only the canonicalizer's `absorbEntryIntoCaller` gate covers the
+    legit absorbed case, and it runs for graphs-form only). Fix:
+    `rejectAuthorSetInternalFlags` runs before `canonicalizeGraphs` and rejects
+    either flag on any author-supplied node (flat `nodes:` or `graphs[].nodes:`);
+    the canonicalizer still sets them post-check, so the legit path is untouched.
+  - **`1504`** async-callback tag-validation bypass: the async terminal path
+    never ran `validateTags`, and `CallbackServer`/`runArgs` never carried
+    `DeclaredTagsFor` at all. Fix: wired `DeclaredTagsFor` through the callback
+    server + `runArgs`, and `driveTerminal` now runs `validateTags` before
+    applying the terminal — an undeclared tag becomes `executor_protocol_violation`,
+    matching the sync path.
+  - **`1631`** commit-validation bypass: `PhaseCommit` validation was gated on
+    `t.Changed`, but the delta is merged and persisted regardless, so
+    `changed=false` + a non-empty delta committed unvalidated attributes. Fix:
+    gate on the delta (`len(t.AttributesDel) > 0`), not on `Changed`, via a
+    shared `validateCommitWriteback` helper. **Overshoot:** the error-terminal
+    path (`applyTerminalError`) persisted its delta with *no* commit gate at all
+    — the same invariant-12 violation — so it now runs the same helper and
+    refuses to persist an invalid writeback (emits `attributes_schema_failed`,
+    keeps the executor's error class).
+  - Regression tests: three template-validator rejections (flat + graphs form,
+    plus the legit graphs-form path still validates clean); two Postgres-backed
+    async-callback integration tests driving the real HTTP path (undeclared tag
+    → run fails; `changed=false` invalid delta → not committed + run fails).
+    Verified `-race`, lint, full core+cmd suite, and the subgraph/attribute/
+    terminal scenario suites green.
 
 ## Approach
 

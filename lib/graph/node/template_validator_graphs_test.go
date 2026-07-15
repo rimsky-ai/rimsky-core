@@ -28,6 +28,53 @@ func hasErrorContaining(msgs []string, needle string) bool {
 	return false
 }
 
+func TestValidate_RejectsAuthorSetIsSubgraphEntryAbsorbed_FlatForm(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Nodes: []TemplateNodeDef{
+			{Type: "sneaky", Executor: "stub", Delegate: "sub", IsSubgraphEntryAbsorbed: true},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	if !hasErrorContaining(msgs, "is_subgraph_entry_absorbed is set by subgraph canonicalization") {
+		t.Fatalf("expected rejection of author-set is_subgraph_entry_absorbed (executor/delegate bypass closed); got: %v", msgs)
+	}
+}
+
+func TestValidate_RejectsAuthorSetIsSubgraphExit_FlatForm(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Nodes: []TemplateNodeDef{
+			{Type: "sneaky", Executor: "stub", IsSubgraphExit: true},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	if !hasErrorContaining(msgs, "is_subgraph_exit is set by subgraph canonicalization") {
+		t.Fatalf("expected rejection of author-set is_subgraph_exit; got: %v", msgs)
+	}
+}
+
+func TestValidate_RejectsAuthorSetInternalFlag_GraphsForm(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Graphs: []GraphSpec{
+			{
+				Name: MainGraphName,
+				Nodes: []TemplateNodeDef{
+					{Type: "alpha", Executor: "stub", IsSubgraphEntryAbsorbed: true},
+				},
+			},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	if !hasErrorContaining(msgs, "is_subgraph_entry_absorbed is set by subgraph canonicalization") {
+		t.Fatalf("expected rejection of author-set flag in graphs-form node; got: %v", msgs)
+	}
+}
+
 func TestCanonicalizeGraphs_HappyPathSingleMain(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "tmpl-1",

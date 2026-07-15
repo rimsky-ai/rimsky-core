@@ -32,6 +32,30 @@ func chainPostCommit(a, b postCommitFn) postCommitFn {
 	}
 }
 
+func validateCommitWriteback(
+	ctx context.Context, args RunArgs, acq *acquisition,
+	schema, merged map[string]any, tx persistence.Tx,
+) error {
+	if schema == nil {
+		return nil
+	}
+	if err := attributes.Validate(schema, merged, attributes.PhaseCommit); err != nil {
+		if appendErr := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: events.KindAttributesSchemaFailed(),
+			Payload: map[string]any{
+				"errors": []map[string]any{{"message": err.Error()}},
+			},
+		}, tx); appendErr != nil && args.Logger != nil {
+			args.Logger.Warn("runner_terminal: append attributes_schema_failed event failed",
+				"node_id", acq.NodeID.String(),
+				"error", appendErr.Error())
+		}
+		return err
+	}
+	return nil
+}
+
 func applyTerminal(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	resolvedAttrs map[string]any, schema map[string]any,
@@ -44,7 +68,7 @@ func applyTerminal(
 	case terminalKindComplete:
 		pc, err = applyTerminalComplete(ctx, args, acq, resolvedAttrs, schema, t, tx)
 	case terminalKindErrored:
-		pc, err = applyTerminalError(ctx, args, acq, resolvedAttrs, t.ErrorClass, t.Payload, t.Tags, t.AttributesDel, t.Scratch, tx)
+		pc, err = applyTerminalError(ctx, args, acq, resolvedAttrs, schema, t.ErrorClass, t.Payload, t.Tags, t.AttributesDel, t.Scratch, tx)
 	case terminalKindInfra:
 		pc, err = applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload, t.Scratch, tx)
 	case terminalKindPark:
@@ -141,19 +165,8 @@ func applyTerminalComplete(
 	t terminalEvent, tx persistence.Tx,
 ) (postCommitFn, error) {
 	merged := mergeAttributesDelta(resolvedAttrs, t.AttributesDel)
-	if t.Changed && len(t.AttributesDel) > 0 && schema != nil {
-		if err := attributes.Validate(schema, merged, attributes.PhaseCommit); err != nil {
-			if appendErr := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: events.KindAttributesSchemaFailed(),
-				Payload: map[string]any{
-					"errors": []map[string]any{{"message": err.Error()}},
-				},
-			}, tx); appendErr != nil && args.Logger != nil {
-				args.Logger.Warn("runner_terminal: append attributes_schema_failed event failed",
-					"node_id", acq.NodeID.String(),
-					"error", appendErr.Error())
-			}
+	if len(t.AttributesDel) > 0 {
+		if err := validateCommitWriteback(ctx, args, acq, schema, merged, tx); err != nil {
 			// @concept: executor
 			return applyErrorPolicyWithScratch(ctx, args, acq, "attributes_schema_failed", "",
 				map[string]any{"error": err.Error()}, t.Tags, t.AttributesDel, t.Scratch, tx)

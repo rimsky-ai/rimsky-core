@@ -121,6 +121,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	validateFrameTimeout(spec, &res)
 	validateMessageQueueMode(spec, &res)
 
+	rejectAuthorSetInternalFlags(spec, &res)
 	canonicalizeGraphs(spec, &res)
 
 	if len(spec.Nodes) == 0 {
@@ -776,6 +777,31 @@ func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (sugg
 		return suggestedType, false
 	}
 	return "", true
+}
+
+func rejectAuthorSetInternalFlags(spec *TemplateSpec, res *ValidationResult) {
+	report := func(path string, n TemplateNodeDef) {
+		if n.IsSubgraphEntryAbsorbed {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path + ".is_subgraph_entry_absorbed",
+				Msg:  "is_subgraph_entry_absorbed is set by subgraph canonicalization and may not be declared by a template author",
+			})
+		}
+		if n.IsSubgraphExit {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path + ".is_subgraph_exit",
+				Msg:  "is_subgraph_exit is set by subgraph canonicalization and may not be declared by a template author",
+			})
+		}
+	}
+	for i := range spec.Nodes {
+		report(fmt.Sprintf("nodes[%d]", i), spec.Nodes[i])
+	}
+	for gi := range spec.Graphs {
+		for ni := range spec.Graphs[gi].Nodes {
+			report(fmt.Sprintf("graphs[%d].nodes[%d]", gi, ni), spec.Graphs[gi].Nodes[ni])
+		}
+	}
 }
 
 func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {

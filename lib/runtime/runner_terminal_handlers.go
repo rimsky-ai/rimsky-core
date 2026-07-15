@@ -17,14 +17,16 @@ import (
 // @concept: attribute
 func applyTerminalError(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	resolvedAttrs map[string]any,
+	resolvedAttrs map[string]any, schema map[string]any,
 	errorClass string, payload map[string]any, tags []string,
 	attributesDel map[string]any, scratch []byte, tx persistence.Tx,
 ) (postCommitFn, error) {
 	if len(attributesDel) > 0 {
 		merged := mergeAttributesDelta(resolvedAttrs, attributesDel)
-		if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
-			return nil, fmt.Errorf("applyTerminalError: upsert attributes_delta: %w", err)
+		if err := validateCommitWriteback(ctx, args, acq, schema, merged, tx); err == nil {
+			if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
+				return nil, fmt.Errorf("applyTerminalError: upsert attributes_delta: %w", err)
+			}
 		}
 	}
 	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, "", payload, tags, attributesDel, scratch, tx)
