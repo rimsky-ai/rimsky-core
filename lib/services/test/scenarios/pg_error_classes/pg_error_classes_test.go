@@ -26,7 +26,7 @@ const canonicalSchema = "production_swap_collision"
 func TestPGErrorClasses_Delivered(t *testing.T) {
 	t.Parallel()
 	t.Run("claim_unavailable", testClaimUnavailableDelivered)
-	t.Run("swap_failed", testSwapFailedDelivered)
+	t.Run("not_atomically_replaceable", testNotReplaceableDelivered)
 }
 
 func testClaimUnavailableDelivered(t *testing.T) {
@@ -101,7 +101,7 @@ func testClaimUnavailableDelivered(t *testing.T) {
 			"acquire/unavailable")
 }
 
-func testSwapFailedDelivered(t *testing.T) {
+func testNotReplaceableDelivered(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -167,16 +167,15 @@ func testSwapFailedDelivered(t *testing.T) {
 		},
 	})
 
-	instanceID := createInstance(t, ep, templateID, "ck-pg-swap-failed")
-
-	requireStagingSchemaReserved(t, pool, 120*time.Second)
-
-	requireSwapCollidedAndLeftStaging(t, pool, canonicalSchema, 30*time.Second)
+	instanceID := createInstance(t, ep, templateID, "ck-pg-not-replaceable")
 
 	requireEventKind(t, ep, instanceID,
-		"terminal/error/pg/swap_failed", 90*time.Second,
-		"the forced atomic-staging swap collision must deliver the "+
-			"producer-declared pg/swap_failed class as a real signal")
+		"terminal/error/pg/not_atomically_replaceable", 90*time.Second,
+		"a write-intent Open on a canonical with an external cross-schema dependent must "+
+			"fail fast at Open and deliver the producer-declared pg/not_atomically_replaceable "+
+			"class as a real signal, never staging then cascade-destroying the dependent")
+
+	requireNoStagingAndDependentsIntact(t, pool, canonicalSchema)
 }
 
 func dialSubstrate(ctx context.Context, t *testing.T, hostDSN string) *pgxpool.Pool {
@@ -299,14 +298,24 @@ func requireEventKind(t *testing.T, ep harness.RimskyEndpoint, instanceID, kind 
 		kind, instanceID, deadline, why)
 }
 
-func requireSwapCollidedAndLeftStaging(t *testing.T, pool *pgxpool.Pool, canonical string, settle time.Duration) {
+func requireNoStagingAndDependentsIntact(t *testing.T, pool *pgxpool.Pool, canonical string) {
 	t.Helper()
-	deadline := time.Now().Add(settle)
-	for time.Now().Before(deadline) {
-		time.Sleep(500 * time.Millisecond)
+	ctx := context.Background()
+
+	var staging int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM information_schema.schemata
+		   WHERE schema_name LIKE 'rimsky_stg_%'`,
+	).Scan(&staging); err != nil {
+		t.Fatalf("query residual staging schemas: %v", err)
 	}
+	if staging != 0 {
+		t.Fatalf("a `rimsky_stg_` staging schema exists after an Open that must fail fast on the " +
+			"external-dependent guard; no staging may be reserved on the reject path")
+	}
+
 	var pinnedExists bool
-	if err := pool.QueryRow(context.Background(),
+	if err := pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM information_schema.tables
 		   WHERE table_schema = $1 AND table_name = 'pinned')`,
 		canonical,
@@ -314,44 +323,19 @@ func requireSwapCollidedAndLeftStaging(t *testing.T, pool *pgxpool.Pool, canonic
 		t.Fatalf("query canonical pinned table: %v", err)
 	}
 	if !pinnedExists {
-		t.Fatalf("canonical schema %q.pinned is gone — the atomic swap must have "+
-			"completed, but this test forces a collision (the depended-upon canonical "+
-			"cannot be dropped under RESTRICT); the swap-collision value path did not "+
-			"run as intended", canonical)
+		t.Fatalf("canonical schema %q.pinned is gone; a rejected Open must never touch the canonical", canonical)
 	}
-	var staging int
-	if err := pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM information_schema.schemata
-		   WHERE schema_name LIKE 'rimsky_stg_%'`,
-	).Scan(&staging); err != nil {
-		t.Fatalf("query residual staging schemas: %v", err)
-	}
-	if staging == 0 {
-		t.Fatalf("the reserved `rimsky_stg_` staging schema is gone after the swap window — "+
-			"a collided swap rolls back and leaves staging intact, so its absence means the "+
-			"swap either succeeded or never ran; the swap-collision value path did not run as "+
-			"intended for canonical %q", canonical)
-	}
-}
 
-func requireStagingSchemaReserved(t *testing.T, pool *pgxpool.Pool, deadline time.Duration) {
-	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		var n int
-		if err := pool.QueryRow(context.Background(),
-			`SELECT count(*) FROM information_schema.schemata
-			   WHERE schema_name LIKE 'rimsky_stg_%'`,
-		).Scan(&n); err != nil {
-			t.Fatalf("query staging schemas: %v", err)
-		}
-		if n > 0 {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
+	var depExists bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM information_schema.views
+		   WHERE table_schema = $1 AND table_name = 'dep')`,
+		canonical+"_dep",
+	).Scan(&depExists); err != nil {
+		t.Fatalf("query external dependent view: %v", err)
 	}
-	t.Fatalf("no `rimsky_stg_` staging schema ever appeared in the substrate within %v — "+
-		"the staged claim Open did not reserve a staging schema, so the atomic-staging "+
-		"swap-collision value path did not engage (check the store's write_semantics and "+
-		"the selector's schema-identifier shape)", deadline)
+	if !depExists {
+		t.Fatalf("external dependent view %q.dep was destroyed; the fail-fast guard must leave it intact "+
+			"(the CASCADE data-loss regression this test guards has returned)", canonical+"_dep")
+	}
 }

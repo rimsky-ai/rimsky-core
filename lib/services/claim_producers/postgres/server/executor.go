@@ -42,6 +42,7 @@ func declaredErrorClasses() []string {
 		"pg/attribute_invalid",
 		"pg/claim_unavailable",
 		"pg/connection_lost",
+		"pg/not_atomically_replaceable",
 		"pg/swap_failed",
 		"pg/verifier_check_failed/*",
 	}

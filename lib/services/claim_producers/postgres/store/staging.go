@@ -9,6 +9,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -19,6 +20,44 @@ import (
 const SwapFailedClass = "pg/swap_failed"
 
 const ClaimUnavailableClass = "pg/claim_unavailable"
+
+const NotReplaceableClass = "pg/not_atomically_replaceable"
+
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+const externalDependentQuery = `
+SELECT dep_schema, dep_object FROM (
+	SELECT depns.nspname AS dep_schema, dep.relname AS dep_object
+	  FROM pg_depend d
+	  JOIN pg_rewrite rw ON d.classid = 'pg_rewrite'::regclass AND d.objid = rw.oid
+	  JOIN pg_class dep ON rw.ev_class = dep.oid
+	  JOIN pg_namespace depns ON dep.relnamespace = depns.oid
+	  JOIN pg_class ref ON d.refobjid = ref.oid
+	  JOIN pg_namespace refns ON ref.relnamespace = refns.oid
+	 WHERE refns.nspname = $1 AND depns.nspname <> $1
+	UNION
+	SELECT ns.nspname AS dep_schema, t.relname AS dep_object
+	  FROM pg_constraint con
+	  JOIN pg_class ft ON con.confrelid = ft.oid
+	  JOIN pg_namespace fns ON ft.relnamespace = fns.oid
+	  JOIN pg_class t ON con.conrelid = t.oid
+	  JOIN pg_namespace ns ON t.relnamespace = ns.oid
+	 WHERE con.contype = 'f' AND fns.nspname = $1 AND ns.nspname <> $1
+) ext
+LIMIT 1`
+
+func externalDependent(ctx context.Context, q rowQuerier, canonical string) (schema, object string, found bool, err error) {
+	err = q.QueryRow(ctx, externalDependentQuery, canonical).Scan(&schema, &object)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("postgres store: probe external dependents of schema %q: %w", canonical, err)
+	}
+	return schema, object, true, nil
+}
 
 type ClassedError struct {
 	Class string
@@ -72,6 +111,15 @@ func (s *Store) openStaging(ctx context.Context, claimID, selector string) (json
 		return nil, nil, fmt.Errorf(
 			"postgres store: staged claim selector %q collides with the reserved staging prefix %q",
 			selector, stagingSchemaPrefix)
+	}
+	if depSchema, depObject, found, err := externalDependent(ctx, s.pool, selector); err != nil {
+		return nil, nil, err
+	} else if found {
+		return nil, nil, &ClassedError{Class: NotReplaceableClass, Err: fmt.Errorf(
+			"postgres store: schema %q is not atomically replaceable: object %q.%q outside it depends on objects inside it; "+
+				"a staged_async write claim would cascade-destroy the external dependent on swap "+
+				"(remove the cross-schema reference or publish through the depending schema instead)",
+			selector, depSchema, depObject)}
 	}
 	staging := stagingSchemaName(claimID)
 	stmt := "CREATE SCHEMA IF NOT EXISTS " + pgx.Identifier{staging}.Sanitize()
@@ -140,6 +188,15 @@ func (s *Store) commitStagingSwap(ctx context.Context, canonical, staging string
 		return swapFailed(fmt.Errorf(
 			"postgres store: staging schema %q is gone and canonical %q does not exist; swap state is indeterminate",
 			staging, canonical))
+	}
+
+	if depSchema, depObject, found, err := externalDependent(ctx, tx, canonical); err != nil {
+		return swapFailed(err)
+	} else if found {
+		return swapFailed(fmt.Errorf(
+			"postgres store: canonical %q gained an external dependent %q.%q after Open; "+
+				"refusing the swap that would cascade-destroy it",
+			canonical, depSchema, depObject))
 	}
 
 	canonicalID := pgx.Identifier{canonical}.Sanitize()

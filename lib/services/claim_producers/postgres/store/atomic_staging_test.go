@@ -191,14 +191,6 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 
 		publish("('a','v1'),('b','v1')")
 
-		if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS dependents_of_canonical"); err != nil {
-			t.Fatalf("create dependents schema: %v", err)
-		}
-		if _, err := pool.Exec(ctx,
-			"CREATE VIEW dependents_of_canonical.items_view AS SELECT id FROM "+canonical+".items"); err != nil {
-			t.Fatalf("create cross-schema dependent view: %v", err)
-		}
-
 		publish("('c','v2'),('d','v2'),('e','v2')")
 
 		if got := canonicalItemCount(t, pool, canonical); got != 3 {
@@ -360,6 +352,129 @@ func TestAtomicStaging_SchemaSwap(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "pg/swap_failed") {
 			t.Fatalf("Commit indeterminate-state error = %q; want it to name the pg/swap_failed class", err.Error())
+		}
+	})
+
+	t.Run("write-intent Open rejects a canonical with an external dependent and reserves no staging", func(t *testing.T) {
+		const ext = "external_dep_canonical"
+		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+ext+" CASCADE"); err != nil {
+			t.Fatalf("reset canonical: %v", err)
+		}
+		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+ext+"_readers CASCADE"); err != nil {
+			t.Fatalf("reset readers schema: %v", err)
+		}
+		if _, err := pool.Exec(ctx, "CREATE SCHEMA "+ext); err != nil {
+			t.Fatalf("create canonical: %v", err)
+		}
+		if _, err := pool.Exec(ctx, "CREATE TABLE "+ext+".pinned (n INT)"); err != nil {
+			t.Fatalf("create pinned table: %v", err)
+		}
+		if _, err := pool.Exec(ctx, "CREATE SCHEMA "+ext+"_readers"); err != nil {
+			t.Fatalf("create readers schema: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			"CREATE VIEW "+ext+"_readers.dep AS SELECT n FROM "+ext+".pinned"); err != nil {
+			t.Fatalf("create external dependent view: %v", err)
+		}
+
+		claimID := uuid.NewString()
+		_, err := st.Open(ctx, claimID, ext, claimproducer.IntentReadWrite)
+		if err == nil {
+			t.Fatalf("Open on a canonical with an external dependent succeeded; it must fail fast before staging")
+		}
+		if !strings.Contains(err.Error(), NotReplaceableClass) {
+			t.Fatalf("Open external-dependent error = %q; want it to name the %q class", err.Error(), NotReplaceableClass)
+		}
+		if schemaExists(t, pool, stagingSchemaName(claimID)) {
+			t.Fatalf("Open reserved staging schema %q despite the external dependent; no staging must be created on the reject path",
+				stagingSchemaName(claimID))
+		}
+		if !schemaExists(t, pool, ext+"_readers") {
+			t.Fatalf("external dependent schema was destroyed; Open must not touch it")
+		}
+	})
+
+	t.Run("write-intent Open allows a canonical with only internal cross-references", func(t *testing.T) {
+		const internal = "internal_dep_canonical"
+		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+internal+" CASCADE"); err != nil {
+			t.Fatalf("reset canonical: %v", err)
+		}
+		if _, err := pool.Exec(ctx, "CREATE SCHEMA "+internal); err != nil {
+			t.Fatalf("create canonical: %v", err)
+		}
+		if _, err := pool.Exec(ctx, "CREATE TABLE "+internal+".base (n INT)"); err != nil {
+			t.Fatalf("create base table: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			"CREATE VIEW "+internal+".derived AS SELECT n FROM "+internal+".base"); err != nil {
+			t.Fatalf("create internal dependent view: %v", err)
+		}
+
+		claimID := uuid.NewString()
+		out, err := st.Open(ctx, claimID, internal, claimproducer.IntentReadWrite)
+		if err != nil {
+			t.Fatalf("Open on a self-contained canonical with internal cross-refs must succeed: %v", err)
+		}
+		staging := addressSchema(t, out.Result.Address)
+		if !schemaExists(t, pool, staging) {
+			t.Fatalf("Open did not reserve staging schema %q for a self-contained canonical", staging)
+		}
+		if err := st.Abandon(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
+			t.Fatalf("Abandon (cleanup): %v", err)
+		}
+	})
+
+	t.Run("swap-time backstop refuses a mid-flight external dependent without destroying it", func(t *testing.T) {
+		const race = "race_dep_canonical"
+		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+race+" CASCADE"); err != nil {
+			t.Fatalf("reset canonical: %v", err)
+		}
+		if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+race+"_readers CASCADE"); err != nil {
+			t.Fatalf("reset readers schema: %v", err)
+		}
+		if _, err := pool.Exec(ctx, "CREATE SCHEMA "+race); err != nil {
+			t.Fatalf("create canonical: %v", err)
+		}
+		if _, err := pool.Exec(ctx, "CREATE TABLE "+race+".pinned (n INT)"); err != nil {
+			t.Fatalf("create pinned table: %v", err)
+		}
+
+		claimID := uuid.NewString()
+		out, err := st.Open(ctx, claimID, race, claimproducer.IntentReadWrite)
+		if err != nil {
+			t.Fatalf("Open on a self-contained canonical must succeed: %v", err)
+		}
+		staging := addressSchema(t, out.Result.Address)
+		if _, err := pool.Exec(ctx, "CREATE TABLE "+staging+".pinned (n INT)"); err != nil {
+			t.Fatalf("stage a table: %v", err)
+		}
+
+		if _, err := pool.Exec(ctx, "CREATE SCHEMA "+race+"_readers"); err != nil {
+			t.Fatalf("create readers schema: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			"CREATE VIEW "+race+"_readers.dep AS SELECT n FROM "+race+".pinned"); err != nil {
+			t.Fatalf("create mid-flight external dependent view: %v", err)
+		}
+
+		err = st.Commit(ctx, claimID, out.Result.ClaimScope, out.Result.Address)
+		if err == nil {
+			t.Fatalf("Commit swapped a canonical that gained an external dependent; the backstop must refuse it")
+		}
+		if !strings.Contains(err.Error(), SwapFailedClass) {
+			t.Fatalf("Commit backstop error = %q; want it to name the %q class", err.Error(), SwapFailedClass)
+		}
+		if !schemaExists(t, pool, race+"_readers") {
+			t.Fatalf("the mid-flight external dependent was destroyed; the backstop must not cascade-drop it")
+		}
+		if !schemaExists(t, pool, race) {
+			t.Fatalf("canonical %q was dropped by a refused swap; it must remain intact", race)
+		}
+		if !schemaExists(t, pool, staging) {
+			t.Fatalf("staging %q was consumed by a refused swap; a refused swap must leave staging intact", staging)
+		}
+		if err := st.Abandon(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
+			t.Fatalf("Abandon (cleanup): %v", err)
 		}
 	})
 }

@@ -130,6 +130,7 @@ func producerDeclaredErrorClasses() []string {
 	return []string{
 		pgsstore.ClaimUnavailableClass,
 		pgsstore.SwapFailedClass,
+		pgsstore.NotReplaceableClass,
 	}
 }
 
@@ -152,7 +153,7 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 	}
 	outcome, err := s.store.Open(ctx, req.GetClaimId(), req.GetSelector(), claimproducer.Intent(req.GetIntent()))
 	if err != nil {
-		return nil, err
+		return nil, classedStatus(err)
 	}
 	if !outcome.Available {
 		return &genv1.OpenResponse{
