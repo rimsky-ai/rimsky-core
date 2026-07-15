@@ -11,7 +11,7 @@ isolated is the whole point of the split.
 
 ## Status
 
-40 rows total. **10 fixed, 3 awaiting a design ruling, 27 open.**
+40 rows total. **11 fixed, 1 accepted, 1 awaiting a design ruling, 27 open.**
 
 - **2 fixed in Track 0b** of the drift work (id `1` proxy Register auth, `1801`
   unguarded schema drop/rename).
@@ -21,18 +21,19 @@ isolated is the whole point of the split.
   `1841` retry-leg rate-limit park, `1856` requests-reset header, `1860`
   module-loopback bearer gate, `2041` faithful rate-limit fake + park assertion.
   All with regression tests; verified `-race` + fresh-image cross-stack green.
-- **3 in the same cluster are design-calls** (intent latitude a wrong guess
-  would break — not yet fixed, awaiting user ruling):
-  - `1840` MCP allowlist pins name only, so a node can run arbitrary stdio
-    `command` under an allowlisted name. Fix shape = the operator boundary's
-    intent: block node-supplied stdio when the allowlist is closed / add
-    operator-side command pinning / accept name-only. Recommend: block stdio in
-    closed mode.
-  - `1843` OAuth token handed to the child via `CLAUDE_CODE_OAUTH_TOKEN` env
-    (readable by the agent's Bash + inherited by stdio MCP children); the
-    API-key path avoids env via an apiKeyHelper. A file-based fix needs the
-    claude CLI's OAuth credential-file format, which can't be verified here;
-    env is the documented OAuth mechanism.
+- **`1840` FIXED (user ruling A, commit `80c40a19`):** the MCP allowlist pinned
+  name only, so a node could run an arbitrary stdio `command` under an
+  allowlisted name. `resolveHostServers` now refuses `stdio` transport whenever
+  the allowlist is closed (set); `http`/`module` still allowed, open mode
+  unchanged. Regression tests + fresh-image cross-stack green.
+- **`1843` ACCEPTED (user ruling A, 2026-07-15):** OAuth token via
+  `CLAUDE_CODE_OAUTH_TOKEN` env stays. Env is the CLI's OAuth channel; a
+  bypassPermissions Bash agent can read any credential the CLI holds (incl. the
+  api-key file), so env-vs-file is marginal; `1840` removed the stdio-child
+  inheritance vector under a closed allowlist. A file-based move needs a
+  real-CLI OAuth test this repo can't run — deferred, not guessed.
+- **1 remaining design-call** (intent latitude a wrong guess would break —
+  awaiting user ruling):
   - `1874` callback token registry has no TTL. A fixed TTL is an arbitrary
     wall-clock constant that would reject a legitimate long-running dispatch;
     "max dispatch lifetime" is a design question.
