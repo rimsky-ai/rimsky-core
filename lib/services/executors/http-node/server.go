@@ -36,7 +36,7 @@ type Server struct {
 func NewServer(cfg Opts) *Server {
 	return &Server{
 		cfg:      cfg,
-		client:   &http.Client{Timeout: time.Duration(cfg.TimeoutMs) * time.Millisecond},
+		client:   cfg.Egress.HTTPClient(time.Duration(cfg.TimeoutMs) * time.Millisecond),
 		stubMode: cfg.StubMode,
 	}
 }

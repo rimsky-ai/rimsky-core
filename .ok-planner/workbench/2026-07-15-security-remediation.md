@@ -11,9 +11,9 @@ isolated is the whole point of the split.
 
 ## Status
 
-40 rows total. **14 fixed, 2 accepted, 24 open.** The claude-agent executor
+40 rows total. **16 fixed, 2 accepted, 22 open.** The claude-agent executor
 cluster is fully closed (9 fixed + 2 accepted); the core validation-bypass
-cluster is fully closed (3 fixed).
+cluster is fully closed (3 fixed); the SSRF/open-egress pair is fixed (2).
 
 - **2 fixed in Track 0b** of the drift work (id `1` proxy Register auth, `1801`
   unguarded schema drop/rename).
@@ -73,6 +73,26 @@ cluster is fully closed (3 fixed).
     → run fails; `changed=false` invalid delta → not committed + run fails).
     Verified `-race`, lint, full core+cmd suite, and the subgraph/attribute/
     terminal scenario suites green.
+
+- **SSRF / open-egress pair FIXED (2 rows):** `1882` (http-node) and `1928`
+  (sensor-http) both dialed caller/template-supplied URLs with a default-transport
+  client — no scheme restriction, no private/link-local (169.254.169.254 metadata)
+  block, no allowlist — and fed the response back into rimsky. Fix: one shared
+  `lib/services/internal/egress` guard builds an `*http.Client` whose dialer
+  `Control` checks the **resolved IP at connect time** (blocks
+  loopback/private/link-local/ULA/unspecified/multicast, also defeating DNS
+  rebinding and re-checking redirect targets) and whose RoundTripper restricts
+  the scheme to http/https. Secure by default (unset env = block all non-public);
+  operators opt specific CIDRs back in via `RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST`
+  / `RIMSKY_SENSOR_HTTP_EGRESS_ALLOWLIST`, parsed fail-closed at startup. In
+  sensor-http only the **poll** client is guarded; the publish-to-control-API
+  client stays unguarded (trusted, often private). Regression tests: egress unit
+  suite (metadata/private blocked, public allowed, allowlist exception, non-http
+  scheme rejected) + per-service negative tests (http-node refuses the metadata
+  endpoint; sensor-http's guarded poll client refuses a loopback target that
+  would otherwise match). The services harness sets the allowlist so its
+  host-gateway poll still works; verified against **freshly rebuilt** sensor-http
+  + http-node images (sensor/portable/bundled/smoke scenarios green), full lint.
 
 ## Approach
 

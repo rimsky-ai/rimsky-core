@@ -22,6 +22,7 @@ import (
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 )
 
 type Watch struct {
@@ -44,6 +45,7 @@ type SensorService struct {
 	watches        map[string]*Watch
 	rimskyEndpoint string
 	httpClient     *http.Client
+	pollClient     *http.Client
 	clock          func() time.Time
 	logger         logger
 	tickInterval   time.Duration
@@ -88,11 +90,12 @@ type logger interface {
 	Error(msg string, args ...any)
 }
 
-func NewSensorService(rimskyEndpoint string, log logger) *SensorService {
+func NewSensorService(rimskyEndpoint string, pollGuard egress.Guard, log logger) *SensorService {
 	return &SensorService{
 		watches:        make(map[string]*Watch),
 		rimskyEndpoint: rimskyEndpoint,
 		httpClient:     &http.Client{Timeout: 30 * time.Second},
+		pollClient:     pollGuard.HTTPClient(30 * time.Second),
 		clock:          time.Now,
 		logger:         log,
 		tickInterval:   time.Second,
@@ -261,7 +264,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		return
 	}
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.pollClient.Do(req)
 	if err != nil {
 		s.logger.Warn("sensor-http.poll_dial_failed",
 			"publisher_subscription_id", w.SubscriptionID, "url", w.URL, "error", err.Error())

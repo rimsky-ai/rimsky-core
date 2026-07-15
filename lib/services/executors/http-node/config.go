@@ -7,6 +7,8 @@ package httpnode
 import (
 	"os"
 	"strconv"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 )
 
 type Opts struct {
@@ -18,6 +20,7 @@ type Opts struct {
 	StubMode        bool
 	HTTPBridgeURL   string
 	ErrorClassField string
+	Egress          egress.Guard
 }
 
 const DefaultErrorClassField = "error_class"
@@ -31,6 +34,11 @@ func LoadOptsFromEnv() (Opts, error) {
 	opts.StubMode = env("RIMSKY_EXECUTOR_STUB_MODE", "0") == "1"
 	opts.HTTPBridgeURL = env("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL", "")
 	opts.ErrorClassField = env("RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD", DefaultErrorClassField)
+	guard, err := egress.NewGuardFromEnv("RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST")
+	if err != nil {
+		return Opts{}, err
+	}
+	opts.Egress = guard
 	return opts, nil
 }
 

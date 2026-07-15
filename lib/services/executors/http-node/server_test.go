@@ -19,6 +19,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
+
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -43,6 +45,15 @@ func newRequestWithAttrs(t *testing.T, ud, attrs map[string]any) *genv1.ExecuteR
 	return &genv1.ExecuteRequest{NodeType: "http.request@1", Attributes: st}
 }
 
+func loopbackGuard(t *testing.T) egress.Guard {
+	t.Helper()
+	g, err := egress.NewGuard([]string{"127.0.0.0/8", "::1/128"})
+	if err != nil {
+		t.Fatalf("build loopback egress guard: %v", err)
+	}
+	return g
+}
+
 func testServer(t *testing.T, stub bool) *Server {
 	t.Helper()
 	return NewServer(Opts{
@@ -52,6 +63,7 @@ func testServer(t *testing.T, stub bool) *Server {
 		TimeoutMs:    5000,
 		MaxBodyBytes: 1 << 20,
 		StubMode:     stub,
+		Egress:       loopbackGuard(t),
 	})
 }
 
@@ -141,6 +153,7 @@ func TestExecute_Timeout_ReturnsTimeout(t *testing.T) {
 
 	s := NewServer(Opts{
 		Host: "127.0.0.1", TimeoutMs: 50, MaxBodyBytes: 1 << 20,
+		Egress: loopbackGuard(t),
 	})
 	req := newRequest(t, map[string]any{"url": ts.URL})
 	outcome, _ := s.Execute(context.Background(), req)
@@ -150,6 +163,19 @@ func TestExecute_Timeout_ReturnsTimeout(t *testing.T) {
 	}
 	if errd.GetErrorClass() != "http/timeout" {
 		t.Errorf("error_class=%q, want http/timeout", errd.GetErrorClass())
+	}
+}
+
+func TestExecute_BlocksCloudMetadataEndpoint(t *testing.T) {
+	s := testServer(t, false)
+	req := newRequest(t, map[string]any{"url": "http://169.254.169.254/latest/meta-data/"})
+	outcome, _ := s.Execute(context.Background(), req)
+	errd := outcome.GetError()
+	if errd == nil {
+		t.Fatalf("expected Error terminal for blocked metadata endpoint, got %T", outcome.GetOutcome())
+	}
+	if outcome.GetSuccess() != nil {
+		t.Fatal("metadata endpoint must not be fetched")
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 )
 
@@ -36,7 +37,13 @@ func main() {
 		"grpc_port", port,
 		"rimsky_endpoint", rimskyEndpoint)
 
-	svc := NewSensorService(rimskyEndpoint, slogAdapter{l: slog.Default()})
+	pollGuard, err := egress.NewGuardFromEnv("RIMSKY_SENSOR_HTTP_EGRESS_ALLOWLIST")
+	if err != nil {
+		slog.Error("sensor-http egress allowlist", "error", err.Error())
+		os.Exit(1)
+	}
+
+	svc := NewSensorService(rimskyEndpoint, pollGuard, slogAdapter{l: slog.Default()})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

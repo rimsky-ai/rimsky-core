@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 )
 
 type noopLogger struct{}
@@ -27,8 +28,17 @@ func (noopLogger) Info(_ string, _ ...any)  {}
 func (noopLogger) Warn(_ string, _ ...any)  {}
 func (noopLogger) Error(_ string, _ ...any) {}
 
+func loopbackGuard(t *testing.T) egress.Guard {
+	t.Helper()
+	g, err := egress.NewGuard([]string{"127.0.0.0/8", "::1/128"})
+	if err != nil {
+		t.Fatalf("build loopback egress guard: %v", err)
+	}
+	return g
+}
+
 func TestCapabilities_AdvertiseHTTP(t *testing.T) {
-	s := NewSensorService("", noopLogger{})
+	s := NewSensorService("", loopbackGuard(t), noopLogger{})
 	caps, err := s.Capabilities(context.Background(), &emptypb.Empty{})
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +52,7 @@ func TestCapabilities_AdvertiseHTTP(t *testing.T) {
 }
 
 func TestSubscribe_ParsesAndRegisters(t *testing.T) {
-	s := NewSensorService("", noopLogger{})
+	s := NewSensorService("", loopbackGuard(t), noopLogger{})
 	cfg := map[string]any{
 		"url":           "http://example.test/feed.json",
 		"poll_interval": "15s",
@@ -77,7 +87,7 @@ func TestSubscribe_ParsesAndRegisters(t *testing.T) {
 }
 
 func TestSubscribe_RejectsMissingURL(t *testing.T) {
-	s := NewSensorService("", noopLogger{})
+	s := NewSensorService("", loopbackGuard(t), noopLogger{})
 	cfg := map[string]any{"poll_interval": "10s"}
 	raw, _ := json.Marshal(cfg)
 	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
@@ -89,7 +99,7 @@ func TestSubscribe_RejectsMissingURL(t *testing.T) {
 }
 
 func TestSubscribe_RejectsWrongKind(t *testing.T) {
-	s := NewSensorService("", noopLogger{})
+	s := NewSensorService("", loopbackGuard(t), noopLogger{})
 	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{Kind: "cron"})
 	if err == nil {
 		t.Fatal("expected error for non-http kind")
@@ -97,7 +107,7 @@ func TestSubscribe_RejectsWrongKind(t *testing.T) {
 }
 
 func TestUnsubscribeIdempotent(t *testing.T) {
-	s := NewSensorService("", noopLogger{})
+	s := NewSensorService("", loopbackGuard(t), noopLogger{})
 	s.mu.Lock()
 	s.watches["w1"] = &Watch{SubscriptionID: "w1"}
 	s.mu.Unlock()
@@ -144,7 +154,7 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	}))
 	defer rimsky.Close()
 
-	s := NewSensorService(rimsky.URL, noopLogger{})
+	s := NewSensorService(rimsky.URL, loopbackGuard(t), noopLogger{})
 	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	s.clock = func() time.Time { return pin }
 	cfg := map[string]any{"url": upstream.URL, "poll_interval": "10s"}
@@ -183,6 +193,35 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	obsMu.Unlock()
 }
 
+func TestTick_PollClientEnforcesEgressGuard(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
+	}))
+	defer upstream.Close()
+
+	pushed := 0
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pushed++
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, egress.Guard{}, noopLogger{})
+	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	cfg := map[string]any{"url": upstream.URL, "poll_interval": "10s"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Tick(context.Background())
+	if pushed != 0 {
+		t.Errorf("egress guard must block the loopback poll target; pushed=%d (want 0)", pushed)
+	}
+}
+
 func TestTick_StatusFilter_RejectsNonMatch(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -197,7 +236,7 @@ func TestTick_StatusFilter_RejectsNonMatch(t *testing.T) {
 	}))
 	defer rimsky.Close()
 
-	s := NewSensorService(rimsky.URL, noopLogger{})
+	s := NewSensorService(rimsky.URL, loopbackGuard(t), noopLogger{})
 	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	cfg := map[string]any{"url": upstream.URL, "poll_interval": "10s"}
 	raw, _ := json.Marshal(cfg)
@@ -226,7 +265,7 @@ func TestTick_JSONPathFilter(t *testing.T) {
 	}))
 	defer rimsky.Close()
 
-	s := NewSensorService(rimsky.URL, noopLogger{})
+	s := NewSensorService(rimsky.URL, loopbackGuard(t), noopLogger{})
 	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	cfg := map[string]any{
 		"url":           upstream.URL,
