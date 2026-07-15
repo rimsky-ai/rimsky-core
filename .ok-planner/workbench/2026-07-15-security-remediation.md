@@ -11,10 +11,31 @@ isolated is the whole point of the split.
 
 ## Status
 
-40 rows total. **2 already fixed** in Track 0b of the drift work (id `1` proxy
-Register auth, `1801` unguarded schema drop/rename — both committed). **38 open.**
-Severity of the open set: ~13 major, ~24 minor, 1 nit (no open criticals; the
-two criticals were the fixed ones).
+40 rows total. **10 fixed, 3 awaiting a design ruling, 27 open.**
+
+- **2 fixed in Track 0b** of the drift work (id `1` proxy Register auth, `1801`
+  unguarded schema drop/rename).
+- **8 fixed in the claude-agent executor cluster** (commit `4a9df8f8`): `1834`
+  (crit) argv flag-injection guard, `1835` callback-token-off-argv (stdin),
+  `1849` prompt ARG_MAX (stdin), `1838` resume carries restrictions+budget,
+  `1841` retry-leg rate-limit park, `1856` requests-reset header, `1860`
+  module-loopback bearer gate, `2041` faithful rate-limit fake + park assertion.
+  All with regression tests; verified `-race` + fresh-image cross-stack green.
+- **3 in the same cluster are design-calls** (intent latitude a wrong guess
+  would break — not yet fixed, awaiting user ruling):
+  - `1840` MCP allowlist pins name only, so a node can run arbitrary stdio
+    `command` under an allowlisted name. Fix shape = the operator boundary's
+    intent: block node-supplied stdio when the allowlist is closed / add
+    operator-side command pinning / accept name-only. Recommend: block stdio in
+    closed mode.
+  - `1843` OAuth token handed to the child via `CLAUDE_CODE_OAUTH_TOKEN` env
+    (readable by the agent's Bash + inherited by stdio MCP children); the
+    API-key path avoids env via an apiKeyHelper. A file-based fix needs the
+    claude CLI's OAuth credential-file format, which can't be verified here;
+    env is the documented OAuth mechanism.
+  - `1874` callback token registry has no TTL. A fixed TTL is an arbitrary
+    wall-clock constant that would reject a legitimate long-running dispatch;
+    "max dispatch lifetime" is a design question.
 
 ## Approach
 
