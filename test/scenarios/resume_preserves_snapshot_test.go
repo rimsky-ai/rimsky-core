@@ -42,7 +42,7 @@ func TestResumePreservesSnapshot_DeadlineWakeReusesDispatchTimeBag(t *testing.T)
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"x": map[string]any{"type": "string"},
+						"x": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"x"},
 				}),

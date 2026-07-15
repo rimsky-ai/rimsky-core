@@ -24,8 +24,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	rimskyscratch "github.com/rimsky-ai/rimsky-core/lib/graph/scratch"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
 var errUnauthorizedCallback = errors.New("callback: unauthorized")
@@ -80,6 +83,7 @@ type CallbackServer struct {
 	Queue                       persistence.Queue
 	AdvisoryLocker              persistence.AdvisoryLocker
 	ClaimHandles                persistence.ClaimHandleTable
+	StoreRegistry               *locks.Registry
 	Clock                       shared.Clock
 	Logger                      shared.Logger
 	SupervisorID                string
@@ -299,27 +303,222 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 	if row.ClaimedBy != nil {
 		supervisorID = *row.ClaimedBy
 	}
-	var instanceID shared.UUID
+	args := c.runArgs(supervisorID, c.StoreRegistry)
+	acq := acquisition{
+		NodeRunID: row.ID,
+		NodeID:    row.NodeID,
+		FrameID:   row.FrameID,
+	}
 	if err := c.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		n, err := c.Persist.Nodes().Get(ctx, row.NodeID, tx)
+		return c.reconstructAcquisition(ctx, args, tx, row, &acq)
+	}); err != nil {
+		return nil, fmt.Errorf("lookupAsyncCtxByAck: reconstruct acquisition: %w", err)
+	}
+	resolvedAttrs, schema, err := recoverResolvedAttributes(ctx, args, &acq)
+	if err != nil {
+		c.Logger.Warn("callback: attribute reconstruction failed; settling with base bag only",
+			"async_ack_id", ackID,
+			"dispatch_id", row.ID.String(),
+			"error", err.Error())
+	}
+	return &AsyncContext{
+		NodeID:             acq.NodeID,
+		InstanceID:         acq.InstanceID,
+		NodeRunID:          acq.NodeRunID,
+		SupervisorID:       supervisorID,
+		StoreRegistry:      c.StoreRegistry,
+		FrameID:            acq.FrameID,
+		AcquiredLocks:      acq.Locks,
+		NodeType:           acq.NodeType,
+		Executor:           acq.Executor,
+		NodeDef:            acq.NodeDef,
+		ResolvedAttributes: resolvedAttrs,
+		AttributesSchema:   schema,
+	}, nil
+}
+
+// @decision: async-callback-persistent-registry
+func (c *CallbackServer) reconstructAcquisition(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	row *persistence.DispatchRow, acq *acquisition,
+) error {
+	nd, err := c.Persist.Nodes().Get(ctx, row.NodeID, tx)
+	if err != nil {
+		return err
+	}
+	if nd == nil {
+		return fmt.Errorf("node %s missing for dispatch %s", row.NodeID, row.ID)
+	}
+	acq.InstanceID = nd.InstanceID
+	acq.NodeType = nd.NodeType
+	acq.Executor = nd.Executor
+	inst, err := c.Persist.Instances().Get(ctx, nd.InstanceID, tx)
+	if err != nil {
+		return err
+	}
+	tmpl := lookupTemplate(ctx, args, tx, inst)
+	acq.NodeDef = lookupNodeDef(tmpl, nd.NodeType)
+	acq.TemplateAttributeDefaults = templateAttributeDefaultsFor(tmpl, nd.Executor)
+	acq.GraphName = spec.MainGraphName
+	if tmpl != nil {
+		acq.GraphName = graphContainingNodeType(tmpl.Graphs, nd.NodeType)
+	}
+	if inst != nil {
+		acq.InstanceParams = inst.Params
+		acq.InstanceAttributeOverrides = inst.AttributeOverrides
+		acq.TemplateHash = inst.TemplateHash
+	}
+	if rt := c.Persist.NodeRunTree(); rt != nil {
+		treeRow, err := rt.GetByID(ctx, tx, row.ID)
 		if err != nil {
 			return err
 		}
-		if n == nil {
-			return fmt.Errorf("lookupAsyncCtxByAck: node %s missing for dispatch %s", row.NodeID, row.ID)
+		if treeRow != nil {
+			acq.RunScopeID = treeRow.RunScopeID
 		}
-		instanceID = n.InstanceID
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("lookupAsyncCtxByAck: resolve instance: %w", err)
 	}
-	return &AsyncContext{
-		NodeID:       row.NodeID,
-		InstanceID:   instanceID,
-		NodeRunID:    row.ID,
-		SupervisorID: supervisorID,
-		FrameID:      row.FrameID,
-	}, nil
+	acqLocks, err := reconstructAcquiredLocks(ctx, args, tx, row.ID, acq.NodeDef)
+	if err != nil {
+		return err
+	}
+	acq.Locks = acqLocks
+	if held := loadInheritedClaimsForNode(ctx, args, tx, nd); len(held) > 0 {
+		acq.HeldClaims = held
+	}
+	return nil
+}
+
+// @decision: async-callback-persistent-registry
+func reconstructAcquiredLocks(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	nodeRunID shared.UUID, nodeDef *node.TemplateNodeDef,
+) ([]AcquiredLock, error) {
+	if args.ClaimHandles == nil {
+		return nil, nil
+	}
+	rows, err := args.ClaimHandles.ListByNodeRun(ctx, nodeRunID, tx)
+	if err != nil {
+		return nil, fmt.Errorf("reconstructAcquiredLocks: ListByNodeRun: %w", err)
+	}
+	aliasByProducer := map[string]string{}
+	if nodeDef != nil {
+		for _, ref := range nodeDef.ClaimProducers {
+			aliasByProducer[ref.Name] = ref.AliasOf()
+		}
+	}
+	var out []AcquiredLock
+	for i := range rows {
+		row := rows[i]
+		if row.ParentClaimHandleID != nil || row.State != spec.ClaimHandleStateActive {
+			continue
+		}
+		switch row.LockKind {
+		case persistence.LockKindNamed:
+			name := ""
+			if row.LockName != nil {
+				name = *row.LockName
+			}
+			out = append(out, AcquiredLock{
+				Spec:          locks.NamedLockSpec{Name: name},
+				ClaimHandleID: row.ID,
+				IsHeld:        row.IsHeld,
+			})
+		case persistence.LockKindScope:
+			producerName := ""
+			if row.ProducerName != nil {
+				producerName = *row.ProducerName
+			}
+			var producer locks.ClaimProducer
+			if args.StoreRegistry != nil {
+				if p, ok := args.StoreRegistry.Get(producerName); ok {
+					producer = p
+				}
+			}
+			alias := aliasByProducer[producerName]
+			out = append(out, AcquiredLock{
+				Spec: claimproducer.ClaimSpec{
+					ProducerName: producerName,
+					Alias:        alias,
+					Lifetime:     string(row.Lifetime),
+				},
+				ClaimHandleID: row.ID,
+				ClaimResult: claimproducer.ClaimResult{
+					Address:    row.Address,
+					Payload:    row.Payload,
+					ClaimScope: row.ClaimScopeData,
+				},
+				Producer:                producer,
+				Alias:                   alias,
+				IsHeld:                  row.IsHeld,
+				ProducerCandidateHandle: row.ProducerCandidateHandle,
+			})
+		}
+	}
+	return out, nil
+}
+
+// @decision: async-callback-persistent-registry
+func recoverResolvedAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
+	if acq.Executor != "" && acq.NodeDef != nil && acq.NodeDef.Attributes != nil {
+		schema, _, execSchemaVisible := computeEffectiveAttributeSchema(args, acq)
+		if !execSchemaVisible {
+			return nil, schema, &executorSchemaUnavailableError{Executor: acq.Executor}
+		}
+	}
+	snapshot, schema, err := loadDispatchBag(ctx, args, acq)
+	if err != nil {
+		return nil, schema, err
+	}
+	var paramsRaw json.RawMessage
+	if len(acq.InstanceParams) > 0 {
+		b, mErr := json.Marshal(acq.InstanceParams)
+		if mErr != nil {
+			return nil, schema, mErr
+		}
+		paramsRaw = b
+	}
+	scope := resolveAcqScope(ctx, args, acq)
+	filled, err := fillClaimRefs(schema, attributes.ResolveContext{
+		Claim:             claimsMapFromAcq(acq),
+		Params:            paramsRaw,
+		ChildPartitionKey: scope.PartitionKey,
+	}, snapshot)
+	if err != nil {
+		return nil, schema, err
+	}
+	filled = mergeSchemaDefaultsForDispatch(schema, filled)
+	merged, _ := applyAttributeOverrides(
+		filled,
+		acq.InstanceAttributeOverrides,
+		acq.Executor,
+		acq.NodeType,
+		acq.GraphName,
+		scope.PartitionKey,
+		args.Logger,
+	)
+	acq.MergedAttributes = merged
+	return merged, schema, nil
+}
+
+func (c *CallbackServer) runArgs(supervisorID string, storeRegistry *locks.Registry) RunArgs {
+	return RunArgs{
+		Persist:                     c.Persist,
+		Queue:                       c.Queue,
+		AdvisoryLocker:              c.AdvisoryLocker,
+		ClaimHandles:                c.ClaimHandles,
+		StoreRegistry:               storeRegistry,
+		Clock:                       c.Clock,
+		Logger:                      c.Logger,
+		SupervisorID:                supervisorID,
+		ResumeGrace:                 c.ResumeGrace,
+		Blob:                        c.Blob,
+		BlobSpillThreshold:          c.BlobSpillThreshold,
+		ExpectedAttributesSchemaFor: c.ExpectedAttributesSchemaFor,
+		Metrics:                     c.Metrics,
+		LifecycleSubs:               c.LifecycleSubs,
+		LifecyclePeersForSpec:       c.LifecyclePeersForSpec,
+		DataProcessors:              c.DataProcessors,
+	}
 }
 
 func (c *CallbackServer) findCanonicalSuccessor(ctx context.Context, ac AsyncContext) *shared.UUID {
@@ -399,24 +598,7 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 }
 
 func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t terminalEvent) error {
-	args := RunArgs{
-		Persist:                     c.Persist,
-		Queue:                       c.Queue,
-		AdvisoryLocker:              c.AdvisoryLocker,
-		ClaimHandles:                c.ClaimHandles,
-		StoreRegistry:               ac.StoreRegistry,
-		Clock:                       c.Clock,
-		Logger:                      c.Logger,
-		SupervisorID:                ac.SupervisorID,
-		ResumeGrace:                 c.ResumeGrace,
-		Blob:                        c.Blob,
-		BlobSpillThreshold:          c.BlobSpillThreshold,
-		ExpectedAttributesSchemaFor: c.ExpectedAttributesSchemaFor,
-		Metrics:                     c.Metrics,
-		LifecycleSubs:               c.LifecycleSubs,
-		LifecyclePeersForSpec:       c.LifecyclePeersForSpec,
-		DataProcessors:              c.DataProcessors,
-	}
+	args := c.runArgs(ac.SupervisorID, ac.StoreRegistry)
 	acq := &acquisition{
 		NodeRunID:      ac.NodeRunID,
 		NodeID:         ac.NodeID,

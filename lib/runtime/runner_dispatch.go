@@ -406,6 +406,14 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	}
 	filled = bpFilled
 	acq.MergedAttributes = filled
+	if schema != nil {
+		if vErr := attributes.Validate(relaxRequiredForExecutorWritten(schema), filled, attributes.PhaseDispatch); vErr != nil {
+			return nil, schema, &attributeValidationError{
+				Reason: "dispatch_bag_violates_executor_schema",
+				Cause:  vErr,
+			}
+		}
+	}
 	if args.Persist != nil {
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{

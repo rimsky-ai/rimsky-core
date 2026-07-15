@@ -41,7 +41,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"a_value": map[string]any{"type": "string"},
+						"a_value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"a_value"},
 				}),
@@ -51,7 +51,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"b_value": map[string]any{"type": "string"},
+						"b_value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"b_value"},
 				}),
@@ -145,7 +145,7 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"a_value": map[string]any{"type": "string"},
+						"a_value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"a_value"},
 				}),
@@ -155,7 +155,7 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"b_value": map[string]any{"type": "string"},
+						"b_value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"b_value"},
 				}),

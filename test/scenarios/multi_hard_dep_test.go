@@ -42,7 +42,7 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"t_value": map[string]any{"type": "string"},
+						"t_value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"t_value"},
 				}),
@@ -52,7 +52,7 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"a_value": map[string]any{"type": "string"},
+						"a_value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"a_value"},
 				}),
@@ -62,7 +62,7 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"b_value": map[string]any{"type": "string"},
+						"b_value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"b_value"},
 				}),

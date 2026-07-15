@@ -36,6 +36,7 @@ func Suite(
 	t.Run("PublisherSubscriptionLifecycle", func(t *testing.T) { testPublisherSubscriptionLifecycle(t, factory(t)) })
 	t.Run("QueueInTxAndDispatchNode", func(t *testing.T) { testQueueInTxAndDispatchNode(t, factory(t)) })
 	t.Run("SelectCandidatesSkipsPausedInstances", func(t *testing.T) { testSelectCandidatesSkipsPausedInstances(t, factory(t)) })
+	t.Run("SelectCandidatesSkipsTerminatedInstances", func(t *testing.T) { testSelectCandidatesSkipsTerminatedInstances(t, factory(t)) })
 	t.Run("SelectCandidatesKeysetCursor", func(t *testing.T) { testSelectCandidatesKeysetCursor(t, factory(t)) })
 	t.Run("QueueRebindRunFrameInTx", func(t *testing.T) { testQueueRebindRunFrameInTx(t, factory(t)) })
 	t.Run("ClaimHandlesUpdateClaimScope", func(t *testing.T) { testClaimHandlesUpdateClaimScope(t, factory(t)) })

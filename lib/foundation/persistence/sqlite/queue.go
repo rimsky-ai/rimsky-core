@@ -179,6 +179,7 @@ func (q *queueImpl) SelectCandidates(
 		  WHERE d.claimed_by IS NULL
 		    AND d.state = 'stale'
 		    AND i.paused = 0
+		    AND i.terminated_at IS NULL
 		    AND d.enqueued_at <= ?
 		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_node_runs other

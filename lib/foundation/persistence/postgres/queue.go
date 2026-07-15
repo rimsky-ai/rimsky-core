@@ -153,6 +153,7 @@ func (q *queueImpl) SelectCandidates(
 		  WHERE d.claimed_by IS NULL
 		    AND d.state = 'stale'
 		    AND i.paused = false
+		    AND i.terminated_at IS NULL
 		    AND (
 		      d.required_stores <@ $1::text[]
 		      OR (

@@ -39,7 +39,7 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"value": map[string]any{"type": "string"},
+						"value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"value"},
 				}),

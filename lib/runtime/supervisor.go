@@ -144,6 +144,7 @@ func Start(cfg Config) (*Handle, error) {
 		Queue:                       cfg.Queue,
 		AdvisoryLocker:              cfg.AdvisoryLocker,
 		ClaimHandles:                lockHolders,
+		StoreRegistry:               cfg.StoreRegistry,
 		Clock:                       cfg.Clock,
 		Logger:                      cfg.Logger,
 		SupervisorID:                cfg.SupervisorID,

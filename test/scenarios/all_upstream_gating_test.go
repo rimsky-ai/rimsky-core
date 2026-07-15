@@ -40,7 +40,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"a_value": map[string]any{"type": "string"},
+						"a_value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"a_value"},
 				}),
@@ -51,7 +51,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"b_value": map[string]any{"type": "string"},
+						"b_value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"b_value"},
 				}),
@@ -62,7 +62,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"c_value": map[string]any{"type": "string"},
+						"c_value": map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"c_value"},
 				}),

@@ -925,3 +925,90 @@ func TestResolveAttributes_MissingSnapshotIsInvariantViolation(t *testing.T) {
 		t.Fatalf("expected `dispatch_input_bag missing` error, got %v", err)
 	}
 }
+
+// @concept: attribute
+func TestResolveAttributes_DispatchGateRejectsInvalidResolvedBag(t *testing.T) {
+	ctx := context.Background()
+	execSchema := []byte(`{"type":"object","properties":{"model":{"type":"string"}}}`)
+	nodeSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"model": map[string]any{"type": "string"},
+		},
+	}
+
+	makeArgs := func(fx carryForwardFixture) RunArgs {
+		return RunArgs{
+			Persist:      fx.tables,
+			Logger:       shared.SilentLogger{},
+			Clock:        shared.SystemClock{},
+			SupervisorID: "sup-dispatch-gate",
+			ExpectedAttributesSchemaFor: func(string) ([]byte, bool) {
+				return execSchema, true
+			},
+		}
+	}
+
+	makeAcq := func(fx carryForwardFixture, nodeRunID shared.UUID) *acquisition {
+		return &acquisition{
+			NodeRunID:  nodeRunID,
+			NodeID:     fx.nodeID,
+			InstanceID: fx.instanceID,
+			NodeType:   "stateful-node",
+			Executor:   "test-executor",
+			GraphName:  tmplspec.MainGraphName,
+			RunScopeID: fx.mainScopeID,
+			FrameID:    fx.frameID,
+			NodeDef: &node.TemplateNodeDef{
+				Type:       "stateful-node",
+				Executor:   "test-executor",
+				Attributes: &node.NodeAttributesDef{Schema: nodeSchema},
+			},
+		}
+	}
+
+	seedRun := func(t *testing.T, fx carryForwardFixture, bag map[string]any) shared.UUID {
+		t.Helper()
+		nodeRunID := shared.UUID(uuid.New())
+		if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			if err := fx.tables.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+				NodeRunID: nodeRunID, NodeID: fx.nodeID, FrameID: fx.frameID,
+				RunScopeID: fx.mainScopeID,
+			}); err != nil {
+				return err
+			}
+			return fx.tables.NodeAttributes().SetDispatchInputBag(ctx, tx, nodeRunID, fx.nodeID, bag)
+		}); err != nil {
+			t.Fatalf("seed run: %v", err)
+		}
+		return nodeRunID
+	}
+
+	t.Run("resolved bag violating effective schema is rejected at dispatch", func(t *testing.T) {
+		fx := seedCarryForwardFixture(t, ctx)
+		nodeRunID := seedRun(t, fx, map[string]any{"model": float64(42)})
+		_, _, err := resolveAttributes(ctx, makeArgs(fx), makeAcq(fx, nodeRunID))
+		if err == nil {
+			t.Fatalf("expected dispatch-gate rejection for type-mismatched bag, got nil")
+		}
+		var validation *attributeValidationError
+		if !errors.As(err, &validation) {
+			t.Fatalf("expected *attributeValidationError, got %T: %v", err, err)
+		}
+		if class, _ := classifyAttributeFailure(err); class != "template_validation_failed" {
+			t.Fatalf("expected class template_validation_failed, got %q", class)
+		}
+	})
+
+	t.Run("valid resolved bag dispatches", func(t *testing.T) {
+		fx := seedCarryForwardFixture(t, ctx)
+		nodeRunID := seedRun(t, fx, map[string]any{"model": "claude-sonnet"})
+		resolved, _, err := resolveAttributes(ctx, makeArgs(fx), makeAcq(fx, nodeRunID))
+		if err != nil {
+			t.Fatalf("resolveAttributes: unexpected error for valid bag: %v", err)
+		}
+		if got := resolved["model"]; got != "claude-sonnet" {
+			t.Fatalf("model: want claude-sonnet, got %v", got)
+		}
+	})
+}

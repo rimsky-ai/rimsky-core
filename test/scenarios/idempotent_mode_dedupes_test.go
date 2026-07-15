@@ -50,8 +50,8 @@ func TestIdempotentModeDedupes_QueueComparison(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"counter": map[string]any{"type": "integer"},
-						"stable":  map[string]any{"type": "string"},
+						"counter": map[string]any{"type": "integer", "readOnly": true},
+						"stable":  map[string]any{"type": "string", "readOnly": true},
 					},
 					"required": []any{"counter", "stable"},
 				}),

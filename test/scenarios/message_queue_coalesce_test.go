@@ -39,7 +39,7 @@ func TestMessageQueueCoalesce_DropsPriorPendingOnReceipt(t *testing.T) {
 				}),
 				scenario.WithAttributes(map[string]any{
 					"type":       "object",
-					"properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+					"properties": map[string]any{"ok": map[string]any{"type": "boolean", "readOnly": true}},
 					"required":   []any{"ok"},
 				}),
 			),
@@ -105,7 +105,7 @@ func TestMessageQueueCoalesce_BacklogModePreservesEveryMessage(t *testing.T) {
 				}),
 				scenario.WithAttributes(map[string]any{
 					"type":       "object",
-					"properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+					"properties": map[string]any{"ok": map[string]any{"type": "boolean", "readOnly": true}},
 					"required":   []any{"ok"},
 				}),
 			),
