@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images push-images publish-protocols check-clean smoke-all test-all test-race test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images test-images push-images publish-protocols check-clean smoke-all test-all test-race test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -95,16 +95,17 @@ test-services:
 test-examples:
 	cd examples && $(GOTEST_GUARD) -timeout 600s -p 2 -parallel 4 ./...
 
-# test-all builds the core + service images BEFORE running any module's
-# tests: the services scenarios under lib/services/test/ (and the examples
-# cross-stack proofs) pull rimsky-all-in-one:latest and the bundled-service
-# :latest tags from the LOCAL docker daemon. Without the image prerequisites,
-# those suites exercise whatever image happened to be on disk from a prior
-# build — a stale-image pass that silently waves through regressions in the
-# live source. Building first means every test-all run proves the source
-# tree as it stands. Docker layer caching keeps the rebuild cheap when
-# nothing image-relevant changed.
-test-all: core-images service-images test-root test-foundation test-protocols test-services test-examples
+# test-all builds the core + service + test images BEFORE running any
+# module's tests: the services scenarios under lib/services/test/ (and the
+# examples cross-stack proofs) pull rimsky-all-in-one:latest, the
+# bundled-service :latest tags, and the test-only rimsky-test/* +
+# rimsky-example/* tags from the LOCAL docker daemon. Without the image
+# prerequisites, those suites exercise whatever image happened to be on disk
+# from a prior build — a stale-image pass that silently waves through
+# regressions in the live source. Building first means every test-all run
+# proves the source tree as it stands. Docker layer caching keeps the
+# rebuild cheap when nothing image-relevant changed.
+test-all: core-images service-images test-images test-root test-foundation test-protocols test-services test-examples
 
 # Local test-speed observability. Runs every Go test across all modules under
 # gotestsum, then prints the slowest tests across the whole run. Continues
@@ -213,6 +214,21 @@ service-images:
 	docker build -f lib/services/executors/verifier-http/Dockerfile.verifier-http -t rimsky-executor-verifier-http:$(VERSION) -t rimsky-executor-verifier-http:latest .
 	docker build -f lib/services/executors/verifier-shape-checks/Dockerfile.verifier-shape-checks -t rimsky-executor-verifier-shape-checks:$(VERSION) -t rimsky-executor-verifier-shape-checks:latest .
 	docker build -f lib/services/executors/claude-agent/Dockerfile -t rimsky-executor-claude-agent:$(VERSION) -t rimsky-executor-claude-agent:latest .
+
+# Test-only images consumed by the services/examples integration harnesses.
+# Built ONCE here by stable name (never published, so :latest only) and
+# referenced BY NAME from the tests — never rebuilt inline at test time.
+# An inline testcontainers WithDockerfile build with the repo root as
+# context re-tags on every source edit, orphaning the prior image ID as a
+# dangling <none> layer stack each run; hundreds of those accumulate and
+# wedge the daemon. Build context stays the repo root for the same reason
+# as service-images: the Go builds need go.work + the workspace modules.
+test-images:
+	docker build -f lib/services/test/stubexecutor/Dockerfile.stubexecutor -t rimsky-test/stubexecutor:latest .
+	docker build -f lib/services/test/scenarios/claude_agent_fake_cli/Dockerfile.fake-claude-agent -t rimsky-test/claude-agent-fake:latest .
+	docker build -f lib/services/test/overlapproducer/Dockerfile.overlapproducer -t rimsky-test/overlapproducer:latest .
+	docker build -f examples/claimproducer/Dockerfile.example -t rimsky-example/claim-producer:latest .
+	docker build -f examples/validation/Dockerfile.example -t rimsky-example/validation:latest .
 
 # The 15-image set published by this repo. Single source of truth for `scan`
 # and (in symbolic form) push-images. Order matters for push-images:
@@ -357,10 +373,10 @@ push-images: check-clean buildx-builder
 #   scan           — docker scout cves against every locally-built image
 #   push-images    — buildx build + push with SBOM + provenance attestations
 #
-# test-all itself depends on core-images + service-images (see its comment
-# above): the services scenarios pull the :latest tags from the LOCAL docker
-# daemon, so images must be built from the current source before the suites
-# run. Listing the image targets explicitly here as well keeps the chain's
+# test-all itself depends on core-images + service-images + test-images
+# (see its comment above): the services scenarios pull the :latest tags from
+# the LOCAL docker daemon, so images must be built from the current source
+# before the suites run. Listing the image targets explicitly here as well keeps the chain's
 # ordering self-documenting; make deduplicates the prerequisites, so each
 # image set builds once per invocation and test-all always exercises the
 # same binaries that scan + push-images later ship.

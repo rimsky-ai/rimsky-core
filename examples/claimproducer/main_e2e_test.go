@@ -10,10 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -342,21 +339,11 @@ func categorize(active, pending, fresh, failed int) string {
 	return "idle"
 }
 
-var exampleProducerBuildMu sync.Mutex
+const exampleClaimProducerImage = "rimsky-example/claim-producer:latest"
 
 func startExampleClaimProducerOnNetwork(ctx context.Context, t *testing.T, networkName, alias string) (endpoint string) {
 	t.Helper()
-	exampleProducerBuildMu.Lock()
-	defer exampleProducerBuildMu.Unlock()
-
-	c, err := testcontainers.Run(ctx, "",
-		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
-			Context:    repoRoot(),
-			Dockerfile: "examples/claimproducer/Dockerfile.example",
-			Repo:       "rimsky-example/claim-producer",
-			Tag:        "latest",
-			KeepImage:  true,
-		}),
+	c, err := testcontainers.Run(ctx, exampleClaimProducerImage,
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithExposedPorts("9400/tcp"),
 		testcontainers.WithWaitStrategy(
@@ -372,11 +359,6 @@ func startExampleClaimProducerOnNetwork(ctx context.Context, t *testing.T, netwo
 		_ = c.Terminate(termCtx)
 	})
 	return alias + ":9400"
-}
-
-func repoRoot() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
 
 func freeHostPort(t *testing.T) int {

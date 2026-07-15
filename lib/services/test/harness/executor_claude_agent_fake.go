@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -17,7 +16,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-var fakeClaudeBuildMu sync.Mutex
+const claudeAgentFakeImage = "rimsky-test/claude-agent-fake:latest"
 
 type ClaudeAgentFakeOptions struct {
 	McpAllowlist         []string
@@ -62,15 +61,7 @@ func StartClaudeAgentFakeOnNetwork(
 		})
 	}
 
-	fakeClaudeBuildMu.Lock()
-	c, err := runWithRetry(ctx, "",
-		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
-			Context:    repoRoot(),
-			Dockerfile: "lib/services/test/scenarios/claude_agent_fake_cli/Dockerfile.fake-claude-agent",
-			Repo:       "rimsky-test/claude-agent-fake",
-			Tag:        "latest",
-			KeepImage:  true,
-		}),
+	c, err := runWithRetry(ctx, claudeAgentFakeImage,
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithFiles(files...),
@@ -79,7 +70,6 @@ func StartClaudeAgentFakeOnNetwork(
 			wait.ForListeningPort("9090/tcp").WithStartupTimeout(120*time.Second),
 		),
 	)
-	fakeClaudeBuildMu.Unlock()
 	if err != nil {
 		t.Fatalf("harness: start claude-agent-fake: %v", err)
 	}

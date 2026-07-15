@@ -6,8 +6,6 @@ package harness
 
 import (
 	"context"
-	"path/filepath"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -18,13 +16,12 @@ import (
 )
 
 const (
+	stubExecutorImage  = "rimsky-test/stubexecutor:latest"
 	sharedStubAlias    = "executor-stub"
 	sharedStubErrAlias = "executor-stub-erroring"
 )
 
 var (
-	stubBuildMu sync.Mutex
-
 	stubOnce    sync.Once
 	stubErr     error
 	stubErrOnce sync.Once
@@ -60,16 +57,7 @@ func launchExecutorStub(ctx context.Context, networkName, alias string, forceErr
 	if forceError {
 		env["EXECUTOR_STUB_FORCE_ERROR"] = "1"
 	}
-	stubBuildMu.Lock()
-	defer stubBuildMu.Unlock()
-	_, err := runWithRetry(ctx, "",
-		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
-			Context:    repoRoot(),
-			Dockerfile: "lib/services/test/stubexecutor/Dockerfile.stubexecutor",
-			Repo:       "rimsky-test/stubexecutor",
-			Tag:        "latest",
-			KeepImage:  true,
-		}),
+	_, err := runWithRetry(ctx, stubExecutorImage,
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9300/tcp"),
@@ -78,9 +66,4 @@ func launchExecutorStub(ctx context.Context, networkName, alias string, forceErr
 		),
 	)
 	return err
-}
-
-func repoRoot() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", ".."))
 }

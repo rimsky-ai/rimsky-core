@@ -8,10 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -167,21 +164,11 @@ func validatedTemplate(name, selector string) map[string]any {
 	}
 }
 
-var exampleValidatorBuildMu sync.Mutex
+const exampleValidatorImage = "rimsky-example/validation:latest"
 
 func startExampleValidatorOnNetwork(ctx context.Context, t *testing.T, networkName, alias string) (endpoint string) {
 	t.Helper()
-	exampleValidatorBuildMu.Lock()
-	defer exampleValidatorBuildMu.Unlock()
-
-	c, err := testcontainers.Run(ctx, "",
-		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
-			Context:    repoRoot(),
-			Dockerfile: "examples/validation/Dockerfile.example",
-			Repo:       "rimsky-example/validation",
-			Tag:        "latest",
-			KeepImage:  true,
-		}),
+	c, err := testcontainers.Run(ctx, exampleValidatorImage,
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithExposedPorts("9400/tcp"),
 		testcontainers.WithWaitStrategy(
@@ -197,9 +184,4 @@ func startExampleValidatorOnNetwork(ctx context.Context, t *testing.T, networkNa
 		_ = c.Terminate(termCtx)
 	})
 	return alias + ":9400"
-}
-
-func repoRoot() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
