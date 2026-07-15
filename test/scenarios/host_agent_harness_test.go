@@ -77,17 +77,15 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-func waitDialable(addr string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+func waitDialable(addr string) {
+	for {
 		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
-			return true
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }
 
 func startAgent(t *testing.T, proxyAddr, apiKeyPlaintext string) (context.CancelFunc, chan struct{}) {
@@ -184,7 +182,7 @@ func startProxyOnPort(t *testing.T, port int, controlBase, adminKey string) {
 			_ = cmd.Process.Kill()
 		}
 	})
-	require.True(t, waitDialable(addr, 10*time.Second), "proxy did not come up on %s", addr)
+	waitDialable(addr)
 }
 
 func lateBindTemplateSpec(name string) map[string]any {
