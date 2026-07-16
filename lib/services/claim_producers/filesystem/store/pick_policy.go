@@ -225,7 +225,7 @@ func (s *Store) tryRenameClaim(claimID, selector string, pp *PickPolicy, availDi
 		if err != nil {
 			return claimproducer.OpenOutcome{}, false, err
 		}
-		scope, err := json.Marshal(subPath)
+		scope, err := s.scopeBytes(subPath)
 		if err != nil {
 			return claimproducer.OpenOutcome{}, false, err
 		}
@@ -346,7 +346,7 @@ func (s *Store) popOne(claimID, selector string, pp *PickPolicy, availDir, inPro
 		if err != nil {
 			return PickedItem{}, false, err
 		}
-		scope, err := json.Marshal(subPath)
+		scope, err := s.scopeBytes(subPath)
 		if err != nil {
 			return PickedItem{}, false, err
 		}
@@ -410,8 +410,14 @@ func (s *Store) findByScope(scope []byte) (pp *PickPolicy, selector, entry, fold
 	if subPath == "" {
 		return nil, "", "", ""
 	}
+	fold := func(p string) string {
+		if s.caseFold {
+			return strings.ToLower(p)
+		}
+		return p
+	}
 	for sel, candidate := range s.pickPolicies {
-		policyRoot := candidate.Root
+		policyRoot := fold(candidate.Root)
 		var wantFolder string
 		switch {
 		case subPath == policyRoot:
@@ -433,7 +439,7 @@ func (s *Store) findByScope(scope []byte) (pp *PickPolicy, selector, entry, fold
 		}
 		for _, e := range entries {
 			f, c, _, perr := parseFromRight(e.Name())
-			if perr != nil || f != wantFolder || !strings.HasPrefix(c, batchLeaseIDPrefix) {
+			if perr != nil || fold(f) != wantFolder || !strings.HasPrefix(c, batchLeaseIDPrefix) {
 				continue
 			}
 			return candidate, sel, e.Name(), f

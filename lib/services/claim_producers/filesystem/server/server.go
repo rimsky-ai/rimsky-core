@@ -266,7 +266,7 @@ func (s *Server) splitListArray(_ context.Context, parent parentClaimInfo, parti
 	}
 	subs, err := listarray.ToSubScopes(req, func(key string) ([]byte, error) {
 		syntheticPath := filepath.Join(parent.AbsPath, "_list", key)
-		return json.Marshal(syntheticPath)
+		return s.store.ScopeBytesForAbs(syntheticPath)
 	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal,
@@ -437,14 +437,18 @@ func (s *Server) splitExpandFolder(_ context.Context, parent parentClaimInfo, ex
 				return nil
 			}
 		}
-		pathBytes, mErr := json.Marshal(p)
+		addrBytes, mErr := json.Marshal(p)
 		if mErr != nil {
 			return mErr
 		}
+		scopeBytes, sErr := s.store.ScopeBytesForAbs(p)
+		if sErr != nil {
+			return sErr
+		}
 		out = append(out, &genv1.SubScopeDescriptor{
 			PartitionKey:   filepath.ToSlash(relPath),
-			ClaimScopeData: pathBytes,
-			Address:        pathBytes,
+			ClaimScopeData: scopeBytes,
+			Address:        addrBytes,
 			Payload:        nil,
 		})
 		return nil

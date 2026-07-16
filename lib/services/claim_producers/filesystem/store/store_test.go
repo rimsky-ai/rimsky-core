@@ -196,3 +196,31 @@ func TestCapabilitiesIsSyncEnvelope(t *testing.T) {
 		t.Fatalf("expected envelope [sync], got %v", caps.WriteSemanticsAllowed)
 	}
 }
+
+func TestOpenScoped_CaseFoldConsistency(t *testing.T) {
+	st, err := New(Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	o1, err := st.openScoped("c1", "Docs/A")
+	if err != nil {
+		t.Fatalf("openScoped Docs/A: %v", err)
+	}
+	o2, err := st.openScoped("c2", "docs/a")
+	if err != nil {
+		t.Fatalf("openScoped docs/a: %v", err)
+	}
+	equal := string(o1.Result.ClaimScope) == string(o2.Result.ClaimScope)
+	if equal != st.caseFold {
+		t.Errorf("scope equality for Docs/A vs docs/a = %v; must equal caseFold = %v (folding gates the byte-equal conflict predicate on case-insensitive filesystems)", equal, st.caseFold)
+	}
+	if st.caseFold {
+		var scope string
+		if err := json.Unmarshal(o1.Result.ClaimScope, &scope); err != nil {
+			t.Fatalf("scope not a JSON string: %v", err)
+		}
+		if scope != strings.ToLower(scope) {
+			t.Errorf("case-insensitive root: scope %q must be folded to lowercase", scope)
+		}
+	}
+}

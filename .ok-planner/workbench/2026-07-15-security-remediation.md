@@ -11,9 +11,10 @@ isolated is the whole point of the split.
 
 ## Status
 
-40 rows total. **16 fixed, 2 accepted, 22 open.** The claude-agent executor
+40 rows total. **18 fixed, 2 accepted, 20 open.** The claude-agent executor
 cluster is fully closed (9 fixed + 2 accepted); the core validation-bypass
-cluster is fully closed (3 fixed); the SSRF/open-egress pair is fixed (2).
+cluster is fully closed (3 fixed); the SSRF/open-egress pair is fixed (2); the
+filesystem claim-producer canonicalization pair is fixed (2).
 
 - **2 fixed in Track 0b** of the drift work (id `1` proxy Register auth, `1801`
   unguarded schema drop/rename).
@@ -93,6 +94,32 @@ cluster is fully closed (3 fixed); the SSRF/open-egress pair is fixed (2).
   would otherwise match). The services harness sets the allowlist so its
   host-gateway poll still works; verified against **freshly rebuilt** sensor-http
   + http-node images (sensor/portable/bundled/smoke scenarios green), full lint.
+
+- **Filesystem claim-producer canonicalization pair FIXED (2 rows):** `1745`
+  (major, CONFIRMED) and `1774` (minor) both broke the byte-equal conflict
+  predicate by emitting non-canonical scope bytes. `1745`: the two SplitScope
+  fan-out sites (`splitExpandFolder`, `splitListArray`) marshaled **absolute**
+  paths into `claim_scope_data` while `Open` and `BatchPop`/`popOne` marshaled
+  **relative** paths, so a fan-out sub-claim on a file and a direct `Open` of the
+  same file never collided (two concurrent rw claims undetected), and
+  `server_test.go` asserted the absolute shape. `1774`: canonicalization was
+  purely lexical, so on a case-insensitive FS (macOS/APFS dev) `Docs/A` and
+  `docs/a` emitted different bytes for the same file. Fix: one `Store`
+  canonicalization method (`root-relative → clean → fold if case-insensitive →
+  marshal`) routes all four emission sites; a probe at `New` sets `caseFold` only
+  when the root's FS is case-insensitive (so case-sensitive production is
+  byte-for-byte unchanged); addresses stay absolute; `findByScope` was made
+  fold-aware so the Commit/Abandon reverse lookup still matches on a
+  case-insensitive FS. **Overshoot:** folding forced `findByScope`
+  (`pick_policy.go`) to fold its policy-root/on-disk-folder comparison too, else
+  a restart-fallback Commit would fail to clear an in_progress entry (queue
+  livelock) — fixed in the same change. Regression tests: a fan-out sub-scope
+  byte-equals a direct `Open` of the same file (flipping the absolute assertion +
+  a root-relative list-shape assertion); a deterministic store-package fold test
+  whose verdict is host-FS-independent. Verified: `lib/services` build + vet +
+  full `make lint` green; the filesystem claim-producer **docker** scenarios
+  (incl. pick-vs-scope + cross-queue concurrency) and the stores smoke test green
+  against a **freshly rebuilt** `rimsky-claim-producer-filesystem:latest`.
 
 ## Approach
 

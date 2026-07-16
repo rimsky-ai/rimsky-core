@@ -110,8 +110,11 @@ func TestSplitScope_ListShape(t *testing.T) {
 			t.Errorf("PartitionKey=%q: ClaimScopeData not a JSON string: %v", sub.PartitionKey, err)
 			continue
 		}
-		if !filepath.IsAbs(scopePath) {
-			t.Errorf("PartitionKey=%q: ClaimScopeData path %q should be absolute", sub.PartitionKey, scopePath)
+		if filepath.IsAbs(scopePath) {
+			t.Errorf("PartitionKey=%q: ClaimScopeData path %q must be store-root-relative, not absolute", sub.PartitionKey, scopePath)
+		}
+		if want := filepath.Join("parent", "_list", sub.PartitionKey); scopePath != want {
+			t.Errorf("PartitionKey=%q: ClaimScopeData = %q, want root-relative %q", sub.PartitionKey, scopePath, want)
 		}
 	}
 }
@@ -243,6 +246,49 @@ func TestSplitScope_ExpandFolderShape(t *testing.T) {
 		if gotKeys[i] != want[i] {
 			t.Errorf("PartitionKey[%d] = %q, want %q", i, gotKeys[i], want[i])
 		}
+	}
+}
+
+func TestSplitScope_ExpandFolderScopeMatchesDirectOpen(t *testing.T) {
+	srv, _, root := newServerWithStore(t)
+	parentDir := filepath.Join(root, "expand-parent")
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		t.Fatalf("mkdir parent: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parentDir, "a.json"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write a.json: %v", err)
+	}
+	if _, err := srv.Open(context.Background(), &genv1.OpenRequest{
+		ClaimId: "p1", Selector: "expand-parent", Intent: "rw",
+	}); err != nil {
+		t.Fatalf("Open parent: %v", err)
+	}
+	resp, err := srv.SplitScope(context.Background(), &genv1.SplitScopeRequest{
+		ClaimHandleId:    "p1",
+		PartitionRequest: []byte(`{"expand_folder":{"filter":"*.json"}}`),
+	})
+	if err != nil {
+		t.Fatalf("SplitScope: %v", err)
+	}
+	var fanoutScope []byte
+	for _, sub := range resp.SubScopes {
+		if sub.PartitionKey == "a.json" {
+			fanoutScope = sub.ClaimScopeData
+		}
+	}
+	if fanoutScope == nil {
+		t.Fatal("no fan-out sub-scope emitted for a.json")
+	}
+	direct, err := srv.Open(context.Background(), &genv1.OpenRequest{
+		ClaimId: "d1", Selector: "expand-parent/a.json", Intent: "rw",
+	})
+	if err != nil {
+		t.Fatalf("Open direct: %v", err)
+	}
+	directScope := direct.GetAcquired().GetClaimScope()
+	if !bytes.Equal(fanoutScope, directScope) {
+		t.Errorf("fan-out scope %s must byte-equal a direct Open of the same file %s; otherwise the byte-equal conflict predicate cannot relate the two rw claims",
+			string(fanoutScope), string(directScope))
 	}
 }
 

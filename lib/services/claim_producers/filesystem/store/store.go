@@ -40,12 +40,45 @@ type Config struct {
 
 type Store struct {
 	root         string
+	caseFold     bool
 	pickPolicies map[string]*PickPolicy
 	mu           sync.Mutex
 
 	claims map[string]string
 
 	ledger *ClaimLedger
+}
+
+func (s *Store) scopeBytes(relPath string) ([]byte, error) {
+	cleaned := filepath.Clean(relPath)
+	if s.caseFold {
+		cleaned = strings.ToLower(cleaned)
+	}
+	return json.Marshal(cleaned)
+}
+
+func (s *Store) ScopeBytesForAbs(absPath string) ([]byte, error) {
+	rel, err := filepath.Rel(s.root, absPath)
+	if err != nil {
+		return nil, fmt.Errorf("filesystem store: scope for %q: %w", absPath, err)
+	}
+	return s.scopeBytes(rel)
+}
+
+func detectCaseInsensitiveRoot(root string) bool {
+	f, err := os.CreateTemp(root, "rimsky-fs-case-probe-lower-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	defer func() { _ = os.Remove(name) }()
+	upper := filepath.Join(filepath.Dir(name), strings.ToUpper(filepath.Base(name)))
+	if upper == name {
+		return false
+	}
+	_, statErr := os.Stat(upper)
+	return statErr == nil
 }
 
 func (s *Store) Ledger() *ClaimLedger { return s.ledger }
@@ -101,6 +134,7 @@ func New(cfg Config) (*Store, error) {
 	}
 	return &Store{
 		root:         cfg.Root,
+		caseFold:     detectCaseInsensitiveRoot(cfg.Root),
 		pickPolicies: cfg.PickPolicies,
 		claims:       make(map[string]string),
 		ledger:       NewClaimLedger(1024),
@@ -154,7 +188,7 @@ func (s *Store) openScoped(claimID, selector string) (claimproducer.OpenOutcome,
 			"filesystem store: Open: selector %q resolves to the root itself; selectors must name a concrete entry", raw)
 	}
 
-	scopeBytes, err := json.Marshal(cleaned)
+	scopeBytes, err := s.scopeBytes(cleaned)
 	if err != nil {
 		return claimproducer.OpenOutcome{}, fmt.Errorf("filesystem store: marshal scope: %w", err)
 	}
