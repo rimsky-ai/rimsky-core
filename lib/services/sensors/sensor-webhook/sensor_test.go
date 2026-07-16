@@ -234,6 +234,60 @@ func TestIdempotencyHeader_FailedPostAllowsRetry(t *testing.T) {
 	}
 }
 
+func TestServeWebhook_RejectsOversizedBody(t *testing.T) {
+	var readMu sync.Mutex
+	upstreamReads := 0
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		readMu.Lock()
+		upstreamReads++
+		readMu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	router := chi.NewRouter()
+	s := NewSensorService(rimsky.URL, router, noopLogger{})
+	cfg := map[string]any{"path_prefix": "/wh/size"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "webhook", ResolvedConfig: raw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	oversized := bytes.Repeat([]byte("a"), int(maxWebhookBodyBytes)+1)
+	resp, err := http.Post(srv.URL+"/wh/size", "application/octet-stream", bytes.NewReader(oversized))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized status: %d (want 413)", resp.StatusCode)
+	}
+	readMu.Lock()
+	if upstreamReads != 0 {
+		t.Errorf("upstream pushes on oversized body: %d (want 0; must reject before forwarding)", upstreamReads)
+	}
+	readMu.Unlock()
+
+	normal := []byte(`{"event":"ok"}`)
+	okResp, err := http.Post(srv.URL+"/wh/size", "application/json", bytes.NewReader(normal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	okResp.Body.Close()
+	if okResp.StatusCode != http.StatusOK {
+		t.Errorf("normal-body status: %d (want 200)", okResp.StatusCode)
+	}
+	readMu.Lock()
+	defer readMu.Unlock()
+	if upstreamReads != 1 {
+		t.Errorf("upstream pushes on normal body: %d (want 1)", upstreamReads)
+	}
+}
+
 func TestUnsubscribeIdempotent(t *testing.T) {
 	router := chi.NewRouter()
 	s := NewSensorService("", router, noopLogger{})

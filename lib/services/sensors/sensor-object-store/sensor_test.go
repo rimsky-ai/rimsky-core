@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -312,6 +313,36 @@ func TestTick_FailedPostDoesNotAdvanceWatermark(t *testing.T) {
 	s.mu.Unlock()
 	if watermark != "events/b.json" {
 		t.Errorf("watermark after recovery: %q (want events/b.json)", watermark)
+	}
+}
+
+func TestPostMessage_EscapesInstanceIDPathSegment(t *testing.T) {
+	const hostileInstanceID = "../../../v1/auth/whoami?x=/..%2e"
+	gotSegment := make(chan string, 1)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		escaped := r.URL.EscapedPath()
+		prefix, suffix := "/v1/instances/", "/messages"
+		if !strings.HasPrefix(escaped, prefix) || !strings.HasSuffix(escaped, suffix) {
+			t.Errorf("escaped path escaped its route shape: %q", escaped)
+		}
+		segment := strings.TrimSuffix(strings.TrimPrefix(escaped, prefix), suffix)
+		gotSegment <- segment
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	w := &Watch{SubscriptionID: "w1", InstanceID: hostileInstanceID, MessageType: "invalidate"}
+	if err := s.postMessage(context.Background(), w, map[string]any{"k": "v"}, "idem-1"); err != nil {
+		t.Fatalf("postMessage: %v", err)
+	}
+
+	segment := <-gotSegment
+	if strings.Contains(segment, "/") {
+		t.Errorf("instance-id segment broke out of its path position: %q", segment)
+	}
+	if decoded, err := url.PathUnescape(segment); err != nil || decoded != hostileInstanceID {
+		t.Errorf("segment %q did not round-trip to the raw instance id (decoded=%q err=%v)", segment, decoded, err)
 	}
 }
 

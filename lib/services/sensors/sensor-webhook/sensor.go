@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,8 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
 )
+
+const maxWebhookBodyBytes int64 = 1 << 20
 
 type Watch struct {
 	SubscriptionID    string
@@ -194,8 +197,13 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 }
 
 func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http.Request) {
-	body, err := io.ReadAll(req.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(rw, req.Body, maxWebhookBodyBytes))
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(rw, "request body exceeds size limit", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(rw, "read body", http.StatusBadRequest)
 		return
 	}
