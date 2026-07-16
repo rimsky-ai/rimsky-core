@@ -11,10 +11,12 @@ isolated is the whole point of the split.
 
 ## Status
 
-40 rows total. **18 fixed, 2 accepted, 20 open.** The claude-agent executor
+40 rows total. **28 fixed, 2 accepted, 10 open.** The claude-agent executor
 cluster is fully closed (9 fixed + 2 accepted); the core validation-bypass
 cluster is fully closed (3 fixed); the SSRF/open-egress pair is fixed (2); the
-filesystem claim-producer canonicalization pair is fixed (2).
+filesystem claim-producer canonicalization pair is fixed (2); the
+mechanically-obvious batch (injection/race/escaping/coverage) is fixed (10). The
+10 that remain are the auth-posture judgment cluster, tracked below.
 
 - **2 fixed in Track 0b** of the drift work (id `1` proxy Register auth, `1801`
   unguarded schema drop/rename).
@@ -120,6 +122,60 @@ filesystem claim-producer canonicalization pair is fixed (2).
   full `make lint` green; the filesystem claim-producer **docker** scenarios
   (incl. pick-vs-scope + cross-queue concurrency) and the stores smoke test green
   against a **freshly rebuilt** `rimsky-claim-producer-filesystem:latest`.
+
+- **Mechanically-obvious batch FIXED (10 rows):** the injection/race/escaping/
+  coverage findings whose correct behavior was not in question — fixed in one
+  file-disjoint parallel pass (per-file subagents on the security tier, verified
+  and committed centrally). All with deterministic regression tests.
+  - **`1949`** (major) unbounded `io.ReadAll` on the unauthenticated webhook
+    endpoint → `http.MaxBytesReader` at a named 1 MiB cap, 413 on overflow.
+  - **`1956`** instance-id from the unauthenticated Subscribe surface
+    interpolated into the message-send URL path unescaped (path traversal to
+    other control-api routes) → `url.PathEscape` on the untrusted segment.
+  - **`1703`** `CanonicalizeSendMessageSugar` duplicated the `send_message` kind
+    literal across the graph/runtime layer boundary and silently no-op'd on an
+    unregistered alias (failing at dispatch, not deploy). Relocated the canonical
+    string to `lib/foundation/spec` (the common importable ancestor —
+    `graph-purity` forbids graph→runtime), so both sides resolve one symbol
+    statically; the unregistered-alias case now errors at canonicalize/deploy.
+  - **`1713` + `377`** `pathAllowed` glob-matched the un-canonicalized binding
+    path, so a symlink under an allowed dir or a relative/unclean pattern escaped
+    the allowlist → canonicalize both sides (`Abs`→`Clean`→`EvalSymlinks`, fail
+    closed on unresolvable) before matching, and execute the resolved path to
+    close the validate-vs-exec gap.
+  - **`1724`** free-port TOCTOU (probe listener closed before the child binds,
+    spurious `spawn_failed`) → bounded 3-attempt re-pick on a child-didn't-bind
+    sentinel, port source injected for a deterministic collision test.
+  - **`1494`** breakpoint queue-cap check + insert in separate txns →
+    concurrent evaluators could exceed cap. Added `Lock` to the breakpoint table
+    (`SELECT … FOR UPDATE` on Postgres, immediate-txn on SQLite); cap-check +
+    conditional insert now one serialized txn. Proven with a real-Postgres racer
+    test (the load-bearing one — MVCC would slip without the lock).
+  - **`1299`** (major) frame-end TOCTOU (`ended_at` stamped without re-checking
+    the no-in-flight predicate in-tx) → added `EndFrameIfSettled` (both backends):
+    a `FOR UPDATE` re-check + conditional stamp in one txn that conflicts with the
+    FK lock every run-insert takes, so a concurrent run can't land in a just-ended
+    frame. Raw `MarkFrameEnded` kept for the test scaffolding that force-ends.
+  - **`2177`** (major, CONFIRMED) last-active-key revoke TOCTOU was real — two
+    concurrent revokes of distinct last keys both passed the `active<=1` guard and
+    dropped the deployment to anonymous mode. **Fixed at root:** added
+    `RevokeIfNotLast` (count-active `FOR UPDATE` + revoke in one txn, consistent
+    lock order); `handleRevokeKey` routes through it. Barrier-synced concurrent
+    regression test + a conformance subtest across both backends.
+  - **`2179`** audit payloads never asserted to exclude bearer plaintext →
+    added the assertion; it **passes against current code** (the audit-write path
+    only persists request bodies, never the `Authorization` header), so no leak —
+    the test locks the property in.
+  - **Flake fix (overshoot, `rules.md` "Fix Every Bug You Find"):** the retry
+    loop for `1724` pushed `TestSpawnService_ReadyTimeoutReapsChild`'s
+    never-binding path from ~200ms to ~3.5s against a `elapsed > 5s` wall-clock
+    verdict — a load-dependent pass/fail rules.md forbids. Removed the timing
+    verdict; the deterministic signal assertions stay and the suite `-timeout` is
+    the hang backstop.
+  - Verified: both modules build; `make lint` (all modules) clean; the full
+    changed-package set + persistence conformance + auth scenarios green under
+    `-race`; the two sensor images (`rimsky-sensor-webhook`,
+    `rimsky-sensor-object-store`) **rebuilt fresh** and their e2e scenarios green.
 
 ## Approach
 
