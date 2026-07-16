@@ -198,6 +198,53 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 
+	t.Run("RevokeIfNotLast", func(t *testing.T) {
+		all, err := keys.List(ctx, true, "", nil)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		for _, k := range all {
+			if k.RevokedAt == nil {
+				mustMarkRevoked(t, ctx, tables, keys, k.ID, now)
+			}
+		}
+
+		soleID := uuid.New()
+		soleHash := sha256Of([]byte("rk_guard_sole"))
+		mustInsert(t, ctx, tables, keys, persistence.APIKey{
+			ID: soleID, KeyHash: soleHash[:], Name: "guard-sole",
+			Permissions: []byte(`[{"action":"*"}]`), CreatedAt: now,
+		})
+		if res, err := keys.RevokeIfNotLast(ctx, soleID, now, false, nil); err != nil || res != persistence.RevokeResultWouldLeaveNoneActive {
+			t.Fatalf("revoke sole active without force: res=%v err=%v (want WouldLeaveNoneActive)", res, err)
+		}
+		if n, err := keys.ActiveCount(ctx, now, nil); err != nil || n != 1 {
+			t.Fatalf("sole key must survive refused revoke: active=%d err=%v", n, err)
+		}
+
+		secondID := uuid.New()
+		secondHash := sha256Of([]byte("rk_guard_second"))
+		mustInsert(t, ctx, tables, keys, persistence.APIKey{
+			ID: secondID, KeyHash: secondHash[:], Name: "guard-second",
+			Permissions: []byte(`[{"action":"*"}]`), CreatedAt: now,
+		})
+		if res, err := keys.RevokeIfNotLast(ctx, secondID, now, false, nil); err != nil || res != persistence.RevokeResultRevoked {
+			t.Fatalf("revoke non-last active: res=%v err=%v (want Revoked)", res, err)
+		}
+		if res, err := keys.RevokeIfNotLast(ctx, soleID, now, false, nil); err != nil || res != persistence.RevokeResultWouldLeaveNoneActive {
+			t.Fatalf("revoke now-last active without force: res=%v err=%v (want WouldLeaveNoneActive)", res, err)
+		}
+		if res, err := keys.RevokeIfNotLast(ctx, soleID, now, true, nil); err != nil || res != persistence.RevokeResultRevoked {
+			t.Fatalf("force revoke last active: res=%v err=%v (want Revoked)", res, err)
+		}
+		if res, err := keys.RevokeIfNotLast(ctx, soleID, now, false, nil); err != nil || res != persistence.RevokeResultAlreadyRevoked {
+			t.Fatalf("revoke already-revoked: res=%v err=%v (want AlreadyRevoked)", res, err)
+		}
+		if res, err := keys.RevokeIfNotLast(ctx, uuid.New(), now, false, nil); err != nil || res != persistence.RevokeResultNotFound {
+			t.Fatalf("revoke missing: res=%v err=%v (want NotFound)", res, err)
+		}
+	})
+
 	t.Run("SweepRotationGrace", func(t *testing.T) {
 		id := uuid.New()
 		hash := sha256Of([]byte("rk_sweep"))

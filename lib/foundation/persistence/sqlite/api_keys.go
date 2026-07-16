@@ -173,6 +173,65 @@ func (b *apiKeysImpl) markRevokedInTx(ctx context.Context, id shared.UUID, now t
 	return false, exists != 0, nil
 }
 
+func (b *apiKeysImpl) RevokeIfNotLast(ctx context.Context, id shared.UUID, now time.Time, force bool, tx persistence.Tx) (persistence.RevokeResult, error) {
+	if tx == nil {
+		var result persistence.RevokeResult
+		txErr := (*tablesImpl)(b).Transaction(ctx, func(ctx context.Context, itx persistence.Tx) error {
+			var ierr error
+			result, ierr = b.revokeIfNotLastInTx(ctx, id, now, force, itx)
+			return ierr
+		})
+		return result, txErr
+	}
+	return b.revokeIfNotLastInTx(ctx, id, now, force, tx)
+}
+
+func (b *apiKeysImpl) revokeIfNotLastInTx(ctx context.Context, id shared.UUID, now time.Time, force bool, tx persistence.Tx) (persistence.RevokeResult, error) {
+	nowStr := now.UTC().Format(timeLayoutFixedNanos)
+	if !force {
+		var targetActive int
+		if err := b.run(tx).QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM rimsky_api_keys
+			  WHERE id = ?
+			    AND revoked_at IS NULL
+			    AND (expires_at IS NULL OR expires_at > ?)
+			    AND (revoke_at IS NULL OR revoke_at > ?)`, id.String(), nowStr, nowStr).Scan(&targetActive); err != nil {
+			return 0, fmt.Errorf("sqlite.APIKeys.RevokeIfNotLast.targetActive: %w", err)
+		}
+		if targetActive > 0 {
+			var active int
+			if err := b.run(tx).QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM rimsky_api_keys
+				  WHERE revoked_at IS NULL
+				    AND (expires_at IS NULL OR expires_at > ?)
+				    AND (revoke_at IS NULL OR revoke_at > ?)`, nowStr, nowStr).Scan(&active); err != nil {
+				return 0, fmt.Errorf("sqlite.APIKeys.RevokeIfNotLast.activeCount: %w", err)
+			}
+			if active <= 1 {
+				return persistence.RevokeResultWouldLeaveNoneActive, nil
+			}
+		}
+	}
+	res, err := b.run(tx).ExecContext(ctx,
+		`UPDATE rimsky_api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+		nowStr, id.String())
+	if err != nil {
+		return 0, fmt.Errorf("sqlite.APIKeys.RevokeIfNotLast.update: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 1 {
+		return persistence.RevokeResultRevoked, nil
+	}
+	var exists int
+	if err := b.run(tx).QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM rimsky_api_keys WHERE id = ?)`, id.String()).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("sqlite.APIKeys.RevokeIfNotLast.exists: %w", err)
+	}
+	if exists == 0 {
+		return persistence.RevokeResultNotFound, nil
+	}
+	return persistence.RevokeResultAlreadyRevoked, nil
+}
+
 func (b *apiKeysImpl) SetRevokeAt(ctx context.Context, id shared.UUID, at time.Time, tx persistence.Tx) error {
 	_, err := b.run(tx).ExecContext(ctx,
 		`UPDATE rimsky_api_keys SET revoke_at = ? WHERE id = ?`,

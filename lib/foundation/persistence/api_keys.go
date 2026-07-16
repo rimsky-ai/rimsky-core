@@ -33,6 +33,15 @@ var (
 	ErrAPIKeyHashCollision = errors.New("persistence: api-key key_hash collision (likely a stale row from a previous deploy; pre-v1: drop the row and retry)")
 )
 
+type RevokeResult int
+
+const (
+	RevokeResultNotFound RevokeResult = iota
+	RevokeResultAlreadyRevoked
+	RevokeResultWouldLeaveNoneActive
+	RevokeResultRevoked
+)
+
 // @concept: api-key
 type APIKeyTable interface {
 	Insert(ctx context.Context, k APIKey, tx Tx) error
@@ -48,6 +57,8 @@ type APIKeyTable interface {
 	ActiveCount(ctx context.Context, now time.Time, tx Tx) (int, error)
 
 	MarkRevoked(ctx context.Context, id shared.UUID, now time.Time, tx Tx) (changed bool, found bool, err error)
+
+	RevokeIfNotLast(ctx context.Context, id shared.UUID, now time.Time, force bool, tx Tx) (RevokeResult, error)
 
 	SetRevokeAt(ctx context.Context, id shared.UUID, at time.Time, tx Tx) error
 

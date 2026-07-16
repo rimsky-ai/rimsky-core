@@ -208,36 +208,43 @@ func handleRevokeKey(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		now := deps.AuthState.Clock.Now()
-		active, err := keys.ActiveCount(ctx, now, nil)
+		if ModeFromContext(ctx) == auth.ModeDryRun {
+			active, err := keys.ActiveCount(ctx, now, nil)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			thisRowActive := row.RevokedAt == nil &&
+				(row.ExpiresAt == nil || row.ExpiresAt.After(now)) &&
+				(row.RevokeAt == nil || row.RevokeAt.After(now))
+			if thisRowActive && active <= 1 && !force {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error":             "would leave zero active keys (anonymous mode); pass ?force_leave_anonymous=true to confirm",
+					"active_keys_after": 0,
+				})
+				return
+			}
+			WriteDryRunResponseForced(w, "would_have_revoked_key", map[string]any{
+				"key_id": row.ID.String(),
+			})
+			return
+		}
+		outcome, err := keys.RevokeIfNotLast(ctx, row.ID, now, force, nil)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		thisRowActive := row.RevokedAt == nil &&
-			(row.ExpiresAt == nil || row.ExpiresAt.After(now)) &&
-			(row.RevokeAt == nil || row.RevokeAt.After(now))
-		if thisRowActive && active <= 1 && !force {
+		switch outcome {
+		case persistence.RevokeResultNotFound:
+			notFoundResp(w, "no such key")
+			return
+		case persistence.RevokeResultWouldLeaveNoneActive:
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error":             "would leave zero active keys (anonymous mode); pass ?force_leave_anonymous=true to confirm",
 				"active_keys_after": 0,
 			})
 			return
-		}
-		if WriteDryRunResponse(w, r, "would_have_revoked_key", map[string]any{
-			"key_id": row.ID.String(),
-		}) {
-			return
-		}
-		changed, found, err := keys.MarkRevoked(ctx, row.ID, now, nil)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if !found {
-			notFoundResp(w, "no such key")
-			return
-		}
-		if !changed {
+		case persistence.RevokeResultAlreadyRevoked:
 			writeJSON(w, http.StatusOK, map[string]any{
 				"id":              row.ID,
 				"name":            row.Name,

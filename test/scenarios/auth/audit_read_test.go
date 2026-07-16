@@ -8,8 +8,14 @@
 package auth_test
 
 import (
+	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
 func auditRows(t *testing.T, f *authFixture, key, query string) []map[string]any {
@@ -465,6 +471,100 @@ func auditRowsWithKind(t *testing.T, f *authFixture, key, query string) []map[st
 		}
 	}
 	return out
+}
+
+func allAuditPayloads(t *testing.T, f *authFixture) []map[string]any {
+	t.Helper()
+	ctx := context.Background()
+	kinds := []string{
+		auth.EventAccessAttempted, auth.EventAccessDenied,
+		auth.EventKeyCreated, auth.EventKeyRevoked, auth.EventKeyRotated,
+	}
+	var out []map[string]any
+	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for _, k := range kinds {
+			rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{Kind: k}, persistence.ListPagination{Limit: 500}, tx)
+			if err != nil {
+				return err
+			}
+			for _, e := range rl.Events {
+				out = append(out, e.Payload)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("collect audit payloads: %v", err)
+	}
+	return out
+}
+
+func TestAuditContent_NoBearerSecretLeaks(t *testing.T) {
+	f := newAuthFixture(t)
+	defer f.Close()
+
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
+		"name":        "admin",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	adminKey, _ := adminBody["plaintext"].(string)
+	if adminKey == "" {
+		t.Fatalf("mint admin: %+v", adminBody)
+	}
+
+	if st, _ := f.request(t, "GET", "/v1/auth/keys", adminKey, nil); st != 200 {
+		t.Fatalf("admin read with bearer: %d", st)
+	}
+
+	_, narrowBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
+		"name":        "narrow",
+		"permissions": []map[string]any{{"action": "instance:read"}},
+	})
+	narrowKey, _ := narrowBody["plaintext"].(string)
+	if narrowKey == "" {
+		t.Fatalf("mint narrow: %+v", narrowBody)
+	}
+
+	_, rotBody := f.request(t, "POST", "/v1/auth/keys/narrow/rotate", adminKey, map[string]any{})
+	rotatedKey, _ := rotBody["plaintext"].(string)
+	if rotatedKey == "" {
+		t.Fatalf("rotate narrow: %+v", rotBody)
+	}
+
+	if st, _ := f.request(t, "POST", "/v1/auth/keys", rotatedKey, map[string]any{
+		"name":        "should-not-exist",
+		"permissions": []map[string]any{{"action": "instance:read"}},
+	}); st != 403 {
+		t.Fatalf("narrow-key create should be 403 (drives an access_denied audit row carrying the bearer identity): %d", st)
+	}
+
+	if st, _ := f.request(t, "DELETE", "/v1/auth/keys/narrow", adminKey, nil); st != 200 && st != 204 {
+		t.Fatalf("revoke narrow: %d", st)
+	}
+
+	const bogusBearer = "rk_bogus_secret_that_must_never_be_persisted_0123456789abcdef"
+	_, _ = f.request(t, "GET", "/v1/auth/keys", bogusBearer, nil)
+
+	secrets := []string{adminKey, narrowKey, rotatedKey, bogusBearer}
+
+	payloads := allAuditPayloads(t, f)
+	if len(payloads) == 0 {
+		t.Fatalf("no audit payloads collected — expected mint/rotate/revoke/denied/attempted rows")
+	}
+	for _, p := range payloads {
+		raw, err := json.Marshal(p)
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
+		s := string(raw)
+		for _, secret := range secrets {
+			if strings.Contains(s, secret) {
+				t.Fatalf("audit payload leaks a bearer plaintext secret (a persisted audit record must never contain the token): payload=%s", s)
+			}
+			if strings.Contains(s, "Bearer "+secret) {
+				t.Fatalf("audit payload leaks the Authorization header value: payload=%s", s)
+			}
+		}
+	}
 }
 
 func findRowMatching(rows []map[string]any, kind string, match func(map[string]any) bool) map[string]any {

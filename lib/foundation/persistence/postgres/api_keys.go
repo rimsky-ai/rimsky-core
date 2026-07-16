@@ -153,6 +153,71 @@ func (b *apiKeysImpl) MarkRevoked(ctx context.Context, id shared.UUID, now time.
 	return false, exists, nil
 }
 
+func (b *apiKeysImpl) RevokeIfNotLast(ctx context.Context, id shared.UUID, now time.Time, force bool, tx persistence.Tx) (persistence.RevokeResult, error) {
+	if tx == nil {
+		var result persistence.RevokeResult
+		txErr := (*tablesImpl)(b).Transaction(ctx, func(ctx context.Context, itx persistence.Tx) error {
+			var ierr error
+			result, ierr = b.revokeIfNotLastInTx(ctx, id, now, force, itx)
+			return ierr
+		})
+		return result, txErr
+	}
+	return b.revokeIfNotLastInTx(ctx, id, now, force, tx)
+}
+
+func (b *apiKeysImpl) revokeIfNotLastInTx(ctx context.Context, id shared.UUID, now time.Time, force bool, tx persistence.Tx) (persistence.RevokeResult, error) {
+	if !force {
+		rows, err := b.run(tx).Query(ctx,
+			`SELECT id FROM rimsky_api_keys
+			  WHERE revoked_at IS NULL
+			    AND (expires_at IS NULL OR expires_at > $1)
+			    AND (revoke_at IS NULL OR revoke_at > $1)
+			  ORDER BY id
+			  FOR UPDATE`, now)
+		if err != nil {
+			return 0, fmt.Errorf("postgres.APIKeys.RevokeIfNotLast.lockActive: %w", err)
+		}
+		var active int
+		var targetActive bool
+		for rows.Next() {
+			var rowID shared.UUID
+			if err := rows.Scan(&rowID); err != nil {
+				rows.Close()
+				return 0, fmt.Errorf("postgres.APIKeys.RevokeIfNotLast.scan: %w", err)
+			}
+			active++
+			if rowID == id {
+				targetActive = true
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return 0, fmt.Errorf("postgres.APIKeys.RevokeIfNotLast.rows: %w", err)
+		}
+		if targetActive && active <= 1 {
+			return persistence.RevokeResultWouldLeaveNoneActive, nil
+		}
+	}
+	tag, err := b.run(tx).Exec(ctx,
+		`UPDATE rimsky_api_keys SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL`, id, now)
+	if err != nil {
+		return 0, fmt.Errorf("postgres.APIKeys.RevokeIfNotLast.update: %w", err)
+	}
+	if tag.RowsAffected() == 1 {
+		return persistence.RevokeResultRevoked, nil
+	}
+	var exists bool
+	if err := b.run(tx).QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM rimsky_api_keys WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("postgres.APIKeys.RevokeIfNotLast.exists: %w", err)
+	}
+	if !exists {
+		return persistence.RevokeResultNotFound, nil
+	}
+	return persistence.RevokeResultAlreadyRevoked, nil
+}
+
 func (b *apiKeysImpl) SetRevokeAt(ctx context.Context, id shared.UUID, at time.Time, tx persistence.Tx) error {
 	_, err := b.run(tx).Exec(ctx,
 		`UPDATE rimsky_api_keys SET revoke_at = $2 WHERE id = $1`, id, at)

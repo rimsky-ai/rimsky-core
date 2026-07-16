@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -428,6 +429,86 @@ func TestRevokeGuard_RefuseLastKey(t *testing.T) {
 	code, body = f.request(t, "GET", "/v1/auth/status", "", nil)
 	if code != 200 || body["mode"] != "anonymous" {
 		t.Fatalf("post-force-revoke: %d %+v", code, body)
+	}
+}
+
+func TestRevokeGuard_ConcurrentLastKeyRace(t *testing.T) {
+	f := newAuthFixture(t)
+	defer f.Close()
+
+	_, aBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
+		"name":        "admin-a",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	keyA, _ := aBody["plaintext"].(string)
+	if keyA == "" {
+		t.Fatalf("mint admin-a: %+v", aBody)
+	}
+	_, bBody := f.request(t, "POST", "/v1/auth/keys", keyA, map[string]any{
+		"name":        "admin-b",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	keyB, _ := bBody["plaintext"].(string)
+	if keyB == "" {
+		t.Fatalf("mint admin-b: %+v", bBody)
+	}
+
+	ctx := context.Background()
+	now := f.clock.Now()
+	if n, err := f.db.Tables().APIKeys().ActiveCount(ctx, now, nil); err != nil || n != 2 {
+		t.Fatalf("pre-race active count: n=%d err=%v (want 2)", n, err)
+	}
+
+	type revoke struct{ bearer, target string }
+	reqs := []revoke{
+		{bearer: keyA, target: "admin-b"},
+		{bearer: keyB, target: "admin-a"},
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	codes := make([]int, len(reqs))
+	errs := make([]error, len(reqs))
+	for i, rq := range reqs {
+		wg.Add(1)
+		go func(i int, rq revoke) {
+			defer wg.Done()
+			req, err := http.NewRequest("DELETE", f.srv.URL+"/v1/auth/keys/"+rq.target, nil)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			req.Header.Set("Authorization", "Bearer "+rq.bearer)
+			<-start
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			_ = resp.Body.Close()
+			codes[i] = resp.StatusCode
+		}(i, rq)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("revoke request %d transport error: %v", i, err)
+		}
+	}
+
+	revoked := 0
+	for _, c := range codes {
+		if c == http.StatusOK {
+			revoked++
+		}
+	}
+	if revoked != 1 {
+		t.Fatalf("concurrent revoke of two distinct last active keys: %d requests succeeded (codes=%v); want exactly 1 — the last-active-key guard must let only one through", revoked, codes)
+	}
+
+	if n, err := f.db.Tables().APIKeys().ActiveCount(ctx, now, nil); err != nil || n != 1 {
+		t.Fatalf("post-race active count: n=%d err=%v (want 1) — n==0 proves the TOCTOU let both revokes commit and dropped the deployment into anonymous mode", n, err)
 	}
 }
 
