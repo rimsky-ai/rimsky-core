@@ -106,6 +106,9 @@ const (
 	SelfTarget = "self"
 )
 
+// @concept: message-sender-node
+const SendMessageKindName = "send_message"
+
 // @concept: claim
 type NodeClaimProducerRef struct {
 	Name     string          `yaml:"name" json:"name"`

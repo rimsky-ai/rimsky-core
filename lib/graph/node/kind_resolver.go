@@ -57,14 +57,11 @@ func CanonicalizeKindSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
 
 // @concept: message-sender-node
 // @concept: node
-func CanonicalizeSendMessageSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
+func CanonicalizeSendMessageSugar(tspec *TemplateSpec, aliases *KindAliasMap) error {
 	if tspec == nil || aliases == nil {
-		return
+		return nil
 	}
-	alias, ok := aliases.Resolve("send_message")
-	if !ok {
-		return
-	}
+	alias, registered := aliases.Resolve(spec.SendMessageKindName)
 	for i := range tspec.Nodes {
 		n := &tspec.Nodes[i]
 		if n.SendsMessage == "" {
@@ -73,8 +70,14 @@ func CanonicalizeSendMessageSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
 		if n.Executor != "" {
 			continue
 		}
+		if !registered {
+			return fmt.Errorf(
+				"CanonicalizeSendMessageSugar: nodes[%d] (type %q) declares sends_message but builtin kind %q has no registered executor alias",
+				i, n.Type, spec.SendMessageKindName)
+		}
 		n.Executor = alias
 	}
+	return nil
 }
 
 // @concept: fan-out

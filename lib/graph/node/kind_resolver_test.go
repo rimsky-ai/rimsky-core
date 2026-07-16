@@ -7,6 +7,8 @@ package node
 import (
 	"strings"
 	"testing"
+
+	fspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func newSeededAliases(t *testing.T, kind, alias string) *KindAliasMap {
@@ -181,6 +183,89 @@ func TestCanonicalizeKindSugar_NilSafe(t *testing.T) {
 	CanonicalizeKindSugar(&TemplateSpec{}, nil)
 	aliases := newSeededAliases(t, "k", "alias")
 	CanonicalizeKindSugar(nil, aliases)
+}
+
+func TestCanonicalizeSendMessageSugar_RegisteredAliasSetsExecutor(t *testing.T) {
+	aliases := newSeededAliases(t, fspec.SendMessageKindName, "rimsky.send_message")
+	tmpl := &TemplateSpec{
+		Name:    "t",
+		Version: "1",
+		Nodes: []TemplateNodeDef{{
+			Type:         "sender",
+			SendsMessage: "some_message",
+		}},
+	}
+	if err := CanonicalizeSendMessageSugar(tmpl, aliases); err != nil {
+		t.Fatalf("expected clean canonicalization, got %v", err)
+	}
+	if tmpl.Nodes[0].Executor != "rimsky.send_message" {
+		t.Fatalf("expected Executor rimsky.send_message, got %q", tmpl.Nodes[0].Executor)
+	}
+}
+
+func TestCanonicalizeSendMessageSugar_UnregisteredAliasErrorsAtDeploy(t *testing.T) {
+	aliases := NewKindAliasMap()
+	tmpl := &TemplateSpec{
+		Name:    "t",
+		Version: "1",
+		Nodes: []TemplateNodeDef{{
+			Type:         "sender",
+			SendsMessage: "some_message",
+		}},
+	}
+	err := CanonicalizeSendMessageSugar(tmpl, aliases)
+	if err == nil {
+		t.Fatalf("expected an error when the send_message alias is unregistered")
+	}
+	if !strings.Contains(err.Error(), fspec.SendMessageKindName) {
+		t.Fatalf("expected error naming kind %q, got %q", fspec.SendMessageKindName, err.Error())
+	}
+	if tmpl.Nodes[0].Executor != "" {
+		t.Fatalf("expected Executor to remain empty on error, got %q", tmpl.Nodes[0].Executor)
+	}
+}
+
+func TestCanonicalizeSendMessageSugar_UnregisteredButNoSenderIsClean(t *testing.T) {
+	aliases := NewKindAliasMap()
+	tmpl := &TemplateSpec{
+		Name:    "t",
+		Version: "1",
+		Nodes: []TemplateNodeDef{{
+			Type:     "plain",
+			Executor: "rimsky.something",
+		}},
+	}
+	if err := CanonicalizeSendMessageSugar(tmpl, aliases); err != nil {
+		t.Fatalf("expected no error when no node needs the send_message alias, got %v", err)
+	}
+}
+
+func TestCanonicalizeSendMessageSugar_ExplicitExecutorPreserved(t *testing.T) {
+	aliases := NewKindAliasMap()
+	tmpl := &TemplateSpec{
+		Name:    "t",
+		Version: "1",
+		Nodes: []TemplateNodeDef{{
+			Type:         "sender",
+			SendsMessage: "some_message",
+			Executor:     "custom.sender",
+		}},
+	}
+	if err := CanonicalizeSendMessageSugar(tmpl, aliases); err != nil {
+		t.Fatalf("expected explicit executor to be preserved without error, got %v", err)
+	}
+	if tmpl.Nodes[0].Executor != "custom.sender" {
+		t.Fatalf("expected explicit executor preserved, got %q", tmpl.Nodes[0].Executor)
+	}
+}
+
+func TestCanonicalizeSendMessageSugar_NilSafe(t *testing.T) {
+	if err := CanonicalizeSendMessageSugar(nil, nil); err != nil {
+		t.Fatalf("nil/nil should be a no-op, got %v", err)
+	}
+	if err := CanonicalizeSendMessageSugar(&TemplateSpec{}, nil); err != nil {
+		t.Fatalf("nil aliases should be a no-op, got %v", err)
+	}
 }
 
 func findErrorContains(errs []ValidationError, substr string) bool {

@@ -4,6 +4,8 @@
 
 package send_message
 
+import "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+
 func SchemaBytes() []byte {
 	return []byte(`{
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -16,6 +18,6 @@ func DeclaredTags() []string { return nil }
 
 const ExecutorAlias = "rimsky.send_message"
 
-const KindName = "send_message"
+const KindName = spec.SendMessageKindName
 
 const InProcURL = "inproc://send_message"
