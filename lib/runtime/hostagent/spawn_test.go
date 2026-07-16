@@ -5,10 +5,12 @@
 package hostagent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -130,6 +132,136 @@ func TestSpawnRejectedByAllowPaths(t *testing.T) {
 	if ack.GetError().GetClass() != errClassSpawnFailed {
 		t.Fatalf("error class = %q, want %q", ack.GetError().GetClass(), errClassSpawnFailed)
 	}
+}
+
+func copyExecutable(t *testing.T, src, dst string) {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read %s: %v", src, err)
+	}
+	if err := os.WriteFile(dst, data, 0o755); err != nil {
+		t.Fatalf("write %s: %v", dst, err)
+	}
+}
+
+func TestSpawnDeniesSymlinkEscapingAllowedDir(t *testing.T) {
+	realBin := buildStubChild(t)
+	allowedDir := t.TempDir()
+	link := filepath.Join(allowedDir, "stubchild")
+	if err := os.Symlink(realBin, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	fp := startFakeProxy(t)
+	connectAgentToFakeProxy(t, fp, Config{AllowPaths: []string{filepath.Join(allowedDir, "*")}})
+
+	ack := spawnVia(t, fp, &genv1.Spawn{
+		SpawnId:             uuid.NewString(),
+		Binding:             &genv1.Binding{Path: link},
+		ExpectedProtocols:   []string{protocolExecutor},
+		ReadyTimeoutSeconds: 5,
+	})
+	if ack.GetStatus() != genv1.SpawnAck_SPAWN_STATUS_FAILED {
+		t.Fatalf("status = %v, want FAILED (a symlink under the allowed dir pointing outside it must resolve to its real target and be denied)", ack.GetStatus())
+	}
+}
+
+func TestSpawnAllowsRealBinaryInsideAllowedDir(t *testing.T) {
+	realBin := buildStubChild(t)
+	allowedDir := t.TempDir()
+	inside := filepath.Join(allowedDir, "stubchild")
+	copyExecutable(t, realBin, inside)
+
+	fp := startFakeProxy(t)
+	connectAgentToFakeProxy(t, fp, Config{AllowPaths: []string{filepath.Join(allowedDir, "*")}})
+
+	spawnID := uuid.NewString()
+	ack := spawnVia(t, fp, &genv1.Spawn{
+		SpawnId:             spawnID,
+		Binding:             &genv1.Binding{Path: inside},
+		ExpectedProtocols:   []string{protocolExecutor},
+		ReadyTimeoutSeconds: 15,
+	})
+	if ack.GetStatus() != genv1.SpawnAck_SPAWN_STATUS_READY {
+		t.Fatalf("status = %v, want READY (a real binary inside the allowed dir must be permitted) err=%v", ack.GetStatus(), ack.GetError())
+	}
+	reapVia(t, fp, spawnID, 5)
+}
+
+func TestSpawnDeniesRelativeAllowPatternAgainstForeignBinary(t *testing.T) {
+	foreignBin := buildStubChild(t)
+	foreignDir := filepath.Dir(foreignBin)
+
+	fp := startFakeProxy(t)
+	connectAgentToFakeProxy(t, fp, Config{AllowPaths: []string{"stubchild"}})
+
+	ack := spawnVia(t, fp, &genv1.Spawn{
+		SpawnId:             uuid.NewString(),
+		Binding:             &genv1.Binding{Path: "stubchild", Cwd: foreignDir},
+		ExpectedProtocols:   []string{protocolExecutor},
+		ReadyTimeoutSeconds: 5,
+	})
+	if ack.GetStatus() != genv1.SpawnAck_SPAWN_STATUS_FAILED {
+		t.Fatalf("status = %v, want FAILED (a relative allow pattern must anchor to the agent cwd, not a remote-supplied binding cwd, so it cannot match a foreign same-named binary)", ack.GetStatus())
+	}
+}
+
+func occupyPortWithoutListening(t *testing.T) (int, func()) {
+	t.Helper()
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("socket: %v", err)
+	}
+	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}}); err != nil {
+		_ = syscall.Close(fd)
+		t.Fatalf("bind: %v", err)
+	}
+	sa, err := syscall.Getsockname(fd)
+	if err != nil {
+		_ = syscall.Close(fd)
+		t.Fatalf("getsockname: %v", err)
+	}
+	return sa.(*syscall.SockaddrInet4).Port, func() { _ = syscall.Close(fd) }
+}
+
+func TestSpawnServiceRetriesPastStolenPort(t *testing.T) {
+	bin := buildFixture(t, "stub-service")
+	stolenPort, release := occupyPortWithoutListening(t)
+	defer release()
+
+	calls := 0
+	portSource := func() (int, error) {
+		calls++
+		if calls == 1 {
+			return stolenPort, nil
+		}
+		return FreeLocalPort()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	spawned, err := SpawnService(ctx, SpawnServiceParams{
+		BinaryPath:   bin,
+		Env:          os.Environ(),
+		ReadyTimeout: 2 * time.Second,
+		portSource:   portSource,
+	})
+	if err != nil {
+		t.Fatalf("SpawnService: expected a bounded retry to re-pick a fresh port and succeed past the occupied port, got %v", err)
+	}
+	if spawned.Port == stolenPort {
+		t.Fatalf("spawned on the occupied port %d, expected a re-picked free port", stolenPort)
+	}
+	if calls < 2 {
+		t.Fatalf("portSource called %d time(s), want >= 2 (a collision on the first port must trigger a re-pick)", calls)
+	}
+
+	if err := spawned.Cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal child: %v", err)
+	}
+	<-spawned.Exited
 }
 
 func TestSpawnBinaryMissing(t *testing.T) {

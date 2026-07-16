@@ -7,12 +7,14 @@ package hostagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,6 +34,10 @@ const errClassSpawnFailed = "spawn_failed"
 
 const portDialInterval = 25 * time.Millisecond
 
+const maxSpawnPortAttempts = 3
+
+var errChildDidNotBind = errors.New("child did not bind picked port")
+
 func (a *agent) runSpawn(ctx context.Context, sp *genv1.Spawn) {
 	ack := a.handleSpawn(ctx, sp)
 	a.send(&genv1.ClientFrame{Body: &genv1.ClientFrame_SpawnAck{SpawnAck: ack}})
@@ -43,6 +49,7 @@ type SpawnServiceParams struct {
 	Cwd          string
 	Env          []string
 	ReadyTimeout time.Duration
+	portSource   func() (int, error)
 }
 
 type SpawnedService struct {
@@ -52,12 +59,35 @@ type SpawnedService struct {
 }
 
 func SpawnService(ctx context.Context, params SpawnServiceParams) (*SpawnedService, error) {
-	port, err := FreeLocalPort()
+	pickPort := params.portSource
+	if pickPort == nil {
+		pickPort = FreeLocalPort
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < maxSpawnPortAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		spawned, err := spawnOnPickedPort(ctx, params, pickPort)
+		if err == nil {
+			return spawned, nil
+		}
+		lastErr = err
+		if !errors.Is(err, errChildDidNotBind) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func spawnOnPickedPort(ctx context.Context, params SpawnServiceParams, pickPort func() (int, error)) (*SpawnedService, error) {
+	port, err := pickPort()
 	if err != nil {
 		return nil, fmt.Errorf("allocate port: %w", err)
 	}
 
-	cmd := exec.Command(params.BinaryPath, params.Args...) //nolint:gosec // path trust is the caller's posture (host-agent enforces allow-paths via pathAllowed; future callers MUST validate the binary path against their own trust model before invoking SpawnService)
+	cmd := exec.Command(params.BinaryPath, params.Args...) //nolint:gosec // path trust is the caller's posture (host-agent canonicalizes + allow-paths-checks via resolveBindingPath; future callers MUST validate the binary path against their own trust model before invoking SpawnService)
 	if params.Cwd != "" {
 		cmd.Dir = params.Cwd
 	}
@@ -86,7 +116,7 @@ func SpawnService(ctx context.Context, params SpawnServiceParams) (*SpawnedServi
 	if !waitPortReady(ctx, port, exited, readyTimeout) {
 		killProcess(cmd)
 		<-exited
-		return nil, fmt.Errorf("child did not bind port %d within %s", port, readyTimeout)
+		return nil, fmt.Errorf("child did not bind port %d within %s: %w", port, readyTimeout, errChildDidNotBind)
 	}
 
 	return &SpawnedService{Cmd: cmd, Port: port, Exited: exited}, nil
@@ -97,8 +127,9 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 	if path == "" {
 		return spawnFailed(sp.GetSpawnId(), "binding.path is empty")
 	}
-	if !a.pathAllowed(path) {
-		return spawnFailed(sp.GetSpawnId(), fmt.Sprintf("path %q not permitted by --allow-paths", path))
+	execPath, err := a.resolveBindingPath(path)
+	if err != nil {
+		return spawnFailed(sp.GetSpawnId(), err.Error())
 	}
 
 	// @story: host-agent-per-binding-overrides
@@ -113,7 +144,7 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 	}
 
 	spawned, err := SpawnService(ctx, SpawnServiceParams{
-		BinaryPath:   path,
+		BinaryPath:   execPath,
 		Args:         sp.GetBinding().GetArgs(),
 		Cwd:          cwd,
 		Env:          env,
@@ -148,7 +179,7 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 	}
 	a.childMu.Unlock()
 
-	slog.Info("hostagent: spawned child", "spawn_id", sp.GetSpawnId(), "path", path, "port", spawned.Port, "protocols", sp.GetExpectedProtocols())
+	slog.Info("hostagent: spawned child", "spawn_id", sp.GetSpawnId(), "path", execPath, "port", spawned.Port, "protocols", sp.GetExpectedProtocols())
 	return &genv1.SpawnAck{
 		SpawnId:      sp.GetSpawnId(),
 		Status:       genv1.SpawnAck_SPAWN_STATUS_READY,
@@ -156,19 +187,66 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 	}
 }
 
-func (a *agent) pathAllowed(path string) bool {
+func (a *agent) resolveBindingPath(path string) (string, error) {
+	resolved, rerr := canonicalPath(path)
 	if len(a.cfg.AllowPaths) == 0 {
-		return true
+		if rerr != nil {
+			return path, nil
+		}
+		return resolved, nil
+	}
+	if rerr != nil {
+		return "", fmt.Errorf("path %q could not be resolved for --allow-paths matching: %w", path, rerr)
 	}
 	for _, glob := range a.cfg.AllowPaths {
 		if glob == "" {
 			continue
 		}
-		if ok, err := filepath.Match(glob, path); err == nil && ok {
-			return true
+		pattern, ok := canonicalGlob(glob)
+		if !ok {
+			continue
+		}
+		if matched, merr := filepath.Match(pattern, resolved); merr == nil && matched {
+			return resolved, nil
 		}
 	}
-	return false
+	return "", fmt.Errorf("path %q not permitted by --allow-paths", path)
+}
+
+func canonicalPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(filepath.Clean(abs))
+}
+
+func canonicalGlob(glob string) (string, bool) {
+	base, rest := splitGlobBase(glob)
+	if base == "" {
+		base = "."
+	}
+	resolvedBase, err := canonicalPath(base)
+	if err != nil {
+		return "", false
+	}
+	if rest == "" {
+		return resolvedBase, true
+	}
+	return filepath.Join(resolvedBase, rest), true
+}
+
+func splitGlobBase(glob string) (base, rest string) {
+	sep := string(filepath.Separator)
+	parts := strings.Split(glob, sep)
+	magicIdx := len(parts)
+	for i, part := range parts {
+		if strings.ContainsAny(part, `*?[\`) {
+			magicIdx = i
+			break
+		}
+	}
+	return strings.Join(parts[:magicIdx], sep), strings.Join(parts[magicIdx:], sep)
 }
 
 func handshakeCapabilities(ctx context.Context, conn *grpc.ClientConn, protocols []string) (map[string][]byte, error) {
