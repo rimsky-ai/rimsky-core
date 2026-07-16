@@ -487,6 +487,94 @@ func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.
 	}
 }
 
+func unresumedCountForBreakpoint(t *testing.T, ctx context.Context, tables persistence.Tables, bpID shared.UUID) int {
+	t.Helper()
+	var n int
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		n, err = tables.BreakpointHits().UnresumedCount(ctx, bpID, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("unresumed count: %v", err)
+	}
+	return n
+}
+
+func TestEvaluateBreakpoints_ConcurrentEvaluatorsNeverExceedCap(t *testing.T) {
+	const queueCap = 100
+	const racers = 12
+
+	ctx := context.Background()
+	tables := openInMemoryTables(t)
+	instanceID := seedBreakpointEvalFixture(t, ctx, tables)
+	bpID := createBreakpointForEval(t, ctx, tables, persistence.BreakpointRow{
+		InstanceID:     instanceID,
+		Matcher:        map[string]any{},
+		Checkpoint:     persistence.CheckpointBeforeDispatch,
+		Mode:           persistence.BreakpointModeNotifyOnly,
+		OverflowPolicy: persistence.OverflowDropOldest,
+		HitTTLSeconds:  300,
+		CreatedByKey:   "test",
+	})
+
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for i := 0; i < queueCap-1; i++ {
+			if _, _, err := tables.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
+				BreakpointID: bpID,
+				InstanceID:   instanceID,
+				Checkpoint:   persistence.CheckpointBeforeDispatch,
+				Mode:         persistence.BreakpointModeNotifyOnly,
+				Snapshot:     map[string]any{"seed": i},
+			}, tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed %d unresumed hits: %v", queueCap-1, err)
+	}
+
+	if got := unresumedCountForBreakpoint(t, ctx, tables, bpID); got != queueCap-1 {
+		t.Fatalf("precondition: unresumed=%d want %d", got, queueCap-1)
+	}
+
+	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
+
+	start := make(chan struct{})
+	var ready sync.WaitGroup
+	var done sync.WaitGroup
+	errs := make(chan error, racers)
+	ready.Add(racers)
+	done.Add(racers)
+	for i := 0; i < racers; i++ {
+		go func() {
+			defer done.Done()
+			cc := newCheckpointContext(instanceID)
+			ready.Done()
+			<-start
+			if _, err := runtime.EvaluateBreakpoints(ctx, args, cc); err != nil {
+				errs <- err
+			}
+		}()
+	}
+
+	ready.Wait()
+	close(start)
+	done.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("EvaluateBreakpoints under race: %v", err)
+	}
+
+	got := unresumedCountForBreakpoint(t, ctx, tables, bpID)
+	if got > queueCap {
+		t.Fatalf("unresumed hit count exceeded cap: got %d want <= %d", got, queueCap)
+	}
+	if got != queueCap {
+		t.Fatalf("drop_oldest should hold the queue at cap: got %d want %d", got, queueCap)
+	}
+}
+
 func TestBuildSnapshot_IncludesEffectiveSchema(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)

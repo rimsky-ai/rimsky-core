@@ -58,6 +58,8 @@ type BreakpointTable interface {
 	Delete(ctx context.Context, id shared.UUID, tx Tx) error
 	IncrementDropped(ctx context.Context, id shared.UUID, tx Tx) error
 	SweepExpired(ctx context.Context, now time.Time, tx Tx) (int, error)
+
+	Lock(ctx context.Context, id shared.UUID, tx Tx) error
 }
 
 // @concept: breakpoint

@@ -9,6 +9,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -750,6 +751,91 @@ func TestPGBreakpointHits_UnresumedCount(t *testing.T) {
 	}
 	if n != 3 {
 		t.Errorf("UnresumedCount: got %d want 3", n)
+	}
+}
+
+func TestPGBreakpointHits_ConcurrentCappedInsertsHoldCap(t *testing.T) {
+	t.Parallel()
+	const queueCap = 100
+	const racers = 16
+
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	store := d.Tables()
+	instanceID := seedBreakpointFixture(t, ctx, d)
+	bpID := createBreakpoint(t, ctx, store, newBreakpoint(instanceID, func(b *persistence.BreakpointRow) {
+		b.OverflowPolicy = persistence.OverflowDropOldest
+	}))
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for i := 0; i < queueCap-1; i++ {
+			if _, _, err := store.BreakpointHits().Create(ctx, makeHit(bpID, instanceID, nil), tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed %d unresumed hits: %v", queueCap-1, err)
+	}
+
+	cappedInsert := func() error {
+		return store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			if err := store.Breakpoints().Lock(ctx, bpID, tx); err != nil {
+				return err
+			}
+			n, err := store.BreakpointHits().UnresumedCount(ctx, bpID, tx)
+			if err != nil {
+				return err
+			}
+			if n >= queueCap {
+				if _, err := store.BreakpointHits().DropOldest(ctx, bpID, queueCap-1, tx); err != nil {
+					return err
+				}
+				if err := store.Breakpoints().IncrementDropped(ctx, bpID, tx); err != nil {
+					return err
+				}
+			}
+			_, _, err = store.BreakpointHits().Create(ctx, makeHit(bpID, instanceID, nil), tx)
+			return err
+		})
+	}
+
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	errs := make(chan error, racers)
+	ready.Add(racers)
+	done.Add(racers)
+	for i := 0; i < racers; i++ {
+		go func() {
+			defer done.Done()
+			ready.Done()
+			<-start
+			if err := cappedInsert(); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("capped insert under race: %v", err)
+	}
+
+	var got int
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		got, err = store.BreakpointHits().UnresumedCount(ctx, bpID, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("UnresumedCount: %v", err)
+	}
+	if got > queueCap {
+		t.Fatalf("FOR UPDATE lock failed to serialize evaluators: unresumed=%d exceeds cap %d", got, queueCap)
+	}
+	if got != queueCap {
+		t.Fatalf("drop_oldest should hold the queue at cap: unresumed=%d want %d", got, queueCap)
 	}
 }
 

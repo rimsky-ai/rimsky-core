@@ -85,7 +85,7 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 		if gerr != nil {
 			return gerr
 		}
-		moved, err := store.Frames().MarkFrameEnded(ctx, frameID, tx)
+		moved, err := store.Frames().EndFrameIfSettled(ctx, frameID, tx)
 		if err != nil {
 			return err
 		}

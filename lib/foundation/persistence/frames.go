@@ -60,6 +60,8 @@ type FrameTable interface {
 
 	MarkFrameEnded(ctx context.Context, frameID shared.UUID, tx Tx) (transitioned bool, err error)
 
+	EndFrameIfSettled(ctx context.Context, frameID shared.UUID, tx Tx) (transitioned bool, err error)
+
 	GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx Tx) (*shared.UUID, error)
 
 	MarkSourceNodeStale(ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx Tx) (matched bool, err error)

@@ -91,54 +91,9 @@ func EvaluateBreakpoints(
 			}
 		}
 
-		if err := handleOverflow(ctx, args, bp); err != nil {
+		hitID, err := createHitWithinCap(ctx, args, cc, bp)
+		if err != nil {
 			return result, err
-		}
-
-		var (
-			hitID       shared.UUID
-			nodeRunIDPt *shared.UUID
-			frameIDPt   *shared.UUID
-		)
-		if cc.NodeRunID != (shared.UUID{}) {
-			id := cc.NodeRunID
-			nodeRunIDPt = &id
-		}
-		if cc.FrameID != (shared.UUID{}) {
-			id := cc.FrameID
-			frameIDPt = &id
-		}
-		// @concept: event-log
-		nodeIDPt := nodeIDPtr(cc.NodeID)
-		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			var err error
-			hitID, _, err = args.Persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
-				BreakpointID: bp.ID,
-				InstanceID:   cc.InstanceID,
-				NodeRunID:    nodeRunIDPt,
-				FrameID:      frameIDPt,
-				Checkpoint:   cc.Checkpoint,
-				Mode:         bp.Mode,
-				Snapshot:     buildSnapshot(cc),
-			}, tx)
-			if err != nil {
-				return err
-			}
-			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				InstanceID: &cc.InstanceID,
-				NodeID:     nodeIDPt,
-				Kind:       events.KindBreakpointHit(),
-				Payload: map[string]any{
-					"instance_id":   cc.InstanceID.String(),
-					"node_id":       cc.NodeID.String(),
-					"breakpoint_id": bp.ID.String(),
-					"hit_id":        hitID.String(),
-					"checkpoint":    string(cc.Checkpoint),
-					"mode":          string(bp.Mode),
-				},
-			}, tx)
-		}); err != nil {
-			return result, &BreakpointInfraError{Phase: "create_hit", Cause: err}
 		}
 
 		if bp.Mode == persistence.BreakpointModeNotifyOnly {
@@ -159,37 +114,85 @@ func EvaluateBreakpoints(
 	return result, nil
 }
 
-func handleOverflow(ctx context.Context, args RunArgs, bp persistence.BreakpointRow) error {
+func createHitWithinCap(ctx context.Context, args RunArgs, cc CheckpointContext, bp persistence.BreakpointRow) (shared.UUID, error) {
+	var (
+		nodeRunIDPt *shared.UUID
+		frameIDPt   *shared.UUID
+	)
+	if cc.NodeRunID != (shared.UUID{}) {
+		id := cc.NodeRunID
+		nodeRunIDPt = &id
+	}
+	if cc.FrameID != (shared.UUID{}) {
+		id := cc.FrameID
+		frameIDPt = &id
+	}
+	// @concept: event-log
+	nodeIDPt := nodeIDPtr(cc.NodeID)
+
 	warnedUnknownPolicy := false
 	for {
-		var unresumed int
+		var (
+			hitID    shared.UUID
+			inserted bool
+		)
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			var err error
-			unresumed, err = args.Persist.BreakpointHits().UnresumedCount(ctx, bp.ID, tx)
-			return err
-		}); err != nil {
-			return &BreakpointInfraError{Phase: "overflow_check", Cause: err}
-		}
-		if unresumed < breakpointQueueCap {
-			return nil
-		}
-		switch bp.OverflowPolicy {
-		case persistence.OverflowDropOldest:
-			if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				if _, err := args.Persist.BreakpointHits().DropOldest(ctx, bp.ID, breakpointQueueCap-1, tx); err != nil {
-					return err
+			if err := args.Persist.Breakpoints().Lock(ctx, bp.ID, tx); err != nil {
+				return &BreakpointInfraError{Phase: "overflow_lock", Cause: err}
+			}
+			unresumed, err := args.Persist.BreakpointHits().UnresumedCount(ctx, bp.ID, tx)
+			if err != nil {
+				return &BreakpointInfraError{Phase: "overflow_check", Cause: err}
+			}
+			if unresumed >= breakpointQueueCap {
+				if bp.OverflowPolicy != persistence.OverflowDropOldest {
+					return nil
 				}
-				return args.Persist.Breakpoints().IncrementDropped(ctx, bp.ID, tx)
-			}); err != nil {
-				return &BreakpointInfraError{Phase: "drop_oldest", Cause: err}
+				if _, err := args.Persist.BreakpointHits().DropOldest(ctx, bp.ID, breakpointQueueCap-1, tx); err != nil {
+					return &BreakpointInfraError{Phase: "drop_oldest", Cause: err}
+				}
+				if err := args.Persist.Breakpoints().IncrementDropped(ctx, bp.ID, tx); err != nil {
+					return &BreakpointInfraError{Phase: "drop_oldest", Cause: err}
+				}
 			}
+			hitID, _, err = args.Persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
+				BreakpointID: bp.ID,
+				InstanceID:   cc.InstanceID,
+				NodeRunID:    nodeRunIDPt,
+				FrameID:      frameIDPt,
+				Checkpoint:   cc.Checkpoint,
+				Mode:         bp.Mode,
+				Snapshot:     buildSnapshot(cc),
+			}, tx)
+			if err != nil {
+				return &BreakpointInfraError{Phase: "create_hit", Cause: err}
+			}
+			if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				InstanceID: &cc.InstanceID,
+				NodeID:     nodeIDPt,
+				Kind:       events.KindBreakpointHit(),
+				Payload: map[string]any{
+					"instance_id":   cc.InstanceID.String(),
+					"node_id":       cc.NodeID.String(),
+					"breakpoint_id": bp.ID.String(),
+					"hit_id":        hitID.String(),
+					"checkpoint":    string(cc.Checkpoint),
+					"mode":          string(bp.Mode),
+				},
+			}, tx); err != nil {
+				return &BreakpointInfraError{Phase: "create_hit", Cause: err}
+			}
+			inserted = true
 			return nil
+		}); err != nil {
+			return shared.UUID{}, err
+		}
+		if inserted {
+			return hitID, nil
+		}
+
+		switch bp.OverflowPolicy {
 		case persistence.OverflowBlockDispatch, persistence.OverflowAutoResumeAfterTTL:
-			select {
-			case <-ctx.Done():
-				return &BreakpointInfraError{Phase: "ctx_cancelled", Cause: ctx.Err()}
-			case <-time.After(breakpointResumePollInterval):
-			}
 		default:
 			if !warnedUnknownPolicy && args.Logger != nil {
 				args.Logger.Warn("breakpoint.overflow.unknown_policy",
@@ -198,11 +201,11 @@ func handleOverflow(ctx context.Context, args RunArgs, bp persistence.Breakpoint
 					"action", "defaulting to block until queue drains")
 				warnedUnknownPolicy = true
 			}
-			select {
-			case <-ctx.Done():
-				return &BreakpointInfraError{Phase: "ctx_cancelled", Cause: ctx.Err()}
-			case <-time.After(breakpointResumePollInterval):
-			}
+		}
+		select {
+		case <-ctx.Done():
+			return shared.UUID{}, &BreakpointInfraError{Phase: "ctx_cancelled", Cause: ctx.Err()}
+		case <-time.After(breakpointResumePollInterval):
 		}
 	}
 }

@@ -132,6 +132,15 @@ func (b *breakpointsImpl) Delete(ctx context.Context, id shared.UUID, tx persist
 	return nil
 }
 
+func (b *breakpointsImpl) Lock(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+	ex := b.q(tx)
+	if _, err := ex.Exec(ctx,
+		`SELECT id FROM rimsky_instance_breakpoints WHERE id = $1 FOR UPDATE`, id); err != nil {
+		return fmt.Errorf("breakpoints.lock: %w", err)
+	}
+	return nil
+}
+
 func (b *breakpointsImpl) IncrementDropped(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
 	ex := b.q(tx)
 	if _, err := ex.Exec(ctx,

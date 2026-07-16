@@ -133,6 +133,17 @@ func (b *breakpointsImpl) Delete(ctx context.Context, id shared.UUID, tx persist
 	return nil
 }
 
+func (b *breakpointsImpl) Lock(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+	ex := b.q(tx)
+	var got sql.NullString
+	err := ex.QueryRowContext(ctx,
+		`SELECT id FROM rimsky_instance_breakpoints WHERE id = ?`, id.String()).Scan(&got)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("sqlite.breakpoints.lock: %w", err)
+	}
+	return nil
+}
+
 func (b *breakpointsImpl) IncrementDropped(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
 	ex := b.q(tx)
 	if _, err := ex.ExecContext(ctx,

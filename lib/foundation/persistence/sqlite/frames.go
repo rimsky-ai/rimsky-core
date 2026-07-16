@@ -96,6 +96,30 @@ func (s *framesImpl) MarkFrameEnded(
 	return n == 1, nil
 }
 
+func (s *framesImpl) EndFrameIfSettled(
+	ctx context.Context, frameID shared.UUID, tx persistence.Tx,
+) (bool, error) {
+	res, err := s.q(tx).ExecContext(ctx, `
+        UPDATE rimsky_frames
+           SET ended_at = ?
+         WHERE frame_id = ?
+           AND ended_at IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM rimsky_node_runs r
+                WHERE r.frame_id = ?
+                  AND r.state IN ('pending','stale','running','held','parked')
+           )
+    `, nowUTC(), frameID.String(), frameID.String())
+	if err != nil {
+		return false, fmt.Errorf("frames.EndFrameIfSettled: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
 func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKept int, cutoff time.Time) (int, error) {
 	countBound := recentFramesKept > 0
 	timeBound := !cutoff.IsZero()

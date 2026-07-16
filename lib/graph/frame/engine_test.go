@@ -307,6 +307,99 @@ func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 	require.Nil(t, claimedBy)
 }
 
+func TestEndFrameIfSettled_RefusesFrameWithInFlightRun(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	d := pgtest.OpenDriver(ctx, t)
+
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
+	node := uuid.New()
+	now := time.Now()
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now, 600000)
+	seedNode(t, ctx, d, instanceID, node, "stale", &frameID)
+
+	var moved bool
+	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		moved, err = d.Tables().Frames().EndFrameIfSettled(ctx, frameID, tx)
+		return err
+	}))
+	require.False(t, moved, "a frame with a non-terminal run must not be ended")
+
+	var endedAtNull bool
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT ended_at IS NULL FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &endedAtNull)
+	require.True(t, endedAtNull, "refused end must leave ended_at unset")
+}
+
+type endFrameOutcome struct {
+	observedSettled bool
+	moved           bool
+	err             error
+}
+
+func TestEndFrameIfSettled_ConcurrentRunInsertCannotEndFrame(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	d := pgtest.OpenDriver(ctx, t)
+
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
+	node := uuid.New()
+	now := time.Now()
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now, 600000)
+	seedNode(t, ctx, d, instanceID, node, "fresh", &frameID)
+
+	endObserved := make(chan struct{})
+	insertCommitted := make(chan struct{})
+	result := make(chan endFrameOutcome, 1)
+
+	go func() {
+		var out endFrameOutcome
+		out.err = d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			pend, err := d.Tables().Frames().ListRunningFramesNoPendingNodes(ctx, tx)
+			if err != nil {
+				return err
+			}
+			for _, p := range pend {
+				if p.FrameID == frameID {
+					out.observedSettled = true
+				}
+			}
+			close(endObserved)
+			<-insertCommitted
+			moved, err := d.Tables().Frames().EndFrameIfSettled(ctx, frameID, tx)
+			out.moved = moved
+			return err
+		})
+		result <- out
+	}()
+
+	<-endObserved
+	var matched bool
+	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		matched, err = d.Tables().Frames().MarkSourceNodeStale(ctx, instanceID, node, frameID, tx)
+		return err
+	}))
+	require.True(t, matched, "concurrent insert must create an in-flight run")
+	close(insertCommitted)
+
+	out := <-result
+	require.NoError(t, out.err)
+	require.True(t, out.observedSettled,
+		"frame must have looked settled at observation time — that is the window the finding targets")
+	require.False(t, out.moved,
+		"the stamp must re-check in-tx and refuse: a run committed after observation but before the stamp")
+
+	var endedAtNull bool
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT ended_at IS NULL FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &endedAtNull)
+	require.True(t, endedAtNull,
+		"a run inserted concurrently with the end-stamp must not end up in an ended frame")
+}
+
 func TestRunTick_NoOp_EmptyDB(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

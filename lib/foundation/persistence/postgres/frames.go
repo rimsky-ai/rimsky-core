@@ -80,6 +80,38 @@ func (s *framesImpl) MarkFrameEnded(
 	return cmd.RowsAffected() == 1, nil
 }
 
+func (s *framesImpl) EndFrameIfSettled(
+	ctx context.Context, frameID shared.UUID, tx persistence.Tx,
+) (bool, error) {
+	var locked shared.UUID
+	if err := s.q(tx).QueryRow(ctx, `
+        SELECT frame_id
+          FROM rimsky_frames
+         WHERE frame_id = $1 AND ended_at IS NULL
+         FOR UPDATE
+    `, frameID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("frames.EndFrameIfSettled: lock: %w", err)
+	}
+	cmd, err := s.q(tx).Exec(ctx, `
+        UPDATE rimsky_frames
+           SET ended_at = now()
+         WHERE frame_id = $1
+           AND ended_at IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM rimsky_node_runs r
+                WHERE r.frame_id = $1
+                  AND r.state IN ('pending','stale','running','held','parked')
+           )
+    `, frameID)
+	if err != nil {
+		return false, fmt.Errorf("frames.EndFrameIfSettled: %w", err)
+	}
+	return cmd.RowsAffected() == 1, nil
+}
+
 func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (*shared.UUID, error) {
 	var frameID shared.UUID
 	err := s.q(tx).QueryRow(ctx, `
