@@ -1,7 +1,7 @@
 ---
 tension: blob-backend-conformance-fixture-asymmetry
 category: inconsistent
-status: open
+status: resolved
 affects:
   - conformance
   - blob-backend
@@ -29,7 +29,9 @@ A third-party `BlobBackend` implementer who wants to run the same checks under `
 
 ## Evidence
 
-- `_discover/2026-05-10-conformance-test-binaries.md` Observations bullet "in-process vs wire asymmetry".
-- `cmd/rimsky-blob-backend-conformance/main.go:115-138`.
-- `foundation/persistence/conformance/` (21 .go files).
+- The standalone `rimsky-blob-backend-conformance` binary no longer exists; conformance is now `rimsky conformance <protocol>` subcommands of the single CLI, and the blob-backend checks live in a shared fixture package exposing a `Run(ctx, backend) []CheckResult` entry point that both the CLI subcommand and any driver-internal test can call — the same reuse shape the other three protocol suites already followed.
+
+## Resolution
+
+The seven standalone `cmd/rimsky-*-conformance` binaries (blob-backend included) were folded into `rimsky conformance <protocol>` subcommands backed by an importable shared library under the protocols module's conformance package, so external Go implementers can invoke conformance from their own tests without shelling out (`concept:conformance`, 2026-05-24/27). The blob-backend suite now sits symmetrically alongside the claim-producer, executor, publisher, and data-processing suites as its own reusable fixture package — the asymmetry this tension flagged no longer exists.
 

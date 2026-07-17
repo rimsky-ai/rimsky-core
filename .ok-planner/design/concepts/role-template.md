@@ -18,7 +18,7 @@ A CLI-bundled JSON resource that expands into a `concept:permission` grant at ke
 - `publisher-service` — a single `message:send` grant; minimal grant for bundled publisher services
 - `debug-operator` — `*:read` + `instance:pause`, `instance:resume`, `breakpoint:create`, `breakpoint:resume`, `breakpoint:delete` — debugger authority for pausing instances and managing runtime breakpoints
 
-These ship embedded in the CLI binary and are loaded at startup. Operators can drop additional JSON files into a per-user roles directory or pass a role-file flag; the CLI loads them the same way.
+These are compiled into the CLI binary at build time and read on demand when a command needs them. Operators define custom roles as local JSON files and pass them via a role-file flag; the CLI loads a custom role the same way it loads a bundled one.
 
 ## Purpose
 
@@ -30,5 +30,5 @@ Owns: the bundled JSON files, the CLI expansion logic, the grant-patch operators
 
 ## Invariants
 
-- **CLI-side only.** The server does not know roles exist. The CLI's key-detail surface may pattern-match a grant against bundled roles for display ("role:operator + 1 override") but this is a display nicety; the wire surface is always the raw grant.
+- **CLI-side only.** The server does not know roles exist. The CLI's key-detail surface may pattern-match a grant against bundled roles for display, naming the matching role on an exact match and reporting "custom" otherwise, but this is a display nicety; the wire surface is always the raw grant.
 - **Operator-defined roles are local.** No server-side surface for "register a role with the cluster".

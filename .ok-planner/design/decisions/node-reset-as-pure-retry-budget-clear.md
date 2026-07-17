@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The node-reset endpoint becomes a pure state-machine-counter-clear verb. It preserves the existing state gate (refusing non-failed-terminal nodes with `409 Conflict`); on a valid reset it clears the error budget, resets the failed-terminal settling-signal-type, and nulls the leftover frame pointer; it does not enqueue an envelope or open a frame. The operator's workflow for retrying an errored node is two explicit steps: reset, then a message (empty or typed) that invalidates the node so a fresh dispatch is attempted.
+The node-reset endpoint is a pure state-machine-counter-clear verb. It preserves the existing state gate (refusing non-failed-terminal nodes with `409 Conflict`); on a valid reset it clears the error budget and resets the failed-terminal settling-signal-type; it does not enqueue an envelope or open a frame. There is no node-identity-row frame pointer to clear — node rows carry no runtime state, including no frame reference, under frame isolation (see `concept:node`). The operator's workflow for retrying an errored node is two explicit steps: reset, then a message (empty or typed) that invalidates the node so a fresh dispatch is attempted.
 
 ## Rationale
 

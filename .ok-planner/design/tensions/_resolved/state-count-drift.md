@@ -1,7 +1,7 @@
 ---
 tension: state-count-drift
 category: inconsistent
-status: open
+status: resolved
 affects:
   - node-run
   - parked-state
@@ -32,7 +32,9 @@ A reader counting from one surface gets a stale picture: they may build mental m
 
 ## Evidence
 
-- `_discover/2026-05-10-state-machine-no-self-loop.md` Observations.
-- `_discover/2026-05-10-parked-state-and-resume.md` Description.
-- `foundation/cascade/state.go:110-117` — the five legal states inline.
+- The node-run state enum is now seven values (`pending`, `stale`, `running`, `held`, `parked`, `fresh`, `failed`), not five — the four-phase model plus a separate phase column was collapsed into this single seven-value column. `node-state` as a standalone concept is retired in favor of `concept:node-run`, which is the enum's one authoritative home.
+
+## Resolution
+
+The old node-state model (four or five operator-visible states, tracked partly on the node row) is superseded by the node-run seven-state machine (`concept:node-run`, 2026-06-20): `pending`, `stale`, `running`, `held`, `parked`, `fresh`, `failed`. Nodes themselves carry no runtime state at all — state belongs exclusively to node_run rows, and `concept:node-run` is established as the single authoritative state enumeration other prose references, closing the "which count is right" question this tension raised. The tension's own five-value premise is itself now stale; the accretion it worried about is resolved by a formal state-machine redesign, not a documentation reconciliation.
 

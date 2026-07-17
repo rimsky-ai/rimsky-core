@@ -1,7 +1,7 @@
 ---
 tension: blessed-invariant-14-retired
 category: vestigial
-status: open
+status: resolved
 affects:
   - claim-handle
 ---
@@ -23,5 +23,9 @@ A grep for the retired numeric reference should return zero hits (or only a docu
 
 ## Evidence
 
-- CLAUDE.md "Blessed invariants" retirement note for the retired claim-handle slot.
+- CLAUDE.md carries no "Blessed invariants" section; the numbered-invariant list this tension describes no longer exists as a documentation surface. `concept:claim-handle` states its invariants as prose with sparse parenthetical numbers (4, 9a, 20), not a numbered list with a reserved gap.
+
+## Resolution
+
+Numbered-invariant references (including any reserved gap for a retired number) were banned outright from source code, error strings, tests, and repo-root docs — invariants live in concept docs under descriptive names, and diagnostics describe the violated rule in plain language (`concept:conformance`, 2026-06-19). With the numbering scheme itself retired as a citation surface, the "does a stray comment still cite the old gap" question this tension raised no longer applies: there is no numbered list left for a gap to appear in, and a repo-wide audit confirms zero surviving references to the retired slot outside historical archive material.
 

@@ -22,4 +22,4 @@ Owns: the per-name capacity declaration in config, the named-lock rows in the cl
 
 - The claim spec (for scope claims) and the named-lock spec are distinct shapes with no common interface; callers dispatch by kind.
 - Both primitives' acquisitions are walked in deterministic `(lock_kind, sort_key)` order to prevent the (N1-held, S1-wait) ⨯ (S1-held, N1-wait) deadlock (invariant 3).
-- Named-lock capacity counts come from active node-runs joined against their claim-handle rows (invariant 2).
+- Named-lock capacity counts are a single-table count of the named lock's own claim-handle rows in the active state; committed and abandoned rows are no longer held and do not count (invariant 2).

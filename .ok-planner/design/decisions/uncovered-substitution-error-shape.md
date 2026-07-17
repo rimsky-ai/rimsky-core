@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Registration rejection for an uncovered substitution ref returns a structured `validation_errors` entry of kind `substitution_ref_uncovered` carrying the receiver node-type, the literal ref text, the schema property path the ref appears in, a copy-pasteable subscription-entry suggestion with both flags set to `false`, and a separate one-sentence note explaining the flag implications.
+Registration rejection for an uncovered substitution ref returns a structured `validation_errors` entry of kind `substitution_ref_uncovered` carrying the receiver node-type, the literal ref text, the schema property path the ref appears in, a copy-pasteable subscription-entry suggestion with its `force_upstream_refresh` flag set to `false`, and a separate one-sentence note explaining the flag's implications.
 
 ## Rationale
 

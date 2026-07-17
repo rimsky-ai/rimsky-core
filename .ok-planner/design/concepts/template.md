@@ -9,11 +9,11 @@ aliases:
 
 ## What it is
 
-A template is the static artifact a consumer registers: node definitions, attribute schemas, claim/lock declarations, frame-resolution policy, handler declarations, quality rules. Persisted as a template record keyed by a content-hash identifier computed over the canonicalized spec bytes. Templates pass through a small lifecycle from initial registration through deployment, undeployment, and final deregistration.
+A template is the static artifact a consumer registers: node definitions, attribute schemas, claim/lock declarations, subscription and cascade-coupling declarations, message-type schemas, publisher declarations, a params schema, late-bind service names, and sub-graph declarations. Persisted as a template record keyed by a content-hash identifier computed over the canonicalized spec bytes. Templates pass through a small lifecycle from initial registration through deployment, undeployment, and final deregistration.
 
 ## Purpose
 
-Content-addressing gives a template stable identity. Two semantically-identical specs (key order, whitespace) produce the same hash; differing specs do not. Idempotent re-registration is a persistence-layer property: re-registering an identical spec is a no-op rather than a conflict.
+Content-addressing gives a template stable identity. Two semantically-identical specs (key order, whitespace) produce the same hash; differing specs do not. Idempotent re-registration is a registration-entry-point property: the registration handler resolves the incoming spec's hash first and, when a matching template already exists, returns success without re-inserting rather than surfacing a conflict.
 
 ## Boundaries
 

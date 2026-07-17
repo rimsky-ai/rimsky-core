@@ -14,20 +14,20 @@ A claim is a node's request to access a producer-managed resource: an items-tabl
 
 ## Purpose
 
-Claims are how a graph node says "I need exclusive (or coexisting) access to this thing while I run." The producer parses the selector from its own DSL and emits canonical claim scope bytes; rimsky enforces the conflict matrix byte-equally.
+Claims are how a graph node says "I need exclusive (or coexisting) access to this thing while I run." The producer parses the selector from its own DSL and emits canonical claim scope bytes; rimsky's default conflict predicate is byte-equal comparison of those bytes, and a producer that advertises the scopes-conflict capability supplies its own overlap predicate instead, consulted at acquisition and in the fan-out sub-claim path (see `concept:claim-scope`).
 
 Claims carry three orthogonal extensions:
 
 - **Lifetime** (subgraph or durable, default subgraph): governs auto-terminal behavior. A durable claim's handle row persists past holding-subgraph completion in a committed-durable state, released only by explicit operator action or instance termination. See `concept:claim-lifetime`, `concept:asset`.
-- **Sub-claim chains**: a claim's claim scope may be partitioned via the producer's split-scope verb into sub-claims that hold sub-scopes. Persisted via a self-referential parent pointer on the claim-handle ledger. Auto-terminal walks bottom-up: a parent claim resolves only after all sub-claims have terminal. See `concept:fan-out`, `concept:claim-handle`.
+- **Sub-claim chains**: a claim's claim scope may be partitioned via the producer's split-scope verb into sub-claims that hold sub-scopes. Persisted via a self-referential parent pointer on the claim-handle ledger. Auto-terminal walks bottom-up: a parent claim resolves only after all sub-claims have terminal. See `concept:fan-out`, `concept:claim-handle`, `concept:claim-tree`.
 - **Co-holdership**: multiple node-runs may hold the same claim handle by declaring co-holdership in the template. Each co-holder gets a row in a per-claim co-holder ledger keyed by holder run. The holding subgraph extends to all co-holders; auto-terminal fires only after every co-holder reaches a non-active state. See `concept:claim-co-holdership`.
 
 ## Boundaries
 
-Owns: the claim declaration, the address/payload/claim-scope returned at open, the post-terminal verb (commit, abandon, or release). Does NOT own: lock state ledger (lives in `claim-handle`), capacity counting (that's `named-lock`), producer-internal state (lives in the producer). Adjacent: `claim-handle` (including its Held variant subsection), `claim-producer`, `claim-scope`, `write-semantics`, `auto-terminal`, `inertness`.
+Owns: the claim declaration, the address/payload/claim-scope returned at open, the terminal verb (commit, abandon, or release). Does NOT own: lock state ledger (lives in `claim-handle`), capacity counting (that's `named-lock`), producer-internal state (lives in the producer). Adjacent: `claim-handle` (including its Held variant subsection), `claim-producer`, `claim-scope`, `claim-tree`, `write-semantics`, `auto-terminal`, `inertness`.
 
 ## Invariants
 
-- Claim content (payload, address, claim scope) is inert in rimsky: read only at the sanctioned substitution sites and one wire-encoding site. Never logged, formatted into strings, attached to traces, validated beyond schema gates, or included in error messages (invariant 20).
+- Claim content (payload, address, claim scope) is inert in rimsky: read only at the sanctioned substitution sites, the conflict-check comparison, claim-scope lock keying, and the terminal-verb wire encoding back to the producer. Never logged, formatted into strings, attached to traces, validated beyond schema gates, or included in error messages (invariant 20).
 - Producers do not persist lock state internally; the claim-handle ledger is the sole authority (invariant 9a).
 - Producers must not internally serialize on lock-shaped predicates (reader-lease serialization is forbidden for the staged-async write semantics) — invariant 9b.

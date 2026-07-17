@@ -3,27 +3,27 @@ story: host-agent-late-bind-all-protocols
 status: as-is
 ---
 
-# Every protocol works through late-bind
+# Executor and claim-producer work through late-bind
 
 ## Role
 
-As a template author wiring a workflow against locally-running binaries (executor, claim-producer, publisher, validation, data-processing), I can run the host-agent on my dev machine connected to a remote rimsky stack, declare bindings for each protocol, and have rimsky dispatch through the proxy to spawned local children identically across every supported protocol — no protocol left as an unimplemented stub, so that I exercise the assembled product against local code without rebuilding images.
+As a template author wiring a workflow against locally-running executor and claim-producer binaries, I can run the host-agent on my dev machine connected to a remote rimsky stack, declare bindings for those two protocols, and have rimsky dispatch through the proxy to spawned local children identically across both, so that I exercise the assembled product against local code without rebuilding images.
 
 ## Capability
 
-Host-agent late-binding for every rimsky-implementable protocol: executor, claim-producer, publisher, validation, data-processing. Every dispatch reaches a real spawned binary; no protocol returns an unimplemented-method error through the proxy.
+Host-agent late-binding covers exactly the two rimsky-implementable protocols with a genuine per-node local dev loop: executor and claim-producer. Every dispatch to a late-bound executor or claim-producer binding reaches a real spawned binary; neither protocol returns an unimplemented-method error through the proxy. A binding declared for any other protocol (publisher, validation, data-processing) is refused loudly at registration/config rather than silently accepted or served by a stub — those protocols talk mostly inbound, fire only at registration, or have no per-node iteration story, and the purely-local case is served by single-process all-in-one instead.
 
 ## Business value
 
-Template authors exercise the assembled product against local code without rebuilding images, across every protocol rimsky supports — no protocol is partially-supported.
+Template authors exercise the assembled product against local executor and claim-producer code without rebuilding images. Authors who attempt to late-bind an unsupported protocol get a clear, immediate refusal instead of a silent stub or a runtime surprise.
 
 ## Acceptance
 
-With the host-agent connected to a deployed host-agent-proxy (see `concept:host-agent`, `concept:host-agent-proxy`) and bindings declared for each protocol, instance dispatches reach spawned local binaries: a validation binding's rejecting validator causes registration rejection at the validation surface; a publisher binding publishes real messages into the instance; a data-processing binding performs a real typed-data operation; executor and claim-producer bindings work. Every dispatch is served by a real spawned binary; none returns an unimplemented-method error.
+With the host-agent connected to a deployed host-agent-proxy (see `concept:host-agent`, `concept:host-agent-proxy`) and bindings declared for executor and claim-producer, instance dispatches reach spawned local binaries for both: an executor binding runs a real spawned executor to terminal, and a claim-producer binding's Open, Commit, and Abandon all reach the spawned binary. Declaring a late-bound binding for publisher, validation, or data-processing is refused at registration/config with a diagnostic naming the unsupported protocol.
 
 ## Falsifier
 
-Any of the five protocols returns an unimplemented-method error through the proxy, OR a dispatch's effect is canned at the proxy layer rather than reaching the spawned binary.
+An executor or claim-producer dispatch through the proxy is served by an unimplemented-method error or by an effect canned at the proxy layer rather than reaching the spawned binary, OR a late-bound publisher, validation, or data-processing binding is silently accepted (registers or dispatches) instead of being refused.
 
 ## Proof
 

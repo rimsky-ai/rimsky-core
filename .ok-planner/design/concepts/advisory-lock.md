@@ -16,13 +16,13 @@ Cross-process coordination — through Postgres advisory locks, or under SQLite 
 
 ## Boundaries
 
-Owns: the four primitives, the two pinned long-lived keys (scheduler-tick and migration), the session-vs-transaction scope difference. Does NOT own: the conflict matrix that decides which lock modes coexist, `max_quiet_period` cutoffs, the claim-handle ledger. Adjacent: `sensor` (scheduler-tick lock), `persistence-database` (migration lock), `claim-handle`, `supervisor` (the acquisition tx).
+Owns: the four primitives, the two pinned long-lived keys (scheduler-tick and migration), the session-vs-transaction scope difference. Does NOT own: the conflict matrix that decides which lock modes coexist, `max_quiet_period` cutoffs, the claim-handle ledger. Adjacent: `claim-handle`, `message` (scheduler-tick lock), `persistence-database` (migration lock), `supervisor` (the acquisition tx).
 
 ## Invariants
 
 - Scheduler tick uses a non-blocking try-acquire on the pinned tick key (Postgres) or a non-blocking exclusive file lock (SQLite) — in both backends the exclusion holds across OS processes (invariant 7).
 - For the scheduler-tick lock, an error from the lock attempt is treated as lock-held: the sweep pass is skipped, never run unlocked. The sweeps are periodic recovery, so a one-interval delay is benign, while running unlocked permits the concurrent sweeping the lock exists to prevent.
 - Migration uses a blocking exclusion held for the duration of the batch — a session-level advisory lock (Postgres) or an exclusive file lock (SQLite), cross-process in both backends (invariant 8).
-- Per-name and per-scope advisory locks are transaction-scoped, released at COMMIT/ROLLBACK.
+- Per-name and per-scope advisory locks are transaction-scoped, released at COMMIT/ROLLBACK (Postgres); under SQLite they are no-ops, since the immediate-mode transaction's writer-slot hold already closes the same window.
 - All multi-lock acquisitions walk a deterministic order keyed by lock kind then sort key (invariant 3).
-- Two pinned int64 keys are documented as "never reuse" at the definition site.
+- The scheduler-tick and migration keys are two distinct pinned int64 values; a newly introduced pinned key must never collide with either.

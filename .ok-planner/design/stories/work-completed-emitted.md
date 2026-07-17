@@ -19,11 +19,11 @@ Run durations and did-everything-finish audits are computable from the ledger al
 
 ## Acceptance
 
-Dispatching a node-run appends a work-started event; the run reaching its terminal appends a work-completed event carrying the same identifying fields plus the terminal kind.
+Dispatching a node-run appends a work-started event; the run reaching a true terminal (success, error, or give-up) appends exactly one work-completed event carrying the same identifying fields plus the terminal kind. Park is an in-flight suspension, not a terminal, and pairs with no work-completed of its own; the run's eventual real terminal after resume carries the pairing event.
 
 ## Falsifier
 
-Runs that reach terminal with no work-completed event in the ledger — the kind declared but never spoken.
+A run reaching a true (non-park) terminal with no work-completed event in the ledger — the kind declared but never spoken — OR a run emitting more than one work-completed for a single terminal settlement (e.g. one per retry iteration rather than only the final settle).
 
 ## Proof
 

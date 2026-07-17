@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-A cascade mode is a per-node setting that governs how the cascade walker (per `concept:cascade`) treats a re-cascade targeting a receiver whose latest cascade-driven pending row, or recently-settled run, in the current `(receiver, run-scope)` already exists. Because RunScopes never span frames (per `concept:run-scope`), the `(receiver, run-scope)` key is always intra-frame — every mode operates purely inside the current frame; prior-frame runs are invisible to the mode rules. The mode selects from a closed enumeration of four behaviors — `most-recent`, `sequenced`, `idempotent-queue`, `idempotent-settled` — each reshaping how the walker's accumulate-or-queue gate (the per-sender-node accumulation rule in `concept:cascade`) interacts with subsequent rounds, and how the gate evaluator's pending→stale transition (per `concept:wait-set`) treats bag-equivalent successors.
+A cascade mode is a per-node setting that governs how the gate evaluator's pending→stale transition (per `concept:wait-set`) treats a re-cascade targeting a receiver whose latest cascade-driven pending row, or recently-settled run, in the current `(receiver, run-scope)` already exists. Because RunScopes never span frames (per `concept:run-scope`), the `(receiver, run-scope)` key is always intra-frame — every mode operates purely inside the current frame; prior-frame runs are invisible to the mode rules. The mode selects from a closed enumeration of four behaviors — `most-recent`, `sequenced`, `idempotent-queue`, `idempotent-settled` — each reshaping what happens at the pending→stale transition: whether a prior cascade-driven stale is deleted, a new stale row is queued alongside it, or the transitioning row is dropped as a bag-equivalent duplicate. The per-sender-node accumulation rule the cascade walker applies before this point (per `concept:cascade`) is the same for every mode.
 
 ## Purpose
 
@@ -16,18 +16,18 @@ Different consumers want different coalescing semantics for cascades. A node who
 
 ## Boundaries
 
-Owns: the per-mode rule applied at the walker's accumulate-or-queue gate, and the per-mode dedup rule applied at the gate evaluator's pending→stale transition. Does NOT own: the per-sender-node accumulation rule itself (lives at `concept:cascade`); the dispatcher's serialization gate (lives at `concept:node-run`); error-policy handling for failed cascades (lives at `concept:error-policy`). Adjacent: `concept:cascade`, `concept:node-run`, `concept:wait-set`, `concept:node-subscription`.
+Owns: the per-mode rule applied at the gate evaluator's pending→stale transition — the coalesce, queue, or dedup action taken as a cascade-driven row transitions from pending to stale. Does NOT own: the per-sender-node accumulation rule the walker applies before this point (lives at `concept:cascade`, and is the same for every mode); the dispatcher's serialization gate (lives at `concept:node-run`); error-policy handling for failed cascades (lives at `concept:error-policy`). Adjacent: `concept:cascade`, `concept:node-run`, `concept:wait-set`, `concept:node-subscription`.
 
 ## The four modes
 
 Every `(receiver, run-scope)` key in the rows below is intra-frame by construction (RunScopes never span frames). Prior-frame runs of the same node do not appear in any mode's lookup.
 
-| Mode | Walker behavior on re-cascade | Gate-eval behavior |
-|---|---|---|
-| `most-recent` | The newest cascade-driven pending wins. Prior cascade-driven stale rows for the same `(receiver, run-scope)` in the current frame that have not yet been claimed by the dispatcher are deleted before the new pending transitions to stale. | No additional dedup; the surviving stale transitions on its own wait-set draining. |
-| `sequenced` | Each cascade round creates its own pending; prior pendings in the current frame are preserved and dispatch in sequence order. No coalescing across rounds. | No dedup; every queued round dispatches. |
-| `idempotent-queue` | The new cascade accumulates per the standard walker rule. | At pending→stale, the resolved bag is canonicalized to a stable byte form and compared against the currently-queued stale row for this `(receiver, run-scope)` in the current frame. If byte-equivalent, the new row is dropped. |
-| `idempotent-settled` | Same as `idempotent-queue`. | At pending→stale, the resolved bag is compared against both the currently-queued stale and the most-recently-settled successful run for this `(receiver, run-scope)` in the current frame. If byte-equivalent to either, the new row is dropped. |
+| Mode | Behavior at the gate evaluator's pending→stale transition |
+|---|---|
+| `most-recent` | Prior cascade-driven stale rows for the same `(receiver, run-scope)` in the current frame that have not yet been claimed by the dispatcher are deleted, then the transitioning row becomes the surviving stale. |
+| `sequenced` | The transitioning row becomes its own queued stale row alongside any prior queued stale rows for the same `(receiver, run-scope)`; no deletion, no dedup — every queued round dispatches, each in sequence order. |
+| `idempotent-queue` | The resolved bag is canonicalized to a stable byte form and compared against the most recent prior cascade row (pending or stale, whichever has the highest sequence) for this `(receiver, run-scope)` in the current frame. If byte-equivalent, the transitioning row is dropped instead of becoming stale. |
+| `idempotent-settled` | Same comparison as `idempotent-queue` against the most recent prior cascade row. When no such prior cascade row exists, the resolved bag is instead compared against the most-recently-settled successful run for this `(receiver, run-scope)`. If byte-equivalent to either, the transitioning row is dropped. |
 
 ## Invariants
 

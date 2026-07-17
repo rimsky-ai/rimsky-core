@@ -19,7 +19,7 @@ An agent can drive rimsky deployments without a custom client, with no auth or p
 
 ## Acceptance
 
-An MCP client connecting to a running rimsky's MCP endpoint discovers a tool catalog covering the templates / tags / instances / nodes / messages / events / audit / breakpoints / assets / backfills / lineage / diagnostics / auth surfaces; invoking a tool mirrors the equivalent HTTP route — the same auth gate fires, the same observable state results, and the same response is returned through the MCP wire.
+An MCP client connecting to a running rimsky's MCP endpoint discovers a tool catalog covering the templates / tags / instances / nodes / messages / events / audit / breakpoints / assets / lineage / diagnostics / auth surfaces; invoking a tool mirrors the equivalent HTTP route — the same auth gate fires, the same observable state results, and the same response is returned through the MCP wire.
 
 ## Falsifier
 

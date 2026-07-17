@@ -1,7 +1,7 @@
 ---
 tension: substitution-introspection-site-count
 category: inconsistent
-status: open
+status: resolved
 affects:
   - inertness
   - attribute
@@ -31,5 +31,8 @@ A code-review discipline that grep-checks for "introspection-adjacent calls" nee
 
 ## Evidence
 
-- `_discover/2026-05-10-attribute-substitution-grammar.md` Observations bullet 3.
-- `_discover/2026-05-10-opacity-of-userdata-claim-blob.md` Observations bullet 2.
+- `concept:inertness` now carries the authoritative enumeration directly: it names the substitution engine's leaf extraction, the blob-spill movement between the inline column and the backend, and the shared matcher evaluator's primitive-equality `attrs.<path>` read as sanctioned sites, and states explicitly that "sanctioned read sites are precisely enumerated by the per-stream owning concepts." The three original sites this tension named (`walkPath`, `stringifyRaw`, `makeClaimHandle`) still exist, but the matcher-evaluator site is now also documented as sanctioned — a fourth site beyond the tension's original count.
+
+## Resolution
+
+`concept:inertness` was rewritten to carry the authoritative enumeration itself rather than leaving it implicit in a single package's comment: it names the substitution engine's leaf extraction, the blob-spill boundary, and the shared matcher evaluator's `attrs.<path>` read as the sanctioned sites, and states that each owning concept enumerates its own stream's exact sites (2026-05-04 through 2026-05-21, modeling-layer-contract / platform-extensions / attribute-overrides-matcher-overlay). This is exactly the resolution candidate the tension asked for — a single authoritative, cross-referenced enumeration owned by `concept:inertness` — so the "single site" framing this tension flagged as misleading is corrected at the source.

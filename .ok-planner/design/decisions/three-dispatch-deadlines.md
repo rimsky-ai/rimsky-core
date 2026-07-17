@@ -10,9 +10,11 @@ aliases: []
 
 Three independent deadlines per dispatch:
 
-- `sync_rpc_deadline` — executor-template-level, default 30s. Cancels the unary `Execute` RPC if exceeded.
-- `max_quiet_period` — executor-template-level or per-node, default 0 (disabled). Maximum time between liveness signals during an async dispatch.
+- `sync_rpc_deadline` — per-node, default 30s. Cancels the unary `Execute` RPC if exceeded.
+- `max_quiet_period` — per-node, default 0 (disabled). Maximum time between liveness signals during an async dispatch.
 - `max_runtime` — per-node, default 0 (disabled). Absolute upper bound on dispatch wall-clock runtime.
+
+All three are node-template fields with deployment-config-supplied defaults; there is no separate executor-level declaration layer for deadlines.
 
 Each is independently enforced by the supervisor and scheduler sweeps. `0` is the disable sentinel; the deadline is not applied when the value is zero.
 

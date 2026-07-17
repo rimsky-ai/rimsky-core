@@ -8,7 +8,7 @@ aliases: []
 
 ## Definition
 
-A terminal tag is a string member of the tag set the executor attaches to a settling verdict — a `terminal/success`, a `terminal/error/<class>`, or a park (the audit-only `transient/park/snooze` / `transient/park/await_callback`). Tags are deduplicated at decode (set semantics), inert to rimsky (they affect no node state), and serve as the ephemeral discriminator subscribers match on via CEL filters over `payload.tags`. The tag name MUST appear in the emitting executor's observability-advertised declared-tag set — the registry that template registration validates emitted tag sets against.
+A terminal tag is a string member of the tag set the executor attaches to a settling verdict — a `terminal/success`, a `terminal/error/<class>`, or a park (the audit-only `transient/park/snooze` / `transient/park/await_callback`). Tags are deduplicated at decode (set semantics) and serve as the ephemeral discriminator subscribers match on via CEL filters over `payload.tags`; a tag never merges into node-attribute state. The tag name MUST belong to the emitting executor's observability-advertised declared-tag set, enforced in two gates: at template registration, tag literals referenced in a subscription's `payload.tags` filter are checked against the sender's declared-tag set and an undeclared reference produces a warning while the subscription still registers; at runtime, every tag actually carried by a settling verdict is checked against the same declared-tag set.
 
 ## Purpose
 
@@ -24,6 +24,6 @@ Provide a topology-visible, ledger-free, **emission-scoped** discriminator on th
 
 ## Invariants
 
-- Tags are inert; rimsky reads them only at cascade-walk CEL evaluation (on run-terminating signals) and at signal persistence. A tag never merges into the per-run attribute ledger and never carries forward to the next dispatch.
-- The tag name appears in the executor's observability-declared tag set at registration; emissions of undeclared names are rejected at the supervisor's terminal handler.
+- A declared tag is inert to node state past the runtime declared-tag gate: rimsky reads it only at cascade-walk CEL evaluation (on run-terminating signals) and at signal persistence. A tag never merges into the per-run attribute ledger and never carries forward to the next dispatch. An undeclared tag is not inert — it is itself the trigger the runtime declared-tag gate acts on (see below), a distinct read site from cascade-walk and persistence.
+- Tag enforcement runs in two gates. At template registration, tag literals referenced in a subscription's `payload.tags` filter are checked against the sender executor's declared-tag set; an undeclared reference produces a warning and the subscription still registers. At runtime, as the executor's wire outcome is resolved into its internal settling verdict — before that verdict reaches terminal dispatch — every tag the verdict actually carries is checked against the same declared-tag set; any undeclared tag converts the verdict into an `executor_protocol_violation` error terminal.
 - Tags ride the run-terminating `terminal/success` and `terminal/error/<class>` payloads alongside the attributes-delta slot; the two are independent and compose freely in a CEL `when:` filter. Tags also ride `transient/park/*` payloads for audit forensics, but park signals are audit-only — subscribers cannot fire on `payload.tags` from a park; the tag-as-discriminator role surfaces to subscribers only via the eventual run-terminating settlement.

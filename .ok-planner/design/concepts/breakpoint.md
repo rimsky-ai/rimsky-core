@@ -12,19 +12,19 @@ A breakpoint is a runtime-installed pause-point on a live `concept:instance`, id
 
 ## Purpose
 
-Enable agent-driven debugging of live rimsky instances. The agent installs breakpoints at the dispatch points it cares about, optionally pauses execution, inspects the snapshot, and optionally mutates the dispatch via a one-shot overlay before resuming. This is the runtime-cooperative half of `concept:control-api`'s debugger surface; `concept:instance`'s paused/resume affordance is the other half (instance-level hold).
+Enable agent-driven debugging of live rimsky instances. The agent installs breakpoints at the dispatch points it cares about, optionally pauses execution, inspects the snapshot, and optionally mutates the dispatch via a one-shot overlay before resuming. An unresumed pause-mode hit also gates `concept:control-api`'s debug-override channel, which lets the agent apply persistent node-attribute writes and invalidations against the paused instance — a separate, persistent mutation path distinct from the one-shot resume overlay. This is the runtime-cooperative half of `concept:control-api`'s debugger surface; `concept:instance`'s paused/resume affordance is the other half (instance-level hold).
 
 ## Boundaries
 
-Owns: the per-instance breakpoint ledger and the hit ledger (schema, CRUD, sweeps); the supervisor pre-dispatch and post-terminal checkpoint logic; the resume-with-overlay L6 merge; the per-mode overflow policies and a queue-cap on unresumed hits.
+Owns: the per-instance breakpoint ledger and the hit ledger (schema, CRUD, sweeps); breakpoint matcher evaluation and hit-recording at the pre-dispatch and post-terminal checkpoints; the resume-with-overlay merge — layer L6, applied after `concept:attribute`'s L5 override merge — that feeds the one-shot resume payload into the dispatch; the per-mode overflow policies and a queue-cap on unresumed hits.
 
-Does NOT own: the matcher grammar itself (shared with `concept:attribute`'s by_match via the common foundation matcher package); template-baked pauses (none exist — `concept:parked-state` is executor-emitted, this concept is operator-injected at runtime); the audit-log emission for the API surface (covered by the existing auth audit event kinds per `concept:event-log`); hit *delivery* (`concept:control-api` owns it, exposing **both** the read-only MCP resource-listing and resource-read extension and a read-only REST route that surface hits — this concept owns the ledger, not the transport).
+Does NOT own: the matcher grammar itself (shared with `concept:attribute`'s by_match via the common foundation matcher package); template-baked pauses (none exist — `concept:parked-state` is executor-emitted, this concept is operator-injected at runtime); the audit-log emission for the API surface (covered by the existing auth audit event kinds per `concept:event-log`); hit *delivery* (`concept:control-api` owns it, exposing **both** the read-only MCP resource-listing and resource-read extension and a read-only REST route that surface hits — this concept owns the ledger, not the transport); the runner's checkpoint wiring — invoking evaluation at the pre-dispatch and post-terminal points in the dispatch flow — and the blocked-runner resume-polling loop (owned by `concept:supervisor`: this concept owns what happens when a checkpoint is evaluated, not where in the dispatch flow it is invoked from).
 
 Adjacent: `concept:supervisor`, `concept:control-api`, `concept:attribute`, `concept:instance`, `concept:signal`, `concept:permission`, `concept:parked-state`.
 
 ## Invariants
 
-- Only the supervisor writes hit rows.
+- Only the supervisor creates hit rows; resume and TTL housekeeping sweeps by other roles may update or delete an existing hit row, but no non-supervisor role inserts one.
 - Resume is idempotent on `hit_id`: replays return the original outcome unchanged.
 - A signal-type filter is rejected on pre-dispatch breakpoints at registration (the filter only makes sense on post-terminal hits).
 - Pause-mode hits combined with a silently-dropping overflow policy are rejected at registration (pause-mode hits cannot be silently dropped).
@@ -32,13 +32,13 @@ Adjacent: `concept:supervisor`, `concept:control-api`, `concept:attribute`, `con
 - The L6 resume overlay applies only to the single dispatch that hit the breakpoint; it never persists into the instance's stored attribute-overrides.
 - An L6 resume overlay on a post-terminal hit is rejected at the resume API as an invalid-overlay error — the dispatch the breakpoint observed has already committed, so the overlay can never feed back into the run; accepting it would silently no-op.
 - Cascade-deletion of a breakpoint (the hit rows are deleted with their parent breakpoint) unblocks any paused runner waiting on a hit of that breakpoint, treating the missing-row case as auto-resume with no overlay.
-- The pre-dispatch checkpoint fires exactly once per dispatch attempt, regardless of how the dispatch's attribute bag was sourced (sealed bag built earlier per `concept:node-run`, full substitution at dispatch, or a schema-less dispatch with no bag at all). Every branch of the dispatcher's attribute-resolution path reaches the checkpoint before the executor invocation.
+- The pre-dispatch checkpoint fires exactly once per dispatch attempt — once, before the executor is invoked, and not again on any subsequent retry re-invocation of the executor — regardless of how the dispatch's attribute bag was sourced: a sealed bag built earlier per `concept:node-run`, then substitution and override application at dispatch. Every branch of the dispatcher's attribute-resolution path reaches the checkpoint before the executor invocation.
 
 ## Policy differences from `by_match`
 
-The breakpoint matcher shares its grammar with `concept:attribute`'s `by_match` overrides via the common foundation matcher package, but the validator's used-executors cross-check is intentionally laxer on the breakpoint side:
+The breakpoint matcher shares its grammar with `concept:attribute`'s `by_match` overrides, but the validator's used-executors cross-check is intentionally laxer on the breakpoint side:
 
-- The attribute by-match overlay rejects an executor key that names an executor not referenced by any node in the template (the override is dead). Implemented by passing a populated set of used-executor names to the matcher validator.
-- Breakpoint matchers leave the used-executors set empty so an operator can install a breakpoint against any declared executor — including ones the current template doesn't dispatch to. This supports cross-template debugger habits (an operator who runs a debug session against many templates can carry one matcher pinned to a specific executor even on templates that happen not to use that executor; the breakpoint just doesn't fire).
+- The attribute by-match overlay rejects an executor key that names an executor not referenced by any node in the template (the override is dead).
+- Breakpoint matchers treat every declared executor as valid regardless of template usage, so an operator can install a breakpoint against any declared executor — including ones the current template doesn't dispatch to. This supports cross-template debugger habits (an operator who runs a debug session against many templates can carry one matcher pinned to a specific executor even on templates that happen not to use that executor; the breakpoint just doesn't fire).
 
-The breakpoint matcher still enforces every other cross-check: declared node types, existing graphs, declared deployment-level executors, and the closed grammar. This is enforced by the control-api breakpoint matcher-refs check.
+The breakpoint matcher still enforces every other cross-check: declared node types, existing graphs, declared deployment-level executors, and the closed grammar.

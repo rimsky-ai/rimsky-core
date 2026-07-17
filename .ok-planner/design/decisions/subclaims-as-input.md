@@ -7,8 +7,8 @@ status: as-is
 
 ## Choice
 
-Sub-claim acquisition is owned by the claim-tree machinery (see `concept:claim-tree`); the dispatch-children primitive consumes already-acquired sub-claims as input rather than calling the producer's partition-split itself.
+Sub-claim acquisition is owned by fan-out's partition-split mechanics (see `concept:fan-out`); the dispatch-children primitive consumes already-acquired sub-claims as input rather than calling the producer's partition-split itself.
 
 ## Rationale
 
-Keeps acquisition concerns in `concept:claim-tree` and run-side dispatch concerns in the dispatch primitive; the two surfaces compose without coupling.
+Keeps acquisition concerns in `concept:fan-out` and run-side dispatch concerns in the dispatch primitive; the two surfaces compose without coupling.

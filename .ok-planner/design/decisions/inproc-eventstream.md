@@ -4,16 +4,16 @@ status: as-is
 aliases: []
 ---
 
-# Channel-backed in-process event stream
+# Unary in-process executor call
 
 ## Choice
 
-Channel-backed in-process event stream implementing the runtime's event-stream interface. The in-process client's execute method starts the handler on a goroutine that writes events to a buffered channel; the receive call reads from the channel; channel close signals stream end (returns end-of-stream). The handler's return error is surfaced through the stream per existing gRPC parity.
+The in-process executor client is a synchronous, unary call into the runtime executor package's handler interface. The client's execute method invokes the resolved in-process handler directly on the caller's goroutine and returns the resulting Outcome (or an error) once the handler completes — no goroutine handoff, no channel, no receive loop, and no end-of-stream signal.
 
 ## Rationale
 
-Matches the gRPC streaming semantics the dispatch loop is built around. The supervisor's read loop doesn't have to distinguish transports. Sync utility executors (counter, loop) emit all their events synchronously and return — the channel drains quickly. Async-style ones emit events as they happen.
+Matches `decision:executor-unary-rpc`: the executor protocol's Execute call is unary, so the in-process transport mirrors the gRPC and HTTP-bridge transports exactly, with no transport-specific casing at the dispatch call site. Sync utility executors (counter, loop) and async-style ones alike simply return their one Outcome; there is nothing to stream.
 
 ## Alternatives
 
-Synchronous event stream returning queued events from a slice. Avoids a goroutine but blocks the supervisor's read while the handler runs — incompatible with the streaming pattern the dispatch code assumes.
+A goroutine-plus-channel event stream mirroring a server-streaming Execute call — rejected: the executor protocol itself is unary, so a streaming in-process transport would need to fabricate a receive loop the other two transports don't have, reintroducing exactly the concurrency and error-surfacing complexity the move to a unary protocol was meant to remove.

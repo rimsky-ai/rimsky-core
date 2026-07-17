@@ -8,7 +8,7 @@ aliases: []
 
 ## Definition
 
-An asset is a documented compound, not a new primitive: a claim against a data-processing-capable producer with a durable lifetime. Anything satisfying both is an asset; anything else isn't. Rimsky does not apply asset semantics to other claims.
+An asset is a documented compound, not a new primitive: a committed claim against a data-processing-capable producer with a durable lifetime. Anything satisfying all three is an asset; anything else isn't. Rimsky does not apply asset semantics to other claims.
 
 Assets are surfaced by querying claim handles that are committed and durable against data-processing-advertising producers.
 
@@ -19,6 +19,6 @@ Owns: the compound definition, the asset presentation surface (listing, detail, 
 ## Invariants
 
 - Assets are namespaced per-instance; the identity composes the instance with the asset's alias.
-- The producer MUST advertise the data-processing capability. A durable-lifetime claim against a producer lacking that capability is a held-durable claim, not an asset.
-- The asset's `data:` block in the template is producer-targeted and opaque to rimsky. Rimsky-aware fields outside `data:`: `producer`, `scope`, `lifetime`, `write_semantics`.
+- The producer MUST advertise the data-processing capability. A durable-lifetime claim against a producer lacking that capability remains durable but is not surfaced as an asset (see `concept:claim-lifetime`).
+- The asset's `data:` block in the template is producer-targeted and opaque to rimsky. Rimsky-aware fields outside `data:`: `name`, `selector`, `intent`, `alias`, `lifetime`.
 - The asset-delete endpoint releases the claim handle via the producer's release verb; it refuses if any in-flight run holds the claim.

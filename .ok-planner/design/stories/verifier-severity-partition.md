@@ -11,7 +11,7 @@ As a template author declaring data-quality checks, I can label a check with the
 
 ## Capability
 
-Severity partition in verifier nodes: the warning severity is non-blocking; the error severity (and any non-warning string) is blocking. Both observable through the runtime surface. Severity is a free-form string; the runtime partitions on the exact-string warning value (non-blocking) and treats every other value, including the documented error value and any typo, as blocking. The two-string convention (warning and error) is the contract this story exercises; `tension:quality-rule-severity-string-footgun` tracks the typo footgun.
+Severity partition in verifier nodes: the warning severity is non-blocking; the error severity is blocking. Both observable through the runtime surface. Severity is validated against a closed allowlist — empty defaults to error, otherwise the value must be exactly warning or error; the verifier rejects any other value, including a typo, with a structured error before running any check, rather than silently treating it as blocking.
 
 ## Business value
 

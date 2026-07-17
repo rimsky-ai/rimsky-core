@@ -11,17 +11,19 @@ aliases:
 
 A claim producer is an implementation of the claim-producer protocol — four verbs plus capability advertisement — running either as an out-of-process service (capabilities via the startup handshake) or as an in-process bundled handler registered inside the rimsky all-in-one process (capabilities declared at registration). Both shapes are dispatched through the same protocol surface.
 
-The protocol carries three optional methods, each advertised in the capabilities handshake:
+The protocol carries two optional methods on the claim-producer service itself, each gated by its own capability flag:
 
 - **Split-scope** — partitions a claim's claim scope into sub-scopes for fan-out. Advertised via a split-scope capability flag. Rimsky opens one sub-claim per sub-scope at parent-acquisition time. Each sub-scope descriptor carries the same substrate-meaningful claim content a regular open returns (scope, address, payload) plus per-partition discriminators identifying the sub-scope within its parent. A sub-claim is a claim; substitution paths over a sub-claim resolve identically to those over a regular claim.
-- **Scopes-conflict** — a producer-aware overlap predicate over two claim scopes. Advertised via a scopes-conflict capability flag. Producers that don't advertise default to byte-equal comparison (invariant 4b).
-- **Validation (mix-in)** — the same validate request/response any service can advertise via the validation protocol. Validates a node's userdata at template-registration time against the producer's domain (claim bindings, scopes). Inert userdata per invariant 11 — rimsky forwards opaque bytes; receives a verdict. See `concept:validation`.
+- **Scopes-conflict** — a producer-aware overlap predicate over two claim scopes. Advertised via a scopes-conflict capability flag. Producers that don't advertise default to byte-equal comparison.
 
-A fourth optional mix-in, the **data-processing protocol**, is the control-plane surface for typed-data version lifecycle: begin / commit / abandon a candidate, plus list-versions / list-partitions / get-version-schema. Data motion stays substrate-direct via the acquired result's address; the protocol carries control-plane only. See `concept:data-processing`.
+Two further optional mix-ins are separate sibling protocols advertised through the capabilities list rather than a dedicated flag:
+
+- **Validation** — the same validate request/response any service can advertise via the validation protocol. Validates claim bindings at template-registration time against the producer's domain (selector, intent, lifetime, scope). See `concept:validation`.
+- **Data-processing** — the control-plane surface for typed-data version lifecycle: begin / commit / abandon a candidate, plus list-versions / list-partitions / get-version-schema. Data motion stays substrate-direct via the acquired result's address; the protocol carries control-plane only. See `concept:data-processing`.
 
 ## Purpose
 
-Out-of-process producers let rimsky stay project-agnostic: the producer knows what "the same data" means in its own domain (path canonicalization, MVCC, queue keys) and emits canonical claim scope bytes; rimsky's conflict predicate is byte-equal. A producer can be written in any language; protocol wire compatibility is the only requirement.
+Out-of-process producers let rimsky stay project-agnostic: the producer knows what "the same data" means in its own domain (path canonicalization, MVCC, queue keys) and emits canonical claim scope bytes; rimsky's default conflict predicate is byte-equal, and a producer that needs richer overlap semantics supplies its own predicate via the scopes-conflict capability. A producer can be written in any language; protocol wire compatibility is the only requirement.
 
 ## Boundaries
 

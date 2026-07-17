@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Per `concept:module-layout`, dual-track licensing across two surfaces: a permissive open-source license covers the protocols module, the examples module, and the bundled TypeScript executor reference (the surface external implementers copy, modify, or link against); a strong-copyleft license with a commercial alternative covers everything else (the foundation module, graph layer, runtime layer, control layer, the other bundled services, the binaries group, the test group, the tools group).
+Per `concept:module-layout`, dual-track licensing across two surfaces: a permissive open-source license covers the protocols module and the examples module (the surface external implementers copy, modify, or link against); a strong-copyleft license with a commercial alternative covers everything else (the foundation module, graph layer, runtime layer, control layer, the bundled services, the binaries group, the test group, the tools group).
 
 ## Rationale
 

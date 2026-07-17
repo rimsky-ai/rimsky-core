@@ -12,7 +12,7 @@ A per-claim, four-value enum family that determines how the coexistence matrix t
 
 ### Per-value semantics
 
-The byte-equal-scope uniformity invariant (see below) means the coexistence predicate is only ever asked with a single realized value — holder and candidate share the producer's realization for that scope. So each value defines its own (holder-intent × candidate-intent) sub-matrix; there is no cross-value cell.
+The coexistence predicate is always asked with a single realized value. For a byte-equal-scope conflict, the byte-equal-scope uniformity invariant (see below) guarantees holder and candidate share the producer's realization for that scope. For a producer-defined scope-overlap conflict (see `concept:claim-scope`), the candidate has not yet acquired a realization of its own, so the predicate is evaluated against the holder's already-realized value alone. So each value defines its own (holder-intent × candidate-intent) sub-matrix; there is no cross-value cell.
 
 The four-value family covers four points on the concurrency-vs-consistency spectrum:
 
@@ -27,7 +27,7 @@ A single per-binary capability is too coarse (a relational-store producer might 
 
 ## Boundaries
 
-Owns: the enum values, the envelope handshake, the realized-per-claim value, the conflict-matrix input. Does NOT own: claim-scope conflict comparison (see `concept:claim-scope`), claim disposition (see `concept:claim-producer`), per-claim payload (see `concept:claim`). Adjacent: `concept:claim`, `concept:claim-producer`, `concept:claim-scope`, `concept:claim-handle`.
+Owns: the enum values, the envelope handshake, the realized-per-claim value, the conflict-matrix input. Does NOT own: claim-scope conflict comparison (see `concept:claim-scope`), claim disposition (see `concept:claim-producer`), per-claim payload (see `concept:claim`). Adjacent: `concept:claim`, `concept:claim-producer`, `concept:claim-scope`, `concept:claim-handle`, `concept:atomic-staging`.
 
 ## Invariants
 

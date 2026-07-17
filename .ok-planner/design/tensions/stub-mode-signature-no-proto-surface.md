@@ -11,9 +11,9 @@ affects:
 
 ## What is muddy
 
-`rimsky-executor-conformance --require-stub-mode` (and the standalone `rimsky-conformance-probe`) asserts that a "stub-mode" executor responds to a probe Execute (`userdata: {stub_probe: true}`) with a Complete event whose `attributes_delta` is exactly `{stub: true}` (`cmd/rimsky-conformance-probe/main.go:80-84`, runner's `probeStubMode` at `conformance/runner.go:110+`).
+`rimsky conformance executor --require-stub-mode` asserts that a "stub-mode" executor responds to a probe Execute (`userdata: {stub_probe: true}`) with a settling outcome whose `attributes_delta` is exactly `{stub: true}`. The probe logic is duplicated: once in the shared conformance runner library's `probeStubMode`, and again inline in the CLI's own conformance command (the standalone probe sidecar binary that originally hosted this assertion is gone).
 
-Any executor that wants to be "stub-conformant" must hard-code this exact map shape. The agreement is not documented in `protocols/proto/v1/executor.proto`, not in `docs/protocols/executor.md`, not in `docs/concepts/conformance.md`, and has no shared constant in either the Go runner or the TS executor's source — both sides hard-code the literal `{stub: true}` independently.
+Any executor that wants to be "stub-conformant" must hard-code this exact map shape. The agreement is not documented in `protocols/proto/v1/executor.proto` or in any in-tree protocol/conformance doc, and has no shared constant tying the two Go call sites together — each hard-codes the literal `{stub: true}` independently. There is no TypeScript executor in the tree to independently hard-code a second copy (all bundled executors, including the former TS claude-agent, are Go) — the "two languages hard-code it separately" framing is stale, but the "no schema surface, only code" problem is unchanged.
 
 A rename or shape change would require simultaneous edits in: the probe binary's expected-shape assertion, the runner's `probeStubMode`, every conformant executor's Go/TS code that emits the literal, and any third-party executor in private use.
 
@@ -31,7 +31,5 @@ This is the same shape as `async-callback-body-key` (the `type` vs `kind` issue)
 
 ## Evidence
 
-- `_discover/2026-05-10-conformance-test-binaries.md` Observations bullet "stub-mode signature surface area".
-- `cmd/rimsky-conformance-probe/main.go:80-84`.
-- `conformance/runner.go::probeStubMode`.
+- The standalone probe binary this tension originally cited is gone; the `{stub: true}` assertion now lives in two Go call sites — the shared conformance runner library's `probeStubMode` and a second inline copy in the CLI's conformance command — with no shared constant or protocol-level schema tying them together. No TS executor exists in the tree to hard-code a third copy.
 

@@ -8,7 +8,7 @@ aliases: [sensor-watch]
 
 ## Definition
 
-A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, type) triple. Created at instance creation when the template declares a publisher entry; lives in a persisted publisher-subscription ledger; carries an opaque subscription identifier; dropped at instance termination.
+A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, type) triple. Created at instance creation when the template declares a publisher entry; lives in a persisted publisher-subscription ledger; carries an opaque subscription identifier; transitions to the stopped state at instance termination and the row is retained, not deleted.
 
 A publisher-subscription is the rimsky-side mirror of the publisher's per-binary state. The publisher holds the substrate-specific state (cron schedule, body hash, watermark cursor); rimsky holds the binding metadata (which publisher, which instance, which message type).
 
@@ -30,8 +30,8 @@ Adjacent: `concept:publisher` (the protocol), `concept:sensor` (one class of pub
 
 ## Invariants
 
-- Identity is composite over the owning publisher's name plus the subscription's own identifier — operators can scan one publisher's subscriptions efficiently.
-- The declared message type must match an entry in the target instance's template message-schema registry at the publisher-subscription's mounting time; mismatches keep the row in the mounting state and the failed-reason field carries the diagnostic.
+- Identity is composite over the owning publisher's name plus the subscription's own identifier, scoping each publisher's subscription identifiers independently rather than drawing from one global namespace.
+- The declared message type must match an entry in the target instance's template message-schema registry; a mismatch is rejected as a template validation error, so no instance and no publisher-subscription row is ever created for it. This is distinct from the mounting-to-failed transitions in the lifecycle invariant below, which cover only post-creation, non-retryable Subscribe-handshake failures.
 - The lifecycle state is one of mounting, active, failed, or stopped. Rows are created in the mounting state — instance creation never performs (or blocks on, or fails because of) the publisher subscribe handshake. A reconciliation worker drives the subscribe handshake for mounting rows with backoff and no attempt cap, flipping the row to active on success; the failed state is reserved for non-retryable errors (an unregistered publisher name, a config blob that fails resolution) and carries a reason; the stopped state is reached on unsubscribe. Startup resync re-drives mounting rows; it also recovers a failed row whose failure was an unregistered publisher name once that name is registered, flipping it back to mounting — other failed classes stay failed.
 - The publisher capability check on the message-send endpoint validates the subscription identifier against its instance and lifecycle state, accepting active and mounting rows (a fast publisher can send its first message before the reconciler records the flip to active; rejecting it would drop a legitimate observation). Failed and stopped rows are rejected. Cross-instance subscription IDs are rejected as forbidden.
 - invariant: message-inertness — rimsky-side subscription rows are inert with respect to the publisher's substrate. The row exists; the publisher's internal state is the publisher's concern.

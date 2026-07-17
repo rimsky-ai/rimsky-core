@@ -17,7 +17,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `cascade` (aliases: reactive-cascade) — Cascade is the engine that turns one node-state transition into the set of downstream node-state transitions.
 - `cascade-graph` (aliases: operator dashboard backplane) — The operator-dashboard HTTP-route backplane exposed by the control API: a family of read endpoints covering observability summaries, the event feed, frames, per-instance node state, and dispatches.
 - `cascade-mode` — Per-node setting governing how the cascade walker treats re-cascades targeting a receiver whose latest pending/settled run exists; selects among `most-recent`, `sequenced`, `idempotent-queue`, and `idempotent-settled`.
-- `child-execution` — Child execution is the run-side primitive by which a parent node-run dispatches one or more child executions into their own execution contexts and settles on their aggregate outcome.
+- `child-execution` — Child execution is the umbrella term for the two distinct mechanisms — fan-out and sub-graph delegation — by which a parent node-run dispatches child execution contexts, settled by their own carry or aggregate settle primitive respectively.
 - `claim` — `claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing.
 - `claim-co-holdership` — Multiple node-runs holding the same claim handle via the `holds:` template directive.
 - `claim-handle` — `claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing.
@@ -61,10 +61,10 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `publisher` — A publisher is a peer service that publishes messages into rimsky.
 - `publisher-subscription` (aliases: sensor-watch) — A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, type) triple.
 - `replica` — A replica is one running pod/process of a rimsky-platform binary, behind a deployment-tier load-balancing layer.
-- `rimsky` (aliases: rimsky-cli) — Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack, plus an embedded one-shot orchestration mode that self-hosts the runtime stack to drive a manifest to terminal without standing up rimsky infrastructure.
+- `rimsky` (aliases: rimsky-cli) — Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack, plus two embedded one-shot orchestration modes (ephemeral-run for a single template, compose one-shot for a manifest) that self-host the runtime stack to drive to terminal without standing up rimsky infrastructure.
 - `rimsky-yml` (aliases: unified config) — A single YAML file at a well-known default path (overridable by a config-path environment variable) read by all three runtime processes plus the migrate step.
 - `role-template` (aliases: bundled role) — A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time.
-- `run-scope` — RunScope is the first-class execution context for one graph instantiation (main / subgraph / fanout_partition).
+- `run-scope` — RunScope is the first-class execution context for one graph instantiation (root / sub-graph / fanout_partition).
 - `sensor` — A sensor is a class of `concept:publisher` implementation that observes external state.
 - `service` — An out-of-process gRPC binary that implements one or more rimsky service protocols and is orchestrated by rimsky.
 - `signal` — A signal is the unified emission shape for any transition that affects a node-run.

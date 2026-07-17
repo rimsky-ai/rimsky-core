@@ -20,4 +20,4 @@ The loop-counter carries the `loop` tag after reaching the maximum count. OR: it
 
 ## Proof
 
-Demo — scenario test wiring a loop-counter node (maximum count of three) to a sink subscriber via `subscribes: [{node: <emitter>, type: terminal/success, when: "loop" in payload.tags}]` and a different sink subscriber on `"done" in payload.tags`; observes the `loop` tag fires three times then the `done` tag fires once.
+Demo — scenario test wiring a loop-counter node (maximum count of three) to a sink subscriber via `subscribes: [{node: <emitter>, type: terminal/success, when: "loop" in payload.tags}]` and a different sink subscriber on `"done" in payload.tags`; observes the `loop` tag fires twice then the `done` tag fires once.

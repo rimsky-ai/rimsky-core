@@ -16,11 +16,11 @@ The grant comprises four pieces: the grant-entry types and their parser, the wil
 
 ## Purpose
 
-The auth middleware needs a small, predictable grammar for "what this key is allowed to do." Forward-compatibility matters — entries grow new fields (`mode` and `scope`) without a schema migration — so entries are JSONB with a parser that preserves unknown fields.
+The auth middleware needs a small, predictable grammar for "what this key is allowed to do." Forward-compatibility matters — entries grow new fields (`mode` and `scope`) without a schema migration — so entries are JSON with a parser that preserves unknown fields.
 
 ## Boundaries
 
-Owns: the grant entry shape, a boundary-only wildcard matcher over the action grammar, the canonical action registry (which includes the `service:enroll` verb that authorizes a service to enroll for a certificate identity), and per-action resource scoping via the optional selector field. Does NOT own: per-route handler dispatch (that's the HTTP router's concern), role expansion (CLI-side; see `concept:role-template`), the resolution of preview-vs-commit (`concept:dry-run` owns resolving the request's mode; `concept:permission` owns only the grant mode field that feeds the floor), the certificate machinery gated by the `service:enroll` grant (that's `concept:peer-auth`). Adjacent: `concept:api-key`, `concept:control-api`, `concept:dry-run` (orthogonal — the request flag, not a grant property), `concept:role-template`, `concept:peer-auth`.
+Owns: the grant entry shape, a boundary-only wildcard matcher over the action grammar, the canonical action registry (which includes the `service:enroll` verb that authorizes a service to enroll for a certificate identity), and per-action resource scoping via the optional selector field. Does NOT own: per-route handler dispatch (that's the HTTP router's concern), role expansion (CLI-side; see `concept:role-template`), the resolution of preview-vs-commit (`concept:dry-run` owns resolving the request's mode; `concept:permission` owns only the grant mode field that feeds the floor), the certificate machinery gated by the `service:enroll` grant (that's `concept:peer-auth`). Adjacent: `concept:api-key`, `concept:control-api`, `concept:dry-run` (owns resolving the request's mode from the flag and this concept's grant mode field together), `concept:role-template`, `concept:peer-auth`.
 
 ## Invariants
 

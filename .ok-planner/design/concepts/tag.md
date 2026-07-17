@@ -17,7 +17,7 @@ Templates are immutable (content-addressed). Tags are how operators say "the cur
 
 ## Boundaries
 
-Owns: name → hash mapping, lifecycle event fan-out (tags arrive on the template-deployed lifecycle event). Does NOT own: the underlying spec (see `concept:template`), instance routing (instances bind to hashes, not tags). Adjacent: `concept:template`, `concept:lifecycle-subscriber`, `concept:rimsky`.
+Owns: name → hash mapping. Does NOT own: the underlying spec (see `concept:template`), instance routing (instances bind to hashes, not tags), the template-deployed lifecycle event and its fan-out (tags ride that event's payload; the event itself belongs to `concept:template`). Adjacent: `concept:template`, `concept:lifecycle-subscriber`, `concept:rimsky`. Distinct from `concept:terminal-tag`, an unrelated executor-emitted per-verdict discriminator that shares only the word.
 
 ## Invariants
 

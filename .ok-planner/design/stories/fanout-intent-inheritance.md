@@ -11,20 +11,20 @@ As a template author,
 
 ## Capability
 
-I can declare a fan-out claim with `intent: r` and trust that read-only applies to the sub-claims too,
+I can declare a fan-out claim with `intent: r` and trust that every sub-claim inherits that intent, honored by the coexistence rule that decides which holders may hold a scope concurrently — not by the producer branching its own behavior on intent,
 
 ## Business value
 
-so my read-only declarations are honored end-to-end.
+so my read-only declarations are honored end-to-end without depending on producer-specific behavior.
 
 ## Acceptance
 
-I author a fan-out template with `claims: [{name: <X>, intent: r}]`; I deploy and trigger; the producer's Commit handler treats sub-claim Commits as read-only (the substrate-specific write-back does not fire). I author a second template with `intent: rw`; the producer's Commit handler exhibits write-back.
+I author a fan-out template with `claims: [{name: <X>, intent: r}]`; I deploy and trigger; each sub-claim's persisted intent matches the parent claim's declared intent, and the coexistence rule evaluated at acquisition treats a read-only sub-claim's scope as shareable with another concurrent read-only holder of the same scope. I author a second template with `intent: rw`; its sub-claims are exclusive under the same rule. A producer's behavior at Commit or Abandon is uniform regardless of the sub-claim's intent.
 
 ## Falsifier
 
-A read-only fan-out template later causes the producer to perform write-back operations on sub-claim Commit (the inheritance regressed); OR the producer's behavior on a sub-claim Commit diverges from its behavior on a sibling regular claim of the same intent.
+A fan-out sub-claim's persisted intent diverges from its parent claim's declared intent; OR the coexistence rule fails to honor a read-only sub-claim's shareability, or fails to keep a `rw` sub-claim exclusive; OR a producer branches its Commit or Abandon behavior on claim intent (intent enforcement belongs to the coexistence rule, not the producer).
 
 ## Proof
 
-Executable proof. Side-by-side runnable templates (one `intent: r`, one `intent: rw`) with observable producer-side write behavior differing per declared intent.
+Executable proof. Side-by-side runnable templates (one `intent: r`, one `intent: rw`) with the persisted sub-claim intent asserted against the parent's declaration and observable coexistence behavior differing per declared intent.

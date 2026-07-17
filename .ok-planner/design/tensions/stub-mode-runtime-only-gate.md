@@ -11,7 +11,7 @@ affects:
 
 ## What is muddy
 
-The safety against accidental real-money LLM calls in conformance runs is a runtime flag (`--require-stub-mode` + the probe sidecar). Without the flag, the probe doesn't fire, and conformance can run against any endpoint.
+The safety against accidental real-money LLM calls in conformance runs is a runtime flag, `--require-stub-mode`, gating an inline stub-mode probe run by the conformance CLI itself (the probe no longer lives in a separate sidecar binary). Without the flag, the probe doesn't fire, and conformance can run against any endpoint.
 
 Default behavior is permissive: no probe runs unless the operator opts in. The right default for a stub-only executor (`executors/stub/`); a footgun for any LLM-calling executor.
 
@@ -27,6 +27,5 @@ A new operator running the executor-conformance binary against an arbitrary endp
 
 ## Evidence
 
-- `_discover/conformance-probe-stub-mode-handshake.md` Description ("A conformance run without --require-stub-mode is allowed; the operator takes responsibility").
-- `_discover/2026-05-10-conformance-test-binaries.md` Observations bullet 2.
+- The standalone `rimsky-conformance-probe` sidecar binary this tension originally named no longer exists; the seven standalone conformance binaries were folded into `rimsky conformance <protocol>` subcommands, and the stub-mode probe now runs inline inside the executor conformance runner. The `--require-stub-mode` flag remains permissive-by-default (unset = no probe, any endpoint accepted) — no dossier ruling has flipped this default or otherwise closed the question.
 

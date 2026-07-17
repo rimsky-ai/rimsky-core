@@ -12,7 +12,7 @@ A **signal** is the unified emission shape for any transition that affects a nod
 
 Once emitted, the signal feeds two consumers:
 
-1. **Cascade walker.** Subscription edges keyed by type-path prefix select candidate receivers; a CEL `when:` predicate evaluated against the payload gates wait-set insertion. The payload is consumed at walk-time and is NOT propagated to subscribers — wait-set rows carry only `(frame, receiver_run, sender_run, topic_kind, subscription_scope)` (see `concept:wait-set`). Subscribers receive the wake (the wait-set drain triggers their gate-eval), not the payload.
+1. **Cascade walker.** Subscription edges keyed by type-path prefix select candidate receivers; a CEL `when:` predicate evaluated against the payload gates wait-set insertion. The payload is consumed at walk-time and is NOT propagated to subscribers — wait-set rows carry no payload (see `concept:wait-set`). Subscribers receive the wake (the wait-set drain triggers their gate-eval), not the payload.
 2. **Audit log.** Every signal writes one row to the persisted audit-event ledger with the event kind set to the signal's type-path string and the audit payload set to the signal payload. This is the only path on which the payload is durably preserved. Audit emission is unconditional and independent of subscribers.
 
 The signal vocabulary unifies the historical parallel surfaces (run outcome, transition reason, subscription's structured-filter fields) into one type-path-plus-payload contract.
@@ -23,7 +23,7 @@ Make "what just happened to a node-run" one vocabulary across cascade-fire, audi
 
 ## Signal type-path taxonomy
 
-Four top-level kinds. Type-paths are canonical and validator-enforced.
+Three top-level kinds. Type-paths are canonical and validator-enforced.
 
 ### `terminal/*` — run-terminating: the run ends at this signal
 
@@ -45,10 +45,6 @@ Emitted per attribute key whose value differs from the prior run's persisted val
 
 The diff-gate's job is to suppress redundant cascade rounds **inside a single frame** (self-cascade converging on a stable value across intra-frame rounds) — not to suppress cascade rounds across frames. Cross-frame convergence is not a rimsky feature; a multi-frame workflow that must terminate on value stability carries its convergence signal in the message payload or observes it via external state (per `concept:frame` invariants and common pitfalls).
 
-### `message/<kind>/<sender_kind>/<target>` — boundary-crossing messages
-
-Emitted when a `concept:message` arrives at an instance. The three structured filter dimensions (`kind`, `sender_kind`, `target`) live on the type-path leaves, not as separate subscription-entry fields.
-
 ## Payload schemas
 
 Each signal type's payload is a typed object. The CEL environment binds these field types at template registration so subscribers' `when:` predicates parse-check. The per-type payload schema is a property of the concept: each type-path resolves to one payload shape.
@@ -57,7 +53,7 @@ Each signal type's payload is a typed object. The CEL environment binds these fi
 
 ### Field-naming convention
 
-The signal envelope's outer field is `payload`. To avoid a bare-`payload` collision when a signal's payload itself wraps an opaque sub-object whose wire carrier also names its own opaque field `payload` (the executor error carrier and the message envelope each carry one), the inner field is renamed with a domain prefix:
+The signal envelope's outer field is `payload`. To avoid a bare-`payload` collision when a signal's payload itself wraps an opaque sub-object whose wire carrier also names its own opaque field `payload` (the executor error carrier carries one), the inner field is renamed with a domain prefix:
 
 | Wire carrier | Renamed-in-signal field |
 | --- | --- |
@@ -77,7 +73,7 @@ Subscription `when:` predicates compile at registration time and evaluate at cas
 ## Boundaries
 
 Owns:
-- The canonical type-path taxonomy (four top-level kinds + leaf rules).
+- The canonical type-path taxonomy (three top-level kinds + leaf rules).
 - The per-type payload schema.
 - The CEL filter language: env construction, predicate compilation, evaluation.
 - The audit-emit pathway that writes each signal to the persisted audit-event ledger.

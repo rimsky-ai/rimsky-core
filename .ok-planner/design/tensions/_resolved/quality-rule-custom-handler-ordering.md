@@ -1,7 +1,7 @@
 ---
 tension: quality-rule-custom-handler-ordering
 category: unspecified
-status: open
+status: resolved
 affects:
   - validation
   - attribute
@@ -27,6 +27,9 @@ The contract for registration timing is implicit: it relies on the consumer orde
 
 ## Evidence
 
-- `_discover/quality-rules-and-attribute-validation.md` Observations bullet "custom-handler lifecycle".
-- `graph/qualityrule/eval/rules.go` — the registry and reserved-name handling.
+- The in-graph quality-rule package this tension describes (the process-global evaluator registry, `Register(name, ev)`, and the reserved `custom` lookup) no longer exists anywhere in the tree. Data-shape checks are now a bundled Apache-licensed executor with a closed, hardcoded switch over a static known-kinds set — there is no dynamic registration surface at all, so no consumer-`main()` ordering can race a template load.
+
+## Resolution
+
+The in-graph quality-rule subsystem was retired entirely and replaced by the verifier-executor pattern: a bundled Go executor doing shape checks (no_nulls, pk_unique, value_in_set, regex_match, numeric_range, ...) against a fixed, closed set of check kinds (`concept:validation`, 2026-06-15). With no runtime registry and no consumer-supplied handler registration step, the registration-before-use ordering hazard this tension raised cannot occur — there is nothing left to register out of order.
 

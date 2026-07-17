@@ -1,7 +1,7 @@
 ---
 tension: force-fire-204-hides-asynchrony
 category: unclear
-status: open
+status: resolved
 affects:
   - sensor
   - control-api
@@ -34,7 +34,9 @@ The design choice (row-write rather than direct invalidate dispatch) is correct 
 
 ## Evidence
 
-- `_discover/2026-05-10-cron-no-backfill.md` Observations bullet "force-fire is row-write, not invalidate-dispatch".
-- `control/controlapi/admin_force_fire.go`.
-- `foundation/persistence/postgres/schedules.go`.
+- The force-fire admin endpoint this tension analyzes no longer exists: there is no force-fire route, handler, or scheduled-fire SQL statement anywhere in the tree, and the per-node `schedule:` field / scheduler cron-fire path it depended on is gone. The only surviving mention is in an archived release note.
+
+## Resolution
+
+Per-node scheduling, the `rimsky_schedules` table, the scheduler cron-fire path, and the force-fire admin endpoint/CLI/MCP tool were all retired when cron moved to the bundled `sensor-cron` publisher (`concept:sensor`, 2026-05-15; reaffirmed 2026-06-15). Cron is no longer a rimsky-core capability, so there is no row-write endpoint left to convey tick-bounded-fire semantics honestly — the 204-vs-async ambiguity this tension raised is moot because its subject was removed, not fixed.
 

@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-At template registration, the inverse-edge map gains one entry per structural root receiver, keyed by sender=empty-string, with wake-on-change true and force-upstream-refresh false. The augmentation lives on the runtime's derived in-memory map; the canonical template hash is over the spec bytes only and is unaffected. A structural root is a node whose author-declared subscribes block is empty or absent: any subscribes entry disqualifies the node from root status. A self-subscription (node == self) does not establish an upstream and is excluded from the disqualification.
+At template registration, the inverse-edge map gains one entry per structural root receiver, keyed by sender=empty-string, matching a success terminal with force-upstream-refresh false. The augmentation lives on the runtime's derived in-memory map; the canonical template hash is over the spec bytes only and is unaffected. A structural root is a node with no upstream of any kind: no non-self subscribes entries, no upstream attribute substitution refs, and no message-body consumption — the latter two being sugar-form subscriptions that derive real edges in the inverse-edge map. A self-subscription (node == self) does not establish an upstream and is excluded from the disqualification.
 
 ## Rationale
 

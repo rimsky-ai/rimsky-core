@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The parent-settlement cascade bridge fires within the settle-children primitive, not alongside it at call sites (see `concept:child-execution`).
+The parent-settlement cascade bridge fires within whichever settle primitive is closing the child execution context — carry or aggregate — not alongside it at call sites (see `concept:child-execution`).
 
 ## Rationale
 

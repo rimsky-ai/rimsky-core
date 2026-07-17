@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-When attribute substitution fails (missing-source directive, schema-validation error, or other classifiable substitution failure), the failure is classified and applied to the receiver's `template_resolution_failed` error-class policy in the same transaction where substitution runs. For cascade-driven rows that transaction is the sender's terminal-apply transaction (where the gate evaluator runs); for non-cascade rows it is the row-creation transaction. The classification and policy-application happen inline; the failure is not propagated to a later phase.
+When attribute substitution fails (missing-source directive, schema-validation error, or other classifiable substitution failure), the failure is classified and applied inline to the receiver's error-class policy in the same transaction where substitution runs. A missing-source directive or other unclassified substitution failure maps to the `template_resolution_failed` class; a schema-validation failure maps to the distinct `template_validation_failed` class. For cascade-driven rows that transaction is the sender's terminal-apply transaction (where the gate evaluator runs). Non-cascade rows carry their bag forward verbatim at creation, with no substitution round in the row-creation transaction; their substitution failure can only surface at the claim-substitution round, so it is classified and applied in a fresh transaction opened at dispatch time. The classification and policy-application happen inline; the failure is not propagated to a later phase.
 
 ## Rationale
 

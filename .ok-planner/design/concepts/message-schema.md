@@ -26,4 +26,4 @@ Owns: the registry's persisted shape (content-addressed into the template spec),
 - The body-schema declaration is a valid JSON Schema.
 - Every template's declared-types set carries an implicit empty-type entry seeded at registration with a null body schema. The implicit entry has no fields and no substitution references can resolve against it; receivers gate on the entry via subscription edges, not via body substitution. An author-declared entry of the empty type is refused at registration as reserved-for-runtime.
 - Receipt-time lookup against the registry is the gate: unknown type refuses with an unknown-type response.
-- The body-schema is documentation and a registration-time check on substitution references; the actual body bytes are validated at the receiver's dispatch via the existing attribute-validation machinery. The body remains inert at receipt (see invariant: 21).
+- The body-schema is documentation and a registration-time check on substitution references; the actual body bytes are validated at the receiver's dispatch via the existing attribute-validation machinery. The body remains inert at receipt (see invariant: 24).

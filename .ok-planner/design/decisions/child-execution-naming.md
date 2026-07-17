@@ -7,8 +7,8 @@ status: as-is
 
 ## Choice
 
-The primitive pair is named dispatch-children / settle-children.
+The child-execution primitives carry plain, descriptive names: a single shared dispatch-children primitive, and two named settle primitives — carry (sub-graph delegation's settle) and aggregate (fan-out's settle) — rather than one settle-children primitive covering both.
 
 ## Rationale
 
-Descriptive, and avoids overloading "delegation."
+Descriptive naming avoids overloading "delegation." Settlement is named as two primitives, not one, because fan-out and sub-graph delegation are distinct mechanisms with different fan-in shapes (see `concept:child-execution`): a single settle-children name would imply one shape where there are two.

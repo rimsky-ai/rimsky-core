@@ -19,7 +19,7 @@ Operators react to new objects landing in an external store without writing a cu
 
 ## Acceptance
 
-An object-store-sensor instance polling a real bucket and prefix discovers a new object dropped after the last poll and sends exactly one message carrying that object's metadata; downstream nodes consume the message; a process restart preserves discovery state and doesn't re-send objects already discovered. Backend kinds are pluggable.
+An object-store-sensor instance polling a real bucket and prefix discovers a new object dropped after the last poll, advances its discovery watermark past that object, and attempts to send a message carrying that object's metadata at most once; downstream nodes consume the message on a successful send; a process restart preserves discovery state and doesn't re-send objects already discovered, even one whose send previously failed. Backend kinds are pluggable.
 
 ## Falsifier
 

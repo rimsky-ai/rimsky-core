@@ -19,7 +19,7 @@ Template authors don't silently miss supported substitution sources because the 
 
 ## Acceptance
 
-An automated accuracy check asserts the documented list of substitution source kinds matches the runtime resolver's dispatch set. The check fails when the documented list undercounts, omits a real kind (trigger, child), or lists a kind the resolver doesn't handle.
+An automated accuracy check asserts the documented list of substitution source kinds matches the runtime resolver's dispatch set. The check fails when the documented list undercounts, omits a real kind, or lists a kind the resolver doesn't handle.
 
 ## Falsifier
 
