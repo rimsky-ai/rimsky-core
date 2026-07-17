@@ -8,7 +8,14 @@ This document is the **operating doc** for the effort and is written to be
 **resumable from a clean context**: a fresh session should be able to read this
 top-to-bottom and continue without prior conversation history.
 
-## Status (as of 2026-07-15)
+## Status (as of 2026-07-17)
+
+**Current `dev` tip: `408eb3c5`.** Since this plan's Track 0b commits, the
+separate security track ran to completion and landed 8 commits on `dev`
+(`5f8c10f1` through `408eb3c5`). Those belong to the security track, not this
+one — do NOT read the commit SHAs listed below as the branch head; reconcile
+against `git log` starting from `408eb3c5`. This track's own progress is
+unchanged: Phase 1 (design-corpus reconciliation) is still the next step.
 
 **Track 0a — conflict rulings: DONE.** All 33 distinct dossier conflicts
 resolved by user ruling, written back into the dossiers. Committed `993cd3ad`.
@@ -37,7 +44,10 @@ that Track 0a is complete.
 - **Security ledger** — `review-findings-security-2026-07-06.csv` (40 rows): a
   **separate track**, NOT part of the Phase 1–3 fleet. Worked on the
   security-cleared model per its own doc (`2026-07-15-security-remediation.md`).
-  Do not pull it into this general-remediation context.
+  Do not pull it into this general-remediation context. **COMPLETE as of
+  2026-07-17** (36 fixed / 4 accepted on the ledger; pre-commit review 12 fixed /
+  2 accepted), landed on `dev` through `408eb3c5`. Nothing left to do there;
+  it stays out of this context.
 
 ## Environment & verification discipline (hard-won — do not relearn)
 
