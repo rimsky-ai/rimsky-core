@@ -1,0 +1,6 @@
+CREATE TABLE rimsky_deployment_ca (
+    id                UUID        NOT NULL PRIMARY KEY,
+    ca_cert_pem       BYTEA       NOT NULL,
+    ca_key_encrypted  BYTEA       NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL
+);

@@ -419,4 +419,9 @@ var v1Actions = []ActionEntry{
 		Routes:      []Route{{"POST", "/v1/mcp"}, {"GET", "/v1/mcp"}},
 		MCPTools:    nil,
 		Description: "Invoke the MCP JSON-RPC dispatch surface (POST) and open the server-to-client stream (GET); per-tool actions still gate tools/call."},
+
+	{Action: "service:enroll", IsWrite: false,
+		Routes:      []Route{{"POST", "/v1/enroll"}},
+		MCPTools:    nil,
+		Description: "Exchange the caller's api-key for a short-lived mTLS leaf certificate (peer authentication enrollment)."},
 }

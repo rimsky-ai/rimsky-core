@@ -56,6 +56,10 @@ type AppDeps struct {
 
 	// @concept: node
 	KindAliases *node.KindAliasMap
+
+	PeerAuth string
+
+	Enroll *EnrollDeps
 }
 
 type ObservabilityRouter func(r chi.Router)
@@ -121,6 +125,7 @@ func NewApp(deps AppDeps) http.Handler {
 				registerLineageRoutes(rrr, deps)
 				registerAdminDiagnosticsRoutes(rrr, deps)
 				registerAuthRoutes(rrr, deps)
+				registerEnrollRoutes(rrr, deps)
 				registerMCPRoute(rrr, deps)
 			})
 		})

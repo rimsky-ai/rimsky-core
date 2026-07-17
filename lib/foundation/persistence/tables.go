@@ -33,6 +33,8 @@ type Tables interface {
 	// @concept: api-key
 	APIKeys() APIKeyTable
 
+	DeploymentCA() DeploymentCATable
+
 	// @concept: breakpoint
 	Breakpoints() BreakpointTable
 	BreakpointHits() BreakpointHitTable

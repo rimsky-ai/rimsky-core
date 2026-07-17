@@ -246,6 +246,7 @@ func TestV1Registry(t *testing.T) {
 		"instance:read-frame":  true,
 		// @story: debug-channel
 		"instance:debug-override": true,
+		"service:enroll":          true,
 	}
 	for _, a := range surplus {
 		if !allowed[a] {

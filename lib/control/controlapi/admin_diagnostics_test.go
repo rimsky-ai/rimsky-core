@@ -44,6 +44,7 @@ func (noopStore) PublisherSubscriptions() persistence.PublisherSubscriptionsTabl
 func (noopStore) NodeRunTree() persistence.RunTreeTable                           { return nil }
 func (noopStore) RunScopes() persistence.RunScopeTable                            { return nil }
 func (noopStore) APIKeys() persistence.APIKeyTable                                { return nil }
+func (noopStore) DeploymentCA() persistence.DeploymentCATable                     { return nil }
 func (noopStore) Breakpoints() persistence.BreakpointTable                        { return nil }
 func (noopStore) BreakpointHits() persistence.BreakpointHitTable                  { return nil }
 
@@ -286,7 +287,7 @@ func (f *fakeDiagnosticQueue) UpdateDispatchTuningInTx(context.Context, persiste
 func (f *fakeDiagnosticQueue) BumpLastProgressAt(context.Context, persistence.Tx, shared.UUID, time.Time) (bool, error) {
 	return true, nil
 }
-func (f *fakeDiagnosticQueue) RegisterAsyncAck(context.Context, persistence.Tx, shared.UUID, string, time.Time, *int, *int) error {
+func (f *fakeDiagnosticQueue) RegisterAsyncAck(context.Context, persistence.Tx, shared.UUID, string, time.Time, *int, *int, string) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) LookupRunByAsyncAckID(context.Context, persistence.Tx, string) (*persistence.DispatchRow, error) {

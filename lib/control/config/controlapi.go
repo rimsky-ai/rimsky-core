@@ -20,10 +20,12 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 type ControlAPIConfig struct {
@@ -39,6 +41,7 @@ type ControlAPIConfig struct {
 	Metrics                runtime.MetricsHook
 	LateBindServiceProxies map[string]string
 	RefValidationMode      node.RefValidationMode
+	PeerAuth               string
 
 	Bundled *BundledRegistrations
 }
@@ -196,6 +199,20 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		Logger:   cfg.Logger,
 	}
 	_ = runtime.RegisterAuthMutationHook(authState.OnAuthMutation)
+	var enrollDeps *controlapi.EnrollDeps
+	if cfg.PeerAuth == peer.PeerAuthMTLS {
+		ca, err := ensureDeploymentCA(context.Background(), persistStore, cfg.Clock)
+		if err != nil {
+			cancelDiscovery()
+			registry.Close()
+			lifecycleReg.Close()
+			for _, c := range peerClosers {
+				c()
+			}
+			return nil, fmt.Errorf("StartControlAPI: %w", err)
+		}
+		enrollDeps = &controlapi.EnrollDeps{CA: ca, LeafTTL: pki.LeafTTL, Clock: cfg.Clock}
+	}
 	deps := controlapi.AppDeps{
 		Persist:        persistStore,
 		Queue:          persistQueue,
@@ -240,6 +257,8 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		LateBindServiceProxies: cfg.LateBindServiceProxies,
 		RefValidationMode:      cfg.RefValidationMode,
 		KindAliases:            buildKindAliases(),
+		PeerAuth:               cfg.PeerAuth,
+		Enroll:                 enrollDeps,
 	}
 	app := controlapi.NewApp(deps)
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))

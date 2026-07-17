@@ -147,4 +147,5 @@ func Suite(
 	t.Run("LineageQueryByParentRunID", func(t *testing.T) { testLineageQueryByParentRunID(t, factory(t)) })
 	t.Run("LineageCountOlderThanMatchesDelete", func(t *testing.T) { testLineageCountOlderThanMatchesDelete(t, factory(t)) })
 	t.Run("APIKeys", func(t *testing.T) { TestAPIKeys(t, factory(t)) })
+	t.Run("DeploymentCA", func(t *testing.T) { TestDeploymentCA(t, factory(t)) })
 }

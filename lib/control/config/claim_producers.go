@@ -20,6 +20,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
@@ -145,6 +146,18 @@ type RimskyConfig struct {
 	Retention              runtime.RetentionConfig
 	LateBindServiceProxies map[string]string
 	RefValidationMode      node.RefValidationMode
+	PeerAuth               string
+}
+
+func ParsePeerAuth(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", peer.PeerAuthNone:
+		return peer.PeerAuthNone, nil
+	case peer.PeerAuthMTLS:
+		return peer.PeerAuthMTLS, nil
+	default:
+		return "", fmt.Errorf("peer_auth: unknown value %q (one of: none, mtls)", raw)
+	}
 }
 
 func ParseRefValidationMode(raw string) (node.RefValidationMode, error) {
@@ -227,6 +240,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		MaxParkDuration        map[string]time.Duration          `yaml:"max_park_duration"`
 		Retention              *yamlRetention                    `yaml:"retention"`
 		LateBindServiceProxies map[string]string                 `yaml:"late_bind_service_proxies"`
+		PeerAuth               string                            `yaml:"peer_auth"`
 		Templates              struct {
 			RefValidationMode string `yaml:"ref_validation_mode"`
 		} `yaml:"templates"`
@@ -400,6 +414,16 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: templates.%w", path, err)
 	}
 
+	peerAuth, err := ParsePeerAuth(wrapper.PeerAuth)
+	if err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+	}
+	if peerAuth == peer.PeerAuthMTLS {
+		if _, err := pki.ParseCAEncryptionKey(os.Getenv(pki.EnvCAEncryptionKey)); err != nil {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: peer_auth: mtls requires %w", path, err)
+		}
+	}
+
 	return RimskyConfig{
 		Persistence:            pcfg,
 		Blob:                   bcfg,
@@ -411,6 +435,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Retention:              retentionCfg,
 		LateBindServiceProxies: wrapper.LateBindServiceProxies,
 		RefValidationMode:      refMode,
+		PeerAuth:               peerAuth,
 	}, nil
 }
 
