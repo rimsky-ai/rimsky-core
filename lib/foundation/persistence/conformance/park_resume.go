@@ -416,9 +416,10 @@ func testRegisterAsyncAckRoundTrip(t *testing.T, d persistence.Database) {
 
 	runID := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, parkResumeSup)
 	ackID := "ack-" + uuid.New().String()
+	expectedPrincipal := "executor-" + uuid.New().String()
 	now := time.Now().UTC().Truncate(time.Second)
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RegisterAsyncAck(ctx, tx, runID, ackID, now, nil, nil)
+		return q.RegisterAsyncAck(ctx, tx, runID, ackID, now, nil, nil, expectedPrincipal)
 	}); err != nil {
 		t.Fatalf("RegisterAsyncAck: %v", err)
 	}
@@ -439,6 +440,9 @@ func testRegisterAsyncAckRoundTrip(t *testing.T, d persistence.Database) {
 		}
 		if got.LastProgressAt == nil {
 			t.Fatalf("RegisterAsyncAck did not set last_progress_at")
+		}
+		if got.AsyncAckPrincipal == nil || *got.AsyncAckPrincipal != expectedPrincipal {
+			t.Fatalf("dispatch row AsyncAckPrincipal = %v, want %s (dispatched-executor principal must round-trip)", got.AsyncAckPrincipal, expectedPrincipal)
 		}
 		return nil
 	}); err != nil {

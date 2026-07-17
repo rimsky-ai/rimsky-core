@@ -82,8 +82,8 @@ func TestHandler_HappyPath(t *testing.T) {
 	writer := newFakeScratchWriter()
 	runID := uuid.New()
 
-	auth := func(token string, gotID shared.UUID) error {
-		if token != "tok-123" {
+	auth := func(r *http.Request, gotID shared.UUID) error {
+		if r.Header.Get("Authorization") != "tok-123" {
 			return ErrUnauthorizedCallback
 		}
 		if gotID != runID {
@@ -110,8 +110,8 @@ func TestHandler_BearerPrefixAccepted(t *testing.T) {
 
 	writer := newFakeScratchWriter()
 	runID := uuid.New()
-	auth := func(token string, _ shared.UUID) error {
-		if token != "tok-bearer" {
+	auth := func(r *http.Request, _ shared.UUID) error {
+		if r.Header.Get("Authorization") != "Bearer tok-bearer" {
 			return ErrUnauthorizedCallback
 		}
 		return nil
@@ -128,7 +128,13 @@ func TestHandler_MissingAuth(t *testing.T) {
 	t.Parallel()
 
 	writer := newFakeScratchWriter()
-	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: func(string, shared.UUID) error { return nil }})
+	auth := func(r *http.Request, _ shared.UUID) error {
+		if r.Header.Get("Authorization") == "" {
+			return ErrUnauthorizedCallback
+		}
+		return nil
+	}
+	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: auth})
 
 	resp := postScratch(t, srv, uuid.New(), "", []byte("x"))
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -140,7 +146,7 @@ func TestHandler_BadAuth(t *testing.T) {
 	t.Parallel()
 
 	writer := newFakeScratchWriter()
-	auth := func(string, shared.UUID) error { return ErrUnauthorizedCallback }
+	auth := func(*http.Request, shared.UUID) error { return ErrUnauthorizedCallback }
 	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: auth})
 
 	resp := postScratch(t, srv, uuid.New(), "wrong-tok", []byte("x"))
@@ -153,7 +159,7 @@ func TestHandler_BadRunID(t *testing.T) {
 	t.Parallel()
 
 	writer := newFakeScratchWriter()
-	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: func(string, shared.UUID) error { return nil }})
+	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: func(*http.Request, shared.UUID) error { return nil }})
 
 	resp, err := http.Post(srv.URL+"/v1/runs/not-a-uuid/scratch", "application/octet-stream",
 		strings.NewReader("x"))
@@ -170,7 +176,7 @@ func TestHandler_BodyTooLarge(t *testing.T) {
 	t.Parallel()
 
 	writer := newFakeScratchWriter()
-	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: func(string, shared.UUID) error { return nil }})
+	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: func(*http.Request, shared.UUID) error { return nil }})
 
 	const maxBody = 64 * 1024 * 1024
 	body := io.MultiReader(
@@ -207,7 +213,7 @@ func TestHandler_WriteFailureReturns500(t *testing.T) {
 
 	writer := newFakeScratchWriter()
 	writer.failErr = errors.New("synthetic write failure")
-	auth := func(string, shared.UUID) error { return nil }
+	auth := func(*http.Request, shared.UUID) error { return nil }
 	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: auth})
 
 	resp := postScratch(t, srv, uuid.New(), "tok", []byte("x"))
@@ -221,7 +227,7 @@ func TestHandler_RunRowMissingReturns410(t *testing.T) {
 
 	writer := newFakeScratchWriter()
 	writer.failErr = ErrRunRowMissing
-	auth := func(string, shared.UUID) error { return nil }
+	auth := func(*http.Request, shared.UUID) error { return nil }
 	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: auth})
 
 	resp := postScratch(t, srv, uuid.New(), "tok", []byte("x"))
@@ -247,5 +253,5 @@ func TestHandler_PanicOnNilWriter(t *testing.T) {
 			t.Fatalf("expected panic on nil Writer")
 		}
 	}()
-	_ = Handler(HandlerDeps{Writer: nil, Auth: func(string, shared.UUID) error { return nil }})
+	_ = Handler(HandlerDeps{Writer: nil, Auth: func(*http.Request, shared.UUID) error { return nil }})
 }

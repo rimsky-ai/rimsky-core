@@ -6,6 +6,8 @@ package runtime
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +18,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 type keepaliveStubTables struct {
@@ -51,7 +55,6 @@ func TestKeepalive_InvalidRunID(t *testing.T) {
 	router := newKeepaliveRouter(c)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/runs/not-a-uuid/keepalive", nil)
-	req.Header.Set("Authorization", "sup-1:"+uuid.NewString())
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -60,67 +63,93 @@ func TestKeepalive_InvalidRunID(t *testing.T) {
 	}
 }
 
-func TestKeepalive_MissingAuth(t *testing.T) {
+func TestKeepalive_NoneModeNeedsNoAuth(t *testing.T) {
 	t.Parallel()
-	c := &CallbackServer{Logger: shared.SilentLogger{}, SupervisorID: "sup-1"}
+	queue := &keepaliveStubQueue{found: true}
+	c := &CallbackServer{
+		Logger:       shared.SilentLogger{},
+		SupervisorID: "sup-1",
+		Persist:      keepaliveStubTables{},
+		Queue:        queue,
+	}
 	router := newKeepaliveRouter(c)
 
-	runID := uuid.NewString()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID+"/keepalive", nil)
+	runID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (none mode is unauthenticated); body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestKeepalive_BadTokenShape(t *testing.T) {
+func TestKeepalive_MTLSRejectsMissingClientCert(t *testing.T) {
 	t.Parallel()
-	c := &CallbackServer{Logger: shared.SilentLogger{}, SupervisorID: "sup-1"}
+	c := &CallbackServer{
+		Logger:       shared.SilentLogger{},
+		SupervisorID: "sup-1",
+		PeerAuth:     peer.PeerAuthMTLS,
+	}
 	router := newKeepaliveRouter(c)
 
-	runID := uuid.NewString()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID+"/keepalive", nil)
-	req.Header.Set("Authorization", "no-colon-here")
+	runID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
+		t.Fatalf("status = %d, want 401 (mtls without client cert)", rec.Code)
 	}
 }
 
-func TestKeepalive_SupervisorMismatch(t *testing.T) {
+func TestKeepalive_MTLSAcceptsVerifiedPrincipal(t *testing.T) {
 	t.Parallel()
-	c := &CallbackServer{Logger: shared.SilentLogger{}, SupervisorID: "sup-A"}
+	queue := &keepaliveStubQueue{found: true}
+	c := &CallbackServer{
+		Logger:       shared.SilentLogger{},
+		SupervisorID: "sup-1",
+		Persist:      keepaliveStubTables{},
+		Queue:        queue,
+		PeerAuth:     peer.PeerAuthMTLS,
+	}
 	router := newKeepaliveRouter(c)
 
-	runID := uuid.NewString()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID+"/keepalive", nil)
-	req.Header.Set("Authorization", "sup-B:"+runID)
+	runID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
+	leaf := leafForPrincipal(t, "executor-7")
+	req.TLS = &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{leaf},
+		VerifiedChains:   [][]*x509.Certificate{{leaf}},
+	}
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestKeepalive_RunIDMismatch(t *testing.T) {
+func TestKeepalive_MTLSRejectsCertWithoutPrincipal(t *testing.T) {
 	t.Parallel()
-	c := &CallbackServer{Logger: shared.SilentLogger{}, SupervisorID: "sup-1"}
+	c := &CallbackServer{
+		Logger:       shared.SilentLogger{},
+		SupervisorID: "sup-1",
+		PeerAuth:     peer.PeerAuthMTLS,
+	}
 	router := newKeepaliveRouter(c)
 
-	urlRun := uuid.NewString()
-	tokenRun := uuid.NewString()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+urlRun+"/keepalive", nil)
-	req.Header.Set("Authorization", "sup-1:"+tokenRun)
+	runID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
+	req.TLS = &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{{}},
+		VerifiedChains:   [][]*x509.Certificate{{{}}},
+	}
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
+		t.Fatalf("status = %d, want 401 (cert carries no spiffe principal)", rec.Code)
 	}
 }
 
@@ -135,9 +164,8 @@ func TestKeepalive_UnknownRun(t *testing.T) {
 	}
 	router := newKeepaliveRouter(c)
 
-	runID := uuid.NewString()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID+"/keepalive", nil)
-	req.Header.Set("Authorization", "sup-1:"+runID)
+	runID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -165,7 +193,6 @@ func TestKeepalive_Success(t *testing.T) {
 
 	runID := uuid.New()
 	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
-	req.Header.Set("Authorization", "sup-1:"+runID.String())
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -178,4 +205,25 @@ func TestKeepalive_Success(t *testing.T) {
 	if queue.calls[0] != shared.UUID(runID) {
 		t.Fatalf("BumpLastProgressAt runID = %s, want %s", queue.calls[0], runID)
 	}
+}
+
+func leafForPrincipal(t *testing.T, principal string) *x509.Certificate {
+	t.Helper()
+	ca, err := pki.GenerateCA(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	issued, err := ca.IssueLeaf(principal, time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC), pki.LeafTTL)
+	if err != nil {
+		t.Fatalf("IssueLeaf: %v", err)
+	}
+	keyPair, err := tls.X509KeyPair(issued.CertPEM, issued.KeyPEM)
+	if err != nil {
+		t.Fatalf("X509KeyPair: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(keyPair.Certificate[0])
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	return leaf
 }

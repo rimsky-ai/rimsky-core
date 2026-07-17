@@ -123,6 +123,7 @@ type AsyncContext struct {
 	NodeDef            *node.TemplateNodeDef
 	ResolvedAttributes map[string]any
 	AttributesSchema   map[string]any
+	AsyncAckPrincipal  string
 }
 
 type AcquiredLock struct {

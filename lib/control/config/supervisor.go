@@ -6,6 +6,7 @@ package config
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 type SupervisorConfig struct {
@@ -51,6 +53,8 @@ type SupervisorConfig struct {
 	ExtraInprocHandlers map[string]executor.InProcessHandler
 
 	Bundled *BundledRegistrations
+
+	PeerAuth string
 }
 
 type SupervisorHandle interface {
@@ -74,8 +78,39 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if persistStore == nil {
 		return nil, fmt.Errorf("StartSupervisor: Database.Tables() returned nil — driver did not initialize the Tables accessor")
 	}
+
+	var (
+		serverIdentity *peer.IdentityHolder
+		clientCAs      *x509.CertPool
+		stopIdentity   = func() {}
+	)
+	if cfg.PeerAuth == peer.PeerAuthMTLS {
+		clock := cfg.Clock
+		if clock == nil {
+			clock = shared.SystemClock{}
+		}
+		logger := cfg.Logger
+		if logger == nil {
+			logger = shared.SilentLogger{}
+		}
+		ca, err := ensureDeploymentCA(context.Background(), persistStore, clock)
+		if err != nil {
+			return nil, fmt.Errorf("StartSupervisor: %w", err)
+		}
+		idCtx, cancel := context.WithCancel(context.Background())
+		holder, err := setupOutboundIdentity(idCtx, ca, cfg.SupervisorID, clock, logger)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("StartSupervisor: %w", err)
+		}
+		serverIdentity = holder
+		clientCAs = ca.CertPool()
+		stopIdentity = cancel
+	}
+
 	registry, err := dialRemoteClaimProducers(context.Background(), cfg.ClaimProducers, persistStore, cfg.LateBindServiceProxies)
 	if err != nil {
+		stopIdentity()
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
 	}
 	if cfg.Bundled != nil {
@@ -96,6 +131,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		}
 		for url, h := range cfg.Bundled.ExecutorHandlers {
 			if _, exists := merged[url]; exists {
+				stopIdentity()
 				registry.Close()
 				return nil, fmt.Errorf("StartSupervisor: bundled in-proc handler collides with extra handler %q", url)
 			}
@@ -105,12 +141,14 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	}
 	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors)
 	if err != nil {
+		stopIdentity()
 		registry.Close()
 		return nil, fmt.Errorf("StartSupervisor: dial lifecycle subscribers: %w", err)
 	}
 	_, _, dataProcessors, dpClosers, err := DialPublisherAndValidationRegistries(
 		context.Background(), cfg.ClaimProducers, cfg.Executors, RemotePublishersConfig{})
 	if err != nil {
+		stopIdentity()
 		registry.Close()
 		lifecycleSubs.Close()
 		return nil, fmt.Errorf("StartSupervisor: dial data-processing registry: %w", err)
@@ -121,6 +159,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		}
 	}
 	if err := cfg.NamedLocks.Validate(); err != nil {
+		stopIdentity()
 		registry.Close()
 		lifecycleSubs.Close()
 		closeDataProcessors()
@@ -128,6 +167,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	}
 	persistQueue := cfg.Driver.Queue()
 	if persistQueue == nil {
+		stopIdentity()
 		registry.Close()
 		lifecycleSubs.Close()
 		closeDataProcessors()
@@ -135,11 +175,13 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	}
 	coordinator := cfg.Driver.AdvisoryLocker()
 	if coordinator == nil {
+		stopIdentity()
 		registry.Close()
 		lifecycleSubs.Close()
 		closeDataProcessors()
 		return nil, fmt.Errorf("StartSupervisor: Driver.AdvisoryLocker() returned nil")
 	}
+
 	inner, err := runtime.Start(runtime.Config{
 		SupervisorID:                cfg.SupervisorID,
 		Persist:                     persistStore,
@@ -167,8 +209,12 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		LateBindServiceProxies:      cfg.LateBindServiceProxies,
 		DataProcessors:              dataProcessors,
 		ExtraInprocHandlers:         cfg.ExtraInprocHandlers,
+		PeerAuth:                    cfg.PeerAuth,
+		ServerIdentity:              serverIdentity,
+		ClientCAs:                   clientCAs,
 	})
 	if err != nil {
+		stopIdentity()
 		registry.Close()
 		lifecycleSubs.Close()
 		closeDataProcessors()
@@ -179,6 +225,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		registry:            registry,
 		lifecycleSubs:       lifecycleSubs,
 		closeDataProcessors: closeDataProcessors,
+		stopIdentity:        stopIdentity,
 	}, nil
 }
 
@@ -187,10 +234,14 @@ type supervisorHandleWithRegistry struct {
 	registry            *locks.Registry
 	lifecycleSubs       *locks.LifecycleRegistry
 	closeDataProcessors func()
+	stopIdentity        func()
 }
 
 func (h supervisorHandleWithRegistry) Shutdown(ctx context.Context) error {
 	err := h.inner.Shutdown(ctx)
+	if h.stopIdentity != nil {
+		h.stopIdentity()
+	}
 	h.registry.Close()
 	if h.lifecycleSubs != nil {
 		h.lifecycleSubs.Close()

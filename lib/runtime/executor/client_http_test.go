@@ -45,7 +45,7 @@ func TestHTTPClientTLSRequiredVerifiedExchange(t *testing.T) {
 		t.Fatalf("NewHTTPClient: %v", err)
 	}
 	defer c.Close()
-	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
+	outcome, _, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
 	if err != nil {
 		t.Fatalf("Execute over tls: required: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestHTTPClientTLSRequiredUnverifiedPeerFailsLoudly(t *testing.T) {
 		t.Fatalf("NewHTTPClient: %v", err)
 	}
 	defer c.Close()
-	_, err = c.Execute(context.Background(), &genv1.ExecuteRequest{})
+	_, _, err = c.Execute(context.Background(), &genv1.ExecuteRequest{})
 	if err == nil {
 		t.Fatal("expected verified-TLS handshake against an untrusted cert to fail")
 	}
@@ -94,7 +94,7 @@ func TestHTTPClientTLSOffPlaintext(t *testing.T) {
 		t.Fatalf("NewHTTPClient: %v", err)
 	}
 	defer c.Close()
-	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
+	outcome, _, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
 	if err != nil {
 		t.Fatalf("Execute over tls: off: %v", err)
 	}

@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -19,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 type Config struct {
@@ -57,6 +59,10 @@ type Config struct {
 
 	// @concept: executor
 	ExtraInprocHandlers map[string]executor.InProcessHandler
+
+	PeerAuth       string
+	ServerIdentity *peer.IdentityHolder
+	ClientCAs      *x509.CertPool
 }
 
 type Handle struct {
@@ -157,6 +163,9 @@ func Start(cfg Config) (*Handle, error) {
 		LifecycleSubs:               cfg.LifecycleSubs,
 		LifecyclePeersForSpec:       cfg.LifecyclePeersForSpec,
 		DataProcessors:              cfg.DataProcessors,
+		PeerAuth:                    cfg.PeerAuth,
+		ServerIdentity:              cfg.ServerIdentity,
+		ClientCAs:                   cfg.ClientCAs,
 	}
 	addr, err := callbackSrv.Start(cfg.CallbackHost, cfg.CallbackPort)
 	if err != nil {
@@ -236,7 +245,7 @@ func Start(cfg Config) (*Handle, error) {
 		return hctx
 	})
 	clientPool := executor.NewClientPoolWithInProcess(inprocReg, newHctx)
-	advertised := advertisedCallbackURL(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
+	advertised := advertisedCallbackURL(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort, cfg.PeerAuth)
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg, callbackServeErr: callbackSrv.ServeErr()}
 	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedClaimProducers, lockHolders)
 	return h, nil
@@ -283,9 +292,13 @@ func effectiveCallbackHostPort(listenerAddr, advertiseHost string, advertisePort
 	return advertiseHost, advertisePort
 }
 
-func advertisedCallbackURL(listenerAddr, advertiseHost string, advertisePort int) string {
+func advertisedCallbackURL(listenerAddr, advertiseHost string, advertisePort int, peerAuth string) string {
 	host, port := effectiveCallbackHostPort(listenerAddr, advertiseHost, advertisePort)
-	return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
+	scheme := "http://"
+	if peerAuth == peer.PeerAuthMTLS {
+		scheme = "https://"
+	}
+	return scheme + net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 func runLoop(

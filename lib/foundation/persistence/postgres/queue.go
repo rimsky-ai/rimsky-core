@@ -333,7 +333,8 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
 		        claimed_by, claimed_at, frame_id, async_ack_id, async_ack_registered_at,
 		        last_progress_at, tags,
-		        effective_max_quiet_period_seconds, effective_max_runtime_seconds
+		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
+		        async_ack_principal
 		   FROM rimsky_node_runs
 		  WHERE claimed_by IS NOT NULL
 		    AND async_ack_id IS NOT NULL`,
@@ -351,6 +352,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 			&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 			&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
+			&r.AsyncAckPrincipal,
 		); err != nil {
 			return nil, err
 		}
@@ -431,7 +433,8 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
 		        claimed_by, claimed_at, frame_id, async_ack_id, async_ack_registered_at,
 		        last_progress_at, tags,
-		        effective_max_quiet_period_seconds, effective_max_runtime_seconds
+		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
+		        async_ack_principal
 		   FROM rimsky_node_runs
 		  WHERE async_ack_id = $1`,
 		ackID,
@@ -442,6 +445,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 		&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 		&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
+		&r.AsyncAckPrincipal,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -454,7 +458,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 	return &r, nil
 }
 
-func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int) error {
+func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string) error {
 	if tx == nil {
 		return errors.New("postgres.RegisterAsyncAck: tx required")
 	}
@@ -467,9 +471,10 @@ func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, run
 		        async_ack_registered_at = $3,
 		        last_progress_at = $3,
 		        effective_max_quiet_period_seconds = $4,
-		        effective_max_runtime_seconds = $5
+		        effective_max_runtime_seconds = $5,
+		        async_ack_principal = $6
 		  WHERE id = $1`,
-		runID, ackID, now, maxQuietSec, maxRuntimeSec,
+		runID, ackID, now, maxQuietSec, maxRuntimeSec, nullableString(expectedPrincipal),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.RegisterAsyncAck: %w", err)
@@ -543,7 +548,8 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
-		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
+		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
+		        d.async_ack_principal
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.state IN ('pending','stale','running','held','parked')
@@ -569,6 +575,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 			&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 			&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
+			&r.AsyncAckPrincipal,
 		); err != nil {
 			return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 		}
@@ -645,7 +652,8 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
-		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
+		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
+		        d.async_ack_principal
 		   FROM rimsky_node_runs d
 		  WHERE d.id = $1
 		    AND d.state IN ('pending','stale','running','held','parked')`, id,
@@ -656,6 +664,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 		&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 		&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
+		&r.AsyncAckPrincipal,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil

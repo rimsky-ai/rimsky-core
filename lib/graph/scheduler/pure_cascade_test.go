@@ -115,7 +115,7 @@ func (f *fakeQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx
 func (f *fakeQueue) BumpLastProgressAt(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) (bool, error) {
 	return true, nil
 }
-func (f *fakeQueue) RegisterAsyncAck(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string, _ time.Time, _ *int, _ *int) error {
+func (f *fakeQueue) RegisterAsyncAck(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string, _ time.Time, _ *int, _ *int, _ string) error {
 	return nil
 }
 func (f *fakeQueue) LookupRunByAsyncAckID(_ context.Context, _ persistence.Tx, _ string) (*persistence.DispatchRow, error) {

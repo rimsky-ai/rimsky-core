@@ -412,7 +412,8 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
 		        claimed_by, claimed_at, frame_id, async_ack_id,
 		        async_ack_registered_at, last_progress_at, tags,
-		        effective_max_quiet_period_seconds, effective_max_runtime_seconds
+		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
+		        async_ack_principal
 		   FROM rimsky_node_runs
 		  WHERE claimed_by IS NOT NULL
 		    AND async_ack_id IS NOT NULL`,
@@ -503,7 +504,8 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
 		        claimed_by, claimed_at, frame_id, async_ack_id,
 		        async_ack_registered_at, last_progress_at, tags,
-		        effective_max_quiet_period_seconds, effective_max_runtime_seconds
+		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
+		        async_ack_principal
 		   FROM rimsky_node_runs
 		  WHERE async_ack_id = ?`,
 		ackID,
@@ -518,7 +520,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 	return &r, nil
 }
 
-func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int) error {
+func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string) error {
 	if tx == nil {
 		return errors.New("sqlite.RegisterAsyncAck: tx required")
 	}
@@ -538,9 +540,10 @@ func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, run
 		        async_ack_registered_at = ?,
 		        last_progress_at = ?,
 		        effective_max_quiet_period_seconds = ?,
-		        effective_max_runtime_seconds = ?
+		        effective_max_runtime_seconds = ?,
+		        async_ack_principal = ?
 		  WHERE id = ?`,
-		ackID, formatTime(now), formatTime(now), maxQuietArg, maxRuntimeArg, runID.String(),
+		ackID, formatTime(now), formatTime(now), maxQuietArg, maxRuntimeArg, nullableString(expectedPrincipal), runID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.RegisterAsyncAck: %w", err)
@@ -592,7 +595,8 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	q1 := `SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 	        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 	        d.async_ack_registered_at, d.last_progress_at, d.tags,
-	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
+	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
+	        d.async_ack_principal
 	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 	  WHERE d.state IN ('pending','stale','running','held','parked')` +
@@ -670,7 +674,8 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
-	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
+	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
+	        d.async_ack_principal
 		   FROM rimsky_node_runs d
 		  WHERE d.id = ?
 		    AND d.state IN ('pending','stale','running','held','parked')`, id.String(),
@@ -812,13 +817,14 @@ func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
 		tagsStr                   sql.NullString
 		maxQuietSec               sql.NullInt64
 		maxRuntimeSec             sql.NullInt64
+		asyncAckPrincipal         sql.NullString
 		r                         persistence.DispatchRow
 	)
 	if err := row.Scan(
 		&idStr, &nodeIDStr, &executorName, &requiredClaimProducersStr,
 		&enqueuedAtStr, &claimedBy, &claimedAtStr, &frameIDStr,
 		&asyncAckID, &asyncAckRegisteredAt, &lastProgressAtStr, &tagsStr,
-		&maxQuietSec, &maxRuntimeSec,
+		&maxQuietSec, &maxRuntimeSec, &asyncAckPrincipal,
 	); err != nil {
 		return persistence.DispatchRow{}, err
 	}
@@ -888,6 +894,10 @@ func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
 	if maxRuntimeSec.Valid {
 		v := int(maxRuntimeSec.Int64)
 		r.EffectiveMaxRuntimeSeconds = &v
+	}
+	if asyncAckPrincipal.Valid {
+		v := asyncAckPrincipal.String
+		r.AsyncAckPrincipal = &v
 	}
 	return r, nil
 }

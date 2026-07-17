@@ -10,7 +10,6 @@ package runtime
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +20,12 @@ import (
 )
 
 func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request) {
+	if authErr := c.authorizePeer(r); authErr != nil {
+		c.Logger.Warn("keepalive: unauthorized",
+			"error", authErr.Error())
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
 	runIDStr := chi.URLParam(r, "run_id")
 	parsed, err := uuid.Parse(runIDStr)
 	if err != nil {
@@ -28,20 +33,6 @@ func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	runID := shared.UUID(parsed)
-
-	token := strings.TrimSpace(r.Header.Get("Authorization"))
-	token = strings.TrimPrefix(token, "Bearer ")
-	token = strings.TrimSpace(token)
-	if token == "" {
-		http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
-		return
-	}
-	if authErr := c.runTokenAuth(token, runID); authErr != nil {
-		c.Logger.Warn("keepalive: unauthorized",
-			"run_id", runID.String(), "error", authErr.Error())
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
 
 	var found bool
 	if txErr := c.Persist.Transaction(r.Context(), func(ctx context.Context, tx persistence.Tx) error {

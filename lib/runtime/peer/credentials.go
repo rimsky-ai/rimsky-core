@@ -26,33 +26,53 @@ const (
 var (
 	tlsRootCAsMu sync.RWMutex
 	tlsRootCAs   *x509.CertPool
+
+	clientIdentityMu sync.RWMutex
+	clientIdentity   *IdentityHolder
 )
 
-func SetTLSRootCAsForTesting(pool *x509.CertPool) {
+func SetTLSRootCAs(pool *x509.CertPool) {
 	tlsRootCAsMu.Lock()
 	defer tlsRootCAsMu.Unlock()
 	tlsRootCAs = pool
+}
+
+func SetTLSRootCAsForTesting(pool *x509.CertPool) {
+	SetTLSRootCAs(pool)
+}
+
+func SetClientIdentity(h *IdentityHolder) {
+	clientIdentityMu.Lock()
+	defer clientIdentityMu.Unlock()
+	clientIdentity = h
 }
 
 func TransportCredentials(mode string) credentials.TransportCredentials {
 	if mode != TLSModeRequired {
 		return insecure.NewCredentials()
 	}
-	tlsRootCAsMu.RLock()
-	defer tlsRootCAsMu.RUnlock()
-	return credentials.NewTLS(&tls.Config{
-		RootCAs:    tlsRootCAs,
-		MinVersion: tls.VersionTLS12,
-	})
+	return credentials.NewTLS(clientTLSConfig())
 }
 
 func TLSClientConfig() *tls.Config {
+	return clientTLSConfig()
+}
+
+func clientTLSConfig() *tls.Config {
 	tlsRootCAsMu.RLock()
-	defer tlsRootCAsMu.RUnlock()
-	return &tls.Config{
-		RootCAs:    tlsRootCAs,
+	pool := tlsRootCAs
+	tlsRootCAsMu.RUnlock()
+	cfg := &tls.Config{
+		RootCAs:    pool,
 		MinVersion: tls.VersionTLS12,
 	}
+	clientIdentityMu.RLock()
+	h := clientIdentity
+	clientIdentityMu.RUnlock()
+	if h != nil && h.HasIdentity() {
+		cfg.GetClientCertificate = h.GetClientCertificate
+	}
+	return cfg
 }
 
 func TLSModeUnaryInterceptor(name, mode string) grpc.UnaryClientInterceptor {

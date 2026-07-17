@@ -199,6 +199,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		LifecyclePeersForSpec:       peersForSpec,
 		LateBindServiceProxies:      lateBindProxies,
 		Bundled:                     bundledRegs,
+		PeerAuth:                    rimskyCfg.PeerAuth,
 	})
 	if err != nil {
 		log.Error("StartSupervisor", "error", err.Error())

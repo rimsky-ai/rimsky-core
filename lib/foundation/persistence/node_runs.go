@@ -116,7 +116,7 @@ type Queue interface {
 
 	LookupRunByAsyncAckID(ctx context.Context, tx Tx, ackID string) (*DispatchRow, error)
 
-	RegisterAsyncAck(ctx context.Context, tx Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int) error
+	RegisterAsyncAck(ctx context.Context, tx Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string) error
 
 	BumpLastProgressAt(ctx context.Context, tx Tx, runID shared.UUID, now time.Time) (bool, error)
 

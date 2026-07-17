@@ -9,7 +9,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -21,7 +20,7 @@ type ScratchWriter interface {
 	Write(ctx context.Context, runID shared.UUID, bytes []byte) error
 }
 
-type AuthLookup func(token string, runID shared.UUID) error
+type AuthLookup func(r *http.Request, runID shared.UUID) error
 
 var ErrUnauthorizedCallback = errors.New("scratch: unauthorized callback")
 
@@ -51,14 +50,7 @@ func Handler(deps HandlerDeps) http.Handler {
 			http.Error(w, `{"error":"invalid run_id"}`, http.StatusBadRequest)
 			return
 		}
-		token := strings.TrimSpace(r.Header.Get("Authorization"))
-		token = strings.TrimPrefix(token, "Bearer ")
-		token = strings.TrimSpace(token)
-		if token == "" {
-			http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
-			return
-		}
-		if err := deps.Auth(token, runID); err != nil {
+		if err := deps.Auth(r, runID); err != nil {
 			logger.Warn("scratch callback: unauthorized",
 				"run_id", runID.String(), "error", err.Error())
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)

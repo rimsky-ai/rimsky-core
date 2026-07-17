@@ -49,10 +49,11 @@ func (p *scopeOnlyPersist) Lineage() persistence.LineageTable                   
 func (p *scopeOnlyPersist) PublisherSubscriptions() persistence.PublisherSubscriptionsTable {
 	return nil
 }
-func (p *scopeOnlyPersist) NodeRunTree() persistence.RunTreeTable    { return nil }
-func (p *scopeOnlyPersist) RunScopes() persistence.RunScopeTable     { return p.scopes }
-func (p *scopeOnlyPersist) APIKeys() persistence.APIKeyTable         { return nil }
-func (p *scopeOnlyPersist) Breakpoints() persistence.BreakpointTable { return nil }
+func (p *scopeOnlyPersist) NodeRunTree() persistence.RunTreeTable       { return nil }
+func (p *scopeOnlyPersist) RunScopes() persistence.RunScopeTable        { return p.scopes }
+func (p *scopeOnlyPersist) APIKeys() persistence.APIKeyTable            { return nil }
+func (p *scopeOnlyPersist) DeploymentCA() persistence.DeploymentCATable { return nil }
+func (p *scopeOnlyPersist) Breakpoints() persistence.BreakpointTable    { return nil }
 func (p *scopeOnlyPersist) BreakpointHits() persistence.BreakpointHitTable {
 	return nil
 }

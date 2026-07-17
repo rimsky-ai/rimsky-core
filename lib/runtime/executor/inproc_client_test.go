@@ -47,7 +47,7 @@ func TestInProcessClient_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	outcome, err := client.Execute(context.Background(), newFreshRequest(t))
+	outcome, _, err := client.Execute(context.Background(), newFreshRequest(t))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestInProcessClient_HandlerPanicSurfacesAsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	if _, err := client.Execute(context.Background(), newFreshRequest(t)); err == nil {
+	if _, _, err := client.Execute(context.Background(), newFreshRequest(t)); err == nil {
 		t.Fatalf("expected handler-panic error, got nil")
 	}
 }
@@ -86,7 +86,7 @@ func TestInProcessClient_HandlerErrorSurfaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	_, err = client.Execute(context.Background(), newFreshRequest(t))
+	_, _, err = client.Execute(context.Background(), newFreshRequest(t))
 	if err == nil {
 		t.Fatalf("expected handler error, got nil")
 	}
@@ -108,7 +108,7 @@ func TestInProcessClient_ScratchOnSuccessReachesConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	outcome, err := client.Execute(context.Background(), newFreshRequest(t))
+	outcome, _, err := client.Execute(context.Background(), newFreshRequest(t))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -154,11 +154,11 @@ func TestInProcessClient_ParsesTypedUUIDsAtBoundary(t *testing.T) {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
 	bad := &genv1.ExecuteRequest{NodeId: uuid.New().String(), DispatchId: "not-a-uuid"}
-	if _, err := client.Execute(context.Background(), bad); err == nil {
+	if _, _, err := client.Execute(context.Background(), bad); err == nil {
 		t.Fatalf("expected parse error for malformed dispatch_id, got nil")
 	}
 	bad2 := &genv1.ExecuteRequest{NodeId: "still-not-a-uuid", DispatchId: uuid.New().String()}
-	if _, err := client.Execute(context.Background(), bad2); err == nil {
+	if _, _, err := client.Execute(context.Background(), bad2); err == nil {
 		t.Fatalf("expected parse error for malformed node_id, got nil")
 	}
 }
@@ -220,7 +220,7 @@ func TestInProcessClient_HandlerContextFactoryReceivesTypedIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	if _, err := client.Execute(context.Background(), newFreshRequest(t)); err != nil {
+	if _, _, err := client.Execute(context.Background(), newFreshRequest(t)); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if !cap.gotScratchWriter {

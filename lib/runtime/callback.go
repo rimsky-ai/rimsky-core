@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,22 +14,22 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	rimskyscratch "github.com/rimsky-ai/rimsky-core/lib/graph/scratch"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 var errUnauthorizedCallback = errors.New("callback: unauthorized")
@@ -98,11 +99,44 @@ type CallbackServer struct {
 	LifecyclePeersForSpec       func(tplSpec node.TemplateSpec) []string
 	// @concept: data-processing
 	DataProcessors DataProcessingRegistry
+	PeerAuth       string
+	ServerIdentity *peer.IdentityHolder
+	ClientCAs      *x509.CertPool
 	addr           string
 	srv            *http.Server
 	serveErr       chan error
 	ackMu          sync.Mutex
 	ackOutcomes    map[shared.UUID]ackOutcomeRecord
+}
+
+func (c *CallbackServer) authorizePeer(r *http.Request) error {
+	if c.PeerAuth != peer.PeerAuthMTLS {
+		return nil
+	}
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return errUnauthorizedCallback
+	}
+	if _, err := pki.PrincipalFromVerifiedChains(r.TLS); err != nil {
+		return fmt.Errorf("%w: %v", errUnauthorizedCallback, err)
+	}
+	return nil
+}
+
+func (c *CallbackServer) enforceCallbackPrincipal(r *http.Request, asyncCtx AsyncContext) error {
+	if c.PeerAuth != peer.PeerAuthMTLS || asyncCtx.AsyncAckPrincipal == "" {
+		return nil
+	}
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return errUnauthorizedCallback
+	}
+	got, err := pki.PrincipalFromVerifiedChains(r.TLS)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errUnauthorizedCallback, err)
+	}
+	if got != asyncCtx.AsyncAckPrincipal {
+		return fmt.Errorf("%w: callback principal %q does not match dispatched executor principal %q", errUnauthorizedCallback, got, asyncCtx.AsyncAckPrincipal)
+	}
+	return nil
 }
 
 func (c *CallbackServer) recordAckOutcome(nodeRunID shared.UUID, status, phase string, _ bool) {
@@ -143,7 +177,7 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 				spillThreshold: c.BlobSpillThreshold,
 				logger:         c.Logger,
 			},
-			Auth:   c.runTokenAuth,
+			Auth:   c.authorizeScratch,
 			Logger: c.Logger,
 		}))
 	}
@@ -160,15 +194,35 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	}
 	c.addr = listener.Addr().String()
 	c.srv = &http.Server{Handler: r}
+	if c.PeerAuth == peer.PeerAuthMTLS {
+		if c.ServerIdentity == nil {
+			_ = listener.Close()
+			return "", fmt.Errorf("callback: peer_auth mtls requires a server identity")
+		}
+		if c.ClientCAs == nil {
+			_ = listener.Close()
+			return "", fmt.Errorf("callback: peer_auth mtls requires a client CA pool")
+		}
+		c.srv.TLSConfig = peer.TLSServerConfig(peer.PeerAuthMTLS, c.ServerIdentity, c.ClientCAs)
+	}
 	c.serveErr = make(chan error, 1)
 	go func() {
-		err := c.srv.Serve(listener)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			c.serveErr <- err
+		var serveErr error
+		if c.PeerAuth == peer.PeerAuthMTLS {
+			serveErr = c.srv.ServeTLS(listener, "", "")
+		} else {
+			serveErr = c.srv.Serve(listener)
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			c.serveErr <- serveErr
 		}
 		close(c.serveErr)
 	}()
 	return c.addr, nil
+}
+
+func (c *CallbackServer) authorizeScratch(r *http.Request, _ shared.UUID) error {
+	return c.authorizePeer(r)
 }
 
 func (c *CallbackServer) Addr() string { return c.addr }
@@ -217,6 +271,11 @@ type asyncCallbackPark struct {
 }
 
 func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
+	if err := c.authorizePeer(r); err != nil {
+		c.Logger.Warn("callback: unauthorized peer", "error", err.Error())
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
 	ackID := chi.URLParam(r, "async_ack_id")
 	if ackID == "" {
 		http.Error(w, `{"error":"missing async_ack_id"}`, http.StatusBadRequest)
@@ -236,6 +295,12 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		asyncCtx = *row
+	}
+	if err := c.enforceCallbackPrincipal(r, asyncCtx); err != nil {
+		c.Registry.Register(ackID, asyncCtx)
+		c.Logger.Warn("callback: principal binding rejected", "async_ack_id", ackID, "error", err.Error())
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
 	}
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -322,6 +387,10 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 			"dispatch_id", row.ID.String(),
 			"error", err.Error())
 	}
+	expectedPrincipal := ""
+	if row.AsyncAckPrincipal != nil {
+		expectedPrincipal = *row.AsyncAckPrincipal
+	}
 	return &AsyncContext{
 		NodeID:             acq.NodeID,
 		InstanceID:         acq.InstanceID,
@@ -335,6 +404,7 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 		NodeDef:            acq.NodeDef,
 		ResolvedAttributes: resolvedAttrs,
 		AttributesSchema:   schema,
+		AsyncAckPrincipal:  expectedPrincipal,
 	}, nil
 }
 
@@ -692,54 +762,6 @@ func ackStatusForState(s cascade.NodeState) string {
 	default:
 		return ackStatusRejectedRunTerminal
 	}
-}
-
-func (c *CallbackServer) runTokenAuth(token string, runID shared.UUID) error {
-	parts := strings.SplitN(token, ":", 2)
-	if len(parts) != 2 {
-		c.Logger.Warn("runTokenAuth: token has no ':' separator",
-			"run_id", runID.String(),
-			"token_len", len(token))
-		return errUnauthorizedCallback
-	}
-	tokSupervisor, tokDispatch := parts[0], parts[1]
-	if tokSupervisor == "" || tokDispatch == "" {
-		c.Logger.Warn("runTokenAuth: empty supervisor or dispatch segment",
-			"run_id", runID.String(),
-			"token_supervisor_len", len(tokSupervisor),
-			"token_dispatch_len", len(tokDispatch))
-		return errUnauthorizedCallback
-	}
-	if c.SupervisorID != "" && tokSupervisor != c.SupervisorID {
-		c.Logger.Warn("runTokenAuth: supervisor id mismatch",
-			"run_id", runID.String(),
-			"token_supervisor", truncForLog(tokSupervisor, 64),
-			"token_supervisor_len", len(tokSupervisor),
-			"server_supervisor", c.SupervisorID)
-		return errUnauthorizedCallback
-	}
-	nodeRunID, err := uuid.Parse(tokDispatch)
-	if err != nil {
-		c.Logger.Warn("runTokenAuth: dispatch id parse failed",
-			"run_id", runID.String(),
-			"token_dispatch_len", len(tokDispatch),
-			"error", err.Error())
-		return errUnauthorizedCallback
-	}
-	if nodeRunID != runID {
-		c.Logger.Warn("runTokenAuth: run id mismatch",
-			"url_run_id", runID.String(),
-			"token_dispatch_id", nodeRunID.String())
-		return errUnauthorizedCallback
-	}
-	return nil
-}
-
-func truncForLog(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
 }
 
 // @concept: executor

@@ -168,7 +168,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		FrameID:         acq.FrameID,
 		SendMessageType: sendMessageType,
 	})
-	outcome, err := client.Execute(ctx, req)
+	outcome, peerPrincipal, err := client.Execute(ctx, req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return terminalEvent{
@@ -186,7 +186,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	terminal, asyncAck := readExecutorOutcome(ctx, dctx, outcome)
 
 	if asyncAck != "" {
-		registerAsyncIfSet(dctx, asyncAck)
+		registerAsyncIfSet(dctx, asyncAck, peerPrincipal)
 		// @concept: signal
 		if dctx.Args.Persist != nil && dctx.Args.Queue != nil {
 			maxQuietSec, maxRuntimeSec := computeEffectiveDeadlineSecs(acq.NodeDef, dctx.Args.MaxQuietPeriodDefault, dctx.Args.MaxRuntimeDefault)
@@ -198,7 +198,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 				},
 			}
 			if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				if err := dctx.Args.Queue.RegisterAsyncAck(ctx, tx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec); err != nil {
+				if err := dctx.Args.Queue.RegisterAsyncAck(ctx, tx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec, peerPrincipal); err != nil {
 					return fmt.Errorf("register async ack: %w", err)
 				}
 				return signalaudit.EmitSignal(ctx, dctx.Args.Persist.Events(),
@@ -221,7 +221,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	return terminal, nil, nil
 }
 
-func registerAsyncIfSet(dctx dispatchContext, asyncAck string) {
+func registerAsyncIfSet(dctx dispatchContext, asyncAck, peerPrincipal string) {
 	if dctx.RegisterAsync == nil {
 		return
 	}
@@ -239,6 +239,7 @@ func registerAsyncIfSet(dctx dispatchContext, asyncAck string) {
 		NodeDef:            acq.NodeDef,
 		ResolvedAttributes: dctx.Attributes,
 		AttributesSchema:   dctx.AttributesSchema,
+		AsyncAckPrincipal:  peerPrincipal,
 	})
 }
 

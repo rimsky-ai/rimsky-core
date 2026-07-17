@@ -74,7 +74,7 @@ func newDriveSetup(
 			return err
 		}
 		require.True(t, promoted, "run must promote to running")
-		return d.Queue().RegisterAsyncAck(ctx, tx, nodeRunID, ackID, clk.Now(), nil, nil)
+		return d.Queue().RegisterAsyncAck(ctx, tx, nodeRunID, ackID, clk.Now(), nil, nil, "")
 	}))
 
 	cb := &runtime.CallbackServer{

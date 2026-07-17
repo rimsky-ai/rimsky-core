@@ -7,7 +7,10 @@ package runtime
 import (
 	"net"
 	"strconv"
+	"strings"
 	"testing"
+
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 func TestEffectiveCallbackHostPort(t *testing.T) {
@@ -66,9 +69,16 @@ func TestAdvertisedURLMatchesPersistedHostPort(t *testing.T) {
 		advertisePort = 9200
 	)
 	host, port := effectiveCallbackHostPort(listenerAddr, advertiseHost, advertisePort)
-	url := advertisedCallbackURL(listenerAddr, advertiseHost, advertisePort)
+	url := advertisedCallbackURL(listenerAddr, advertiseHost, advertisePort, peer.PeerAuthNone)
 	want := "http://" + net.JoinHostPort(host, strconv.Itoa(port))
 	if url != want {
 		t.Fatalf("advertisedCallbackURL = %q; want %q (must match persisted host:port)", url, want)
+	}
+}
+
+func TestAdvertisedURLUsesHTTPSUnderMTLS(t *testing.T) {
+	url := advertisedCallbackURL("0.0.0.0:9100", "rimsky-supervisor", 9200, peer.PeerAuthMTLS)
+	if !strings.HasPrefix(url, "https://") {
+		t.Fatalf("advertisedCallbackURL under mtls = %q; want https:// scheme", url)
 	}
 }

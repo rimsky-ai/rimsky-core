@@ -10,14 +10,17 @@ import (
 	"sync"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	grpcpeer "google.golang.org/grpc/peer"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 // @concept: executor
 type Client interface {
-	Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error)
+	Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, string, error)
 	Close() error
 }
 
@@ -40,9 +43,27 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	return &grpcClient{conn: conn, api: genv1.NewExecutorClient(conn)}, nil
 }
 
-func (c *grpcClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
-	return c.api.Execute(ctx, req)
+func (c *grpcClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, string, error) {
+	var pr grpcpeer.Peer
+	outcome, err := c.api.Execute(ctx, req, grpc.Peer(&pr))
+	if err != nil {
+		return nil, "", err
+	}
+	return outcome, verifiedPeerPrincipal(pr.AuthInfo), nil
 }
+
+func verifiedPeerPrincipal(authInfo credentials.AuthInfo) string {
+	tlsInfo, ok := authInfo.(credentials.TLSInfo)
+	if !ok {
+		return ""
+	}
+	principal, err := pki.PrincipalFromVerifiedChains(&tlsInfo.State)
+	if err != nil {
+		return ""
+	}
+	return principal
+}
+
 func (c *grpcClient) Close() error { return c.conn.Close() }
 
 type ClientPool struct {

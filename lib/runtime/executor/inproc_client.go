@@ -38,18 +38,18 @@ func NewInProcessClient(endpoint Endpoint, registry *InProcessRegistry, newHctx 
 }
 
 // @decision: three-dispatch-deadlines
-func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, string, error) {
 	h, ok := c.registry.Lookup(c.url)
 	if !ok {
-		return nil, fmt.Errorf("InProcessClient.Execute: no handler for %q", c.url)
+		return nil, "", fmt.Errorf("InProcessClient.Execute: no handler for %q", c.url)
 	}
 	nodeRunID, err := uuid.Parse(req.DispatchId)
 	if err != nil {
-		return nil, fmt.Errorf("InProcessClient.Execute: parse dispatch_id %q: %w", req.DispatchId, err)
+		return nil, "", fmt.Errorf("InProcessClient.Execute: parse dispatch_id %q: %w", req.DispatchId, err)
 	}
 	nodeID, err := uuid.Parse(req.NodeId)
 	if err != nil {
-		return nil, fmt.Errorf("InProcessClient.Execute: parse node_id %q: %w", req.NodeId, err)
+		return nil, "", fmt.Errorf("InProcessClient.Execute: parse node_id %q: %w", req.NodeId, err)
 	}
 	hctx := HandlerContext{}
 	if c.newHctx != nil {
@@ -65,9 +65,9 @@ func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest
 		outcome, err = h.Execute(ctx, req, hctx)
 	}()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return outcome, nil
+	return outcome, "", nil
 }
 
 func (c *InProcessClient) Close() error { return nil }

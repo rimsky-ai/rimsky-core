@@ -265,7 +265,7 @@ func TestQueue_RegisterAsyncAckAndLookupRoundTrip(t *testing.T) {
 
 	const ackID = "ack-roundtrip"
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return d.Queue().RegisterAsyncAck(ctx, tx, runID, ackID, time.Now(), nil, nil)
+		return d.Queue().RegisterAsyncAck(ctx, tx, runID, ackID, time.Now(), nil, nil, "")
 	}); err != nil {
 		t.Fatalf("RegisterAsyncAck: %v", err)
 	}

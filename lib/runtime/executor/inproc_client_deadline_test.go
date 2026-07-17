@@ -51,7 +51,7 @@ func TestInProcessClient_HonorsCallerDeadline(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	_, err = client.Execute(ctx, req)
+	_, _, err = client.Execute(ctx, req)
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, context.DeadlineExceeded) {

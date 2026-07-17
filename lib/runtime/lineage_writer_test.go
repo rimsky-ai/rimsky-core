@@ -267,10 +267,11 @@ func (f *emitFakePersist) Lineage() persistence.LineageTable                    
 func (f *emitFakePersist) PublisherSubscriptions() persistence.PublisherSubscriptionsTable {
 	return nil
 }
-func (f *emitFakePersist) NodeRunTree() persistence.RunTreeTable    { return nil }
-func (f *emitFakePersist) RunScopes() persistence.RunScopeTable     { return nil }
-func (f *emitFakePersist) APIKeys() persistence.APIKeyTable         { return nil }
-func (f *emitFakePersist) Breakpoints() persistence.BreakpointTable { return nil }
+func (f *emitFakePersist) NodeRunTree() persistence.RunTreeTable       { return nil }
+func (f *emitFakePersist) RunScopes() persistence.RunScopeTable        { return nil }
+func (f *emitFakePersist) APIKeys() persistence.APIKeyTable            { return nil }
+func (f *emitFakePersist) DeploymentCA() persistence.DeploymentCATable { return nil }
+func (f *emitFakePersist) Breakpoints() persistence.BreakpointTable    { return nil }
 func (f *emitFakePersist) BreakpointHits() persistence.BreakpointHitTable {
 	return nil
 }
