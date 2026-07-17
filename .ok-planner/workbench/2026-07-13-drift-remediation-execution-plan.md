@@ -10,12 +10,26 @@ top-to-bottom and continue without prior conversation history.
 
 ## Status (as of 2026-07-17)
 
-**Current `dev` tip: `408eb3c5`.** Since this plan's Track 0b commits, the
-separate security track ran to completion and landed 8 commits on `dev`
-(`5f8c10f1` through `408eb3c5`). Those belong to the security track, not this
-one — do NOT read the commit SHAs listed below as the branch head; reconcile
-against `git log` starting from `408eb3c5`. This track's own progress is
-unchanged: Phase 1 (design-corpus reconciliation) is still the next step.
+**Current `dev` tip: `b7e34819`.** Between Track 0b and Phase 1, the separate
+security track landed 8 commits on `dev` (`5f8c10f1` through `408eb3c5`) —
+those belong to the security track, not this one; do NOT read the commit SHAs
+listed below as the branch head.
+
+**Phase 1 — design-corpus reconciliation: DONE.** All 586 open Phase 1 rows
+adjudicated against the intent ledger by a Sonnet subagent fleet (75 dispatches
+across 8 waves, one file-disjoint concept cluster per agent), producing 594
+rulings recorded in `phase1-rulings-*.jsonl` adjacent to this doc (the 8 extra
+are `-followup` rulings for adjacent fixes with no ledger row). Tally: 450
+fix-doc (applied to the corpus), 78 fix-code queued for Phase 3, 24 fix-test
+queued for Phase 2, 29 design-calls awaiting user ruling, 13 refuted. An
+adversarial audit of all 75 weak-provenance applied edits (`audit-*.jsonl`)
+found 3 genuine errors (fixed) and 2 false overturns (rejected against Track 0a
+dossier rulings). Corpus edits committed `b7e34819`; rulings merged into the
+main ledger as `phase1_*` columns; full-repo plumbline sweep (comment hygiene +
+citation resolution) clean.
+
+**Next: user rulings on the 29 open design-calls** (filter the ledger on
+`phase1_direction=design-call`), then Phase 2.
 
 **Track 0a — conflict rulings: DONE.** All 33 distinct dossier conflicts
 resolved by user ruling, written back into the dossiers. Committed `993cd3ad`.
@@ -31,9 +45,6 @@ timeout panics). Commits:
 - `e7d4eacc` build test images once (ended the Docker-daemon wedging)
 - `72e57828` proxy-startup wait made deterministic
 - `6fd4ace3` · `01dc2906` · `58e5a7b8` follow-up tracking + workbench folder
-
-**Next: Phase 1** (design-corpus reconciliation), ungated for every concept now
-that Track 0a is complete.
 
 ## Ledgers (two, separate tracks)
 
