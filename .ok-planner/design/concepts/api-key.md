@@ -13,18 +13,19 @@ A high-entropy, rimsky-issued credential carried by control-api clients as a bea
 
 ## Purpose
 
-Rimsky needs an authentication floor: every control-api endpoint should be able to tell who is calling, and operators need a primitive they can mint, rotate, and revoke without redeploying. API keys are the floor — deployments that need richer identity (OIDC, SAML, mTLS) terminate that at their edge and inject API keys downstream.
+Rimsky needs an authentication floor: every control-api endpoint should be able to tell who is calling, and operators need a primitive they can mint, rotate, and revoke without redeploying. API keys are the floor — deployments that need richer identity (OIDC, SAML) terminate that at their edge and inject API keys downstream. The ledger is also rimsky's ENTIRE principal registry: there is no user entity, so a human is just the holder of a key's plaintext and a service principal IS an api-key (see `concept:peer-auth`).
 
 ## Boundaries
 
-Owns: the plaintext format + hash; the persisted API-key ledger; the lifecycle verbs (mint / list / show / revoke / rotate / sweep); the rotation-grace sweep. Does NOT own: external IdP integration, rate-limiting, role definitions (see `concept:role-template`). Adjacent: `concept:permission` (the grant attached to each key), `concept:anonymous-mode` (the data-derived deployment state when no active keys exist), `concept:event-log` (auth audit emissions).
+Owns: the plaintext format + hash; the persisted API-key ledger; the lifecycle verbs (mint / list / show / revoke / rotate / sweep); the rotation-grace sweep. Does NOT own: external IdP integration, rate-limiting, role definitions (see `concept:role-template`); the certificate machinery that derives a service's short-lived identity from a `service:enroll`-bearing key (that is `concept:peer-auth` — the api-key is the standing secret, the cert is the derived identity). Adjacent: `concept:permission` (the grant attached to each key, including the `service:enroll` grant that authorizes enrollment), `concept:anonymous-mode` (the data-derived deployment state when no active keys exist), `concept:event-log` (auth audit emissions), `concept:peer-auth` (service principals are api-keys).
 
 ## Invariants
 
-- **Plaintext is surfaced exactly once.** At mint and at each rotation. The server retains only a hash digest. Lost plaintext is unrecoverable; recovery is rotation.
+- **Plaintext is surfaced exactly once.** At mint and at each rotation. The server retains only a hash digest. Lost plaintext is unrecoverable; recovery is rotation. This one-way-hash storage is the strongest tier of rimsky's graduated secret-at-rest posture (see `decision:secret-at-rest-posture`).
 - **Keys are revoked, not deleted.** A revocation timestamp is set; the row persists. Preserves the audit trail (auth-access audit rows carry the key id and join through to the row).
 - **Active-status predicate.** A key is active iff it has not been revoked and neither its expiry nor its scheduled-revoke time has passed. The middleware applies this on every request; the anonymous-mode predicate consults the same definition.
 - **Name uniqueness is partial.** The active-name uniqueness index excludes rows in the rotation-grace window so a rotation can mint a new row with the same name while the old one is still active.
+- **A service principal is an api-key.** Under `peer_auth: mtls` an operator-deployed service holds an api-key carrying the `service:enroll` grant; the key is the standing secret that authorizes obtaining a short-lived certificate identity, and revoking the key stops the certificate's renewal so it ages out within its TTL (see `concept:peer-auth`, `concept:permission`).
 
 ## Lifecycle
 

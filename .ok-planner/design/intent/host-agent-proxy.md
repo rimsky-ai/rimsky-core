@@ -16,6 +16,7 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 - Anonymous-mode and late-binding are no longer mutually exclusive: ownerless instances resolve the serving agent via an anonymous-mode routing identity / default agent route (2026-06-06, comprehensive-gap-closure, artifact, resolving the anonymous-mode-locks-out-late-bind tension).
 - The proxy is not used in one-shot compose-run mode — it exists to bridge a remote long-running stack to a dev box (2026-06-13, 65667e33, transcript).
 - License split: host-agent code is Apache (client-side, bundled into the CLI); the proxy binary and its migration SQL are AGPL platform-side (2026-05-24, artifact).
+- The agent-facing side is served over TLS: the proxy presents a server cert the agent verifies against a pinned deployment-CA root, so the agent's api-key transits an encrypted channel over the dev-machine→deployment hop; the agent presents no client cert and authenticates by api-key inside the channel (2026-07-16, peer-auth-posture, transcript; see the peer-auth dossier).
 
 ## Required behaviors (open promises)
 
@@ -40,7 +41,7 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 - A dedicated host-agent/proxy conformance binary — v1 follow-up per the spec (2026-05-24), then made permanently unnecessary by protocol transparency (2026-06-06, artifact).
 - The ServiceName interceptor on the lifecycle, publisher, validation, and data-processing dial paths — installed only on executor and claim-producer paths, per spec optionality; intentional, not dropped work; the TODO(host-agent-proxy v2) markers recording it were residue to delete (2026-06-13, c41b7afe, transcript). See Conflicts.
 - Explicitly deferred beyond v1: pool-routed bindings, long-running pinned bindings (attach to an already-running process), per-binding env/args/cwd/timeout overrides, sandboxing beyond --allow-paths, internal-service auth between rimsky processes, a synthetic error class for unreachable services, explicit multi-agent routing (2026-05-24, artifact).
-- Process-to-process authentication — deployment-level network isolation instead; cataloged as the internal-service-auth-unspeced tension, not solved in v1 (2026-05-24, artifact).
+- Process-to-process authentication — deployment-level network isolation instead; cataloged as the internal-service-auth-unspeced tension, not solved in v1 (2026-05-24, artifact). SUPERSEDED 2026-07-16: the internal-service-auth-unspeced tension is RESOLVED by the peer-auth posture — internal service↔service traffic is optionally mTLS under `peer_auth: mtls` (default `none` keeps the network-isolation model), and the agent→proxy hop uses pinned-root TLS (2026-07-16, peer-auth-posture, transcript).
 - Proxy participation in one-shot compose-run — the supervisor is already local there (2026-06-13, 65667e33, transcript).
 
 ## Corrections and restorations (drift-fight record)

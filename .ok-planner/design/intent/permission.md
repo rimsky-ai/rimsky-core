@@ -14,6 +14,7 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 - Roles are CLI-side JSON expansion only; the server stores the raw grant and has no role concept.
 - Direct node targeting is a debug feature only: there is no general operator verb to invalidate or re-run arbitrary nodes; node:invalidate and the operator-invalidate routes are retired.
 - The debug channel is POST /instances/{id}/debug/override, gated to paused/breakpoint state, guarded by a dedicated permission action named `instance:debug-override`, auditing every use.
+- The action registry carries a `service:enroll` verb that authorizes a service to enroll for a short-lived certificate identity under `peer_auth: mtls`; a key without the grant is refused at the enroll endpoint (2026-07-16, peer-auth-posture, transcript; see the peer-auth dossier).
 
 ## Required behaviors (open promises)
 

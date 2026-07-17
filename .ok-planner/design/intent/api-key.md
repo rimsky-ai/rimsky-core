@@ -13,6 +13,7 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 - Rotation is atomic and identity-preserving with a grace window (default 24h) during which both keys are valid; a scheduler sweep revokes past-grace keys.
 - A grant entry may carry `mode: dry_run` (identity-bound dry-run floor) and per-action resource scope; both are enforced, not just parsed (see permission dossier).
 - On the wire, the authentication path is the sender discriminator: operator API key vs publisher-subscription capability; sender_kind was dropped from the message envelope and is stamped server-side from auth context.
+- The api-key ledger is the ENTIRE principal registry — no user entity exists, so a service principal IS an api-key. Under `peer_auth: mtls` an operator-deployed service holds a key carrying the new `service:enroll` grant and exchanges it at POST /v1/enroll for a short-lived certificate identity; the api-key is the standing secret, the cert is the derived identity, and revoking the key stops its renewal (2026-07-16, peer-auth-posture, transcript; see the peer-auth dossier).
 
 ## Required behaviors (open promises)
 
@@ -35,7 +36,7 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 
 ## Intentional absences
 
-- External identity providers (OIDC, SAML, JWT validation, mTLS termination): out of scope by design, not deferred — the deployment layer owns identity; rimsky's surface is the API-key floor (2026-05-15, artifact).
+- External identity providers (OIDC, SAML, JWT validation, mTLS termination at the edge): out of scope by design, not deferred — the deployment layer owns EXTERNAL identity; rimsky's surface is the API-key floor (2026-05-15, artifact). Note: this is distinct from the INTERNAL service↔service mTLS added 2026-07-16, which derives from the api-key ledger via `service:enroll` and does not terminate any external identity (2026-07-16, peer-auth-posture, transcript).
 - Slow hashing (argon2id/bcrypt): rejected — full-entropy CSPRNG tokens have no dictionary to guess; slow hashing costs every request for no benefit (2026-05-15, artifact).
 - A CLI break-glass verb for a lost admin key: deliberately absent; break-glass is a documented direct-DB operation (2026-05-15, artifact).
 - sender_kind on the wire message envelope: dropped; the auth path discriminates (2026-06-19, transcript).

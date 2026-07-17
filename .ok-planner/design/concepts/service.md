@@ -31,6 +31,7 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 - Protocol membership is advertised for out-of-process services at startup via the per-protocol capabilities query; in-process handlers advertise their protocol membership and capabilities (schema, tags, declared error classes) through the same registration entrypoint, which knows each handler's capabilities by construction.
 - Conformance is validated by the per-protocol conformance subcommands shipped in the single binary (see `concept:conformance`). Conformance runs against the standalone gRPC surface each bundled service still exposes; the in-process handler and the gRPC-wrapped handler share the same protocol semantics by construction (same handler package, same code paths), so a passing conformance run on the standalone image guarantees the in-process handler's semantics too.
 - Multi-protocol binaries use a distinct handler per protocol; there is no shared capabilities-provider abstraction across protocols (response shapes are protocol-specific and the downstream code is already protocol-specific).
+- An operator-deployed standing service participates in the internal service↔service trust boundary: under `peer_auth: none` its dials are plaintext on a trusted subnet, and under `peer_auth: mtls` it enrolls with a `service:enroll`-bearing api-key to obtain a short-lived certificate and both peers of every dial mutually authenticate (see `concept:peer-auth`). This is orthogonal to the per-peer `tls` config key that verifies a single peer's server certificate against system roots (see `decision:peer-tls-enforcement`).
 
 ## Adjacent
 
@@ -43,3 +44,4 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 - `concept:conformance`
 - `concept:observability`
 - `concept:discovery-cache`
+- `concept:peer-auth`

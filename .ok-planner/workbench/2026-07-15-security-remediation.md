@@ -11,12 +11,130 @@ isolated is the whole point of the split.
 
 ## Status
 
-40 rows total. **28 fixed, 2 accepted, 10 open.** The claude-agent executor
+40 rows total. **36 fixed, 4 accepted, 0 open.** The claude-agent executor
 cluster is fully closed (9 fixed + 2 accepted); the core validation-bypass
 cluster is fully closed (3 fixed); the SSRF/open-egress pair is fixed (2); the
 filesystem claim-producer canonicalization pair is fixed (2); the
-mechanically-obvious batch (injection/race/escaping/coverage) is fixed (10). The
-10 that remain are the auth-posture judgment cluster, tracked below.
+mechanically-obvious batch (injection/race/escaping/coverage) is fixed (10); the
+auth-posture judgment cluster is fully closed (8 fixed + 2 accepted). The whole
+ledger is now resolved.
+
+### Auth-posture cluster — CLOSED (10 rows), commit(s) pending user approval
+
+Decided the posture with the user across a design conversation, then implemented
+via file-disjoint security-cleared subagents + central verification. The posture:
+rimsky has four trust boundaries — control plane (api-key + TLS, unchanged),
+internal service↔service (now optionally mutual-TLS), bundled-service web ingress
+(webhook/agent), and outbound (service→third-party). "Everything is a key"
+(no user entity; service principals are api-keys). New capability: `peer_auth:
+none|mtls` (default OFF) — a deployment CA in the control plane (key encrypted at
+rest, AES-256-GCM / `RIMSKY_CA_ENCRYPTION_KEY`), services enroll via an api-key
+carrying a new `service:enroll` permission (`POST /v1/enroll`), receive a 24h
+memory-only leaf cert auto-renewed at ⅔ TTL, and authenticate mutually. The
+ad-hoc callback run-token + executor-chosen `async_ack_id`-as-credential were
+swept, replaced by mTLS peer identity (`async_ack_id` stays a correlation key).
+
+Row dispositions:
+- `1712` FIXED — agent→proxy TLS (pinned-CA verification; api-key stays the
+  identity, no client cert; agent is per-user tooling not an enrolled service).
+- `1883` FIXED — http-node HTTP dispatch bridge honors mTLS under `peer_auth`;
+  bridge port no longer `EXPOSE`d by default. (It's a boundary-2 surface — the
+  supervisor's own HTTP executor client dials it, not a public endpoint.)
+- `1947` + `2025` FIXED — webhook sensor requires per-subscription auth
+  (`hmac`/`secret_header`/`none`), fail-LOUD on omission; e2e flipped to assert
+  an unsigned POST is rejected.
+- `1967` FIXED — openlineage subscriber presents an optional outbound bearer.
+- `1719` FIXED — concept doc's stale "active-context config" auth-source line
+  corrected to `RIMSKY_API_KEY` / `--api-key`.
+- `2129` FIXED — operator-invalidate test reseeded through the real
+  `POST /v1/instances/{id}/debug/override` route; wall-clock verdict removed.
+- `2091` FIXED — added the missing negative test (unknown api-key → registration
+  refused with `Unauthenticated`).
+- `82` ACCEPTED (stale) — proxy self-asserted identity was already closed by the
+  earlier `1` fix (whoami verification); the `2091` negative test now covers it.
+- `2178` ACCEPTED (refuted) — asset actions declare no `ScopeDimensions`, so they
+  authorize via the uniform action-permission gate; the generic out-of-scope
+  denial is already tested. No asset-specific hole.
+
+Also built (posture support): shared enroll wire-client `lib/protocols/enroll`;
+core-side `lib/runtime/peer` mutual-TLS extensions (client cert, `TLSServerConfig`,
+`IdentityHolder`, renewal); services-side `lib/services/internal/peerauth`; the
+deployment CA + migration 022 (both backends); full design-corpus update
+(`concept:peer-auth` + 8 concepts, 6 decisions, `tension:internal-service-auth-
+unspeced` resolved, stories + intent).
+
+Two pre-existing failures found and fixed (overshoot):
+- `TestHttpNodeCrossStack` — broken since the SSRF-guard commit `63b26c68`; its
+  loopback upstream was blocked by the default-closed egress guard. Fixed by
+  allowlisting loopback in the test's http-node env (127.0.0.0/8).
+- `TestClaudeAgentPerNodeDivergence` — broken by the `1840` stdio-block; worker-
+  beta declared a `stdio` MCP server under a closed allowlist (forbidden). Fixed
+  by switching beta to `http` transport (mirrors alpha) — preserves the per-node
+  divergence proof.
+
+One judgment call, operator-CONFIRMED: `service:enroll` is `IsWrite: false` (a
+compute-and-return that persists nothing, like `template:validate`), so it's
+outside the dry-run mutation-preview guarantee.
+
+Host-agent loopback — REDESIGNED after the operator discussion. The `1712`
+per-spawn ad-hoc secret (env `RIMSKY_AGENT_SECRET` + `X-Rimsky-Agent-Secret`
+header + a planned nonce challenge) was recognized as an ad-hoc reimplementation
+of mutual TLS and BACKED OUT entirely. Replaced by mandatory, always-on mutual
+TLS on the agent↔child loopback, administered by the daemon as a self-contained
+LOCAL enrollment authority: on startup the daemon generates a local CA (reusing
+`pkg:lib/foundation/pki`) — a trust domain separate from the deployment CA — and
+serves a plaintext bootstrap `route:POST /v1/enroll`; per spawn it mints a
+bootstrap token and provisions the child with `env:RIMSKY_PEER_AUTH=mtls` /
+`env:RIMSKY_API_KEY=<token>` / `env:RIMSKY_CONTROL_API_URL=<daemon's local enroll
+base>`; the child self-enrolls (unchanged executor code — reuses
+`pkg:lib/services/internal/peerauth`), and agent↔child dispatch + callback run
+mutual mTLS against the local CA. The daemon needs NO rimsky permission and mints
+no ledger keys (the loopback trust is entirely local). A plaintext-only binary is
+no longer a valid late-bound executor (pre-v1 contract change). This decouples
+the loopback from the deployment `peer_auth` (it's always on locally) and closes
+the port-squat dispatch-interception, forged-callback, and forged-dispatch cases
+uniformly. Two local listeners (plaintext enroll vs mTLS callback); callback base
+is now `https://localhost:<port>` for SAN validation. Verified: `-race -count=3`
+on hostagent + proxy + enroll, full root + services suites, lint/plumbline clean.
+
+Pre-commit adversarial review (4 security-cleared agents over the risk surface)
+found 2 real defects that green tests had hidden, plus hardening — all FIXED:
+- HIGH: the core `peer` client trust root was set only by a test hook, so a
+  production mtls deployment ran with `RootCAs=nil` → outbound dials verified
+  against the system pool (deployment certs rejected AND public PKI trusted, a
+  MITM surface). Added a production setter, wired at role startup from the
+  deployment CA; fixed the dial-before-identity ordering in `StartSupervisor`.
+- MAJOR: the webhook HMAC signed only the body, leaving the replay window
+  decorative. Now signs `timestamp + "." + body` and requires the timestamp
+  header in hmac mode (fail-loud at bind).
+- Loopback: pinned the plaintext enroll listener to loopback (was honoring an
+  operator-supplied off-host `ListenAddr`, leaking the bootstrap token over the
+  LAN); bounded the bootstrap token's lifetime (child re-enrolls with the same
+  token at renewal, so single-use would break it — 24h sliding window instead).
+- Callback principal binding (operator-elected hardening): the callback mTLS gate
+  discarded the peer principal, so any deployment-cert holder who learned an
+  `async_ack_id` could settle that run. Now the dispatched-to principal is
+  captured at dispatch (from the executor mTLS handshake), persisted with the
+  async-ack (migration 023), and the callback is rejected on principal mismatch.
+- Symmetric `ClientCAs != nil` guard on the callback listener; 1-minute cert
+  clock-skew backdate. Re-verified: build/lint/plumbline clean; changed paths
+  `-race`; migration-023 conformance on both backends; full scenario suite green.
+
+Review scoreboard: 14 findings → **11 fixed, 3 accepted**. Accepts: dead `label`
+field (shared wire type, harmless); anonymous-agent displacement (reachable only
+in no-auth anonymous mode); flat local loopback trust domain (matches the same-UID
+boundary — a finer per-child check is defeated by the same access it would guard).
+Finding 12 (webhook secret at rest) split: sensor-side FIXED (the sensor now
+persists only its watermark, never the secret — rimsky re-provisions config via
+subscription resync); rimsky-side DELEGATED per `decision:secret-at-rest-posture`
+(config-blob secrets rely on operator infra encryption + restricted DB access +
+encrypted backups, never logged / never returned over API; app-level field
+encryption reserved for the CA key). Sensor #12 re-verified via a fresh-image
+webhook e2e; #8/#11 fixes verified `-race` on the touched paths.
+
+Verification: `go build` + `make lint` + `plumbline` clean across all modules;
+full root + services test suites green (incl. the testcontainers docker harness
+against freshly-rebuilt images); race-sensitive packages green under `-race`.
 
 - **2 fixed in Track 0b** of the drift work (id `1` proxy Register auth, `1801`
   unguarded schema drop/rename).

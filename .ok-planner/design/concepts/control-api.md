@@ -18,7 +18,7 @@ The operator, the rimsky thin-client CLI, and agentic clients all speak to this 
 
 ## Boundaries
 
-Owns: the operation surface and its handlers, the lifecycle-subscriber fan-out, the observability read handlers, the auth middleware and endpoint surface, the agentic-tool envelope handler and catalog. Does NOT own: dispatch (supervisor's job), scheduling (scheduler's job), the out-of-process service protocols. Adjacent: `rimsky` (CLI), `lifecycle-subscriber`, `observability`, `cascade-graph`, `instance`, `template`, `api-key`, `permission`.
+Owns: the operation surface and its handlers, the lifecycle-subscriber fan-out, the observability read handlers, the auth middleware and endpoint surface, the agentic-tool envelope handler and catalog, and — under `peer_auth: mtls` — the enrollment endpoint `route:POST /v1/enroll` where a `service:enroll`-bearing key exchanges for a short-lived certificate plus the CA root. The control plane hosts the per-deployment CA and is the identity authority the other trust boundaries defer to. Does NOT own: dispatch (supervisor's job), scheduling (scheduler's job), the out-of-process service protocols, the certificate lifecycle on the service side (memory-only, auto-renewed — see `concept:peer-auth`). Adjacent: `rimsky` (CLI), `lifecycle-subscriber`, `observability`, `cascade-graph`, `instance`, `template`, `api-key`, `permission`, `peer-auth`.
 
 ## Invariants
 
@@ -27,6 +27,7 @@ Owns: the operation surface and its handlers, the lifecycle-subscriber fan-out, 
 - The reserved compose prefix on tags and instance keys is server-enforced: requests originating outside compose are rejected when they target it.
 - **Every operation is auth-gated** except the health and readiness probes, which are unauthenticated infrastructure paths. The action registry is the canonical surface-to-action mapping; an unmapped operation is a wiring bug.
 - **The agentic-tool skin shares the auth gate.** Tool invocations re-enter the routing pipeline via the catalog's invoke path, so the same action-gating middleware runs. The audit row records the protocol skin used.
+- **Enrollment is gated by `service:enroll`.** Under `peer_auth: mtls` the enroll endpoint passes the same auth middleware and requires the `service:enroll` grant; it issues a short-lived leaf certificate whose SAN binds the calling key's id. The control plane fails closed at startup when `mtls` is on but the CA encryption key is missing or malformed (see `concept:peer-auth`).
 
 ## Skin-as-implementation
 

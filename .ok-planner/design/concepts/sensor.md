@@ -24,7 +24,7 @@ Owns: the watching loop, the per-substrate dialect, the in-binary per-subscripti
 
 Does NOT own: the wire protocol (that's `concept:publisher`), the message envelope shape (that's `concept:message`), the per-instance binding state (that's `concept:publisher-subscription`, stored in the rimsky-side publisher-subscription ledger), or the deployment-tier replica posture (that's `concept:replica`).
 
-Adjacent: `concept:publisher` (sensors implement it), `concept:publisher-subscription` (sensors hold its publisher-side state in their own per-binary state DB), `concept:message` (sensors send them), `concept:replica` (sensor binaries are single-replica per v1 contract).
+Adjacent: `concept:publisher` (sensors implement it), `concept:publisher-subscription` (sensors hold its publisher-side state in their own per-binary state DB), `concept:message` (sensors send them), `concept:replica` (sensor binaries are single-replica per v1 contract), `concept:peer-auth` (the webhook sensor's inbound-auth requirement realizes the public-web ingress boundary).
 
 ## Invariants
 
@@ -34,3 +34,4 @@ Adjacent: `concept:publisher` (sensors implement it), `concept:publisher-subscri
 - Each send constructs a message envelope (see `concept:message`) and posts it to the universal message-send endpoint under an idempotent send. Inert payload per invariant: message-inertness.
 - Sensors observe; they do not interpret. Payload bytes flow through rimsky unread until a consumer's substitution leaf walks into them.
 - Single-replica per `concept:replica` — operators run one pod per sensor binary; rimsky does not coordinate multi-replica fan-in.
+- The webhook sensor requires per-subscription authentication, configured as exactly one of `hmac` (HMAC-SHA256 over the raw body, with an optional timestamp header and replay window), `secret_header` (constant-time compare of a configured header), or `none` (explicit opt-out). Polarity is fail-loud: a subscription with no `auth` block is refused at bind time — the insecure `none` mode must be typed explicitly, mirroring the closed-by-default polarity of the bundled-image egress guard. This closes unauthenticated message injection and forged-idempotency-key pre-seeding on the public-web ingress boundary (see `concept:peer-auth`).

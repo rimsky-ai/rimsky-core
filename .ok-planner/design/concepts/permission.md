@@ -20,7 +20,7 @@ The auth middleware needs a small, predictable grammar for "what this key is all
 
 ## Boundaries
 
-Owns: the grant entry shape, a boundary-only wildcard matcher over the action grammar, the canonical action registry, and per-action resource scoping via the optional selector field. Does NOT own: per-route handler dispatch (that's the HTTP router's concern), role expansion (CLI-side; see `concept:role-template`), the resolution of preview-vs-commit (`concept:dry-run` owns resolving the request's mode; `concept:permission` owns only the grant mode field that feeds the floor). Adjacent: `concept:api-key`, `concept:control-api`, `concept:dry-run` (orthogonal — the request flag, not a grant property), `concept:role-template`.
+Owns: the grant entry shape, a boundary-only wildcard matcher over the action grammar, the canonical action registry (which includes the `service:enroll` verb that authorizes a service to enroll for a certificate identity), and per-action resource scoping via the optional selector field. Does NOT own: per-route handler dispatch (that's the HTTP router's concern), role expansion (CLI-side; see `concept:role-template`), the resolution of preview-vs-commit (`concept:dry-run` owns resolving the request's mode; `concept:permission` owns only the grant mode field that feeds the floor), the certificate machinery gated by the `service:enroll` grant (that's `concept:peer-auth`). Adjacent: `concept:api-key`, `concept:control-api`, `concept:dry-run` (orthogonal — the request flag, not a grant property), `concept:role-template`, `concept:peer-auth`.
 
 ## Invariants
 

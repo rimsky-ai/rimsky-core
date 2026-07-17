@@ -55,6 +55,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `observability` — The service-facing optional observability protocols and the startup handshake that probes them.
 - `orphan-reaper` — A periodic sweep that hard-deletes stale rows from the node-run ledger and the claim-handle ledger.
 - `parked-state` (aliases: park, parked node) — `parked` is the fifth legal node state, entered from `running` when the executor emits a park outcome.
+- `peer-auth` (aliases: internal-service-auth, mtls, peer_auth) — The posture governing authentication across rimsky's four trust boundaries, and the optional deployment-level mutual-TLS mechanism (`peer_auth: none|mtls`, default off) that authenticates the internal service↔service boundary via a per-deployment CA and enrollment-by-api-key.
 - `permission` (aliases: grant, action) — The per-key authorization grant attached to a `concept:api-key`.
 - `persistence-database` (aliases: persistence-driver) — The top-level database interface is the umbrella over the rimsky persistence layer.
 - `publisher` — A publisher is a peer service that publishes messages into rimsky.
