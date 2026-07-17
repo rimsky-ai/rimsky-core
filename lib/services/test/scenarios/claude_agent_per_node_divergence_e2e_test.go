@@ -17,7 +17,7 @@ import (
 const (
 	perNodeReviewerSeed = "reviewer-seed-plaintext-do-not-leak-3b2d1e64"
 	perNodeAlphaMcpURL  = "http://127.0.0.1:9999/mcp/alpha"
-	perNodeBetaCommand  = "/bin/true"
+	perNodeBetaMcpURL   = "http://127.0.0.1:9999/mcp/beta"
 )
 
 // @story: claude-agent-mcp-servers-per-node
@@ -64,7 +64,7 @@ func TestClaudeAgentPerNodeDivergence(t *testing.T) {
 	if hasMcpServer(alphaObs, "local-tool") {
 		t.Fatalf("worker-alpha observed local-tool in its mcp config — per-node MCP declarations are leaking across nodes; alpha bag=%v", alphaObs)
 	}
-	assertMcpServer(t, "worker-beta", betaObs, "local-tool", "stdio")
+	assertMcpServer(t, "worker-beta", betaObs, "local-tool", "http")
 	if hasMcpServer(betaObs, "validator") {
 		t.Fatalf("worker-beta observed validator in its mcp config — per-node MCP declarations are leaking across nodes; beta bag=%v", betaObs)
 	}
@@ -85,7 +85,7 @@ func buildPerNodeTemplate(pubPEM string) map[string]any {
 	setExposeEnv(alphaAttrs, "VALIDATOR_TOKEN")
 
 	betaAttrs := perNodeAgentAttrs("scenario:per_node_witness node_hint beta", pubPEM)
-	setInlineMcpStdio(betaAttrs, "local-tool", perNodeBetaCommand)
+	setInlineMcpHTTP(betaAttrs, "local-tool", perNodeBetaMcpURL)
 	setExposeEnv(betaAttrs, "REVIEWER_SEED")
 
 	return map[string]any{
@@ -146,13 +146,6 @@ func setInlineMcpHTTP(attrs map[string]any, name, url string) {
 	cliDefault := attrs["schema"].(map[string]any)["properties"].(map[string]any)["cli"].(map[string]any)["default"].(map[string]any)
 	cliDefault["mcp_servers"] = []any{
 		map[string]any{"transport": "http", "name": name, "url": url},
-	}
-}
-
-func setInlineMcpStdio(attrs map[string]any, name, command string) {
-	cliDefault := attrs["schema"].(map[string]any)["properties"].(map[string]any)["cli"].(map[string]any)["default"].(map[string]any)
-	cliDefault["mcp_servers"] = []any{
-		map[string]any{"transport": "stdio", "name": name, "command": command},
 	}
 }
 

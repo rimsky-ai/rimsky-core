@@ -5,28 +5,32 @@
 package scenarios
 
 import (
-	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
 // @story: operator-invalidate-queues-during-flight
 func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	resumeAt := time.Now().Add(8 * time.Second)
+	base := time.Now().UTC()
+	clock := shared.NewControllableClock(base)
+	h := scenario.Start(t, scenario.HarnessOpts{Clock: clock})
+
+	resumeAt := base.Add(10 * time.Second)
 	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_SNOOZE, "snooze", resumeAt)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -52,52 +56,35 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should park on its first dispatch")
+	require.Equal(t, 1, stubWorkerCount(h), "worker invoked exactly once before invalidate")
 
-	workerObs := func() []stub.ObservedRequest {
-		var out []stub.ObservedRequest
-		for _, o := range h.Stub.Observed() {
-			if o.NodeType == "worker" {
-				out = append(out, o)
-			}
-		}
-		return out
+	pauseResp := postJSON(t,
+		h.ControlBase+fmt.Sprintf("/v1/instances/%s/pause", iid.String()),
+		map[string]any{})
+	require.Equal(t, http.StatusOK, pauseResp.status,
+		"pause must succeed so the operator surface is debuggable; body=%s", string(pauseResp.raw))
+
+	overrideResp := postDebugOverride(t, h.ControlBase, iid, map[string]any{
+		"action":          "set_attribute",
+		"node_type":       "worker",
+		"attribute_key":   "prior_marker",
+		"attribute_value": "from-parked-run",
+	}, "")
+	require.Equal(t, http.StatusOK, overrideResp.status,
+		"operator invalidate via the debug-override route must be accepted; body=%s",
+		string(overrideResp.raw))
+	var applied struct {
+		OK          bool   `json:"ok"`
+		GateState   string `json:"gate_state"`
+		RunsMutated int    `json:"runs_mutated"`
 	}
-	require.Equal(t, 1, len(workerObs()), "worker invoked exactly once before invalidate")
-
-	scopeID := h.GetMainRunScopeID(iid)
-	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		latest, err := h.Persist.Nodes().GetLatestRunForNode(context.Background(), tx, worker.ID)
-		if err != nil {
-			return err
-		}
-		require.NotNil(t, latest, "worker should have a parked run before invalidate")
-		return h.Persist.NodeAttributes().Upsert(context.Background(), latest.NodeRunID, worker.ID, map[string]any{
-			"prior_marker": "from-parked-run",
-		}, tx)
-	}))
-
-	var newRunID string
-	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		fr, err := h.Persist.Frames().GetRunningFrameID(context.Background(), iid, tx)
-		if err != nil {
-			return err
-		}
-		require.NotNil(t, fr, "instance should have a running frame after parking")
-		nid, err := h.Persist.Nodes().CreateNonCascadeStale(context.Background(), tx, persistence.NonCascadeStaleInput{
-			NodeID:                 worker.ID,
-			RunScopeID:             scopeID,
-			FrameID:                *fr,
-			ExecutorName:           "stub",
-			RequiredClaimProducers: []string{},
-			EnqueuedAt:             time.Now(),
-			CreationReason:         cascade.CreationReasonOperatorInvalidate,
-		})
-		if err != nil {
-			return err
-		}
-		newRunID = nid.String()
-		return nil
-	}))
+	require.NoError(t, json.Unmarshal(overrideResp.raw, &applied))
+	require.True(t, applied.OK)
+	require.Equal(t, "paused", applied.GateState,
+		"the override gate must report `paused` for the paused-instance path")
+	require.GreaterOrEqual(t, applied.RunsMutated, 1,
+		"the override must mutate at least one run — a 200 with runs_mutated=0 means the "+
+			"handler returned a status struct without driving the invalidate through the graph")
 
 	var staleCount int
 	h.QueryRowSQL(
@@ -105,7 +92,13 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 		[]any{worker.ID}, &staleCount,
 	)
 	require.Equal(t, 1, staleCount,
-		"operator-invalidate must create exactly one stale row with creation_reason=operator_invalidate")
+		"the operator-invalidate route must create exactly one stale row with creation_reason=operator_invalidate")
+
+	var newRunID string
+	h.QueryRowSQL(
+		`SELECT id::text FROM rimsky_node_runs WHERE node_id = $1 AND creation_reason = 'operator_invalidate'`,
+		[]any{worker.ID}, &newRunID,
+	)
 
 	var (
 		carriedData string
@@ -116,33 +109,35 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 		[]any{newRunID}, &carriedData, &dispatchBag,
 	)
 	require.Contains(t, carriedData, "prior_marker",
-		"operator-invalidate stale must carry forward the live bag from the most-recent settled/in-flight run")
+		"operator-invalidate stale must carry forward the live bag the route merged into the in-flight run")
 	require.True(t, dispatchBag.Valid && dispatchBag.String != "",
 		"operator-invalidate stale must snapshot a dispatch_input_bag at row creation per the non-cascade-direct-to-stale decision")
 	require.Contains(t, dispatchBag.String, "prior_marker",
 		"snapshot dispatch_input_bag must mirror the carried-forward live bag")
 
-	require.Equal(t, 1, len(workerObs()),
-		"the operator-invalidate stale must NOT dispatch while the parked predecessor is in-flight; "+
-			"the dispatcher's serialization gate blocks it")
-
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "worker-resumed")
 
-	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
-		"deadline sweep should wake the parked worker run")
+	resumeResp := postJSON(t,
+		h.ControlBase+fmt.Sprintf("/v1/instances/%s/resume", iid.String()),
+		map[string]any{})
+	require.Equal(t, http.StatusOK, resumeResp.status,
+		"resume must succeed so dispatch can flow again; body=%s", string(resumeResp.raw))
 
-	deadline := time.Now().Add(45 * time.Second)
-	var observedAfter int
-	for time.Now().Before(deadline) {
-		observedAfter = len(workerObs())
-		if observedAfter >= 3 {
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-	require.Equal(t, 3, observedAfter,
-		"worker should be invoked exactly three times: (1) parked dispatch, (2) deadline-resume "+
-			"of the same row, (3) operator-invalidate stale dispatched after the predecessor settles")
+	require.Equal(t, 1, stubWorkerCount(h),
+		"with the instance unpaused and the clock still frozen before resume_at, the operator-invalidate "+
+			"stale must NOT dispatch while the parked predecessor is in-flight; the dispatcher's serialization "+
+			"gate — not the pause — blocks it")
+
+	clock.Advance(15 * time.Second)
+
+	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
+		"advancing the clock past resume_at must let the deadline sweep wake the parked worker run")
+
+	require.True(t, waitForStubWorkerCount(h, 3, 30*time.Second),
+		"worker should be invoked three times: (1) parked dispatch, (2) deadline-resume of the same row, "+
+			"(3) operator-invalidate stale dispatched after the predecessor settles")
+	require.Equal(t, 3, stubWorkerCount(h),
+		"worker must be invoked exactly three times, no more")
 
 	var creationReasons string
 	h.QueryRowSQL(
