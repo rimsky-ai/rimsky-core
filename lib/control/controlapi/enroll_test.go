@@ -5,6 +5,7 @@
 package controlapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,10 +27,49 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+type captureEvent struct {
+	msg    string
+	fields []any
+}
+
+type captureLogger struct {
+	mu     *sync.Mutex
+	events *[]captureEvent
+}
+
+func (c captureLogger) record(msg string, fields ...any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	*c.events = append(*c.events, captureEvent{msg: msg, fields: append([]any(nil), fields...)})
+}
+
+func (c captureLogger) Debug(msg string, f ...any)  { c.record(msg, f...) }
+func (c captureLogger) Info(msg string, f ...any)   { c.record(msg, f...) }
+func (c captureLogger) Warn(msg string, f ...any)   { c.record(msg, f...) }
+func (c captureLogger) Error(msg string, f ...any)  { c.record(msg, f...) }
+func (c captureLogger) With(_ ...any) shared.Logger { return c }
+
+func (c captureLogger) fieldFor(msg, key string) (any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range *c.events {
+		if e.msg != msg {
+			continue
+		}
+		for i := 0; i+1 < len(e.fields); i += 2 {
+			if k, _ := e.fields[i].(string); k == key {
+				return e.fields[i+1], true
+			}
+		}
+	}
+	return nil, false
+}
+
 type enrollHarness struct {
 	srv    *httptest.Server
 	tables persistence.Tables
 	clock  shared.Clock
+	logger captureLogger
 }
 
 func newEnrollHarness(t *testing.T, withEnroll, withEnrollClock bool) enrollHarness {
@@ -53,10 +94,11 @@ func newEnrollHarness(t *testing.T, withEnroll, withEnrollClock bool) enrollHarn
 		Clock:    clock,
 		Logger:   shared.SilentLogger{},
 	}
+	logger := captureLogger{mu: &sync.Mutex{}, events: &[]captureEvent{}}
 	deps := AppDeps{
 		Persist:   d.Tables(),
 		Clock:     clock,
-		Logger:    shared.SilentLogger{},
+		Logger:    logger,
 		AuthState: authState,
 	}
 	if withEnroll {
@@ -73,7 +115,7 @@ func newEnrollHarness(t *testing.T, withEnroll, withEnrollClock bool) enrollHarn
 	}
 	srv := httptest.NewServer(NewApp(deps))
 	t.Cleanup(srv.Close)
-	return enrollHarness{srv: srv, tables: d.Tables(), clock: clock}
+	return enrollHarness{srv: srv, tables: d.Tables(), clock: clock, logger: logger}
 }
 
 func (h enrollHarness) seedKey(t *testing.T, name string, actions ...string) (id uuid.UUID, plaintext string) {
@@ -104,8 +146,16 @@ func (h enrollHarness) seedKey(t *testing.T, name string, actions ...string) (id
 }
 
 func (h enrollHarness) post(t *testing.T, path, bearer string) (int, map[string]any) {
+	return h.postBody(t, path, bearer, nil)
+}
+
+func (h enrollHarness) postBody(t *testing.T, path, bearer string, body []byte) (int, map[string]any) {
 	t.Helper()
-	req, err := http.NewRequest("POST", h.srv.URL+path, nil)
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest("POST", h.srv.URL+path, reader)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
@@ -159,6 +209,28 @@ func TestEnrollReturnsCertWithCallerKeyIDInSAN(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("issued cert SAN URIs %v do not include %q", cert.URIs, wantURI)
+	}
+}
+
+func TestEnrollLogsServiceLabel(t *testing.T) {
+	h := newEnrollHarness(t, true, true)
+	id, plaintext := h.seedKey(t, "enroller", "service:enroll")
+
+	status, body := h.postBody(t, "/v1/enroll", plaintext, []byte(`{"label":"sensor-webhook"}`))
+	if status != http.StatusOK {
+		t.Fatalf("enroll status: got %d body=%v", status, body)
+	}
+
+	gotLabel, ok := h.logger.fieldFor("service enrolled", "label")
+	if !ok {
+		t.Fatalf("enrollment did not emit a 'service enrolled' log line carrying the client label — the wire label is dead again")
+	}
+	if gotLabel != "sensor-webhook" {
+		t.Fatalf("enrollment logged label = %v, want %q", gotLabel, "sensor-webhook")
+	}
+	gotPrincipal, ok := h.logger.fieldFor("service enrolled", "principal")
+	if !ok || gotPrincipal != id.String() {
+		t.Fatalf("enrollment logged principal = %v (present=%v), want authenticated key id %q", gotPrincipal, ok, id.String())
 	}
 }
 

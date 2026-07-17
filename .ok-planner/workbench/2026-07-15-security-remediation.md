@@ -120,10 +120,14 @@ found 2 real defects that green tests had hidden, plus hardening — all FIXED:
   clock-skew backdate. Re-verified: build/lint/plumbline clean; changed paths
   `-race`; migration-023 conformance on both backends; full scenario suite green.
 
-Review scoreboard: 14 findings → **11 fixed, 3 accepted**. Accepts: dead `label`
-field (shared wire type, harmless); anonymous-agent displacement (reachable only
-in no-auth anonymous mode); flat local loopback trust domain (matches the same-UID
-boundary — a finer per-child check is defeated by the same access it would guard).
+Review scoreboard: 14 findings → **12 fixed, 2 accepted** (post-walk 2026-07-17,
+was 11/3). The dead `label` field is now FIXED: the enroll handler logs it as the
+enrollment audit line (label + authenticated principal), and `TestEnrollLogsServiceLabel`
+fails if the wire label goes dead again. Standing accepts: anonymous-agent
+displacement (reachable only in no-auth anonymous mode — a per-connection-identity
+hardening is recorded under Follow-up); flat local loopback trust domain (matches
+the same-UID boundary — a finer per-child check is defeated by the same access it
+would guard).
 Finding 12 (webhook secret at rest) split: sensor-side FIXED (the sensor now
 persists only its watermark, never the secret — rimsky re-provisions config via
 subscription resync); rimsky-side DELEGATED per `decision:secret-at-rest-posture`
@@ -370,6 +374,22 @@ changes. Read real exit codes from files, not the background-task wrapper; a
 whole-package `panic: test timed out` is a hang, not a failure (see the
 drift-remediation plan's Environment discipline). Commit per batch or per
 coherent cluster.
+
+## Follow-up (deferred hardening — tracked for a later pass, operator-elected)
+
+- **Anonymous-agent displacement** (`registerAgent` in
+  `cmd/rimsky-host-agent-proxy/state.go`, ~L204). The proxy keys its
+  connected-agent table by routing identity and overwrites on collision. Every
+  anonymous agent collapses to the single routing key `"anonymous"`
+  (`register_auth.go` whoami `kind: anonymous` → `anonymousRoutingIdentity`;
+  `lib/runtime/hostagent/run.go` `AnonymousRoutingIdentity`), so any anonymous
+  agent displaces any other and inherits its dispatch stream. Reachable ONLY in
+  no-auth mode (control-api `whoami` reports `kind: anonymous`), where there is
+  no inter-agent security boundary to begin with; under real auth each agent
+  carries a distinct key id and "displacement" is the same principal
+  reconnecting. Accepted for the peer-auth track. **Follow-up:** route anonymous
+  agents by a per-connection identity (agent label / connection id) so two of
+  them cannot collide even in no-auth mode. Operator-elected 2026-07-17.
 
 ## End state
 

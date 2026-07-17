@@ -62,6 +62,12 @@ func handleEnroll(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		if deps.Logger != nil {
+			deps.Logger.Info("service enrolled",
+				"label", body.Label,
+				"principal", ident.KeyID.String(),
+				"not_after", issued.NotAfter.Format(time.RFC3339))
+		}
 		writeJSON(w, http.StatusOK, enroll.Response{
 			CertPEM:   string(issued.CertPEM),
 			KeyPEM:    string(issued.KeyPEM),
