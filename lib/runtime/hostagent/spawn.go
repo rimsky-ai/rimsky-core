@@ -7,6 +7,9 @@ package hostagent
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,17 +17,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -48,6 +53,7 @@ type SpawnServiceParams struct {
 	Args         []string
 	Cwd          string
 	Env          []string
+	DialTLS      *tls.Config
 	ReadyTimeout time.Duration
 	portSource   func() (int, error)
 }
@@ -92,8 +98,7 @@ func spawnOnPickedPort(ctx context.Context, params SpawnServiceParams, pickPort 
 		cmd.Dir = params.Cwd
 	}
 
-	env := append([]string(nil), params.Env...)
-	env = append(env, fmt.Sprintf("%s=%d", agentPortEnvVar, port))
+	env := setEnvVar(params.Env, agentPortEnvVar, strconv.Itoa(port))
 	cmd.Env = env
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
@@ -113,7 +118,7 @@ func spawnOnPickedPort(ctx context.Context, params SpawnServiceParams, pickPort 
 		readyTimeout = 30 * time.Second
 	}
 
-	if !waitPortReady(ctx, port, exited, readyTimeout) {
+	if !waitPortReady(ctx, port, exited, readyTimeout, params.DialTLS) {
 		killProcess(cmd)
 		<-exited
 		return nil, fmt.Errorf("child did not bind port %d within %s: %w", port, readyTimeout, errChildDidNotBind)
@@ -143,22 +148,36 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
+	spawnID := sp.GetSpawnId()
+	token, err := generateSpawnSecret()
+	if err != nil {
+		return spawnFailed(spawnID, err.Error())
+	}
+	a.registerBootstrapToken(spawnID, token, time.Now())
+
+	env = setEnvVar(env, enroll.EnvPeerAuth, enroll.PeerAuthMTLS)
+	env = setEnvVar(env, enroll.EnvAPIKey, token)
+	env = setEnvVar(env, enroll.EnvControlAPIURL, a.enrollBaseURL)
+
 	spawned, err := SpawnService(ctx, SpawnServiceParams{
 		BinaryPath:   execPath,
 		Args:         sp.GetBinding().GetArgs(),
 		Cwd:          cwd,
 		Env:          env,
+		DialTLS:      a.trust.dialChildTLSConfig(),
 		ReadyTimeout: time.Duration(sp.GetReadyTimeoutSeconds()) * time.Second,
 	})
 	if err != nil {
-		return spawnFailed(sp.GetSpawnId(), err.Error())
+		a.forgetBootstrapToken(spawnID)
+		return spawnFailed(spawnID, err.Error())
 	}
 
-	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", spawned.Port), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := a.dialChild(spawned.Port)
 	if err != nil {
 		killProcess(spawned.Cmd)
 		<-spawned.Exited
-		return spawnFailed(sp.GetSpawnId(), "dial child: "+err.Error())
+		a.forgetBootstrapToken(spawnID)
+		return spawnFailed(spawnID, "dial child: "+err.Error())
 	}
 
 	caps, err := handshakeCapabilities(ctx, conn, sp.GetExpectedProtocols())
@@ -166,12 +185,13 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 		_ = conn.Close()
 		killProcess(spawned.Cmd)
 		<-spawned.Exited
-		return spawnFailed(sp.GetSpawnId(), err.Error())
+		a.forgetBootstrapToken(spawnID)
+		return spawnFailed(spawnID, err.Error())
 	}
 
 	a.childMu.Lock()
-	a.children[sp.GetSpawnId()] = &liveChild{
-		spawnID: sp.GetSpawnId(),
+	a.children[spawnID] = &liveChild{
+		spawnID: spawnID,
 		cmd:     spawned.Cmd,
 		conn:    conn,
 		port:    spawned.Port,
@@ -185,6 +205,23 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 		Status:       genv1.SpawnAck_SPAWN_STATUS_READY,
 		Capabilities: caps,
 	}
+}
+
+func (a *agent) dialChild(port int) (*grpc.ClientConn, error) {
+	creds := credentials.NewTLS(a.trust.dialChildTLSConfig())
+	return grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", port), grpc.WithTransportCredentials(creds))
+}
+
+func setEnvVar(env []string, key, val string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return append(out, key+"="+val)
 }
 
 func (a *agent) resolveBindingPath(path string) (string, error) {
@@ -320,6 +357,7 @@ func (a *agent) handleReap(reap *genv1.Reap) *genv1.Reaped {
 		delete(a.children, reap.GetSpawnId())
 	}
 	a.childMu.Unlock()
+	a.forgetBootstrapToken(reap.GetSpawnId())
 
 	if !ok {
 		return &genv1.Reaped{SpawnId: reap.GetSpawnId(), Clean: true}
@@ -394,6 +432,14 @@ func spawnFailed(spawnID, msg string) *genv1.SpawnAck {
 	}
 }
 
+func generateSpawnSecret() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("hostagent: generate spawn secret: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
+
 func FreeLocalPort() (int, error) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -404,7 +450,7 @@ func FreeLocalPort() (int, error) {
 	return port, nil
 }
 
-func waitPortReady(ctx context.Context, port int, exited <-chan struct{}, timeout time.Duration) bool {
+func waitPortReady(ctx context.Context, port int, exited <-chan struct{}, timeout time.Duration, dialTLS *tls.Config) bool {
 	deadline := time.Now().Add(timeout)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	for {
@@ -415,9 +461,7 @@ func waitPortReady(ctx context.Context, port int, exited <-chan struct{}, timeou
 			return false
 		default:
 		}
-		conn, err := net.DialTimeout("tcp", addr, portDialInterval)
-		if err == nil {
-			_ = conn.Close()
+		if probeReady(addr, dialTLS) {
 			return true
 		}
 		if time.Now().After(deadline) {
@@ -425,4 +469,22 @@ func waitPortReady(ctx context.Context, port int, exited <-chan struct{}, timeou
 		}
 		time.Sleep(portDialInterval)
 	}
+}
+
+func probeReady(addr string, dialTLS *tls.Config) bool {
+	dialer := &net.Dialer{Timeout: portDialInterval}
+	if dialTLS == nil {
+		conn, err := dialer.Dial("tcp", addr)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	}
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, dialTLS)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }

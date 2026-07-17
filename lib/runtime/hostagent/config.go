@@ -21,6 +21,8 @@ type Config struct {
 	LogLevel          string
 	HeartbeatInterval time.Duration
 	ReapGracePeriod   time.Duration
+	TLSEnabled        bool
+	TLSCAPath         string
 	// @story: host-agent-control-plane
 	StatusFile string
 }
@@ -34,6 +36,8 @@ func LoadConfigFromEnv() Config {
 		LogLevel:          envOr("RIMSKY_LOG_LEVEL", "info"),
 		HeartbeatInterval: envDurationSec("RIMSKY_AGENT_HEARTBEAT_SEC", 10*time.Second),
 		ReapGracePeriod:   envDurationSec("RIMSKY_AGENT_REAP_GRACE_SEC", 30*time.Second),
+		TLSEnabled:        envBool("RIMSKY_AGENT_TLS"),
+		TLSCAPath:         os.Getenv("RIMSKY_AGENT_TLS_CA"),
 		StatusFile:        os.Getenv("RIMSKY_AGENT_STATUS_FILE"),
 	}
 }
@@ -67,6 +71,15 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envBool(key string) bool {
+	switch strings.TrimSpace(os.Getenv(key)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func envDurationSec(key string, def time.Duration) time.Duration {

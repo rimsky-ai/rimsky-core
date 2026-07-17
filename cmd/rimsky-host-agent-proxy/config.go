@@ -15,6 +15,8 @@ type Config struct {
 	ControlAPIURL     string
 	ControlAPIToken   string
 	LogLevel          string
+	TLSCertPath       string
+	TLSKeyPath        string
 	SpawnReadyTimeout time.Duration
 	ReapTimeout       time.Duration
 }
@@ -25,6 +27,8 @@ func LoadConfig() Config {
 		ControlAPIURL:     trimTrailingSlash(os.Getenv("RIMSKY_CONTROL_API_URL")),
 		ControlAPIToken:   os.Getenv("RIMSKY_CONTROL_API_TOKEN"),
 		LogLevel:          envOr("RIMSKY_LOG_LEVEL", "info"),
+		TLSCertPath:       os.Getenv("RIMSKY_PROXY_TLS_CERT"),
+		TLSKeyPath:        os.Getenv("RIMSKY_PROXY_TLS_KEY"),
 		SpawnReadyTimeout: 30 * time.Second,
 		ReapTimeout:       45 * time.Second,
 	}

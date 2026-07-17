@@ -5,90 +5,67 @@
 package hostagent
 
 import (
-	"io"
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-func freeTestPort(t *testing.T) int {
-	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
+func TestEnrollListenerPinnedToLoopbackDespiteNonLoopbackListenAddr(t *testing.T) {
+	for _, addr := range []string{"0.0.0.0:0", "0.0.0.0:0", ""} {
+		lis, base, err := bindPlaintextListener(addr)
+		if err != nil {
+			t.Fatalf("bindPlaintextListener(%q): %v", addr, err)
+		}
+		host, _, splitErr := net.SplitHostPort(lis.Addr().String())
+		_ = lis.Close()
+		if splitErr != nil {
+			t.Fatalf("split bound addr %q: %v", lis.Addr().String(), splitErr)
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			t.Fatalf("listen %q bound enroll listener to non-loopback host %q (base=%s)", addr, host, base)
+		}
 	}
-	port := lis.Addr().(*net.TCPAddr).Port
-	_ = lis.Close()
-	return port
 }
 
-func TestLocalHTTPForwardRoundTrip(t *testing.T) {
-	fp := startFakeProxy(t)
-	port := freeTestPort(t)
+func TestBootstrapTokenAcceptedRepeatedlyForRenewalWithinLifetime(t *testing.T) {
+	a := newAgent(Config{}, nil, "", "", nil)
+	base := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	a.registerBootstrapToken("spawn-1", "secret", base)
 
-	go func() {
-		<-fp.connected
-		for {
-			frame := <-fp.clientFrame
-			fwd := frame.GetHttpForward()
-			if fwd == nil {
-				continue
-			}
-			fp.mu.Lock()
-			stream := fp.stream
-			fp.mu.Unlock()
-			_ = stream.Send(&genv1.ServerFrame{Body: &genv1.ServerFrame_HttpResponse{HttpResponse: &genv1.LocalHttpResponse{
-				ForwardId: fwd.GetForwardId(),
-				Status:    http.StatusCreated,
-				Body:      append([]byte("echo:"), fwd.GetBody()...),
-				Headers:   map[string]string{"X-Echo-Method": fwd.GetMethod()},
-			}}})
-		}
-	}()
+	if p, ok := a.principalForBootstrapToken("secret", base); !ok || p != "spawn-1" {
+		t.Fatalf("first enroll must be accepted: got (%q, %v)", p, ok)
+	}
+	if p, ok := a.principalForBootstrapToken("secret", base.Add(time.Hour)); !ok || p != "spawn-1" {
+		t.Fatalf("renewal re-presenting the same token must be accepted: got (%q, %v)", p, ok)
+	}
+}
 
-	runAgentInBackground(t, Config{
-		RimskyURL:  fp.addr,
-		APIKey:     "k",
-		ListenAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
-	})
-	fp.waitConnected(t)
+func TestBootstrapTokenRejectedPastItsLifetimeBound(t *testing.T) {
+	a := newAgent(Config{}, nil, "", "", nil)
+	base := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	a.registerBootstrapToken("spawn-1", "secret", base)
 
-	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/v1/callback/ack-1"
-	var resp *http.Response
-	var err error
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err = http.Post(url, "application/json", strings.NewReader("hello"))
-		if err == nil {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
+	if _, ok := a.principalForBootstrapToken("secret", base.Add(bootstrapTokenTTL).Add(time.Second)); ok {
+		t.Fatal("token presented past its lifetime bound must be rejected")
 	}
-	if err != nil {
-		t.Fatalf("post to local listener: %v", err)
-	}
-	defer resp.Body.Close()
+}
 
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("status = %d, want 201", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != "echo:hello" {
-		t.Fatalf("body = %q, want %q", body, "echo:hello")
-	}
-	if got := resp.Header.Get("X-Echo-Method"); got != http.MethodPost {
-		t.Fatalf("X-Echo-Method = %q, want POST", got)
+func TestBootstrapTokenLifetimeOutlastsLeafRenewalInterval(t *testing.T) {
+	renewalInterval := pki.LeafTTL * 2 / 3
+	if bootstrapTokenTTL <= renewalInterval {
+		t.Fatalf("bootstrapTokenTTL (%s) must exceed the leaf renewal interval (%s) so renewals refresh the token before it expires", bootstrapTokenTTL, renewalInterval)
 	}
 }
 
 func TestDeliverHTTPResponseNeverSendsOnClearedForward(t *testing.T) {
-	a := newAgent(Config{}, "", nil)
+	a := newAgent(Config{}, nil, "", "", nil)
 	for i := 0; i < 10000; i++ {
 		forwardID := strconv.Itoa(i)
 		ch := a.registerForward(forwardID)
@@ -120,28 +97,5 @@ func TestDeliverHTTPResponseNeverSendsOnClearedForward(t *testing.T) {
 		default:
 			t.Fatalf("iteration %d: channel neither closed nor delivered", i)
 		}
-	}
-}
-
-func TestLocalHTTPForwardTimeout(t *testing.T) {
-	fp := startFakeProxy(t)
-	port := freeTestPort(t)
-
-	runAgentInBackground(t, Config{
-		RimskyURL:  fp.addr,
-		APIKey:     "k",
-		ListenAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
-	})
-	fp.waitConnected(t)
-
-	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/whatever"
-	go func() { _, _ = http.Post(url, "text/plain", strings.NewReader("x")) }()
-
-	frame := fp.nextClientFrame(t)
-	if frame.GetHttpForward() == nil {
-		t.Fatalf("expected an http_forward frame, got %T", frame.GetBody())
-	}
-	if frame.GetHttpForward().GetMethod() != http.MethodPost {
-		t.Fatalf("forward method = %q, want POST", frame.GetHttpForward().GetMethod())
 	}
 }

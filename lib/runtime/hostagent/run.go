@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -44,8 +43,10 @@ type liveChild struct {
 }
 
 type agent struct {
-	cfg          Config
-	localBaseURL string
+	cfg             Config
+	trust           *localTrust
+	enrollBaseURL   string
+	callbackBaseURL string
 
 	sendMu     sync.Mutex
 	stream     genv1.HostAgent_ConnectClient
@@ -56,6 +57,9 @@ type agent struct {
 	childMu  sync.Mutex
 	children map[string]*liveChild
 
+	tokenMu     sync.Mutex
+	spawnTokens map[string]bootstrapToken
+
 	spawnWG sync.WaitGroup
 
 	forwardMu       sync.Mutex
@@ -65,12 +69,15 @@ type agent struct {
 	dispatchCancels map[string]context.CancelFunc
 }
 
-func newAgent(cfg Config, localBaseURL string, stream genv1.HostAgent_ConnectClient) *agent {
+func newAgent(cfg Config, trust *localTrust, enrollBaseURL, callbackBaseURL string, stream genv1.HostAgent_ConnectClient) *agent {
 	return &agent{
 		cfg:             cfg,
-		localBaseURL:    localBaseURL,
+		trust:           trust,
+		enrollBaseURL:   enrollBaseURL,
+		callbackBaseURL: callbackBaseURL,
 		stream:          stream,
 		children:        map[string]*liveChild{},
+		spawnTokens:     map[string]bootstrapToken{},
 		pendingForwards: map[string]chan *genv1.LocalHttpResponse{},
 		dispatchCancels: map[string]context.CancelFunc{},
 	}
@@ -104,33 +111,56 @@ func Run(ctx context.Context, cfg Config) error {
 		cfg.APIKey = AnonymousRoutingIdentity
 	}
 
-	lis, baseURL, err := bindLocalListener(cfg.ListenAddr)
+	trust, err := newLocalTrust(time.Now())
 	if err != nil {
-		return fmt.Errorf("hostagent: bind local listener: %w", err)
+		return fmt.Errorf("hostagent: %w", err)
 	}
-	defer lis.Close()
 
 	var (
 		curMu sync.Mutex
 		cur   *agent
 	)
-	httpSrv := &http.Server{Handler: localForwardHandler(func() *agent {
+	currentAgent := func() *agent {
 		curMu.Lock()
 		defer curMu.Unlock()
 		return cur
-	})}
+	}
+
+	enrollLis, enrollBase, err := bindPlaintextListener(cfg.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("hostagent: bind enroll listener: %w", err)
+	}
+	defer enrollLis.Close()
+
+	callbackLis, callbackBase, err := bindCallbackListener()
+	if err != nil {
+		return fmt.Errorf("hostagent: bind callback listener: %w", err)
+	}
+	defer callbackLis.Close()
+
+	enrollSrv := &http.Server{Handler: localEnrollHandler(trust, currentAgent)}
+	callbackSrv := &http.Server{
+		Handler:   localForwardHandler(currentAgent),
+		TLSConfig: trust.callbackServerTLSConfig(),
+	}
 	go func() {
-		if serveErr := httpSrv.Serve(lis); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			slog.Error("hostagent: local HTTP serve stopped", "error", serveErr)
+		if serveErr := enrollSrv.Serve(enrollLis); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			slog.Error("hostagent: enroll HTTP serve stopped", "error", serveErr)
+		}
+	}()
+	go func() {
+		if serveErr := callbackSrv.ServeTLS(callbackLis, "", ""); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			slog.Error("hostagent: callback mTLS serve stopped", "error", serveErr)
 		}
 	}()
 	defer func() {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = httpSrv.Shutdown(shutCtx)
+		_ = enrollSrv.Shutdown(shutCtx)
+		_ = callbackSrv.Shutdown(shutCtx)
 	}()
 
-	slog.Info("hostagent starting", "rimsky_url", cfg.RimskyURL, "agent_label", cfg.AgentLabel, "local_base_url", baseURL)
+	slog.Info("hostagent starting", "rimsky_url", cfg.RimskyURL, "agent_label", cfg.AgentLabel, "enroll_base_url", enrollBase, "callback_base_url", callbackBase)
 
 	// @story: host-agent-control-plane
 	clearStatusFile(cfg.StatusFile)
@@ -141,7 +171,7 @@ func Run(ctx context.Context, cfg Config) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		a, connErr := connectOnce(ctx, cfg, baseURL)
+		a, connErr := connectOnce(ctx, cfg, trust, enrollBase, callbackBase)
 		if connErr != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -224,8 +254,12 @@ func clearStatusFile(path string) {
 	}
 }
 
-func connectOnce(ctx context.Context, cfg Config, localBaseURL string) (*agent, error) {
-	conn, err := grpc.NewClient(cfg.RimskyURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func connectOnce(ctx context.Context, cfg Config, trust *localTrust, enrollBaseURL, callbackBaseURL string) (*agent, error) {
+	creds, err := agentTransportCredentials(cfg)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := grpc.NewClient(cfg.RimskyURL, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, fmt.Errorf("dial proxy: %w", err)
 	}
@@ -236,12 +270,12 @@ func connectOnce(ctx context.Context, cfg Config, localBaseURL string) (*agent, 
 		return nil, fmt.Errorf("open Connect stream: %w", err)
 	}
 
-	a := newAgent(cfg, localBaseURL, stream)
+	a := newAgent(cfg, trust, enrollBaseURL, callbackBaseURL, stream)
 	if !a.send(&genv1.ClientFrame{Body: &genv1.ClientFrame_Register{Register: &genv1.Register{
 		ApiKey:               cfg.APIKey,
 		AgentLabel:           cfg.AgentLabel,
 		AgentVersion:         agentVersion,
-		LocalCallbackBaseUrl: localBaseURL,
+		LocalCallbackBaseUrl: callbackBaseURL,
 	}}}) {
 		_ = conn.Close()
 		return nil, errors.New("send Register failed")
@@ -345,13 +379,34 @@ func nextBackoff(cur time.Duration) time.Duration {
 	return next
 }
 
-func bindLocalListener(addr string) (net.Listener, string, error) {
-	if addr == "" {
-		addr = "127.0.0.1:0"
-	}
-	lis, err := net.Listen("tcp", addr)
+func bindPlaintextListener(addr string) (net.Listener, string, error) {
+	lis, err := net.Listen("tcp", loopbackEnrollAddr(addr))
 	if err != nil {
 		return nil, "", err
 	}
 	return lis, "http://" + lis.Addr().String(), nil
+}
+
+func loopbackEnrollAddr(addr string) string {
+	if addr == "" {
+		return "127.0.0.1:0"
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return "127.0.0.1:0"
+	}
+	if host != "" && host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		slog.Warn("hostagent: enroll listener is loopback-only; ignoring non-loopback host", "requested_listen", addr, "bound_host", "127.0.0.1")
+	}
+	return net.JoinHostPort("127.0.0.1", port)
+}
+
+func bindCallbackListener() (net.Listener, string, error) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, "", err
+	}
+	port := lis.Addr().(*net.TCPAddr).Port
+	base := fmt.Sprintf("https://%s:%d", localTrustServerName, port)
+	return lis, base, nil
 }

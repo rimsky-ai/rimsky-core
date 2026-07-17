@@ -55,6 +55,8 @@ func runAgentStart(args []string) int {
 	listen := fs.String("listen", "", "agent local listener addr (default 127.0.0.1:0)")
 	proxy := fs.String("proxy", "", "host-agent-proxy endpoint host:port (overrides $RIMSKY_URL)")
 	apiKey := fs.String("api-key", "", "api-key plaintext presented to the proxy on Register (overrides $RIMSKY_API_KEY); omit to register anonymously")
+	tls := fs.Bool("tls", false, "dial the proxy over TLS, verifying its server cert against --tls-ca (overrides $RIMSKY_AGENT_TLS)")
+	tlsCA := fs.String("tls-ca", "", "path to the pinned deployment CA root PEM used to verify the proxy server cert (overrides $RIMSKY_AGENT_TLS_CA)")
 	stateDir := fs.String("state-dir", "", "directory for pid and status files (default ~/.rimsky)")
 	foreground := fs.Bool("foreground", false, "run in foreground (don't daemonize)")
 	if err := parseInterspersed(fs, args); err != nil {
@@ -74,6 +76,12 @@ func runAgentStart(args []string) int {
 	}
 	if *apiKey != "" {
 		cfg.APIKey = *apiKey
+	}
+	if *tls {
+		cfg.TLSEnabled = true
+	}
+	if *tlsCA != "" {
+		cfg.TLSCAPath = *tlsCA
 	}
 
 	dir, err := resolveStateDir(*stateDir)

@@ -29,7 +29,18 @@ func main() {
 	slog.Info("rimsky-host-agent-proxy starting", "grpc_port", cfg.GRPCPort)
 
 	state := newProxyState()
-	grpcSrv := grpc.NewServer()
+
+	creds, err := proxyServerCredentials(cfg)
+	if err != nil {
+		slog.Error("proxy TLS config invalid", "error", err)
+		os.Exit(1)
+	}
+	var serverOpts []grpc.ServerOption
+	if creds != nil {
+		serverOpts = append(serverOpts, grpc.Creds(creds))
+		slog.Info("agent-facing TLS enabled", "cert", cfg.TLSCertPath)
+	}
+	grpcSrv := grpc.NewServer(serverOpts...)
 
 	verifyIdentity := newControlAPIRegisterIdentityVerifier(&http.Client{Timeout: 10 * time.Second}, cfg.ControlAPIURL)
 	genv1.RegisterHostAgentServer(grpcSrv, newAgentServer(state, verifyIdentity))

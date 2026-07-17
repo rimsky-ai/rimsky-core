@@ -6,9 +6,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -16,9 +19,11 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -46,7 +51,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := grpc.NewServer()
+	srvOpts, err := mtlsServerOptions()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stubchild: enroll: %v\n", err)
+		os.Exit(1)
+	}
+	srv := grpc.NewServer(srvOpts...)
 	genv1.RegisterExecutorServer(srv, &stubExecutor{})
 	genv1.RegisterExecutorObservabilityServer(srv, &stubExecutorObs{})
 	genv1.RegisterClaimProducerServer(srv, &stubClaimProducer{})
@@ -66,6 +76,34 @@ func main() {
 		}
 	}
 	srv.GracefulStop()
+}
+
+func mtlsServerOptions() ([]grpc.ServerOption, error) {
+	if os.Getenv(enroll.EnvPeerAuth) != enroll.PeerAuthMTLS {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := enroll.Enroll(ctx, &http.Client{Timeout: 30 * time.Second},
+		os.Getenv(enroll.EnvControlAPIURL), os.Getenv(enroll.EnvAPIKey), "stubchild")
+	if err != nil {
+		return nil, err
+	}
+	cert, err := tls.X509KeyPair([]byte(resp.CertPEM), []byte(resp.KeyPEM))
+	if err != nil {
+		return nil, fmt.Errorf("load leaf keypair: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(resp.CARootPEM)) {
+		return nil, fmt.Errorf("ca_root_pem is not a valid certificate")
+	}
+	cfg := &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{cert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    pool,
+	}
+	return []grpc.ServerOption{grpc.Creds(credentials.NewTLS(cfg))}, nil
 }
 
 func sleepUntilSignal() {
