@@ -11,12 +11,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"google.golang.org/grpc"
-
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	verifiershapechecks "github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-shape-checks"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 func main() {
@@ -33,12 +32,17 @@ func main() {
 		slog.Error("grpc listen", "error", err.Error())
 		os.Exit(1)
 	}
-	srv := grpc.NewServer()
+	srv, identity, err := peerauth.NewGRPCServer(context.Background(), "verifier-shape-checks")
+	if err != nil {
+		slog.Error("verifier-shape-checks peer-auth", "error", err.Error())
+		os.Exit(1)
+	}
 	genv1.RegisterExecutorServer(srv, verifiershapechecks.NewServer(opts.StubMode))
 	verifiershapechecks.RegisterObservability(srv)
 	genv1.RegisterValidationServer(srv, verifiershapechecks.NewValidationServer())
 
 	ctx, cancel := context.WithCancel(context.Background())
+	identity.StartMaintain(ctx, "verifier-shape-checks")
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

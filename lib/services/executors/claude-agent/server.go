@@ -21,6 +21,7 @@ import (
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/internal/observability"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 type PostCallbackFn func(url string, body map[string]any, logger *slog.Logger)
@@ -297,19 +298,25 @@ func claimProducerNames(claimProducers map[string]*genv1.ClaimProducerHandle) []
 }
 
 func DefaultPostCallback(callbackURL string, body map[string]any, logger *slog.Logger) {
-	raw, err := json.Marshal(body)
-	if err != nil {
-		logger.Error("callback POST body marshal failed", "error", err.Error(), "url", callbackURL)
-		return
-	}
-	resp, err := http.Post(callbackURL, "application/json", bytes.NewReader(raw))
-	if err != nil {
-		logger.Error("callback POST failed", "error", err.Error(), "url", callbackURL)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		logger.Warn("callback POST returned non-2xx", "status", resp.StatusCode, "url", callbackURL)
+	PostCallbackVia(http.DefaultClient)(callbackURL, body, logger)
+}
+
+func PostCallbackVia(client *http.Client) PostCallbackFn {
+	return func(callbackURL string, body map[string]any, logger *slog.Logger) {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			logger.Error("callback POST body marshal failed", "error", err.Error(), "url", callbackURL)
+			return
+		}
+		resp, err := client.Post(callbackURL, "application/json", bytes.NewReader(raw))
+		if err != nil {
+			logger.Error("callback POST failed", "error", err.Error(), "url", callbackURL)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			logger.Warn("callback POST returned non-2xx", "status", resp.StatusCode, "url", callbackURL)
+		}
 	}
 }
 
@@ -322,12 +329,12 @@ func (r *RunningGrpcServer) Shutdown() {
 	r.server.GracefulStop()
 }
 
-func StartGrpcServer(host string, port int, executor *ExecutorServer, observability *ObservabilityServer) (*RunningGrpcServer, error) {
+func StartGrpcServer(host string, port int, executor *ExecutorServer, observability *ObservabilityServer, identity *peerauth.Identity) (*RunningGrpcServer, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		return nil, err
 	}
-	srv := grpc.NewServer()
+	srv := grpc.NewServer(identity.GRPCServerOptions()...)
 	genv1.RegisterExecutorServer(srv, executor)
 	if observability != nil {
 		genv1.RegisterExecutorObservabilityServer(srv, observability)

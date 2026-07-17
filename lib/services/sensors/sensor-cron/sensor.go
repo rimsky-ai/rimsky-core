@@ -78,6 +78,12 @@ type logger interface {
 	Error(msg string, args ...any)
 }
 
+func (s *SensorService) SetPublishClient(c *http.Client) {
+	if c != nil {
+		s.httpClient = c
+	}
+}
+
 func NewSensorService(rimskyEndpoint string, log logger) *SensorService {
 	return &SensorService{
 		watches:        make(map[string]*Watch),

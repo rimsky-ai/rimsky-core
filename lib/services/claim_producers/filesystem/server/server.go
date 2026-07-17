@@ -29,6 +29,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/lifecycle"
 	fsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/store"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/listarray"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -64,7 +65,13 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		return err
 	}
 
-	grpcSrv := grpc.NewServer()
+	identity, err := peerauth.LoadFromEnv(ctx, "claim-producer-filesystem")
+	if err != nil {
+		return err
+	}
+	identity.StartMaintain(ctx, "claim-producer-filesystem")
+
+	grpcSrv := grpc.NewServer(identity.GRPCServerOptions()...)
 	genv1.RegisterClaimProducerServer(grpcSrv, srv)
 	if cfg.EnableLifecycle {
 		genv1.RegisterLifecycleSubscriberServer(grpcSrv, lifecycle.NewServer())
@@ -83,9 +90,9 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		bridge.MountLifecycle(mux, lifecycle.NewServer())
 	}
 	bridge.MountObservability(mux, obsSrv)
-	httpSrv := &http.Server{Handler: mux}
+	httpSrv := identity.HTTPServer(mux)
 	go func() {
-		if err := httpSrv.Serve(httpLis); err != nil && err != http.ErrServerClosed {
+		if err := identity.RunHTTP(httpSrv, httpLis); err != nil && err != http.ErrServerClosed {
 			slog.Warn("filesystem store: http serve", "error", err.Error())
 		}
 	}()

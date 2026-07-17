@@ -12,12 +12,12 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
-
-	"google.golang.org/grpc"
+	"time"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 type slogAdapter struct{ l *slog.Logger }
@@ -41,6 +41,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	identity, err := peerauth.LoadFromEnv(ctx, "sensor-cron")
+	if err != nil {
+		slog.Error("sensor-cron peer-auth", "error", err.Error())
+		os.Exit(1)
+	}
+	svc.SetPublishClient(identity.OutboundHTTPClient(10 * time.Second))
+	identity.StartMaintain(ctx, "sensor-cron")
+
 	state, err := openStateDB(ctx)
 	if err != nil {
 		slog.Error("open state db", "error", err.Error())
@@ -59,7 +67,7 @@ func main() {
 		slog.Error("grpc listen", "error", err.Error())
 		os.Exit(1)
 	}
-	srv := grpc.NewServer()
+	srv := identity.GRPCServer()
 	genv1.RegisterPublisherServer(srv, svc)
 
 	sigCh := make(chan os.Signal, 1)

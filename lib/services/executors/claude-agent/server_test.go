@@ -68,7 +68,7 @@ func startTestExecutor(t *testing.T) (*ExecutorServer, *ObservabilityServer, *ca
 
 func dialTestGrpc(t *testing.T, executor *ExecutorServer, obs *ObservabilityServer) (genv1.ExecutorClient, genv1.ExecutorObservabilityClient) {
 	t.Helper()
-	running, err := StartGrpcServer("127.0.0.1", 0, executor, obs)
+	running, err := StartGrpcServer("127.0.0.1", 0, executor, obs, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

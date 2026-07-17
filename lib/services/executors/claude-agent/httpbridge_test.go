@@ -18,7 +18,7 @@ import (
 func startTestBridge(t *testing.T) (string, *callbackRecorder) {
 	t.Helper()
 	executor, _, recorder := startTestExecutor(t)
-	bridge, err := StartHTTPBridge("127.0.0.1", 0, executor)
+	bridge, err := StartHTTPBridge("127.0.0.1", 0, executor, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

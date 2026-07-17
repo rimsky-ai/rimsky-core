@@ -26,6 +26,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/lifecycle"
 	pgsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/store"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/listarray"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -67,7 +68,12 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		return err
 	}
 	st := srv.store
-	grpcSrv := grpc.NewServer()
+	identity, err := peerauth.LoadFromEnv(ctx, "claim-producer-postgres")
+	if err != nil {
+		return err
+	}
+	identity.StartMaintain(ctx, "claim-producer-postgres")
+	grpcSrv := grpc.NewServer(identity.GRPCServerOptions()...)
 	genv1.RegisterClaimProducerServer(grpcSrv, srv)
 	if cfg.EnableLifecycle {
 		genv1.RegisterLifecycleSubscriberServer(grpcSrv, lifecycle.NewServer())
@@ -90,9 +96,9 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		bridge.MountLifecycle(httpMux, lifecycle.NewServer())
 	}
 	bridge.MountObservability(httpMux, obsSrv)
-	httpSrv := &http.Server{Handler: httpMux}
+	httpSrv := identity.HTTPServer(httpMux)
 	go func() {
-		if err := httpSrv.Serve(httpLis); err != nil && err != http.ErrServerClosed {
+		if err := identity.RunHTTP(httpSrv, httpLis); err != nil && err != http.ErrServerClosed {
 			slog.Warn("postgres store: http serve", "error", err.Error())
 		}
 	}()

@@ -20,6 +20,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	httpnode "github.com/rimsky-ai/rimsky-core/lib/services/executors/http-node"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 func main() {
@@ -29,10 +30,17 @@ func main() {
 		slog.Error("http-node config", "error", err.Error())
 		os.Exit(1)
 	}
+
+	identity, err := peerauth.LoadFromEnv(context.Background(), "http-node")
+	if err != nil {
+		slog.Error("http-node peer-auth", "error", err.Error())
+		os.Exit(1)
+	}
 	slog.Info("http-node starting",
 		"grpc_port", opts.GRPCPort,
 		"http_port", opts.HTTPPort,
 		"stub_mode", opts.StubMode,
+		"peer_auth_mtls", identity.Enabled(),
 	)
 
 	s := httpnode.NewServer(opts)
@@ -42,7 +50,7 @@ func main() {
 		slog.Error("grpc listen", "error", err.Error())
 		os.Exit(1)
 	}
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(identity.GRPCServerOptions()...)
 	genv1.RegisterExecutorServer(grpcSrv, s)
 	obs := httpnode.RegisterObservability(grpcSrv)
 	obs.SetHTTPBridgeURL(opts.HTTPBridgeURL)
@@ -57,15 +65,24 @@ func main() {
 	mux := http.NewServeMux()
 	httpnode.MountBridge(mux, s)
 	httpnode.MountObservabilityBridge(mux, obs, httpBridgeURL)
-	httpSrv := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", opts.Host, opts.HTTPPort),
-		Handler: mux,
+	httpAddr := fmt.Sprintf("%s:%d", opts.Host, opts.HTTPPort)
+	httpLis, err := net.Listen("tcp", httpAddr)
+	if err != nil {
+		slog.Error("http listen", "error", err.Error())
+		os.Exit(1)
 	}
+	httpSrv := httpnode.NewBridgeServer(httpAddr, mux, identity)
 	go func() {
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpnode.ServeBridge(httpSrv, httpLis, identity); err != nil && err != http.ErrServerClosed {
 			slog.Error("http serve", "error", err.Error())
 		}
 	}()
+
+	maintainCtx, cancelMaintain := context.WithCancel(context.Background())
+	defer cancelMaintain()
+	go identity.Maintain(maintainCtx, peerauth.DefaultRenewCheckInterval, func(err error) {
+		slog.Error("http-node peer-auth renewal", "error", err.Error())
+	})
 
 	sweepCtx, cancelSweep := context.WithCancel(context.Background())
 	defer cancelSweep()

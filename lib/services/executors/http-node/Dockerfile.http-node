@@ -20,5 +20,5 @@ RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=builder /out/app /app
 USER nonroot
-EXPOSE 9091 9092
+EXPOSE 9091
 ENTRYPOINT ["/app"]

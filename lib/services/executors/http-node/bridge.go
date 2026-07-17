@@ -6,12 +6,24 @@ package httpnode
 
 import (
 	"io"
+	"net"
 	"net/http"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
+
+func NewBridgeServer(addr string, handler http.Handler, id *peerauth.Identity) *http.Server {
+	srv := id.HTTPServer(handler)
+	srv.Addr = addr
+	return srv
+}
+
+func ServeBridge(srv *http.Server, lis net.Listener, id *peerauth.Identity) error {
+	return id.RunHTTP(srv, lis)
+}
 
 func MountBridge(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/v1/Execute", func(w http.ResponseWriter, r *http.Request) {

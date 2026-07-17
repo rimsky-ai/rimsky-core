@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/internal/observability"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 type httpExecuteBody struct {
@@ -43,7 +44,7 @@ func (r *RunningHTTPBridge) Shutdown(ctx context.Context) error {
 }
 
 // @decision: http-bridge-preserved
-func StartHTTPBridge(host string, port int, executor *ExecutorServer) (*RunningHTTPBridge, error) {
+func StartHTTPBridge(host string, port int, executor *ExecutorServer, identity *peerauth.Identity) (*RunningHTTPBridge, error) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -120,9 +121,10 @@ func StartHTTPBridge(host string, port int, executor *ExecutorServer) (*RunningH
 	if err != nil {
 		return nil, err
 	}
-	server := &http.Server{Handler: mux, ReadHeaderTimeout: 30 * time.Second}
+	server := identity.HTTPServer(mux)
+	server.ReadHeaderTimeout = 30 * time.Second
 	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+		if serveErr := identity.RunHTTP(server, listener); serveErr != nil && serveErr != http.ErrServerClosed {
 			executor.cfg.Logger.Error("http bridge serve", "error", serveErr.Error())
 		}
 	}()
