@@ -15,6 +15,7 @@ type Config struct {
 	RimskyDSN    string
 	StateDSN     string
 	BackendURL   string
+	BearerToken  string
 	Namespace    string
 	PollInterval time.Duration
 	BatchSize    int
@@ -30,6 +31,7 @@ func LoadConfig() (Config, error) {
 		state = rimsky
 	}
 	backend := os.Getenv("RIMSKY_OPENLINEAGE_BACKEND_URL")
+	bearer := os.Getenv("RIMSKY_OPENLINEAGE_BEARER_TOKEN")
 	namespace := os.Getenv("RIMSKY_OPENLINEAGE_NAMESPACE")
 	if namespace == "" {
 		namespace = "rimsky"
@@ -54,6 +56,7 @@ func LoadConfig() (Config, error) {
 		RimskyDSN:    rimsky,
 		StateDSN:     state,
 		BackendURL:   backend,
+		BearerToken:  bearer,
 		Namespace:    namespace,
 		PollInterval: poll,
 		BatchSize:    batch,

@@ -111,7 +111,7 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*Subscriber, err
 		cfg:     cfg,
 		rimsky:  rimsky,
 		state:   state,
-		emitter: NewEmitter(cfg.BackendURL),
+		emitter: NewEmitter(cfg.BackendURL, cfg.BearerToken),
 		logger:  logger,
 		nowFn:   time.Now,
 	}

@@ -45,14 +45,16 @@ type DatasetRef struct {
 
 // @concept: lineage
 type Emitter struct {
-	BackendURL string
-	Client     *http.Client
+	BackendURL  string
+	BearerToken string
+	Client      *http.Client
 }
 
-func NewEmitter(backendURL string) *Emitter {
+func NewEmitter(backendURL string, bearerToken string) *Emitter {
 	return &Emitter{
-		BackendURL: backendURL,
-		Client:     &http.Client{Timeout: 10 * time.Second},
+		BackendURL:  backendURL,
+		BearerToken: bearerToken,
+		Client:      &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -70,6 +72,9 @@ func (e *Emitter) Send(ctx context.Context, ev Event) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if e.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+e.BearerToken)
+	}
 	resp, err := e.Client.Do(req)
 	if err != nil {
 		return err

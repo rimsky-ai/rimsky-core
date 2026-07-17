@@ -17,11 +17,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"google.golang.org/grpc"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 type slogAdapter struct{ l *slog.Logger }
@@ -50,6 +50,15 @@ func main() {
 
 	ctxState, cancelState := context.WithCancel(context.Background())
 	defer cancelState()
+
+	identity, err := peerauth.LoadFromEnv(ctxState, "sensor-webhook")
+	if err != nil {
+		slog.Error("sensor-webhook peer-auth", "error", err.Error())
+		os.Exit(1)
+	}
+	svc.SetPublishClient(identity.OutboundHTTPClient(10 * time.Second))
+	identity.StartMaintain(ctxState, "sensor-webhook")
+
 	state, err := openStateDB(ctxState)
 	if err != nil {
 		slog.Error("open state db", "error", err.Error())
@@ -77,7 +86,7 @@ func main() {
 		slog.Error("grpc listen", "error", err.Error())
 		os.Exit(1)
 	}
-	grpcSrv := grpc.NewServer()
+	grpcSrv := identity.GRPCServer()
 	genv1.RegisterPublisherServer(grpcSrv, svc)
 	go serverkit.Serve(grpcSrv, lis, "sensor-webhook")
 

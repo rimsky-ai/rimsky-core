@@ -7,187 +7,232 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"sync"
+	"sort"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-func TestSubscribe_RestartReplay_PreloadsLastIdempotency(t *testing.T) {
-	ctx := context.Background()
-	dsn := harness.StartFreshPostgres(ctx, t)
-
-	t.Setenv("RIMSKY_SENSOR_WEBHOOK_STATE_DSN", dsn)
-
-	s1, err := openStateDB(ctx)
+func stateColumns(ctx context.Context, t *testing.T, s *stateDB) []string {
+	t.Helper()
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT column_name FROM information_schema.columns WHERE table_name = 'sensor_webhook_state'`)
 	if err != nil {
-		t.Fatalf("openStateDB: %v", err)
+		t.Fatalf("query columns: %v", err)
 	}
-	defer s1.Close()
-	w := &Watch{
-		SubscriptionID:    "sub-2",
-		InstanceID:        "inst-2",
-		PathPrefix:        "/wh/restart",
-		IdempotencyHeader: "X-Idem",
+	defer rows.Close()
+	var cols []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		cols = append(cols, c)
+	}
+	sort.Strings(cols)
+	return cols
+}
 
+func dumpStateRows(ctx context.Context, t *testing.T, s *stateDB) string {
+	t.Helper()
+	rows, err := s.db.QueryContext(ctx, `SELECT to_jsonb(t)::text FROM sensor_webhook_state t`)
+	if err != nil {
+		t.Fatalf("dump rows: %v", err)
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var j string
+		if err := rows.Scan(&j); err != nil {
+			t.Fatalf("scan row: %v", err)
+		}
+		b.WriteString(j)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func subscribeWebhook(t *testing.T, s *SensorService, subID, path, idemHeader string, auth map[string]any) {
+	t.Helper()
+	cfg := map[string]any{"path_prefix": path, "idempotency_header": idemHeader, "auth": auth}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: subID, InstanceId: "i1", Kind: "webhook", ResolvedConfig: raw,
 		MessageType: "invalidate",
-	}
-	if err := s1.UpsertSubscription(ctx, w); err != nil {
-		t.Fatalf("UpsertSubscription: %v", err)
-	}
-	if err := s1.UpdateLastIdempotency(ctx, "sub-2", "post-restart-key"); err != nil {
-		t.Fatalf("UpdateLastIdempotency: %v", err)
-	}
-
-	got, err := s1.GetSubscription(ctx, "sub-2")
-	if err != nil {
-		t.Fatalf("GetSubscription: %v", err)
-	}
-	if got == nil {
-		t.Fatal("GetSubscription returned nil for known subscription_id")
-	}
-	if got.LastIdempotencyKey != "post-restart-key" {
-		t.Fatalf("expected LastIdempotencyKey=post-restart-key, got %q", got.LastIdempotencyKey)
-	}
-
-	got, err = s1.GetSubscription(ctx, "sub-nonexistent")
-	if err != nil {
-		t.Fatalf("GetSubscription nonexistent: %v", err)
-	}
-	if got != nil {
-		t.Fatal("GetSubscription should return nil for unknown id")
+	}); err != nil {
+		t.Fatalf("subscribe %s: %v", subID, err)
 	}
 }
 
-func TestAttachStateDB_RestartRestoresPathBindings(t *testing.T) {
+func TestStateDB_OnlyPersistsWatermarkNeverConfig(t *testing.T) {
 	ctx := context.Background()
 	dsn := harness.StartFreshPostgres(ctx, t)
-
 	t.Setenv("RIMSKY_SENSOR_WEBHOOK_STATE_DSN", dsn)
 
-	s1, err := openStateDB(ctx)
+	s, err := openStateDB(ctx)
 	if err != nil {
 		t.Fatalf("openStateDB: %v", err)
 	}
-	persisted := &Watch{
-		SubscriptionID:    "sub-3",
-		InstanceID:        "inst-3",
-		PathPrefix:        "/wh/restored",
-		IdempotencyHeader: "X-Idem",
-		MessageType:       "invalidate",
-	}
-	if err := s1.UpsertSubscription(ctx, persisted); err != nil {
-		t.Fatalf("UpsertSubscription: %v", err)
-	}
-	if err := s1.UpdateLastIdempotency(ctx, "sub-3", "seen-key"); err != nil {
-		t.Fatalf("UpdateLastIdempotency: %v", err)
-	}
-	if err := s1.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
+	defer s.Close()
 
-	var (
-		mu     sync.Mutex
-		pushed int
-	)
+	got := stateColumns(ctx, t, s)
+	want := []string{"last_idempotency_key", "last_seen_at", "publisher_subscription_id"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("state schema columns = %v, want exactly %v (config/secret columns must be gone)", got, want)
+	}
+}
+
+func TestStateDB_NeverPersistsSecret(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	t.Setenv("RIMSKY_SENSOR_WEBHOOK_STATE_DSN", dsn)
+
+	var pushed int32
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		mu.Lock()
-		pushed++
-		mu.Unlock()
+		atomic.AddInt32(&pushed, 1)
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
 	router := chi.NewRouter()
 	svc := NewSensorService(rimsky.URL, router, noopLogger{})
-	s2, err := openStateDB(ctx)
+	state, err := openStateDB(ctx)
 	if err != nil {
-		t.Fatalf("openStateDB after restart: %v", err)
+		t.Fatalf("openStateDB: %v", err)
 	}
-	defer s2.Close()
-	svc.AttachStateDB(s2)
+	defer state.Close()
+	svc.AttachStateDB(state)
+
+	const secret = "super-secret-shared-value"
+	subscribeWebhook(t, svc, "sub-secret", "/wh/secret", "X-Idem", map[string]any{
+		"mode": authModeSecretHeader, "header": "X-Token", "secret": secret,
+	})
 
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
-	post := func(key string) int {
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/restored", bytes.NewReader([]byte(`{"event":"x"}`)))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/secret", bytes.NewReader([]byte(`{"event":"x"}`)))
+	req.Header.Set("X-Token", secret)
+	req.Header.Set("X-Idem", "delivery-1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post webhook: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("webhook post status %d (want 200)", resp.StatusCode)
+	}
+	if atomic.LoadInt32(&pushed) != 1 {
+		t.Fatalf("pushed = %d, want 1", atomic.LoadInt32(&pushed))
+	}
+
+	dump := dumpStateRows(ctx, t, state)
+	if strings.Contains(dump, secret) {
+		t.Fatalf("secret leaked into state db: %s", dump)
+	}
+	if cols := stateColumns(ctx, t, state); strings.Join(cols, ",") != "last_idempotency_key,last_seen_at,publisher_subscription_id" {
+		t.Fatalf("config columns still present: %v", cols)
+	}
+	key, err := state.GetLastIdempotency(ctx, "sub-secret")
+	if err != nil {
+		t.Fatalf("GetLastIdempotency: %v", err)
+	}
+	if key != "delivery-1" {
+		t.Fatalf("watermark = %q, want delivery-1", key)
+	}
+}
+
+func TestSubscribe_ResyncReloadsWatermarkAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	t.Setenv("RIMSKY_SENSOR_WEBHOOK_STATE_DSN", dsn)
+
+	auth := map[string]any{"mode": authModeNone}
+
+	var pushed1 int32
+	rimsky1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&pushed1, 1)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky1.Close()
+
+	router1 := chi.NewRouter()
+	svc1 := NewSensorService(rimsky1.URL, router1, noopLogger{})
+	state1, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB: %v", err)
+	}
+	svc1.AttachStateDB(state1)
+	subscribeWebhook(t, svc1, "sub-resync", "/wh/resync", "X-Idem", auth)
+
+	srv1 := httptest.NewServer(router1)
+	post := func(base, key string) int {
+		req, _ := http.NewRequest(http.MethodPost, base+"/wh/resync", bytes.NewReader([]byte(`{"event":"x"}`)))
 		req.Header.Set("X-Idem", key)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("post: %v", err)
 		}
 		resp.Body.Close()
 		return resp.StatusCode
 	}
-
-	if code := post("seen-key"); code != http.StatusOK {
-		t.Errorf("replayed key after restart: %d (want 200 dedup, 404 means binding lost)", code)
+	if code := post(srv1.URL, "k1"); code != http.StatusOK {
+		t.Fatalf("first delivery status %d (want 200)", code)
 	}
-	mu.Lock()
-	if pushed != 0 {
-		t.Errorf("pushed for replayed key: %d (want 0)", pushed)
+	if atomic.LoadInt32(&pushed1) != 1 {
+		t.Fatalf("pushed1 = %d, want 1", atomic.LoadInt32(&pushed1))
 	}
-	mu.Unlock()
-
-	if code := post("fresh-key"); code != http.StatusOK {
-		t.Errorf("fresh key after restart: %d (want 200)", code)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if pushed != 1 {
-		t.Errorf("pushed for fresh key: %d (want 1)", pushed)
-	}
-}
-
-func TestStateDB_PersistsAcrossRestart(t *testing.T) {
-	ctx := context.Background()
-	dsn := harness.StartFreshPostgres(ctx, t)
-
-	t.Setenv("RIMSKY_SENSOR_WEBHOOK_STATE_DSN", dsn)
-
-	s1, err := openStateDB(ctx)
-	if err != nil {
-		t.Fatalf("openStateDB: %v", err)
-	}
-	if s1 == nil {
-		t.Fatal("openStateDB returned nil with DSN set")
-	}
-	w := &Watch{
-		SubscriptionID:    "sub-1",
-		InstanceID:        "inst-1",
-		PathPrefix:        "/wh/abc",
-		IdempotencyHeader: "X-Idem",
-
-		MessageType: "invalidate",
-	}
-	if err := s1.UpsertSubscription(ctx, w); err != nil {
-		t.Fatalf("UpsertSubscription: %v", err)
-	}
-	if err := s1.UpdateLastIdempotency(ctx, "sub-1", "delivery-key-42"); err != nil {
-		t.Fatalf("UpdateLastIdempotency: %v", err)
-	}
-	if err := s1.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	srv1.Close()
+	if err := state1.Close(); err != nil {
+		t.Fatalf("close state1: %v", err)
 	}
 
-	s2, err := openStateDB(ctx)
+	var pushed2 int32
+	rimsky2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&pushed2, 1)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky2.Close()
+
+	router2 := chi.NewRouter()
+	svc2 := NewSensorService(rimsky2.URL, router2, noopLogger{})
+	state2, err := openStateDB(ctx)
 	if err != nil {
 		t.Fatalf("openStateDB after restart: %v", err)
 	}
-	defer s2.Close()
-	subs, err := s2.ListAll(ctx)
-	if err != nil {
-		t.Fatalf("ListAll: %v", err)
+	defer state2.Close()
+	svc2.AttachStateDB(state2)
+
+	svc2.mu.Lock()
+	restoredWatches := len(svc2.watches)
+	svc2.mu.Unlock()
+	if restoredWatches != 0 {
+		t.Fatalf("restart restored %d watches from its own db; config must come from resync", restoredWatches)
 	}
-	if len(subs) != 1 {
-		t.Fatalf("expected 1 subscription, got %d", len(subs))
+
+	subscribeWebhook(t, svc2, "sub-resync", "/wh/resync", "X-Idem", auth)
+
+	srv2 := httptest.NewServer(router2)
+	defer srv2.Close()
+
+	if code := post(srv2.URL, "k1"); code != http.StatusOK {
+		t.Fatalf("replayed key after resync status %d (want 200 dedup)", code)
 	}
-	if subs[0].SubscriptionID != "sub-1" || subs[0].LastIdempotencyKey != "delivery-key-42" {
-		t.Errorf("subscription state did not roundtrip: %+v", subs[0])
+	if atomic.LoadInt32(&pushed2) != 0 {
+		t.Fatalf("pushed2 = %d after replayed key, want 0 (watermark did not resume dedup)", atomic.LoadInt32(&pushed2))
+	}
+	if code := post(srv2.URL, "k2"); code != http.StatusOK {
+		t.Fatalf("fresh key after resync status %d (want 200)", code)
+	}
+	if atomic.LoadInt32(&pushed2) != 1 {
+		t.Fatalf("pushed2 = %d after fresh key, want 1", atomic.LoadInt32(&pushed2))
 	}
 }

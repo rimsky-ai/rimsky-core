@@ -42,21 +42,24 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 	const schema = `
 		CREATE TABLE IF NOT EXISTS sensor_webhook_state (
 		    publisher_subscription_id TEXT PRIMARY KEY,
-		    instance_id               TEXT NOT NULL,
-		    path_prefix               TEXT NOT NULL,
-		    idempotency_header        TEXT,
-		    message_type              TEXT NOT NULL,
 		    last_idempotency_key      TEXT,
-		    last_seen_at              TIMESTAMPTZ,
-		    started_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+		    last_seen_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 		);
 	`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx,
-		`ALTER TABLE sensor_webhook_state DROP COLUMN IF EXISTS target_node`)
-	return err
+	droppedConfigColumns := []string{
+		"instance_id", "path_prefix", "idempotency_header",
+		"message_type", "auth_config", "target_node", "started_at",
+	}
+	for _, col := range droppedConfigColumns {
+		if _, err := s.db.ExecContext(ctx,
+			fmt.Sprintf("ALTER TABLE sensor_webhook_state DROP COLUMN IF EXISTS %s", col)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *stateDB) Close() error {
@@ -64,27 +67,6 @@ func (s *stateDB) Close() error {
 		return nil
 	}
 	return s.db.Close()
-}
-
-func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
-	if s == nil {
-		return nil
-	}
-	const q = `
-		INSERT INTO sensor_webhook_state (
-		    publisher_subscription_id, instance_id, path_prefix,
-		    idempotency_header, message_type
-		) VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (publisher_subscription_id) DO UPDATE SET
-		    instance_id        = EXCLUDED.instance_id,
-		    path_prefix        = EXCLUDED.path_prefix,
-		    idempotency_header = EXCLUDED.idempotency_header,
-		    message_type       = EXCLUDED.message_type
-	`
-	_, err := s.db.ExecContext(ctx, q,
-		w.SubscriptionID, w.InstanceID, w.PathPrefix,
-		w.IdempotencyHeader, w.MessageType)
-	return err
 }
 
 func (s *stateDB) DeleteSubscription(ctx context.Context, subscriptionID string) error {
@@ -100,63 +82,30 @@ func (s *stateDB) UpdateLastIdempotency(ctx context.Context, subscriptionID, key
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE sensor_webhook_state SET last_idempotency_key = $1, last_seen_at = now() WHERE publisher_subscription_id = $2`,
-		key, subscriptionID)
+		`INSERT INTO sensor_webhook_state (publisher_subscription_id, last_idempotency_key, last_seen_at)
+		      VALUES ($1, $2, now())
+		 ON CONFLICT (publisher_subscription_id) DO UPDATE SET
+		     last_idempotency_key = EXCLUDED.last_idempotency_key,
+		     last_seen_at         = now()`,
+		subscriptionID, key)
 	return err
 }
 
-type SubscriptionState struct {
-	SubscriptionID     string
-	InstanceID         string
-	PathPrefix         string
-	IdempotencyHeader  string
-	MessageType        string
-	LastIdempotencyKey string
-}
-
-func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
+func (s *stateDB) GetLastIdempotency(ctx context.Context, subscriptionID string) (string, error) {
 	if s == nil {
-		return nil, nil
-	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT publisher_subscription_id, instance_id, path_prefix,
-		        COALESCE(idempotency_header, ''), message_type,
-		        COALESCE(last_idempotency_key, '')
-		   FROM sensor_webhook_state`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []SubscriptionState{}
-	for rows.Next() {
-		var w SubscriptionState
-		if err := rows.Scan(&w.SubscriptionID, &w.InstanceID, &w.PathPrefix,
-			&w.IdempotencyHeader, &w.MessageType, &w.LastIdempotencyKey); err != nil {
-			return nil, err
-		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
-}
-
-func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*SubscriptionState, error) {
-	if s == nil {
-		return nil, nil
+		return "", nil
 	}
 	row := s.db.QueryRowContext(ctx,
-		`SELECT publisher_subscription_id, instance_id, path_prefix,
-		        COALESCE(idempotency_header, ''), message_type,
-		        COALESCE(last_idempotency_key, '')
+		`SELECT COALESCE(last_idempotency_key, '')
 		   FROM sensor_webhook_state
 		  WHERE publisher_subscription_id = $1`,
 		subscriptionID)
-	var w SubscriptionState
-	if err := row.Scan(&w.SubscriptionID, &w.InstanceID, &w.PathPrefix,
-		&w.IdempotencyHeader, &w.MessageType, &w.LastIdempotencyKey); err != nil {
+	var key string
+	if err := row.Scan(&key); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil
+			return "", nil
 		}
-		return nil, err
+		return "", err
 	}
-	return &w, nil
+	return key, nil
 }

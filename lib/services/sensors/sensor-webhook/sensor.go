@@ -7,11 +7,16 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,12 +31,70 @@ import (
 
 const maxWebhookBodyBytes int64 = 1 << 20
 
+const (
+	authModeHMAC         = "hmac"
+	authModeSecretHeader = "secret_header"
+	authModeNone         = "none"
+)
+
+const (
+	defaultSignatureHeader     = "X-Rimsky-Signature"
+	defaultReplayWindowSeconds = 300
+	hmacSignaturePrefix        = "sha256="
+)
+
+type AuthConfig struct {
+	Mode                string `json:"mode"`
+	Secret              string `json:"secret,omitempty"`
+	SignatureHeader     string `json:"signature_header,omitempty"`
+	TimestampHeader     string `json:"timestamp_header,omitempty"`
+	ReplayWindowSeconds int    `json:"replay_window_seconds,omitempty"`
+	Header              string `json:"header,omitempty"`
+}
+
+func validateAuthConfig(auth *AuthConfig) error {
+	if auth == nil {
+		return errors.New("resolved_config.auth required (set mode to hmac, secret_header, or none)")
+	}
+	switch auth.Mode {
+	case authModeNone:
+		return nil
+	case authModeHMAC:
+		if auth.Secret == "" {
+			return errors.New("resolved_config.auth.secret required for hmac mode")
+		}
+		if auth.SignatureHeader == "" {
+			auth.SignatureHeader = defaultSignatureHeader
+		}
+		if auth.TimestampHeader == "" {
+			return errors.New("resolved_config.auth.timestamp_header required for hmac mode (replay protection is mandatory: the timestamp is part of the signed material)")
+		}
+		if auth.ReplayWindowSeconds < 0 {
+			return errors.New("resolved_config.auth.replay_window_seconds must not be negative")
+		}
+		return nil
+	case authModeSecretHeader:
+		if auth.Header == "" {
+			return errors.New("resolved_config.auth.header required for secret_header mode")
+		}
+		if auth.Secret == "" {
+			return errors.New("resolved_config.auth.secret required for secret_header mode")
+		}
+		return nil
+	case "":
+		return errors.New("resolved_config.auth.mode required (hmac, secret_header, or none)")
+	default:
+		return fmt.Errorf("resolved_config.auth.mode %q invalid (want hmac, secret_header, or none)", auth.Mode)
+	}
+}
+
 type Watch struct {
 	SubscriptionID    string
 	InstanceID        string
 	PathPrefix        string
 	IdempotencyHeader string
 	MessageType       string
+	Auth              *AuthConfig
 
 	mu              sync.Mutex
 	StartedAt       time.Time
@@ -55,38 +118,18 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state = state
-	if state == nil {
-		return
-	}
-	rows, err := state.ListAll(context.Background())
-	if err != nil {
-		s.logger.Warn("sensor-webhook.attach_state_db.list_failed", "error", err.Error())
-		return
-	}
-	for _, r := range rows {
-		w := &Watch{
-			SubscriptionID:    r.SubscriptionID,
-			InstanceID:        r.InstanceID,
-			PathPrefix:        r.PathPrefix,
-			IdempotencyHeader: r.IdempotencyHeader,
-			MessageType:       r.MessageType,
-			StartedAt:         s.clock(),
-			LastIdempotency:   r.LastIdempotencyKey,
-		}
-		s.watches[r.SubscriptionID] = w
-		s.pathToWatch[r.PathPrefix] = w
-		s.logger.Info("sensor-webhook.state_recovered",
-			"publisher_subscription_id", r.SubscriptionID,
-			"instance_id", r.InstanceID,
-			"path", r.PathPrefix,
-			"restored_idempotency", r.LastIdempotencyKey != "")
-	}
 }
 
 type logger interface {
 	Info(msg string, args ...any)
 	Warn(msg string, args ...any)
 	Error(msg string, args ...any)
+}
+
+func (s *SensorService) SetPublishClient(c *http.Client) {
+	if c != nil {
+		s.httpClient = c
+	}
 }
 
 func NewSensorService(rimskyEndpoint string, router *chi.Mux, log logger) *SensorService {
@@ -123,9 +166,21 @@ func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv
 					"type": "object",
 					"properties": {
 						"path_prefix": {"type": "string"},
-						"idempotency_header": {"type": "string"}
+						"idempotency_header": {"type": "string"},
+						"auth": {
+							"type": "object",
+							"properties": {
+								"mode": {"type": "string", "enum": ["hmac", "secret_header", "none"]},
+								"secret": {"type": "string"},
+								"signature_header": {"type": "string"},
+								"timestamp_header": {"type": "string"},
+								"replay_window_seconds": {"type": "integer", "minimum": 0},
+								"header": {"type": "string"}
+							},
+							"required": ["mode"]
+						}
 					},
-					"required": ["path_prefix"]
+					"required": ["path_prefix", "auth"]
 				}`),
 			},
 		},
@@ -138,8 +193,9 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		return nil, fmt.Errorf("sensor-webhook does not support kind %q", req.GetKind())
 	}
 	var cfg struct {
-		PathPrefix        string `json:"path_prefix"`
-		IdempotencyHeader string `json:"idempotency_header"`
+		PathPrefix        string      `json:"path_prefix"`
+		IdempotencyHeader string      `json:"idempotency_header"`
+		Auth              *AuthConfig `json:"auth"`
 	}
 	if err := json.Unmarshal(req.GetResolvedConfig(), &cfg); err != nil {
 		return nil, fmt.Errorf("decode resolved_config: %w", err)
@@ -150,6 +206,9 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	if !strings.HasPrefix(cfg.PathPrefix, "/") {
 		cfg.PathPrefix = "/" + cfg.PathPrefix
 	}
+	if err := validateAuthConfig(cfg.Auth); err != nil {
+		return nil, err
+	}
 	messageType := req.GetMessageType()
 	w := &Watch{
 		SubscriptionID:    req.GetPublisherSubscriptionId(),
@@ -157,17 +216,18 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		PathPrefix:        cfg.PathPrefix,
 		IdempotencyHeader: cfg.IdempotencyHeader,
 		MessageType:       messageType,
+		Auth:              cfg.Auth,
 		StartedAt:         s.clock(),
 	}
 	s.mu.Lock()
 	state := s.state
 	s.mu.Unlock()
 	if state != nil {
-		if persisted, err := state.GetSubscription(ctx, w.SubscriptionID); err != nil {
+		if key, err := state.GetLastIdempotency(ctx, w.SubscriptionID); err != nil {
 			s.logger.Warn("sensor-webhook.subscribe.state_get_failed",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
-		} else if persisted != nil {
-			w.LastIdempotency = persisted.LastIdempotencyKey
+		} else {
+			w.LastIdempotency = key
 		}
 	}
 	s.mu.Lock()
@@ -182,12 +242,6 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	s.watches[w.SubscriptionID] = w
 	s.pathToWatch[w.PathPrefix] = w
 	s.mu.Unlock()
-	if state != nil {
-		if err := state.UpsertSubscription(context.Background(), w); err != nil {
-			s.logger.Warn("sensor-webhook.subscribe.state_upsert_failed",
-				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
-		}
-	}
 	s.logger.Info("sensor-webhook.subscribe",
 		"publisher_subscription_id", w.SubscriptionID,
 		"instance_id", w.InstanceID,
@@ -205,6 +259,12 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 			return
 		}
 		http.Error(rw, "read body", http.StatusBadRequest)
+		return
+	}
+	if code, authErr := s.authenticate(w, req, body); authErr != nil {
+		s.logger.Warn("sensor-webhook.auth_rejected",
+			"publisher_subscription_id", w.SubscriptionID, "error", authErr.Error())
+		http.Error(rw, http.StatusText(code), code)
 		return
 	}
 	var inboundIdem string
@@ -262,6 +322,68 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 		}
 	}
 	rw.WriteHeader(http.StatusOK)
+}
+
+func (s *SensorService) authenticate(w *Watch, req *http.Request, body []byte) (int, error) {
+	if w.Auth == nil {
+		return http.StatusUnauthorized, errors.New("no auth configured for subscription")
+	}
+	switch w.Auth.Mode {
+	case authModeNone:
+		return http.StatusOK, nil
+	case authModeSecretHeader:
+		provided := req.Header.Get(w.Auth.Header)
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(w.Auth.Secret)) != 1 {
+			return http.StatusUnauthorized, errors.New("secret header mismatch")
+		}
+		return http.StatusOK, nil
+	case authModeHMAC:
+		return s.authenticateHMAC(w.Auth, req, body)
+	default:
+		return http.StatusUnauthorized, fmt.Errorf("unknown auth mode %q", w.Auth.Mode)
+	}
+}
+
+func (s *SensorService) authenticateHMAC(auth *AuthConfig, req *http.Request, body []byte) (int, error) {
+	provided := req.Header.Get(auth.SignatureHeader)
+	if provided == "" {
+		return http.StatusUnauthorized, errors.New("missing signature header")
+	}
+	tsHeader := req.Header.Get(auth.TimestampHeader)
+	if code, err := s.verifyTimestamp(auth, tsHeader); err != nil {
+		return code, err
+	}
+	mac := hmac.New(sha256.New, []byte(auth.Secret))
+	mac.Write([]byte(tsHeader))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	expected := hmacSignaturePrefix + hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(provided), []byte(expected)) {
+		return http.StatusUnauthorized, errors.New("signature mismatch")
+	}
+	return http.StatusOK, nil
+}
+
+func (s *SensorService) verifyTimestamp(auth *AuthConfig, tsHeader string) (int, error) {
+	if tsHeader == "" {
+		return http.StatusUnauthorized, errors.New("missing timestamp header")
+	}
+	secs, err := strconv.ParseInt(tsHeader, 10, 64)
+	if err != nil {
+		return http.StatusUnauthorized, fmt.Errorf("invalid timestamp header: %w", err)
+	}
+	window := auth.ReplayWindowSeconds
+	if window <= 0 {
+		window = defaultReplayWindowSeconds
+	}
+	delta := s.clock().Sub(time.Unix(secs, 0))
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta > time.Duration(window)*time.Second {
+		return http.StatusUnauthorized, errors.New("timestamp outside replay window")
+	}
+	return http.StatusOK, nil
 }
 
 func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {

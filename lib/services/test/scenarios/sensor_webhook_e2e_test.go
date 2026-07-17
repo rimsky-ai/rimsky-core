@@ -11,10 +11,14 @@ package scenarios
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -28,6 +32,12 @@ const webhookReactorNode = "reactor"
 const webhookMessageType = "invalidate/reactor"
 
 const webhookPathPrefix = "/wh/ingest"
+
+const webhookAuthSecret = "e2e-shared-hmac-secret"
+
+const webhookSignatureHeader = "X-Rimsky-Signature"
+
+const webhookTimestampHeader = "X-Rimsky-Timestamp"
 
 func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 	t.Parallel()
@@ -66,6 +76,19 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 	requirePublisherMessageCountStable(t, ep, instanceID, preCount, 2*time.Second,
 		"off-prefix-post-must-not-emit")
 
+	postPath := sensor.WebhookBaseURL + webhookPathPrefix
+
+	beforeAnon := publisherMessageCount(t, ep, instanceID)
+	anonStatus, anonBody := postWebhook(t, postPath, []byte(`{"forged":"no-signature"}`))
+	if anonStatus != http.StatusUnauthorized {
+		t.Fatalf("bare unsigned POST to %s returned %d (want 401) body=%q — the webhook "+
+			"sensor must REJECT callers that cannot produce a valid HMAC signature; an "+
+			"accepted anonymous POST is the finding-1947 injection vulnerability",
+			postPath, anonStatus, string(anonBody))
+	}
+	requirePublisherMessageCountStable(t, ep, instanceID, beforeAnon, 2*time.Second,
+		"unsigned-post-must-not-emit")
+
 	inboundBody := map[string]any{
 		"event": "deploy.requested",
 		"id":    "ck-sensor-webhook-payload-marker",
@@ -83,12 +106,11 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 
 	beforePost := publisherMessageCount(t, ep, instanceID)
 
-	postPath := sensor.WebhookBaseURL + webhookPathPrefix
-	status, ackBody := postWebhook(t, postPath, rawBody)
+	status, ackBody := postWebhookSigned(t, postPath, rawBody, webhookAuthSecret)
 	if status != http.StatusOK {
-		t.Fatalf("inbound POST to %s returned %d (want 200), body=%q — the sensor "+
-			"did not accept the inbound POST on the configured path; the path-prefix "+
-			"mount did not register", postPath, status, string(ackBody))
+		t.Fatalf("correctly-signed POST to %s returned %d (want 200), body=%q — the sensor "+
+			"did not accept the HMAC-signed POST on the configured path; the path-prefix "+
+			"mount or the signature verification is broken", postPath, status, string(ackBody))
 	}
 
 	immediateCount := publisherMessageCount(t, ep, instanceID)
@@ -119,6 +141,33 @@ func postWebhook(t *testing.T, url string, body []byte) (int, []byte) {
 	return resp.StatusCode, raw
 }
 
+func webhookSignature(secret, ts string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func postWebhookSigned(t *testing.T, url string, body []byte, secret string) (int, []byte) {
+	t.Helper()
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build signed POST %s: %v", url, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(webhookSignatureHeader, webhookSignature(secret, ts, body))
+	req.Header.Set(webhookTimestampHeader, ts)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("signed POST %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, raw
+}
+
 func waitForWebhookSubscriptionActive(t *testing.T, baseURL, pathPrefix string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
@@ -134,14 +183,15 @@ func waitForWebhookSubscriptionActive(t *testing.T, baseURL, pathPrefix string, 
 		if err == nil {
 			lastStatus = resp.StatusCode
 			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			if resp.StatusCode == http.StatusUnauthorized {
 				return
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("sensor-webhook subscription did not become active on %s within %v "+
-		"(last status=%d) — Subscribe handshake from rimsky did not mount the path",
+		"(last status=%d, want 401 once the path is mounted and rejecting unsigned "+
+		"callers) — Subscribe handshake from rimsky did not mount the path",
 		pathPrefix, deadline, lastStatus)
 }
 
@@ -277,6 +327,12 @@ func deploySensorWebhookTemplate(t *testing.T, ep harness.RimskyEndpoint) string
 	t.Helper()
 	sensorConfig := map[string]any{
 		"path_prefix": webhookPathPrefix,
+		"auth": map[string]any{
+			"mode":             "hmac",
+			"secret":           webhookAuthSecret,
+			"signature_header": webhookSignatureHeader,
+			"timestamp_header": webhookTimestampHeader,
+		},
 	}
 	configBytes, err := json.Marshal(sensorConfig)
 	if err != nil {

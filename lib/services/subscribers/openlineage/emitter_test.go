@@ -152,7 +152,7 @@ func TestEmitter_PostsJSONToBackend(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	e := NewEmitter(srv.URL)
+	e := NewEmitter(srv.URL, "")
 	ev := Event{EventType: "COMPLETE", EventTime: time.Now().Format(time.RFC3339), Run: RunRef{RunID: "r"}, Job: JobRef{Namespace: "n", Name: "j"}}
 	if err := e.Send(context.Background(), ev); err != nil {
 		t.Fatalf("send: %v", err)
@@ -170,7 +170,7 @@ func TestEmitter_ReportsNon2xx(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	e := NewEmitter(srv.URL)
+	e := NewEmitter(srv.URL, "")
 	if err := e.Send(context.Background(), Event{EventType: "COMPLETE"}); err == nil {
 		t.Errorf("expected error on 500")
 	}
@@ -178,8 +178,56 @@ func TestEmitter_ReportsNon2xx(t *testing.T) {
 
 func TestEmitter_EmptyBackendIsNoOp(t *testing.T) {
 	t.Parallel()
-	e := NewEmitter("")
+	e := NewEmitter("", "")
 	if err := e.Send(context.Background(), Event{EventType: "COMPLETE"}); err != nil {
 		t.Errorf("empty backend should be no-op: %v", err)
+	}
+}
+
+func TestEmitter_AddsBearerTokenWhenConfigured(t *testing.T) {
+	t.Parallel()
+	var (
+		mu   sync.Mutex
+		auth string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		auth = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	e := NewEmitter(srv.URL, "secret-token")
+	if err := e.Send(context.Background(), Event{EventType: "COMPLETE"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if auth != "Bearer secret-token" {
+		t.Errorf("Authorization = %q, want %q", auth, "Bearer secret-token")
+	}
+}
+
+func TestEmitter_NoBearerTokenNoAuthHeader(t *testing.T) {
+	t.Parallel()
+	var (
+		mu     sync.Mutex
+		hasKey bool
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		_, hasKey = r.Header["Authorization"]
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	e := NewEmitter(srv.URL, "")
+	if err := e.Send(context.Background(), Event{EventType: "COMPLETE"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hasKey {
+		t.Errorf("Authorization header present when no token configured")
 	}
 }
