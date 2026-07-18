@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-A reconciliation worker performs Subscribe RPCs for mounting subscription rows with backoff and no attempt cap; the failed state is reserved for non-retryable errors (e.g. an unknown publisher name); the startup resync pass remains the durable safety net.
+A reconciliation worker performs Subscribe RPCs for mounting subscription rows at a fixed reconcile interval with no attempt cap; the failed state is reserved for non-retryable errors (e.g. an unknown publisher name); the startup resync pass remains the durable safety net.
 
 ## Rationale
 

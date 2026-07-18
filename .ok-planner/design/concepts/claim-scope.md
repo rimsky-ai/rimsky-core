@@ -17,7 +17,7 @@ The two terms name two ends of the resolution pipeline; conflating them is a com
 - The **selector** is the opaque text the graph author supplies in a node's claim declaration. At template-author time it may still carry unresolved substitution directives; these resolve at dispatch, and the producer parses the dispatch-time-resolved text.
 - The **claim scope** is the resolved selector or, for a producer that picks among candidates rather than matching a literal selector (a pick policy), the identifier it picked — the canonical-byte form the producer commits to representing this claim by. Returned by the producer's open verb and persisted with the claim handle. Claim scopes never contain substitution directives — they are post-resolution.
 
-A claim-scope substitution path returns the resolved claim scope bytes verbatim into the consuming attribute path.
+A claim-scope substitution path inserts the resolved claim scope into the consuming attribute path under the substitution grammar's general stringification convention (shared with the address path): a JSON-string scope inserts as its unquoted text; any other JSON form inserts as its raw JSON text.
 
 ## Purpose
 
@@ -27,7 +27,7 @@ The rationale for byte-equal-conflict as the default (rather than mandating rich
 
 1. **Uniform default across heterogeneous producers.** Rimsky cannot reason about producer-specific selector DSLs (one might be POSIX glob, another might be SQL row-range, another might be regex over a custom namespace). Byte-equality is the predicate rimsky can evaluate without any producer-specific code; a producer with richer overlap semantics opts into its own predicate via the scopes-conflict capability instead of relying on canonicalization tricks.
 2. **Producer authorship is the canonicalization contract.** A producer that wants byte-equal claim scopes to line up for the data it considers identical must canonicalize at the open verb; a producer that instead wants to honor "different selectors that target the same data" without forcing a byte-equal canonical form advertises the scopes-conflict capability and answers the overlap question directly.
-3. **Audit-trail honesty.** The persisted claim scope bytes are exactly what the producer returned. No lossy normalization happens at the rimsky persistence boundary.
+3. **Audit-trail honesty.** When the producer's open verb returns claim scope bytes, those bytes are persisted exactly as returned — no lossy normalization happens at the rimsky persistence boundary. When the producer returns an empty claim scope, the persisted bytes remain rimsky's JSON-marshaled form of the resolved selector, seeded on the claim-handle row before open: the request stands in for the unreported acquisition so the scope stays meaningful for audit and conflict detection rather than blank.
 
 ## Boundaries
 

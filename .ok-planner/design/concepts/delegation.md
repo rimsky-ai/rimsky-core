@@ -17,7 +17,7 @@ So entry absorption is structural; exit carry-up is the carry settle primitive o
 
 ## Boundaries
 
-Owns: the template surface that targets a sub-graph for delegation, entry absorption at canonicalization (the genuine asymmetry versus fan-out), and triggering the entry-success internal cascade that begins the sub-graph's internal walk. Does NOT own: the dispatch and settlement shape, context closure, or the carry's atomicity — those belong to `concept:child-execution`; sub-graph template surface (see `concept:sub-graph`); per-run state aggregation (see `concept:node-run`). Adjacent: `concept:child-execution`, `concept:sub-graph`, `concept:node`, `concept:node-run`, `concept:cascade`.
+Owns: the template surface that targets a sub-graph for delegation, entry absorption at canonicalization (the genuine asymmetry versus fan-out), and triggering the entry-success internal cascade that begins the sub-graph's internal walk. Does NOT own: the dispatch and settlement shape, context closure, or the carry's atomicity — those belong to `concept:child-execution`; sub-graph template surface (see `concept:sub-graph`); per-run state aggregation (see `concept:node-run`). Adjacent: `concept:child-execution`, `concept:sub-graph`, `concept:node`, `concept:node-run`, `concept:run-scope` (the delegate runs in a sub-graph RunScope), `concept:cascade`.
 
 ## Invariants
 

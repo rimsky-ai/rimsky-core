@@ -16,7 +16,7 @@ Extensibility (third-party implementations are first-class) and modularity (refe
 
 ## Boundaries
 
-The specific service protocols are sibling concepts: `concept:executor`, `concept:claim-producer`, `concept:lifecycle-subscriber`, `concept:publisher`, `concept:blob-backend`. Orchestration mechanics (dispatch, acquisition, supervisor coordination, terminal resolution) live in their own concepts: `concept:supervisor`, `concept:terminal-resolution`, `concept:auto-terminal`, `concept:orphan-reaper`.
+The specific service protocols are sibling concepts: `concept:executor`, `concept:claim-producer`, `concept:lifecycle-subscriber`, `concept:publisher`. Orchestration mechanics (dispatch, acquisition, supervisor coordination, terminal resolution) live in their own concepts: `concept:supervisor`, `concept:terminal-resolution`, `concept:auto-terminal`, `concept:orphan-reaper`.
 
 `concept:service` owns:
 
@@ -29,7 +29,7 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 
 - Out-of-process services are declared in the unified config with an explicit protocol-membership list per service. In-process bundled services register their protocol membership programmatically via the bundled registration entrypoint — an equivalent declaration on a different surface.
 - Protocol membership is advertised for out-of-process services at startup via the per-protocol capabilities query; in-process handlers advertise their protocol membership and capabilities (schema, tags, declared error classes) through the same registration entrypoint, which knows each handler's capabilities by construction.
-- Conformance is validated by the per-protocol conformance subcommands shipped in the single binary (see `concept:conformance`). For executor and claim-producer, conformance runs against the standalone gRPC surface each bundled service exposes; the in-process handler and the gRPC-wrapped handler share the same protocol semantics by construction (same handler package, same code paths), so a passing conformance run on the standalone image guarantees the in-process handler's semantics too. Lifecycle-subscriber has no dedicated conformance subcommand; blob-backend conformance runs via in-process construction against a reduced backend interface, with no standalone gRPC surface.
+- Conformance is validated by the per-protocol conformance subcommands shipped in the single binary (see `concept:conformance`). For executor and claim-producer, conformance runs against the standalone gRPC surface each bundled service exposes; the in-process handler and the gRPC-wrapped handler share the same protocol semantics by construction (same handler package, same code paths), so a passing conformance run on the standalone image guarantees the in-process handler's semantics too. Lifecycle-subscriber has no dedicated conformance subcommand. (Blob-backend also ships a conformance suite, but it is a persistence-layer abstraction, not a service protocol — see `concept:blob-backend`.)
 - Multi-protocol binaries use a distinct handler per protocol; there is no shared capabilities-provider abstraction across protocols (response shapes are protocol-specific and the downstream code is already protocol-specific).
 - An operator-deployed standing service participates in the internal service↔service trust boundary: under `peer_auth: none` its dials are plaintext on a trusted subnet, and under `peer_auth: mtls` it enrolls with a `service:enroll`-bearing api-key to obtain a short-lived certificate and both peers of every dial mutually authenticate (see `concept:peer-auth`). This is orthogonal to the per-peer `tls` config key that verifies a single peer's server certificate against system roots (see `decision:peer-tls-enforcement`).
 
@@ -38,7 +38,6 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 - `concept:executor`
 - `concept:claim-producer`
 - `concept:lifecycle-subscriber`
-- `concept:blob-backend`
 - `concept:publisher` (the umbrella concept; `concept:sensor` is one class of publisher)
 - `concept:rimsky-yml`
 - `concept:conformance`

@@ -27,7 +27,7 @@ Owns the names of the two mechanisms (fan-out, sub-graph delegation), the names 
 
 ## Invariants
 
-- Settlement (carry or aggregate) is the only run-side path that closes child execution contexts (instance termination is the administrative exception, per `concept:run-scope`).
+- Settlement (carry or aggregate) is the only run-side path that closes child execution contexts. Administrative instance termination is the sole exception: it closes every remaining open run-scope in the instance's frames — child scopes included, not just frame roots — and fires each closed scope's run-scope-terminal peer fan-out, so peers tracking per-scope state hear about scopes a kill orphaned (per `concept:run-scope`).
 - Fan-out's clones share the calling node's template node-type, executor, and attribute schema — they ARE the same node, dispatched N times into N distinct run-scopes. Per-clone attribute writebacks do NOT aggregate onto the parent's attribute bag (per `concept:fan-out`).
 - Sub-graph delegation's carry settle fires exactly once per invocation, on the designated exit's terminal; a sub-graph declares at most one exit by construction — the template grammar represents it as a single field, not a runtime-validated constraint.
 - Entry absorption is a property of the delegation mechanism, not of child-execution as such — the dispatch helper does not compute it; the delegate template surface carries it.

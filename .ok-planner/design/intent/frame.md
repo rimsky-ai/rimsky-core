@@ -11,6 +11,9 @@ they are recorded under "Superseded / historical" and must not be used to justif
 
 ## Net position
 
+- **Frame-origin envelope is two-surface** (user ruling 2026-07-17): frames-read inlines the triggering message's sender, type, and sender kind plus the message id; the body lives behind the message-read route and its own permission — large bodies are never inlined into frame listings. The frame-origin-audit story's one-surface (sender, type, body) wording was amended.
+- **`terminated` is a distinct terminal frame state** (user ruling 2026-07-17): `failed` stays reserved for a frame whose own cascade broke; administrative instance kill drives an in-flight frame to `terminated` with `ended_at` stamped — the frame row has no reason column, so the state itself must carry the story, and "show me genuinely failed frames" must not surface kill casualties. Part of the queued termination fix: kill force-fails every in-flight run (all five states, per the transition-reason ruling of the same date), closes the full run-scope tree with peer fan-out, and ends in-flight frames as `terminated`. Code currently leaves killed frames looking `running` forever (queued fix-code).
+
 - A frame is, by product definition, "one complete run of the graph with no side effects from earlier runs or against future runs" — this was always the intent (2026-07-06, 3f71f90a, transcript).
 - Only a message creates a frame. Nothing else — not park-wake, not cron, not cascade, not operator invalidation, not instance creation (2026-06-15, 91ec93d1, transcript: "*nothing* creates a new frame except a message").
 - One message = one frame, exactly. N messages posted in succession produce N distinct frames; multiple messages in one frame is impossible by design; messages cannot queue on a node or node_run (2026-06-14 and repeatedly after, transcript).

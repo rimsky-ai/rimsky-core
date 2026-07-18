@@ -6,6 +6,8 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 
 ## Net position
 
+- **Claim lineage walks are symmetric, and route names must tell the truth** (user ruling 2026-07-17): the claim-handle lineage surface offers both directions, like run lineage — a descendants walk following sub-claim ids downward, and a true ancestors walk following the claim-tree parent pointer upward. The shipped single claim route is named "ancestors" but walks sub-claims downward; it must be renamed to descendants and joined by a genuine ancestors walk (queued fix-code). The doc's backward/forward promise is ratified as intent.
+
 - Lineage means attribute/data lineage: data flow via substitution_refs. Wake-only causality (a consumer woken without reading the upstream's attributes) is explicitly out of scope, documented as a boundary; a future causal lineage would be a parallel surface, not a polymorphic field on substitution_refs (2026-06-23, user).
 - rimsky_lineage is an append-only projection with two record kinds: leaf_run (one per leaf-run terminal) and claim_terminal (renamed from claim_commit; outcome discriminator committed | abandoned | force_cancelled), plus a settling_signal_type field that replaced the retired last_outcome projection.
 - Pass-through nodes (fan-out parents, pure-cascade nodes) cannot mutate their own attributes and therefore produce no lineage artifact by design. Sub-graph exit nodes are NOT pass-through: they are normal executor-bearing nodes that emit leaf_run records.

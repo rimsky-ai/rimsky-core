@@ -6,6 +6,9 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 
 ## Net position
 
+- **`expired` is not a key_revoked reason** (user ruling 2026-07-17): expiry is a state lapse, not an administrative action — a key that lapses is not revoked, and no expiry sweep exists or is wanted; expiry stays a passive per-request check observable from the key row's timestamp. The reason enum is `manual | rotation_grace` only.
+- **Denial rows carry mode** (user ruling 2026-07-17): `permission_denied` access-denied rows populate the `mode` field with the requested mode (dry-run vs enforce), keeping the audit surface's mode filter meaningful for denials — an audit reviewer must be able to tell a dry-run probe from a real enforcement denial. The value is knowable at the emit site; code currently never sets it (queued fix-code).
+
 - There is one event log: `rimsky_events`, rimsky's own append-only audit ledger with rimsky-readable JSONB payloads, written by supervisor/scheduler/control-api at observable transitions and served at GET /events. The second table of the 2026-05-11 split — the named-event ledger `rimsky_node_events` — is gone (dropped in migration 013 with the whole NamedEvent mechanism, 2026-06-17, b31002b8, transcript).
 - Kinds are typed at the app boundary: signal-class kinds keep the signal type-path discipline; operational kinds are a proto `OperationalKind` enum in events.proto; app logic consumes typed values exclusively, never raw strings; the column stays TEXT with no CHECK — the enum at the app boundary IS the gate; an unknown string at unmarshal is a defensive error (2026-06-08, corpus-bootstrap, artifact).
 - Payloads have two shapes: typed oneof payloads for signal-class events, free-form JSON for operational events whose payload is audit data (2026-06-08, artifact).

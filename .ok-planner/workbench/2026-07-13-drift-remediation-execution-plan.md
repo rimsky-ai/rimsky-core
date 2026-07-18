@@ -28,8 +28,23 @@ dossier rulings). Corpus edits committed `b7e34819`; rulings merged into the
 main ledger as `phase1_*` columns; full-repo plumbline sweep (comment hygiene +
 citation resolution) clean.
 
-**Next: user rulings on the 29 open design-calls** (filter the ledger on
-`phase1_direction=design-call`), then Phase 2.
+**Design-call walkthrough: DONE (2026-07-17).** All 29 design-calls resolved by
+user ruling in a live walkthrough, applied and merged back into the ledger —
+zero rows remain in `design-call`. Final Phase 1 tally: 474 fix-doc (applied),
+83 fix-code (queued for Phase 3), 24 fix-test (queued for Phase 2), 13 refuted.
+Each ruling is recorded in its `phase1-rulings-*.jsonl` entry and written back
+into the relevant intent dossier; the severity-footgun tension moved to
+`_resolved/`. Notable rulings that queue new Phase 3 work: instance termination
+(kill fails all five in-flight states, closes the whole run-scope tree with
+peer fan-out, ends in-flight frames as the new `terminated` frame state);
+pause-mode breakpoints fail closed; the empty-claimant queue-guard sentinel is
+abolished in favor of an explicit force variant; lifecycle_subscriber becomes
+the fourth registration-validation role; claim lineage gains a true ancestors
+walk (and the mis-named route is corrected); permission-denial audit rows must
+carry `mode`. See also the catalog-shape follow-up below.
+
+**Next: Phase 2** (proofs/tests), then Phase 3 (code, including the queued
+fix-code items above).
 
 **Track 0a — conflict rulings: DONE.** All 33 distinct dossier conflicts
 resolved by user ruling, written back into the dossiers. Committed `993cd3ad`.
@@ -188,6 +203,22 @@ Full verify per rules.md per batch (`make test-all` for core/service changes).
 - Agent prompts MUST forbid destructive git ops and require deterministic tests
   (no wall-clock verdicts).
 - After each phase: merge rulings into the CSV, stage, run the gate, report stats.
+
+## Catalog-shape follow-up (user pattern rulings, 2026-07-17, design-call walkthrough)
+
+Two rulings from the design-call walkthrough generalize beyond their rows and
+need a corpus-wide restructuring pass (spec-pipeline work, not Phase 1 drift
+fixing):
+- **Concepts must not prescriptively enumerate enum membership** — membership
+  is owned by code; a decision doc may record it when the choice itself needs
+  rationale. (Applied to transition-reason.md; other concept docs still
+  enumerate value lists.)
+- **Concept docs carry too much prescriptive technical detail generally** —
+  blob-backend named as the exemplar: its substance is a story ("as a user, I
+  don't worry about attribute size limits") plus a technical decision ("spill
+  oversized values to a configurable blob backend"), not a concept. A sweep
+  should assess which "concepts" are really story+decision pairs and
+  restructure via the spec pipeline.
 
 ## Follow-up units (tracked as main-ledger rows, source `track-0b-discovery`)
 - **2362** callback/dispatch DRY extraction (structure) — both files now settled.

@@ -6,6 +6,8 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 
 ## Net position
 
+- **No empty-claimant guard bypass** (user ruling 2026-07-17): the queue-level claimed_by guard on release/remove verbs is unconditional — the shipped `""`-sentinel carve-out (enshrined only by a conformance test, blessed by no design artifact) is rejected because a bug that loses the claimant value would silently disarm the very guard meant to catch it. Administrative callers (pure-cascade settle, parked-row sweep) move to an explicitly-named force variant; the conformance suite proves strictness plus the explicit variant instead of the sentinel; the caller-less queue Complete verb is dead code to delete. Queued fix-code.
+
 - A node-run is one execution of one node within a RunScope (and thereby a frame). Frame ⊃ run-scope ⊃ node-run is the hierarchy; a run-scope is one graph instantiation (main/root, sub-graph, fan-out partition), never "one execution of one node" (2026-05-12 artifact; corrected 2026-06-19, 08d65bfe, transcript).
 - The table is `rimsky_node_runs` (plural); the Go row struct is `NodeRunRow` (singular). The identifier is `node_run_id` / `NodeRunID` everywhere — bare `run_id`, `RunID`, and `DispatchID` are retired names swept repo-wide (2026-07-05, 3f71f90a: "code base should use 'node_run_id' not 'run_id'. nobody knows what a 'run' is.").
 - Node-runs follow a **seven-state machine**: pending, stale, running, held, parked, fresh, failed. fresh and failed are settled states with no outgoing edges. The legacy phase axis (pending/active/held/completed) and its column are retired entirely; state × phase virtual states are collapsed into the single state column (2026-06-20, 8a3b8c19).

@@ -6,6 +6,9 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 
 ## Net position
 
+- **Pre-dispatch checkpoint is executor-scoped** (user ruling 2026-07-17): the fires-exactly-once guarantee covers executor-invoking dispatch attempts only; executor-less dispositions (pure-cascade, claim-acquired) skip it deliberately — with no executor invocation the assembled bag cannot mutate after assembly, so there is nothing to gate or overlay pre-dispatch. Those dispatches are observed at the post-terminal checkpoint only. Code conforms; the doc's blanket wording was narrowed.
+- **Pause-mode fails closed on infra error** (user ruling 2026-07-17): an infrastructure error while evaluating or persisting a pause-mode hit blocks the dispatch — a pause is an operator-requested gate and must never be silently skipped; the blast radius of blocking is one visible, recoverable dispatch, while failing open lets an unreviewed action through. After-terminal (observation-only) evaluation stays fail-open, logged. Code currently fails open on the pause path (queued fix-code); matches the codebase's fail-closed posture on its other gates (peer-auth, host-agent registration, egress guard).
+
 - Breakpoint is the operator-injected sibling of executor-emitted parked-state — two distinct primitives serving different control directions (2026-05-24, instance-debugger, artifact). The v1 use case is an LLM agent driving rimsky via MCP.
 - Exactly two supervisor checkpoints: before_dispatch (after the post-L5 merged bag, before Execute) and after_terminal (wired at the two callers of runApplyTerminal, after the terminal tx commits and before cascade walks) — the caller wiring preserves the no-tx-held-across-wait invariant (2026-05-24, artifact).
 - Two modes: pause (blocks the supervisor runner until resumed; the default) and notify_only (records a hit row and continues) (2026-05-24, artifact).

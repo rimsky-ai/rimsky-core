@@ -8,28 +8,24 @@ aliases: []
 
 ## What it is
 
-The transition reason is the closed enum carried on every node-state transition. It is a closed set of named values, each a reason value carrying a kind discriminator (`handler_complete`, `pure_cascade`, `dispatch_claimed`, `acquire_pass`, `handler_park`, `deadline_resume`, `park_timeout`, `auto_terminal_commit`, `auto_terminal_abandon`, `instance_killed`, etc.). Written by the state-transition apply path that drives the state machine.
+The transition reason is the closed vocabulary carried on every node-state transition: a set of named values, each carrying a kind discriminator. Membership of the set is owned by the state-machine code, not enumerated here. Written by the state-transition apply path that drives the state machine; consumed only by the next-state function — the reason is never an audit identity.
 
-`instance_killed` is the forced-instance-teardown reason: it drives a resource-holding node-run (running or parked — the states that hold or await a claim) to failed, and is accepted by the next-state function only from those two states. The terminal state fresh and the non-resource-holding state stale are not force-failed — a terminated instance's pending node-runs are left inert — so the next-state function rejects `instance_killed` from them as an illegal transition. It is **state-machine-validation-only** — it is NOT emitted as an audit-event kind. When the force-terminate control path tears an instance down, the teardown's auditable cause is the single administrative `instance_terminated` event-log row, not the per-node reason kind (the per-node state update writes run-row state and the settling-signal-type field, with no audit row). It is distinct from `policy_give_up` (policy-chain-driven) and from the creation-reason field's `operator_invalidate` value per `concept:node-run`, a separate vocabulary for why a node-run was created rather than why it transitioned.
+`instance_killed` is the forced-instance-teardown reason: it drives every in-flight node-run (pending, stale, running, held, parked — see `concept:node-run`'s in-flight set) to failed, and is accepted by the next-state function from exactly those five states. A killed instance leaves nothing eligible to dispatch. The terminal states fresh and failed are already settled, so the next-state function rejects `instance_killed` from them as an illegal transition. It is **state-machine-validation-only** — it is NOT emitted as an audit-event kind. When the force-terminate control path tears an instance down, the teardown's auditable cause is the single administrative `instance_terminated` event-log row, not the per-node reason kind (the per-node state update writes run-row state and the settling-signal-type field, with no audit row). It is distinct from `policy_give_up` (policy-chain-driven) and from the creation-reason field's `operator_invalidate` value per `concept:node-run`, a separate vocabulary for why a node-run was created rather than why it transitioned.
 
 ## Purpose
 
-The transition reason exists for two narrow roles:
+The transition reason exists for one narrow role: **state-machine validation in the next-state function.** Every transition consults the next-state function, which switches on `(current state, reason)` and returns either the next state or the illegal-transition sentinel. The reason is the load-bearing input to the state machine — without it the machine couldn't reject double-execute or other illegal sequences.
 
-1. **State-machine validation in the next-state function.** Every transition consults the next-state function, which switches on `(current state, reason)` and returns either the next state or the illegal-transition sentinel. The reason is the load-bearing input to the state machine — without it the machine couldn't reject double-execute or other illegal sequences.
-2. **Audit-event kind for non-signal transitions.** A subset of transitions (`dispatch_claimed`, `pure_cascade`, `deadline_resume`, `park_timeout`, `acquire_pass`, `auto_terminal_commit`, `auto_terminal_abandon`, `child_transitioned`, etc.) write rows to the persisted audit-event ledger with the event kind set to the reason's kind discriminator. These are administrative-shaped transitions that don't carry a `concept:signal` envelope; the reason kind is their audit identity.
-
-Signal-bearing transitions (the handler-complete, handler-park, policy-give-up, and handler-pass reasons) write audit-event rows whose kind is the canonical signal type-path per `concept:signal`, not the reason's kind discriminator. The state-machine validation role of the transition reason holds for those transitions.
+Audit identity lives elsewhere: audit-event rows carry either a canonical signal type-path or an operational kind, per `concept:signal` and `concept:event-log` — never the transition reason's kind discriminator.
 
 ## Boundaries
 
 Owns:
-- The closed enum.
+- The closed reason vocabulary.
 - The per-state validation switch in the next-state function (the state machine's load-bearing rejection of illegal transitions).
-- The audit-event-log payload field carrying the reason **for non-signal transitions**.
 
 Does NOT own:
-- The audit kind for signal-bearing transitions (those use signal type-paths from `concept:signal`).
+- Audit-event kinds (signal type-paths and operational kinds — see `concept:signal`, `concept:event-log`).
 - Dispatch eligibility (`concept:node-run`).
 - The cascade-fire gate (subscriber-driven per `concept:signal` and `concept:cascade`).
 - Event-log table mechanics (`concept:event-log`).
@@ -39,5 +35,5 @@ Adjacent: `concept:signal`, `concept:cascade`, `concept:event-log`.
 ## Invariants
 
 - Reason values are enumerated as named values, each a reason value carrying a kind discriminator; the form is not a closed type-system enum (a caller could in principle construct a reason value with an arbitrary kind string), but the next-state function rejects any reason whose kind is not in the known per-state switch with the illegal-transition sentinel. The runtime guard, not the type system, enforces the closed set.
-- Reason is written at every state transition; absence from the audit row for non-signal transitions is a defect. Signal-bearing transitions emit their signal type-path as the audit kind instead.
-- `instance_killed` is a state-machine-validation-only reason: the next-state function accepts it from the resource-holding states (running, parked), driving each to failed, and rejects it from the terminal state fresh and the non-resource-holding state stale as an illegal transition. It is never written as an audit-event kind. Forced instance teardown records its auditable cause once via the administrative `instance_terminated` event-log row, not per node-run.
+- A reason accompanies every state transition and is consulted by the next-state function; no transition bypasses the validation switch. The reason is never written as an audit-event kind.
+- `instance_killed` is a state-machine-validation-only reason: the next-state function accepts it from every in-flight state (pending, stale, running, held, parked), driving each to failed, and rejects it from the terminal states fresh and failed as an illegal transition. It is never written as an audit-event kind. Forced instance teardown records its auditable cause once via the administrative `instance_terminated` event-log row, not per node-run.

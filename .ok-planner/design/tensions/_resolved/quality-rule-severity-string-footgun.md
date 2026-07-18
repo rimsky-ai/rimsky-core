@@ -1,13 +1,17 @@
 ---
 tension: quality-rule-severity-string-footgun
 category: unspecified
-status: open
+status: resolved
 affects:
   - validation
   - attribute
 ---
 
 # Quality-rule severity is partitioned by exact-string equality on `"warning"` — any other value silently blocks
+
+## Resolution
+
+Resolved by user ruling (2026-07-17, design-call walkthrough). The subsystem this tension targeted no longer exists: the core quality-rule feature was dissolved, and its capability lives in a bundled utility executor (the shape-checks verifier) that owns its own config parsing. That successor implements what the resolution candidates asked for: severity is a typed value parsed against the closed error/warning set (empty defaults to error), and an unrecognized value is rejected with an error naming the valid values — a loud failure at the node's first dispatch instead of a silent promotion to blocking. Severity is executor userdata (free-form authored YAML, opaque to rimsky), so parse-time rejection inside the executor is the correct enforcement point; registration-time rejection is available to the executor via the validation role if it ever advertises it, as an option rather than an obligation.
 
 ## What is muddy
 

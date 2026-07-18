@@ -12,7 +12,7 @@ A sub-graph is a graph with declared entry and exit nodes; invocable from anothe
 
 ## Boundaries
 
-Owns: the sub-graph template-DSL shape (declared entry and exit nodes plus an internal node set), the edge-case rejections at registration. Does NOT own: entry absorption at canonicalization (see `concept:delegation`), the carry settle primitive (see `concept:child-execution`), per-invocation run trees (see `concept:node-run`, `concept:delegation`), aggregation rules over internal children (see `concept:node-run` state-aggregation table). Adjacent: `concept:graph`, `concept:delegation`, `concept:node`, `concept:node-run`, `concept:cascade` (sub-graph encapsulation).
+Owns: the sub-graph template-DSL shape (declared entry and exit nodes plus an internal node set), the edge-case rejections at registration. Does NOT own: entry absorption at canonicalization (see `concept:delegation`), the carry settle primitive (see `concept:child-execution`), per-invocation run trees (see `concept:node-run`, `concept:delegation`), aggregation rules over internal children (see `concept:node-run` state-aggregation table). Adjacent: `concept:graph`, `concept:delegation`, `concept:node`, `concept:node-run`, `concept:run-scope` (invocation creates a sub-graph RunScope), `concept:cascade` (sub-graph encapsulation).
 
 ## Invariants
 

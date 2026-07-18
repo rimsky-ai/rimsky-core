@@ -7,7 +7,7 @@ status: as-is
 
 ## Role
 
-As an operator, I can list the data assets a running instance has produced, see the current version of each, walk the version history and materialization audit, retire an asset, and trace its lineage to consumers, so that I observe and govern the data outputs nodes produce.
+As an operator, I can list the data assets a running instance has produced, see the current version of each, walk the version history and materialization audit, retire an asset, and trace its lineage, so that I observe and govern the data outputs nodes produce — including understanding what downstream work consumed an asset before I retire or re-materialize it.
 
 ## Capability
 
@@ -19,11 +19,11 @@ Operators observe and govern data outputs — walking version history, retiring 
 
 ## Acceptance
 
-Against an instance running a template whose nodes declare durable claims against a data-processing-capable producer (the asset construction per `concept:asset`), the operator queries the instance's assets through the control-api and sees each asset alias with its current version; the materialization-history surface lists each materialization with its outcome; deleting an asset removes the alias.
+Against an instance running a template whose nodes declare durable claims against a data-processing-capable producer (the asset construction per `concept:asset`), the operator queries the instance's assets through the control-api and sees each asset alias with its current version; the materialization-history surface lists each materialization with its outcome; the lineage surface walks from an asset's materializing runs forward to the runs that read their outputs (per `concept:lineage`); deleting an asset removes the alias.
 
 ## Falsifier
 
-The materialization-history surface returns rows that don't match what really materialized, OR delete fails to remove the alias.
+The materialization-history surface returns rows that don't match what really materialized, OR the forward lineage walk omits a run that demonstrably read the asset's output, OR delete fails to remove the alias.
 
 ## Proof
 

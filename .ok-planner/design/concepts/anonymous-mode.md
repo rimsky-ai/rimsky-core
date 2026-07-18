@@ -9,7 +9,7 @@ aliases:
 
 ## What it is
 
-A data-derived deployment state in which the API-key ledger has zero active rows. While in this state, every request — including requests with no `Authorization` header — is admitted as a synthetic admin identity (null key id, name `"anonymous"`, a wildcard `*` permission). The mode flips automatically the moment the first key is minted.
+A data-derived deployment state in which the API-key ledger has zero active rows. While in this state, every credential-less request — one presenting no `Authorization` header — is admitted as a synthetic admin identity (null key id, name `"anonymous"`, a wildcard `*` permission). A request that does present credentials is validated normally even while anonymous: a malformed, unknown, expired, or revoked bearer token is rejected 401 in every mode, so a stale-credentialed client hears about its bad token instead of being silently promoted to admin. The mode flips automatically the moment the first key is minted.
 
 The control-api auth middleware computes the predicate (with a short TTL cache) and substitutes the synthetic anonymous identity when the predicate holds.
 

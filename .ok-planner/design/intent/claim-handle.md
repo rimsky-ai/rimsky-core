@@ -6,6 +6,8 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 
 ## Net position
 
+- **claim.md owns the layer-split paragraph** (user ruling 2026-07-17): the claim/claim-handle protocol-vs-persistence split is defined once, in the claim concept; claim-handle.md opens with its own ledger-row definition plus a slug cross-reference. Verbatim duplication of the paragraph across the two catalogs was drift risk, not intentional standalone readability.
+
 - claim and claim-handle are layer-distinct nouns for one conceptual thing: claim is the protocol-layer noun returned by ClaimProducer.Open; claim-handle is the rimsky-persistence-layer noun (row in `rimsky_claim_handles`). Invariant 20 (claim content inert) gates the content; invariant 4 (claimant-guarded release) gates the row (2026-05-11, log-convergence, artifact).
 - Conflict primitive: two handles conflict iff their claim-scope bytes are byte-equal; the foundation never parses or range-matches scope bytes (2026-05-04, foundation-contract, artifact). All handles with the same (producer, scope-bytes) must have identical realized write-semantics; cross-semantics coexistence is deliberately undefined (2026-06-19, a02fe167, transcript).
 - Content (address, payload, realized_write_semantics) is written only inside the acquisition transaction by the producer's Open (invariant 15) and is inert thereafter; the only sanctioned introspection site is the substitution engine's leaf extraction (2026-05-04, artifact).

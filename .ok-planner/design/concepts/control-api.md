@@ -22,7 +22,7 @@ Owns: the operation surface and its handlers, the lifecycle-subscriber fan-out f
 
 ## Invariants
 
-- The operation surface carries a single wire version, `/v1`, with no version negotiation and no multi-version compatibility. Rolling upgrades are operator-managed.
+- The operation surface serves a single wire version at a time, with no version negotiation and no multi-version compatibility. Rolling upgrades are operator-managed. The URL path convention (whether and which version prefix appears) is a wire detail the design does not fix.
 - Lifecycle events fire synchronously from the process that owns the state transition: control-api for template and instance events and main-scope run-scope-terminal, the supervisor for sub-graph and fan-out-partition run-scope-terminal. A slow subscriber holds up the firing process's path — not necessarily the response to the request that triggered the transition, since a gracefully terminating instance's terminated event fires only once the transition actually completes.
 - The reserved `compose:` prefix on tags and instance keys is server-enforced: requests originating outside the CLI's compose surface (`concept:rimsky`) are rejected when they target it.
 - **Every operation is auth-gated** except the health probe, which is an unauthenticated infrastructure path. The action registry is the canonical surface-to-action mapping; an unmapped operation is a wiring bug.

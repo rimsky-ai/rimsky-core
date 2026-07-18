@@ -6,6 +6,8 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 
 ## Net position
 
+- **Termination closes the whole scope tree** (user ruling 2026-07-17): administrative instance termination closes every remaining open run-scope in the instance's frames — child scopes (sub-graph, fan-out partition) included, not just frame roots — and fires each closed scope's run-scope-terminal peer fan-out, so peers tracking per-scope state (e.g. data-processing candidates under a partition scope) hear about scopes the kill orphaned. Code currently closes root scopes only (queued fix-code). Settlement rendezvous remains the only run-side closure path; termination is the sole administrative exception.
+
 - A RunScope is one graph instantiation — the execution context that owns a set of node-runs. It never represents one execution of one node; that is a node-run (2026-06-19, 08d65bfe, transcript).
 - RunScope is **frame-rooted, not instance-rooted**: every frame's start creates a fresh root RunScope, the frame row carries `root_run_scope_id`, and there is no per-instance main RunScope (`instance.MainRunScopeID` removed) (2026-06-30, 8a8539a4, transcript; reaffirmed 2026-07-06).
 - A RunScope is IN exactly one frame, never more than one; a frame is a tree of RunScopes; RunScopes never cross a frame or instance boundary. The entirety of frame state is held in run scopes and node_runs (2026-06-30 and 2026-07-05, transcript).

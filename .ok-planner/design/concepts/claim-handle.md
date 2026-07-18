@@ -8,9 +8,7 @@ aliases: []
 
 ## What it is
 
-`claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing. They have different invariants by layer — invariant 20 (claim content inert) gates content; invariant 4 (claimant-guarded release) gates the persistence row.
-
-The claim handle is the rimsky-side ledger row representing one acquired claim (or named-lock acquisition). It records the lock identity (kind and name), the acquired claim scope, an expiry and held marker, the realized write semantics, and a nullable link back to the holding node-run that survives the parent's deletion rather than cascading.
+The claim handle is the rimsky-persistence-layer shadow of a `concept:claim` — the layer split between the protocol noun and this persistence noun is defined there. The claim handle is the rimsky-side ledger row representing one acquired claim (or named-lock acquisition). It records the lock identity (kind and name), the acquired claim scope, an expiry and held marker, the realized write semantics, and a nullable link back to the holding node-run that survives the parent's deletion rather than cascading.
 
 The row also carries:
 

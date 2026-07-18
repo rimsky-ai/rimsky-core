@@ -23,4 +23,3 @@ Owns: the read-route definitions, the per-route handlers, the JSON marshalling, 
 
 - Handlers that read persisted tables open a short fresh transaction per read; handlers backed by the discovery cache or the dispatch queue read those sources directly, outside any table transaction.
 - Read-only: no handler in this surface mutates state.
-- Routes are mounted under the control API's versioned prefix, matching the parent `control-api` versioning discipline.

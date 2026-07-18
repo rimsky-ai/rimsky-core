@@ -6,6 +6,8 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 
 ## Net position
 
+- **"Trace lineage to consumers" is not a rimsky capability** (user ruling 2026-07-17): rimsky has no first-class notion of an asset's consumers — external substrate readers are invisible, and cross-system consumer tracking belongs to the OpenLineage export's ecosystem. The asset-management story's capability is the lineage trace rimsky actually delivers (the forward run-level walk: which runs read the materializing runs' outputs); consumer-impact reasoning moved to the story's "so that" side as motivation. Story rewritten with a lineage acceptance clause and falsifier that were previously missing.
+
 - An asset is a **documented compound, not a new primitive**: a claim against a DataProcessing-capable producer with `lifetime: durable`. The presentation surface is a query alias — `state='committed' AND lifetime='durable'` joined to the instance — never its own table (the separate `rimsky_assets` table, Option D, was articulated and rejected 2026-05-17).
 - Canonical asset identity is `{instance_id}.{asset_alias}`, dotted `{node_alias}.{claim_alias}` form in URLs.
 - Committed-durable rows are the asset surface: retention-exempt, still tripping scope conflict at acquire time, released only via producer Release — instance termination or operator DELETE.
