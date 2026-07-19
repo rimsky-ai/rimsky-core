@@ -60,7 +60,7 @@ func TestReapers_NeverTouchAPIKeys(t *testing.T) {
 
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := tables.Templates().Insert(ctx, persistence.TemplateInsertInput{
-			ID: templateHash, Spec: tmplspec.TemplateSpec{Name: "reaper-api-key-fixture", Version: "1", FrameTimeoutMs: 600000},
+			ID: templateHash, Spec: tmplspec.TemplateSpec{Name: "reaper-api-key-fixture", Version: "1"},
 			State: persistence.TemplateStateRegistered, Source: "direct",
 		}, tx); err != nil {
 			return err
@@ -86,7 +86,7 @@ func TestReapers_NeverTouchAPIKeys(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertRunningFrame(ctx, uuid.UUID(instanceID), msgID, mainScopeID, 600000, tx)
+		frameID, err := tables.Frames().InsertRunningFrame(ctx, uuid.UUID(instanceID), msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

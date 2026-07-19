@@ -61,8 +61,8 @@ func testListInFlightRunStates(t *testing.T, d persistence.Database) {
 		t.Errorf("empty-set: got %v, want empty", m)
 	}
 
-	if err := q.Complete(ctx, runID, ""); err != nil {
-		t.Fatalf("Complete: %v", err)
+	if err := q.ForceComplete(ctx, runID); err != nil {
+		t.Fatalf("ForceComplete: %v", err)
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return forceRunStateToFresh(ctx, tx, store, runID)

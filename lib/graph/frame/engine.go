@@ -34,9 +34,6 @@ func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Qu
 	if err := runOpenNewFrames(ctx, store, queue, logger); err != nil {
 		return fmt.Errorf("frame.RunTick: open: %w", err)
 	}
-	if err := runWarnStuckFrames(ctx, store, logger); err != nil {
-		return fmt.Errorf("frame.RunTick: warn stuck: %w", err)
-	}
 	if err := runReapOrphanFrameDispatches(ctx, store, queue, logger); err != nil {
 		return fmt.Errorf("frame.RunTick: reap orphan: %w", err)
 	}
@@ -146,28 +143,6 @@ func runOpenNewFrames(ctx context.Context, store persistence.Tables, queue persi
 			"frame_id", frameID,
 			"instance_id", p.InstanceID,
 			"triggering_message_id", p.MessageID)
-	}
-	return nil
-}
-
-func runWarnStuckFrames(ctx context.Context, store persistence.Tables, logger Logger) error {
-	var stuckFrames []persistence.FrameStuck
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ss, err := store.Frames().ListStuckRunningFrames(ctx, tx)
-		if err != nil {
-			return err
-		}
-		stuckFrames = ss
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	for _, s := range stuckFrames {
-		logger.Warn("frame.stuck.observed",
-			"frame_id", s.FrameID,
-			"instance_id", s.InstanceID,
-			"timeout_ms", s.FrameTimeoutMs)
 	}
 	return nil
 }

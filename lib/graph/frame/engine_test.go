@@ -5,7 +5,6 @@
 package frame_test
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -102,7 +101,7 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 
 func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 	instanceID uuid.UUID, triggeringMessageID uuid.UUID, state string,
-	startedAt *time.Time, timeoutMs int64) uuid.UUID {
+	startedAt *time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	var endedAt *time.Time
@@ -120,9 +119,9 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 		[]any{instanceID}, &rootScope)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, ended_at, frame_timeout_ms, last_progress_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    `, id, instanceID, triggeringMessageID, rootScope, startedAt, endedAt, timeoutMs, progressAt)
+            (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, ended_at, last_progress_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, id, instanceID, triggeringMessageID, rootScope, startedAt, endedAt, progressAt)
 	return id
 }
 
@@ -155,7 +154,7 @@ func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
 	now := time.Now()
-	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now, 600000)
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now)
 	seedNode(t, ctx, d, instanceID, src, "fresh", &frameID)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
@@ -181,7 +180,7 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
 	now := time.Now()
-	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now, 600000)
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now)
 	seedNode(t, ctx, d, instanceID, src, "failed", &frameID)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
@@ -232,57 +231,6 @@ func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
 		"oldest pending message opens the running frame")
 }
 
-func TestRunTick_WarnStuckFrame(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	d := pgtest.OpenDriver(ctx, t)
-
-	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
-	src := uuid.New()
-	stuckStart := time.Now().Add(-11 * time.Minute)
-	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &stuckStart, 600000)
-	seedNode(t, ctx, d, instanceID, src, "stale", &frameID)
-
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
-
-	require.NoError(t, runTickAgainstDriver(ctx, d, logger))
-
-	logged := buf.String()
-	require.Contains(t, logged, "frame.stuck.observed",
-		"expected stuck-frame observation; got logger output: %q", logged)
-	require.Contains(t, logged, frameID.String(),
-		"warning should mention frame_id %s; got %q", frameID.String(), logged)
-
-	var fState, nState string
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT
-		    CASE
-		        WHEN f.ended_at IS NULL THEN 'running'
-		        WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
-		        ELSE 'completed'
-		    END
-		   FROM rimsky_frames f WHERE frame_id = $1`, []any{frameID}, &fState)
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT COALESCE(r.state, 'fresh')
-		   FROM rimsky_nodes n
-		   LEFT JOIN rimsky_node_runs r
-		          ON r.node_id = n.id
-		         AND r.state IN ('pending','stale','running','held','parked')
-		  WHERE n.id = $1`, []any{src}, &nState)
-	require.Equal(t, "running", fState,
-		"frame must stay running after stuck-frame observation; warning is non-destructive")
-	require.Equal(t, "stale", nState,
-		"wedged node must keep its state; warning does not fail nodes")
-
-	var terminatedAt *time.Time
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT terminated_at FROM rimsky_instances WHERE id = $1`, []any{instanceID}, &terminatedAt)
-	require.Nil(t, terminatedAt,
-		"stuck-frame warning must not terminate the instance")
-}
-
 func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -292,7 +240,7 @@ func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
 	now := time.Now()
-	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "completed", &now, 600000)
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "completed", &now)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_frames SET ended_at = now() WHERE frame_id = $1`, frameID)
 
@@ -316,7 +264,7 @@ func TestEndFrameIfSettled_RefusesFrameWithInFlightRun(t *testing.T) {
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	node := uuid.New()
 	now := time.Now()
-	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now, 600000)
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now)
 	seedNode(t, ctx, d, instanceID, node, "stale", &frameID)
 
 	var moved bool
@@ -348,7 +296,7 @@ func TestEndFrameIfSettled_ConcurrentRunInsertCannotEndFrame(t *testing.T) {
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	node := uuid.New()
 	now := time.Now()
-	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now, 600000)
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now)
 	seedNode(t, ctx, d, instanceID, node, "fresh", &frameID)
 
 	endObserved := make(chan struct{})

@@ -60,7 +60,7 @@ func testSelectCandidatesSkipsTerminatedInstances(t *testing.T, d persistence.Da
 		}); err != nil {
 			return err
 		}
-		frameID, err := store.Frames().InsertRunningFrame(ctx, terminatedInstanceID, terminatedMessageID, terminatedRunScopeID, 600000, tx)
+		frameID, err := store.Frames().InsertRunningFrame(ctx, terminatedInstanceID, terminatedMessageID, terminatedRunScopeID, tx)
 		if err != nil {
 			return err
 		}

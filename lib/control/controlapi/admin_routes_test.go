@@ -39,6 +39,7 @@ func newAdminHarness(t *testing.T) *adminHarness {
 func buildRouter(register func(chi.Router, AppDeps), deps AppDeps) http.Handler {
 	r := chi.NewRouter()
 	r.Route("/v1", func(v1 chi.Router) {
+		v1.Use(deps.AuthState.IdentityResolver())
 		register(v1, deps)
 	})
 	return r
@@ -69,6 +70,12 @@ func TestClaimHoldersRoute(t *testing.T) {
 	deps := AppDeps{
 		Persist: h.persist,
 		Logger:  shared.SilentLogger{},
+		AuthState: &AuthState{
+			Tables:   h.persist,
+			Registry: BuildV1Registry(),
+			Clock:    shared.SystemClock{},
+			Logger:   shared.SilentLogger{},
+		},
 	}
 	router := buildRouter(registerClaimsRoutes, deps)
 
@@ -175,8 +182,8 @@ func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID s
 		msgID, instID,
 	)
 	pgtest.QueryRowForTest(ctx, t, h.driver,
-		`INSERT INTO rimsky_frames(instance_id, triggering_message_id, root_run_scope_id, started_at, last_progress_at, frame_timeout_ms)
-		 VALUES ($1, $2, $3, now(), now(), 600000)
+		`INSERT INTO rimsky_frames(instance_id, triggering_message_id, root_run_scope_id, started_at, last_progress_at)
+		 VALUES ($1, $2, $3, now(), now())
 		 RETURNING frame_id`,
 		[]any{instID, msgID, mainScopeID}, &frameID,
 	)

@@ -65,14 +65,6 @@ func validateFanOut(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 	}
 	fbase := base + ".fan_out"
 
-	if strings.TrimSpace(n.Delegate) != "" {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: fbase,
-			Msg:  "delegate and fan_out are mutually exclusive — a calling node cannot itself fan-out (the sub-graph's entry can declare fan_out instead)",
-		})
-		return
-	}
-
 	claim := strings.TrimSpace(fo.Claim)
 	if claim == "" {
 		res.Errors = append(res.Errors, ValidationError{
@@ -132,12 +124,6 @@ func validateFanOut(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 		res.Errors = append(res.Errors, ValidationError{
 			Path: fbase + ".error_policy.max_failures",
 			Msg:  "max_failures must be > 0 when error_policy.kind = threshold",
-		})
-	}
-	if fo.ErrorPolicy.Kind != "strict" && fo.ErrorPolicy.CancelSiblings {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: fbase + ".error_policy.cancel_siblings",
-			Msg:  "cancel_siblings is only meaningful when error_policy.kind = strict",
 		})
 	}
 	if fo.Parallelism < 0 {

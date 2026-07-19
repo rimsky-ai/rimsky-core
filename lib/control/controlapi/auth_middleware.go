@@ -337,8 +337,5 @@ func (c *capturingWriter) Flush() {
 func (c *capturingWriter) status() int { return c.statusCode }
 
 func gate(deps AppDeps, action string, inner http.HandlerFunc) http.HandlerFunc {
-	if deps.AuthState == nil {
-		return inner
-	}
 	return deps.AuthState.gateByAction(action, inner)
 }

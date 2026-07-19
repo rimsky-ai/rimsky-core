@@ -340,9 +340,8 @@ func deploySensorWebhookTemplate(t *testing.T, ep harness.RimskyEndpoint) string
 	}
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":             "sensor-webhook-e2e",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "sensor-webhook-e2e",
+			"version": "1",
 			"messages": []map[string]any{
 				{
 					"type": webhookMessageType,

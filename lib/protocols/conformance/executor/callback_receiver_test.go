@@ -83,12 +83,8 @@ func TestParseCallbackBody_Park(t *testing.T) {
 	resumeAt := time.Date(2026, 6, 17, 15, 30, 0, 0, time.UTC).Format(time.RFC3339)
 	body := map[string]any{
 		"park": map[string]any{
-			"reason":           "snooze",
-			"reason_note":      "rate-limited until cooldown elapses",
-			"reason_label":     "rate_limit",
-			"resume_at":        resumeAt,
-			"attributes_delta": map[string]any{"session_token": "tok-1"},
-			"tags":             []any{"parked"},
+			"resume_at": resumeAt,
+			"tags":      []any{"parked"},
 		},
 	}
 	out, err := parseCallbackBody(body)
@@ -99,15 +95,6 @@ func TestParseCallbackBody_Park(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Park, got %T", out.GetOutcome())
 	}
-	if park.Park.GetReason() != genv1.ParkReason_PARK_REASON_SNOOZE {
-		t.Errorf("park reason=%v want=SNOOZE", park.Park.GetReason())
-	}
-	if park.Park.GetReasonNote() != "rate-limited until cooldown elapses" {
-		t.Errorf("reason_note=%q", park.Park.GetReasonNote())
-	}
-	if park.Park.GetReasonLabel() != "rate_limit" {
-		t.Errorf("reason_label=%q", park.Park.GetReasonLabel())
-	}
 	if park.Park.GetResumeAt() == nil {
 		t.Fatal("resume_at not propagated")
 	}
@@ -116,23 +103,6 @@ func TestParseCallbackBody_Park(t *testing.T) {
 	}
 	if tags := park.Park.GetTags(); len(tags) != 1 || tags[0] != "parked" {
 		t.Errorf("tags=%v want [parked]", tags)
-	}
-}
-
-func TestParseCallbackBody_ParkUnknownReasonFallsBackToAwaitCallback(t *testing.T) {
-	body := map[string]any{
-		"park": map[string]any{"reason": "made_up"},
-	}
-	out, err := parseCallbackBody(body)
-	if err != nil {
-		t.Fatalf("parseCallbackBody: %v", err)
-	}
-	park, ok := out.GetOutcome().(*genv1.Outcome_Park)
-	if !ok {
-		t.Fatalf("expected Park, got %T", out.GetOutcome())
-	}
-	if park.Park.GetReason() != genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK {
-		t.Errorf("park reason=%v want=AWAIT_CALLBACK fallback", park.Park.GetReason())
 	}
 }
 

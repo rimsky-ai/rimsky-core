@@ -31,10 +31,9 @@ func seedNodeAndRunPG(
 	run := uuid.New()
 
 	tmpl := spec.TemplateSpec{
-		Name:           "node-attr-spill-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
-		Nodes:          []spec.TemplateNodeDef{{Type: "fixture-node-type", Executor: "test-executor"}},
+		Name:    "node-attr-spill-fixture",
+		Version: "1",
+		Nodes:   []spec.TemplateNodeDef{{Type: "fixture-node-type", Executor: "test-executor"}},
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
@@ -65,8 +64,8 @@ func seedNodeAndRunPG(
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, frame_timeout_ms, started_at)
-		 VALUES ($1, $2, $3, $4, 600000, now())`,
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at)
+		 VALUES ($1, $2, $3, $4, now())`,
 		frame, instanceID, messageID, mainRunScopeID,
 	)
 	pgtest.ExecForTest(ctx, t, d,

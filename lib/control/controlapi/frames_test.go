@@ -61,7 +61,7 @@ func seedFrameForTest(
 				return err
 			}
 		}
-		fid, err := h.persist.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, tx)
 		if err != nil {
 			return err
 		}

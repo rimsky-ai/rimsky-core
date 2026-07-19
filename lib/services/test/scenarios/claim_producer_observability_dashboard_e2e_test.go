@@ -467,9 +467,8 @@ func deployObsTemplate(t *testing.T, ep harness.RimskyEndpoint, name string) str
 	t.Helper()
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":             name,
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    name,
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",

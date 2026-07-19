@@ -77,7 +77,6 @@ func testReaperSkipsParkedHolder(t *testing.T, d persistence.Database) {
 		ExpectedClaimedBy: reaperLivenessSup,
 		ParkedAt:          time.Now(),
 		ResumeAt:          time.Now().Add(24 * time.Hour),
-		Reason:            "snooze",
 	})
 
 	if listExpiredContains(ctx, t, store, claimID) {
@@ -158,7 +157,6 @@ func testSweepExecutorDeadlinesSkipsParkedRow(t *testing.T, d persistence.Databa
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		NodeRunID: runID, ExpectedClaimedBy: reaperLivenessSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(24 * time.Hour),
-		Reason: "await_callback",
 	})
 
 	if listOrphanedClaimsContains(ctx, t, d, runID) {

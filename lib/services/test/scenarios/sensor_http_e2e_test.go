@@ -338,9 +338,8 @@ func deploySensorHttpTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedUR
 	}
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":             "sensor-http-e2e",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "sensor-http-e2e",
+			"version": "1",
 			"messages": []map[string]any{
 				{
 					"type": httpMessageType,

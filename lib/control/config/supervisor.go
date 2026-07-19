@@ -40,7 +40,6 @@ type SupervisorConfig struct {
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	Metrics                     runtime.MetricsHook
-	MaxParkDuration             map[string]time.Duration
 
 	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
 
@@ -199,7 +198,6 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		BlobSpillThreshold:          cfg.BlobSpillThreshold,
 		ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
 		Metrics:                     cfg.Metrics,
-		MaxParkDuration:             cfg.MaxParkDuration,
 		LifecycleSubs:               lifecycleSubs,
 		LifecyclePeersForSpec:       cfg.LifecyclePeersForSpec,
 		LateBindServiceProxies:      cfg.LateBindServiceProxies,

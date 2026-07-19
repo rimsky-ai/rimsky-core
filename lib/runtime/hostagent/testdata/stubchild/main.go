@@ -20,18 +20,11 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
-
-const validationRejectRole = "stubchild-reject"
-
-const candidateHandlePrefix = "stub-candidate:"
-
-const committedMetadataPrefix = "stub-committed:"
 
 func main() {
 	port := os.Getenv("RIMSKY_AGENT_PORT")
@@ -60,9 +53,6 @@ func main() {
 	genv1.RegisterExecutorServer(srv, &stubExecutor{})
 	genv1.RegisterExecutorObservabilityServer(srv, &stubExecutorObs{})
 	genv1.RegisterClaimProducerServer(srv, &stubClaimProducer{})
-	genv1.RegisterPublisherServer(srv, &stubPublisher{})
-	genv1.RegisterValidationServer(srv, &stubValidation{})
-	genv1.RegisterDataProcessingServer(srv, &stubDataProcessing{})
 
 	go func() { _ = srv.Serve(lis) }()
 
@@ -243,84 +233,4 @@ func (s *stubClaimProducer) Abandon(_ context.Context, _ *genv1.AbandonRequest) 
 func (s *stubClaimProducer) Release(_ context.Context, _ *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
 	recordVerb("release")
 	return &genv1.ReleaseResponse{}, nil
-}
-
-type stubPublisher struct {
-	genv1.UnimplementedPublisherServer
-}
-
-func (s *stubPublisher) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.PublisherCapabilities, error) {
-	return &genv1.PublisherCapabilities{Protocols: []string{"publisher"}}, nil
-}
-
-var publishLogMu sync.Mutex
-
-func recordPublish(subID, instanceID, messageType string) {
-	path := os.Getenv("STUBCHILD_PUBLISH_LOG")
-	if path == "" {
-		return
-	}
-	publishLogMu.Lock()
-	defer publishLogMu.Unlock()
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_, _ = fmt.Fprintf(f, "%s %s %s\n", subID, instanceID, messageType)
-}
-
-func (s *stubPublisher) Subscribe(_ context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
-	recordPublish(req.GetPublisherSubscriptionId(), req.GetInstanceId(), req.GetMessageType())
-	return &genv1.SubscribeResponse{}, nil
-}
-
-func (s *stubPublisher) Unsubscribe(_ context.Context, _ *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
-	return &genv1.UnsubscribeResponse{}, nil
-}
-
-func (s *stubPublisher) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (*genv1.ListSubscriptionsResponse, error) {
-	return &genv1.ListSubscriptionsResponse{}, nil
-}
-
-type stubValidation struct {
-	genv1.UnimplementedValidationServer
-}
-
-func (s *stubValidation) Validate(_ context.Context, req *genv1.ValidateRequest) (*genv1.ValidateResponse, error) {
-	if req.GetRole() == validationRejectRole {
-		return &genv1.ValidateResponse{
-			Valid: false,
-			Errors: []*genv1.ValidationFinding{{
-				Class:   "stubchild_rejected",
-				Message: "stubchild validator deliberately rejected role " + req.GetRole(),
-				Path:    "/role",
-			}},
-		}, nil
-	}
-	return &genv1.ValidateResponse{Valid: true}, nil
-}
-
-type stubDataProcessing struct {
-	genv1.UnimplementedDataProcessingServer
-}
-
-func (s *stubDataProcessing) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.DataProcessingCapabilities, error) {
-	return &genv1.DataProcessingCapabilities{Materializations: []string{"full"}}, nil
-}
-
-func (s *stubDataProcessing) BeginCandidate(_ context.Context, req *genv1.BeginCandidateRequest) (*genv1.BeginCandidateResponse, error) {
-	return &genv1.BeginCandidateResponse{
-		CandidateHandle: []byte(candidateHandlePrefix + req.GetIdempotencyKey()),
-	}, nil
-}
-
-func (s *stubDataProcessing) CommitCandidate(_ context.Context, req *genv1.CommitCandidateRequest) (*genv1.CommitCandidateResponse, error) {
-	return &genv1.CommitCandidateResponse{
-		CandidateMetadata: append([]byte(committedMetadataPrefix), req.GetCandidateHandle()...),
-	}, nil
-}
-
-func (s *stubDataProcessing) AbandonCandidate(_ context.Context, _ *genv1.AbandonCandidateRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
 }

@@ -181,10 +181,13 @@ func applyTerminalComplete(
 	}
 
 	isSubgraphExit := isSubgraphExitNode(acq)
+	var subgraphExitPC postCommitFn
 	if isSubgraphExit {
-		if err := applyTerminalCompleteSubgraphExit(ctx, args, acq, merged, tx); err != nil {
+		pc, err := applyTerminalCompleteSubgraphExit(ctx, args, acq, merged, tx)
+		if err != nil {
 			return nil, err
 		}
+		subgraphExitPC = pc
 	}
 
 	successType := string(signalpkg.TypePath("terminal/success"))
@@ -268,7 +271,7 @@ func applyTerminalComplete(
 				SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
 			})
 		}
-		return chainPostCommit(chainPostCommit(releasePC, transitionPC), post), nil
+		return chainPostCommit(subgraphExitPC, chainPostCommit(chainPostCommit(releasePC, transitionPC), post)), nil
 	}
 	// @concept: claim-handle
 	// @decision: held-as-state-not-phase
@@ -336,7 +339,7 @@ func applyTerminalComplete(
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}
 	}
-	return chainPostCommit(releasePC, post), nil
+	return chainPostCommit(subgraphExitPC, chainPostCommit(releasePC, post)), nil
 }
 
 // @concept: claim-handle
@@ -445,6 +448,9 @@ func cascadeSubscribersStaleInTxWithVisited(
 	visitedReceivers map[foundationshared.UUID]struct{},
 	filter receiverFilter,
 ) error {
+	if !signalpkg.ShouldCascade(sig.Type) {
+		return nil
+	}
 	inst, err := args.Persist.Instances().Get(ctx, instanceID, tx)
 	if err != nil {
 		return fmt.Errorf("cascadeSubscribersStaleInTx: get instance: %w", err)

@@ -59,6 +59,7 @@ func (f *invTestQueue) PromoteClaimedToRunning(_ context.Context, _ persistence.
 }
 
 func (f *invTestQueue) Complete(_ context.Context, _ shared.UUID, _ string) error { return nil }
+func (f *invTestQueue) ForceComplete(_ context.Context, _ shared.UUID) error      { return nil }
 
 func (f *invTestQueue) RemoveForNode(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ string) error {
 	f.mu.Lock()
@@ -74,10 +75,25 @@ func (f *invTestQueue) RemoveForNodeInTx(_ context.Context, nodeID shared.UUID, 
 	return nil
 }
 
+func (f *invTestQueue) ForceRemoveForNode(_ context.Context, nodeID shared.UUID, _ shared.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removedNodes = append(f.removedNodes, nodeID)
+	return nil
+}
+
+func (f *invTestQueue) ForceRemoveForNodeInTx(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ persistence.Tx) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removedNodes = append(f.removedNodes, nodeID)
+	return nil
+}
+
 func (f *invTestQueue) ListOrphanedClaims(_ context.Context) ([]persistence.DispatchRow, error) {
 	return nil, nil
 }
 func (f *invTestQueue) ReleaseClaim(_ context.Context, _ shared.UUID, _ string) error { return nil }
+func (f *invTestQueue) ForceReleaseClaim(_ context.Context, _ shared.UUID) error      { return nil }
 func (f *invTestQueue) GetClaimedBy(_ context.Context, _ shared.UUID) (persistence.ClaimOwnership, error) {
 	return persistence.ClaimOwnership{Kind: "not_found"}, nil
 }
@@ -120,9 +136,6 @@ func (f *invTestQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ per
 func (f *invTestQueue) ListParkedReadyForResume(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) ListParkedOverdue(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
-	return nil, nil
-}
 func (f *invTestQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
@@ -138,11 +151,11 @@ func (f *invTestQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int
 func (f *invTestQueue) SetRetryNoProgressForRunInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ int) error {
 	return nil
 }
-func (f *invTestQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int, _ *int) error {
+func (f *invTestQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int) error {
 	return nil
 }
-func (f *invTestQueue) CountParkedByReason(_ context.Context) (map[string]int, error) {
-	return nil, nil
+func (f *invTestQueue) CountParked(_ context.Context) (int, error) {
+	return 0, nil
 }
 func (f *invTestQueue) BumpLastProgressAt(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) (bool, error) {
 	return true, nil
@@ -159,7 +172,7 @@ func (f *invTestQueue) LoadScratchInTx(_ context.Context, _ persistence.Tx, _ sh
 func (f *invTestQueue) WriteScratchInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []byte, _, _ string) error {
 	return nil
 }
-func (f *invTestQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx, _ string) ([]persistence.ParkedDiagnosticRow, error) {
+func (f *invTestQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx) ([]persistence.ParkedDiagnosticRow, error) {
 	return nil, nil
 }
 
@@ -191,8 +204,7 @@ func newFixture(t *testing.T) *fixture {
 	d := pgtest.OpenDriver(ctx, t)
 	tpl := insertDeployedTemplate(ctx, t, d.Tables(), nodepkg.TemplateSpec{
 		Name: "sched-test-" + uuid.NewString(), Version: "v1",
-		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
-		Nodes:          []nodepkg.TemplateNodeDef{},
+		Nodes: []nodepkg.TemplateNodeDef{},
 	})
 
 	ck := "ck-" + uuid.NewString()
@@ -259,8 +271,8 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
         `, msgID, f.instance.ID)
 		pgtest.QueryRowForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_frames
-                (instance_id, triggering_message_id, root_run_scope_id, started_at, frame_timeout_ms)
-            VALUES ($1, $2, $3, now(), 600000)
+                (instance_id, triggering_message_id, root_run_scope_id, started_at)
+            VALUES ($1, $2, $3, now())
             RETURNING frame_id
         `, []any{f.instance.ID, msgID, f.mainScopeID}, &frameID)
 	} else {

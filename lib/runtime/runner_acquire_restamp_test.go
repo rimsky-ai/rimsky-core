@@ -53,7 +53,7 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := tables.Templates().Insert(ctx, persistence.TemplateInsertInput{
 			ID:     templateHash,
-			Spec:   tmplspec.TemplateSpec{Name: "restamp-fixture", Version: "1", FrameTimeoutMs: 600000},
+			Spec:   tmplspec.TemplateSpec{Name: "restamp-fixture", Version: "1"},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",
 		}, tx); err != nil {
@@ -84,7 +84,7 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
+		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

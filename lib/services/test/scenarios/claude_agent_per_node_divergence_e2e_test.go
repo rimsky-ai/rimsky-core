@@ -122,9 +122,8 @@ func buildPerNodeTemplate(pubPEM string) map[string]any {
 
 	return map[string]any{
 		"spec": map[string]any{
-			"name":             "claude-agent-per-node-divergence",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "claude-agent-per-node-divergence",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":       "worker-alpha",

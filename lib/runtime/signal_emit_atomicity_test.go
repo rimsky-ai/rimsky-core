@@ -66,9 +66,8 @@ func seedSignalAtomicityFixture(t *testing.T) (tables persistence.Tables, sender
 	receiverNodeID = shared.UUID(uuid.New())
 
 	tmpl := spec.TemplateSpec{
-		Name:           "signal-atomicity-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "signal-atomicity-fixture",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "sender", Executor: "test-executor"},
 			{
@@ -112,7 +111,7 @@ func seedSignalAtomicityFixture(t *testing.T) (tables persistence.Tables, sender
 		}); err != nil {
 			return err
 		}
-		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
+		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

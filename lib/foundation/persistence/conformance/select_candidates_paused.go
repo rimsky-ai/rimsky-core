@@ -64,7 +64,7 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		}); err != nil {
 			return err
 		}
-		fid, err := store.Frames().InsertRunningFrame(ctx, pausedInstanceID, pausedMessageID, pausedRunScopeID, 600000, tx)
+		fid, err := store.Frames().InsertRunningFrame(ctx, pausedInstanceID, pausedMessageID, pausedRunScopeID, tx)
 		if err != nil {
 			return err
 		}

@@ -23,11 +23,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -314,36 +311,9 @@ func capabilitiesForProtocol(ctx context.Context, conn *grpc.ClientConn, protoco
 			return nil, err
 		}
 		return proto.Marshal(resp)
-	case protocolPublisher:
-		resp, err := genv1.NewPublisherClient(conn).Capabilities(callCtx, &emptypb.Empty{})
-		if err != nil {
-			return nil, err
-		}
-		return proto.Marshal(resp)
-	case protocolDataProcessing:
-		resp, err := genv1.NewDataProcessingClient(conn).Capabilities(callCtx, &emptypb.Empty{})
-		if err != nil {
-			return nil, err
-		}
-		return proto.Marshal(resp)
-	case protocolValidation:
-		return probeValidationRegistered(callCtx, conn)
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", protocol)
 	}
-}
-
-const validationHandshakeProbeRole = ""
-
-func probeValidationRegistered(ctx context.Context, conn *grpc.ClientConn) ([]byte, error) {
-	_, err := genv1.NewValidationClient(conn).Validate(ctx, &genv1.ValidateRequest{Role: validationHandshakeProbeRole})
-	if err == nil {
-		return nil, nil
-	}
-	if status.Code(err) == codes.Unimplemented {
-		return nil, fmt.Errorf("validation service not registered on spawned binary: %w", err)
-	}
-	return nil, nil
 }
 
 func (a *agent) runReap(reap *genv1.Reap) {

@@ -9,7 +9,6 @@ package runtime
 
 import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func signalForTerminal(t terminalEvent) signalpkg.Signal {
@@ -25,24 +24,7 @@ func signalForTerminal(t terminalEvent) signalpkg.Signal {
 		}
 		return signalpkg.BuildTerminalErrorSignal(t.ErrorClass, errorPayload, 0, 0, t.AttributesDel, t.Tags)
 	case terminalKindPark:
-		payload := map[string]any{
-			"parked_reason_label": t.ParkReasonLabel,
-			"parked_reason_note":  t.ParkReasonNote,
-			"tags":                t.Tags,
-		}
-		if !t.ParkResumeAt.IsZero() {
-			payload["resume_at"] = t.ParkResumeAt
-		}
-		if t.ParkReason == genv1.ParkReason_PARK_REASON_SNOOZE {
-			return signalpkg.Signal{
-				Type:    signalpkg.TypePath("transient/park/snooze"),
-				Payload: payload,
-			}
-		}
-		return signalpkg.Signal{
-			Type:    signalpkg.TypePath("transient/park/await_callback"),
-			Payload: payload,
-		}
+		return parkTerminalSignal(t)
 	case terminalKindInfra:
 		return signalpkg.Signal{}
 	}

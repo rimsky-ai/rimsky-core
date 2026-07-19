@@ -64,7 +64,6 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 		Metrics:        observability.MetricsHookOf(mreg),
 
 		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,
-		RefValidationMode:      rimskyCfg.RefValidationMode,
 		PeerAuth:               rimskyCfg.PeerAuth,
 		Bundled:                bundledRegs,
 	})

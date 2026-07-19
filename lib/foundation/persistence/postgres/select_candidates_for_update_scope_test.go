@@ -34,7 +34,7 @@ func TestSelectCandidates_ForUpdateScopedToDispatchRow_NoInstanceRowContention(t
 	nodeBID := shared.UUID(uuid.New())
 
 	tmpl := spec.TemplateSpec{
-		Name: "for-update-scope-fixture", Version: "1", FrameTimeoutMs: 600000,
+		Name: "for-update-scope-fixture", Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "node-a", Executor: "test-executor"},
 			{Type: "node-b", Executor: "test-executor"},
@@ -74,7 +74,7 @@ func TestSelectCandidates_ForUpdateScopedToDispatchRow_NoInstanceRowContention(t
 		}); err != nil {
 			return err
 		}
-		fid, err := store.Frames().InsertRunningFrame(ctx, instanceID, msgID, runScopeID, 600000, tx)
+		fid, err := store.Frames().InsertRunningFrame(ctx, instanceID, msgID, runScopeID, tx)
 		if err != nil {
 			return err
 		}

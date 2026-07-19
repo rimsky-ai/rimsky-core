@@ -51,9 +51,8 @@ func TestExecutorReadsDispatchContext(t *testing.T) {
 func buildDispatchContextProbeTemplate() map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":             "executor-reads-dispatch-context",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "executor-reads-dispatch-context",
+			"version": "1",
 			"messages": []map[string]any{
 				{
 					"type": "operator/worker-rerun",

@@ -45,9 +45,8 @@ func seedHeldErrorFixture(t *testing.T, curState cascade.NodeState, nodeDef *nod
 	var holderNodeRunID shared.UUID
 
 	tmpl := spec.TemplateSpec{
-		Name:           "held-error-shield-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "held-error-shield-fixture",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "holder", Executor: "test-executor"},
 		},
@@ -81,7 +80,7 @@ func seedHeldErrorFixture(t *testing.T, curState cascade.NodeState, nodeDef *nod
 		}); err != nil {
 			return err
 		}
-		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
+		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

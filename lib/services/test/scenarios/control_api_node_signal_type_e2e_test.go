@@ -31,9 +31,8 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":             "node-signal-type-e2e",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "node-signal-type-e2e",
+			"version": "1",
 			"nodes": []map[string]any{
 				{"type": "worker", "executor": "stub"},
 			},

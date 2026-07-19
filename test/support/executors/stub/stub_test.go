@@ -81,11 +81,7 @@ func TestScripted_ErrorHierarchicalClassPassesThrough(t *testing.T) {
 func TestScripted_Park(t *testing.T) {
 	s := New()
 	resumeAt := time.Now().Add(time.Hour)
-	s.WhenType("t.park").Park(
-		genv1.ParkReason_PARK_REASON_SNOOZE,
-		"sleeping on it",
-		resumeAt,
-	)
+	s.WhenType("t.park").Park(resumeAt)
 	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
@@ -93,9 +89,8 @@ func TestScripted_Park(t *testing.T) {
 	require.NoError(t, err)
 	park := outcome.GetPark()
 	require.NotNil(t, park, "expected Park outcome")
-	require.Equal(t, genv1.ParkReason_PARK_REASON_SNOOZE, park.GetReason())
-	require.Equal(t, "sleeping on it", park.GetReasonNote())
 	require.NotNil(t, park.GetResumeAt())
+	require.True(t, park.GetResumeAt().AsTime().Equal(resumeAt), "resume_at should round-trip")
 }
 
 func TestScripted_AwaitAsyncCallback(t *testing.T) {
@@ -233,11 +228,10 @@ func TestStubMode_ParkProbeReturnsPark(t *testing.T) {
 	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
+	resumeAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	attrs, _ := structpb.NewStruct(map[string]any{
-		"probe_park":        true,
-		"park_reason":       "snooze",
-		"park_reason_note":  "scheduled rest",
-		"park_reason_label": "demo",
+		"probe_park":     true,
+		"park_resume_at": resumeAt.Format(time.RFC3339Nano),
 	})
 	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{
 		NodeType:   "any",
@@ -246,9 +240,8 @@ func TestStubMode_ParkProbeReturnsPark(t *testing.T) {
 	require.NoError(t, err)
 	park := outcome.GetPark()
 	require.NotNil(t, park, "expected Park outcome in stub mode under probe_park")
-	require.Equal(t, genv1.ParkReason_PARK_REASON_SNOOZE, park.GetReason())
-	require.Equal(t, "scheduled rest", park.GetReasonNote())
-	require.Equal(t, "demo", park.GetReasonLabel())
+	require.NotNil(t, park.GetResumeAt(), "probe_park must emit resume_at")
+	require.True(t, park.GetResumeAt().AsTime().Equal(resumeAt), "resume_at should round-trip")
 }
 
 func TestThenAdvancesQueuePerCall(t *testing.T) {

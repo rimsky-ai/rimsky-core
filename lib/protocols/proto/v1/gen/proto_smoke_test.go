@@ -42,7 +42,6 @@ func TestProtoSmoke_OutcomeSuccess(t *testing.T) {
 // concept:parked-state) and tags.
 func TestProtoSmoke_OutcomePark(t *testing.T) {
 	src := &Outcome{Outcome: &Outcome_Park{Park: &Park{
-		Reason:   ParkReason_PARK_REASON_SNOOZE,
 		ResumeAt: timestamppb.New(timestamppb.Now().AsTime()),
 		Scratch:  []byte("sess-abc"),
 		Tags:     []string{"awaiting_remote"},
@@ -54,9 +53,6 @@ func TestProtoSmoke_OutcomePark(t *testing.T) {
 	var got Outcome
 	if err := proto.Unmarshal(bytes, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
-	}
-	if got.GetPark().GetReason() != src.GetPark().GetReason() {
-		t.Fatalf("reason: got %q, want %q", got.GetPark().GetReason(), src.GetPark().GetReason())
 	}
 	if got.GetPark().GetResumeAt() == nil {
 		t.Fatalf("resume_at should round-trip non-nil")

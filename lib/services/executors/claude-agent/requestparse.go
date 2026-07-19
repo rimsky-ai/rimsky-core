@@ -54,10 +54,7 @@ func OutcomeToCallbackBody(outcome AgentOutcome) map[string]any {
 			},
 		}
 	case OutcomeParkRequested:
-		parkBody := map[string]any{
-			"reason":      outcome.Reason,
-			"reason_note": outcome.ReasonNote,
-		}
+		parkBody := map[string]any{}
 		if outcome.ResumeAt != nil {
 			parkBody["resume_at"] = outcome.ResumeAt.UTC().Format(time.RFC3339Nano)
 		}

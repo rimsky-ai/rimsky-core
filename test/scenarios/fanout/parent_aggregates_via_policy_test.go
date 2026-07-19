@@ -21,7 +21,7 @@ func TestParentAggregatesViaPolicy_StrictFailsOnAnyFailure(t *testing.T) {
 		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.PathPtr("terminal/error/test_failure")},
 		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 	}
-	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict", CancelSiblings: true})
+	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
 	if !res.IsSettled {
 		t.Fatalf("strict aggregation should settle on any-failed; got non-terminal")
 	}
@@ -29,7 +29,7 @@ func TestParentAggregatesViaPolicy_StrictFailsOnAnyFailure(t *testing.T) {
 		t.Errorf("strict parent state: %s (want failed)", res.ParentState)
 	}
 	if res.Action != runtime.AggregateActionCancelSiblings {
-		t.Errorf("strict.cancel_siblings should request sibling cancellation; got %v", res.Action)
+		t.Errorf("strict should always request sibling cancellation; got %v", res.Action)
 	}
 }
 

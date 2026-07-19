@@ -15,4 +15,4 @@ The override is a debug feature, not a general operator capability. Both legal s
 
 ## Alternatives considered
 
-Include "frame held by parked node-run" and "last-progress past frame-timeout" in the gate. Rejected: those are degraded states (normal-operation park, or a bug surfacing as the frame-stuck warning); the project's pre-v1 rule is to investigate and fix the underlying issue rather than engineer around it with an override.
+Include "frame held by parked node-run" in the gate. Rejected: that is a normal-operation degraded state, not an error; the project's pre-v1 rule is to investigate and fix the underlying issue rather than engineer around it with an override.

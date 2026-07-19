@@ -483,22 +483,14 @@ func (p *callbackToolProvider) callTool(name string, arguments json.RawMessage) 
 		return toolResultText(`{"status":"accepted"}`, false), nil
 	case "report_park":
 		var args struct {
-			Token      string  `json:"token"`
-			Reason     string  `json:"reason"`
-			ReasonNote *string `json:"reason_note"`
-			ResumeAt   *string `json:"resume_at"`
+			Token    string `json:"token"`
+			ResumeAt string `json:"resume_at"`
 		}
 		if err := json.Unmarshal(arguments, &args); err != nil {
 			return invalidParams(err.Error())
 		}
-		validReason := false
-		for _, r := range ParkReasons {
-			if args.Reason == r {
-				validReason = true
-			}
-		}
-		if args.Token == "" || !validReason {
-			return invalidParams("token and a typed reason (await_callback | snooze) are required")
+		if args.Token == "" || args.ResumeAt == "" {
+			return invalidParams("token and resume_at are required")
 		}
 		entry, errResult := lookup(args.Token, "report_park")
 		if errResult != nil {
@@ -507,7 +499,7 @@ func (p *callbackToolProvider) callTool(name string, arguments json.RawMessage) 
 		if entry.OnPark == nil {
 			return toolResultText("park_not_supported", true), nil
 		}
-		if err := entry.OnPark(args.Reason, args.ReasonNote, args.ResumeAt, deferTeardown); err != nil {
+		if err := entry.OnPark(args.ResumeAt, deferTeardown); err != nil {
 			return nil, &jsonRPCError{Code: -32603, Message: err.Error()}
 		}
 		return toolResultText(`{"status":"accepted"}`, false), nil

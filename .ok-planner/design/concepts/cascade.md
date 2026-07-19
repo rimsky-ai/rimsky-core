@@ -14,7 +14,7 @@ Cascade is the engine that turns one node-state transition into the set of downs
 | Word | Meaning |
 |---|---|
 | **walk** | The scheduler-tick-driven traversal of the graph (topology-ordered). The mechanism. |
-| **propagation** | Cascade-of-stale on a subscription-edge match (sender node-type × emitted signal type) whose `when:` predicate evaluates true. Mark dependents stale and recurse. |
+| **propagation** | Cascade-of-stale on a subscription-edge match (sender node-type × emitted settling signal type) whose `when:` predicate evaluates true. Mark dependents stale and recurse. |
 | **fallthrough** | No-dispatch fresh-roll for a node with no executor. Roll fresh state forward without running the node; detected per-node (executor unset) and executed by the scheduler's pure-cascade sweep, which records the transition-reason `pure_cascade`. |
 
 One walk; two node-level behaviors (propagation, fallthrough).
@@ -31,6 +31,7 @@ The cascade walker consults two edge maps — the subscription-edge map and the 
 
 ## Invariants
 
+- **Cascade fires only on settling signals.** The firing-gate predicate admits exactly the settling signal kinds — `terminal/success`, `terminal/error/<class>`, and `attribute/<key>/changed` — and rejects every other signal kind outright, before any subscription-edge lookup runs. A single predicate is the sole authority for both what a template may subscribe to and what actually reaches the walk at runtime, so the subscribable set is derived from that predicate rather than tracked as a second, independently-maintained list. Dispatch-internal signals never cascade and are not subscribable; template registration rejects any subscription that targets one.
 - A cascade walk inserts a wait-set row for the receiver whenever a subscription edge matches the emitted signal's type AND the subscriber's `when:` predicate evaluates true; the receiver is unconditionally stale-marked on that match — every declared subscription is a wake declaration, there is no separate wake opt-in. An upstream-refresh edge additionally inserts a wait-set row for a receiver's own named upstream independent of any emitted signal or filter, proactively invalidating that upstream within the same walk.
 - Cascade always happens in a frame.
 - The cascade walker operates entirely within a single frame. It never creates a new frame; cross-frame coupling is expressed by message-sender nodes whose dispatch lands a message in the ledger, with the next frame opening on the standard delivery path.

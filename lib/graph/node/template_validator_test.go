@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -725,6 +724,29 @@ func TestValidateSubscribes_RejectsUnknownType(t *testing.T) {
 	require.False(t, res.Ok())
 }
 
+func TestValidateSubscribes_RejectsTransientType(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1",
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "a", Type: "transient/retry/*", ForceUpstreamRefresh: BoolPtr(false)},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "transient/retry/*") {
+			found = true
+		}
+	}
+	require.True(t, found, "expected validation error naming the rejected transient subscription type, got %+v", res.Errors)
+}
+
 func TestValidateSubscribes_RejectsMalformedCEL(t *testing.T) {
 	spec := &TemplateSpec{
 		Name: "demo", Version: "1",
@@ -810,31 +832,6 @@ func TestValidateSubscribes_AllowsExactDuplicateFlags(t *testing.T) {
 			t.Fatalf("exact-duplicate entries must not trigger the conflict check; got %+v", res.Errors)
 		}
 	}
-}
-
-func TestValidateMaxParkDuration_Ok(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:    "demo",
-		Version: "1.0.0",
-		Nodes: []TemplateNodeDef{{
-			Type: "a", Executor: "h", MaxParkDuration: "30m",
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
-}
-
-func TestValidateMaxParkDuration_Malformed(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:    "demo",
-		Version: "1.0.0",
-		Nodes: []TemplateNodeDef{{
-			Type: "a", Executor: "h", MaxParkDuration: "thirty-minutes",
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].max_park_duration")
 }
 
 func TestValidateCascadeMode_Ok(t *testing.T) {
@@ -1973,25 +1970,22 @@ func TestValidateAttributesSchema_OpenSchemaAcceptsExtraProperty(t *testing.T) {
 	assert.True(t, res.Ok(), "open executor schema should admit extra L2 props; errors: %+v", res.Errors)
 }
 
-func TestValidateTemplate_RefMode(t *testing.T) {
+func TestValidateTemplate_ReferenceValidationIsUnconditionallyStrict(t *testing.T) {
 	const notProvisioned = "ghost-executor"
 	const provisionedConstrained = "constrained-executor"
 	const constrainedSchema = `{"type":"object","properties":{"count":{"type":"integer","minimum":0}}}`
 
-	hooksFor := func(mode RefValidationMode) RegistryHooks {
-		return RegistryHooks{
-			StoreDeclared:     storeDeclaredLookup(knownClaimProducers),
-			RefValidationMode: mode,
-			ExecutorDeclared: func(name string) bool {
-				return name == provisionedConstrained
-			},
-			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
-				if name == provisionedConstrained {
-					return []byte(constrainedSchema), true
-				}
-				return nil, false
-			},
-		}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
+		ExecutorDeclared: func(name string) bool {
+			return name == provisionedConstrained
+		},
+		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+			if name == provisionedConstrained {
+				return []byte(constrainedSchema), true
+			}
+			return nil, false
+		},
 	}
 
 	notProvisionedNode := func() TemplateNodeDef {
@@ -2022,49 +2016,36 @@ func TestValidateTemplate_RefMode(t *testing.T) {
 		}
 	}
 
-	t.Run("all: not-provisioned ref hard-fails with a missing-reference error", func(t *testing.T) {
+	t.Run("not-provisioned executor ref hard-fails", func(t *testing.T) {
 		spec := specWith(notProvisionedNode())
-		res := ValidateTemplate(spec, hooksFor(RefValidateAll))
-		require.False(t, res.Ok(),
-			"mode all must reject a reference to a not-yet-provisioned executor; errors: %+v", res.Errors)
-		hasErrorAt(t, res, "nodes[0].executor")
-	})
-
-	t.Run("available: not-provisioned ref skipped, provisioned-invalid ref still errors", func(t *testing.T) {
-		spec := specWith(notProvisionedNode(), invalidProvisionedNode())
-		res := ValidateTemplate(spec, hooksFor(RefValidateAvailable))
-
-		for _, e := range res.Errors {
-			require.False(t, strings.HasPrefix(e.Path, "nodes[0]"),
-				"mode available must skip the not-yet-provisioned ref at node 0, got error: %+v", e)
-		}
-		require.False(t, res.Ok(),
-			"mode available must still reject a genuinely-invalid provisioned ref; errors: %+v", res.Errors)
-		hasErrorAt(t, res, "nodes[1].attributes")
-	})
-
-	t.Run("none: no reference errors at all", func(t *testing.T) {
-		spec := specWith(notProvisionedNode(), invalidProvisionedNode())
-		res := ValidateTemplate(spec, hooksFor(RefValidateNone))
-		require.True(t, res.Ok(),
-			"mode none must perform no registration-time reference validation; errors: %+v", res.Errors)
-	})
-
-	t.Run("default zero-value mode is all (strict)", func(t *testing.T) {
-		spec := specWith(notProvisionedNode())
-		hooks := RegistryHooks{
-			StoreDeclared: storeDeclaredLookup(knownClaimProducers),
-			ExecutorDeclared: func(name string) bool {
-				return name == provisionedConstrained
-			},
-			ExecutorExpectedAttributesSchema: func(string) ([]byte, bool) {
-				return nil, false
-			},
-		}
 		res := ValidateTemplate(spec, hooks)
 		require.False(t, res.Ok(),
-			"default (zero-value) mode must be strict `all`; errors: %+v", res.Errors)
+			"a reference to a not-yet-provisioned executor must be rejected; errors: %+v", res.Errors)
 		hasErrorAt(t, res, "nodes[0].executor")
+	})
+
+	t.Run("provisioned but schema-invalid ref hard-fails", func(t *testing.T) {
+		spec := specWith(invalidProvisionedNode())
+		res := ValidateTemplate(spec, hooks)
+		require.False(t, res.Ok(),
+			"a genuinely-invalid provisioned ref must always be rejected; errors: %+v", res.Errors)
+		hasErrorAt(t, res, "nodes[0].attributes")
+	})
+
+	t.Run("executor's expected_attributes_schema not visible at registration hard-fails", func(t *testing.T) {
+		spec := specWith(TemplateNodeDef{
+			Type:     "unseen",
+			Executor: notProvisioned,
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"count": map[string]any{"type": "integer"},
+				},
+			}},
+		})
+		res := ValidateTemplate(spec, hooks)
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, "nodes[0].attributes")
 	})
 }
 
@@ -2362,41 +2343,6 @@ func TestValidateMessageSubstitutionRef_Error_NamedFieldAgainstEmptyBody(t *test
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[receiver].attributes.schema (substitution ref)")
-}
-
-func TestBuildSubscriptionEdges_ImplicitFromMessageRef(t *testing.T) {
-	tmpl := TemplateSpec{
-		Messages: []MessageSchema{
-			{Type: "ping/recheck", BodySchema: []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`)},
-		},
-		Nodes: []TemplateNodeDef{
-			{Type: "receiver", Executor: "stub",
-				Attributes: &NodeAttributesDef{Schema: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"reason": map[string]any{
-							"type":   "string",
-							"source": "{{messages.ping/recheck.reason}}",
-						},
-					},
-				}}},
-		},
-	}
-	msgRefs := ExtractMessageRefsFromTemplate(tmpl)
-	edges, err := BuildSubscriptionEdges(tmpl, msgRefs)
-	if err != nil {
-		t.Fatalf("BuildSubscriptionEdges: %v", err)
-	}
-	matched := edges.Match("ping/recheck", signal.TypePath("terminal/success"))
-	if len(matched) != 1 {
-		t.Fatalf("want 1 implicit message-virtual-node edge, got %d", len(matched))
-	}
-	if matched[0].ReceiverNodeType != "receiver" {
-		t.Errorf("ReceiverNodeType: got %q want receiver", matched[0].ReceiverNodeType)
-	}
-	if matched[0].TypePattern != signal.TypePath("terminal/success") {
-		t.Errorf("TypePattern: got %q want terminal/success", matched[0].TypePattern)
-	}
 }
 
 func sendsMessageOKSpec(t *testing.T) *TemplateSpec {

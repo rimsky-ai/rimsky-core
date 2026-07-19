@@ -15,7 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -24,7 +23,7 @@ func TestParkedFrameHold_InstanceStaysNonTerminalUntilFrameEnds(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	resumeAt := time.Now().Add(3 * time.Second)
 	h.Stub.WhenType("worker").
-		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "hold-frame", resumeAt)
+		Park(resumeAt)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-frame-hold-terminal", Version: "1",

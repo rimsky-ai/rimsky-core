@@ -49,16 +49,24 @@ func (f *fakeQueue) PromoteClaimedToRunning(_ context.Context, _ persistence.Tx,
 	return false, nil
 }
 func (f *fakeQueue) Complete(_ context.Context, _ shared.UUID, _ string) error { return nil }
+func (f *fakeQueue) ForceComplete(_ context.Context, _ shared.UUID) error      { return nil }
 func (f *fakeQueue) RemoveForNode(_ context.Context, _ shared.UUID, _ shared.UUID, _ string) error {
 	return nil
 }
 func (f *fakeQueue) RemoveForNodeInTx(_ context.Context, _ shared.UUID, _ shared.UUID, _ string, _ persistence.Tx) error {
 	return nil
 }
+func (f *fakeQueue) ForceRemoveForNode(_ context.Context, _ shared.UUID, _ shared.UUID) error {
+	return nil
+}
+func (f *fakeQueue) ForceRemoveForNodeInTx(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) error {
+	return nil
+}
 func (f *fakeQueue) ListOrphanedClaims(_ context.Context) ([]persistence.DispatchRow, error) {
 	return nil, nil
 }
 func (f *fakeQueue) ReleaseClaim(_ context.Context, _ shared.UUID, _ string) error { return nil }
+func (f *fakeQueue) ForceReleaseClaim(_ context.Context, _ shared.UUID) error      { return nil }
 func (f *fakeQueue) GetClaimedBy(_ context.Context, _ shared.UUID) (persistence.ClaimOwnership, error) {
 	return persistence.ClaimOwnership{Kind: "not_found"}, nil
 }
@@ -91,9 +99,6 @@ func (f *fakeQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ persis
 func (f *fakeQueue) ListParkedReadyForResume(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeQueue) ListParkedOverdue(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
-	return nil, nil
-}
 func (f *fakeQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
@@ -109,7 +114,7 @@ func (f *fakeQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *
 func (f *fakeQueue) SetRetryNoProgressForRunInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ int) error {
 	return nil
 }
-func (f *fakeQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int, _ *int) error {
+func (f *fakeQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int) error {
 	return nil
 }
 func (f *fakeQueue) BumpLastProgressAt(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) (bool, error) {
@@ -128,11 +133,11 @@ func (f *fakeQueue) WriteScratchInTx(_ context.Context, _ persistence.Tx, _ shar
 	return nil
 }
 
-func (f *fakeQueue) CountParkedByReason(_ context.Context) (map[string]int, error) {
-	return nil, nil
+func (f *fakeQueue) CountParked(_ context.Context) (int, error) {
+	return 0, nil
 }
 
-func (f *fakeQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx, _ string) ([]persistence.ParkedDiagnosticRow, error) {
+func (f *fakeQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx) ([]persistence.ParkedDiagnosticRow, error) {
 	return nil, nil
 }
 
@@ -162,8 +167,7 @@ func pcDeployTemplate(ctx context.Context, t *testing.T, b persistence.Tables, n
 	t.Helper()
 	return insertDeployedTemplate(ctx, t, b, nodepkg.TemplateSpec{
 		Name: name, Version: "v1", Description: "test",
-		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
-		Nodes:          []nodepkg.TemplateNodeDef{},
+		Nodes: []nodepkg.TemplateNodeDef{},
 	})
 }
 
@@ -279,8 +283,8 @@ func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, no
         `, msgID, instanceID)
 		pgtest.QueryRowForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_frames
-                (instance_id, triggering_message_id, root_run_scope_id, started_at, frame_timeout_ms)
-            VALUES ($1, $2, $3, now(), 600000)
+                (instance_id, triggering_message_id, root_run_scope_id, started_at)
+            VALUES ($1, $2, $3, now())
             RETURNING frame_id
         `, []any{instanceID, msgID, rootScope}, &frameID)
 		_ = nodeID
@@ -397,7 +401,6 @@ func TestProcessPureCascade_NativeClaimOnly_ReusesStaleRunAcrossTicks(t *testing
 
 	sum := insertDeployedTemplate(ctx, t, f.persist, nodepkg.TemplateSpec{
 		Name: "claim-only", Version: "v1", Description: "test",
-		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
 		Nodes: []nodepkg.TemplateNodeDef{{
 			Type:     "t",
 			Executor: "",
@@ -469,7 +472,6 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 
 	tpl := insertDeployedTemplate(ctx, t, f.persist, nodepkg.TemplateSpec{
 		Name: "alpha-cascade", Version: "v1",
-		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
 		Nodes: []nodepkg.TemplateNodeDef{
 			{Type: "pure-a"},
 			{Type: "worker-b", Executor: "worker",

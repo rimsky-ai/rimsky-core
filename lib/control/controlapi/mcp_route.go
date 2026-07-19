@@ -27,9 +27,6 @@ func (rr *routerRef) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func registerMCPRoute(r chi.Router, deps AppDeps) {
-	if deps.AuthState == nil {
-		return
-	}
 	rr := &routerRef{}
 	deps.AuthState.mcpRouterRef = rr
 	catalog := &mcp.Catalog{

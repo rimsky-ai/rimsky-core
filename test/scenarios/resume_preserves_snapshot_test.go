@@ -13,7 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -25,7 +24,7 @@ func TestResumePreservesSnapshot_DeadlineWakeReusesDispatchTimeBag(t *testing.T)
 
 	h.Stub.WhenType("a").Success(map[string]any{"x": "initial"}, true, "a-first")
 	resumeAt := time.Now().Add(10 * time.Second)
-	h.Stub.WhenType("b").Park(genv1.ParkReason_PARK_REASON_SNOOZE, "deadline", resumeAt)
+	h.Stub.WhenType("b").Park(resumeAt)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "resume-preserves-snapshot", Version: "1",

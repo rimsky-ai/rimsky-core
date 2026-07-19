@@ -252,10 +252,6 @@ func BuildSubscriptionEdges(
 			}
 			out.Insert(s.Node, edge)
 		}
-		for _, ref := range messageRefs[receiverType] {
-			edge := edgeFromMessageRef(receiverType)
-			out.Insert(ref.TypeName, edge)
-		}
 	}
 	subgraphInternal := subgraphInternalNodeTypes(tmpl)
 	for _, def := range tmpl.Nodes {
@@ -313,17 +309,6 @@ func subgraphInternalNodeTypes(tmpl spec.TemplateSpec) map[string]bool {
 		}
 	}
 	return out
-}
-
-// @concept: message-schema
-// @concept: node-subscription
-func edgeFromMessageRef(receiverType string) SubscriptionEdge {
-	return SubscriptionEdge{
-		ReceiverNodeType:     receiverType,
-		TypePattern:          signal.TypePath("terminal/success"),
-		WhenExpr:             nil,
-		ForceUpstreamRefresh: false,
-	}
 }
 
 // @concept: message-schema

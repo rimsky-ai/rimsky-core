@@ -21,10 +21,6 @@ func openRunningFrameForMessage(
 	instanceID, triggeringMessageID uuid.UUID,
 ) (uuid.UUID, error) {
 
-	frameTimeoutMs, err := store.Frames().LookupFrameTimeoutMs(ctx, instanceID, tx)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("frame.openRunningFrameForMessage: %w", err)
-	}
 	// @concept: run-scope
 	rootRunScopeID := shared.UUID(uuid.New())
 	if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -35,5 +31,5 @@ func openRunningFrameForMessage(
 	}); err != nil {
 		return uuid.Nil, fmt.Errorf("frame.openRunningFrameForMessage: create root run scope: %w", err)
 	}
-	return store.Frames().InsertRunningFrame(ctx, instanceID, triggeringMessageID, rootRunScopeID, frameTimeoutMs, tx)
+	return store.Frames().InsertRunningFrame(ctx, instanceID, triggeringMessageID, rootRunScopeID, tx)
 }

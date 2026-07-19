@@ -33,13 +33,13 @@ func cancelInFlightSiblings(
 	policy, err := persistence.UnmarshalAggregationPolicy(parent.AggregationPolicy)
 	if err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("cancelInFlightSiblings: malformed aggregation_policy on parent claim_handle; treating as no cancel_siblings",
+			args.Logger.Warn("cancelInFlightSiblings: malformed aggregation_policy on parent claim_handle; treating as non-strict",
 				"parent_claim_handle_id", parentID.String(),
 				"error", err.Error())
 		}
 		return nil, nil
 	}
-	if policy.Kind != spec.AggregationKindStrict || !policy.CancelSiblings {
+	if policy.Kind != spec.AggregationKindStrict {
 		return nil, nil
 	}
 	siblings, err := args.ClaimHandles.ListChildClaimHandles(ctx, parentID, tx)

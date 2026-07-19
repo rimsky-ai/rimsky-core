@@ -255,6 +255,78 @@ func TestV1Registry(t *testing.T) {
 	}
 }
 
+func TestActionRoutes_PinnedRouteCounts(t *testing.T) {
+	r := BuildV1Registry()
+	wantRouteCount := map[string]int{
+		"instance:read":           2,
+		"instance:create":         1,
+		"instance:terminate":      1,
+		"instance:pause":          1,
+		"instance:resume":         1,
+		"instance:kill":           1,
+		"instance:debug-override": 1,
+		"instance:list-frames":    1,
+		"instance:read-frame":     1,
+		"breakpoint:read":         2,
+		"breakpoint:create":       1,
+		"breakpoint:resume":       1,
+		"breakpoint:delete":       1,
+		"template:read":           2,
+		"template:validate":       1,
+		"template:register":       1,
+		"template:deploy":         1,
+		"template:undeploy":       1,
+		"template:deregister":     1,
+		"tag:read":                1,
+		"tag:create":              1,
+		"tag:set":                 1,
+		"tag:delete":              1,
+		"node:read":               2,
+		"node:reset":              1,
+		"message:send":            1,
+		"message:read":            2,
+		"event:read":              1,
+		"audit:read":              1,
+		"lineage:read":            7,
+		"lineage:prune":           1,
+		"parked-node:read":        1,
+		"waitset:read":            1,
+		"claim-holders:read":      1,
+		"asset:read":              4,
+		"asset:delete":            1,
+		"diagnostics:read":        1,
+		"auth:read":               3,
+		"auth:create":             1,
+		"auth:revoke":             1,
+		"auth:rotate":             1,
+		"observability:read":      1,
+		composeOriginAction:       0,
+		"mcp:read":                2,
+		"service:enroll":          1,
+	}
+	got := r.AllActions()
+	if len(got) != len(wantRouteCount) {
+		t.Fatalf("registry has %d actions, wantRouteCount table has %d; "+
+			"add or remove an entry so a new action or route cannot silently accrete without an explicit pin",
+			len(got), len(wantRouteCount))
+	}
+	for _, action := range got {
+		entry, ok := r.Entry(action)
+		if !ok {
+			t.Fatalf("action %q missing from registry entries", action)
+		}
+		want, ok := wantRouteCount[action]
+		if !ok {
+			t.Errorf("action %q missing from wantRouteCount; pin its expected route count", action)
+			continue
+		}
+		if len(entry.Routes) != want {
+			t.Errorf("action %q has %d routes, want %d (update wantRouteCount deliberately if this is an intended change, not a silently-added alias)",
+				action, len(entry.Routes), want)
+		}
+	}
+}
+
 func TestBuiltinSchemasLockstep(t *testing.T) {
 	schemas := builtinSchemas()
 	for _, e := range v1Actions {

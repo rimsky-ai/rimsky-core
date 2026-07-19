@@ -12,7 +12,7 @@ This concept describes the **receiver-side** template-DSL subscription declared 
 
 A node-subscription declares a target signal (a canonical signal type-path, exact or wildcarded per `concept:signal`) plus an optional payload predicate, plus a required force-upstream-refresh cascade-shape boolean. A sender-side filter selects the specific upstream node-type the subscription reacts to. Subscriptions are declared per node in the template.
 
-The subscription's signal family is one of the families enumerated in `concept:signal` (terminal, transient, attribute, message). To express interest in a specific terminal-tag discriminator, a subscription pairs a wildcarded terminal target with a payload predicate over the signal's tags. The payload predicate carries the discriminator at the payload layer rather than at the type-path leaf.
+A subscription's target is restricted to the settling signal kinds that fire cascade — `terminal/success`, `terminal/error/<class>`, and `attribute/<key>/changed` — per `concept:cascade`'s single firing-gate predicate. Dispatch-internal signals are not subscribable; declaring a subscription against one is rejected at registration. To express interest in a specific terminal-tag discriminator, a subscription pairs a wildcarded terminal target with a payload predicate over the signal's tags. The payload predicate carries the discriminator at the payload layer rather than at the type-path leaf.
 
 A subscription declaration is itself a wake declaration: a matching emission from the sender always stale-marks the receiver and inserts a wait-set row gating its dispatch on the sender. There is no way to declare a subscription that gathers a sender's data into the receiver's substitution context without also waking the receiver.
 
@@ -46,7 +46,7 @@ Does NOT own:
 
 ## Invariants
 
-- The subscription target and payload predicate are validated at registration against the canonical taxonomy (`concept:signal`) and the resolved payload schema.
+- The subscription target and payload predicate are validated at registration against the subscribable subset of the canonical taxonomy (`concept:signal`, gated by `concept:cascade`'s firing-gate predicate) and the resolved payload schema. A target outside that subset is rejected by name.
 - Every substitution ref in a node's attribute schema is matched by at least one subscription entry whose sender and type would deliver the corresponding signal. Templates with uncovered refs are rejected at registration.
 - Every subscription entry carries the force-upstream-refresh cascade-shape flag; entries missing it are rejected at registration.
 - **Self-subscription is first-class in both same-frame and next-frame shapes** — the "drain my own queue" idiom has two equally-valid spellings. The next-frame shape opens a fresh frame for the same node-instance on every matching commit (one frame per queue item, clean frame boundaries per iteration). The same-frame shape keeps iteration inside the current frame (one long-running frame, supervisor picks up each new pending run as it lands). The cascade walker's insert-then-drain-in-same-tx pattern makes the same-frame shape safe: the new pending self-run's wait-set blocker (keyed on the just-committed run) is drained at the end of the terminal-complete handler in the same transaction, before the supervisor sees it. The cascade stale-mark does not touch the per-instance node row's state — it only inserts a new run row and re-stamps the frame reference — so the just-committed fresh state survives intact.

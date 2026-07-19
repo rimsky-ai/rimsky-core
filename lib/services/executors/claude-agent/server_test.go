@@ -234,14 +234,15 @@ func TestOutcomeToCallbackBodyShapes(t *testing.T) {
 
 	park := OutcomeToCallbackBody(AgentOutcome{
 		Kind:         OutcomeParkRequested,
-		Reason:       "snooze",
-		ReasonNote:   "later",
 		ResumeAt:     &resumeAt,
 		SessionToken: "sess-1",
 	})
 	parkBody := park["park"].(map[string]any)
-	if parkBody["reason"] != "snooze" || parkBody["scratch"] != SessionTokenToScratchBase64("sess-1") {
+	if parkBody["scratch"] != SessionTokenToScratchBase64("sess-1") {
 		t.Fatalf("park body = %v", park)
+	}
+	if _, present := parkBody["reason"]; present {
+		t.Fatalf("park body must not carry the retired reason field: %v", park)
 	}
 	if parkBody["resume_at"] != "2026-07-02T12:00:00Z" {
 		t.Fatalf("resume_at = %v", parkBody["resume_at"])

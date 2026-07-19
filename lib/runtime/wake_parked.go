@@ -103,7 +103,6 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 			Payload: map[string]any{
 				"resume_reason": string(reason),
 				"supervisor_id": args.SupervisorID,
-				"prior_reason":  parked.Reason,
 			},
 		}, tx)
 	})

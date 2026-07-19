@@ -49,7 +49,6 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 		harness.WithExistingNetwork(netName),
 		harness.WithRimskyAlias(rimskyAlias),
 		harness.WithPublisher(objectStorePublisherName, sensor.Endpoint),
-		harness.WithRefValidationMode("none"),
 	)
 
 	templateID := deployObjectStoreSensorTemplate(t, ep)
@@ -321,9 +320,8 @@ func deployObjectStoreSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 	}
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":             "sensor-object-store-e2e",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "sensor-object-store-e2e",
+			"version": "1",
 			"messages": []map[string]any{
 				{
 					"type": objectStoreMessageType,

@@ -33,16 +33,11 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		    SET claimed_by = NULL,
 		        claimed_at = NULL,
 		        parked_at = ?,
-		        resume_at = ?,
-		        parked_reason = ?,
-		        parked_reason_note = ?,
-		        parked_reason_label = ?
+		        resume_at = ?
 		  WHERE id = ?
 		    AND claimed_by = ?
 		    AND state = 'running'`,
 		formatTime(in.ParkedAt), resumeAt,
-		nullableString(in.Reason), nullableString(in.ReasonNote),
-		nullableString(in.ReasonLabel),
 		in.NodeRunID.String(), in.ExpectedClaimedBy,
 	)
 	if err != nil {
@@ -64,8 +59,7 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 	}
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
-		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
+		        d.parked_at, d.resume_at, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.state = 'parked'
 		    AND d.resume_at IS NOT NULL
@@ -81,64 +75,17 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 	return scanSqliteParkedRows(rows)
 }
 
-func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit int) ([]persistence.ParkedRow, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	rows, err := q.db.QueryContext(ctx,
-		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
-		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
-		   FROM rimsky_node_runs d
-		  WHERE d.state = 'parked'
-		    AND d.max_park_duration_seconds IS NOT NULL
-		    AND d.parked_at IS NOT NULL
-		  ORDER BY d.parked_at ASC
-		  LIMIT ?`,
-		limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite.ListParkedOverdue: %w", err)
-	}
-	defer rows.Close()
-	all, err := scanSqliteParkedRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]persistence.ParkedRow, 0, len(all))
-	for _, r := range all {
-		if r.MaxParkDurationSeconds == nil {
-			continue
-		}
-		deadline := r.ParkedAt.Add(time.Duration(*r.MaxParkDurationSeconds) * time.Second)
-		if deadline.After(now) {
-			continue
-		}
-		if r.ResumeAt != nil && !r.ResumeAt.After(now) {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out, nil
-}
-
-func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
+func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx) ([]persistence.ParkedDiagnosticRow, error) {
 	if tx == nil {
 		return nil, errors.New("sqlite.ListParkedDiagnostic: tx required")
 	}
-	var reasonArg any
-	if reasonFilter != "" {
-		reasonArg = reasonFilter
-	}
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, n.instance_id, d.node_id, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note
+		        d.parked_at, d.resume_at
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.state = 'parked'
-		    AND (? IS NULL OR d.parked_reason = ?)
 		  ORDER BY d.parked_at ASC`,
-		reasonArg, reasonArg,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite.ListParkedDiagnostic: %w", err)
@@ -153,11 +100,9 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 			frameID     sql.NullString
 			parkedAtStr string
 			resumeAtStr sql.NullString
-			reason      sql.NullString
-			reasonNote  sql.NullString
 			nodeID      string
 		)
-		if err := rows.Scan(&dispatchStr, &instID, &nodeID, &frameID, &parkedAtStr, &resumeAtStr, &reason, &reasonNote); err != nil {
+		if err := rows.Scan(&dispatchStr, &instID, &nodeID, &frameID, &parkedAtStr, &resumeAtStr); err != nil {
 			return nil, err
 		}
 		nodeRunID, err := uuid.Parse(dispatchStr)
@@ -184,12 +129,6 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 			}
 			r.ResumeAt = rt
 		}
-		if reason.Valid {
-			r.Reason = reason.String
-		}
-		if reasonNote.Valid {
-			r.ReasonNote = reasonNote.String
-		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -202,8 +141,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
-		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
+		        d.parked_at, d.resume_at, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.node_id = ?
 		    AND d.run_scope_id = ?
@@ -307,20 +245,16 @@ func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persist
 	return nil
 }
 
-func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error {
-	var park, retries any
-	if maxParkDurationSeconds != nil {
-		park = *maxParkDurationSeconds
-	}
+func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, maxRetriesWithoutProgress *int) error {
+	var retries any
 	if maxRetriesWithoutProgress != nil {
 		retries = *maxRetriesWithoutProgress
 	}
 	_, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
-		    SET max_park_duration_seconds = ?,
-		        max_retries_without_progress = ?
+		    SET max_retries_without_progress = ?
 		  WHERE id = ?`,
-		park, retries, nodeRunID.String(),
+		retries, nodeRunID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.UpdateDispatchTuningInTx: %w", err)
@@ -420,15 +354,11 @@ func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 		frameIDStr         string
 		parkedAtStr        string
 		resumeAtStr        sql.NullString
-		reason             sql.NullString
-		reasonNote         sql.NullString
-		maxParkSec         sql.NullInt64
 		consecutiveRetries int
 	)
 	if err := row.Scan(
 		&idStr, &nodeIDStr, &executor, &storesStr, &frameIDStr,
-		&parkedAtStr, &resumeAtStr, &reason, &reasonNote,
-		&maxParkSec, &consecutiveRetries,
+		&parkedAtStr, &resumeAtStr, &consecutiveRetries,
 	); err != nil {
 		return nil, err
 	}
@@ -469,16 +399,6 @@ func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 			return nil, err
 		}
 		out.ResumeAt = &t
-	}
-	if reason.Valid {
-		out.Reason = reason.String
-	}
-	if reasonNote.Valid {
-		out.ReasonNote = reasonNote.String
-	}
-	if maxParkSec.Valid {
-		v := int(maxParkSec.Int64)
-		out.MaxParkDurationSeconds = &v
 	}
 	return out, nil
 }

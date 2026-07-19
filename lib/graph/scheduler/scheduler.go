@@ -33,7 +33,6 @@ type Config struct {
 	BlobOrphans             persistence.BlobOrphanTable
 	OrphanBlobSweepInterval time.Duration
 	Metrics                 runtime.MetricsHook
-	MaxParkDuration         map[string]time.Duration
 	// @concept: claim-lifetime
 	// @concept: claim-handle
 	Retention runtime.RetentionConfig
@@ -208,16 +207,12 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 
 	if cfg.SupervisorID != "" {
 		if err := runtime.SweepParkedNodes(ctx, runtime.ParkedSweepArgs{
-			Persist:          cfg.Persist,
-			Queue:            cfg.Queue,
-			Clock:            cfg.Clock,
-			Logger:           log,
-			SupervisorID:     cfg.SupervisorID,
-			ClaimHandles:     cfg.ClaimHandles,
-			AdvisoryLocker:   cfg.AdvisoryLocker,
-			StoreRegistry:    cfg.StoreRegistry,
-			Metrics:          cfg.Metrics,
-			PerReasonMaxPark: cfg.MaxParkDuration,
+			Persist:      cfg.Persist,
+			Queue:        cfg.Queue,
+			Clock:        cfg.Clock,
+			Logger:       log,
+			SupervisorID: cfg.SupervisorID,
+			Metrics:      cfg.Metrics,
 		}); err != nil {
 			log.Warn("tick: SweepParkedNodes failed", "error", err.Error())
 		}

@@ -43,7 +43,6 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 		harness.WithExistingNetwork(netName),
 		harness.WithRimskyAlias(rimskyAlias),
 		harness.WithPublisher(cronPublisherName, sensor.Endpoint),
-		harness.WithRefValidationMode("none"),
 	)
 
 	templateID := deployCronSensorTemplate(t, ep)
@@ -202,9 +201,8 @@ func deployCronSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	}
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":             "sensor-cron-restart",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "sensor-cron-restart",
+			"version": "1",
 			"messages": []map[string]any{
 				{
 					"type": cronMessageType,

@@ -27,7 +27,7 @@ One carve-out sits outside the unified engine but shares the same abandon-opened
 | Completion | Success terminal | Commit | Commit if all completed |
 | Error | Per-class error terminal (give-up or pass paths) or per-class transient retry signal | Abandon on give-up; preserved on retry | Abandon if any failed |
 | Infra | Per-reason infrastructure terminal | Abandon | mark failed + check |
-| Park | Park terminal (snooze or await-callback flavour) | none — claims retained | none — claims retained |
+| Park | Park terminal (time-wake at resume-at) | none — claims retained | none — claims retained |
 | Await-async-callback (transient) | Await-async transient signal | none — no settling verb on first pass | none — callback's eventual terminal drives verb emission |
 | Acquisition failure (pre-dispatch) | Per-class error terminal (producer-declared class else the synthetic acquisition class) | Abandon partial-acquired (via helper — the single carve-out outside the unified engine) | n/a |
 | Verify-before-run race (orphaned-claim bail) | (no signal — admin path) | Abandon (via the unified engine, ownership-bail source: verb then claimant-guarded delete) | n/a |

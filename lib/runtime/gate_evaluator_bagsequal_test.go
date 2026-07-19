@@ -48,7 +48,7 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 	var priorRunFrameID shared.UUID
 
 	tmpl := node.TemplateSpec{
-		Name: "bags-equal-on-demand", Version: "1", FrameTimeoutMs: 600000,
+		Name: "bags-equal-on-demand", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			{
 				Type: "n", Executor: "stub",
@@ -99,7 +99,7 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
+		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

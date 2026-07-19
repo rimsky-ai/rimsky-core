@@ -539,8 +539,6 @@ type ParkedNodeEntry struct {
 	NodeID     string     `json:"node_id"`
 	ParkedAt   time.Time  `json:"parked_at"`
 	ResumeAt   *time.Time `json:"resume_at,omitempty"`
-	Reason     string     `json:"reason,omitempty"`
-	ReasonNote string     `json:"reason_note,omitempty"`
 }
 
 type ParkedNodesResponse struct {

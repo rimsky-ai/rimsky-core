@@ -32,14 +32,15 @@ func TestE2E_ExampleLifecycleSubscriberAgainstRunningRimsky(t *testing.T) {
 	execPort := freeHostPort(t)
 	startStubExecutor(t, execPort)
 
-	subEndpoint := fmt.Sprintf("host.testcontainers.internal:%d", subPort)
+	netName := harness.NewNetwork(ctx, t)
+	subEndpoint := harness.StartHostForwarderOnNetwork(ctx, t, netName, "sub-forward", subPort)
 	execEndpoint := fmt.Sprintf("host.testcontainers.internal:%d", execPort)
 	ep := harness.BringUpRimsky(ctx, t,
-		harness.WithExecutor("example-subscriber", subEndpoint),
-		harness.WithExecutorProtocols("example-subscriber", "lifecycle_subscriber"),
+		harness.WithExistingNetwork(netName),
+		harness.WithClaimProducer("example-subscriber", subEndpoint, "sync"),
+		harness.WithClaimProducerProtocols("example-subscriber", "lifecycle_subscriber"),
 		harness.WithExecutor("stub", execEndpoint),
-		harness.WithHostPortAccess(subPort, execPort),
-		harness.WithRefValidationMode("none"),
+		harness.WithHostPortAccess(execPort),
 	)
 
 	state := &lifecycleState{}
@@ -204,9 +205,8 @@ func exerciseFailureHonoredSynchronouslyLeg(t *testing.T, ep harness.RimskyEndpo
 
 	spec := map[string]any{
 		"spec": map[string]any{
-			"name":             "lifecycle-subscriber-failure-probe",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "lifecycle-subscriber-failure-probe",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",
@@ -256,7 +256,7 @@ type capturedCall struct {
 
 type recordingLifecycleSubscriber struct {
 	genv1.UnimplementedLifecycleSubscriberServer
-	genv1.UnimplementedExecutorServer
+	genv1.UnimplementedClaimProducerServer
 	genv1.UnimplementedExecutorObservabilityServer
 
 	delegate *Subscriber
@@ -406,26 +406,22 @@ func (r *recordingLifecycleSubscriber) OnRunScopeTerminal(ctx context.Context, r
 	return r.delegate.OnRunScopeTerminal(ctx, req)
 }
 
-func (r *recordingLifecycleSubscriber) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
-	return &genv1.ObservabilityCapabilities{
-		SupportsTraceGet:              false,
-		SupportsTraceStream:           false,
-		RetentionAfterTerminalSeconds: 0,
-		ExpectedAttributesSchema:      []byte(`{"type":"object"}`),
+func (r *recordingLifecycleSubscriber) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
+	return &genv1.CapabilitiesResponse{
+		WriteSemanticsAllowed: []genv1.WriteSemantics{genv1.WriteSemantics_WRITE_SEMANTICS_SYNC},
 	}, nil
 }
 
 func startRecordingLifecycleSubscriber(t *testing.T, port int) *recordingLifecycleSubscriber {
 	t.Helper()
-	lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	lis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		t.Fatalf("listen %d: %v", port, err)
 	}
 	srv := grpc.NewServer()
 	rec := newRecordingLifecycleSubscriber()
 	genv1.RegisterLifecycleSubscriberServer(srv, rec)
-	genv1.RegisterExecutorServer(srv, rec)
-	genv1.RegisterExecutorObservabilityServer(srv, rec)
+	genv1.RegisterClaimProducerServer(srv, rec)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 
@@ -538,9 +534,8 @@ func registerLifecycleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	t.Helper()
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":             "lifecycle-subscriber-walkthrough",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "lifecycle-subscriber-walkthrough",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",

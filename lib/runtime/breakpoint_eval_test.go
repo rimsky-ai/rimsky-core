@@ -30,9 +30,8 @@ func seedBreakpointEvalFixture(t *testing.T, ctx context.Context, tables persist
 	mainRunScopeID := shared.UUID(uuid.New())
 
 	tmpl := spec.TemplateSpec{
-		Name:           "breakpoint-eval-fixture-" + uuid.NewString(),
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "breakpoint-eval-fixture-" + uuid.NewString(),
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "fixture-node-type", Executor: "test-executor"},
 		},

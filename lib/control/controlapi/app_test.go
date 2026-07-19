@@ -68,6 +68,12 @@ func newHarness(t *testing.T) (*harness, func()) {
 			"worker":      {Transport: "grpc", Endpoint: "localhost:0"},
 			"unused-exec": {Transport: "grpc", Endpoint: "localhost:0"},
 		},
+		AuthState: &AuthState{
+			Tables:   d.Tables(),
+			Registry: BuildV1Registry(),
+			Clock:    shared.SystemClock{},
+			Logger:   capLog,
+		},
 	})
 	srv := httptest.NewServer(app)
 
@@ -451,8 +457,8 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	frameID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, started_at, triggering_message_id, root_run_scope_id, frame_timeout_ms)
-        VALUES ($1, $2, now(), $3, $4, 60000)
+            (frame_id, instance_id, started_at, triggering_message_id, root_run_scope_id)
+        VALUES ($1, $2, now(), $3, $4)
     `, frameID, inst.ID, msgID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
@@ -543,6 +549,13 @@ func TestHealth(t *testing.T) {
 		_, present := counts[k]
 		require.True(t, present, "missing count key %q", k)
 	}
+}
+
+func TestNewApp_RequiresAuthState(t *testing.T) {
+	t.Parallel()
+	require.Panics(t, func() {
+		NewApp(AppDeps{})
+	}, "NewApp must fail loudly when AppDeps.AuthState is nil rather than serving ungated")
 }
 
 func TestClaimHoldersRoute_EmptyList(t *testing.T) {

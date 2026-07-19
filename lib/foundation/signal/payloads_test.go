@@ -39,29 +39,12 @@ func TestPayloads_RoundTrip(t *testing.T) {
 		}
 	})
 
-	t.Run("TransientParkSnoozePayload", func(t *testing.T) {
-		in := TransientParkSnoozePayload{
-			ResumeAt:          time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC),
-			ParkedReasonLabel: "wait",
-			ParkedReasonNote:  "ten min",
-			Tags:              []string{"rate_limited"},
+	t.Run("TransientParkPayload", func(t *testing.T) {
+		in := TransientParkPayload{
+			ResumeAt: time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC),
+			Tags:     []string{"rate_limited"},
 		}
-		var out TransientParkSnoozePayload
-		roundTrip(t, in, &out)
-		if !reflect.DeepEqual(in, out) {
-			t.Fatalf("round-trip mismatch: in=%+v out=%+v", in, out)
-		}
-	})
-
-	t.Run("TransientParkAwaitCallbackPayload", func(t *testing.T) {
-		ts := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
-		in := TransientParkAwaitCallbackPayload{
-			ResumeAt:          &ts,
-			ParkedReasonLabel: "wait",
-			ParkedReasonNote:  "callback",
-			Tags:              []string{"awaiting_external"},
-		}
-		var out TransientParkAwaitCallbackPayload
+		var out TransientParkPayload
 		roundTrip(t, in, &out)
 		if !reflect.DeepEqual(in, out) {
 			t.Fatalf("round-trip mismatch: in=%+v out=%+v", in, out)
@@ -144,8 +127,9 @@ func TestPayloadSchemaForType(t *testing.T) {
 		{"terminal/success", reflect.TypeOf(TerminalSuccessPayload{}), true},
 		{"terminal/error/http/timeout", reflect.TypeOf(TerminalErrorPayload{}), true},
 		{"terminal/error/foo", reflect.TypeOf(TerminalErrorPayload{}), true},
-		{"transient/park/snooze", reflect.TypeOf(TransientParkSnoozePayload{}), true},
-		{"transient/park/await_callback", reflect.TypeOf(TransientParkAwaitCallbackPayload{}), true},
+		{"transient/park", reflect.TypeOf(TransientParkPayload{}), true},
+		{"transient/park/snooze", nil, false},
+		{"transient/park/await_callback", nil, false},
 		{"terminal/infra/heartbeat_lost", nil, false},
 		{"terminal/park/snooze", nil, false},
 		{"transient/retry/3/agent/rate_limited", reflect.TypeOf(TransientRetryPayload{}), true},

@@ -49,7 +49,6 @@ var (
 	ReasonAutoTerminalAbandon = TransitionReason{Kind: "auto_terminal_abandon"}
 
 	ReasonDeadlineResume = TransitionReason{Kind: "deadline_resume"}
-	ReasonParkTimeout    = TransitionReason{Kind: "park_timeout"}
 
 	ReasonChildTransitioned = TransitionReason{Kind: "child_transitioned"}
 
@@ -115,8 +114,6 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 		switch reason.Kind {
 		case "deadline_resume":
 			return NodeStateStale, nil
-		case "park_timeout":
-			return NodeStateFailed, nil
 		case "instance_killed":
 			return NodeStateFailed, nil
 		}

@@ -64,8 +64,8 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, frame_timeout_ms, started_at)
-		 VALUES (?, ?, ?, ?, 60000, datetime('now'))`,
+		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at)
+		 VALUES (?, ?, ?, ?, datetime('now'))`,
 		frameID, instanceID, msgID, scopeID,
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)

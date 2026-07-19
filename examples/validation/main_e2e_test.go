@@ -31,7 +31,6 @@ func TestE2E_ExampleValidationAgainstRunningRimsky(t *testing.T) {
 		harness.WithExecutor("exec-stub", stubEndpoint),
 		harness.WithClaimProducer("validator", valEndpoint, "read_only"),
 		harness.WithClaimProducerProtocols("validator", "validation"),
-		harness.WithRefValidationMode("none"),
 	)
 
 	t.Run("Error_severity_finding_blocks_registration", func(t *testing.T) {
@@ -139,9 +138,8 @@ func exerciseAcceptCaseLeg(t *testing.T, ep harness.RimskyEndpoint) {
 
 func validatedTemplate(name, selector string) map[string]any {
 	return map[string]any{
-		"name":             name,
-		"version":          "1",
-		"frame_timeout_ms": 600000,
+		"name":    name,
+		"version": "1",
 		"nodes": []map[string]any{
 			{
 				"type":     "worker",

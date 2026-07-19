@@ -21,7 +21,6 @@ type frameRow struct {
 	TriggeringMessageID uuid.UUID
 	StartedAt           *time.Time
 	EndedAt             *time.Time
-	FrameTimeoutMs      int64
 }
 
 func listFrames(t *testing.T, h *scenario.Harness, instanceID shared.UUID) []frameRow {
@@ -34,7 +33,7 @@ func listFrames(t *testing.T, h *scenario.Harness, instanceID shared.UUID) []fra
 		           WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
 		           ELSE 'completed'
 		       END,
-		       f.triggering_message_id, f.started_at, f.ended_at, f.frame_timeout_ms
+		       f.triggering_message_id, f.started_at, f.ended_at
 		FROM rimsky_frames f
 		WHERE f.instance_id = $1
 		ORDER BY f.started_at ASC
@@ -42,7 +41,7 @@ func listFrames(t *testing.T, h *scenario.Harness, instanceID shared.UUID) []fra
 		var r frameRow
 		if err := scan(
 			&r.FrameID, &r.InstanceID, &r.State, &r.TriggeringMessageID,
-			&r.StartedAt, &r.EndedAt, &r.FrameTimeoutMs,
+			&r.StartedAt, &r.EndedAt,
 		); err != nil {
 			return err
 		}

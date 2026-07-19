@@ -26,9 +26,8 @@ func TestHandler_GetInstance_CascadeGraphIncludesEdges(t *testing.T) {
 	ctx := context.Background()
 
 	tmplSpec := spec.TemplateSpec{
-		Name:           "cascade-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "cascade-fixture",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "upstream", Executor: "test-executor"},
 			{Type: "downstream", Executor: "test-executor", Subscribes: []spec.SubscriptionEntry{

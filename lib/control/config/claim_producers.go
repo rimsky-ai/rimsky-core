@@ -21,7 +21,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
@@ -142,10 +141,8 @@ type RimskyConfig struct {
 	NamedLocks             locks.NamedLocksConfig
 	Executors              ExecutorsConfig
 	Publishers             RemotePublishersConfig
-	MaxParkDuration        map[string]time.Duration
 	Retention              runtime.RetentionConfig
 	LateBindServiceProxies map[string]string
-	RefValidationMode      node.RefValidationMode
 	PeerAuth               string
 }
 
@@ -157,19 +154,6 @@ func ParsePeerAuth(raw string) (string, error) {
 		return peer.PeerAuthMTLS, nil
 	default:
 		return "", fmt.Errorf("peer_auth: unknown value %q (one of: none, mtls)", raw)
-	}
-}
-
-func ParseRefValidationMode(raw string) (node.RefValidationMode, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "all":
-		return node.RefValidateAll, nil
-	case "available":
-		return node.RefValidateAvailable, nil
-	case "none":
-		return node.RefValidateNone, nil
-	default:
-		return node.RefValidateAll, fmt.Errorf("ref_validation_mode: unknown value %q (one of: all, available, none)", raw)
 	}
 }
 
@@ -237,27 +221,31 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		NamedLocks             map[string]locks.NamedLockConfig  `yaml:"named_locks"`
 		Executors              map[string]yamlExecutorEntry      `yaml:"executors"`
 		Publishers             map[string]yamlPublisherEntry     `yaml:"publishers"`
-		MaxParkDuration        map[string]time.Duration          `yaml:"max_park_duration"`
 		Retention              *yamlRetention                    `yaml:"retention"`
 		LateBindServiceProxies map[string]string                 `yaml:"late_bind_service_proxies"`
 		PeerAuth               string                            `yaml:"peer_auth"`
-		Templates              struct {
-			RefValidationMode string `yaml:"ref_validation_mode"`
-		} `yaml:"templates"`
+		RetiredTemplatesKey    map[string]any                    `yaml:"templates"`
+		RetiredMaxParkKey      map[string]any                    `yaml:"max_park_duration"`
 	}
 	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
 		return RimskyConfig{}, fmt.Errorf("parse rimsky config %q: %w", path, err)
 	}
 	if len(wrapper.RetiredStoresKey) > 0 {
-		return RimskyConfig{}, fmt.Errorf("rimsky config %q: unknown config key `stores`; rename to `claim_producers` (the `stores:` alias is no longer accepted)", path)
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: unknown config key `stores`", path)
+	}
+	if len(wrapper.RetiredTemplatesKey) > 0 {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: unknown config key `templates`", path)
+	}
+	if len(wrapper.RetiredMaxParkKey) > 0 {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: unknown config key `max_park_duration`", path)
 	}
 	rawProducers := wrapper.ClaimProducers
 	for name, e := range rawProducers {
 		if e.LegacyWriteSemantics != "" {
-			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: the `write_semantics:` single-value shortcut is no longer accepted; use `write_semantics_allowed: [<value>]`", path, name)
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: unknown key `write_semantics`", path, name)
 		}
 		if len(e.LegacyWriteSemanticsEnvelope) > 0 {
-			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: `write_semantics_envelope` is no longer accepted; rename it to `write_semantics_allowed`", path, name)
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: unknown key `write_semantics_envelope`", path, name)
 		}
 	}
 	stores := RemoteClaimProducersConfig{ClaimProducers: make(map[string]ClaimProducerEntry, len(rawProducers))}
@@ -396,22 +384,9 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: persistence.blob: %w", path, err)
 	}
 
-	if err := validateMaxParkDurationKeys(wrapper.MaxParkDuration); err != nil {
-		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
-	}
-
 	retentionCfg, err := parseRetention(wrapper.Retention)
 	if err != nil {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
-	}
-
-	refModeRaw := wrapper.Templates.RefValidationMode
-	if envMode := os.Getenv("RIMSKY_REF_VALIDATION_MODE"); envMode != "" {
-		refModeRaw = envMode
-	}
-	refMode, err := ParseRefValidationMode(refModeRaw)
-	if err != nil {
-		return RimskyConfig{}, fmt.Errorf("rimsky config %q: templates.%w", path, err)
 	}
 
 	peerAuth, err := ParsePeerAuth(wrapper.PeerAuth)
@@ -431,10 +406,8 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		NamedLocks:             locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
 		Executors:              executors,
 		Publishers:             publishersCfg,
-		MaxParkDuration:        wrapper.MaxParkDuration,
 		Retention:              retentionCfg,
 		LateBindServiceProxies: wrapper.LateBindServiceProxies,
-		RefValidationMode:      refMode,
 		PeerAuth:               peerAuth,
 	}, nil
 }
@@ -481,20 +454,6 @@ func parseRetention(in *yamlRetention) (runtime.RetentionConfig, error) {
 		out.MessageIdempotenciesTrailing = *in.MessageIdempotenciesTrailing
 	}
 	return out, nil
-}
-
-func validateMaxParkDurationKeys(m map[string]time.Duration) error {
-	for k, v := range m {
-		switch k {
-		case "await_callback", "snooze":
-		default:
-			return fmt.Errorf("max_park_duration: unknown reason key %q (one of: await_callback, snooze)", k)
-		}
-		if v < 0 {
-			return fmt.Errorf("max_park_duration[%q]: duration must be non-negative", k)
-		}
-	}
-	return nil
 }
 
 func parseAllowed(name string, allowed []string) ([]claimproducer.WriteSemantics, error) {

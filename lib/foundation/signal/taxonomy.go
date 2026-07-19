@@ -12,8 +12,7 @@ import (
 var canonicalEmitPatterns = []string{
 	"terminal/success",
 	"terminal/error/*",
-	"transient/park/snooze",
-	"transient/park/await_callback",
+	"transient/park",
 	"transient/retry/*",
 	"transient/infra/*",
 	"transient/release_and_requeue/*",
@@ -21,14 +20,25 @@ var canonicalEmitPatterns = []string{
 	"attribute/*/changed",
 }
 
-var canonicalSubscriptionPatterns = []string{
-	"terminal/success",
-	"terminal/error/*",
-	"transient/retry/*",
-	"transient/infra/*",
-	"transient/release_and_requeue/*",
-	"transient/await_async",
-	"attribute/*/changed",
+var canonicalSubscriptionPatterns = derivedSubscriptionPatterns()
+
+func derivedSubscriptionPatterns() []string {
+	out := make([]string, 0, len(canonicalEmitPatterns))
+	for _, p := range canonicalEmitPatterns {
+		if ShouldCascade(TypePath(p)) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func ShouldCascade(t TypePath) bool {
+	switch t.TopLevel() {
+	case KindTerminal, KindAttribute:
+		return true
+	default:
+		return false
+	}
 }
 
 func ValidateTypePath(t TypePath) error {
@@ -53,7 +63,7 @@ func ValidateSubscriptionType(t TypePath) error {
 	}
 	if isExplicitParkSubscription(s) {
 		return fmt.Errorf(
-			"invalid subscription type: %q (transient/park/* signals are audit-only — "+
+			"invalid subscription type: %q (the transient/park signal is audit-only — "+
 				"subscribers cannot fire on park settles; subscribe to terminal/success or "+
 				"terminal/error/<class> for the eventual run-terminating settlement)", s)
 	}
@@ -65,8 +75,7 @@ func ValidateSubscriptionType(t TypePath) error {
 
 func isExplicitParkSubscription(s string) bool {
 	switch s {
-	case "transient/park/snooze",
-		"transient/park/await_callback",
+	case "transient/park",
 		"transient/park/*":
 		return true
 	}

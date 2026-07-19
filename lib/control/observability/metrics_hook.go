@@ -63,8 +63,8 @@ func (h *RegistryHook) SetNodesByState(state string, count float64) {
 	h.reg.NodesByState.WithLabelValues(state).Set(count)
 }
 
-func (h *RegistryHook) SetParkedByReason(reason string, count float64) {
-	h.reg.ParkedByReason.WithLabelValues(reason).Set(count)
+func (h *RegistryHook) SetParkedNodes(count float64) {
+	h.reg.ParkedNodes.Set(count)
 }
 
 func (h *RegistryHook) SetHeldFrames(count float64) {
@@ -119,12 +119,10 @@ func (h *RegistryHook) refreshGauges(ctx context.Context, persist persistence.Ta
 	}); err != nil {
 		log.Debug("metrics gauge refresh: Nodes.CountByState failed", "error", err.Error())
 	}
-	if reasons, err := queue.CountParkedByReason(ctx); err == nil {
-		for reason, n := range reasons {
-			h.SetParkedByReason(reason, float64(n))
-		}
+	if n, err := queue.CountParked(ctx); err == nil {
+		h.SetParkedNodes(float64(n))
 	} else {
-		log.Debug("metrics gauge refresh: CountParkedByReason failed", "error", err.Error())
+		log.Debug("metrics gauge refresh: CountParked failed", "error", err.Error())
 	}
 	if err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		n, err := persist.Frames().CountHeldFrames(ctx, tx)

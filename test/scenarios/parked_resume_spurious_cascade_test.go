@@ -15,7 +15,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -26,7 +25,7 @@ func TestParkedResumeDoesNotSpuriouslyCascadeSuccessSubscriberOnError(t *testing
 
 	resumeAt := time.Now().Add(8 * time.Second)
 	h.Stub.WhenType("worker").
-		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "rate_limit", resumeAt)
+		Park(resumeAt)
 	h.Stub.WhenType("downstream").Success(map[string]any{}, true, "must-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{

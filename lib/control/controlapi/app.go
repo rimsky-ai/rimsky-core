@@ -40,8 +40,6 @@ type AppDeps struct {
 
 	StoreDeclaredErrorClasses func(storeName string) (declaredErrorClasses []string, ok bool)
 
-	RefValidationMode node.RefValidationMode
-
 	Metrics runtime.MetricsHook
 
 	Publishers runtime.PublisherRegistry
@@ -71,6 +69,10 @@ type ExecutorEntry struct {
 }
 
 func NewApp(deps AppDeps) http.Handler {
+	if deps.AuthState == nil {
+		panic("controlapi: NewApp requires AppDeps.AuthState; construct one (anonymous-mode is the zero-config case) rather than serving ungated")
+	}
+
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.RequestID)
@@ -81,9 +83,7 @@ func NewApp(deps AppDeps) http.Handler {
 		registerHealthRoutes(v1, deps)
 
 		v1.Group(func(rr chi.Router) {
-			if deps.AuthState != nil {
-				rr.Use(deps.AuthState.IdentityResolver())
-			}
+			rr.Use(deps.AuthState.IdentityResolver())
 
 			if deps.Observability != nil {
 				rr.Group(func(obs chi.Router) {
@@ -93,11 +93,7 @@ func NewApp(deps AppDeps) http.Handler {
 							next.ServeHTTP(w, req)
 						})
 					})
-					if deps.AuthState != nil {
-						obs.Method("GET", "/observability/*", deps.AuthState.gateByAction("observability:read", deps.AuthState.observabilityWrapper(deps.Observability)))
-					} else {
-						obs.Route("/observability", deps.Observability)
-					}
+					obs.Method("GET", "/observability/*", deps.AuthState.gateByAction("observability:read", deps.AuthState.observabilityWrapper(deps.Observability)))
 				})
 			}
 
@@ -131,7 +127,7 @@ func NewApp(deps AppDeps) http.Handler {
 		})
 	})
 
-	if deps.AuthState != nil && deps.AuthState.mcpRouterRef != nil {
+	if deps.AuthState.mcpRouterRef != nil {
 		deps.AuthState.mcpRouterRef.h = r
 	}
 

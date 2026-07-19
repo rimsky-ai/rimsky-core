@@ -17,7 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func seedRunningNodeForParkFixture(t *testing.T) (RunArgs, *acquisition, persistence.Tables) {
@@ -44,9 +43,8 @@ func seedRunningNodeForParkFixture(t *testing.T) (RunArgs, *acquisition, persist
 	var nodeRunID shared.UUID
 
 	tmpl := spec.TemplateSpec{
-		Name:           "park-spill-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "park-spill-fixture",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "parker", Executor: "test-executor"},
 		},
@@ -80,7 +78,7 @@ func seedRunningNodeForParkFixture(t *testing.T) (RunArgs, *acquisition, persist
 		}); err != nil {
 			return err
 		}
-		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
+		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}
@@ -165,9 +163,9 @@ func TestApplyTerminalPark_OverThresholdScratchSpillsThroughParkedPayload(t *tes
 
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := applyTerminalPark(ctx, args, acq, terminalEvent{
-			Kind:       terminalKindPark,
-			ParkReason: genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK,
-			Scratch:    scratch,
+			Kind:         terminalKindPark,
+			ParkResumeAt: time.Now().Add(time.Hour),
+			Scratch:      scratch,
 		}, tx)
 		return err
 	}); err != nil {
@@ -216,9 +214,9 @@ func TestApplyTerminalPark_AtOrBelowThresholdScratchStaysInline(t *testing.T) {
 
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := applyTerminalPark(ctx, args, acq, terminalEvent{
-			Kind:       terminalKindPark,
-			ParkReason: genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK,
-			Scratch:    scratch,
+			Kind:         terminalKindPark,
+			ParkResumeAt: time.Now().Add(time.Hour),
+			Scratch:      scratch,
 		}, tx)
 		return err
 	}); err != nil {

@@ -246,12 +246,12 @@ func applyTerminalCompleteSubgraphCaller(
 func applyTerminalCompleteSubgraphExit(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	merged map[string]any, tx persistence.Tx,
-) error {
+) (postCommitFn, error) {
 	var wb []byte
 	if len(merged) > 0 {
 		encoded, err := json.Marshal(merged)
 		if err != nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphExit: encode writeback: %w", err)
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphExit: encode writeback: %w", err)
 		}
 		wb = encoded
 	}

@@ -277,17 +277,18 @@ func (q *queueImpl) PromoteClaimedToRunning(
 }
 
 func (q *queueImpl) Complete(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error {
-	if expectedClaimedBy != "" {
-		_, err := q.pool.Exec(ctx,
-			`UPDATE rimsky_node_runs
-			    SET claimed_by = NULL,
-			        active_terminal_at = NOW()
-			  WHERE id = $1
-			    AND claimed_by = $2`,
-			nodeRunID, expectedClaimedBy,
-		)
-		return err
-	}
+	_, err := q.pool.Exec(ctx,
+		`UPDATE rimsky_node_runs
+		    SET claimed_by = NULL,
+		        active_terminal_at = NOW()
+		  WHERE id = $1
+		    AND claimed_by = $2`,
+		nodeRunID, expectedClaimedBy,
+	)
+	return err
+}
+
+func (q *queueImpl) ForceComplete(ctx context.Context, nodeRunID shared.UUID) error {
 	_, err := q.pool.Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL,
@@ -304,18 +305,23 @@ func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, runSc
 
 // @concept: fan-out
 func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
-	if expectedClaimedBy != "" {
-		_, err := q.q(tx).Exec(ctx,
-			`UPDATE rimsky_node_runs
-			    SET claimed_by = NULL,
-			        active_terminal_at = NOW()
-			  WHERE node_id = $1
-			    AND run_scope_id = $2
-			    AND claimed_by = $3`,
-			nodeID, runScopeID, expectedClaimedBy,
-		)
-		return err
-	}
+	_, err := q.q(tx).Exec(ctx,
+		`UPDATE rimsky_node_runs
+		    SET claimed_by = NULL,
+		        active_terminal_at = NOW()
+		  WHERE node_id = $1
+		    AND run_scope_id = $2
+		    AND claimed_by = $3`,
+		nodeID, runScopeID, expectedClaimedBy,
+	)
+	return err
+}
+
+func (q *queueImpl) ForceRemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) error {
+	return q.ForceRemoveForNodeInTx(ctx, nodeID, runScopeID, nil)
+}
+
+func (q *queueImpl) ForceRemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx persistence.Tx) error {
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL,
@@ -368,15 +374,16 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 }
 
 func (q *queueImpl) ReleaseClaim(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error {
-	if expectedClaimedBy != "" {
-		_, err := q.pool.Exec(ctx,
-			`UPDATE rimsky_node_runs
-			    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
-			  WHERE id = $1 AND claimed_by = $2`,
-			nodeRunID, expectedClaimedBy,
-		)
-		return err
-	}
+	_, err := q.pool.Exec(ctx,
+		`UPDATE rimsky_node_runs
+		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
+		  WHERE id = $1 AND claimed_by = $2`,
+		nodeRunID, expectedClaimedBy,
+	)
+	return err
+}
+
+func (q *queueImpl) ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID) error {
 	_, err := q.pool.Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
@@ -625,26 +632,16 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 	return n, nil
 }
 
-func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, error) {
-	rows, err := q.pool.Query(ctx,
-		`SELECT COALESCE(parked_reason, ''), COUNT(*)
+func (q *queueImpl) CountParked(ctx context.Context) (int, error) {
+	var n int
+	err := q.pool.QueryRow(ctx,
+		`SELECT COUNT(*)
 		   FROM rimsky_node_runs
-		  WHERE state = 'parked'
-		  GROUP BY COALESCE(parked_reason, '')`)
+		  WHERE state = 'parked'`).Scan(&n)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	defer rows.Close()
-	out := map[string]int{}
-	for rows.Next() {
-		var reason string
-		var n int
-		if err := rows.Scan(&reason, &n); err != nil {
-			return nil, err
-		}
-		out[reason] = n
-	}
-	return out, rows.Err()
+	return n, nil
 }
 
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {

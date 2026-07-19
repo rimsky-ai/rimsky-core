@@ -13,7 +13,6 @@ import (
 
 // @concept: executor
 type HandlerContext struct {
-	Scratch *ScratchWriter
 	// @concept: message-sender-node
 	SendCascadeMessage func(ctx context.Context, body []byte) (messageID shared.UUID, replayed bool, err error)
 }

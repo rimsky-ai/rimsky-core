@@ -15,8 +15,10 @@ func SchemaBytes() []byte {
 }
 
 func DeclaredTags() []string {
-	return nil
+	return []string{TagRateLimited}
 }
+
+const TagRateLimited = "rate_limited"
 
 func DeclaredErrorClasses() []string {
 	return errorclasses.Declared()

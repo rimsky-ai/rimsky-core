@@ -21,5 +21,5 @@ The naming — `message_queue_mode`, values `coalesce` and `backlog` — is deli
 ## Alternatives considered
 
 - **Per-message-type coalesce scope.** Rejected for the reasons above: coordination cost without a user need pointing at it, plus legibility loss on the "which prior get dropped" question.
-- **Per-instance override at creation only (no template default).** Rejected as inconsistent with how other queue-shape settings (`frame_timeout_ms`) are declared on the template and inherited by every instance of it. The template is the natural home for the default; instances materialize the value they inherit.
+- **Per-instance override at creation only (no template default).** Rejected as inconsistent with how other queue-shape settings are declared on the template and inherited by every instance of it. The template is the natural home for the default; instances materialize the value they inherit.
 - **Global default without opt-in.** Rejected because the two shapes have different failure modes: `backlog` drops nothing (payload preservation guaranteed), `coalesce` drops arbitrarily many older messages (payload preservation not guaranteed). A default that discards data by default is the wrong shape.

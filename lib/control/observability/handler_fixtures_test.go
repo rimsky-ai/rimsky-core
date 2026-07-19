@@ -73,9 +73,8 @@ func seedInstanceWithNode(t *testing.T, ctx context.Context, store persistence.T
 
 func singleNodeTemplateSpec(nodeType string) spec.TemplateSpec {
 	return spec.TemplateSpec{
-		Name:           "fixture-template",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "fixture-template",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: nodeType, Executor: "test-executor"},
 		},
@@ -97,7 +96,7 @@ func seedFrame(t *testing.T, ctx context.Context, store persistence.Tables, inst
 		}); err != nil {
 			return err
 		}
-		fid, err := store.Frames().InsertRunningFrame(ctx, instanceID, msgID, runScopeID, 600000, tx)
+		fid, err := store.Frames().InsertRunningFrame(ctx, instanceID, msgID, runScopeID, tx)
 		if err != nil {
 			return err
 		}

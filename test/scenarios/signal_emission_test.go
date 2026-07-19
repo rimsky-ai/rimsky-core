@@ -14,7 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -89,15 +88,11 @@ func TestSignalEmission_TerminalErrorWithRetryThenGiveUp(t *testing.T) {
 		"transient/retry should precede terminal/error in time (DESC order: retryIdx > terminalIdx); kinds=%v", kinds)
 }
 
-func TestSignalEmission_ParkSnooze(t *testing.T) {
+func TestSignalEmission_Park(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	resume := time.Now().Add(1 * time.Hour)
-	h.Stub.WhenType("worker").Park(
-		genv1.ParkReason_PARK_REASON_SNOOZE,
-		"sleep-1h",
-		resume,
-	)
+	h.Stub.WhenType("worker").Park(resume)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "signal-park-snooze", Version: "1",
@@ -111,10 +106,10 @@ func TestSignalEmission_ParkSnooze(t *testing.T) {
 	h.WaitForNodeState(n.ID, cascade.NodeStateParked)
 
 	rows := readEventsForNode(t, h, n.ID)
-	require.True(t, hasEventKind(rows, "transient/park/snooze"),
-		"expected one rimsky_events row with kind=transient/park/snooze; got kinds=%v", kindsOf(rows))
+	require.True(t, hasEventKind(rows, "transient/park"),
+		"expected one rimsky_events row with kind=transient/park; got kinds=%v", kindsOf(rows))
 	for _, e := range rows {
-		if e.KindRaw != "transient/park/snooze" {
+		if e.KindRaw != "transient/park" {
 			continue
 		}
 		require.NotNil(t, e.Payload["resume_at"], "park payload should carry resume_at")
@@ -173,7 +168,7 @@ func TestSignalEmission_TransientParkAuditOnlyNoAttributesDelta(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	resume := time.Now().Add(1 * time.Hour)
 	h.Stub.WhenType("worker").
-		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "sleep-1h", resume).
+		Park(resume).
 		AttributesDelta(map[string]any{"session_token": "abc-123"})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -188,15 +183,15 @@ func TestSignalEmission_TransientParkAuditOnlyNoAttributesDelta(t *testing.T) {
 	h.WaitForNodeState(n.ID, cascade.NodeStateParked)
 
 	rows := readEventsForNode(t, h, n.ID)
-	require.True(t, hasEventKind(rows, "transient/park/snooze"),
-		"expected transient/park/snooze audit row; got kinds=%v", kindsOf(rows))
+	require.True(t, hasEventKind(rows, "transient/park"),
+		"expected transient/park audit row; got kinds=%v", kindsOf(rows))
 	for _, e := range rows {
-		if e.KindRaw != "transient/park/snooze" {
+		if e.KindRaw != "transient/park" {
 			continue
 		}
 		_, hasDelta := e.Payload["attributes_delta"]
 		require.False(t, hasDelta,
-			"transient/park/* signal payload must NOT carry attributes_delta — park is audit-only and the delta is merged to the per-run row directly; payload=%+v",
+			"transient/park signal payload must NOT carry attributes_delta — park is audit-only and the delta is merged to the per-run row directly; payload=%+v",
 			e.Payload)
 		break
 	}

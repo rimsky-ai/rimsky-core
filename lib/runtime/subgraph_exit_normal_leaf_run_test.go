@@ -44,9 +44,8 @@ func TestApplyTerminalComplete_SubgraphExit_EmitsNormalLeafRunRow(t *testing.T) 
 	exitNodeRunID := shared.UUID(uuid.New())
 
 	tmpl := tmplspec.TemplateSpec{
-		Name:           "exit-normal-leaf-run-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "exit-normal-leaf-run-fixture",
+		Version: "1",
 		Nodes: []tmplspec.TemplateNodeDef{
 			{Type: "caller", Delegate: "inner"},
 			{Type: "inner-exit", Executor: "test-executor"},
@@ -85,7 +84,7 @@ func TestApplyTerminalComplete_SubgraphExit_EmitsNormalLeafRunRow(t *testing.T) 
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
+		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

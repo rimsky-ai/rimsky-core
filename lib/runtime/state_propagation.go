@@ -84,20 +84,7 @@ func walkUpwards(
 			return actions, settlements, fmt.Errorf("walkUpwards: list children %s: %w", current, err)
 		}
 		// @concept: signal
-		inputs := make([]ChildState, len(children))
-		for i, c := range children {
-			var sigType *signalpkg.TypePath
-			if c.SettlingSignalType != nil {
-				tp := signalpkg.TypePath(*c.SettlingSignalType)
-				sigType = &tp
-			}
-			inputs[i] = ChildState{
-				State:              c.State,
-				SettlingSignalType: sigType,
-				Changed:            true,
-			}
-		}
-		result := Aggregate(inputs, parent.AggregationPolicy)
+		result := Aggregate(childStatesForAggregate(children), parent.AggregationPolicy)
 		if !result.IsSettled {
 			return actions, settlements, nil
 		}
@@ -106,6 +93,13 @@ func walkUpwards(
 			parentSig = *parent.SettlingSignalType
 		}
 		if parent.State == result.ParentState && parentSig == string(result.ParentSettlingSignalType) {
+			return actions, settlements, nil
+		}
+		if isSettled(parent.State) && parent.State == result.ParentState {
+			newSig := string(result.ParentSettlingSignalType)
+			if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, &newSig); err != nil {
+				return actions, settlements, fmt.Errorf("walkUpwards: correct settled parent %s signal: %w", current, err)
+			}
 			return actions, settlements, nil
 		}
 		if _, err := cascade.NextStateParent(parent.State, cascade.ReasonChildTransitioned); err != nil {

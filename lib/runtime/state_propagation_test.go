@@ -277,7 +277,7 @@ func TestPropagateFromChildState_StrictCancelSiblings(t *testing.T) {
 		NodeID:            newUUID(),
 		FrameID:           frame,
 		RunScopeID:        rootScope,
-		AggregationPolicy: spec.AggregationPolicy{Kind: "strict", CancelSiblings: true},
+		AggregationPolicy: spec.AggregationPolicy{Kind: "strict"},
 	})
 	c1Scope := scopes.makeChildScope(rootScope, root, "a", "main")
 	c2Scope := scopes.makeChildScope(rootScope, root, "b", "main")
@@ -418,7 +418,7 @@ func TestParentSettlementSignal_ParkedStatePanics(t *testing.T) {
 	}()
 	_ = parentSettlementSignal(
 		cascade.NodeStateParked,
-		signalpkg.TypePath("transient/park/await_callback"),
+		signalpkg.TypePath("transient/park"),
 		false,
 	)
 }

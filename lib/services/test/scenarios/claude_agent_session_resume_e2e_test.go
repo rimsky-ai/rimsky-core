@@ -121,9 +121,8 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 func buildSessionResumeTemplate() map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":             "claude-agent-session-resume",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "claude-agent-session-resume",
+			"version": "1",
 			"messages": []map[string]any{
 				{
 					"type": "operator/worker-rerun",

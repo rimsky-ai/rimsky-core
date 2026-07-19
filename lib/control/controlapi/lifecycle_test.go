@@ -281,13 +281,13 @@ func seedClosedFramesWithScopes(ctx context.Context, t *testing.T, f *fanOutFixt
 	pgtest.ExecForTest(ctx, t, f.driver, msgSQL.String(), msgArgs...)
 
 	var frameSQL strings.Builder
-	frameSQL.WriteString("INSERT INTO rimsky_frames(frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, ended_at, last_progress_at, frame_timeout_ms) VALUES ")
+	frameSQL.WriteString("INSERT INTO rimsky_frames(frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, ended_at, last_progress_at) VALUES ")
 	var frameArgs []any
 	for i := 0; i < n; i++ {
 		if i > 0 {
 			frameSQL.WriteString(",")
 		}
-		fmt.Fprintf(&frameSQL, "(gen_random_uuid(),$%d,$%d,$%d,now(),now(),now(),60000)",
+		fmt.Fprintf(&frameSQL, "(gen_random_uuid(),$%d,$%d,$%d,now(),now(),now())",
 			len(frameArgs)+1, len(frameArgs)+2, len(frameArgs)+3)
 		frameArgs = append(frameArgs, instanceID, msgIDs[i], scopeIDs[i])
 	}

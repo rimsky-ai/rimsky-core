@@ -78,16 +78,8 @@ func TestAggregate_StrictAnyFailure(t *testing.T) {
 	if res.ParentSettlingSignalType != signalpkg.TypePath("terminal/error/aggregate/strict_failed") {
 		t.Fatalf("expected strict_failed; got %q", res.ParentSettlingSignalType)
 	}
-	if res.Action != AggregateActionNone {
-		t.Fatalf("expected no action without cancel_siblings; got %v", res.Action)
-	}
-}
-
-func TestAggregate_StrictCancelSiblings(t *testing.T) {
-	children := []ChildState{failure(), running()}
-	res := Aggregate(children, spec.AggregationPolicy{Kind: "strict", CancelSiblings: true})
-	if !res.IsSettled || res.Action != AggregateActionCancelSiblings {
-		t.Fatalf("expected cancel-siblings; got %+v", res)
+	if res.Action != AggregateActionCancelSiblings {
+		t.Fatalf("expected strict to always cancel in-flight siblings on failure; got %v", res.Action)
 	}
 }
 
@@ -119,6 +111,39 @@ func TestAggregate_ThresholdAtMax(t *testing.T) {
 	res := Aggregate(children, spec.AggregationPolicy{Kind: "threshold", MaxFailures: 2})
 	if !res.IsSettled || res.ParentState != cascade.NodeStateFailed {
 		t.Fatalf("expected failed at threshold; got %+v", res)
+	}
+	if res.ParentSettlingSignalType != signalpkg.TypePath("terminal/error/aggregate/threshold_failed") {
+		t.Fatalf("expected threshold_failed; got %q", res.ParentSettlingSignalType)
+	}
+}
+
+func TestAggregate_ThresholdAtFullCount_KeepsRunning(t *testing.T) {
+	children := []ChildState{failure(), running(), success(true)}
+	res := Aggregate(children, spec.AggregationPolicy{Kind: "threshold", MaxFailures: len(children)})
+	if res.IsSettled {
+		t.Fatalf("threshold at full count must not settle while a sibling is still in flight; got %+v", res)
+	}
+	if res.Action != AggregateActionNone {
+		t.Fatalf("threshold never cancels siblings; got %v", res.Action)
+	}
+}
+
+func TestAggregate_ThresholdAtFullCount_PartialSuccessSettlesFresh(t *testing.T) {
+	children := []ChildState{failure(), success(true), success(true)}
+	res := Aggregate(children, spec.AggregationPolicy{Kind: "threshold", MaxFailures: len(children)})
+	if !res.IsSettled || res.ParentState != cascade.NodeStateFresh {
+		t.Fatalf("threshold at full count must accept a partial outcome once every child is terminal; got %+v", res)
+	}
+	if res.Action != AggregateActionNone {
+		t.Fatalf("threshold never cancels siblings; got %v", res.Action)
+	}
+}
+
+func TestAggregate_ThresholdAtFullCount_AllFailedSettlesFailed(t *testing.T) {
+	children := []ChildState{failure(), failure(), failure()}
+	res := Aggregate(children, spec.AggregationPolicy{Kind: "threshold", MaxFailures: len(children)})
+	if !res.IsSettled || res.ParentState != cascade.NodeStateFailed {
+		t.Fatalf("threshold at full count must fail once every child has failed; got %+v", res)
 	}
 	if res.ParentSettlingSignalType != signalpkg.TypePath("terminal/error/aggregate/threshold_failed") {
 		t.Fatalf("expected threshold_failed; got %q", res.ParentSettlingSignalType)

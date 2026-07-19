@@ -753,9 +753,8 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 	}
 
 	tmpl := tmplspec.TemplateSpec{
-		Name:           "carry-forward-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "carry-forward-fixture",
+		Version: "1",
 		Nodes: []tmplspec.TemplateNodeDef{
 			{Type: "stateful-node", Executor: ""},
 			{Type: "caller", Executor: ""},
@@ -806,7 +805,7 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertRunningFrame(ctx, fx.instanceID, msgID, fx.mainScopeID, 600000, tx)
+		frameID, err := tables.Frames().InsertRunningFrame(ctx, fx.instanceID, msgID, fx.mainScopeID, tx)
 		if err != nil {
 			return err
 		}

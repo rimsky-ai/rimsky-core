@@ -127,7 +127,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		fid, err := backend.Frames().InsertRunningFrame(ctx, inst.ID, msgID, mainScopeID, 600000, tx)
+		fid, err := backend.Frames().InsertRunningFrame(ctx, inst.ID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

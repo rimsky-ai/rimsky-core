@@ -124,53 +124,6 @@ func resolveAndSpawn(
 	return &resolved{agent: agent, spawnID: spawnID, scopeID: scopeID}, nil
 }
 
-// @concept: host-agent-proxy
-func resolveAndSpawnByService(
-	ctx context.Context,
-	state *proxyState,
-	fetch instanceFetcher,
-	expectedProtocols []string,
-	instanceID string,
-	runScopeID string,
-	spawnTimeout time.Duration,
-) (*resolved, *resolveError) {
-	if instanceID != "" {
-		return resolveAndSpawn(ctx, state, fetch, expectedProtocols, instanceID, runScopeID, "", spawnTimeout)
-	}
-
-	name, ok := serviceNameFromContext(ctx)
-	if !ok {
-		return nil, &resolveError{class: errClassBindingNotFound, msg: "missing x-rimsky-service-name header"}
-	}
-	resolvedInstanceID, entry, ok := state.lookupInstanceByBinding(name)
-	if !ok {
-		return nil, &resolveError{class: errClassBindingNotFound, msg: fmt.Sprintf("no cached instance binds service %q", name)}
-	}
-	routingKey := resolveOwnerRoutingKey(entry.ownerAPIKeyID)
-	agent, ok := state.lookupAgent(routingKey)
-	if !ok {
-		return nil, &resolveError{class: errClassHostAgentNotConnected, msg: fmt.Sprintf("no agent connected for owner %q", routingKey)}
-	}
-	binding, ok := entry.serviceBindings[name]
-	if !ok {
-		return nil, &resolveError{class: errClassBindingNotFound, msg: fmt.Sprintf("binding %q not in service_bindings", name)}
-	}
-
-	scopeID := runScopeID
-	if scopeID == "" {
-		scopeID = resolvedInstanceID
-	}
-	if spawnID, ok := state.lookupSpawnByRunScopeBinding(scopeID, name); ok {
-		return &resolved{agent: agent, spawnID: spawnID, scopeID: scopeID}, nil
-	}
-	spawnID, rerr := spawnChild(agent, binding, entry, name, scopeID, expectedProtocols, spawnTimeout)
-	if rerr != nil {
-		return nil, rerr
-	}
-	state.recordSpawn(spawnID, agent.apiKeyID, scopeID, name, nil, "")
-	return &resolved{agent: agent, spawnID: spawnID, scopeID: scopeID}, nil
-}
-
 func spawnChild(
 	agent *agentConnection,
 	binding bindingSpec,
@@ -221,45 +174,6 @@ func spawnChild(
 	case <-agent.closed:
 		return "", &resolveError{class: errClassHostAgentDisconnected, msg: "agent disconnected during spawn"}
 	}
-}
-
-// @concept: host-agent-proxy
-func forwardProxyUnary(ctx context.Context, agent *agentConnection, spawnID, protocol, rpcMethod string, payload []byte, timeout time.Duration) ([]byte, *resolveError) {
-	streamID := uuid.NewString()
-	respCh := agent.registerStream(streamID)
-	defer agent.clearStream(streamID)
-
-	if !agent.send(&genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
-		SpawnId:   spawnID,
-		Protocol:  protocol,
-		Payload:   payload,
-		StreamId:  streamID,
-		Kind:      genv1.DispatchFrame_DISPATCH_FRAME_KIND_DATA,
-		RpcMethod: rpcMethod,
-	}}}) {
-		return nil, &resolveError{class: errClassHostAgentDisconnected, msg: "agent disconnected before dispatch"}
-	}
-
-	select {
-	case frame, ok := <-respCh:
-		if !ok {
-			return nil, &resolveError{class: errClassHostAgentDisconnected, msg: "agent disconnected mid-call"}
-		}
-		if frame.GetKind() == genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL {
-			return nil, &resolveError{class: errClassExecutorCrashed, msg: "spawned " + protocol + " cancelled the call"}
-		}
-		return frame.GetPayload(), nil
-	case <-time.After(timeout):
-		return nil, &resolveError{class: errClassExecutorCrashed, msg: protocol + " call timed out"}
-	case <-ctx.Done():
-		return nil, &resolveError{class: errClassExecutorCrashed, msg: "caller context cancelled: " + ctx.Err().Error()}
-	case <-agent.closed:
-		return nil, &resolveError{class: errClassHostAgentDisconnected, msg: "agent disconnected mid-call"}
-	}
-}
-
-func proxyStatus(rerr *resolveError) error {
-	return claimProducerStatus(rerr)
 }
 
 func rewriteCallbackURL(original, agentBase string) string {

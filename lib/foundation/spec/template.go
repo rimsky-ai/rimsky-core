@@ -7,15 +7,14 @@ package spec
 import "encoding/json"
 
 type TemplateSpec struct {
-	Name           string            `yaml:"name" json:"name"`
-	Version        string            `yaml:"version" json:"version"`
-	Description    string            `yaml:"description,omitempty" json:"description,omitempty"`
-	FrameTimeoutMs int64             `yaml:"frame_timeout_ms,omitempty" json:"frame_timeout_ms,omitempty"`
-	Nodes          []TemplateNodeDef `yaml:"nodes,omitempty" json:"nodes,omitempty"`
-	Graphs         []GraphSpec       `yaml:"graphs,omitempty" json:"graphs,omitempty"`
-	Publishers     []PublisherSpec   `yaml:"publishers,omitempty" json:"publishers,omitempty"`
-	ParamsSchema   map[string]any    `yaml:"params_schema,omitempty" json:"params_schema,omitempty"`
-	ParamsRedact   []string          `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
+	Name         string            `yaml:"name" json:"name"`
+	Version      string            `yaml:"version" json:"version"`
+	Description  string            `yaml:"description,omitempty" json:"description,omitempty"`
+	Nodes        []TemplateNodeDef `yaml:"nodes,omitempty" json:"nodes,omitempty"`
+	Graphs       []GraphSpec       `yaml:"graphs,omitempty" json:"graphs,omitempty"`
+	Publishers   []PublisherSpec   `yaml:"publishers,omitempty" json:"publishers,omitempty"`
+	ParamsSchema map[string]any    `yaml:"params_schema,omitempty" json:"params_schema,omitempty"`
+	ParamsRedact []string          `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
 
 	LateBindServices []string `yaml:"late_bind_services,omitempty" json:"late_bind_services,omitempty"`
 
@@ -44,12 +43,6 @@ type TemplateAttributeDefaults struct {
 	ByExecutor map[string]map[string]any `yaml:"by_executor,omitempty" json:"by_executor,omitempty"`
 }
 
-// @concept: frame
-const (
-	FrameTimeoutDefaultMs = int64(600000)
-	FrameTimeoutMinMs     = int64(60000)
-)
-
 type TemplateNodeDef struct {
 	Type string `yaml:"type" json:"type"`
 	// @concept: node
@@ -68,8 +61,6 @@ type TemplateNodeDef struct {
 	//	@concept: node-subscription
 	//	@concept: cascade
 	Subscribes []SubscriptionEntry `yaml:"subscribes,omitempty" json:"subscribes,omitempty"`
-
-	MaxParkDuration string `yaml:"max_park_duration,omitempty" json:"max_park_duration,omitempty"`
 
 	MaxRetries *int `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`
 

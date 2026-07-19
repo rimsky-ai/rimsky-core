@@ -105,7 +105,6 @@ TEMPLATE_BODY='{
   "spec": {
     "name": "subscription-mounting-demo",
     "version": "1",
-    "frame_timeout_ms": 600000,
     "nodes": [
       {
         "type": "reactor",

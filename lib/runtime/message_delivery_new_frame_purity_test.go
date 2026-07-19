@@ -97,7 +97,7 @@ func TestSweepDeliverMessages_NewFrameReceiverRunNeverProbesPriorFrameParkedRow(
 		}); err != nil {
 			return err
 		}
-		fid, err := backend.Frames().InsertRunningFrame(ctx, inst.ID, msgID, mainScopeID, 600000, tx)
+		fid, err := backend.Frames().InsertRunningFrame(ctx, inst.ID, msgID, mainScopeID, tx)
 		frame2ID = fid
 		return err
 	}))

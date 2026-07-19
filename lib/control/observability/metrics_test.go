@@ -24,7 +24,7 @@ func TestMetricsHandler_Smoke(t *testing.T) {
 	m.ClaimAcquisitions.WithLabelValues("filesystem", "rw").Inc()
 	m.NamedLockAcquisitions.WithLabelValues("deploy-mutex", "acquired").Inc()
 	m.NodesByState.WithLabelValues("fresh").Set(0)
-	m.ParkedByReason.WithLabelValues("rate_limit").Set(0)
+	m.ParkedNodes.Set(0)
 	m.HeldFrames.Set(0)
 	m.NodeRunsPending.Set(0)
 	m.DispatchLatencySeconds.WithLabelValues("worker").Observe(0.5)
@@ -55,7 +55,7 @@ func TestMetricsHandler_Smoke(t *testing.T) {
 		"rimsky_claim_acquisitions_total",
 		"rimsky_named_lock_acquisitions_total",
 		"rimsky_nodes_by_state",
-		"rimsky_parked_nodes_by_reason",
+		"rimsky_parked_nodes",
 		"rimsky_held_frames",
 		"rimsky_node_runs_pending",
 		"rimsky_dispatch_latency_seconds",

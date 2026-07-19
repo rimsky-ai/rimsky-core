@@ -10,9 +10,6 @@ package controlapi
 import "github.com/go-chi/chi/v5"
 
 func registerAuthRoutes(r chi.Router, deps AppDeps) {
-	if deps.AuthState == nil {
-		return
-	}
 	r.Post("/auth/keys",
 		deps.AuthState.gateByAction("auth:create", handleCreateKey(deps)))
 	r.Get("/auth/keys",

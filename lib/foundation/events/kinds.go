@@ -120,7 +120,6 @@ var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED: "subgraph_internal_cascade_fired",
 	genv1.OperationalKind_OPERATIONAL_KIND_SUBGRAPH_DISPATCHED:             "subgraph.dispatched",
 	genv1.OperationalKind_OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY:             "subgraph.exit_carry",
-	genv1.OperationalKind_OPERATIONAL_KIND_PARK_TIMEOUT:                    "park_timeout",
 	genv1.OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED:           "parked_resume_started",
 	genv1.OperationalKind_OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED:          "debug.override.applied",
 }
@@ -266,9 +265,6 @@ func KindSubgraphDispatched() Kind {
 }
 func KindSubgraphExitCarry() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY)
-}
-func KindParkTimeout() Kind {
-	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_PARK_TIMEOUT)
 }
 func KindParkedResumeStarted() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED)

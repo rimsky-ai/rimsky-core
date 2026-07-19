@@ -31,9 +31,8 @@ func seedWaitSetParentsPG(
 	sender := uuid.New()
 
 	tmpl := spec.TemplateSpec{
-		Name:           "wait-set-topic-kind-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "wait-set-topic-kind-fixture",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "fixture-node-type", Executor: "test-executor"},
 		},
@@ -68,8 +67,8 @@ func seedWaitSetParentsPG(
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, triggering_message_id, root_run_scope_id,
-		    frame_timeout_ms, started_at)
-		 VALUES ($1, $2, $3, $4, 60000, now())`,
+		    started_at)
+		 VALUES ($1, $2, $3, $4, now())`,
 		frame, instanceID, messageID, mainRunScopeID,
 	)
 	pgtest.ExecForTest(ctx, t, d,

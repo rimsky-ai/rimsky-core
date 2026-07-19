@@ -26,6 +26,8 @@ const (
 	OutcomeParkRequested = "park_requested"
 )
 
+const defaultRateLimitBackoff = 5 * time.Minute
+
 type AgentOutcome struct {
 	Kind            string
 	AttributesDelta map[string]any
@@ -35,7 +37,6 @@ type AgentOutcome struct {
 	Context         any
 	ErrorClass      string
 	Payload         any
-	ReasonNote      string
 	ResumeAt        *time.Time
 	SessionToken    string
 }
@@ -139,31 +140,15 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 	attrs := opts.Attributes
 
 	if attrs["probe_park"] == true {
-		parkReason := "await_callback"
-		if rawReason, present := attrs["park_reason"]; present {
-			s, isString := rawReason.(string)
-			if !isString || (s != "await_callback" && s != "snooze") {
-				encoded, _ := json.Marshal(rawReason)
-				return erroredOutcome("agent/attribute_invalid", map[string]any{
-					"reason": fmt.Sprintf(`park_reason must be one of "await_callback" | "snooze", got %s`, encoded),
-				})
+		t := time.Now().Add(30 * time.Second)
+		if raw, ok := attrs["park_resume_at"].(string); ok && raw != "" {
+			if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+				t = parsed
 			}
-			parkReason = s
-		}
-		reasonNote := ""
-		if note, ok := attrs["park_reason_note"].(string); ok {
-			reasonNote = note
-		}
-		var resumeAt *time.Time
-		if parkReason == "snooze" {
-			t := time.Now().Add(30 * time.Second)
-			resumeAt = &t
 		}
 		return AgentOutcome{
-			Kind:       OutcomeParkRequested,
-			Reason:     parkReason,
-			ReasonNote: reasonNote,
-			ResumeAt:   resumeAt,
+			Kind:     OutcomeParkRequested,
+			ResumeAt: &t,
 		}
 	}
 
@@ -487,24 +472,16 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 			})
 			return nil
 		},
-		OnPark: func(reason string, reasonNote *string, resumeAtISO *string, scheduleTeardown ScheduleTeardown) error {
-			var parsedResumeAt *time.Time
-			if resumeAtISO != nil && *resumeAtISO != "" {
-				if t, err := time.Parse(time.RFC3339, *resumeAtISO); err == nil {
-					parsedResumeAt = &t
-				}
-			}
-			note := ""
-			if reasonNote != nil {
-				note = *reasonNote
+		OnPark: func(resumeAtISO string, scheduleTeardown ScheduleTeardown) error {
+			t, err := time.Parse(time.RFC3339, resumeAtISO)
+			if err != nil {
+				return fmt.Errorf("report_park: resume_at must be an RFC 3339 timestamp, got %q", resumeAtISO)
 			}
 			scheduleTeardown(func() error {
 				teardownCli()
 				state.safeResolve(AgentOutcome{
 					Kind:         OutcomeParkRequested,
-					Reason:       reason,
-					ReasonNote:   note,
-					ResumeAt:     parsedResumeAt,
+					ResumeAt:     &t,
 					SessionToken: opts.SessionID,
 				})
 				return nil
@@ -737,17 +714,17 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 				}))
 				return true
 			}
-			logger.Warn("cli.rate_limit_detected; emitting park_requested",
-				"run_id", opts.SessionID, "exit_code", *exit.ExitCode, "signal", exit.Signal)
-			note := signalRL.Reason
-			if note == "" {
-				note = "claude cli rate-limit detected; resume_at=" + isoOrIndefinite(signalRL.ResumeAt)
+			resumeAt := signalRL.ResumeAt
+			if resumeAt == nil {
+				t := time.Now().Add(defaultRateLimitBackoff)
+				resumeAt = &t
 			}
+			logger.Warn("cli.rate_limit_detected; emitting park_requested",
+				"run_id", opts.SessionID, "exit_code", *exit.ExitCode, "signal", exit.Signal,
+				"resume_at", resumeAt.UTC().Format(time.RFC3339Nano))
 			state.safeResolve(AgentOutcome{
 				Kind:         OutcomeParkRequested,
-				Reason:       "snooze",
-				ReasonNote:   note,
-				ResumeAt:     signalRL.ResumeAt,
+				ResumeAt:     resumeAt,
 				SessionToken: opts.SessionID,
 			})
 			return true
@@ -877,13 +854,6 @@ func exitCodeForLog(result ExitResult) any {
 func isoOrNil(t *time.Time) any {
 	if t == nil {
 		return nil
-	}
-	return t.UTC().Format(time.RFC3339Nano)
-}
-
-func isoOrIndefinite(t *time.Time) string {
-	if t == nil {
-		return "indefinite"
 	}
 	return t.UTC().Format(time.RFC3339Nano)
 }

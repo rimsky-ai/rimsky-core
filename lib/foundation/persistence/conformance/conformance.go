@@ -108,7 +108,7 @@ func Suite(
 		t.Run("RunComplete", func(t *testing.T) { testClaimantGuardRunComplete(t, factory(t)) })
 		t.Run("RunRemoveForNode", func(t *testing.T) { testClaimantGuardRunRemoveForNode(t, factory(t)) })
 		t.Run("RunPark", func(t *testing.T) { testClaimantGuardRunPark(t, factory(t)) })
-		t.Run("RunEmptyClaimantCarveOut", func(t *testing.T) { testClaimantGuardRunEmptyClaimantCarveOut(t, factory(t)) })
+		t.Run("RunForceOverride", func(t *testing.T) { testClaimantGuardRunForceOverride(t, factory(t)) })
 		t.Run("UnguardedMutationCarveOuts", func(t *testing.T) { testClaimantGuardUnguardedMutationCarveOuts(t, factory(t)) })
 	})
 	t.Run("MessageIdempotency", func(t *testing.T) {
@@ -131,7 +131,6 @@ func Suite(
 		t.Run("NoPendingNodes", func(t *testing.T) { testFrameSettlementNoPendingNodes(t, factory(t)) })
 		t.Run("HasFailedNode", func(t *testing.T) { testFrameSettlementHasFailedNode(t, factory(t)) })
 		t.Run("MarkSourceNodeStale", func(t *testing.T) { testFrameSettlementMarkSourceNodeStale(t, factory(t)) })
-		t.Run("StuckFrames", func(t *testing.T) { testFrameSettlementStuckFrames(t, factory(t), rawExec) })
 		t.Run("OrphanDispatches", func(t *testing.T) { testFrameSettlementOrphanDispatches(t, factory(t)) })
 	})
 	t.Run("ClaimHandleQueries", func(t *testing.T) {

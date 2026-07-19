@@ -17,7 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
@@ -386,7 +385,7 @@ func TestInstanceCreate_RequiresDeployedTemplate(t *testing.T) {
 		"instance creation against state='undeployed' must be refused")
 }
 
-func newRefModeHarness(t *testing.T, mode node.RefValidationMode) (*harness, func()) {
+func newConstrainedExecutorHarness(t *testing.T) (*harness, func()) {
 	t.Helper()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -416,7 +415,12 @@ func newRefModeHarness(t *testing.T, mode node.RefValidationMode) (*harness, fun
 			}
 			return nil, nil, nil, false
 		},
-		RefValidationMode: mode,
+		AuthState: &AuthState{
+			Tables:   d.Tables(),
+			Registry: BuildV1Registry(),
+			Clock:    shared.SystemClock{},
+			Logger:   capLog,
+		},
 	})
 	srv := httptest.NewServer(app)
 	h := &harness{srv: srv, driver: d, persist: d.Tables(), stores: reg, logger: capLog}
@@ -461,51 +465,31 @@ func refModeTemplateProvisionedInvalid(name string) map[string]any {
 	}
 }
 
-func TestRegisterTemplate_RefMode(t *testing.T) {
-	t.Run("all: not-provisioned ref rejected with 400 missing-reference", func(t *testing.T) {
-		h, teardown := newRefModeHarness(t, node.RefValidateAll)
+func TestRegisterTemplate_ReferenceValidationStrict(t *testing.T) {
+	t.Run("not-provisioned ref rejected with 400 missing-reference", func(t *testing.T) {
+		h, teardown := newConstrainedExecutorHarness(t)
 		t.Cleanup(teardown)
 
-		body := refModeTemplateNotProvisioned("refmode-all-" + uuid.NewString())
+		body := refModeTemplateNotProvisioned("strict-ghost-" + uuid.NewString())
 		status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 		require.Equal(t, http.StatusBadRequest, status,
-			"mode all must reject a not-yet-provisioned executor reference; body: %v", out)
+			"registration must reject a not-yet-provisioned executor reference; body: %v", out)
 		errs, ok := out["validation_errors"].([]any)
 		require.True(t, ok, "response must carry validation_errors, got: %v", out)
 		require.NotEmpty(t, errs, "validation_errors must name the missing reference")
 	})
 
-	t.Run("available: not-provisioned ref succeeds; provisioned-invalid ref still 400s", func(t *testing.T) {
-		h, teardown := newRefModeHarness(t, node.RefValidateAvailable)
+	t.Run("provisioned-invalid ref rejected with 400 schema violation", func(t *testing.T) {
+		h, teardown := newConstrainedExecutorHarness(t)
 		t.Cleanup(teardown)
 
-		okBody := refModeTemplateNotProvisioned("refmode-avail-ok-" + uuid.NewString())
-		okStatus, okOut := h.httpJSON(t, "POST", "/v1/templates", okBody)
-		require.Equal(t, http.StatusCreated, okStatus,
-			"mode available must accept a not-yet-provisioned executor reference; body: %v", okOut)
-
-		badBody := refModeTemplateProvisionedInvalid("refmode-avail-bad-" + uuid.NewString())
+		badBody := refModeTemplateProvisionedInvalid("strict-invalid-" + uuid.NewString())
 		badStatus, badOut := h.httpJSON(t, "POST", "/v1/templates", badBody)
 		require.Equal(t, http.StatusBadRequest, badStatus,
-			"mode available must still reject a genuinely-invalid provisioned ref; body: %v", badOut)
+			"registration must reject a schema-invalid provisioned ref; body: %v", badOut)
 		errs, ok := badOut["validation_errors"].([]any)
 		require.True(t, ok, "response must carry validation_errors, got: %v", badOut)
 		require.NotEmpty(t, errs, "validation_errors must name the schema violation")
-	})
-
-	t.Run("none: no registration-time reference validation", func(t *testing.T) {
-		h, teardown := newRefModeHarness(t, node.RefValidateNone)
-		t.Cleanup(teardown)
-
-		okBody := refModeTemplateNotProvisioned("refmode-none-ghost-" + uuid.NewString())
-		okStatus, okOut := h.httpJSON(t, "POST", "/v1/templates", okBody)
-		require.Equal(t, http.StatusCreated, okStatus,
-			"mode none must accept a not-yet-provisioned executor reference; body: %v", okOut)
-
-		invalidBody := refModeTemplateProvisionedInvalid("refmode-none-invalid-" + uuid.NewString())
-		invalidStatus, invalidOut := h.httpJSON(t, "POST", "/v1/templates", invalidBody)
-		require.Equal(t, http.StatusCreated, invalidStatus,
-			"mode none must perform no registration-time reference validation; body: %v", invalidOut)
 	})
 }
 

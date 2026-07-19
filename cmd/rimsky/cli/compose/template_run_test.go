@@ -73,7 +73,6 @@ func TestRunTemplateRun_SelfHostDrivesBundledInProcExecutorToTerminal(t *testing
 	specPath := filepath.Join(workDir, "spec.yml")
 	spec := `name: bundled-selfhost-run
 version: "1"
-frame_timeout_ms: 600000
 nodes:
   - type: worker
     executor: http-node
@@ -116,7 +115,6 @@ func TestRunTemplateRun_SelfHostIgnoresSiblingRimskyYML(t *testing.T) {
 	specPath := filepath.Join(workDir, "spec.yml")
 	spec := `name: bundled-selfhost-sibling-ignore
 version: "1"
-frame_timeout_ms: 600000
 nodes:
   - type: worker
     executor: http-node

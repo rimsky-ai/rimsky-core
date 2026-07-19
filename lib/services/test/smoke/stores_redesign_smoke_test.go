@@ -44,9 +44,8 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 
 	templateID := smokeDeployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":             "stores-redesign-smoke",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "stores-redesign-smoke",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "claim-acquirer",

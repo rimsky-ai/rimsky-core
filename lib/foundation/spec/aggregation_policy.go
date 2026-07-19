@@ -16,9 +16,8 @@ const (
 )
 
 type AggregationPolicy struct {
-	Kind           AggregationKind `yaml:"kind" json:"kind"`
-	CancelSiblings bool            `yaml:"cancel_siblings,omitempty" json:"cancel_siblings,omitempty"`
-	MaxFailures    int             `yaml:"max_failures,omitempty" json:"max_failures,omitempty"`
+	Kind        AggregationKind `yaml:"kind" json:"kind"`
+	MaxFailures int             `yaml:"max_failures,omitempty" json:"max_failures,omitempty"`
 }
 
 func (p AggregationPolicy) Validate() error {
@@ -28,16 +27,10 @@ func (p AggregationPolicy) Validate() error {
 			return fmt.Errorf("aggregation_policy: max_failures is only meaningful for kind=threshold")
 		}
 	case AggregationKindThreshold:
-		if p.CancelSiblings {
-			return fmt.Errorf("aggregation_policy: cancel_siblings is only meaningful for kind=strict")
-		}
 		if p.MaxFailures < 1 {
 			return fmt.Errorf("aggregation_policy: kind=threshold requires max_failures >= 1")
 		}
 	case AggregationKindBestEffort, AggregationKindFirst:
-		if p.CancelSiblings {
-			return fmt.Errorf("aggregation_policy: cancel_siblings is only meaningful for kind=strict")
-		}
 		if p.MaxFailures != 0 {
 			return fmt.Errorf("aggregation_policy: max_failures is only meaningful for kind=threshold")
 		}

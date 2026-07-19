@@ -278,36 +278,35 @@ func TestMcpServerUnknownTokenIsError(t *testing.T) {
 	}
 }
 
-func TestMcpServerReportParkTypedReason(t *testing.T) {
+func TestMcpServerReportParkResumeAt(t *testing.T) {
 	handle, client := startTestServer(t)
 	entry := makeEntry("run-1")
-	var gotReason string
-	var gotNote *string
-	entry.OnPark = func(reason string, note *string, resumeAt *string, td ScheduleTeardown) error {
-		gotReason, gotNote = reason, note
+	var gotResumeAt string
+	entry.OnPark = func(resumeAtISO string, td ScheduleTeardown) error {
+		gotResumeAt = resumeAtISO
 		return nil
 	}
 	handle.Registry.Register("tok-1", entry)
 
-	result, rpcErr := client.callTool("report_park", `{"token":"tok-1","reason":"snooze","reason_note":"resting"}`)
+	result, rpcErr := client.callTool("report_park", `{"token":"tok-1","resume_at":"2026-07-19T10:00:00Z"}`)
 	if rpcErr != nil {
 		t.Fatalf("rpc error: %+v", rpcErr)
 	}
 	if client.firstText(result) != `{"status":"accepted"}` {
 		t.Fatalf("ack = %q", client.firstText(result))
 	}
-	if gotReason != "snooze" || gotNote == nil || *gotNote != "resting" {
-		t.Fatalf("park args wrong: %q %v", gotReason, gotNote)
+	if gotResumeAt != "2026-07-19T10:00:00Z" {
+		t.Fatalf("park args wrong: %q", gotResumeAt)
 	}
 }
 
-func TestMcpServerReportParkRejectsUnknownReason(t *testing.T) {
+func TestMcpServerReportParkRejectsMissingResumeAt(t *testing.T) {
 	handle, client := startTestServer(t)
 	handle.Registry.Register("tok-1", makeEntry("run-1"))
-	for _, reason := range []string{"unspecified", "coffee-break", ""} {
-		_, rpcErr := client.callTool("report_park", fmt.Sprintf(`{"token":"tok-1","reason":%q}`, reason))
+	for _, body := range []string{`{"token":"tok-1"}`, `{"token":"tok-1","resume_at":""}`} {
+		_, rpcErr := client.callTool("report_park", body)
 		if rpcErr == nil || rpcErr.Code != -32602 {
-			t.Fatalf("reason %q: expected -32602, got %+v", reason, rpcErr)
+			t.Fatalf("body %q: expected -32602, got %+v", body, rpcErr)
 		}
 	}
 }
@@ -315,7 +314,7 @@ func TestMcpServerReportParkRejectsUnknownReason(t *testing.T) {
 func TestMcpServerReportParkWithoutOnParkHandler(t *testing.T) {
 	handle, client := startTestServer(t)
 	handle.Registry.Register("tok-1", makeEntry("run-1"))
-	result, rpcErr := client.callTool("report_park", `{"token":"tok-1","reason":"await_callback"}`)
+	result, rpcErr := client.callTool("report_park", `{"token":"tok-1","resume_at":"2026-07-19T10:00:00Z"}`)
 	if rpcErr != nil {
 		t.Fatalf("rpc error: %+v", rpcErr)
 	}

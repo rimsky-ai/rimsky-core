@@ -348,10 +348,7 @@ var v1Actions = []ActionEntry{
 		Description: "Prune lineage rows older than a cutoff."},
 
 	{Action: "parked-node:read", IsWrite: false,
-		Routes: []Route{
-			{Method: "GET", Path: "/v1/diagnostics/parked", Tool: "parked_node_list"},
-			{Method: "GET", Path: "/v1/admin/diagnostics/parked-nodes"},
-		},
+		Routes:      []Route{{Method: "GET", Path: "/v1/admin/diagnostics/parked-nodes"}},
 		MCPTools:    []string{"parked_node_list"},
 		Description: "List nodes parked in the wait-set."},
 

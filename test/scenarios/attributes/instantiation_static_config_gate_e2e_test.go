@@ -17,7 +17,6 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -62,7 +61,6 @@ func startStaticGateHarness(t *testing.T) *scenario.Harness {
 		ExtraExecutors: map[string]executor.Endpoint{
 			"constrained": scenario.StartStubModeExecutorWithSchema(t, []byte(constrainedSchema)),
 		},
-		RefValidationMode: node.RefValidateNone,
 	})
 }
 
@@ -94,7 +92,7 @@ func registerDeployStaticGateTemplate(t *testing.T, h *scenario.Harness, name st
 	t.Helper()
 	status, out := postTemplate(t, h, staticGateTemplate(name, count))
 	require.Equal(t, http.StatusCreated, status,
-		"register must succeed under mode none even for the misconfigured default; body: %v", out)
+		"register must succeed for a schema-compliant static default; body: %v", out)
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID, "register must return a template_id; body: %v", out)
 
@@ -104,27 +102,20 @@ func registerDeployStaticGateTemplate(t *testing.T, h *scenario.Harness, name st
 }
 
 func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
-	t.Run("rejects: static count:-1 violates the executor schema's minimum:0", func(t *testing.T) {
+	t.Run("rejects: static count:-1 violates the executor schema's minimum:0 at registration", func(t *testing.T) {
 		t.Parallel()
 		h := startStaticGateHarness(t)
 
-		tplID := registerDeployStaticGateTemplate(t, h, "static-gate-bad-"+uuid.NewString(), -1)
-
-		status, out := postJSON(t, h, "/v1/instances", map[string]any{
-			"template":     tplID,
-			"instance_key": "ck-bad-" + uuid.NewString(),
-		})
+		status, out := postTemplate(t, h, staticGateTemplate("static-gate-bad-"+uuid.NewString(), -1))
 		require.Equal(t, http.StatusBadRequest, status,
-			"instantiation must reject a static-config violation at create-time; body: %v", out)
+			"a static default that violates the executor's expected_attributes_schema must be rejected at registration; body: %v", out)
 
-		errText := lowerJoin(out["error"], out["validation_errors"])
+		errs, ok := out["validation_errors"].([]any)
+		require.True(t, ok, "rejection must carry validation_errors; body: %v", out)
+		require.NotEmpty(t, errs, "validation_errors must name the schema violation")
+		errText := lowerJoin(errs)
 		require.Contains(t, errText, "count",
 			"rejection must name the offending attribute `count`; body: %v", out)
-		require.Contains(t, errText, "minimum",
-			"rejection must cite the `minimum` value-constraint violation; body: %v", out)
-
-		require.Equal(t, 0, instanceCountForTemplateE2E(t, h, tplID),
-			"a rejected static-config create must persist no instance row")
 	})
 
 	t.Run("admits: a well-formed instance returns 201 and runs to a terminal state", func(t *testing.T) {

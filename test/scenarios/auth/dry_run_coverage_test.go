@@ -526,7 +526,7 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 		}); err != nil {
 			return err
 		}
-		frameID, err := f.db.Tables().Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
+		frameID, err := f.db.Tables().Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, tx)
 		if err != nil {
 			return err
 		}

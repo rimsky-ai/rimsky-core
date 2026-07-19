@@ -46,9 +46,8 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 	exitNodeRunID := shared.UUID(uuid.New())
 
 	tmpl := tmplspec.TemplateSpec{
-		Name:           "exit-carry-empty-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "exit-carry-empty-fixture",
+		Version: "1",
 		Nodes: []tmplspec.TemplateNodeDef{
 			{Type: "caller", Delegate: "inner"},
 			{Type: "inner-exit", Executor: "test-executor"},
@@ -99,7 +98,7 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
+		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}
@@ -148,7 +147,8 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 	}
 
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return applyTerminalCompleteSubgraphExit(ctx, args, acq, map[string]any{}, tx)
+		_, err := applyTerminalCompleteSubgraphExit(ctx, args, acq, map[string]any{}, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("applyTerminalCompleteSubgraphExit (empty attributes): %v", err)
 	}

@@ -39,9 +39,8 @@ func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
 
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":             "single-process-all-in-one",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "single-process-all-in-one",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",

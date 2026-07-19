@@ -56,9 +56,8 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 	mainRunScopeID := uuid.New()
 
 	tmplSpec := spec.TemplateSpec{
-		Name:           "conformance-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "conformance-fixture",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "fixture-node-type", Executor: "test-executor"},
 		},
@@ -109,7 +108,7 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 		}); err != nil {
 			return err
 		}
-		fid, err := store.Frames().InsertRunningFrame(ctx, instanceID, shared.UUID(messageID), shared.UUID(mainRunScopeID), 600000, tx)
+		fid, err := store.Frames().InsertRunningFrame(ctx, instanceID, shared.UUID(messageID), shared.UUID(mainRunScopeID), tx)
 		if err != nil {
 			return err
 		}

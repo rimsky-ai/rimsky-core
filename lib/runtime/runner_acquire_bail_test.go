@@ -56,7 +56,7 @@ func TestTryAcquire_TransientConflictBailAbandonsAlreadyOpenedLocks(t *testing.T
 	incumbentNodeID := shared.UUID(uuid.New())
 
 	tmplSpec := tmplspec.TemplateSpec{
-		Name: "bail-fixture", Version: "1", FrameTimeoutMs: 600000,
+		Name: "bail-fixture", Version: "1",
 		Nodes: []tmplspec.TemplateNodeDef{{
 			Type: nodeType, Executor: "stub",
 			ClaimProducers: []tmplspec.NodeClaimProducerRef{
@@ -99,7 +99,7 @@ func TestTryAcquire_TransientConflictBailAbandonsAlreadyOpenedLocks(t *testing.T
 		}); err != nil {
 			return err
 		}
-		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
+		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

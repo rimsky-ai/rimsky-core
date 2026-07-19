@@ -110,6 +110,12 @@ func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, vfake *fakeVal
 		},
 		Validators:                 vr,
 		UnreachableValidatorPolicy: runtime.UnreachableValidatorPermissiveWarn,
+		AuthState: &AuthState{
+			Tables:   d.Tables(),
+			Registry: BuildV1Registry(),
+			Clock:    shared.SystemClock{},
+			Logger:   capLog,
+		},
 	})
 	srv := httptest.NewServer(app)
 	h := &harness{srv: srv, driver: d, persist: d.Tables(), stores: reg, logger: capLog}

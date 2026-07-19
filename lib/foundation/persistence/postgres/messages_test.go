@@ -28,9 +28,8 @@ func seedMessageInstanceForNullTest(t *testing.T, ctx context.Context, d persist
 	mainRunScopeID := uuid.New()
 
 	tmpl := spec.TemplateSpec{
-		Name:           "messages-null-payload-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "messages-null-payload-fixture",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "n", Executor: "test-executor"},
 		},

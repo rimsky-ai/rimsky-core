@@ -149,45 +149,45 @@ type FanoutChildSettlementInput struct {
 // @concept: delegation
 func SettleFromDelegate(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in DelegateSettlementInput,
-) error {
+) (postCommitFn, error) {
 	if args.Persist == nil {
-		return fmt.Errorf("SettleFromDelegate: Persist is required")
+		return nil, fmt.Errorf("SettleFromDelegate: Persist is required")
 	}
 	rt := args.Persist.NodeRunTree()
 	if rt == nil {
-		return fmt.Errorf("SettleFromDelegate: NodeRunTree is required")
+		return nil, fmt.Errorf("SettleFromDelegate: NodeRunTree is required")
 	}
 	scopes := args.Persist.RunScopes()
 	if scopes == nil {
-		return fmt.Errorf("SettleFromDelegate: RunScopes is required")
+		return nil, fmt.Errorf("SettleFromDelegate: RunScopes is required")
 	}
 	exit, err := rt.GetByID(ctx, tx, in.ExitNodeRunID)
 	if err != nil {
-		return fmt.Errorf("SettleFromDelegate: load exit run %s: %w", in.ExitNodeRunID, err)
+		return nil, fmt.Errorf("SettleFromDelegate: load exit run %s: %w", in.ExitNodeRunID, err)
 	}
 	if exit == nil {
-		return fmt.Errorf("SettleFromDelegate: run %s not found", in.ExitNodeRunID)
+		return nil, fmt.Errorf("SettleFromDelegate: run %s not found", in.ExitNodeRunID)
 	}
 	exitScope, err := scopes.GetByID(ctx, tx, exit.RunScopeID)
 	if err != nil {
-		return fmt.Errorf("SettleFromDelegate: load exit run scope %s: %w", exit.RunScopeID, err)
+		return nil, fmt.Errorf("SettleFromDelegate: load exit run scope %s: %w", exit.RunScopeID, err)
 	}
 	if exitScope == nil || exitScope.ParentNodeRunID == nil {
-		return fmt.Errorf("SettleFromDelegate: run %s has no parent; not a sub-graph exit", in.ExitNodeRunID)
+		return nil, fmt.Errorf("SettleFromDelegate: run %s has no parent; not a sub-graph exit", in.ExitNodeRunID)
 	}
 	var asMap map[string]any
 	if len(in.Writeback) > 0 {
 		if err := json.Unmarshal(in.Writeback, &asMap); err != nil {
-			return fmt.Errorf("SettleFromDelegate: exit writeback bytes not JSON-decodable: %w", err)
+			return nil, fmt.Errorf("SettleFromDelegate: exit writeback bytes not JSON-decodable: %w", err)
 		}
 	}
 	parentNodeRunID := *exitScope.ParentNodeRunID
 	parent, err := rt.GetByID(ctx, tx, parentNodeRunID)
 	if err != nil {
-		return fmt.Errorf("SettleFromDelegate: load parent run %s: %w", parentNodeRunID, err)
+		return nil, fmt.Errorf("SettleFromDelegate: load parent run %s: %w", parentNodeRunID, err)
 	}
 	if parent == nil {
-		return fmt.Errorf("SettleFromDelegate: parent run %s not found", parentNodeRunID)
+		return nil, fmt.Errorf("SettleFromDelegate: parent run %s not found", parentNodeRunID)
 	}
 	if args.Logger != nil {
 		args.Logger.Info("subgraph: carry exit writeback to parent run",
@@ -197,18 +197,18 @@ func SettleFromDelegate(
 			"writeback_field_count", len(asMap))
 	}
 	if args.Persist.NodeAttributes() == nil {
-		return fmt.Errorf("SettleFromDelegate: NodeAttributes is required")
+		return nil, fmt.Errorf("SettleFromDelegate: NodeAttributes is required")
 	}
 	if len(in.Writeback) > 0 {
 		if err := args.Persist.NodeAttributes().Upsert(
 			ctx, parent.NodeRunID, parent.NodeID, asMap, tx,
 		); err != nil {
-			return fmt.Errorf("SettleFromDelegate: upsert parent attributes: %w", err)
+			return nil, fmt.Errorf("SettleFromDelegate: upsert parent attributes: %w", err)
 		}
 	}
 	// @concept: run-scope
 	if err := scopes.Close(ctx, tx, exit.RunScopeID); err != nil {
-		return fmt.Errorf("SettleFromDelegate: close sub-graph run scope %s: %w", exit.RunScopeID, err)
+		return nil, fmt.Errorf("SettleFromDelegate: close sub-graph run scope %s: %w", exit.RunScopeID, err)
 	}
 	if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
 		if inst, err := instTbl.Get(ctx, exitScope.InstanceID, tx); err == nil && inst != nil {
@@ -219,13 +219,19 @@ func SettleFromDelegate(
 			}
 		}
 	}
+	// @concept: claim-handle
+	// @concept: claim-tree
+	callerClaimsPC, err := resolveDelegateCallerClaimsInTx(ctx, args, tx, *parent, in.InstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("SettleFromDelegate: resolve calling node's own claims: %w", err)
+	}
 	// @concept: cascade
 	if args.Persist.Nodes() == nil {
-		return fmt.Errorf("SettleFromDelegate: Nodes table is required for the parent-settlement cascade bridge")
+		return nil, fmt.Errorf("SettleFromDelegate: Nodes table is required for the parent-settlement cascade bridge")
 	}
 	callingNodeRow, err := args.Persist.Nodes().Get(ctx, parent.NodeID, tx)
 	if err != nil {
-		return fmt.Errorf("SettleFromDelegate: load calling node: %w", err)
+		return nil, fmt.Errorf("SettleFromDelegate: load calling node: %w", err)
 	}
 	if callingNodeRow != nil {
 		parentFrameID := parent.FrameID
@@ -233,23 +239,23 @@ func SettleFromDelegate(
 		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
 			parent.NodeID, callingNodeRow.NodeType, parent.NodeRunID,
 			in.InstanceID, parentFrameID, exitBridgeSig); err != nil {
-			return fmt.Errorf("SettleFromDelegate: cascade subscribers of calling node: %w", err)
+			return nil, fmt.Errorf("SettleFromDelegate: cascade subscribers of calling node: %w", err)
 		}
 		if err := emitAttributeChangesForRunInTx(ctx, args, tx,
 			parent.NodeID, callingNodeRow.NodeType, parent.NodeRunID, in.InstanceID, parentFrameID,
 			nil, nil); err != nil {
-			return fmt.Errorf("SettleFromDelegate: emit parent attribute changes: %w", err)
+			return nil, fmt.Errorf("SettleFromDelegate: emit parent attribute changes: %w", err)
 		}
 		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, parentFrameID, parent.NodeRunID, tx); err != nil {
-			return fmt.Errorf("SettleFromDelegate: drain wait-set for calling node: %w", err)
+			return nil, fmt.Errorf("SettleFromDelegate: drain wait-set for calling node: %w", err)
 		}
 	}
 	if args.Persist.Events() == nil {
-		return fmt.Errorf("SettleFromDelegate: Events table is required for the exit-carry forensics record")
+		return nil, fmt.Errorf("SettleFromDelegate: Events table is required for the exit-carry forensics record")
 	}
 	nodeID := in.ExitNodeID
 	instanceID := in.InstanceID
-	return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID:     &nodeID,
 		InstanceID: &instanceID,
 		Kind:       events.KindSubgraphExitCarry(),
@@ -259,7 +265,74 @@ func SettleFromDelegate(
 			"exit_node_alias": in.ExitNodeAlias,
 			"outcome":         "fresh",
 		},
-	}, tx)
+	}, tx); err != nil {
+		return nil, err
+	}
+	return callerClaimsPC, nil
+}
+
+// @concept: claim-handle
+// @concept: claim-tree
+// @decision: fan-out-and-delegation-are-distinct-mechanisms
+func resolveDelegateCallerClaimsInTx(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	parent persistence.NodeRunTreeRow, instanceID shared.UUID,
+) (postCommitFn, error) {
+	if args.ClaimHandles == nil {
+		return nil, nil
+	}
+	rows, err := args.ClaimHandles.ListByNodeRun(ctx, parent.NodeRunID, tx)
+	if err != nil {
+		return nil, fmt.Errorf("resolveDelegateCallerClaimsInTx: ListByNodeRun: %w", err)
+	}
+	var post postCommitFn
+	for i := range rows {
+		row := rows[i]
+		if row.IsHeld || row.State != spec.ClaimHandleStateActive {
+			continue
+		}
+		if row.LockKind == persistence.LockKindNamed {
+			if err := args.ClaimHandles.Delete(ctx, row.ID, args.SupervisorID, tx); err != nil {
+				return nil, fmt.Errorf("resolveDelegateCallerClaimsInTx: named Delete %s: %w", row.ID, err)
+			}
+			continue
+		}
+		producerName := ""
+		if row.ProducerName != nil {
+			producerName = *row.ProducerName
+		}
+		producer, ok := args.StoreRegistry.Get(producerName)
+		if !ok {
+			return nil, fmt.Errorf("resolveDelegateCallerClaimsInTx: unknown producer %q for claim %s", producerName, row.ID)
+		}
+		hint := ClaimLineageHint{
+			InstanceID:   instanceID,
+			FrameID:      parent.FrameID,
+			NodeRunID:    parent.NodeRunID,
+			NodeID:       parent.NodeID,
+			ProducerName: producerName,
+			VersionID:    row.VersionID,
+		}
+		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+			ClaimHandleID:       row.ID,
+			SupervisorID:        args.SupervisorID,
+			Source:              ActiveTerminal,
+			Outcome:             OutcomeCommit,
+			Producer:            producer,
+			Scope:               []byte(row.ClaimScopeData),
+			Address:             []byte(row.Address),
+			Lifetime:            row.Lifetime,
+			CandidateHandle:     row.ProducerCandidateHandle,
+			ProducerName:        producerName,
+			LineageHint:         hint,
+			ParentClaimHandleID: row.ParentClaimHandleID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("resolveDelegateCallerClaimsInTx: resolve claim %s: %w", row.ID, err)
+		}
+		post = chainPostCommit(post, pc)
+	}
+	return post, nil
 }
 
 // @concept: child-execution

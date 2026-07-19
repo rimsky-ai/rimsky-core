@@ -46,8 +46,8 @@ func completeRunAdmin(ctx context.Context, t *testing.T, d persistence.Database,
 	}); err != nil {
 		t.Fatalf("completeRunAdmin: forceRunStateToFresh(%s): %v", runID, err)
 	}
-	if err := d.Queue().Complete(ctx, runID, ""); err != nil {
-		t.Fatalf("Queue.Complete(%s): %v", runID, err)
+	if err := d.Queue().ForceComplete(ctx, runID); err != nil {
+		t.Fatalf("Queue.ForceComplete(%s): %v", runID, err)
 	}
 }
 
@@ -82,7 +82,6 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		NodeRunID: runID, ExpectedClaimedBy: frameSettlementSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(1 * time.Hour),
-		Reason: "snooze",
 	})
 	if got := framePendingForInstance(ctx, t, d, fix.InstanceID); len(got) != 0 {
 		t.Fatalf("frame surfaced drained while a run is PARKED: %+v", got)
@@ -163,7 +162,7 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 		}
 		otherScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
 		var err error
-		otherFrame, err = frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, 600000, tx)
+		otherFrame, err = frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("InsertFrame: %v", err)
@@ -231,7 +230,7 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 		}
 		otherScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
 		var err error
-		otherFrame, err = frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, 600000, tx)
+		otherFrame, err = frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("InsertFrame: %v", err)
@@ -255,102 +254,6 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 	}
 	if mark(nodeS, fix.FrameID) {
 		t.Fatalf("MarkSourceNodeStale matched a claimed (active) source")
-	}
-}
-
-func testFrameSettlementStuckFrames(
-	t *testing.T, d persistence.Database,
-	rawExec func(t *testing.T, d persistence.Database, sql string, args ...any),
-) {
-	ctx := context.Background()
-	fix := seedFixtureSet(ctx, t, d)
-	store := d.Tables()
-	frames := store.Frames()
-	q := d.Queue()
-
-	const timeoutMs = int64(600000)
-	frameID := fix.FrameID
-	backdate := func() {
-		t.Helper()
-		rawExec(t, d,
-			`UPDATE rimsky_frames SET last_progress_at = ? WHERE frame_id = ?`,
-			time.Now().UTC().Add(-11*time.Minute).Format(time.RFC3339Nano),
-			frameID.String(),
-		)
-	}
-
-	listStuck := func() []persistence.FrameStuck {
-		t.Helper()
-		var mine []persistence.FrameStuck
-		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			all, err := frames.ListStuckRunningFrames(ctx, tx)
-			if err != nil {
-				return err
-			}
-			for _, s := range all {
-				if s.InstanceID == fix.InstanceID {
-					mine = append(mine, s)
-				}
-			}
-			return nil
-		}); err != nil {
-			t.Fatalf("ListStuckRunningFrames: %v", err)
-		}
-		return mine
-	}
-
-	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, frameID)
-
-	if got := listStuck(); len(got) != 0 {
-		t.Fatalf("frame stuck inside a fresh progress window: %+v", got)
-	}
-
-	backdate()
-	got := listStuck()
-	if len(got) != 1 || got[0].FrameID != frameID || got[0].FrameTimeoutMs != timeoutMs {
-		t.Fatalf("stuck set = %+v, want [{%s %s %d}]", got, frameID, fix.InstanceID, timeoutMs)
-	}
-
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, runID, frameSettlementSup)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			t.Fatalf("claim failed")
-		}
-		_, err = q.PromoteClaimedToRunning(ctx, tx, runID, frameSettlementSup)
-		return err
-	}); err != nil {
-		t.Fatalf("claim tx: %v", err)
-	}
-	if got := listStuck(); len(got) != 0 {
-		t.Fatalf("frame stuck while its dispatch is claimed: %+v", got)
-	}
-
-	if err := q.ReleaseClaim(ctx, runID, frameSettlementSup); err != nil {
-		t.Fatalf("ReleaseClaim: %v", err)
-	}
-	if got := listStuck(); len(got) != 1 || got[0].FrameID != frameID {
-		t.Fatalf("released frame not stuck: %+v", got)
-	}
-
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return frames.RefreshProgress(ctx, frameID, tx)
-	}); err != nil {
-		t.Fatalf("RefreshProgress: %v", err)
-	}
-	if got := listStuck(); len(got) != 0 {
-		t.Fatalf("frame stuck immediately after RefreshProgress: %+v", got)
-	}
-
-	backdate()
-	if got := listStuck(); len(got) != 1 {
-		t.Fatalf("frame not stuck after window re-elapsed: %+v", got)
-	}
-	completeRunAdmin(ctx, t, d, runID)
-	if got := listStuck(); len(got) != 0 {
-		t.Fatalf("drained frame reported stuck: %+v", got)
 	}
 }
 

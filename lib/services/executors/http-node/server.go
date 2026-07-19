@@ -175,8 +175,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 
 	if resp.StatusCode == http.StatusTooManyRequests && !statusOK(resp.StatusCode, expectStatus) {
 		resumeAt := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now)
-		return parkedOutcome(resumeAt,
-			fmt.Sprintf("upstream returned 429; parked until %s (Retry-After=%q)", resumeAt.Format(time.RFC3339), resp.Header.Get("Retry-After"))), nil
+		return parkedOutcome(resumeAt), nil
 	}
 
 	if !statusOK(resp.StatusCode, expectStatus) {
@@ -288,33 +287,12 @@ func (s *Server) executeStub(req *genv1.ExecuteRequest) *genv1.Outcome {
 }
 
 func (s *Server) executeParkProbe(ud map[string]any) *genv1.Outcome {
-	reasonStr, _ := ud["park_reason"].(string)
-	if reasonStr == "" {
-		reasonStr = "await_callback"
-	}
-	var reason genv1.ParkReason
-	switch reasonStr {
-	case "await_callback":
-		reason = genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
-	case "snooze":
-		reason = genv1.ParkReason_PARK_REASON_SNOOZE
-	default:
-		return erroredOutcome("http/attribute_invalid",
-			fmt.Sprintf("park_reason %q is not in the closed set {await_callback, snooze}", reasonStr))
-	}
-	note, _ := ud["park_reason_note"].(string)
-	label, _ := ud["park_reason_label"].(string)
 	park := &genv1.Park{
-		Reason:      reason,
-		ReasonNote:  note,
-		ReasonLabel: label,
+		ResumeAt: timestamppb.New(time.Now().Add(30 * time.Second)),
 	}
-	if reason == genv1.ParkReason_PARK_REASON_SNOOZE {
-		park.ResumeAt = timestamppb.New(time.Now().Add(30 * time.Second))
-		if raw, _ := ud["park_resume_at"].(string); raw != "" {
-			if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
-				park.ResumeAt = timestamppb.New(t)
-			}
+	if raw, _ := ud["park_resume_at"].(string); raw != "" {
+		if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+			park.ResumeAt = timestamppb.New(t)
 		}
 	}
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}
@@ -378,11 +356,10 @@ func parseRetryAfter(header string, now func() time.Time) time.Time {
 	return base.Add(defaultRetryAfter)
 }
 
-func parkedOutcome(resumeAt time.Time, note string) *genv1.Outcome {
+func parkedOutcome(resumeAt time.Time) *genv1.Outcome {
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: &genv1.Park{
-		Reason:     genv1.ParkReason_PARK_REASON_SNOOZE,
-		ResumeAt:   timestamppb.New(resumeAt),
-		ReasonNote: note,
+		ResumeAt: timestamppb.New(resumeAt),
+		Tags:     []string{TagRateLimited},
 	}}}
 }
 

@@ -85,7 +85,8 @@ enum OperationalKind {
   OPERATIONAL_KIND_SUBGRAPH_DISPATCHED = 75;
   OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY = 76;
   // Parked-node lifecycle.
-  OPERATIONAL_KIND_PARK_TIMEOUT = 80;
+  reserved 80;
+  reserved "OPERATIONAL_KIND_PARK_TIMEOUT";
   OPERATIONAL_KIND_PARKED_RESUME_STARTED = 81;
   // Debug channel (POST /instances/{id}/debug/override). The audit
   // event for a successful operator override applied through the

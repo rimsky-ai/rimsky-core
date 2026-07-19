@@ -30,9 +30,6 @@ var BoolPtr = spec.BoolPtr
 var IntPtr = spec.IntPtr
 
 const (
-	FrameTimeoutDefaultMs = spec.FrameTimeoutDefaultMs
-	FrameTimeoutMinMs     = spec.FrameTimeoutMinMs
-
 	MainGraphName = spec.MainGraphName
 )
 

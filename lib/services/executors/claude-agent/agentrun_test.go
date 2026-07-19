@@ -218,12 +218,12 @@ func TestRunAgentStubModeCompletes(t *testing.T) {
 	}
 }
 
-func TestRunAgentStubProbeParkSnooze(t *testing.T) {
+func TestRunAgentStubProbePark(t *testing.T) {
 	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
 	opts := baseRunOpts(&fakeRunner{})
-	opts.Attributes = map[string]any{"probe_park": true, "park_reason": "snooze"}
+	opts.Attributes = map[string]any{"probe_park": true}
 	outcome := RunAgent(opts)
-	if outcome.Kind != OutcomeParkRequested || outcome.Reason != "snooze" || outcome.ResumeAt == nil {
+	if outcome.Kind != OutcomeParkRequested || outcome.ResumeAt == nil {
 		t.Fatalf("outcome = %+v", outcome)
 	}
 }
@@ -370,12 +370,11 @@ func TestRunAgentBlockedAndParkViaMcp(t *testing.T) {
 	client2, token2 := mcpClientFor(t, req2)
 	resumeAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	if _, rpcErr := client2.callTool("report_park",
-		fmt.Sprintf(`{"token":%q,"reason":"snooze","reason_note":"later","resume_at":%q}`, token2, resumeAt)); rpcErr != nil {
+		fmt.Sprintf(`{"token":%q,"resume_at":%q}`, token2, resumeAt)); rpcErr != nil {
 		t.Fatalf("rpc error: %+v", rpcErr)
 	}
 	outcome2 := <-done2
-	if outcome2.Kind != OutcomeParkRequested || outcome2.Reason != "snooze" ||
-		outcome2.ReasonNote != "later" || outcome2.ResumeAt == nil || outcome2.SessionToken != "run-1" {
+	if outcome2.Kind != OutcomeParkRequested || outcome2.ResumeAt == nil || outcome2.SessionToken != "run-1" {
 		t.Fatalf("outcome = %+v", outcome2)
 	}
 }
@@ -630,7 +629,7 @@ func TestRunAgentRateLimitParksByDefault(t *testing.T) {
 	code := 1
 	h.exit(ExitResult{ExitCode: &code})
 	outcome := <-done
-	if outcome.Kind != OutcomeParkRequested || outcome.Reason != "snooze" || outcome.ResumeAt == nil {
+	if outcome.Kind != OutcomeParkRequested || outcome.ResumeAt == nil {
 		t.Fatalf("outcome = %+v", outcome)
 	}
 	if outcome.SessionToken != "run-1" {
@@ -726,8 +725,8 @@ func TestRunAgentRetryLegRateLimitParks(t *testing.T) {
 	retry.exit(ExitResult{ExitCode: &retryCode})
 
 	outcome := <-done
-	if outcome.Kind != OutcomeParkRequested || outcome.Reason != "snooze" {
-		t.Fatalf("a rate limit on the retry leg must park (snooze), got %+v", outcome)
+	if outcome.Kind != OutcomeParkRequested {
+		t.Fatalf("a rate limit on the retry leg must park, got %+v", outcome)
 	}
 	if outcome.ResumeAt == nil {
 		t.Fatalf("expected resume_at parsed from anthropic-ratelimit-requests-reset (1856), got nil")

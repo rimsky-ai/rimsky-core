@@ -27,9 +27,8 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true, NoSupervisor: true})
 
 	tplHash := h.DeployTemplate(node.TemplateSpec{
-		Name:           "retention-sweep-" + uuid.NewString(),
-		Version:        "v1",
-		FrameTimeoutMs: node.FrameTimeoutDefaultMs,
+		Name:    "retention-sweep-" + uuid.NewString(),
+		Version: "v1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -60,9 +59,9 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 		    VALUES ($1, $2, 'fixture/retention-sweep', 'operator', 'operator')`,
 			messageID, instanceID)
 		h.ExecSQL(`INSERT INTO rimsky_frames
-		    (frame_id, instance_id, triggering_message_id, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
+		    (frame_id, instance_id, triggering_message_id, started_at, ended_at, root_run_scope_id)
 		    VALUES ($1, $2, $3,
-		            $4, $4, 600000, $5)`,
+		            $4, $4, $5)`,
 			frameID, instanceID, messageID, endedAt, uuid.UUID(scopeID))
 
 		runID := uuid.New()
@@ -98,9 +97,9 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	    VALUES ($1, $2, 'fixture/retention-sweep-stale', 'operator', 'operator')`,
 		staleMessageID, instanceID)
 	h.ExecSQL(`INSERT INTO rimsky_frames
-	    (frame_id, instance_id, triggering_message_id, started_at, ended_at, frame_timeout_ms, root_run_scope_id)
+	    (frame_id, instance_id, triggering_message_id, started_at, ended_at, root_run_scope_id)
 	    VALUES ($1, $2, $3,
-	            $4, $4, 600000, $5)`,
+	            $4, $4, $5)`,
 		staleFrameID, instanceID, staleMessageID, base, uuid.UUID(scopeID))
 
 	staleLineageIDs := []uuid.UUID{uuid.New(), uuid.New()}
@@ -169,9 +168,8 @@ func TestSchedulerTickSweepsClaimHandleRetention(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true, NoSupervisor: true})
 
 	tplHash := h.DeployTemplate(node.TemplateSpec{
-		Name:           "claim-handle-retention-" + uuid.NewString(),
-		Version:        "v1",
-		FrameTimeoutMs: node.FrameTimeoutDefaultMs,
+		Name:    "claim-handle-retention-" + uuid.NewString(),
+		Version: "v1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},

@@ -43,7 +43,7 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 			return err
 		}
 		frameBScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
-		fid, err := store.Frames().InsertRunningFrame(ctx, fix.InstanceID, frameBMsgID, frameBScope, 600000, tx)
+		fid, err := store.Frames().InsertRunningFrame(ctx, fix.InstanceID, frameBMsgID, frameBScope, tx)
 		if err != nil {
 			return err
 		}

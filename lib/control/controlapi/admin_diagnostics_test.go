@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func (noopStore) Nodes() persistence.NodeTable                                  
 func (noopStore) ClaimHandles() persistence.ClaimHandleTable                      { return nil }
 func (noopStore) NodeAttributes() persistence.NodeAttributeTable                  { return nil }
 func (noopStore) ClaimHolders() persistence.ClaimHolderTable                      { return nil }
-func (noopStore) Events() persistence.EventTable                                  { return nil }
+func (noopStore) Events() persistence.EventTable                                  { return fakeEvents{} }
 func (noopStore) Supervisors() persistence.SupervisorTable                        { return nil }
 func (noopStore) Frames() persistence.FrameTable                                  { return nil }
 func (noopStore) BlobOrphans() persistence.BlobOrphanTable                        { return nil }
@@ -43,13 +44,65 @@ func (noopStore) Lineage() persistence.LineageTable                             
 func (noopStore) PublisherSubscriptions() persistence.PublisherSubscriptionsTable { return nil }
 func (noopStore) NodeRunTree() persistence.RunTreeTable                           { return nil }
 func (noopStore) RunScopes() persistence.RunScopeTable                            { return nil }
-func (noopStore) APIKeys() persistence.APIKeyTable                                { return nil }
+func (noopStore) APIKeys() persistence.APIKeyTable                                { return fakeAPIKeys{} }
 func (noopStore) DeploymentCA() persistence.DeploymentCATable                     { return nil }
 func (noopStore) Breakpoints() persistence.BreakpointTable                        { return nil }
 func (noopStore) BreakpointHits() persistence.BreakpointHitTable                  { return nil }
 
 func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return fn(ctx, &noopTx{})
+}
+
+type fakeEvents struct{}
+
+func (fakeEvents) Append(context.Context, persistence.EventAppendInput, persistence.Tx) error {
+	return nil
+}
+func (fakeEvents) List(context.Context, persistence.EventListFilter, persistence.ListPagination, persistence.Tx) (persistence.EventListResult, error) {
+	return persistence.EventListResult{}, nil
+}
+func (fakeEvents) LastTerminalByNodes(context.Context, []shared.UUID, persistence.Tx) (map[shared.UUID]persistence.EventRow, error) {
+	return nil, nil
+}
+func (fakeEvents) CountAttributeOverrideMatchesByIndex(context.Context, shared.UUID, persistence.Tx) (map[int64]int64, error) {
+	return nil, nil
+}
+func (fakeEvents) DeleteOlderThan(context.Context, time.Time) (int, error) {
+	return 0, nil
+}
+
+type fakeAPIKeys struct{}
+
+func (fakeAPIKeys) Insert(context.Context, persistence.APIKey, persistence.Tx) error { return nil }
+func (fakeAPIKeys) GetByID(context.Context, shared.UUID, persistence.Tx) (persistence.APIKey, bool, error) {
+	return persistence.APIKey{}, false, nil
+}
+func (fakeAPIKeys) GetByName(context.Context, string, persistence.Tx) (persistence.APIKey, bool, error) {
+	return persistence.APIKey{}, false, nil
+}
+func (fakeAPIKeys) GetByHash(context.Context, []byte, persistence.Tx) (persistence.APIKey, bool, error) {
+	return persistence.APIKey{}, false, nil
+}
+func (fakeAPIKeys) List(context.Context, bool, string, persistence.Tx) ([]persistence.APIKey, error) {
+	return nil, nil
+}
+func (fakeAPIKeys) ActiveCount(context.Context, time.Time, persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (fakeAPIKeys) MarkRevoked(context.Context, shared.UUID, time.Time, persistence.Tx) (bool, bool, error) {
+	return false, false, nil
+}
+func (fakeAPIKeys) RevokeIfNotLast(context.Context, shared.UUID, time.Time, bool, persistence.Tx) (persistence.RevokeResult, error) {
+	return persistence.RevokeResultNotFound, nil
+}
+func (fakeAPIKeys) SetRevokeAt(context.Context, shared.UUID, time.Time, persistence.Tx) error {
+	return nil
+}
+func (fakeAPIKeys) SweepRotationGrace(context.Context, time.Time, persistence.Tx) ([]persistence.APIKey, error) {
+	return nil, nil
+}
+func (fakeAPIKeys) UpdateLastUsed(context.Context, shared.UUID, time.Time, persistence.Tx) error {
+	return nil
 }
 
 type noopNodes struct{}
@@ -186,17 +239,8 @@ type fakeDiagnosticQueue struct {
 	rows []persistence.ParkedDiagnosticRow
 }
 
-func (f *fakeDiagnosticQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
-	if reasonFilter == "" {
-		return f.rows, nil
-	}
-	var out []persistence.ParkedDiagnosticRow
-	for _, r := range f.rows {
-		if r.Reason == reasonFilter {
-			out = append(out, r)
-		}
-	}
-	return out, nil
+func (f *fakeDiagnosticQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx) ([]persistence.ParkedDiagnosticRow, error) {
+	return f.rows, nil
 }
 
 func (f *fakeDiagnosticQueue) Enqueue(context.Context, persistence.DispatchRequest) error {
@@ -217,16 +261,28 @@ func (f *fakeDiagnosticQueue) PromoteClaimedToRunning(context.Context, persisten
 func (f *fakeDiagnosticQueue) Complete(context.Context, shared.UUID, string) error {
 	return nil
 }
+func (f *fakeDiagnosticQueue) ForceComplete(context.Context, shared.UUID) error {
+	return nil
+}
 func (f *fakeDiagnosticQueue) RemoveForNode(context.Context, shared.UUID, shared.UUID, string) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) RemoveForNodeInTx(context.Context, shared.UUID, shared.UUID, string, persistence.Tx) error {
 	return nil
 }
+func (f *fakeDiagnosticQueue) ForceRemoveForNode(context.Context, shared.UUID, shared.UUID) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) ForceRemoveForNodeInTx(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
+	return nil
+}
 func (f *fakeDiagnosticQueue) ListOrphanedClaims(context.Context) ([]persistence.DispatchRow, error) {
 	return nil, nil
 }
 func (f *fakeDiagnosticQueue) ReleaseClaim(context.Context, shared.UUID, string) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) ForceReleaseClaim(context.Context, shared.UUID) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) GetClaimedBy(context.Context, shared.UUID) (persistence.ClaimOwnership, error) {
@@ -242,8 +298,8 @@ func (f *fakeDiagnosticQueue) ListLive(context.Context, persistence.DispatchList
 func (f *fakeDiagnosticQueue) CountLive(context.Context, persistence.DispatchListFilter) (int, error) {
 	return 0, nil
 }
-func (f *fakeDiagnosticQueue) CountParkedByReason(context.Context) (map[string]int, error) {
-	return nil, nil
+func (f *fakeDiagnosticQueue) CountParked(context.Context) (int, error) {
+	return 0, nil
 }
 func (f *fakeDiagnosticQueue) GetByID(context.Context, shared.UUID) (*persistence.DispatchRow, error) {
 	return nil, nil
@@ -263,9 +319,6 @@ func (f *fakeDiagnosticQueue) ParkActiveInTx(context.Context, persistence.Tx, pe
 func (f *fakeDiagnosticQueue) ListParkedReadyForResume(context.Context, time.Time, int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) ListParkedOverdue(context.Context, time.Time, int) ([]persistence.ParkedRow, error) {
-	return nil, nil
-}
 func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, shared.UUID, shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
@@ -281,7 +334,7 @@ func (f *fakeDiagnosticQueue) GetRetryNoProgress(context.Context, shared.UUID) (
 func (f *fakeDiagnosticQueue) SetRetryNoProgressForRunInTx(context.Context, persistence.Tx, shared.UUID, int) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) UpdateDispatchTuningInTx(context.Context, persistence.Tx, shared.UUID, *int, *int) error {
+func (f *fakeDiagnosticQueue) UpdateDispatchTuningInTx(context.Context, persistence.Tx, shared.UUID, *int) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) BumpLastProgressAt(context.Context, persistence.Tx, shared.UUID, time.Time) (bool, error) {
@@ -309,15 +362,12 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 			NodeID:     "22222222-2222-2222-2222-222222222222",
 			ParkedAt:   now,
 			ResumeAt:   now.Add(time.Hour),
-			Reason:     "snooze",
-			ReasonNote: "rate-limit; resume at +1h",
 			FrameID:    "33333333-3333-3333-3333-333333333333",
 		},
 		{
 			InstanceID: "11111111-1111-1111-1111-111111111111",
 			NodeID:     "44444444-4444-4444-4444-444444444444",
 			ParkedAt:   now,
-			Reason:     "await_callback",
 		},
 	}
 	deps := AppDeps{
@@ -325,6 +375,12 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 		Queue:   &fakeDiagnosticQueue{rows: rows},
 		Logger:  shared.SilentLogger{},
 		Clock:   shared.SystemClock{},
+		AuthState: &AuthState{
+			Tables:   noopStore{},
+			Registry: BuildV1Registry(),
+			Clock:    shared.SystemClock{},
+			Logger:   shared.SilentLogger{},
+		},
 	}
 	app := NewApp(deps)
 	srv := httptest.NewServer(app)
@@ -346,20 +402,14 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 		t.Fatalf("want 2 parked rows, got %d", len(got.ParkedNodes))
 	}
 
-	resp2, err := http.Get(srv.URL + "/v1/admin/diagnostics/parked-nodes?reason=snooze")
+	raw, err := json.Marshal(got.ParkedNodes[0])
 	if err != nil {
-		t.Fatalf("GET parked-nodes filtered: %v", err)
+		t.Fatalf("marshal: %v", err)
 	}
-	defer func() { _ = resp2.Body.Close() }()
-	var got2 ParkedNodesResponse
-	if err := json.NewDecoder(resp2.Body).Decode(&got2); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got2.ParkedNodes) != 1 {
-		t.Fatalf("filter want 1, got %d", len(got2.ParkedNodes))
-	}
-	if got2.ParkedNodes[0].Reason != "snooze" {
-		t.Fatalf("filter mismatch: %+v", got2.ParkedNodes)
+	for _, retired := range []string{"reason", "reason_note"} {
+		if strings.Contains(string(raw), `"`+retired+`"`) {
+			t.Fatalf("parked-nodes entry must not carry the retired %q field: %s", retired, raw)
+		}
 	}
 }
 
@@ -369,15 +419,15 @@ func TestAdminHeldFrames_GroupsByFrame(t *testing.T) {
 	rows := []persistence.ParkedDiagnosticRow{
 		{
 			InstanceID: "i1", NodeID: "n1", FrameID: "f1",
-			ParkedAt: now.Add(-time.Hour), Reason: "rate_limit",
+			ParkedAt: now.Add(-time.Hour),
 		},
 		{
 			InstanceID: "i1", NodeID: "n2", FrameID: "f1",
-			ParkedAt: now.Add(-time.Minute), Reason: "human_review",
+			ParkedAt: now.Add(-time.Minute),
 		},
 		{
 			InstanceID: "i2", NodeID: "n3", FrameID: "f2",
-			ParkedAt: now, Reason: "rate_limit",
+			ParkedAt: now,
 		},
 	}
 	deps := AppDeps{
@@ -385,6 +435,12 @@ func TestAdminHeldFrames_GroupsByFrame(t *testing.T) {
 		Queue:   &fakeDiagnosticQueue{rows: rows},
 		Logger:  shared.SilentLogger{},
 		Clock:   shared.SystemClock{},
+		AuthState: &AuthState{
+			Tables:   noopStore{},
+			Registry: BuildV1Registry(),
+			Clock:    shared.SystemClock{},
+			Logger:   shared.SilentLogger{},
+		},
 	}
 	srv := httptest.NewServer(NewApp(deps))
 	defer srv.Close()

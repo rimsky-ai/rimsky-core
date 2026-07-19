@@ -37,7 +37,6 @@ func TestE2E_ExampleClaimProducerAgainstRunningRimsky(t *testing.T) {
 		harness.WithClaimProducer("example", prodInternal, "read_only"),
 		harness.WithExecutor("ok", okEndpoint),
 		harness.WithExecutor("err", errEndpoint),
-		harness.WithRefValidationMode("none"),
 	)
 
 	inProcPort := freeHostPort(t)
@@ -245,10 +244,9 @@ func deployClaimTemplateInternal(t *testing.T, ep harness.RimskyEndpoint, name, 
 	}
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":             name,
-			"version":          "1",
-			"frame_timeout_ms": 600000,
-			"nodes":            []map[string]any{node},
+			"name":    name,
+			"version": "1",
+			"nodes":   []map[string]any{node},
 		},
 	}
 	statusCode, raw := ep.PostJSON(t, "/v1/templates", body)

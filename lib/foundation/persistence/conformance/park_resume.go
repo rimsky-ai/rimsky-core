@@ -137,27 +137,17 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 	runB := seedClaimedRunForNode(ctx, t, d, fix, nodeB, parkResumeSup)
 	runC := seedClaimedRunForNode(ctx, t, d, fix, nodeC, parkResumeSup)
 
-	maxPark := 60
-	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.UpdateDispatchTuningInTx(ctx, tx, runC, &maxPark, nil)
-	}); err != nil {
-		t.Fatalf("UpdateDispatchTuningInTx: %v", err)
-	}
-
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		NodeRunID: runA, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-3 * time.Hour), ResumeAt: now.Add(-2 * time.Hour),
-		Reason: "snooze",
 	})
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		NodeRunID: runB, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-3 * time.Hour), ResumeAt: now.Add(-1 * time.Hour),
-		Reason: "snooze",
 	})
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		NodeRunID: runC, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-1 * time.Hour), ResumeAt: now.Add(24 * time.Hour),
-		Reason: "await_callback",
 	})
 
 	ready, err := q.ListParkedReadyForResume(ctx, now.Add(-90*time.Minute), 10)
@@ -184,20 +174,12 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 		t.Fatalf("limit-1 ready set = %+v, want [runA=%s]", ready, runA)
 	}
 
-	overdue, err := q.ListParkedOverdue(ctx, now, 10)
+	count, err := q.CountParked(ctx)
 	if err != nil {
-		t.Fatalf("ListParkedOverdue: %v", err)
+		t.Fatalf("CountParked: %v", err)
 	}
-	if len(overdue) != 1 || overdue[0].NodeRunID != runC {
-		t.Fatalf("overdue set = %+v, want exactly [runC=%s]", overdue, runC)
-	}
-
-	counts, err := q.CountParkedByReason(ctx)
-	if err != nil {
-		t.Fatalf("CountParkedByReason: %v", err)
-	}
-	if counts["snooze"] != 2 || counts["await_callback"] != 1 {
-		t.Fatalf("CountParkedByReason = %v, want snooze=2 await_callback=1", counts)
+	if count < 3 {
+		t.Fatalf("CountParked = %d, want >= 3 (runA, runB, runC parked)", count)
 	}
 }
 
@@ -218,19 +200,17 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		NodeRunID: runA, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-3 * time.Hour), ResumeAt: resumeA,
-		Reason: "snooze", ReasonNote: "diag note A",
 	})
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		NodeRunID: runB, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-1 * time.Hour), ResumeAt: now.Add(4 * time.Hour),
-		Reason: "await_callback",
 	})
 
-	listDiag := func(reasonFilter string) []persistence.ParkedDiagnosticRow {
+	listDiag := func() []persistence.ParkedDiagnosticRow {
 		t.Helper()
 		var out []persistence.ParkedDiagnosticRow
 		if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
-			rows, err := q.ListParkedDiagnostic(ctx, tx, reasonFilter)
+			rows, err := q.ListParkedDiagnostic(ctx, tx)
 			if err != nil {
 				return err
 			}
@@ -241,12 +221,12 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 			}
 			return nil
 		}); err != nil {
-			t.Fatalf("ListParkedDiagnostic(%q): %v", reasonFilter, err)
+			t.Fatalf("ListParkedDiagnostic: %v", err)
 		}
 		return out
 	}
 
-	got := listDiag("")
+	got := listDiag()
 	if len(got) != 2 || got[0].NodeRunID != runA || got[1].NodeRunID != runB {
 		t.Fatalf("diagnostic set = %+v, want [runA=%s, runB=%s] parked_at-ascending", got, runA, runB)
 	}
@@ -254,21 +234,8 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 	if a.NodeID != nodeA.String() || a.FrameID != fix.FrameID.String() {
 		t.Fatalf("diagnostic row anchors = node %q frame %q, want %s / %s", a.NodeID, a.FrameID, nodeA, fix.FrameID)
 	}
-	if a.Reason != "snooze" || a.ReasonNote != "diag note A" {
-		t.Fatalf("diagnostic row metadata = %+v, want reason=snooze note=\"diag note A\"", a)
-	}
 	if diff := a.ResumeAt.Sub(resumeA); diff < -time.Second || diff > time.Second {
 		t.Fatalf("diagnostic resume_at = %v drifted from %v", a.ResumeAt, resumeA)
-	}
-
-	if got := listDiag("snooze"); len(got) != 1 || got[0].NodeRunID != runA {
-		t.Fatalf("snooze-filtered set = %+v, want exactly [runA=%s]", got, runA)
-	}
-	if got := listDiag("await_callback"); len(got) != 1 || got[0].NodeRunID != runB {
-		t.Fatalf("await_callback-filtered set = %+v, want exactly [runB=%s]", got, runB)
-	}
-	if got := listDiag("no_such_reason"); len(got) != 0 {
-		t.Fatalf("unknown-reason filter returned rows: %+v", got)
 	}
 }
 
@@ -299,7 +266,6 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		NodeRunID: runA, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(1 * time.Hour),
-		Reason: "snooze",
 	})
 	if got := countHeld(); got != 1 {
 		t.Fatalf("CountHeldFrames = %d with one parked run, want 1", got)
@@ -308,7 +274,6 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		NodeRunID: runB, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(1 * time.Hour),
-		Reason: "await_callback",
 	})
 	if got := countHeld(); got != 1 {
 		t.Fatalf("CountHeldFrames = %d with two parked runs in one frame, want 1", got)
@@ -340,8 +305,6 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		ExpectedClaimedBy: parkResumeSup,
 		ParkedAt:          parkedAt,
 		ResumeAt:          now.Add(-1 * time.Minute),
-		Reason:            "snooze",
-		ReasonNote:        "free-form note",
 	})
 
 	parked, err := q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)
@@ -351,8 +314,8 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	if parked == nil || parked.NodeRunID != runID {
 		t.Fatalf("GetParkedByNode = %+v, want run %s", parked, runID)
 	}
-	if parked.Reason != "snooze" || parked.ReasonNote != "free-form note" {
-		t.Fatalf("parked metadata mismatch: %+v", parked)
+	if parked.ResumeAt == nil {
+		t.Fatalf("parked row must carry resume_at: %+v", parked)
 	}
 
 	resume := func() bool {

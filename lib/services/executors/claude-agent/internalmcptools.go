@@ -6,8 +6,6 @@ package claudeagent
 
 const CallbackMCPServerName = "rimsky-callback"
 
-var ParkReasons = []string{"await_callback", "snooze"}
-
 type ToolDefinition struct {
 	Name        string
 	Description string
@@ -68,26 +66,16 @@ func toolDefinitions() []ToolDefinition {
 		{
 			Name: "report_park",
 			Description: "Park the dispatch. The supervisor pauses the node until resume_at " +
-				"elapses or an invalidate wakes it. ParkReason is the closed " +
-				"two-value set (await_callback | snooze).",
+				"elapses, then re-dispatches it.",
 			InputSchema: map[string]any{
 				"type":     "object",
-				"required": []any{"token", "reason"},
+				"required": []any{"token", "resume_at"},
 				"properties": map[string]any{
 					"token": map[string]any{"type": "string"},
-					"reason": map[string]any{
-						"type":        "string",
-						"enum":        []any{"await_callback", "snooze"},
-						"description": "Typed park reason. The agent must pick one.",
-					},
-					"reason_note": map[string]any{
-						"type":        "string",
-						"description": "Optional human-readable annotation.",
-					},
 					"resume_at": map[string]any{
 						"type":        "string",
 						"format":      "date-time",
-						"description": "Optional ISO 8601 timestamp at which to wake. Absent means signal-only.",
+						"description": "Required ISO 8601 timestamp at which to wake.",
 					},
 				},
 			},

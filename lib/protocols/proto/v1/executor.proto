@@ -136,8 +136,7 @@ message ExecuteRequest {
   //
   // Inert in rimsky per concept:inertness. The
   // executor writes scratch back via the Success / Error / Park outcome
-  // variants (terminal-final) or via the
-  // POST {callback_url}/v1/runs/{run_id}/scratch callback (mid-dispatch).
+  // variants only; there is no mid-dispatch scratch channel.
   bytes scratch = 17;
 }
 
@@ -238,69 +237,42 @@ message Error {
   repeated string tags = 5;
 }
 
-// ParkReason categorizes why an executor parked a node. Storage form
-// (col:rimsky_node_runs.parked_reason) is lower_snake_case derived
-// from the enum symbol (e.g. PARK_REASON_AWAIT_CALLBACK ->
-// await_callback). The same form is used on the diagnostics
-// endpoint, the rimsky `parked list --reason=` flag, and the
-// Prometheus rimsky_parked_nodes_by_reason gauge label.
+// Park signals that the executor wants to snooze the node until a
+// wall-clock resume time. The held claim handle is retained across
+// the park boundary. Per concept:parked-state, executor-managed
+// state crosses the park-and-resume boundary via scratch: the
+// executor writes state to `scratch` on Park, which the supervisor
+// persists on the parked row's scratch slot. On time-wake the same
+// row re-dispatches, so the resumed executor reads its scratch from
+// ExecuteRequest.scratch on the same dispatch. Attribute writes are
+// not available on Park because Park is dispatch-internal — the run
+// does not terminate, no cascade-fire happens, and the
+// attribute-writeback channel is reserved for run-terminating
+// verdicts (Success / Error) per decision:uniform-attributes-delta.
 //
-// ParkReason is a closed two-value set
-// (PARK_REASON_AWAIT_CALLBACK, PARK_REASON_SNOOZE). The proto wire
-// layer rejects any other value at decode. No UNSPECIFIED, no
-// OTHER, no fallback. Storage CHECK on
-// col:rimsky_node_runs.parked_reason mirrors the closed set.
-//
-// proto3 requires a defined zero value; PARK_REASON_AWAIT_CALLBACK
-// occupies tag 0 deliberately — an executor that forgets to set
-// the field gets the wait-on-callback interpretation, which won't
-// auto-resume, which is the safer default.
-//
-// @concept: parked-state
-enum ParkReason {
-  PARK_REASON_AWAIT_CALLBACK = 0;
-  PARK_REASON_SNOOZE         = 2;
-}
-
-// Park signals that the executor wants to pause the node and resume
-// later. The held claim handle is retained across the park boundary.
-// Per concept:parked-state, executor-managed state crosses the
-// park-and-resume boundary via scratch: the executor writes state
-// to `scratch` on Park, which the supervisor persists on the parked
-// row's scratch slot. On time-wake the same row re-dispatches, so
-// the resumed executor reads its scratch from ExecuteRequest.scratch
-// on the same dispatch. Attribute writes are not available on Park
-// because Park is dispatch-internal — the run does not terminate,
-// no cascade-fire happens, and the attribute-writeback channel is
-// reserved for run-terminating verdicts (Success / Error) per
-// decision:uniform-attributes-delta.
-//
-// At least one of resume_at or external invalidation must wake the
-// node; rimsky does not enforce this in-protocol.
+// Park carries exactly resume_at + scratch + tags. Waiting on an
+// external callback is not a park — that is AwaitAsyncCallback,
+// which keeps the run running.
 message Park {
-  // Typed reason. Stored as lower_snake_case text in
-  // col:rimsky_node_runs.parked_reason.
-  ParkReason reason = 1;
+  // Reserved (was: ParkReason reason = 1). The reason taxonomy is
+  // retired; WHY-annotation rides `tags`.
+  reserved 1;
+  reserved "reason";
   // Reserved (was: bytes payload = 2). Resume state now rides scratch
   // carry-forward; the resume-context channel is removed.
   reserved 2;
   reserved "payload";
-  // Optional. When non-zero, the supervisor's SweepParkedNodes sweep
-  // wakes the node at this wall-clock time. Absent means
-  // signal-based-only.
+  // Required. The supervisor wakes the node at this wall-clock time.
+  // A Park without resume_at is rejected as a protocol violation.
   google.protobuf.Timestamp resume_at = 3;
   // Reserved (was: string session_token = 4). Session tokens now ride
   // scratch carry-forward.
   reserved 4;
   reserved "session_token";
-  // Free-form human annotation. Inert in rimsky.
-  string reason_note = 5;
-  // reason_label is a freeform tag carrying optional additional
-  // context for the (closed) ParkReason set (PARK_REASON_AWAIT_CALLBACK
-  // | PARK_REASON_SNOOZE). It is always optional under the post-collapse
-  // enum — there is no "other" variant that mandates it. Persisted on
-  // col:rimsky_node_runs.parked_reason_label.
-  string reason_label = 6;
+  // Reserved (was: string reason_note = 5, string reason_label = 6).
+  // Retired with the reason taxonomy; WHY-annotation rides `tags`.
+  reserved 5, 6;
+  reserved "reason_note", "reason_label";
   // Executor-attached opaque bytes the supervisor persists onto the
   // dispatch row at park-verdict time. Copied forward onto the resume
   // dispatch's row at re-enqueue. Inert in rimsky.

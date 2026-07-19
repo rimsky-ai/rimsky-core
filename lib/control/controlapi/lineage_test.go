@@ -62,7 +62,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 			return err
 		}
 		_ = nodes
-		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, 600000, tx)
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, tx)
 		if err != nil {
 			return err
 		}
@@ -162,7 +162,7 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 			return err
 		}
 		_ = nodes
-		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, 600000, tx)
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, tx)
 		if err != nil {
 			return err
 		}
@@ -267,7 +267,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 			return err
 		}
 		_ = nodes
-		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, 600000, tx)
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, tx)
 		if err != nil {
 			return err
 		}
@@ -388,7 +388,7 @@ func seedLineageInstance(t *testing.T, h *harness, prefix string) (instID uuid.U
 		}); err != nil {
 			return err
 		}
-		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instID), msgID, rootScope, 600000, tx)
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instID), msgID, rootScope, tx)
 		if err != nil {
 			return err
 		}

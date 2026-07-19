@@ -99,6 +99,12 @@ func newAssetHarness(t *testing.T, versions []runtime.DataProcessingVersion) (*a
 		Executors: map[string]ExecutorEntry{
 			"worker": {Transport: "grpc", Endpoint: "localhost:0"},
 		},
+		AuthState: &AuthState{
+			Tables:   d.Tables(),
+			Registry: BuildV1Registry(),
+			Clock:    shared.SystemClock{},
+			Logger:   capLog,
+		},
 	})
 	srv := httptest.NewServer(app)
 
@@ -174,7 +180,7 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 			return err
 		}
 		_ = prodNodeUUID
-		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instID), msgID, mainScopeID, 600000, tx)
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instID), msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

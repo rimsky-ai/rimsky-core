@@ -6,40 +6,17 @@ package controlapi
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
-
-func isKnownParkReasonFilter(v string) bool {
-	upper := "PARK_REASON_" + strings.ToUpper(v)
-	_, ok := genv1.ParkReason_value[upper]
-	return ok
-}
-
-func knownParkReasonFilters() []string {
-	out := make([]string, 0, len(genv1.ParkReason_name))
-	for _, name := range genv1.ParkReason_name {
-		const prefix = "PARK_REASON_"
-		if strings.HasPrefix(name, prefix) {
-			out = append(out, strings.ToLower(name[len(prefix):]))
-		}
-	}
-	sort.Strings(out)
-	return out
-}
 
 func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/admin/diagnostics/held-frames", gate(deps, "diagnostics:read", handleAdminHeldFrames(deps)))
 	r.Get("/admin/diagnostics/parked-nodes", gate(deps, "parked-node:read", handleAdminParkedNodes(deps)))
-	r.Get("/diagnostics/parked", gate(deps, "parked-node:read", handleAdminParkedNodes(deps)))
 	r.Get("/admin/diagnostics/wait-sets", gate(deps, "waitset:read", handleAdminWaitSets(deps)))
 }
 
@@ -57,10 +34,8 @@ type HeldFrameEntry struct {
 }
 
 type NodeStateRow struct {
-	NodeID     string `json:"node_id"`
-	State      string `json:"state"`
-	Reason     string `json:"reason,omitempty"`
-	ReasonNote string `json:"reason_note,omitempty"`
+	NodeID string `json:"node_id"`
+	State  string `json:"state"`
 }
 
 type ParkedNodesResponse struct {
@@ -72,15 +47,13 @@ type ParkedNodeEntry struct {
 	NodeID     string     `json:"node_id"`
 	ParkedAt   time.Time  `json:"parked_at"`
 	ResumeAt   *time.Time `json:"resume_at,omitempty"`
-	Reason     string     `json:"reason,omitempty"`
-	ReasonNote string     `json:"reason_note,omitempty"`
 }
 
 func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		out := HeldFramesResponse{Frames: []HeldFrameEntry{}}
 		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			parked, err := listParkedDiagnostic(ctx, tx, deps, "")
+			parked, err := listParkedDiagnostic(ctx, tx, deps)
 			if err != nil {
 				return err
 			}
@@ -91,8 +64,6 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 						InstanceID: p.InstanceID,
 						NodeID:     p.NodeID,
 						ParkedAt:   p.ParkedAt,
-						Reason:     p.Reason,
-						ReasonNote: p.ReasonNote,
 					}
 					if !p.ResumeAt.IsZero() {
 						ra := p.ResumeAt
@@ -116,7 +87,7 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 				}
 				g.NodeIDs = append(g.NodeIDs, p.NodeID)
 				g.NodeStates = append(g.NodeStates, NodeStateRow{
-					NodeID: p.NodeID, State: "parked", Reason: p.Reason, ReasonNote: p.ReasonNote,
+					NodeID: p.NodeID, State: "parked",
 				})
 			}
 			for _, g := range groups {
@@ -135,16 +106,9 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 // @concept: parked-state
 func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		reasonFilter := req.URL.Query().Get("reason")
-		if reasonFilter != "" && !isKnownParkReasonFilter(reasonFilter) {
-			badRequest(w, fmt.Sprintf(
-				"unknown park reason %q (allowed: %s)",
-				reasonFilter, strings.Join(knownParkReasonFilters(), ", ")))
-			return
-		}
 		out := ParkedNodesResponse{ParkedNodes: []ParkedNodeEntry{}}
 		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			parked, err := listParkedDiagnostic(ctx, tx, deps, reasonFilter)
+			parked, err := listParkedDiagnostic(ctx, tx, deps)
 			if err != nil {
 				return err
 			}
@@ -153,8 +117,6 @@ func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 					InstanceID: p.InstanceID,
 					NodeID:     p.NodeID,
 					ParkedAt:   p.ParkedAt,
-					Reason:     p.Reason,
-					ReasonNote: p.ReasonNote,
 				}
 				if !p.ResumeAt.IsZero() {
 					ra := p.ResumeAt
@@ -172,9 +134,9 @@ func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-func listParkedDiagnostic(ctx context.Context, tx persistence.Tx, deps AppDeps, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
+func listParkedDiagnostic(ctx context.Context, tx persistence.Tx, deps AppDeps) ([]persistence.ParkedDiagnosticRow, error) {
 	if deps.Queue == nil {
 		return nil, nil
 	}
-	return deps.Queue.ListParkedDiagnostic(ctx, tx, reasonFilter)
+	return deps.Queue.ListParkedDiagnostic(ctx, tx)
 }

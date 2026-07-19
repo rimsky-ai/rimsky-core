@@ -77,6 +77,41 @@ func TestBuildSubscriptionEdges_NoImplicitEdgeFromSubstitutionRef(t *testing.T) 
 	}
 }
 
+// @decision: subscription-edges-only-from-explicit-block
+func TestBuildSubscriptionEdges_NoImplicitEdgeFromMessageRef(t *testing.T) {
+	tmpl := spec.TemplateSpec{
+		Messages: []spec.MessageSchema{
+			{Type: "ping/recheck", BodySchema: []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`)},
+		},
+		Nodes: []spec.TemplateNodeDef{
+			{Type: "receiver", Executor: "stub",
+				Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"reason": map[string]any{
+							"type":   "string",
+							"source": "{{messages.ping/recheck.reason}}",
+						},
+					},
+				}}},
+		},
+	}
+	msgRefs := ExtractMessageRefsFromTemplate(tmpl)
+	out, err := BuildSubscriptionEdges(tmpl, msgRefs)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	matched := out.Match("ping/recheck", signal.TypePath("terminal/success"))
+	if len(matched) != 0 {
+		t.Fatalf("a messages.* reference alone (no explicit subscribes entry) must not register an edge; got %d matched", len(matched))
+	}
+	for _, sender := range out.Senders() {
+		if sender == "ping/recheck" {
+			t.Fatalf("BuildSubscriptionEdges must not register any sender key for an uncovered message ref; got sender %q", sender)
+		}
+	}
+}
+
 // @concept: template
 func TestBuildSubscriptionEdges_NoImplicitEdgeFromEnvRef(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{

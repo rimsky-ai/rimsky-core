@@ -90,71 +90,6 @@ func (PriorDispatchDisposition) EnumDescriptor() ([]byte, []int) {
 	return file_executor_proto_rawDescGZIP(), []int{0}
 }
 
-// ParkReason categorizes why an executor parked a node. Storage form
-// (col:rimsky_node_runs.parked_reason) is lower_snake_case derived
-// from the enum symbol (e.g. PARK_REASON_AWAIT_CALLBACK ->
-// await_callback). The same form is used on the diagnostics
-// endpoint, the rimsky `parked list --reason=` flag, and the
-// Prometheus rimsky_parked_nodes_by_reason gauge label.
-//
-// ParkReason is a closed two-value set
-// (PARK_REASON_AWAIT_CALLBACK, PARK_REASON_SNOOZE). The proto wire
-// layer rejects any other value at decode. No UNSPECIFIED, no
-// OTHER, no fallback. Storage CHECK on
-// col:rimsky_node_runs.parked_reason mirrors the closed set.
-//
-// proto3 requires a defined zero value; PARK_REASON_AWAIT_CALLBACK
-// occupies tag 0 deliberately — an executor that forgets to set
-// the field gets the wait-on-callback interpretation, which won't
-// auto-resume, which is the safer default.
-//
-// @concept: parked-state
-type ParkReason int32
-
-const (
-	ParkReason_PARK_REASON_AWAIT_CALLBACK ParkReason = 0
-	ParkReason_PARK_REASON_SNOOZE         ParkReason = 2
-)
-
-// Enum value maps for ParkReason.
-var (
-	ParkReason_name = map[int32]string{
-		0: "PARK_REASON_AWAIT_CALLBACK",
-		2: "PARK_REASON_SNOOZE",
-	}
-	ParkReason_value = map[string]int32{
-		"PARK_REASON_AWAIT_CALLBACK": 0,
-		"PARK_REASON_SNOOZE":         2,
-	}
-)
-
-func (x ParkReason) Enum() *ParkReason {
-	p := new(ParkReason)
-	*p = x
-	return p
-}
-
-func (x ParkReason) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (ParkReason) Descriptor() protoreflect.EnumDescriptor {
-	return file_executor_proto_enumTypes[1].Descriptor()
-}
-
-func (ParkReason) Type() protoreflect.EnumType {
-	return &file_executor_proto_enumTypes[1]
-}
-
-func (x ParkReason) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use ParkReason.Descriptor instead.
-func (ParkReason) EnumDescriptor() ([]byte, []int) {
-	return file_executor_proto_rawDescGZIP(), []int{1}
-}
-
 // ExecuteRequest carries the full context of a node dispatch. The
 // attributes bag is the unified surface for both rimsky-populated
 // inputs and executor-written outputs.
@@ -223,8 +158,7 @@ type ExecuteRequest struct {
 	//
 	// Inert in rimsky per concept:inertness. The
 	// executor writes scratch back via the Success / Error / Park outcome
-	// variants (terminal-final) or via the
-	// POST {callback_url}/v1/runs/{run_id}/scratch callback (mid-dispatch).
+	// variants only; there is no mid-dispatch scratch channel.
 	Scratch       []byte `protobuf:"bytes,17,opt,name=scratch,proto3" json:"scratch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -720,38 +654,27 @@ func (x *Error) GetTags() []string {
 	return nil
 }
 
-// Park signals that the executor wants to pause the node and resume
-// later. The held claim handle is retained across the park boundary.
-// Per concept:parked-state, executor-managed state crosses the
-// park-and-resume boundary via scratch: the executor writes state
-// to `scratch` on Park, which the supervisor persists on the parked
-// row's scratch slot. On time-wake the same row re-dispatches, so
-// the resumed executor reads its scratch from ExecuteRequest.scratch
-// on the same dispatch. Attribute writes are not available on Park
-// because Park is dispatch-internal — the run does not terminate,
-// no cascade-fire happens, and the attribute-writeback channel is
-// reserved for run-terminating verdicts (Success / Error) per
-// decision:uniform-attributes-delta.
+// Park signals that the executor wants to snooze the node until a
+// wall-clock resume time. The held claim handle is retained across
+// the park boundary. Per concept:parked-state, executor-managed
+// state crosses the park-and-resume boundary via scratch: the
+// executor writes state to `scratch` on Park, which the supervisor
+// persists on the parked row's scratch slot. On time-wake the same
+// row re-dispatches, so the resumed executor reads its scratch from
+// ExecuteRequest.scratch on the same dispatch. Attribute writes are
+// not available on Park because Park is dispatch-internal — the run
+// does not terminate, no cascade-fire happens, and the
+// attribute-writeback channel is reserved for run-terminating
+// verdicts (Success / Error) per decision:uniform-attributes-delta.
 //
-// At least one of resume_at or external invalidation must wake the
-// node; rimsky does not enforce this in-protocol.
+// Park carries exactly resume_at + scratch + tags. Waiting on an
+// external callback is not a park — that is AwaitAsyncCallback,
+// which keeps the run running.
 type Park struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Typed reason. Stored as lower_snake_case text in
-	// col:rimsky_node_runs.parked_reason.
-	Reason ParkReason `protobuf:"varint,1,opt,name=reason,proto3,enum=rimsky.v1.ParkReason" json:"reason,omitempty"`
-	// Optional. When non-zero, the supervisor's SweepParkedNodes sweep
-	// wakes the node at this wall-clock time. Absent means
-	// signal-based-only.
+	// Required. The supervisor wakes the node at this wall-clock time.
+	// A Park without resume_at is rejected as a protocol violation.
 	ResumeAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`
-	// Free-form human annotation. Inert in rimsky.
-	ReasonNote string `protobuf:"bytes,5,opt,name=reason_note,json=reasonNote,proto3" json:"reason_note,omitempty"`
-	// reason_label is a freeform tag carrying optional additional
-	// context for the (closed) ParkReason set (PARK_REASON_AWAIT_CALLBACK
-	// | PARK_REASON_SNOOZE). It is always optional under the post-collapse
-	// enum — there is no "other" variant that mandates it. Persisted on
-	// col:rimsky_node_runs.parked_reason_label.
-	ReasonLabel string `protobuf:"bytes,6,opt,name=reason_label,json=reasonLabel,proto3" json:"reason_label,omitempty"`
 	// Executor-attached opaque bytes the supervisor persists onto the
 	// dispatch row at park-verdict time. Copied forward onto the resume
 	// dispatch's row at re-enqueue. Inert in rimsky.
@@ -796,32 +719,11 @@ func (*Park) Descriptor() ([]byte, []int) {
 	return file_executor_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *Park) GetReason() ParkReason {
-	if x != nil {
-		return x.Reason
-	}
-	return ParkReason_PARK_REASON_AWAIT_CALLBACK
-}
-
 func (x *Park) GetResumeAt() *timestamppb.Timestamp {
 	if x != nil {
 		return x.ResumeAt
 	}
 	return nil
-}
-
-func (x *Park) GetReasonNote() string {
-	if x != nil {
-		return x.ReasonNote
-	}
-	return ""
-}
-
-func (x *Park) GetReasonLabel() string {
-	if x != nil {
-		return x.ReasonLabel
-	}
-	return ""
 }
 
 func (x *Park) GetScratch() []byte {
@@ -1061,15 +963,11 @@ const file_executor_proto_rawDesc = "" +
 	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\x12\x18\n" +
 	"\ascratch\x18\x03 \x01(\fR\ascratch\x12B\n" +
 	"\x10attributes_delta\x18\x04 \x01(\v2\x17.google.protobuf.StructR\x0fattributesDelta\x12\x12\n" +
-	"\x04tags\x18\x05 \x03(\tR\x04tags\"\x9c\x02\n" +
-	"\x04Park\x12-\n" +
-	"\x06reason\x18\x01 \x01(\x0e2\x15.rimsky.v1.ParkReasonR\x06reason\x127\n" +
-	"\tresume_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bresumeAt\x12\x1f\n" +
-	"\vreason_note\x18\x05 \x01(\tR\n" +
-	"reasonNote\x12!\n" +
-	"\freason_label\x18\x06 \x01(\tR\vreasonLabel\x12\x18\n" +
+	"\x04tags\x18\x05 \x03(\tR\x04tags\"\xde\x01\n" +
+	"\x04Park\x127\n" +
+	"\tresume_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bresumeAt\x12\x18\n" +
 	"\ascratch\x18\a \x01(\fR\ascratch\x12\x12\n" +
-	"\x04tags\x18\t \x03(\tR\x04tagsJ\x04\b\x02\x10\x03J\x04\b\x04\x10\x05J\x04\b\b\x10\tR\apayloadR\rsession_tokenR\x10attributes_delta\"l\n" +
+	"\x04tags\x18\t \x03(\tR\x04tagsJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\x06\x10\aJ\x04\b\b\x10\tR\x06reasonR\apayloadR\rsession_tokenR\vreason_noteR\freason_labelR\x10attributes_delta\"l\n" +
 	"\x12AwaitAsyncCallback\x12 \n" +
 	"\fasync_ack_id\x18\x01 \x01(\tR\n" +
 	"asyncAckId\x124\n" +
@@ -1084,11 +982,7 @@ const file_executor_proto_rawDesc = "" +
 	"PRIOR_NONE\x10\x00\x12\x18\n" +
 	"\x14PRIOR_STALE_RECOVERY\x10\x01\x12\x1b\n" +
 	"\x17PRIOR_RETRY_AFTER_ERROR\x10\x02\x12\x15\n" +
-	"\x11PRIOR_RECALCULATE\x10\x03*D\n" +
-	"\n" +
-	"ParkReason\x12\x1e\n" +
-	"\x1aPARK_REASON_AWAIT_CALLBACK\x10\x00\x12\x16\n" +
-	"\x12PARK_REASON_SNOOZE\x10\x022D\n" +
+	"\x11PRIOR_RECALCULATE\x10\x032D\n" +
 	"\bExecutor\x128\n" +
 	"\aExecute\x12\x19.rimsky.v1.ExecuteRequest\x1a\x12.rimsky.v1.OutcomeBCZAgithub.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1b\x06proto3"
 
@@ -1104,49 +998,47 @@ func file_executor_proto_rawDescGZIP() []byte {
 	return file_executor_proto_rawDescData
 }
 
-var file_executor_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_executor_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_executor_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_executor_proto_goTypes = []any{
 	(PriorDispatchDisposition)(0), // 0: rimsky.v1.PriorDispatchDisposition
-	(ParkReason)(0),               // 1: rimsky.v1.ParkReason
-	(*ExecuteRequest)(nil),        // 2: rimsky.v1.ExecuteRequest
-	(*ClaimProducerHandle)(nil),   // 3: rimsky.v1.ClaimProducerHandle
-	(*Outcome)(nil),               // 4: rimsky.v1.Outcome
-	(*Success)(nil),               // 5: rimsky.v1.Success
-	(*Error)(nil),                 // 6: rimsky.v1.Error
-	(*Park)(nil),                  // 7: rimsky.v1.Park
-	(*AwaitAsyncCallback)(nil),    // 8: rimsky.v1.AwaitAsyncCallback
-	(*AsyncCallbackBody)(nil),     // 9: rimsky.v1.AsyncCallbackBody
-	nil,                           // 10: rimsky.v1.ExecuteRequest.ClaimProducersEntry
-	(*structpb.Struct)(nil),       // 11: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
+	(*ExecuteRequest)(nil),        // 1: rimsky.v1.ExecuteRequest
+	(*ClaimProducerHandle)(nil),   // 2: rimsky.v1.ClaimProducerHandle
+	(*Outcome)(nil),               // 3: rimsky.v1.Outcome
+	(*Success)(nil),               // 4: rimsky.v1.Success
+	(*Error)(nil),                 // 5: rimsky.v1.Error
+	(*Park)(nil),                  // 6: rimsky.v1.Park
+	(*AwaitAsyncCallback)(nil),    // 7: rimsky.v1.AwaitAsyncCallback
+	(*AsyncCallbackBody)(nil),     // 8: rimsky.v1.AsyncCallbackBody
+	nil,                           // 9: rimsky.v1.ExecuteRequest.ClaimProducersEntry
+	(*structpb.Struct)(nil),       // 10: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
 }
 var file_executor_proto_depIdxs = []int32{
-	11, // 0: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
-	11, // 1: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
-	10, // 2: rimsky.v1.ExecuteRequest.claim_producers:type_name -> rimsky.v1.ExecuteRequest.ClaimProducersEntry
+	10, // 0: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
+	10, // 1: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
+	9,  // 2: rimsky.v1.ExecuteRequest.claim_producers:type_name -> rimsky.v1.ExecuteRequest.ClaimProducersEntry
 	0,  // 3: rimsky.v1.ExecuteRequest.prior_dispatch_disposition:type_name -> rimsky.v1.PriorDispatchDisposition
-	11, // 4: rimsky.v1.ClaimProducerHandle.handle:type_name -> google.protobuf.Struct
-	5,  // 5: rimsky.v1.Outcome.success:type_name -> rimsky.v1.Success
-	6,  // 6: rimsky.v1.Outcome.error:type_name -> rimsky.v1.Error
-	7,  // 7: rimsky.v1.Outcome.park:type_name -> rimsky.v1.Park
-	8,  // 8: rimsky.v1.Outcome.await_async:type_name -> rimsky.v1.AwaitAsyncCallback
-	11, // 9: rimsky.v1.Success.attributes_delta:type_name -> google.protobuf.Struct
-	11, // 10: rimsky.v1.Error.payload:type_name -> google.protobuf.Struct
-	11, // 11: rimsky.v1.Error.attributes_delta:type_name -> google.protobuf.Struct
-	1,  // 12: rimsky.v1.Park.reason:type_name -> rimsky.v1.ParkReason
-	12, // 13: rimsky.v1.Park.resume_at:type_name -> google.protobuf.Timestamp
-	5,  // 14: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
-	6,  // 15: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
-	7,  // 16: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
-	3,  // 17: rimsky.v1.ExecuteRequest.ClaimProducersEntry.value:type_name -> rimsky.v1.ClaimProducerHandle
-	2,  // 18: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
-	4,  // 19: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.Outcome
-	19, // [19:20] is the sub-list for method output_type
-	18, // [18:19] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	10, // 4: rimsky.v1.ClaimProducerHandle.handle:type_name -> google.protobuf.Struct
+	4,  // 5: rimsky.v1.Outcome.success:type_name -> rimsky.v1.Success
+	5,  // 6: rimsky.v1.Outcome.error:type_name -> rimsky.v1.Error
+	6,  // 7: rimsky.v1.Outcome.park:type_name -> rimsky.v1.Park
+	7,  // 8: rimsky.v1.Outcome.await_async:type_name -> rimsky.v1.AwaitAsyncCallback
+	10, // 9: rimsky.v1.Success.attributes_delta:type_name -> google.protobuf.Struct
+	10, // 10: rimsky.v1.Error.payload:type_name -> google.protobuf.Struct
+	10, // 11: rimsky.v1.Error.attributes_delta:type_name -> google.protobuf.Struct
+	11, // 12: rimsky.v1.Park.resume_at:type_name -> google.protobuf.Timestamp
+	4,  // 13: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
+	5,  // 14: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
+	6,  // 15: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
+	2,  // 16: rimsky.v1.ExecuteRequest.ClaimProducersEntry.value:type_name -> rimsky.v1.ClaimProducerHandle
+	1,  // 17: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
+	3,  // 18: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.Outcome
+	18, // [18:19] is the sub-list for method output_type
+	17, // [17:18] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_executor_proto_init() }
@@ -1171,7 +1063,7 @@ func file_executor_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_executor_proto_rawDesc), len(file_executor_proto_rawDesc)),
-			NumEnums:      2,
+			NumEnums:      1,
 			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,

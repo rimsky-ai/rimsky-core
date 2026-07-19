@@ -93,7 +93,7 @@ func seedFrame(ctx context.Context, t *testing.T, sb persistence.Tables, instanc
 		}); err != nil {
 			return err
 		}
-		fid, err := sb.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
+		fid, err := sb.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, tx)
 		if err != nil {
 			return err
 		}
@@ -605,6 +605,84 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 		"threshold(2) with abandoned=1 must NOT Abandon the parent")
 }
 
+func TestResolveParentClaimChain_ThresholdFullCount_SurvivingSiblingsKeepRunningAndCommit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
+		Name: "threshold-full-count-fanout", Version: "1",
+	})
+	ck := "ck-thfc"
+	var mainScopeID shared.UUID
+	var inst persistence.InstanceRow
+	var parentNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		inst = i
+		mainScopeID = ms
+		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		parentNode = p
+		return nil
+	}))
+
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+
+	reg := locks.NewRegistry()
+	store := storetest.NewFake("thfc-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+	})
+	reg.Add("thfc-store", store)
+	args := runtime.RunArgs{
+		Persist:       backend,
+		ClaimHandles:  backend.ClaimHandles(),
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		SupervisorID:  "sup-THFC",
+	}
+
+	policy := spec.AggregationPolicy{Kind: spec.AggregationKindThreshold, MaxFailures: 3}
+	parentID, subIDs := seedFanOutParentAndSubclaims(
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-THFC",
+		"thfc-store", policy, 3,
+	)
+
+	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeAbandon)
+
+	for i, idx := range []int{1, 2} {
+		var row *persistence.ClaimHandleRow
+		require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			r, err := backend.ClaimHandles().Get(ctx, subIDs[idx], tx)
+			row = r
+			return err
+		}))
+		require.NotNil(t, row, "sibling %d row must survive", i)
+		require.Equal(t, spec.ClaimHandleStateActive, row.State,
+			"threshold at full count must NOT force-cancel in-flight siblings after one failure (slot %d)", i)
+		require.Equal(t, 0, countCallsOnID(store.Calls(), subIDs[idx].String(), "abandon"),
+			"sibling slot %d must receive no verb call until it settles on its own", i)
+	}
+
+	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.OutcomeCommit)
+	resolveSubclaim(ctx, t, backend, args, subIDs[2], parentID, store, runtime.OutcomeCommit)
+
+	require.Equal(t, 1, countCallsOnID(store.Calls(), subIDs[1].String(), "commit"),
+		"surviving sibling must run to its own natural Commit")
+	require.Equal(t, 1, countCallsOnID(store.Calls(), subIDs[2].String(), "commit"),
+		"surviving sibling must run to its own natural Commit")
+	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "commit"),
+		"threshold at full count accepts the partial outcome (1 failed of 3) once every child settles")
+	require.Equal(t, 0, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
+		"parent must NOT Abandon when failures stay below the full-count threshold")
+}
+
 func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1085,10 +1163,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 		SupervisorID:  "sup-CS",
 	}
 
-	policy := spec.AggregationPolicy{
-		Kind:           spec.AggregationKindStrict,
-		CancelSiblings: true,
-	}
+	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
 		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-CS",
 		"cs-store", policy, 3,
@@ -1174,10 +1249,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 		SupervisorID:  "sup-CD",
 	}
 
-	policy := spec.AggregationPolicy{
-		Kind:           spec.AggregationKindStrict,
-		CancelSiblings: true,
-	}
+	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
 		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-CD",
 		"cs-dur-store", policy, 3,
@@ -1588,10 +1660,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 		SupervisorID:  "sup-CR",
 	}
 
-	policy := spec.AggregationPolicy{
-		Kind:           spec.AggregationKindStrict,
-		CancelSiblings: true,
-	}
+	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
 		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-CR",
 		"cs-rec-store", policy, 2,
@@ -1749,7 +1818,7 @@ func TestSettleFromFanoutChild_MalformedAggregationPolicy_SafeFallback(t *testin
 	}))
 	require.NotNil(t, sub1Row)
 	require.Equal(t, spec.ClaimHandleStateActive, sub1Row.State,
-		"malformed aggregation_policy must be treated as no cancel_siblings: sibling must remain untouched")
+		"malformed aggregation_policy must be treated as non-strict: sibling must remain untouched")
 	require.Equal(t, 0, countCallsOnID(store.Calls(), sub1.String(), "abandon"),
 		"sibling must receive no verb call under malformed-policy fallback")
 
@@ -1813,7 +1882,7 @@ func TestCancelInFlightSiblings_DifferentSupervisorSkipped(t *testing.T) {
 		SupervisorID:  "sup-MS-A",
 	}
 
-	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict, CancelSiblings: true}
+	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	policyBytes, mErr := persistence.MarshalAggregationPolicy(policy)
 	require.NoError(t, mErr)
 
@@ -2148,14 +2217,14 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 	activeRow := getRow(activeChild)
 	require.NotNil(t, activeRow)
 	require.Equal(t, spec.ClaimHandleStateAbandoned, activeRow.State,
-		"active child must be swept by the descendant-cancel walk (claim-tree.md invariant 1)")
+		"active child must be swept by the descendant-cancel walk so it is not left orphaned in-flight when the parent tears down")
 	require.Equal(t, 1, countCallsOnID(store.Calls(), activeChild.String(), "abandon"))
 	verifyLineageOutcomeRT(ctx, t, backend, activeChild, persistence.LineageOutcomeForceCancelled, "descendant_cancel")
 
 	committedRow := getRow(committedChild)
 	require.NotNil(t, committedRow)
 	require.Equal(t, spec.ClaimHandleStateCommitted, committedRow.State,
-		"committed child must be skipped by the descendant-cancel walk (claim-tree.md invariant 5)")
+		"committed child must be skipped by the descendant-cancel walk, which only visits active rows and so preserves the durable-Commit contract")
 	require.Equal(t, 0, countCallsOnID(store.Calls(), committedChild.String(), "abandon"),
 		"committed child must receive no Abandon from the descendant-cancel walk")
 
@@ -2168,7 +2237,7 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 	grandchildRow := getRow(grandchild)
 	require.NotNil(t, grandchildRow)
 	require.Equal(t, spec.ClaimHandleStateAbandoned, grandchildRow.State,
-		"grandchild must be swept by the recursive descendant-cancel walk (claim-tree.md invariants 1 and 3)")
+		"grandchild must be swept by the recursive descendant-cancel walk, which recurses through every tree level so no in-flight descendant is left orphaned")
 	require.Equal(t, 1, countCallsOnID(store.Calls(), grandchild.String(), "abandon"))
 	verifyLineageOutcomeRT(ctx, t, backend, grandchild, persistence.LineageOutcomeForceCancelled, "descendant_cancel")
 }

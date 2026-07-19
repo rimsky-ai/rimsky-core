@@ -313,64 +313,6 @@ func (s *framesImpl) MarkSourceNodeStale(
 	return anyMatched != 0, nil
 }
 
-func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.Tx) ([]persistence.FrameStuck, error) {
-	rows, err := s.q(tx).QueryContext(ctx, `
-        SELECT f.frame_id, f.instance_id, f.frame_timeout_ms, f.last_progress_at
-        FROM rimsky_frames f
-        WHERE f.ended_at IS NULL
-          AND f.last_progress_at IS NOT NULL
-          AND NOT EXISTS (
-              SELECT 1 FROM rimsky_node_runs d
-              WHERE d.frame_id = f.frame_id AND d.claimed_by IS NOT NULL
-          )
-          AND EXISTS (
-              -- dispatch-eligible: excludes parked. A parked run is
-              -- intentionally suspended awaiting a wake, not stuck — the
-              -- no-progress soft warning fires only when there is
-              -- dispatchable work that has stalled, so parked rows are
-              -- deliberately omitted here.
-              SELECT 1 FROM rimsky_node_runs r
-              JOIN rimsky_nodes n ON n.id = r.node_id
-              WHERE n.instance_id = f.instance_id
-                AND r.state IN ('pending','stale','running','held')
-          )
-    `)
-	if err != nil {
-		return nil, fmt.Errorf("frames.ListStuckRunningFrames: %w", err)
-	}
-	defer rows.Close()
-	now := time.Now().UTC()
-	var out []persistence.FrameStuck
-	for rows.Next() {
-		var (
-			frameIDStr      string
-			instanceIDStr   string
-			frameTimeoutMs  int64
-			lastProgressStr string
-		)
-		if err := rows.Scan(&frameIDStr, &instanceIDStr, &frameTimeoutMs, &lastProgressStr); err != nil {
-			return nil, fmt.Errorf("frames.ListStuckRunningFrames: scan: %w", err)
-		}
-		lastProgress, err := parseTime(lastProgressStr)
-		if err != nil {
-			return nil, err
-		}
-		if !lastProgress.Add(time.Duration(frameTimeoutMs) * time.Millisecond).Before(now) {
-			continue
-		}
-		fid, err := uuid.Parse(frameIDStr)
-		if err != nil {
-			return nil, err
-		}
-		iid, err := uuid.Parse(instanceIDStr)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, persistence.FrameStuck{FrameID: fid, InstanceID: iid, FrameTimeoutMs: frameTimeoutMs})
-	}
-	return out, rows.Err()
-}
-
 func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persistence.Tx) ([]persistence.OrphanFrameDispatch, error) {
 	rows, err := s.q(tx).QueryContext(ctx, `
         SELECT d.id, d.claimed_by, d.frame_id
@@ -406,38 +348,17 @@ func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persisten
 	return out, rows.Err()
 }
 
-func (s *framesImpl) LookupFrameTimeoutMs(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (int64, error) {
-	var frameTimeoutMs sql.NullInt64
-	err := s.q(tx).QueryRowContext(ctx, `
-        SELECT json_extract(t.spec, '$.frame_timeout_ms') AS frame_timeout_ms
-        FROM rimsky_instances i
-        JOIN rimsky_templates  t ON t.id = i.template_hash
-        WHERE i.id = ?
-    `, instanceID.String()).Scan(&frameTimeoutMs)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, fmt.Errorf("frames.LookupFrameTimeoutMs: instance %s not found", instanceID)
-		}
-		return 0, fmt.Errorf("frames.LookupFrameTimeoutMs: %w", err)
-	}
-	timeout := int64(600000)
-	if frameTimeoutMs.Valid && frameTimeoutMs.Int64 > 0 {
-		timeout = frameTimeoutMs.Int64
-	}
-	return timeout, nil
-}
-
 func (s *framesImpl) InsertRunningFrame(
-	ctx context.Context, instanceID, triggeringMessageID, rootRunScopeID shared.UUID, frameTimeoutMs int64, tx persistence.Tx,
+	ctx context.Context, instanceID, triggeringMessageID, rootRunScopeID shared.UUID, tx persistence.Tx,
 ) (shared.UUID, error) {
 	frameID := uuid.New()
 	now := nowUTC()
 	_, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, frame_timeout_ms, last_progress_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, last_progress_at)
+        VALUES (?, ?, ?, ?, ?, ?)
     `, frameID.String(), instanceID.String(), triggeringMessageID.String(), rootRunScopeID.String(),
-		now, frameTimeoutMs, now)
+		now, now)
 	if err != nil {
 		return shared.UUID{}, fmt.Errorf("frames.InsertRunningFrame: %w", err)
 	}
@@ -479,7 +400,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
 		            ELSE 'completed'
 		        END AS state,
-		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms
+		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at, f.last_progress_at
 		   FROM rimsky_frames f
 		  WHERE (? IS NULL OR f.instance_id = ?)
 		    AND (? IS NULL OR (? = 1 AND f.ended_at IS NULL) OR (? = 0 AND f.ended_at IS NOT NULL))
@@ -507,7 +428,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 			endedAt        sql.NullString
 			lastProgressAt sql.NullString
 		)
-		if err := rows.Scan(&frameID, &instanceID, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs); err != nil {
+		if err := rows.Scan(&frameID, &instanceID, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt); err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
 		}
 		fid, err := uuid.Parse(frameID)
@@ -634,10 +555,10 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
 		            ELSE 'completed'
 		        END AS state,
-		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms
+		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at, f.last_progress_at
 		   FROM rimsky_frames f WHERE f.frame_id = ?`,
 		frameID.String(),
-	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs)
+	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -711,13 +632,13 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 		            ELSE 'completed'
 		        END AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
-		        f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms,
+		        f.started_at, f.ended_at, f.last_progress_at,
 		        m.type, m.sender, m.sender_kind
 		   FROM rimsky_frames f
 		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
 		  WHERE f.frame_id = ?`,
 		frameID.String(),
-	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs,
+	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt,
 		&mType, &mSender, &mKind)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -814,7 +735,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		            ELSE 'completed'
 		        END AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
-		        f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms,
+		        f.started_at, f.ended_at, f.last_progress_at,
 		        m.type, m.sender, m.sender_kind
 		   FROM rimsky_frames f
 		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
@@ -847,7 +768,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 			mSender        sql.NullString
 			mKind          sql.NullString
 		)
-		if err := rows.Scan(&frameID, &instanceID, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt, &r.FrameTimeoutMs,
+		if err := rows.Scan(&frameID, &instanceID, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt,
 			&mType, &mSender, &mKind); err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
 		}

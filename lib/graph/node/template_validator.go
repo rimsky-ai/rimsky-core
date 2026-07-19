@@ -50,39 +50,7 @@ var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|child|messages|en
 
 var envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// @concept: template
-type RefValidationMode int
-
-const (
-	RefValidateAll RefValidationMode = iota
-	RefValidateAvailable
-	RefValidateNone
-)
-
-func (m RefValidationMode) String() string {
-	switch m {
-	case RefValidateAll:
-		return "all"
-	case RefValidateAvailable:
-		return "available"
-	case RefValidateNone:
-		return "none"
-	}
-	return fmt.Sprintf("RefValidationMode(%d)", int(m))
-}
-
-func refValidationModeRejection(refDesc string, mode RefValidationMode) string {
-	return fmt.Sprintf(
-		"%s; reference validation failed under mode %q — mode %q makes a reference that "+
-			"cannot be validated at registration fatal; for register-before-provision workflows "+
-			"set templates.ref_validation_mode to \"available\" (skip not-yet-provisioned "+
-			"references) or \"none\" (skip registration-time reference validation entirely)",
-		refDesc, mode, mode)
-}
-
 type RegistryHooks struct {
-	RefValidationMode RefValidationMode
-
 	StoreDeclared     func(name string) bool
 	NamedLockDeclared func(name string) bool
 	ExecutorDeclared  func(name string) bool
@@ -118,7 +86,6 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	if strings.TrimSpace(spec.Version) == "" {
 		res.Errors = append(res.Errors, ValidationError{Path: "version", Msg: "version is required"})
 	}
-	validateFrameTimeout(spec, &res)
 	validateMessageQueueMode(spec, &res)
 
 	rejectAuthorSetInternalFlags(spec, &res)
@@ -164,7 +131,6 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, spec, hooks, &res)
 		validateAcquireUnavailablePolicyAdvised(n, base, &res)
-		validateMaxParkDuration(n, base, &res)
 		validateCascadeMode(n, base, &res)
 		validateDispatchDeadlines(n, base, &res)
 		validateHolds(n, base, spec, declared, &res)
@@ -234,16 +200,6 @@ func attributeKeyDeclared(sender TemplateNodeDef, key string) bool {
 	}
 	_, declared := props[key]
 	return declared
-}
-
-func validateFrameTimeout(spec *TemplateSpec, res *ValidationResult) {
-	if spec.FrameTimeoutMs != 0 && spec.FrameTimeoutMs < FrameTimeoutMinMs {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: "frame_timeout_ms",
-			Msg: fmt.Sprintf("frame_timeout_ms = %d is below hard floor %d",
-				spec.FrameTimeoutMs, FrameTimeoutMinMs),
-		})
-	}
 }
 
 // @concept: instance
@@ -321,13 +277,7 @@ func validateDefaults(spec *TemplateSpec, hooks RegistryHooks, res *ValidationRe
 	}
 }
 
-func ApplyFrameResolutionDefaults(spec *TemplateSpec) {
-	if spec == nil {
-		return
-	}
-	if spec.FrameTimeoutMs == 0 {
-		spec.FrameTimeoutMs = FrameTimeoutDefaultMs
-	}
+func ApplyFrameResolutionDefaults(*TemplateSpec) {
 }
 
 // @concept: error-policy
@@ -882,20 +832,12 @@ func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHook
 	if n.Executor == "" || hooks.ExecutorDeclared == nil {
 		return
 	}
-	if hooks.RefValidationMode == RefValidateNone {
-		return
-	}
 	if hooks.ExecutorDeclared(n.Executor) {
-		return
-	}
-	if hooks.RefValidationMode == RefValidateAvailable {
 		return
 	}
 	res.Errors = append(res.Errors, ValidationError{
 		Path: base + ".executor",
-		Msg: refValidationModeRejection(
-			fmt.Sprintf("executor %q is not declared in the operator's executors: block", n.Executor),
-			hooks.RefValidationMode),
+		Msg:  fmt.Sprintf("executor %q is not declared in the operator's executors: block", n.Executor),
 	})
 }
 
@@ -1072,16 +1014,12 @@ func validateClaimProducers(n TemplateNodeDef, base string, hooks RegistryHooks,
 			})
 			continue
 		}
-		if hooks.StoreDeclared != nil && hooks.RefValidationMode != RefValidateNone {
-			if !hooks.StoreDeclared(name) && hooks.RefValidationMode != RefValidateAvailable {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: sbase + ".name",
-					Msg: refValidationModeRejection(
-						fmt.Sprintf("store %q is not declared in the operator's claim_producers: block", name),
-						hooks.RefValidationMode),
-				})
-				continue
-			}
+		if hooks.StoreDeclared != nil && !hooks.StoreDeclared(name) {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase + ".name",
+				Msg:  fmt.Sprintf("store %q is not declared in the operator's claim_producers: block", name),
+			})
+			continue
 		}
 		switch s.Intent {
 		case "r", "rw":
@@ -1162,16 +1100,11 @@ func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *Val
 			continue
 		}
 		seen[name] = j
-		if hooks.NamedLockDeclared != nil && hooks.RefValidationMode != RefValidateNone {
-			if !strings.ContainsAny(name, "{") && !hooks.NamedLockDeclared(name) &&
-				hooks.RefValidationMode != RefValidateAvailable {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: lbase + ".name",
-					Msg: refValidationModeRejection(
-						fmt.Sprintf("named lock %q is not declared in the operator's named_locks: block", name),
-						hooks.RefValidationMode),
-				})
-			}
+		if hooks.NamedLockDeclared != nil && !strings.ContainsAny(name, "{") && !hooks.NamedLockDeclared(name) {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: lbase + ".name",
+				Msg:  fmt.Sprintf("named lock %q is not declared in the operator's named_locks: block", name),
+			})
 		}
 	}
 }
@@ -1235,12 +1168,6 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		}
 	}
 
-	if hooks.RefValidationMode == RefValidateNone {
-		effective := MergeAttributeDefaults(nil, nil, n.Attributes.Schema)
-		checkAttributesSchema(effective, n.Attributes.Schema, nil, map[string]bool{}, false, sbase, res)
-		return
-	}
-
 	executorForSchema := effectiveExecutor(n, hooks)
 
 	var execSchema map[string]any
@@ -1263,13 +1190,10 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		execReadOnlyProps = map[string]bool{}
 	}
 
-	if !execSchemaVisible && hooks.RefValidationMode == RefValidateAll &&
-		executorForSchema != "" && hooks.ExecutorExpectedAttributesSchema != nil {
+	if !execSchemaVisible && executorForSchema != "" && hooks.ExecutorExpectedAttributesSchema != nil {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: base + ".attributes",
-			Msg: refValidationModeRejection(
-				fmt.Sprintf("executor %q expected_attributes_schema is not visible at registration", executorForSchema),
-				hooks.RefValidationMode),
+			Msg:  fmt.Sprintf("executor %q expected_attributes_schema is not visible at registration", executorForSchema),
 		})
 	}
 
@@ -1659,18 +1583,6 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], messages.<type>[.<field>], child.partition_key, or env.<VAR_NAME>)", body),
 			})
 		}
-	}
-}
-
-func validateMaxParkDuration(n TemplateNodeDef, base string, res *ValidationResult) {
-	if n.MaxParkDuration == "" {
-		return
-	}
-	if _, err := parseDurationStrict(n.MaxParkDuration); err != nil {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: base + ".max_park_duration",
-			Msg:  fmt.Sprintf("invalid duration %q: %v", n.MaxParkDuration, err),
-		})
 	}
 }
 

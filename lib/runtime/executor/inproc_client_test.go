@@ -199,12 +199,12 @@ func TestInProcessClient_HandlerContextFactoryReceivesTypedIDs(t *testing.T) {
 	const url = "inproc://test-hctx"
 	reg := NewInProcessRegistry()
 	type capture struct {
-		gotScratchWriter bool
+		gotSender bool
 	}
 	cap := &capture{}
 	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error) {
-		if hctx.Scratch != nil {
-			cap.gotScratchWriter = true
+		if hctx.SendCascadeMessage != nil {
+			cap.gotSender = true
 		}
 		return successOutcome(), nil
 	}}); err != nil {
@@ -214,7 +214,9 @@ func TestInProcessClient_HandlerContextFactoryReceivesTypedIDs(t *testing.T) {
 		if nodeRunID == (shared.UUID{}) || nodeID == (shared.UUID{}) {
 			t.Errorf("expected non-zero typed UUIDs, dispatch=%v node=%v", nodeRunID, nodeID)
 		}
-		return HandlerContext{Scratch: &ScratchWriter{}}
+		return HandlerContext{SendCascadeMessage: func(context.Context, []byte) (shared.UUID, bool, error) {
+			return shared.UUID{}, false, nil
+		}}
 	})
 	client, err := NewInProcessClient(Endpoint{Transport: "inproc", URL: url}, reg, factory)
 	if err != nil {
@@ -223,7 +225,7 @@ func TestInProcessClient_HandlerContextFactoryReceivesTypedIDs(t *testing.T) {
 	if _, _, err := client.Execute(context.Background(), newFreshRequest(t)); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !cap.gotScratchWriter {
-		t.Fatalf("expected handler to receive non-nil ScratchWriter from factory")
+	if !cap.gotSender {
+		t.Fatalf("expected handler to receive the HandlerContext built by the factory")
 	}
 }

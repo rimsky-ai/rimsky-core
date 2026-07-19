@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -37,9 +38,9 @@ func errorOutcome(class string) *genv1.Outcome {
 	}}}
 }
 
-func parkOutcome(reason genv1.ParkReason) *genv1.Outcome {
+func parkOutcome(resumeAt time.Time) *genv1.Outcome {
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: &genv1.Park{
-		Reason: reason,
+		ResumeAt: timestamppb.New(resumeAt),
 	}}}
 }
 
@@ -77,7 +78,7 @@ func TestAwaitTerminal_SyncErrorReturnedDirectly(t *testing.T) {
 }
 
 func TestAwaitTerminal_SyncParkReturnedDirectly(t *testing.T) {
-	out := parkOutcome(genv1.ParkReason_PARK_REASON_SNOOZE)
+	out := parkOutcome(time.Now().Add(time.Hour))
 	got, err := AwaitTerminal(context.Background(), out, Env{})
 	if err != nil {
 		t.Fatalf("AwaitTerminal: %v", err)
@@ -86,8 +87,8 @@ func TestAwaitTerminal_SyncParkReturnedDirectly(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Park, got %T", got.GetOutcome())
 	}
-	if park.Park.GetReason() != genv1.ParkReason_PARK_REASON_SNOOZE {
-		t.Errorf("park reason=%v want=SNOOZE", park.Park.GetReason())
+	if park.Park.GetResumeAt() == nil {
+		t.Errorf("park resume_at should be preserved")
 	}
 }
 
@@ -169,9 +170,7 @@ func TestAwaitTerminal_AsyncFollowsCallbackToPark(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		body, _ := json.Marshal(map[string]any{
 			"park": map[string]any{
-				"reason":      "snooze",
-				"resume_at":   resumeAt,
-				"reason_note": "rate-limited",
+				"resume_at": resumeAt,
 			},
 		})
 		resp, perr := http.Post(r.URL()+"/v1/callback/"+ackID, "application/json", bytes.NewReader(body))
@@ -192,11 +191,8 @@ func TestAwaitTerminal_AsyncFollowsCallbackToPark(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Park from callback, got %T", got.GetOutcome())
 	}
-	if park.Park.GetReason() != genv1.ParkReason_PARK_REASON_SNOOZE {
-		t.Errorf("park reason=%v want=SNOOZE", park.Park.GetReason())
-	}
-	if park.Park.GetReasonNote() != "rate-limited" {
-		t.Errorf("reason_note=%q", park.Park.GetReasonNote())
+	if park.Park.GetResumeAt() == nil {
+		t.Errorf("park resume_at should be propagated from the callback body")
 	}
 }
 

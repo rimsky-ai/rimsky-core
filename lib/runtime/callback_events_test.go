@@ -29,16 +29,31 @@ func TestParseAsyncCallback_Error_AttributesDeltaAndTags(t *testing.T) {
 	require.Equal(t, "s", term.AttributesDel["session_token"])
 }
 
-func TestParseAsyncCallback_Park_TagsOnly(t *testing.T) {
-	raw := []byte(`{"park":{"reason":"await_callback","tags":["await"]}}`)
+func TestParseAsyncCallback_Park_ResumeAtAndTags(t *testing.T) {
+	raw := []byte(`{"park":{"resume_at":"2026-07-19T10:00:00Z","tags":["await"]}}`)
 	term, err := parseAsyncCallback(raw)
 	require.NoError(t, err)
 	require.Equal(t, terminalKindPark, term.Kind)
 	require.Equal(t, []string{"await"}, term.Tags)
+	require.False(t, term.ParkResumeAt.IsZero())
+}
+
+func TestParseAsyncCallback_Park_RejectsMissingResumeAt(t *testing.T) {
+	raw := []byte(`{"park":{"tags":["await"]}}`)
+	_, err := parseAsyncCallback(raw)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "resume_at")
+}
+
+func TestParseAsyncCallback_Park_RejectsMalformedResumeAt(t *testing.T) {
+	raw := []byte(`{"park":{"resume_at":"tomorrow-ish"}}`)
+	_, err := parseAsyncCallback(raw)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "resume_at")
 }
 
 func TestParseAsyncCallback_Park_IgnoresAttributesDelta(t *testing.T) {
-	raw := []byte(`{"park":{"reason":"await_callback","attributes_delta":{"session_token":"s"},"tags":["await"]}}`)
+	raw := []byte(`{"park":{"resume_at":"2026-07-19T10:00:00Z","attributes_delta":{"session_token":"s"},"tags":["await"]}}`)
 	term, err := parseAsyncCallback(raw)
 	require.NoError(t, err)
 	require.Equal(t, terminalKindPark, term.Kind)

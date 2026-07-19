@@ -63,7 +63,7 @@ type RunTreeTable interface {
 }
 
 func MarshalAggregationPolicy(p spec.AggregationPolicy) ([]byte, error) {
-	if p.Kind == "" && !p.CancelSiblings && p.MaxFailures == 0 {
+	if p.Kind == "" && p.MaxFailures == 0 {
 		return nil, nil
 	}
 	return json.Marshal(p)

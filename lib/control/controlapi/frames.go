@@ -30,7 +30,6 @@ type frameItem struct {
 	StartedAt           *time.Time `json:"started_at,omitempty"`
 	EndedAt             *time.Time `json:"ended_at,omitempty"`
 	LastProgressAt      *time.Time `json:"last_progress_at,omitempty"`
-	FrameTimeoutMs      int64      `json:"frame_timeout_ms"`
 
 	MessageType       string `json:"message_type,omitempty"`
 	MessageSender     string `json:"message_sender,omitempty"`
@@ -170,7 +169,6 @@ func toFrameItem(r persistence.FrameRowWithMessage) frameItem {
 		StartedAt:           r.StartedAt,
 		EndedAt:             r.EndedAt,
 		LastProgressAt:      r.LastProgressAt,
-		FrameTimeoutMs:      r.FrameTimeoutMs,
 		MessageType:         r.MessageType,
 		MessageSender:       r.MessageSender,
 		MessageSenderKind:   r.MessageSenderKind,

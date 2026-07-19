@@ -341,25 +341,6 @@ func (s *proxyState) lookupInstance(instanceID string) (*instanceCacheEntry, boo
 	return entry, ok
 }
 
-func (s *proxyState) lookupInstanceByBinding(bindingName string) (string, *instanceCacheEntry, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var foundID string
-	var foundEntry *instanceCacheEntry
-	matches := 0
-	for instanceID, entry := range s.instances {
-		if _, ok := entry.serviceBindings[bindingName]; ok {
-			foundID = instanceID
-			foundEntry = entry
-			matches++
-		}
-	}
-	if matches != 1 {
-		return "", nil, false
-	}
-	return foundID, foundEntry, true
-}
-
 func (s *proxyState) recordClaimRoute(claimID, apiKeyID, spawnID string) {
 	if claimID == "" {
 		return

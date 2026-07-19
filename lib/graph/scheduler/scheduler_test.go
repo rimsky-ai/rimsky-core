@@ -44,8 +44,7 @@ func newSchedFixture(t *testing.T) *schedFixture {
 
 	tpl := insertDeployedTemplate(ctx, t, d.Tables(), nodepkg.TemplateSpec{
 		Name: "sched-loop-" + uuid.NewString(), Version: "v1",
-		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
-		Nodes:          []nodepkg.TemplateNodeDef{},
+		Nodes: []nodepkg.TemplateNodeDef{},
 	})
 	ck := "ck-" + uuid.NewString()
 	var inst persistence.InstanceRow
@@ -146,8 +145,8 @@ func insertRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, inst
 	var frameID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_frames
-            (instance_id, triggering_message_id, root_run_scope_id, started_at, frame_timeout_ms)
-        VALUES ($1, $2, $3, now(), 600000)
+            (instance_id, triggering_message_id, root_run_scope_id, started_at)
+        VALUES ($1, $2, $3, now())
         RETURNING frame_id
     `, []any{instanceID, msgID, f.mainScopeID}, &frameID)
 	return frameID

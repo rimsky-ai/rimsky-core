@@ -31,15 +31,11 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		    SET claimed_by = NULL,
 		        claimed_at = NULL,
 		        parked_at = $3,
-		        resume_at = $4,
-		        parked_reason = $5,
-		        parked_reason_note = NULLIF($6, ''),
-		        parked_reason_label = NULLIF($7, '')
+		        resume_at = $4
 		  WHERE id = $1
 		    AND claimed_by = $2
 		    AND state = 'running'`,
 		in.NodeRunID, in.ExpectedClaimedBy, in.ParkedAt, resumeAt,
-		in.Reason, in.ReasonNote, in.ReasonLabel,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.ParkActiveInTx: %w", err)
@@ -56,8 +52,7 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 	}
 	rows, err := q.pool.Query(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
-		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
+		        d.parked_at, d.resume_at, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.state = 'parked'
 		    AND d.resume_at IS NOT NULL
@@ -73,48 +68,17 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 	return scanParkedRows(rows)
 }
 
-func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit int) ([]persistence.ParkedRow, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	rows, err := q.pool.Query(ctx,
-		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
-		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
-		   FROM rimsky_node_runs d
-		  WHERE d.state = 'parked'
-		    AND d.max_park_duration_seconds IS NOT NULL
-		    AND d.parked_at IS NOT NULL
-		    AND d.parked_at + (d.max_park_duration_seconds * INTERVAL '1 second') <= $1
-		    AND (d.resume_at IS NULL OR d.resume_at > $1)
-		  ORDER BY d.parked_at ASC
-		  LIMIT $2`,
-		now, limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("postgres.ListParkedOverdue: %w", err)
-	}
-	defer rows.Close()
-	return scanParkedRows(rows)
-}
-
-func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
+func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx) ([]persistence.ParkedDiagnosticRow, error) {
 	if tx == nil {
 		return nil, errors.New("postgres.ListParkedDiagnostic: tx required")
 	}
-	var reasonArg any
-	if reasonFilter != "" {
-		reasonArg = reasonFilter
-	}
 	rows, err := q.q(tx).Query(ctx,
 		`SELECT d.id, n.instance_id, d.node_id, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note
+		        d.parked_at, d.resume_at
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.state = 'parked'
-		    AND ($1::text IS NULL OR d.parked_reason = $1)
 		  ORDER BY d.parked_at ASC`,
-		reasonArg,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("postgres.ListParkedDiagnostic: %w", err)
@@ -123,15 +87,13 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 	var out []persistence.ParkedDiagnosticRow
 	for rows.Next() {
 		var (
-			r          persistence.ParkedDiagnosticRow
-			instID     sql.NullString
-			frameID    sql.NullString
-			resumeAt   sql.NullTime
-			reason     sql.NullString
-			reasonNote sql.NullString
-			nodeID     string
+			r        persistence.ParkedDiagnosticRow
+			instID   sql.NullString
+			frameID  sql.NullString
+			resumeAt sql.NullTime
+			nodeID   string
 		)
-		if err := rows.Scan(&r.NodeRunID, &instID, &nodeID, &frameID, &r.ParkedAt, &resumeAt, &reason, &reasonNote); err != nil {
+		if err := rows.Scan(&r.NodeRunID, &instID, &nodeID, &frameID, &r.ParkedAt, &resumeAt); err != nil {
 			return nil, err
 		}
 		if instID.Valid {
@@ -144,12 +106,6 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 		if resumeAt.Valid {
 			r.ResumeAt = resumeAt.Time
 		}
-		if reason.Valid {
-			r.Reason = reason.String
-		}
-		if reasonNote.Valid {
-			r.ReasonNote = reasonNote.String
-		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -161,8 +117,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.pool.QueryRow(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
-		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
+		        d.parked_at, d.resume_at, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.node_id = $1
 		    AND d.run_scope_id = $2
@@ -258,13 +213,12 @@ func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persist
 	return nil
 }
 
-func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error {
+func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, maxRetriesWithoutProgress *int) error {
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET max_park_duration_seconds = $2,
-		        max_retries_without_progress = $3
+		    SET max_retries_without_progress = $2
 		  WHERE id = $1`,
-		nodeRunID, intPtrOrNullPark(maxParkDurationSeconds), intPtrOrNullPark(maxRetriesWithoutProgress),
+		nodeRunID, intPtrOrNullPark(maxRetriesWithoutProgress),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.UpdateDispatchTuningInTx: %w", err)
@@ -289,18 +243,14 @@ func scanParkedRows(rows pgx.Rows) ([]persistence.ParkedRow, error) {
 
 func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	var (
-		r          persistence.ParkedRow
-		executor   sql.NullString
-		stores     []string
-		resumeAt   sql.NullTime
-		reason     sql.NullString
-		reasonNote sql.NullString
-		maxParkSec sql.NullInt32
+		r        persistence.ParkedRow
+		executor sql.NullString
+		stores   []string
+		resumeAt sql.NullTime
 	)
 	if err := row.Scan(
 		&r.NodeRunID, &r.NodeID, &executor, &stores, &r.FrameID,
-		&r.ParkedAt, &resumeAt, &reason, &reasonNote,
-		&maxParkSec, &r.ConsecutiveRetriesNoProg,
+		&r.ParkedAt, &resumeAt, &r.ConsecutiveRetriesNoProg,
 	); err != nil {
 		return nil, err
 	}
@@ -314,16 +264,6 @@ func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	if resumeAt.Valid {
 		t := resumeAt.Time
 		r.ResumeAt = &t
-	}
-	if reason.Valid {
-		r.Reason = reason.String
-	}
-	if reasonNote.Valid {
-		r.ReasonNote = reasonNote.String
-	}
-	if maxParkSec.Valid {
-		v := int(maxParkSec.Int32)
-		r.MaxParkDurationSeconds = &v
 	}
 	return &r, nil
 }

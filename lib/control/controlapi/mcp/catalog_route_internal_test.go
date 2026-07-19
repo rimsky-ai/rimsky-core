@@ -91,7 +91,6 @@ func TestPickCanonicalRoute_RealActionRouteSets(t *testing.T) {
 		{Method: "GET", Path: "/v1/lineage/by-producer/{executor_name}"},
 	}
 	parkedNodeReadRoutes := []RegistryRoute{
-		{Method: "GET", Path: "/v1/diagnostics/parked", Tool: "parked_node_list"},
 		{Method: "GET", Path: "/v1/admin/diagnostics/parked-nodes"},
 	}
 
@@ -116,7 +115,7 @@ func TestPickCanonicalRoute_RealActionRouteSets(t *testing.T) {
 		{"lineage_get by source_type+source_id → by-source reverse lookup", "lineage_get", lineageReadRoutes, withArgs("source_type", "source_id"), "/v1/lineage/by-source/{source_type}/{source_id}"},
 		{"lineage_get by executor_name → by-producer reverse lookup", "lineage_get", lineageReadRoutes, withArgs("executor_name"), "/v1/lineage/by-producer/{executor_name}"},
 
-		{"parked_node_list → non-admin route, not the admin duplicate", "parked_node_list", parkedNodeReadRoutes, withArgs(), "/v1/diagnostics/parked"},
+		{"parked_node_list → the sole admin route", "parked_node_list", parkedNodeReadRoutes, withArgs(), "/v1/admin/diagnostics/parked-nodes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

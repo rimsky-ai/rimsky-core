@@ -28,18 +28,9 @@ type TerminalErrorPayload struct {
 	Tags            []string       `json:"tags,omitempty"`
 }
 
-type TransientParkSnoozePayload struct {
-	ResumeAt          time.Time `json:"resume_at"`
-	ParkedReasonLabel string    `json:"parked_reason_label,omitempty"`
-	ParkedReasonNote  string    `json:"parked_reason_note,omitempty"`
-	Tags              []string  `json:"tags,omitempty"`
-}
-
-type TransientParkAwaitCallbackPayload struct {
-	ResumeAt          *time.Time `json:"resume_at,omitempty"`
-	ParkedReasonLabel string     `json:"parked_reason_label,omitempty"`
-	ParkedReasonNote  string     `json:"parked_reason_note,omitempty"`
-	Tags              []string   `json:"tags,omitempty"`
+type TransientParkPayload struct {
+	ResumeAt time.Time `json:"resume_at"`
+	Tags     []string  `json:"tags,omitempty"`
 }
 
 type TransientRetryPayload struct {
@@ -125,10 +116,8 @@ func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
 	switch {
 	case s == "terminal/success":
 		return reflect.TypeOf(TerminalSuccessPayload{}), true
-	case s == "transient/park/snooze":
-		return reflect.TypeOf(TransientParkSnoozePayload{}), true
-	case s == "transient/park/await_callback":
-		return reflect.TypeOf(TransientParkAwaitCallbackPayload{}), true
+	case s == "transient/park":
+		return reflect.TypeOf(TransientParkPayload{}), true
 	case s == "transient/await_async":
 		return reflect.TypeOf(TransientAwaitAsyncPayload{}), true
 	case strings.HasPrefix(s, "terminal/error/"):

@@ -82,8 +82,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		return false
 	}
 	hooks := node.RegistryHooks{
-		RefValidationMode: deps.RefValidationMode,
-		KindAliases:       deps.KindAliases,
+		KindAliases: deps.KindAliases,
 	}
 	if deps.ClaimProducers != nil {
 		hooks.StoreDeclared = func(name string) bool {

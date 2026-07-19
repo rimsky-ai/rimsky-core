@@ -56,7 +56,6 @@ func TestLoopCounterCapE2E(t *testing.T) {
 			loopSinkURL: {Transport: "inproc", URL: loopSinkURL},
 			doneSinkURL: {Transport: "inproc", URL: doneSinkURL},
 		},
-		RefValidationMode: node.RefValidateAvailable,
 	})
 
 	tid := h.DeployTemplate(node.TemplateSpec{

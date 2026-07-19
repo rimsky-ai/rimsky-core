@@ -61,9 +61,8 @@ func makeFixture(t *testing.T) carryFixture {
 	exitNodeRunID := shared.UUID(uuid.New())
 
 	tmpl := tmplspec.TemplateSpec{
-		Name:           "exit-carry-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "exit-carry-fixture",
+		Version: "1",
 		Nodes: []tmplspec.TemplateNodeDef{
 			{Type: "caller", Delegate: "inner"},
 			{Type: "inner-exit", Executor: "test-executor"},
@@ -114,7 +113,7 @@ func makeFixture(t *testing.T) carryFixture {
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
+		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}
@@ -155,13 +154,14 @@ func makeFixture(t *testing.T) carryFixture {
 func settleCarry(fx carryFixture, exitNodeRunID shared.UUID, writeback json.RawMessage) error {
 	args := runtime.RunArgs{Persist: fx.tables, Logger: shared.SilentLogger{}, Clock: shared.SystemClock{}}
 	return fx.tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.SettleFromDelegate(ctx, args, tx, runtime.DelegateSettlementInput{
+		_, err := runtime.SettleFromDelegate(ctx, args, tx, runtime.DelegateSettlementInput{
 			ExitNodeRunID: exitNodeRunID,
 			ExitNodeID:    fx.exitNodeID,
 			ExitNodeAlias: "inner-exit",
 			InstanceID:    fx.instanceID,
 			Writeback:     writeback,
 		})
+		return err
 	})
 }
 

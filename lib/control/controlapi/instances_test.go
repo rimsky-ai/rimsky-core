@@ -20,7 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
@@ -128,30 +127,23 @@ func instanceCountForTemplate(t *testing.T, h *harness, templateHash string) int
 }
 
 func TestCreateInstance_StaticConfigValidationGate(t *testing.T) {
-	t.Run("rejects: static count:-1 violates the executor schema's minimum:0", func(t *testing.T) {
-		h, teardown := newRefModeHarness(t, node.RefValidateNone)
+	t.Run("rejects: static count:-1 violates the executor schema's minimum:0 at registration", func(t *testing.T) {
+		h, teardown := newConstrainedExecutorHarness(t)
 		t.Cleanup(teardown)
 
-		tplID := registerAndDeployBody(t, h, refModeTemplateProvisionedInvalid("static-gate-bad-"+uuid.NewString()))
-
-		status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
-			"template":     tplID,
-			"instance_key": "ck-" + uuid.NewString(),
-		})
+		body := refModeTemplateProvisionedInvalid("static-gate-bad-" + uuid.NewString())
+		status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 		require.Equal(t, http.StatusBadRequest, status,
-			"instantiation must reject a static-config violation at create-time; body: %v", out)
+			"registration must reject a static-config violation under unconditional strict validation; body: %v", out)
 		errText := strings.ToLower(fmt.Sprint(out["error"]) + " " + fmt.Sprint(out["validation_errors"]))
 		require.Contains(t, errText, "count",
 			"rejection must name the offending attribute `count`; body: %v", out)
 		require.Contains(t, errText, "minimum",
 			"rejection must cite the `minimum` value-constraint violation (a genuine value check, not a missing/extra-attribute surface error); body: %v", out)
-
-		require.Equal(t, 0, instanceCountForTemplate(t, h, tplID),
-			"a rejected static-config create must persist no instance row")
 	})
 
 	t.Run("admits: a well-formed instance of the same executor returns 201 and persists", func(t *testing.T) {
-		h, teardown := newRefModeHarness(t, node.RefValidateNone)
+		h, teardown := newConstrainedExecutorHarness(t)
 		t.Cleanup(teardown)
 
 		tplID := registerAndDeployBody(t, h, refModeTemplateProvisionedValid("static-gate-ok-"+uuid.NewString()))

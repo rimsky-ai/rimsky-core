@@ -207,7 +207,7 @@ func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, in
 		}); err != nil {
 			return err
 		}
-		fid, err := sb.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, 600000, tx)
+		fid, err := sb.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, tx)
 		if err != nil {
 			return err
 		}

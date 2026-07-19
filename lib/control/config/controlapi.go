@@ -41,7 +41,6 @@ type ControlAPIConfig struct {
 	Publishers             RemotePublishersConfig
 	Metrics                runtime.MetricsHook
 	LateBindServiceProxies map[string]string
-	RefValidationMode      node.RefValidationMode
 	PeerAuth               string
 
 	Bundled *BundledRegistrations
@@ -244,7 +243,6 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		Validators:             validationReg,
 		DataProcessors:         dataProcessorReg,
 		LateBindServiceProxies: cfg.LateBindServiceProxies,
-		RefValidationMode:      cfg.RefValidationMode,
 		KindAliases:            buildKindAliases(),
 		PeerAuth:               cfg.PeerAuth,
 		Enroll:                 enrollDeps,

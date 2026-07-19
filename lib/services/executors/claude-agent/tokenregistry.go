@@ -105,7 +105,7 @@ type TokenEntry struct {
 	OnComplete        func(attributesDelta map[string]any, changed bool, changeSummary *string, signoffs []string, scheduleTeardown ScheduleTeardown) (CompleteResult, error)
 	OnBlocked         func(reason string, context any, scheduleTeardown ScheduleTeardown) error
 	OnError           func(errorClass string, payload any, scheduleTeardown ScheduleTeardown) error
-	OnPark            func(reason string, reasonNote *string, resumeAt *string, scheduleTeardown ScheduleTeardown) error
+	OnPark            func(resumeAtISO string, scheduleTeardown ScheduleTeardown) error
 }
 
 type TokenRegistry struct {

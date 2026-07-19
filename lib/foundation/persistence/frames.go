@@ -16,12 +16,6 @@ type FramePending struct {
 	InstanceID shared.UUID
 }
 
-type FrameStuck struct {
-	FrameID        shared.UUID
-	InstanceID     shared.UUID
-	FrameTimeoutMs int64
-}
-
 type OrphanFrameDispatch struct {
 	NodeRunID shared.UUID
 	ClaimedBy string
@@ -37,7 +31,6 @@ type FrameRow struct {
 	StartedAt           *time.Time  `json:"started_at,omitempty"`
 	EndedAt             *time.Time  `json:"ended_at,omitempty"`
 	LastProgressAt      *time.Time  `json:"last_progress_at,omitempty"`
-	FrameTimeoutMs      int64       `json:"frame_timeout_ms"`
 }
 
 type FrameRowWithMessage struct {
@@ -66,14 +59,10 @@ type FrameTable interface {
 
 	MarkSourceNodeStale(ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx Tx) (matched bool, err error)
 
-	ListStuckRunningFrames(ctx context.Context, tx Tx) ([]FrameStuck, error)
-
 	ListOrphanFrameDispatches(ctx context.Context, tx Tx) ([]OrphanFrameDispatch, error)
 
-	LookupFrameTimeoutMs(ctx context.Context, instanceID shared.UUID, tx Tx) (frameTimeoutMs int64, err error)
-
 	// @decision: empty-message-as-root-trigger
-	InsertRunningFrame(ctx context.Context, instanceID, triggeringMessageID, rootRunScopeID shared.UUID, frameTimeoutMs int64, tx Tx) (shared.UUID, error)
+	InsertRunningFrame(ctx context.Context, instanceID, triggeringMessageID, rootRunScopeID shared.UUID, tx Tx) (shared.UUID, error)
 
 	ListForObservabilityWithMessage(ctx context.Context, filter FrameListFilter, pag ListPagination, tx Tx) (PaginatedListResult[FrameRowWithMessage], error)
 

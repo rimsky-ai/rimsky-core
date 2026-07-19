@@ -46,8 +46,7 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
 			ID: tmpl,
 			Spec: spec.TemplateSpec{
 				Name: "find-key", Version: "1",
-				FrameTimeoutMs: 600000,
-				Nodes:          []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				Nodes: []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",
@@ -147,8 +146,7 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 			ID: tmpl,
 			Spec: spec.TemplateSpec{
 				Name: "events-desc", Version: "1",
-				FrameTimeoutMs: 600000,
-				Nodes:          []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				Nodes: []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",

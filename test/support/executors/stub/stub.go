@@ -37,17 +37,6 @@ func postCancelProbeSignal(callbackURL, ackID string) {
 	_ = resp.Body.Close()
 }
 
-func parkReasonFromStorageForm(s string) genv1.ParkReason {
-	if s == "" {
-		return genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
-	}
-	upper := "PARK_REASON_" + strings.ToUpper(s)
-	if v, ok := genv1.ParkReason_value[upper]; ok {
-		return genv1.ParkReason(v)
-	}
-	return genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
-}
-
 func parkResumeAtFromAttrs(attrs map[string]any) *timestamppb.Timestamp {
 	raw, _ := attrs["park_resume_at"].(string)
 	if raw == "" {
@@ -79,8 +68,6 @@ type script struct {
 	asyncAckID        string
 	asyncCompletionMs int64
 	delay             time.Duration
-	parkReason        genv1.ParkReason
-	parkReasonNote    string
 	parkResumeAt      time.Time
 	tags              []string
 	attributesDelta   map[string]any
@@ -94,7 +81,6 @@ type Stub struct {
 	callN             map[string]int
 	stubMode          bool
 	ignoreCancelProbe bool
-	forceParkReason   *genv1.ParkReason
 	observed          []ObservedRequest
 }
 
@@ -129,13 +115,6 @@ func (s *Stub) IgnoreCancelProbe() *Stub {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ignoreCancelProbe = true
-	return s
-}
-
-func (s *Stub) ForceParkReason(reason genv1.ParkReason) *Stub {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.forceParkReason = &reason
 	return s
 }
 
@@ -197,13 +176,11 @@ func (b *TypeBuilder) AwaitAsyncCallback(ackID string, completionMs int64) *Type
 	return b
 }
 
-func (b *TypeBuilder) Park(reason genv1.ParkReason, reasonNote string, resumeAt time.Time) *TypeBuilder {
+func (b *TypeBuilder) Park(resumeAt time.Time) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
 	sc := b.tail()
 	sc.terminal = termPark
-	sc.parkReason = reason
-	sc.parkReasonNote = reasonNote
 	sc.parkResumeAt = resumeAt
 	return b
 }
@@ -265,7 +242,6 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 	})
 	stubMode := s.stubMode
 	ignoreCancelProbe := s.ignoreCancelProbe
-	forceParkReason := s.forceParkReason
 	q, ok := s.scripts[req.NodeType]
 	var sc *script
 	if ok && len(q) > 0 {
@@ -290,19 +266,8 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 			return nil, ctx.Err()
 		}
 		if probe, _ := attrs["probe_park"].(bool); probe {
-			reasonStr, _ := attrs["park_reason"].(string)
-			reasonLabel, _ := attrs["park_reason_label"].(string)
-			reasonNote, _ := attrs["park_reason_note"].(string)
-			resumeAt := parkResumeAtFromAttrs(attrs)
-			reason := parkReasonFromStorageForm(reasonStr)
-			if forceParkReason != nil {
-				reason = *forceParkReason
-			}
 			park := &genv1.Park{
-				Reason:      reason,
-				ReasonLabel: reasonLabel,
-				ReasonNote:  reasonNote,
-				ResumeAt:    resumeAt,
+				ResumeAt: parkResumeAtFromAttrs(attrs),
 			}
 			return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}, nil
 		}
@@ -388,9 +353,7 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 		}}}, nil
 	case termPark:
 		park := &genv1.Park{
-			Reason:     sc.parkReason,
-			ReasonNote: sc.parkReasonNote,
-			Tags:       sc.tags,
+			Tags: sc.tags,
 		}
 		if !sc.parkResumeAt.IsZero() {
 			park.ResumeAt = timestamppb.New(sc.parkResumeAt)

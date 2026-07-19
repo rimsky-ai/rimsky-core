@@ -54,7 +54,6 @@ func TestExampleExecutorE2E(t *testing.T) {
 	h := harness.BringUpRimskyHandle(ctx, t,
 		harness.WithExecutor("example", executorEndpoint),
 		harness.WithHostPortAccess(port),
-		harness.WithRefValidationMode("available"),
 	)
 	ep := h.Endpoint
 
@@ -66,9 +65,8 @@ func TestExampleExecutorE2E(t *testing.T) {
 
 	t.Run("tag-keyed cascade", func(t *testing.T) {
 		tid := deployExampleTemplate(t, ep, map[string]any{
-			"name":             "example-tag-keyed-cascade",
-			"version":          "1",
-			"frame_timeout_ms": 300000,
+			"name":    "example-tag-keyed-cascade",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",
@@ -122,9 +120,8 @@ func TestExampleExecutorE2E(t *testing.T) {
 	t.Run("async callback survives supervisor restart", func(t *testing.T) {
 		const ackID = "ack-async-cross-stack-1"
 		tid := deployExampleTemplate(t, ep, map[string]any{
-			"name":             "example-async-callback",
-			"version":          "1",
-			"frame_timeout_ms": 300000,
+			"name":    "example-async-callback",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",
@@ -166,9 +163,8 @@ func TestExampleExecutorE2E(t *testing.T) {
 
 	t.Run("declared error class routes through error_types", func(t *testing.T) {
 		tid := deployExampleTemplate(t, ep, map[string]any{
-			"name":             "example-declared-error",
-			"version":          "1",
-			"frame_timeout_ms": 300000,
+			"name":    "example-declared-error",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",

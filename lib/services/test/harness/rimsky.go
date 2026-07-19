@@ -63,18 +63,17 @@ type RimskyEndpoint struct {
 type Option func(*configBuilder)
 
 type configBuilder struct {
-	claimProducers    map[string]producerCfg
-	executors         map[string]executorCfg
-	publishers        map[string]publisherCfg
-	namedLocks        map[string]int
-	hostAccessPorts   []int
-	existingNetwork   string
-	rimskyAlias       string
-	blob              *blobCfg
-	extraEnv          map[string]string
-	sqlite            bool
-	refValidationMode string
-	bundledFS         *bundledFSCfg
+	claimProducers  map[string]producerCfg
+	executors       map[string]executorCfg
+	publishers      map[string]publisherCfg
+	namedLocks      map[string]int
+	hostAccessPorts []int
+	existingNetwork string
+	rimskyAlias     string
+	blob            *blobCfg
+	extraEnv        map[string]string
+	sqlite          bool
+	bundledFS       *bundledFSCfg
 }
 
 type bundledFSCfg struct {
@@ -188,12 +187,6 @@ func WithContainerEnv(key, value string) Option {
 func WithHostPortAccess(ports ...int) Option {
 	return func(cb *configBuilder) {
 		cb.hostAccessPorts = append(cb.hostAccessPorts, ports...)
-	}
-}
-
-func WithRefValidationMode(mode string) Option {
-	return func(cb *configBuilder) {
-		cb.refValidationMode = mode
 	}
 }
 
@@ -679,10 +672,6 @@ func renderRimskyYAMLSQLite(cb *configBuilder) string {
 }
 
 func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
-	if cb.refValidationMode != "" {
-		b.WriteString("templates:\n")
-		fmt.Fprintf(b, "  ref_validation_mode: %s\n", cb.refValidationMode)
-	}
 	if len(cb.claimProducers) == 0 {
 		b.WriteString("claim_producers: {}\n")
 	} else {

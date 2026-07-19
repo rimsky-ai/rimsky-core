@@ -9,7 +9,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/url"
 	"os"
 	"time"
 )
@@ -18,7 +17,6 @@ func RunParkedList(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("parked list", flag.ContinueOnError)
 	var common CommonFlags
 	RegisterCommonFlags(fs, &common)
-	reason := fs.String("reason", "", "filter by parked reason (snake_case ParkReason; e.g. awaiting_human)")
 	olderThan := fs.Duration("older-than", 0, "filter to rows parked longer ago than this duration")
 	instance := fs.String("instance", "", "filter to a specific instance id")
 	if err := parseInterspersed(fs, args); err != nil {
@@ -37,14 +35,7 @@ func RunParkedList(ctx context.Context, args []string) int {
 		return 2
 	}
 
-	q := url.Values{}
-	if *reason != "" {
-		q.Set("reason", *reason)
-	}
-	path := "/v1/diagnostics/parked"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
+	path := "/v1/admin/diagnostics/parked-nodes"
 
 	client := NewClient(endpoint)
 	client.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
@@ -78,16 +69,16 @@ func RunParkedList(ctx context.Context, args []string) int {
 		_ = EmitJSON(os.Stdout, rows)
 		return 0
 	}
-	fmt.Println("instance\tnode_id\tparked_at\tresume_at\treason\treason_note")
+	fmt.Println("instance\tnode_id\tparked_at\tresume_at")
 	for _, r := range rows {
 		resumeAt := ""
 		if r.ResumeAt != nil {
 			resumeAt = r.ResumeAt.UTC().Format(time.RFC3339)
 		}
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Printf("%s\t%s\t%s\t%s\n",
 			r.InstanceID, r.NodeID,
 			r.ParkedAt.UTC().Format(time.RFC3339),
-			resumeAt, r.Reason, r.ReasonNote)
+			resumeAt)
 	}
 	return 0
 }

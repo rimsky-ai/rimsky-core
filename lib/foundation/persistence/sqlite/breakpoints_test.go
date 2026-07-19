@@ -47,9 +47,8 @@ func seedBreakpointFixture(t *testing.T, ctx context.Context, d persistence.Data
 	mainRunScopeID := uuid.New()
 
 	tmpl := spec.TemplateSpec{
-		Name:           "breakpoint-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "breakpoint-fixture",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "fixture-node-type", Executor: "test-executor"},
 		},

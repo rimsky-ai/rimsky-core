@@ -39,7 +39,7 @@ func TestClaimContentInertness_ReadSitesAreEnumerated(t *testing.T) {
 			}
 			sort.Strings(names)
 			t.Errorf("new claim-content inert-byte read site %q found (json.Unmarshal/json.Valid over a claim "+
-				"Address/Payload/ClaimScope field); claim content is byte-opaque inert (invariant 20) — read "+
+				"Address/Payload/ClaimScope field); claim content is byte-opaque inert — read "+
 				"only at the enumerated sanctioned sites %v. Either this is a legitimate new sanctioned site "+
 				"(update this test's allowlist and the inertness concept doc) or it's a stray inspection site "+
 				"that must be removed", fn, names)

@@ -13,7 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -30,7 +29,7 @@ func TestCascadeDefersDuringFlight_WalkerQueuesNewPendingWithoutMutatingInFlight
 
 	resumeAt := time.Now().Add(6 * time.Second)
 	h.Stub.WhenType("b").
-		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "deadline-wait", resumeAt).
+		Park(resumeAt).
 		Then().Success(map[string]any{}, true, "b-r1-resumed").
 		Then().Success(map[string]any{}, true, "b-r2").
 		Then().Success(map[string]any{}, true, "b-r3").

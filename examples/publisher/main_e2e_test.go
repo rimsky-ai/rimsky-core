@@ -37,7 +37,6 @@ func TestE2E_ExamplePublisherAgainstRunningRimsky(t *testing.T) {
 		harness.WithPublisher("example", pubEndpoint),
 		harness.WithExecutor("stub", execEndpoint),
 		harness.WithHostPortAccess(pubPort, execPort),
-		harness.WithRefValidationMode("none"),
 	)
 
 	state := &exampleState{}
@@ -226,9 +225,8 @@ func deployExampleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	t.Helper()
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":             "example-publisher-cascade",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "example-publisher-cascade",
+			"version": "1",
 			"messages": []map[string]any{
 				{
 					"type": exampleMessageType,

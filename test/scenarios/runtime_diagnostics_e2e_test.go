@@ -20,7 +20,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -46,10 +45,9 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 	})
 
 	h.Stub.WhenType("acquirer").
-		Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "wedge_callback", time.Time{})
+		Park(time.Now().Add(time.Hour))
+	h.Stub.WhenType("signaler").Success(map[string]any{}, true, "signal-sent")
 	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "should-not-run")
-
-	h.Stub.WhenType("transient_sender").Error("flaky", map[string]any{"hint": "transient"})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "runtime-diagnostics-wedge", Version: "1",
@@ -58,6 +56,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
 				scenario.WithClaimProducers(scenario.AliasedClaimRef("queue-store", "/wedge-A", "rw", "held")),
 			),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "signaler", Executor: "stub"}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{
 					Type:     "inheritor",
@@ -66,21 +65,8 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 						"held": {From: "acquirer"},
 					},
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)}),
-			),
-			scenario.MakeNode(node.TemplateNodeDef{
-				Type:         "transient_sender",
-				Executor:     "stub",
-				MaxRetries:   node.IntPtr(100),
-				RetryBackoff: &node.RetryBackoffConfig{BaseDelayMs: 500},
-				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/flaky": {Action: "retry"},
-				},
-			}),
-			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "transient_receiver", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "transient_sender", Type: "transient/retry/*", ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "signaler", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 			),
 		},
@@ -88,16 +74,16 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-runtime-diag", map[string]any{})
 
 	acq := h.FindNode(iid, "acquirer")
-	rcv := h.FindNode(iid, "transient_receiver")
+	rcv := h.FindNode(iid, "inheritor")
 	require.NotNil(t, acq)
 	require.NotNil(t, rcv)
 
 	h.WaitForNodeState(acq.ID, cascade.NodeStateParked)
 
-	transientFrame, transientReceiverRun, transientSenderRun :=
-		waitForUndrainedWaitSetRow(t, h, rcv.ID, "transient")
-	require.NotEqual(t, shared.UUID{}, transientReceiverRun,
-		"transient_receiver must carry an undrained topic_kind=transient wait-set row "+
+	wedgedFrame, wedgedReceiverRun, wedgedSenderRun :=
+		waitForWaitSetRow(t, h, rcv.ID, "terminal")
+	require.NotEqual(t, shared.UUID{}, wedgedReceiverRun,
+		"inheritor must carry a topic_kind=terminal wait-set row from the settled signaler "+
 			"keyed on a real frame before the diagnostic surfaces are read")
 
 	waitForNodeOnParkedSurface(t, h, acq.ID.String())
@@ -112,10 +98,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 		"the supervisor's actual state for the acquirer must be 'parked' — "+
 			"the parked surface lying would falsify the story")
 
-	require.True(t, parkedSurfaceContainsNodeWithReason(t, h, acq.ID.String(), "await_callback"),
-		"GET /v1/diagnostics/parked?reason=await_callback must return the acquirer (reason filter contract)")
-
-	waitSetURL := h.ControlBase + "/v1/admin/diagnostics/wait-sets?frame=" + transientFrame.String()
+	waitSetURL := h.ControlBase + "/v1/admin/diagnostics/wait-sets?frame=" + wedgedFrame.String()
 	resp, err := http.Get(waitSetURL)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode,
@@ -129,19 +112,19 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 
 	foundEdge := false
 	for _, e := range waitSetBody.WaitSet {
-		if shared.UUID(e.ReceiverNodeRunID) == transientReceiverRun &&
-			shared.UUID(e.SenderNodeRunID) == transientSenderRun &&
-			e.TopicKind == "transient" {
+		if shared.UUID(e.ReceiverNodeRunID) == wedgedReceiverRun &&
+			shared.UUID(e.SenderNodeRunID) == wedgedSenderRun &&
+			e.TopicKind == "terminal" {
 			foundEdge = true
 			break
 		}
 	}
 	require.True(t, foundEdge,
 		"the exact receiver↔sender edge the supervisor is consulting "+
-			"(receiver_run=%s, sender_run=%s, topic_kind=transient) must appear on the wait-set surface",
-		transientReceiverRun, transientSenderRun)
+			"(receiver_run=%s, sender_run=%s, topic_kind=terminal) must appear on the wait-set surface",
+		wedgedReceiverRun, wedgedSenderRun)
 
-	resp2, err := http.Get(waitSetURL + "&receiver_run=" + transientReceiverRun.String())
+	resp2, err := http.Get(waitSetURL + "&receiver_run=" + wedgedReceiverRun.String())
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp2.StatusCode,
 		"wait-sets endpoint must accept ?receiver_run= as a narrowing filter")
@@ -152,7 +135,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 		"the receiver_run-narrowed query must return the same edge — "+
 			"empty would mean the supervisor's actual gate is hidden behind the narrow filter")
 	for _, e := range narrowed.WaitSet {
-		require.Equal(t, transientReceiverRun, shared.UUID(e.ReceiverNodeRunID),
+		require.Equal(t, wedgedReceiverRun, shared.UUID(e.ReceiverNodeRunID),
 			"every narrowed row must key on the supplied receiver_run")
 	}
 
@@ -205,7 +188,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 func waitForNodeOnParkedSurface(t *testing.T, h *scenario.Harness, nodeID string) {
 	t.Helper()
 	for {
-		resp, err := http.Get(h.ControlBase + "/v1/diagnostics/parked")
+		resp, err := http.Get(h.ControlBase + "/v1/admin/diagnostics/parked-nodes")
 		if err == nil {
 			var body controlapi.ParkedNodesResponse
 			decErr := json.NewDecoder(resp.Body).Decode(&body)
@@ -220,28 +203,6 @@ func waitForNodeOnParkedSurface(t *testing.T, h *scenario.Harness, nodeID string
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-}
-
-func parkedSurfaceContainsNodeWithReason(t *testing.T, h *scenario.Harness, nodeID, reason string) bool {
-	t.Helper()
-	resp, err := http.Get(h.ControlBase + "/v1/diagnostics/parked?reason=" + reason)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-	var body controlapi.ParkedNodesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return false
-	}
-	for _, p := range body.ParkedNodes {
-		if p.NodeID == nodeID {
-			return true
-		}
-	}
-	return false
 }
 
 func waitForHeldFrameListingNode(t *testing.T, h *scenario.Harness, nodeID string) {
@@ -284,7 +245,7 @@ func waitForHeldClaimHandle(t *testing.T, h *scenario.Harness, instanceID shared
 	}
 }
 
-func waitForUndrainedWaitSetRow(
+func waitForWaitSetRow(
 	t *testing.T, h *scenario.Harness, receiverNodeID shared.UUID,
 	topicKind string,
 ) (frameID, receiverNodeRunID, senderNodeRunID shared.UUID) {
@@ -302,7 +263,6 @@ func waitForUndrainedWaitSetRow(
               JOIN rimsky_node_runs r ON r.id = w.receiver_run_id
              WHERE r.node_id = $1
                AND w.topic_kind = $2
-               AND w.drained_at IS NULL
              LIMIT 1
         `, []any{receiverNodeID, topicKind}, func(scan func(...any) error) error {
 			if err := scan(&fid, &rid, &sid); err != nil {

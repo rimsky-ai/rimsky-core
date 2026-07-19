@@ -13,7 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -133,7 +132,7 @@ func TestWorkCompletedNotEmittedOnPark(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("worker").
-		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "hold", time.Now().Add(time.Hour))
+		Park(time.Now().Add(time.Hour))
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "work-completed-park", Version: "1",

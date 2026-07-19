@@ -50,9 +50,8 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 
 	tplBody := map[string]any{
 		"spec": map[string]any{
-			"name":             "openlineage-e2e",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "openlineage-e2e",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "acquire-and-execute",
@@ -168,9 +167,8 @@ func TestSubscriber_EmitFailureHaltsBatch(t *testing.T) {
 
 	templateID := postTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":             "openlineage-fail",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "openlineage-fail",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "acquire-and-execute",

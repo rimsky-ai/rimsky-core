@@ -146,14 +146,14 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		}
 	})
 
-	t.Run("upstream rate-limit (stderr + non-zero exit) parks the node as snooze", func(t *testing.T) {
+	t.Run("upstream rate-limit (stderr + non-zero exit) parks the node", func(t *testing.T) {
 		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-rate-limited",
 			"scenario:rate_limited",
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-rate-limited")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeParkedSnoozeClaudeAgent(t, ep, nodeID)
+		waitNodeParkedClaudeAgent(t, ep, nodeID)
 	})
 
 	t.Run("expose-env allowlist reaches the agent; rimsky never sees the plaintext", func(t *testing.T) {
@@ -240,9 +240,8 @@ func buildClaudeAgentTemplate(name, userPrompt string, opts ...claudeAgentTempla
 	}
 	return map[string]any{
 		"spec": map[string]any{
-			"name":             name,
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    name,
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":       "worker",
@@ -336,20 +335,19 @@ func waitNodeSettledClaudeAgent(
 		nodeID, wantState, deadline, lastState, lastBody)
 }
 
-func waitNodeParkedSnoozeClaudeAgent(t *testing.T, ep harness.RimskyEndpoint, nodeID string) {
+func waitNodeParkedClaudeAgent(t *testing.T, ep harness.RimskyEndpoint, nodeID string) {
 	t.Helper()
 	for {
-		status, raw := ep.GetJSON(t, "/v1/diagnostics/parked?reason=snooze", "")
+		status, raw := ep.GetJSON(t, "/v1/admin/diagnostics/parked-nodes", "")
 		if status == http.StatusOK {
 			var resp struct {
 				ParkedNodes []struct {
 					NodeID string `json:"node_id"`
-					Reason string `json:"reason"`
 				} `json:"parked_nodes"`
 			}
 			if json.Unmarshal(raw, &resp) == nil {
 				for _, p := range resp.ParkedNodes {
-					if p.NodeID == nodeID && p.Reason == "snooze" {
+					if p.NodeID == nodeID {
 						return
 					}
 				}

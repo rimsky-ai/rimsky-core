@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-An executor implements the executor protocol's unary execute operation plus an optional observability protocol. Implementations come in two forms — in-process handlers registered with an in-process handler registry, and out-of-process services — and the outcome vocabulary (execute, the outcome variants) is identical across both, but the observability handshake is not: out-of-process services advertise capabilities through the gRPC observability handshake, while in-process handlers advertise capabilities directly into the discovery cache at registration and never receive a handshake. The executor receives one execute request and returns exactly one outcome from the closed family of settling outcomes plus an async-callback deferral. The deferral defers the verdict to a later callback against the supervisor whose body settles the dispatch with one of the settling outcomes. Park outcomes carry an inner park reason (per `concept:parked-state`).
+An executor implements the executor protocol's unary execute operation plus an optional observability protocol. Implementations come in two forms — in-process handlers registered with an in-process handler registry, and out-of-process services — and the outcome vocabulary (execute, the outcome variants) is identical across both, but the observability handshake is not: out-of-process services advertise capabilities through the gRPC observability handshake, while in-process handlers advertise capabilities directly into the discovery cache at registration and never receive a handshake. The executor receives one execute request and returns exactly one outcome from the closed family of settling outcomes plus an async-callback deferral. The deferral defers the verdict to a later callback against the supervisor whose body settles the dispatch with one of the settling outcomes. Park outcomes carry exactly a required resume-at, scratch, and tags (per `concept:parked-state`).
 
 ## Purpose
 
@@ -16,7 +16,7 @@ Executors are where actual work happens. Out-of-process executors give language-
 
 ## Scratch
 
-Executors carry opaque per-dispatch scratch bytes via the protocol. Each dispatch surfaces the previously persisted scratch (empty on first dispatch); the executor may write scratch mid-dispatch via a scratch callback channel or by attaching it to the settling outcome. Both writes persist against the dispatch. The bytes are opaque to rimsky — the inertness discipline extends to scratch (see `concept:inertness`) — and scratch carries forward to a successor dispatch of the same node whenever that dispatch supersedes a prior one, including in-place retry, stale recovery, and cascade-driven recalculate; a fresh dispatch with no predecessor starts with empty scratch. Recovery-path semantics live with `concept:node-run`.
+Executors carry opaque per-dispatch scratch bytes via the protocol. Each dispatch surfaces the previously persisted scratch (empty on first dispatch); the executor writes scratch by attaching it to the settling outcome — there is no mid-dispatch scratch channel. The bytes are opaque to rimsky — the inertness discipline extends to scratch (see `concept:inertness`) — and scratch carries forward to a successor dispatch of the same node whenever that dispatch supersedes a prior one, including in-place retry, stale recovery, and cascade-driven recalculate; a fresh dispatch with no predecessor starts with empty scratch. Recovery-path semantics live with `concept:node-run`.
 
 ## Boundaries
 

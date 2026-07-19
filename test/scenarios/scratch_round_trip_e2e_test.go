@@ -96,7 +96,6 @@ func TestScratchRoundTripE2E_RetryAfterError(t *testing.T) {
 		ExtraExecutors: map[string]executor.Endpoint{
 			url: {Transport: "inproc", URL: url},
 		},
-		RefValidationMode: node.RefValidateAvailable,
 	})
 
 	tid := harness.DeployTemplate(node.TemplateSpec{
@@ -148,7 +147,6 @@ func runDispositionVariant(t *testing.T, disposition string) {
 		ExtraExecutors: map[string]executor.Endpoint{
 			url: {Transport: "inproc", URL: url},
 		},
-		RefValidationMode: node.RefValidateAvailable,
 	})
 
 	tid := harness.DeployTemplate(node.TemplateSpec{

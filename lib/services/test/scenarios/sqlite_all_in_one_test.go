@@ -29,9 +29,8 @@ func TestAllInOneSQLite_DriveNodeToTerminal(t *testing.T) {
 
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":             "sqlite-all-in-one",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "sqlite-all-in-one",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",

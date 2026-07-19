@@ -200,9 +200,8 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":             "sensor-cascade",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "sensor-cascade",
+			"version": "1",
 			"messages": []map[string]any{
 				{
 					"type": reactorMessageType,

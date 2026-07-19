@@ -43,7 +43,6 @@ func TestCascadeTwoNodeBackedgeInFrame(t *testing.T) {
 			pongURL:     {Transport: "inproc", URL: pongURL},
 			doneSinkURL: {Transport: "inproc", URL: doneSinkURL},
 		},
-		RefValidationMode: node.RefValidateAvailable,
 	})
 
 	tid := h.DeployTemplate(node.TemplateSpec{

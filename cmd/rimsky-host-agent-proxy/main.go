@@ -52,10 +52,6 @@ func main() {
 
 	genv1.RegisterLifecycleSubscriberServer(grpcSrv, newLifecycleHandler(state, cfg))
 
-	genv1.RegisterPublisherServer(grpcSrv, newPublisherHandler(state, cfg))
-	genv1.RegisterValidationServer(grpcSrv, newValidationHandler(state, cfg))
-	genv1.RegisterDataProcessingServer(grpcSrv, newDataProcessingHandler(state, cfg))
-
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
 	if err != nil {
 		slog.Error("listen failed", "error", err, "grpc_port", cfg.GRPCPort)

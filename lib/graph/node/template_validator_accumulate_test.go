@@ -13,7 +13,6 @@ func TestValidateTemplate_AccumulatesAllErrors_NoBailOnFirst(t *testing.T) {
 		Name:             "",
 		Version:          "",
 		MessageQueueMode: "bogus",
-		FrameTimeoutMs:   1,
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "handler.a",
@@ -24,7 +23,7 @@ func TestValidateTemplate_AccumulatesAllErrors_NoBailOnFirst(t *testing.T) {
 		t.Fatalf("expected validation errors, got none")
 	}
 
-	wantPrefixes := []string{"name", "version", "message_queue_mode", "frame_timeout_ms"}
+	wantPrefixes := []string{"name", "version", "message_queue_mode"}
 	for _, prefix := range wantPrefixes {
 		hasErrorAt(t, res, prefix)
 	}

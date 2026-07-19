@@ -289,7 +289,6 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 			NodeRunID:         f.runB,
 			ExpectedClaimedBy: "sup-B",
 			ParkedAt:          time.Now(),
-			Reason:            "snooze",
 		}); err != nil {
 			return err
 		}

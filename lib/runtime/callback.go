@@ -27,7 +27,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	rimskyscratch "github.com/rimsky-ai/rimsky-core/lib/graph/scratch"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
@@ -169,19 +168,6 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	r := chi.NewRouter()
 	r.Post("/v1/callback/{async_ack_id}", c.handleCallback)
 	if c.Persist != nil && c.Queue != nil {
-		r.Method(http.MethodPost, "/v1/runs/{run_id}/scratch", rimskyscratch.Handler(rimskyscratch.HandlerDeps{
-			Writer: scratchStoreAdapter{
-				persist:        c.Persist,
-				queue:          c.Queue,
-				blob:           c.Blob,
-				spillThreshold: c.BlobSpillThreshold,
-				logger:         c.Logger,
-			},
-			Auth:   c.authorizeScratch,
-			Logger: c.Logger,
-		}))
-	}
-	if c.Persist != nil && c.Queue != nil {
 		r.Post("/v1/runs/{run_id}/keepalive", c.handleKeepalive)
 	}
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -221,10 +207,6 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	return c.addr, nil
 }
 
-func (c *CallbackServer) authorizeScratch(r *http.Request, _ shared.UUID) error {
-	return c.authorizePeer(r)
-}
-
 func (c *CallbackServer) Addr() string { return c.addr }
 
 func (c *CallbackServer) ServeErr() <-chan error { return c.serveErr }
@@ -261,11 +243,8 @@ type asyncCallbackError struct {
 }
 
 type asyncCallbackPark struct {
-	Reason      string   `json:"reason,omitempty"`
-	ReasonNote  string   `json:"reason_note,omitempty"`
-	ReasonLabel string   `json:"reason_label,omitempty"`
-	ResumeAt    string   `json:"resume_at,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
+	ResumeAt string   `json:"resume_at"`
+	Tags     []string `json:"tags,omitempty"`
 	// @concept: executor
 	Scratch []byte `json:"scratch,omitempty"`
 }
@@ -651,20 +630,19 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 			Scratch:       body.Error.Scratch,
 		}, nil
 	case body.Park != nil:
-		t := terminalEvent{
-			Kind:            terminalKindPark,
-			ParkReason:      parkReasonFromStorageForm(body.Park.Reason),
-			ParkReasonNote:  body.Park.ReasonNote,
-			ParkReasonLabel: body.Park.ReasonLabel,
-			Tags:            dedupTagsRT(body.Park.Tags),
-			Scratch:         body.Park.Scratch,
+		if body.Park.ResumeAt == "" {
+			return terminalEvent{}, errors.New("park requires resume_at")
 		}
-		if body.Park.ResumeAt != "" {
-			if pt, err := time.Parse(time.RFC3339, body.Park.ResumeAt); err == nil {
-				t.ParkResumeAt = pt
-			}
+		pt, err := time.Parse(time.RFC3339, body.Park.ResumeAt)
+		if err != nil {
+			return terminalEvent{}, fmt.Errorf("park resume_at: invalid RFC3339 timestamp %q", body.Park.ResumeAt)
 		}
-		return t, nil
+		return terminalEvent{
+			Kind:         terminalKindPark,
+			ParkResumeAt: pt,
+			Tags:         dedupTagsRT(body.Park.Tags),
+			Scratch:      body.Park.Scratch,
+		}, nil
 	}
 	return terminalEvent{}, errors.New("unreachable")
 }
@@ -762,60 +740,4 @@ func ackStatusForState(s cascade.NodeState) string {
 	default:
 		return ackStatusRejectedRunTerminal
 	}
-}
-
-// @concept: executor
-type scratchStoreAdapter struct {
-	persist        persistence.Tables
-	queue          persistence.Queue
-	blob           persistence.BlobBackend
-	spillThreshold int
-	logger         shared.Logger
-}
-
-func (a scratchStoreAdapter) Write(ctx context.Context, runID shared.UUID, b []byte) error {
-	var (
-		inline        []byte
-		handle        string
-		handleBackend string
-	)
-	if a.blob != nil && persistence.ShouldSpillBlob(a.blob, a.spillThreshold, len(b)) {
-		var nodeID shared.UUID
-		if id, _, err := a.queue.GetDispatchNode(ctx, runID); err == nil {
-			nodeID = id
-		} else if a.logger != nil {
-			a.logger.Warn("scratchStoreAdapter: node id lookup failed; spill key has empty NodeID hint",
-				"dispatch_id", runID.String(), "error", err.Error())
-		}
-		key := persistence.BlobKey{NodeID: nodeID.String(), Hint: "scratch"}
-		h, err := a.blob.Write(ctx, key, b)
-		if err != nil {
-			if a.logger != nil {
-				a.logger.Warn("scratchStoreAdapter: blob spill failed; falling back to inline",
-					"dispatch_id", runID.String(), "error", err.Error())
-			}
-			inline = b
-		} else {
-			handle = string(h)
-			handleBackend = a.blob.Name()
-		}
-	} else {
-		inline = b
-	}
-	if err := a.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := a.queue.WriteScratchInTx(ctx, tx, runID, inline, handle, handleBackend); err != nil {
-			return err
-		}
-		if _, err := a.queue.BumpLastProgressAt(ctx, tx, runID, time.Now().UTC()); err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
-		// @story: opaque-executor-scratch
-		if errors.Is(err, persistence.ErrRunRowMissing) {
-			return rimskyscratch.ErrRunRowMissing
-		}
-		return err
-	}
-	return nil
 }

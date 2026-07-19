@@ -50,7 +50,7 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 
 	parentID, subIDs := seedFanOutTree(ctx, t, backend, parentNodeRunID, parentNodeID, frameID,
 		"sup-FC", "cancel-store", 3,
-		spec.AggregationPolicy{Kind: spec.AggregationKindStrict, CancelSiblings: true})
+		spec.AggregationPolicy{Kind: spec.AggregationKindStrict})
 
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

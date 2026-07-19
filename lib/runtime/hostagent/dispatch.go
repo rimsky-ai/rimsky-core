@@ -16,11 +16,8 @@ import (
 )
 
 const (
-	protocolExecutor       = "executor"
-	protocolClaimProducer  = "claim_producer"
-	protocolPublisher      = "publisher"
-	protocolValidation     = "validation"
-	protocolDataProcessing = "data_processing"
+	protocolExecutor      = "executor"
+	protocolClaimProducer = "claim_producer"
 )
 
 func (a *agent) handleDispatchFrame(ctx context.Context, df *genv1.DispatchFrame) {
@@ -42,8 +39,6 @@ func (a *agent) handleDispatchFrame(ctx context.Context, df *genv1.DispatchFrame
 		a.dispatchExecutor(ctx, child, df)
 	case protocolClaimProducer:
 		a.dispatchClaimProducer(ctx, child, df)
-	case protocolPublisher, protocolValidation, protocolDataProcessing:
-		a.dispatchUnaryByMethod(ctx, child, df)
 	default:
 		slog.Warn("hostagent: dispatch for unknown protocol", "protocol", df.GetProtocol(), "spawn_id", df.GetSpawnId())
 		a.sendDispatchCancel(df)
@@ -129,114 +124,6 @@ func forwardClaimProducerUnary(ctx context.Context, child *liveChild, verb genv1
 		return proto.Marshal(resp)
 	default:
 		return nil, fmt.Errorf("unspecified claim-producer verb %v", verb)
-	}
-}
-
-func (a *agent) dispatchUnaryByMethod(ctx context.Context, child *liveChild, df *genv1.DispatchFrame) {
-	respBytes, err := forwardUnaryByMethod(ctx, child, df.GetProtocol(), df.GetRpcMethod(), df.GetPayload())
-	if err != nil {
-		slog.Warn("hostagent: unary dispatch failed",
-			"protocol", df.GetProtocol(), "rpc_method", df.GetRpcMethod(), "spawn_id", df.GetSpawnId(), "error", err)
-		a.sendDispatchCancel(df)
-		return
-	}
-	a.sendDispatchData(df, respBytes)
-}
-
-func forwardUnaryByMethod(ctx context.Context, child *liveChild, protocol, rpcMethod string, payload []byte) ([]byte, error) {
-	switch protocol {
-	case protocolPublisher:
-		return forwardPublisherUnary(ctx, child, rpcMethod, payload)
-	case protocolValidation:
-		return forwardValidationUnary(ctx, child, rpcMethod, payload)
-	case protocolDataProcessing:
-		return forwardDataProcessingUnary(ctx, child, rpcMethod, payload)
-	default:
-		return nil, fmt.Errorf("unsupported unary protocol %q", protocol)
-	}
-}
-
-func forwardPublisherUnary(ctx context.Context, child *liveChild, rpcMethod string, payload []byte) ([]byte, error) {
-	client := genv1.NewPublisherClient(child.conn)
-	switch rpcMethod {
-	case "Subscribe":
-		var req genv1.SubscribeRequest
-		if err := proto.Unmarshal(payload, &req); err != nil {
-			return nil, fmt.Errorf("unmarshal subscribe request: %w", err)
-		}
-		resp, callErr := client.Subscribe(ctx, &req)
-		if callErr != nil {
-			return nil, callErr
-		}
-		return proto.Marshal(resp)
-	case "Unsubscribe":
-		var req genv1.UnsubscribeRequest
-		if err := proto.Unmarshal(payload, &req); err != nil {
-			return nil, fmt.Errorf("unmarshal unsubscribe request: %w", err)
-		}
-		resp, callErr := client.Unsubscribe(ctx, &req)
-		if callErr != nil {
-			return nil, callErr
-		}
-		return proto.Marshal(resp)
-	default:
-		return nil, fmt.Errorf("unsupported publisher rpc_method %q", rpcMethod)
-	}
-}
-
-func forwardValidationUnary(ctx context.Context, child *liveChild, rpcMethod string, payload []byte) ([]byte, error) {
-	client := genv1.NewValidationClient(child.conn)
-	switch rpcMethod {
-	case "Validate":
-		var req genv1.ValidateRequest
-		if err := proto.Unmarshal(payload, &req); err != nil {
-			return nil, fmt.Errorf("unmarshal validate request: %w", err)
-		}
-		resp, callErr := client.Validate(ctx, &req)
-		if callErr != nil {
-			return nil, callErr
-		}
-		return proto.Marshal(resp)
-	default:
-		return nil, fmt.Errorf("unsupported validation rpc_method %q", rpcMethod)
-	}
-}
-
-func forwardDataProcessingUnary(ctx context.Context, child *liveChild, rpcMethod string, payload []byte) ([]byte, error) {
-	client := genv1.NewDataProcessingClient(child.conn)
-	switch rpcMethod {
-	case "BeginCandidate":
-		var req genv1.BeginCandidateRequest
-		if err := proto.Unmarshal(payload, &req); err != nil {
-			return nil, fmt.Errorf("unmarshal begin-candidate request: %w", err)
-		}
-		resp, callErr := client.BeginCandidate(ctx, &req)
-		if callErr != nil {
-			return nil, callErr
-		}
-		return proto.Marshal(resp)
-	case "CommitCandidate":
-		var req genv1.CommitCandidateRequest
-		if err := proto.Unmarshal(payload, &req); err != nil {
-			return nil, fmt.Errorf("unmarshal commit-candidate request: %w", err)
-		}
-		resp, callErr := client.CommitCandidate(ctx, &req)
-		if callErr != nil {
-			return nil, callErr
-		}
-		return proto.Marshal(resp)
-	case "AbandonCandidate":
-		var req genv1.AbandonCandidateRequest
-		if err := proto.Unmarshal(payload, &req); err != nil {
-			return nil, fmt.Errorf("unmarshal abandon-candidate request: %w", err)
-		}
-		resp, callErr := client.AbandonCandidate(ctx, &req)
-		if callErr != nil {
-			return nil, callErr
-		}
-		return proto.Marshal(resp)
-	default:
-		return nil, fmt.Errorf("unsupported data-processing rpc_method %q", rpcMethod)
 	}
 }
 

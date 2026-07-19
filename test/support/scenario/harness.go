@@ -75,8 +75,6 @@ type HarnessOpts struct {
 
 	ExecutorProtocols map[string][]string
 
-	RefValidationMode node.RefValidationMode
-
 	// @concept: executor
 	ExtraInprocHandlers map[string]executor.InProcessHandler
 
@@ -268,7 +266,6 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		NamedLocks:             opts.NamedLocks,
 		Executors:              executorsCfg,
 		LateBindServiceProxies: opts.LateBindServiceProxies,
-		RefValidationMode:      opts.RefValidationMode,
 	})
 	if err != nil {
 		t.Fatalf("scenario: start controlapi: %v", err)
@@ -847,9 +844,6 @@ func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 		}
 		out["nodes"] = nodes
 	}
-	if spec.FrameTimeoutMs > 0 {
-		out["frame_timeout_ms"] = spec.FrameTimeoutMs
-	}
 	if spec.Description != "" {
 		out["description"] = spec.Description
 	}
@@ -988,9 +982,6 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 		}
 		nd["error_types"] = ets
 	}
-	if n.MaxParkDuration != "" {
-		nd["max_park_duration"] = n.MaxParkDuration
-	}
 	if n.MaxRetries != nil {
 		nd["max_retries"] = *n.MaxRetries
 	}
@@ -1050,9 +1041,6 @@ func fanOutSpecToJSON(fo *node.FanOutSpec) map[string]any {
 	}
 	if fo.ErrorPolicy.MaxFailures > 0 {
 		policy["max_failures"] = fo.ErrorPolicy.MaxFailures
-	}
-	if fo.ErrorPolicy.CancelSiblings {
-		policy["cancel_siblings"] = fo.ErrorPolicy.CancelSiblings
 	}
 	out["error_policy"] = policy
 	return out

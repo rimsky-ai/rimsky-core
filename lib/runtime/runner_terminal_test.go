@@ -90,9 +90,8 @@ func seedPoisonPortfolioFixture(
 	q := d.Queue()
 
 	tmpl := spec.TemplateSpec{
-		Name:           "poison-portfolio-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "poison-portfolio-fixture",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "holder", Executor: "test-executor"},
 		},
@@ -128,7 +127,7 @@ func seedPoisonPortfolioFixture(
 		}); err != nil {
 			return err
 		}
-		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, 600000, tx)
+		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

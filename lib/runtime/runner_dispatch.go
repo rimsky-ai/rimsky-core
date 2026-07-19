@@ -68,14 +68,11 @@ type terminalEvent struct {
 	Changed       bool
 	ChangeSummary string
 	// @concept: attribute
-	AttributesDel   map[string]any
-	Tags            []string
-	ErrorClass      string
-	Payload         map[string]any
-	ParkReason      genv1.ParkReason
-	ParkReasonNote  string
-	ParkReasonLabel string
-	ParkResumeAt    time.Time
+	AttributesDel map[string]any
+	Tags          []string
+	ErrorClass    string
+	Payload       map[string]any
+	ParkResumeAt  time.Time
 	// @concept: executor
 	Scratch []byte
 }
@@ -282,16 +279,20 @@ func readExecutorOutcome(
 		}
 		return validateTags(ctx, dctx, t), ""
 	case *genv1.Outcome_Park:
-		t := terminalEvent{
-			Kind:            terminalKindPark,
-			ParkReason:      oc.Park.Reason,
-			ParkReasonNote:  oc.Park.ReasonNote,
-			ParkReasonLabel: oc.Park.ReasonLabel,
-			Scratch:         oc.Park.Scratch,
-			Tags:            dedupTagsRT(oc.Park.Tags),
+		if oc.Park.ResumeAt == nil {
+			return terminalEvent{
+				Kind:       terminalKindErrored,
+				ErrorClass: "executor_protocol_violation",
+				Payload: map[string]any{
+					"reason": "park_missing_resume_at",
+				},
+			}, ""
 		}
-		if oc.Park.ResumeAt != nil {
-			t.ParkResumeAt = oc.Park.ResumeAt.AsTime()
+		t := terminalEvent{
+			Kind:         terminalKindPark,
+			ParkResumeAt: oc.Park.ResumeAt.AsTime(),
+			Scratch:      oc.Park.Scratch,
+			Tags:         dedupTagsRT(oc.Park.Tags),
 		}
 		return validateTags(ctx, dctx, t), ""
 	case *genv1.Outcome_AwaitAsync:

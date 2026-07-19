@@ -49,7 +49,7 @@ func TestDeleteInstance_OnRunScopeTerminalFiresBeforeOnInstanceTerminated(t *tes
 		}); err != nil {
 			return err
 		}
-		_, err := h.persist.Frames().InsertRunningFrame(ctx, instID, msgID, rootScopeID, 600000, tx)
+		_, err := h.persist.Frames().InsertRunningFrame(ctx, instID, msgID, rootScopeID, tx)
 		return err
 	}))
 

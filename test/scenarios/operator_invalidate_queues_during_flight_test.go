@@ -18,7 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -31,7 +30,7 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{Clock: clock})
 
 	resumeAt := base.Add(10 * time.Second)
-	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_SNOOZE, "snooze", resumeAt)
+	h.Stub.WhenType("worker").Park(resumeAt)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "operator-invalidate-queues-during-flight", Version: "1",

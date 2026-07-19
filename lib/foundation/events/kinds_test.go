@@ -61,7 +61,6 @@ func TestOperationalKindRoundTrip(t *testing.T) {
 		{"subgraph_internal_cascade_fired", genv1.OperationalKind_OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED, "subgraph_internal_cascade_fired"},
 		{"subgraph.dispatched", genv1.OperationalKind_OPERATIONAL_KIND_SUBGRAPH_DISPATCHED, "subgraph.dispatched"},
 		{"subgraph.exit_carry", genv1.OperationalKind_OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY, "subgraph.exit_carry"},
-		{"park_timeout", genv1.OperationalKind_OPERATIONAL_KIND_PARK_TIMEOUT, "park_timeout"},
 		{"parked_resume_started", genv1.OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED, "parked_resume_started"},
 	}
 	for _, c := range cases {
@@ -92,8 +91,7 @@ func TestSignalKindRoundTrip(t *testing.T) {
 	cases := []string{
 		"terminal/success",
 		"terminal/error/http/timeout",
-		"transient/park/snooze",
-		"transient/park/await_callback",
+		"transient/park",
 		"transient/retry/3/agent/rate_limited",
 		"transient/await_async",
 		"attribute/budget_cents/changed",

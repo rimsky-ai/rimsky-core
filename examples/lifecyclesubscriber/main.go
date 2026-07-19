@@ -17,6 +17,16 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
+type syncClaimProducer struct {
+	genv1.UnimplementedClaimProducerServer
+}
+
+func (syncClaimProducer) Capabilities(context.Context, *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
+	return &genv1.CapabilitiesResponse{
+		WriteSemanticsAllowed: []genv1.WriteSemantics{genv1.WriteSemantics_WRITE_SEMANTICS_SYNC},
+	}, nil
+}
+
 func main() {
 	sub := &Subscriber{}
 
@@ -26,6 +36,7 @@ func main() {
 	}
 	srv := grpc.NewServer()
 	genv1.RegisterLifecycleSubscriberServer(srv, sub)
+	genv1.RegisterClaimProducerServer(srv, syncClaimProducer{})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

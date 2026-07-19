@@ -77,7 +77,7 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 			return err
 		}
 		var err error
-		f2, err = frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, scope2, 600000, tx)
+		f2, err = frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, scope2, tx)
 		return err
 	})
 	if f2 == fix.FrameID {
@@ -110,7 +110,7 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		}); err != nil {
 			return err
 		}
-		_, err := frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, scope3, 600000, tx)
+		_, err := frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, scope3, tx)
 		return err
 	}); err == nil {
 		t.Fatalf("InsertRunningFrame while another running frame exists must fail; got nil")
@@ -136,17 +136,6 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		}
 		if row == nil || row.State != "failed" || row.EndedAt == nil {
 			t.Fatalf("failed frame row = %+v, want state=failed with ended_at", row)
-		}
-		return nil
-	})
-
-	frameOp(ctx, t, d, "LookupFrameTimeoutMs", func(tx persistence.Tx) error {
-		timeoutMs, err := frames.LookupFrameTimeoutMs(ctx, fix.InstanceID, tx)
-		if err != nil {
-			return err
-		}
-		if timeoutMs != 600000 {
-			t.Fatalf("LookupFrameTimeoutMs = %d, want 600000", timeoutMs)
 		}
 		return nil
 	})
@@ -192,8 +181,7 @@ func testFrameRowCascadeImmutable(t *testing.T, d persistence.Database) {
 	if after.FrameID != before.FrameID ||
 		after.InstanceID != before.InstanceID ||
 		after.TriggeringMessageID != before.TriggeringMessageID ||
-		after.RootRunScopeID != before.RootRunScopeID ||
-		after.FrameTimeoutMs != before.FrameTimeoutMs {
+		after.RootRunScopeID != before.RootRunScopeID {
 		t.Fatalf("cascade writes mutated frame identity columns:\nbefore=%+v\nafter=%+v", before, after)
 	}
 	if before.StartedAt == nil || after.StartedAt == nil || !after.StartedAt.Equal(*before.StartedAt) {

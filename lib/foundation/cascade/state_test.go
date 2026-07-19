@@ -26,7 +26,6 @@ var allReasons = []TransitionReason{
 	ReasonAutoTerminalCommit,
 	ReasonAutoTerminalAbandon,
 	ReasonDeadlineResume,
-	ReasonParkTimeout,
 	ReasonChildTransitioned,
 	ReasonInstanceKilled,
 }
@@ -72,7 +71,6 @@ func TestTransitionTable(t *testing.T) {
 		},
 		NodeStateParked: {
 			"deadline_resume": NodeStateStale,
-			"park_timeout":    NodeStateFailed,
 			"instance_killed": NodeStateFailed,
 		},
 	}
@@ -308,17 +306,11 @@ func TestNextState_GateCleared(t *testing.T) {
 	}
 }
 
-func TestNextState_ParkTimeout(t *testing.T) {
-	got, err := NextState(NodeStateParked, ReasonParkTimeout)
-	require.NoError(t, err)
-	require.Equal(t, NodeStateFailed, got)
-
-	for _, from := range []NodeState{
-		NodeStatePending, NodeStateFresh, NodeStateStale, NodeStateRunning, NodeStateHeld, NodeStateFailed,
-	} {
+func TestNextState_ParkTimeoutRetired(t *testing.T) {
+	for _, from := range allStates {
 		from := from
 		t.Run("illegal/"+string(from), func(t *testing.T) {
-			_, err := NextState(from, ReasonParkTimeout)
+			_, err := NextState(from, TransitionReason{Kind: "park_timeout"})
 			require.Error(t, err)
 			require.True(t, errors.Is(err, ErrIllegalTransition))
 		})
@@ -328,7 +320,6 @@ func TestNextState_ParkTimeout(t *testing.T) {
 func TestParkedTransitionsWhitelist(t *testing.T) {
 	allowed := map[string]NodeState{
 		"deadline_resume": NodeStateStale,
-		"park_timeout":    NodeStateFailed,
 		"instance_killed": NodeStateFailed,
 	}
 	for _, reason := range allReasons {

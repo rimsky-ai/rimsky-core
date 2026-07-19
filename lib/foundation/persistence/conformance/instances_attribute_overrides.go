@@ -48,8 +48,7 @@ func testInstancesAttributeOverridesRoundTrip(t *testing.T, d persistence.Databa
 			ID: tmpl,
 			Spec: spec.TemplateSpec{
 				Name: "attribute-overrides", Version: "1",
-				FrameTimeoutMs: 600000,
-				Nodes:          []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				Nodes: []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",
@@ -104,8 +103,7 @@ func testInstancesAttributeOverridesMigrationBackfill(
 			ID: tmpl,
 			Spec: spec.TemplateSpec{
 				Name: "attribute-overrides-backfill", Version: "1",
-				FrameTimeoutMs: 600000,
-				Nodes:          []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				Nodes: []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",
@@ -168,8 +166,7 @@ func testInstancesAttributeOverridesDefaultsEmpty(t *testing.T, d persistence.Da
 			ID: tmpl,
 			Spec: spec.TemplateSpec{
 				Name: "attribute-overrides-default", Version: "1",
-				FrameTimeoutMs: 600000,
-				Nodes:          []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				Nodes: []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",

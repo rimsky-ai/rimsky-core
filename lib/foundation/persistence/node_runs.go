@@ -101,14 +101,23 @@ type Queue interface {
 
 	Complete(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error
 
+	ForceComplete(ctx context.Context, nodeRunID shared.UUID) error
+
 	// @concept: run-scope
 	RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string) error
 
 	RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx Tx) error
 
+	// @concept: run-scope
+	ForceRemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) error
+
+	ForceRemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx Tx) error
+
 	ListOrphanedClaims(ctx context.Context) ([]DispatchRow, error)
 
 	ReleaseClaim(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error
+
+	ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID) error
 
 	GetClaimedBy(ctx context.Context, nodeRunID shared.UUID) (ClaimOwnership, error)
 
@@ -124,7 +133,7 @@ type Queue interface {
 
 	CountLive(ctx context.Context, filter DispatchListFilter) (int, error)
 
-	CountParkedByReason(ctx context.Context) (map[string]int, error)
+	CountParked(ctx context.Context) (int, error)
 
 	GetByID(ctx context.Context, id shared.UUID) (*DispatchRow, error)
 
@@ -138,9 +147,7 @@ type Queue interface {
 
 	ListParkedReadyForResume(ctx context.Context, cutoff time.Time, limit int) ([]ParkedRow, error)
 
-	ListParkedDiagnostic(ctx context.Context, tx Tx, reasonFilter string) ([]ParkedDiagnosticRow, error)
-
-	ListParkedOverdue(ctx context.Context, now time.Time, limit int) ([]ParkedRow, error)
+	ListParkedDiagnostic(ctx context.Context, tx Tx) ([]ParkedDiagnosticRow, error)
 
 	// @concept: run-scope
 	GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*ParkedRow, error)
@@ -153,7 +160,7 @@ type Queue interface {
 
 	SetRetryNoProgressForRunInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, count int) error
 
-	UpdateDispatchTuningInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error
+	UpdateDispatchTuningInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, maxRetriesWithoutProgress *int) error
 
 	// @concept: executor
 	LoadScratchInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID) (inline []byte, handle, handleBackend string, err error)
@@ -167,9 +174,6 @@ type ParkActiveInput struct {
 	ExpectedClaimedBy string
 	ParkedAt          time.Time
 	ResumeAt          time.Time
-	Reason            string
-	ReasonNote        string
-	ReasonLabel       string
 }
 
 type ParkedDiagnosticRow struct {
@@ -179,8 +183,6 @@ type ParkedDiagnosticRow struct {
 	FrameID    string
 	ParkedAt   time.Time
 	ResumeAt   time.Time
-	Reason     string
-	ReasonNote string
 }
 
 type ParkedRow struct {
@@ -191,8 +193,5 @@ type ParkedRow struct {
 	FrameID                  shared.UUID
 	ParkedAt                 time.Time
 	ResumeAt                 *time.Time
-	Reason                   string
-	ReasonNote               string
-	MaxParkDurationSeconds   *int
 	ConsecutiveRetriesNoProg int
 }

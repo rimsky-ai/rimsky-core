@@ -70,7 +70,7 @@ func TestBuildAttributeDeps_SkipsEmptyWakeMessages(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, emptyWakeMsgID, mainScopeID, 600000, tx)
+		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, emptyWakeMsgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}

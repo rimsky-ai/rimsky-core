@@ -14,7 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -117,7 +116,7 @@ func TestTemplateSubGraphDelegation_AbsorbedEntryPark_ParentParksWithNoInternalC
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
 	h.Stub.WhenType("caller").
-		Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "entry_wedged", time.Time{})
+		Park(time.Now().Add(time.Hour))
 	h.Stub.WhenType("inner-mid").Success(map[string]any{"ok": true}, true, "mid")
 	h.Stub.WhenType("inner-exit").Success(map[string]any{"done": true}, true, "exit")
 

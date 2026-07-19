@@ -56,9 +56,8 @@ func TestMcpTransportParity(t *testing.T) {
 
 	templateID := deployScenarioTemplateAuth(t, ep, adminKey, map[string]any{
 		"spec": map[string]any{
-			"name":             "mcp-transport-parity",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "mcp-transport-parity",
+			"version": "1",
 			"messages": []map[string]any{
 				{
 					"type": "parity/probe",
@@ -235,7 +234,7 @@ func TestMcpTransportParity(t *testing.T) {
 			name:         "diagnostics",
 			readTool:     "parked_node_list",
 			readHTTPVerb: http.MethodGet,
-			readHTTPPath: "/v1/diagnostics/parked",
+			readHTTPPath: "/v1/admin/diagnostics/parked-nodes",
 		},
 		{
 			name:         "auth",

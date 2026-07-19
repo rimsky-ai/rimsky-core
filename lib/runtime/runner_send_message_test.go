@@ -44,9 +44,8 @@ func seedEmitInstance(t *testing.T, ctx context.Context, d persistence.Database)
 	mainRunScopeID := shared.UUID(uuid.New())
 
 	tmpl := spec.TemplateSpec{
-		Name:           "emit-message-fixture",
-		Version:        "1",
-		FrameTimeoutMs: 600000,
+		Name:    "emit-message-fixture",
+		Version: "1",
 		Messages: []spec.MessageSchema{{
 			Type: "ping/recheck",
 			BodySchema: []byte(`{

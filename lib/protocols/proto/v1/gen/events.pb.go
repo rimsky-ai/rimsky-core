@@ -97,9 +97,7 @@ const (
 	OperationalKind_OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED OperationalKind = 74
 	OperationalKind_OPERATIONAL_KIND_SUBGRAPH_DISPATCHED             OperationalKind = 75
 	OperationalKind_OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY             OperationalKind = 76
-	// Parked-node lifecycle.
-	OperationalKind_OPERATIONAL_KIND_PARK_TIMEOUT          OperationalKind = 80
-	OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED OperationalKind = 81
+	OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED           OperationalKind = 81
 	// Debug channel (POST /instances/{id}/debug/override). The audit
 	// event for a successful operator override applied through the
 	// gated debug channel, distinct from the legacy
@@ -154,7 +152,6 @@ var (
 		74: "OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED",
 		75: "OPERATIONAL_KIND_SUBGRAPH_DISPATCHED",
 		76: "OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY",
-		80: "OPERATIONAL_KIND_PARK_TIMEOUT",
 		81: "OPERATIONAL_KIND_PARKED_RESUME_STARTED",
 		82: "OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED",
 	}
@@ -202,7 +199,6 @@ var (
 		"OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED": 74,
 		"OPERATIONAL_KIND_SUBGRAPH_DISPATCHED":             75,
 		"OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY":             76,
-		"OPERATIONAL_KIND_PARK_TIMEOUT":                    80,
 		"OPERATIONAL_KIND_PARKED_RESUME_STARTED":           81,
 		"OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED":          82,
 	}
@@ -2306,7 +2302,7 @@ const file_events_proto_rawDesc = "" +
 	"\tdirective\x18\x01 \x01(\tR\tdirective\x12\x12\n" +
 	"\x04site\x18\x02 \x01(\tR\x04site\x12\x14\n" +
 	"\x05field\x18\x03 \x01(\tR\x05field\x12\x16\n" +
-	"\x06reason\x18\x04 \x01(\tR\x06reason*\xaa\x0f\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason*\xac\x0f\n" +
 	"\x0fOperationalKind\x12 \n" +
 	"\x1cOPERATIONAL_KIND_UNSPECIFIED\x10\x00\x12*\n" +
 	"&OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED\x10\x01\x12'\n" +
@@ -2351,10 +2347,9 @@ const file_events_proto_rawDesc = "" +
 	"\"OPERATIONAL_KIND_SUBCLAIM_ACQUIRED\x10I\x124\n" +
 	"0OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED\x10J\x12(\n" +
 	"$OPERATIONAL_KIND_SUBGRAPH_DISPATCHED\x10K\x12(\n" +
-	"$OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY\x10L\x12!\n" +
-	"\x1dOPERATIONAL_KIND_PARK_TIMEOUT\x10P\x12*\n" +
+	"$OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY\x10L\x12*\n" +
 	"&OPERATIONAL_KIND_PARKED_RESUME_STARTED\x10Q\x12+\n" +
-	"'OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED\x10R\"\x04\b\x0e\x10\x0e*\x1fOPERATIONAL_KIND_HEARTBEAT_LOSTBCZAgithub.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1b\x06proto3"
+	"'OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED\x10R\"\x04\b\x0e\x10\x0e\"\x04\bP\x10P*\x1fOPERATIONAL_KIND_HEARTBEAT_LOST*\x1dOPERATIONAL_KIND_PARK_TIMEOUTBCZAgithub.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_events_proto_rawDescOnce sync.Once

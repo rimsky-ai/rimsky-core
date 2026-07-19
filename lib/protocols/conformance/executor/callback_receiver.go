@@ -175,19 +175,8 @@ func mapErrorOutcome(m map[string]any) *genv1.Outcome {
 }
 
 func mapPark(m map[string]any) *genv1.Outcome {
-	reasonStr := asString(m["reason"])
-	reasonEnum := genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
-	if reasonStr != "" {
-		upper := "PARK_REASON_" + strings.ToUpper(reasonStr)
-		if v, ok := genv1.ParkReason_value[upper]; ok {
-			reasonEnum = genv1.ParkReason(v)
-		}
-	}
 	p := &genv1.Park{
-		Reason:      reasonEnum,
-		ReasonNote:  asString(m["reason_note"]),
-		ReasonLabel: asString(m["reason_label"]),
-		Tags:        asStringSlice(m["tags"]),
+		Tags: asStringSlice(m["tags"]),
 	}
 	if rawResume := asString(m["resume_at"]); rawResume != "" {
 		if pt, err := time.Parse(time.RFC3339, rawResume); err == nil {

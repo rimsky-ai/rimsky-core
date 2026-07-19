@@ -98,7 +98,7 @@ func TestMessages_ListByFrameID(t *testing.T) {
 	rootScope := mainRunScopeIDForInstance(t, h, shared.UUID(mustParseUUID(t, instID)))
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		fid, err := h.persist.Frames().InsertRunningFrame(ctx,
-			shared.UUID(mustParseUUID(t, instID)), shared.UUID(mid), rootScope, 600000, tx)
+			shared.UUID(mustParseUUID(t, instID)), shared.UUID(mid), rootScope, tx)
 		if err != nil {
 			return err
 		}
@@ -587,7 +587,7 @@ func deliverMessageForTest(t *testing.T, h *harness, instID, msgID string, deliv
 				return err
 			}
 		}
-		fid, err := h.persist.Frames().InsertRunningFrame(ctx, instUUID, mid, rootScope, 600000, tx)
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx, instUUID, mid, rootScope, tx)
 		if err != nil {
 			return err
 		}

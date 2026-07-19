@@ -62,9 +62,8 @@ func testClaimUnavailableDelivered(t *testing.T) {
 
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":             "pg-claim-unavailable",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "pg-claim-unavailable",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",
@@ -127,9 +126,8 @@ func testNotReplaceableDelivered(t *testing.T) {
 
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":             "pg-swap-failed",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "pg-swap-failed",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "acquirer",

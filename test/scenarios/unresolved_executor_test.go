@@ -23,8 +23,10 @@ import (
 func TestUnresolvedExecutor(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{
-		NoSupervisor:      true,
-		RefValidationMode: node.RefValidateNone,
+		NoSupervisor: true,
+		ExtraExecutors: map[string]executor.Endpoint{
+			"does_not_exist_unknown": {Transport: "grpc", URL: "127.0.0.1:1"},
+		},
 	})
 
 	tid := h.DeployTemplate(node.TemplateSpec{

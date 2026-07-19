@@ -70,6 +70,23 @@ type AggregateResult struct {
 	Action AggregateAction
 }
 
+func childStatesForAggregate(children []persistence.NodeRunTreeRow) []ChildState {
+	inputs := make([]ChildState, len(children))
+	for i, c := range children {
+		var sigType *signalpkg.TypePath
+		if c.SettlingSignalType != nil {
+			tp := signalpkg.TypePath(*c.SettlingSignalType)
+			sigType = &tp
+		}
+		inputs[i] = ChildState{
+			State:              c.State,
+			SettlingSignalType: sigType,
+			Changed:            true,
+		}
+	}
+	return inputs
+}
+
 func Aggregate(children []ChildState, policy spec.AggregationPolicy) AggregateResult {
 	if len(children) == 0 {
 		return AggregateResult{IsSettled: false}
@@ -91,15 +108,12 @@ func aggregateStrict(children []ChildState, policy spec.AggregationPolicy) Aggre
 	anyActive := false
 	for _, c := range children {
 		if c.IsFailure() {
-			res := AggregateResult{
+			return AggregateResult{
 				IsSettled:                true,
 				ParentState:              cascade.NodeStateFailed,
 				ParentSettlingSignalType: signalpkg.TypePath("terminal/error/aggregate/strict_failed"),
+				Action:                   AggregateActionCancelSiblings,
 			}
-			if policy.CancelSiblings {
-				res.Action = AggregateActionCancelSiblings
-			}
-			return res
 		}
 		if !c.IsSettled() {
 			anyActive = true

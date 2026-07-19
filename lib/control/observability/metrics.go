@@ -22,7 +22,7 @@ type MetricsRegistry struct {
 	NamedLockAcquisitions *prometheus.CounterVec
 
 	NodesByState    *prometheus.GaugeVec
-	ParkedByReason  *prometheus.GaugeVec
+	ParkedNodes     prometheus.Gauge
 	HeldFrames      prometheus.Gauge
 	NodeRunsPending prometheus.Gauge
 
@@ -60,9 +60,8 @@ func NewMetricsRegistry() *MetricsRegistry {
 			prometheus.GaugeOpts{Name: "rimsky_nodes_by_state", Help: "Count of nodes in each state."},
 			[]string{"state"},
 		),
-		ParkedByReason: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{Name: "rimsky_parked_nodes_by_reason", Help: "Count of parked nodes by parked_reason."},
-			[]string{"reason"},
+		ParkedNodes: prometheus.NewGauge(
+			prometheus.GaugeOpts{Name: "rimsky_parked_nodes", Help: "Count of parked nodes."},
 		),
 		HeldFrames: prometheus.NewGauge(
 			prometheus.GaugeOpts{Name: "rimsky_held_frames", Help: "Count of frames with at least one parked node."},
@@ -108,7 +107,7 @@ func NewMetricsRegistry() *MetricsRegistry {
 		m.ClaimAcquisitions,
 		m.NamedLockAcquisitions,
 		m.NodesByState,
-		m.ParkedByReason,
+		m.ParkedNodes,
 		m.HeldFrames,
 		m.NodeRunsPending,
 		m.DispatchLatencySeconds,

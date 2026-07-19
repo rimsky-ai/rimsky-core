@@ -23,7 +23,7 @@ type EnrollDeps struct {
 }
 
 func registerEnrollRoutes(r chi.Router, deps AppDeps) {
-	if deps.AuthState == nil || deps.Enroll == nil || deps.Enroll.CA == nil {
+	if deps.Enroll == nil || deps.Enroll.CA == nil {
 		return
 	}
 	r.Post("/enroll", deps.AuthState.gateByAction("service:enroll", handleEnroll(deps)))

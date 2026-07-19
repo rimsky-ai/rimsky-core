@@ -59,9 +59,8 @@ type portableTerminalShape struct {
 func buildPortableTemplateBody() map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":             "portable-template-across-modes",
-			"version":          "1",
-			"frame_timeout_ms": 600000,
+			"name":    "portable-template-across-modes",
+			"version": "1",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",

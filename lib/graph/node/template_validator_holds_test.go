@@ -253,33 +253,6 @@ func TestValidateFanOut_RejectsThresholdWithoutMaxFailures(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.max_failures")
 }
 
-func TestValidateFanOut_RejectsCancelSiblingsOutsideStrict(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:    "demo",
-		Version: "1.0.0",
-		Nodes: []TemplateNodeDef{
-			{
-				Type:     "fan",
-				Executor: "handler.fan",
-				ClaimProducers: []NodeClaimProducerRef{
-					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
-				},
-				FanOut: &FanOutSpec{
-					Claim:            "items",
-					PartitionRequest: `{"list":[{"key":"a"}]}`,
-					ErrorPolicy: AggregationPolicy{
-						Kind:           "best_effort",
-						CancelSiblings: true,
-					},
-				},
-			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.cancel_siblings")
-}
-
 func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
@@ -314,24 +287,49 @@ func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
 	require.True(t, found, "expected carry_verbatim_requires_single_child rejection, got %+v", res.Errors)
 }
 
-func TestValidateFanOut_RejectsDelegateCombo(t *testing.T) {
+func TestValidateFanOut_AcceptsDelegateCombo(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
-		Nodes: []TemplateNodeDef{
+		Graphs: []GraphSpec{
 			{
-				Type:     "caller",
-				Delegate: "subgraph_x",
-				FanOut: &FanOutSpec{
-					Claim:            "items",
-					PartitionRequest: `{"list":[{"key":"a"}]}`,
+				Name: MainGraphName,
+				Nodes: []TemplateNodeDef{
+					{
+						Type:     "caller",
+						Delegate: "worker",
+						ClaimProducers: []NodeClaimProducerRef{
+							{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
+						},
+						FanOut: &FanOutSpec{
+							Claim:            "items",
+							PartitionRequest: `{"list":[{"key":"a"}]}`,
+							ErrorPolicy:      AggregationPolicy{Kind: "strict"},
+						},
+					},
+				},
+			},
+			{
+				Name:  "worker",
+				Entry: "inner-entry",
+				Exit:  "inner-exit",
+				Nodes: []TemplateNodeDef{
+					{Type: "inner-entry", Executor: "handler.inner"},
+					{Type: "inner-exit", Executor: "handler.inner",
+						Subscribes: []SubscriptionEntry{
+							{Node: "inner-entry", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)},
+						},
+					},
 				},
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].fan_out")
+	res := ValidateTemplate(spec, RegistryHooks{
+		StoreDeclared:                     storeDeclaredLookup(knownClaimProducers),
+		ClaimProducerAdvertisesSplitScope: func(name string) bool { return true },
+	})
+	assert.True(t, res.Ok(),
+		"fan_out composed with delegate on the same node must register cleanly; errors: %+v", res.Errors)
 }
 
 func TestValidateFanOut_Ok(t *testing.T) {
@@ -350,8 +348,7 @@ func TestValidateFanOut_Ok(t *testing.T) {
 					PartitionRequest: `{"list":[{"key":"a"}]}`,
 					Parallelism:      4,
 					ErrorPolicy: AggregationPolicy{
-						Kind:           "strict",
-						CancelSiblings: true,
+						Kind: "strict",
 					},
 				},
 			},

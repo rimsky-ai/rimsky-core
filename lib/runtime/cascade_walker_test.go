@@ -79,8 +79,8 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 	)
 	require.NoError(t, err)
 	_, err = stx.ExecContext(ctx,
-		`INSERT INTO rimsky_frames (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, frame_timeout_ms)
-		 VALUES (?, ?, ?, ?, datetime('now'), 600000)`,
+		`INSERT INTO rimsky_frames (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at)
+		 VALUES (?, ?, ?, ?, datetime('now'))`,
 		frameID.String(), instanceID.String(), messageID.String(), mainScopeID.String(),
 	)
 	require.NoError(t, err)

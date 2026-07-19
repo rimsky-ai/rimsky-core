@@ -48,7 +48,6 @@ type Config struct {
 	// @concept: node
 	DeclaredTagsFor func(executorName string) (tags []string, ok bool)
 	Metrics         MetricsHook
-	MaxParkDuration map[string]time.Duration
 
 	LifecycleSubs          *locks.LifecycleRegistry
 	LifecyclePeersForSpec  func(tplSpec node.TemplateSpec) []string
@@ -225,22 +224,8 @@ func Start(cfg Config) (*Handle, error) {
 	}
 
 	persistCap := cfg.Persist
-	queueCap := cfg.Queue
-	blobCap := cfg.Blob
-	spillCap := cfg.BlobSpillThreshold
-	loggerCap := cfg.Logger
-	newHctx := executor.HandlerContextFactory(func(ctx context.Context, nodeRunID, nodeID shared.UUID) executor.HandlerContext {
-		hctx := executor.HandlerContext{
-			Scratch: &executor.ScratchWriter{
-				Persist:        persistCap,
-				Queue:          queueCap,
-				Blob:           blobCap,
-				SpillThreshold: spillCap,
-				NodeRunID:      nodeRunID,
-				NodeID:         nodeID,
-				Logger:         loggerCap,
-			},
-		}
+	newHctx := executor.HandlerContextFactory(func(ctx context.Context, _, nodeID shared.UUID) executor.HandlerContext {
+		hctx := executor.HandlerContext{}
 		if extras, ok := executor.DispatchExtrasFromContext(ctx); ok && extras.SendMessageType != "" {
 			msgType := extras.SendMessageType
 			instanceID := extras.InstanceID

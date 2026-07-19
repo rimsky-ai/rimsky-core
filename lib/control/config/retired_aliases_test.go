@@ -22,9 +22,18 @@ func loadCfgErr(t *testing.T, body string) error {
 	return err
 }
 
-func TestLoadRimskyConfigYAML_RejectsRetiredAliases(t *testing.T) {
-	t.Run("retired top-level `stores:` key rejected", func(t *testing.T) {
-		body := `
+var forbiddenRedirectWords = []string{"renamed", "instead", "no longer", "deprecated"}
+
+type retiredConfigKeyCase struct {
+	name      string
+	body      string
+	wantToken string
+}
+
+var retiredConfigKeyCases = []retiredConfigKeyCase{
+	{
+		name: "top-level `stores:` key",
+		body: `
 persistence:
   driver: sqlite
   sqlite:
@@ -33,21 +42,12 @@ stores:
   topics-ring:
     endpoint: topics-ring:9090
     write_semantics_allowed: [sync]
-`
-		err := loadCfgErr(t, body)
-		if err == nil {
-			t.Fatal("expected rejection of retired `stores:` key, got nil")
-		}
-		if !strings.Contains(err.Error(), "stores") {
-			t.Fatalf("error does not name the retired `stores` key: %v", err)
-		}
-		if !strings.Contains(err.Error(), "claim_producers") {
-			t.Fatalf("error does not point at the replacement `claim_producers`: %v", err)
-		}
-	})
-
-	t.Run("retired `write_semantics:` single-value shortcut rejected", func(t *testing.T) {
-		body := `
+`,
+		wantToken: "stores",
+	},
+	{
+		name: "claim_producers `write_semantics:` single-value shortcut",
+		body: `
 persistence:
   driver: sqlite
   sqlite:
@@ -56,21 +56,12 @@ claim_producers:
   topics-ring:
     endpoint: topics-ring:9090
     write_semantics: sync
-`
-		err := loadCfgErr(t, body)
-		if err == nil {
-			t.Fatal("expected rejection of retired `write_semantics:` shortcut, got nil")
-		}
-		if !strings.Contains(err.Error(), "write_semantics") {
-			t.Fatalf("error does not name the retired `write_semantics` key: %v", err)
-		}
-		if !strings.Contains(err.Error(), "write_semantics_allowed") {
-			t.Fatalf("error does not point at the replacement `write_semantics_allowed`: %v", err)
-		}
-	})
-
-	t.Run("retired `write_semantics_envelope:` alias rejected", func(t *testing.T) {
-		body := `
+`,
+		wantToken: "write_semantics",
+	},
+	{
+		name: "claim_producers `write_semantics_envelope:` alias",
+		body: `
 persistence:
   driver: sqlite
   sqlite:
@@ -79,21 +70,72 @@ claim_producers:
   topics-ring:
     endpoint: topics-ring:9090
     write_semantics_envelope: [sync]
-`
-		err := loadCfgErr(t, body)
-		if err == nil {
-			t.Fatal("expected rejection of retired `write_semantics_envelope:` alias, got nil")
-		}
-		if !strings.Contains(err.Error(), "write_semantics_envelope") {
-			t.Fatalf("error does not name the retired `write_semantics_envelope` key: %v", err)
-		}
-		if !strings.Contains(err.Error(), "write_semantics_allowed") {
-			t.Fatalf("error does not point at the replacement `write_semantics_allowed`: %v", err)
-		}
-	})
+`,
+		wantToken: "write_semantics_envelope",
+	},
+	{
+		name: "top-level `templates:` key",
+		body: `
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/rimsky.db
+templates:
+  some_option: true
+`,
+		wantToken: "templates",
+	},
+	{
+		name: "`templates.ref_validation_mode` nested key",
+		body: `
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/rimsky.db
+templates:
+  ref_validation_mode: none
+`,
+		wantToken: "templates",
+	},
+	{
+		name: "top-level `max_park_duration:` key",
+		body: `
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/rimsky.db
+max_park_duration:
+  snooze: 1h
+`,
+		wantToken: "max_park_duration",
+	},
+}
 
-	t.Run("current spelling loads", func(t *testing.T) {
-		body := `
+func TestLoadRimskyConfigYAML_RejectsRetiredKeys(t *testing.T) {
+	for _, tc := range retiredConfigKeyCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := loadCfgErr(t, tc.body)
+			if err == nil {
+				t.Fatalf("expected rejection of retired key, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantToken) {
+				t.Fatalf("error does not name the retired key %q: %v", tc.wantToken, err)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), "unknown") {
+				t.Fatalf("rejection must use the generic unknown-key shape: %v", err)
+			}
+			lower := strings.ToLower(err.Error())
+			for _, word := range forbiddenRedirectWords {
+				if strings.Contains(lower, word) {
+					t.Fatalf("pure erasure: rejection must not direct the caller toward a replacement setting (found %q): %v", word, err)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadRimskyConfigYAML_CurrentSpellingLoads(t *testing.T) {
+	body := `
 persistence:
   driver: sqlite
   sqlite:
@@ -103,13 +145,12 @@ claim_producers:
     endpoint: topics-ring:9090
     write_semantics_allowed: [sync]
 `
-		cfg := mustLoadCfg(t, body)
-		entry, ok := cfg.ClaimProducers.ClaimProducers["topics-ring"]
-		if !ok {
-			t.Fatal("expected topics-ring claim-producer entry to load under the current spelling")
-		}
-		if entry.Endpoint != "topics-ring:9090" {
-			t.Fatalf("endpoint = %q, want topics-ring:9090", entry.Endpoint)
-		}
-	})
+	cfg := mustLoadCfg(t, body)
+	entry, ok := cfg.ClaimProducers.ClaimProducers["topics-ring"]
+	if !ok {
+		t.Fatal("expected topics-ring claim-producer entry to load under the current spelling")
+	}
+	if entry.Endpoint != "topics-ring:9090" {
+		t.Fatalf("endpoint = %q, want topics-ring:9090", entry.Endpoint)
+	}
 }
