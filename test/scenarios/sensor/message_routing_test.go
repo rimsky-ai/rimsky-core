@@ -2,6 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// @concept: message
+// @concept: publisher-subscription
 package sensor
 
 import (
@@ -10,105 +12,241 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
-	"strings"
-	"sync"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-type fakeRimsky struct {
-	mu       sync.Mutex
-	received []recv
+func insertLiveSubscription(t *testing.T, h *scenario.Harness, instanceID shared.UUID, publisherName, state string) shared.UUID {
+	t.Helper()
+	subID := shared.UUID(uuid.New())
+	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.Persist.PublisherSubscriptions().Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+			ID:             subID,
+			InstanceID:     instanceID,
+			PublisherName:  publisherName,
+			Kind:           "http",
+			ResolvedConfig: json.RawMessage(`{}`),
+			MessageType:    "sensor/observation",
+			State:          state,
+			StartedAt:      time.Now().UTC(),
+		})
+	}))
+	return subID
 }
 
-type recv struct {
-	InstanceID     string
-	IdempotencyKey string
-	Body           map[string]any
+type envelopePostResult struct {
+	Status    int
+	MessageID string
+	RawBody   string
 }
 
-func (f *fakeRimsky) handler(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
-	defer r.Body.Close()
-	parts := splitNonEmpty(r.URL.Path, '/')
-	var instanceID string
-	if len(parts) >= 4 && parts[0] == "v1" && parts[1] == "instances" && parts[3] == "messages" {
-		instanceID = parts[2]
-	}
-	var decoded map[string]any
-	_ = json.Unmarshal(body, &decoded)
-	f.mu.Lock()
-	f.received = append(f.received, recv{
-		InstanceID:     instanceID,
-		IdempotencyKey: r.Header.Get("Idempotency-Key"),
-		Body:           decoded,
-	})
-	f.mu.Unlock()
-	w.WriteHeader(http.StatusCreated)
-}
-
-func splitNonEmpty(s string, sep byte) []string {
-	var out []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == sep {
-			if i > start {
-				out = append(out, s[start:i])
-			}
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		out = append(out, s[start:])
-	}
-	return out
-}
-
-func TestMessageRouting_PublisherPostsEnvelopeToInstanceMessages(t *testing.T) {
-	t.Parallel()
-	r := &fakeRimsky{}
-	srv := httptest.NewServer(http.HandlerFunc(r.handler))
-	defer srv.Close()
-
-	envelope := map[string]any{
+func postPublisherEnvelope(t *testing.T, base string, instanceID, subscriptionID, idempotencyKey, bearer string, payload map[string]any) envelopePostResult {
+	t.Helper()
+	bodyMap := map[string]any{
 		"type":                      "sensor/observation",
-		"payload":                   map[string]any{"observed_at": "2026-05-17T12:00:00Z"},
-		"sender":                    "sensor-cron",
-		"publisher_subscription_id": "scenario-subscription",
+		"publisher_subscription_id": subscriptionID,
 	}
-	body, _ := json.Marshal(envelope)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
-		srv.URL+"/v1/instances/scenario-instance/messages", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
+	if payload != nil {
+		bodyMap["payload"] = payload
 	}
+	body, err := json.Marshal(bodyMap)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost,
+		base+"/v1/instances/"+instanceID+"/messages", bytes.NewReader(body))
+	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", "scenario-subscription+2026-05-17T12:00:00Z")
-	resp, err := srv.Client().Do(req)
-	if err != nil {
-		t.Fatalf("Do: %v", err)
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
-	resp.Body.Close()
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var decoded struct {
+		MessageID string `json:"message_id"`
+	}
+	_ = json.Unmarshal(raw, &decoded)
+	return envelopePostResult{Status: resp.StatusCode, MessageID: decoded.MessageID, RawBody: string(raw)}
+}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.received) != 1 {
-		t.Fatalf("expected 1 received POST, got %d", len(r.received))
+func routingTemplate(h *scenario.Harness) string {
+	return h.DeployTemplate(node.TemplateSpec{
+		Name: "sensor-message-routing", Version: "1",
+		Messages: []spec.MessageSchema{{Type: "sensor/observation"}},
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{Type: "hub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "sensor/observation", Type: "terminal/success",
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
+			),
+		},
+	})
+}
+
+func TestMessageRouting_PublisherEnvelopeDeliveredThroughRealPipeline(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	tid := routingTemplate(h)
+	iid := h.CreateInstance(tid, "ck-routing-delivery", map[string]any{})
+	subID := insertLiveSubscription(t, h, iid, "sensor-cron", persistence.PublisherSubscriptionStateActive)
+
+	hub := h.FindNode(iid, "hub")
+	require.NotNil(t, hub)
+
+	idemKey := "scenario-subscription+2026-05-17T12:00:00Z"
+	res := postPublisherEnvelope(t, h.ControlBase, iid.String(), subID.String(), idemKey,
+		"", map[string]any{"observed_at": "2026-05-17T12:00:00Z"})
+	require.Equal(t, http.StatusCreated, res.Status, "body: %s", res.RawBody)
+	require.NotEmpty(t, res.MessageID)
+
+	h.WaitForNodeState(hub.ID, cascade.NodeStateFresh)
+
+	msgUUID, err := uuid.Parse(res.MessageID)
+	require.NoError(t, err)
+	msgID := shared.UUID(msgUUID)
+
+	row, err := h.Persist.Messages().Get(h.Ctx, msgID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, "publisher", row.SenderKind,
+		"a publisher_subscription_id post must be attributed to sender_kind publisher")
+	require.Equal(t, "sensor-cron", row.Sender,
+		"the sender must be the subscription row's publisher_name, not caller-supplied")
+	require.Equal(t, "sensor/observation", row.Type)
+
+	for {
+		row, err = h.Persist.Messages().Get(h.Ctx, msgID)
+		require.NoError(t, err)
+		if row.DeliveredAt != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	rec := r.received[0]
-	if rec.InstanceID != "scenario-instance" {
-		t.Errorf("instance_id: got %q want scenario-instance", rec.InstanceID)
+	require.NotNil(t, row.FrameID,
+		"a delivered message must be stamped with the frame that consumed it — mark and deliver commit together")
+	require.False(t, row.Cancelled)
+
+	replay := postPublisherEnvelope(t, h.ControlBase, iid.String(), subID.String(), idemKey,
+		"", map[string]any{"observed_at": "2026-05-17T12:00:00Z"})
+	require.Equal(t, http.StatusOK, replay.Status,
+		"an idempotency-key replay must be acknowledged as a replay (200), not re-created")
+	require.Equal(t, res.MessageID, replay.MessageID,
+		"the replay must return the original message id")
+
+	var typedCount int
+	h.QueryRowSQL(`
+		SELECT COUNT(*) FROM rimsky_messages
+		 WHERE instance_id = $1 AND type = 'sensor/observation'`,
+		[]any{iid}, &typedCount)
+	require.Equal(t, 1, typedCount,
+		"the replay must not enqueue a second message row")
+}
+
+func TestMessageRouting_WebhookAuthRejectsNonLiveOrForeignSubscription(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	tid := routingTemplate(h)
+	iidA := h.CreateInstance(tid, "ck-routing-auth-a", map[string]any{})
+	iidB := h.CreateInstance(tid, "ck-routing-auth-b", map[string]any{})
+
+	stoppedSub := insertLiveSubscription(t, h, iidA, "sensor-cron", persistence.PublisherSubscriptionStateStopped)
+	foreignSub := insertLiveSubscription(t, h, iidB, "sensor-cron", persistence.PublisherSubscriptionStateActive)
+
+	res := postPublisherEnvelope(t, h.ControlBase, iidA.String(), uuid.NewString(), "k-unknown", "", nil)
+	require.Equal(t, http.StatusForbidden, res.Status,
+		"an unknown publisher_subscription_id must be rejected 403; body: %s", res.RawBody)
+
+	res = postPublisherEnvelope(t, h.ControlBase, iidA.String(), stoppedSub.String(), "k-stopped", "", nil)
+	require.Equal(t, http.StatusForbidden, res.Status,
+		"a stopped subscription must not authenticate a publisher post; body: %s", res.RawBody)
+
+	res = postPublisherEnvelope(t, h.ControlBase, iidA.String(), foreignSub.String(), "k-foreign", "", nil)
+	require.Equal(t, http.StatusForbidden, res.Status,
+		"a live subscription bound to another instance must not authenticate a post to this instance; body: %s", res.RawBody)
+
+	res = postPublisherEnvelope(t, h.ControlBase, iidA.String(), foreignSub.String(), "", "", nil)
+	require.Equal(t, http.StatusBadRequest, res.Status,
+		"a missing Idempotency-Key must be rejected 400; body: %s", res.RawBody)
+
+	liveSub := insertLiveSubscription(t, h, iidA, "sensor-cron", persistence.PublisherSubscriptionStateActive)
+	res = postPublisherEnvelope(t, h.ControlBase, iidA.String(), liveSub.String(), "k-badtoken", "not-a-real-api-key", nil)
+	require.Equal(t, http.StatusUnauthorized, res.Status,
+		"an invalid bearer token must 401 even when anonymous mode would otherwise allow the call; body: %s", res.RawBody)
+
+	var accepted int
+	h.QueryRowSQL(`
+		SELECT COUNT(*) FROM rimsky_messages
+		 WHERE instance_id = $1 AND type = 'sensor/observation'`,
+		[]any{iidA}, &accepted)
+	require.Equal(t, 0, accepted, "no rejected post may leave a message row behind")
+}
+
+func TestMessageRouting_MarkDeliveredImpliesReceiverRunInSameFrame(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "sensor-message-mark-deliver", Version: "1",
+		Messages: []spec.MessageSchema{{Type: "sensor/observation"}},
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
+		},
+	})
+	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "done")
+	iid := h.CreateInstance(tid, "ck-routing-mark-deliver", map[string]any{})
+
+	worker := h.FindNode(iid, "worker")
+	require.NotNil(t, worker)
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
+
+	msgID := h.PostInstanceMessage(iid, "sensor/observation",
+		[]byte(`{"observed_at":"2026-05-17T12:00:00Z"}`), "k-mark-deliver")
+
+	var row *persistence.MessageRow
+	for {
+		r, err := h.Persist.Messages().Get(h.Ctx, msgID)
+		require.NoError(t, err)
+		if r != nil && r.DeliveredAt != nil {
+			row = r
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	if !strings.HasPrefix(rec.IdempotencyKey, "scenario-subscription") {
-		t.Errorf("Idempotency-Key: got %q want prefix scenario-subscription", rec.IdempotencyKey)
-	}
-	if rec.Body["publisher_subscription_id"] != "scenario-subscription" {
-		t.Errorf("body.publisher_subscription_id: %v", rec.Body["publisher_subscription_id"])
-	}
-	if rec.Body["type"] != "sensor/observation" {
-		t.Errorf("body.type: %v", rec.Body["type"])
-	}
-	if _, present := rec.Body["target"]; present {
-		t.Errorf("body.target unexpectedly present: %v", rec.Body["target"])
-	}
+	require.NotNil(t, row.FrameID,
+		"a delivered message must be stamped with the frame that consumed it")
+
+	var receiverRuns int
+	h.QueryRowSQL(`
+		SELECT COUNT(*) FROM rimsky_node_runs r
+		  JOIN rimsky_nodes n ON n.id = r.node_id
+		 WHERE n.instance_id = $1
+		   AND n.node_type = 'sensor/observation'
+		   AND r.creation_reason = 'message_delivery'
+		   AND r.frame_id = $2`,
+		[]any{iid, *row.FrameID}, &receiverRuns)
+	require.Equal(t, 1, receiverRuns,
+		"delivered_at set must imply exactly one receiver run committed in the SAME frame — "+
+			"mark and deliver are one transaction, so a marked-but-undelivered window cannot exist")
+
+	var pending []persistence.MessageRow
+	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		p, err := h.Persist.Messages().ListPendingForInstance(ctx, tx, iid)
+		pending = p
+		return err
+	}))
+	require.Empty(t, pending,
+		"the consumed message must not linger as pending")
 }

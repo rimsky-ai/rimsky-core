@@ -85,10 +85,9 @@ message OnRunScopeTerminalRequest {
   // instance_id is the owning instance of the terminating run-scope.
   // Populated at every firing site (control-api for main scopes; the
   // supervisor for sub-graph and fanout-partition scopes). The
-  // host-agent-proxy keys lazily-spawned children by instance id (its v1
-  // dispatch-observable scope), so the reap path matches on instance_id
-  // rather than run_scope_id. Empty only for legacy callers that predate
-  // this field.
+  // host-agent-proxy keys lazily-spawned children by run_scope_id, falling
+  // back to instance_id only when run_scope_id is empty (legacy callers
+  // that predate this field, or scopes with no narrower identity).
   string instance_id    = 3;
 }
 

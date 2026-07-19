@@ -49,18 +49,19 @@ func emitTerminalForensics(
 		}
 	}
 	rec := ClaimTerminalRecord{
-		ClaimHandleID:       td.ClaimHandleID,
-		NodeRunID:           td.LineageHint.NodeRunID,
-		OpenLineageRunRef:   td.LineageHint.NodeRunID.String(),
-		NodeID:              td.LineageHint.NodeID,
-		FrameID:             td.LineageHint.FrameID,
-		ParentClaimHandleID: td.ParentClaimHandleID,
-		SubClaimHandleIDs:   subIDs,
-		CommittedAt:         now.UTC().Format(time.RFC3339Nano),
-		ProducerName:        td.LineageHint.ProducerName,
-		ClaimScopeDataHash:  HashBytes(td.Scope),
-		VersionID:           preferVersionID(versionID, td.LineageHint.VersionID),
-		Outcome:             outcome,
+		ClaimHandleID:           td.ClaimHandleID,
+		NodeRunID:               td.LineageHint.NodeRunID,
+		OpenLineageRunRef:       td.LineageHint.NodeRunID.String(),
+		NodeID:                  td.LineageHint.NodeID,
+		FrameID:                 td.LineageHint.FrameID,
+		ParentClaimHandleID:     td.ParentClaimHandleID,
+		SubClaimHandleIDs:       subIDs,
+		CommittedAt:             now.UTC().Format(time.RFC3339Nano),
+		ProducerName:            td.LineageHint.ProducerName,
+		ClaimScopeDataHash:      HashBytes(td.Scope),
+		VersionID:               preferVersionID(versionID, td.LineageHint.VersionID),
+		Outcome:                 outcome,
+		TerminatingSupervisorID: td.SupervisorID,
 	}
 	switch td.Outcome {
 	case OutcomeAbandonSiblingCancel, OutcomeAbandonDescendantCancel:

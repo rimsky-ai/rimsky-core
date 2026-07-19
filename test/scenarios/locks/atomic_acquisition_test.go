@@ -5,6 +5,7 @@
 package locks
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -57,8 +58,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForDispatch(n.ID, 5*time.Second),
-		"expected scheduler to enqueue a dispatch row")
+	h.WaitForDispatch(n.ID)
 
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
@@ -125,6 +125,107 @@ type errOpenInjected struct{}
 
 func (errOpenInjected) Error() string { return "injected open error" }
 
+func TestAtomicAcquisitionMultiSpec_SortedOrderAndAllOrNothingRollback(t *testing.T) {
+	t.Parallel()
+
+	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+	})
+	t.Cleanup(teardown)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		NoSupervisor: true,
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
+				"content": {
+					Endpoint:     "grpc://" + endpoint,
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+				},
+			},
+		},
+	})
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "multi-spec-sorted-rollback", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
+				scenario.WithClaimProducers(
+					scenario.AliasedClaimRef("content", "/zzz-selector", "rw", "zzz"),
+					scenario.AliasedClaimRef("content", "/aaa-selector", "rw", "aaa"),
+				),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-multi-spec-sorted-rollback", map[string]any{})
+
+	n := h.FindNode(iid, "worker")
+	require.NotNil(t, n)
+	h.WaitForDispatch(n.ID)
+
+	pool := executor.NewClientPool()
+	t.Cleanup(func() { _ = pool.Close() })
+
+	fake := storetest.NewFake("content", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
+	openErr := errOpenInjected{}
+	var openCount int32
+	fake.ErrorFunc = func(verb string, _ claimproducer.ClaimID) error {
+		if verb != "open" {
+			return nil
+		}
+		if atomic.AddInt32(&openCount, 1) == 2 {
+			return openErr
+		}
+		return nil
+	}
+	reg := locks.NewRegistry()
+	reg.Add("content", fake)
+
+	args := runtime.RunArgs{
+		Persist:                h.Persist,
+		Queue:                  h.Queue,
+		ClaimHandles:           h.Persist.ClaimHandles(),
+		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
+		StoreRegistry:          reg,
+		Clock:                  shared.SystemClock{},
+		Logger:                 shared.SilentLogger{},
+		SupervisorID:           "scenario-runner-multi-rollback",
+		AcceptedExecutors:      []string{"stub"},
+		AcceptedClaimProducers: []string{"content"},
+		Pool:                   pool,
+		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
+			"stub": {Transport: "grpc", URL: h.StubAddr},
+		}),
+		LivenessInterval: 100 * time.Millisecond,
+	}
+	out, err := runtime.RunNode(h.Ctx, args, nil)
+	require.Error(t, err, "the second spec's Open error must surface")
+	require.False(t, out.Ran, "acquisition tx must roll back when the second spec's Open errors")
+
+	calls := fake.Calls()
+	var opens []storetest.FakeCall
+	for _, c := range calls {
+		if c.Verb == "open" {
+			opens = append(opens, c)
+		}
+	}
+	require.Len(t, opens, 2, "both specs must reach Open before the second one errors")
+	require.Equal(t, "/aaa-selector", opens[0].Selector,
+		"sortLockSpecs must order specs by (kind, producer:selector) ascending, so /aaa-selector "+
+			"acquires before /zzz-selector even though /zzz-selector was declared first in the template")
+	require.Equal(t, "/zzz-selector", opens[1].Selector)
+
+	var lhCount int
+	err = h.Pool.QueryRow(h.Ctx,
+		`SELECT count(*) FROM rimsky_claim_handles WHERE holder_node_id = $1`, n.ID,
+	).Scan(&lhCount)
+	require.NoError(t, err)
+	require.Equal(t, 0, lhCount,
+		"multi-insert atomicity: the first spec's claim-handle insert (which the DB already committed "+
+			"to this open transaction) must be rolled back too when the second spec's Open fails — "+
+			"the worker-request claim and ALL claim-handle inserts must commit together or not at all")
+}
+
 func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 	t.Parallel()
 
@@ -158,8 +259,7 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	deadline := time.Now().Add(2 * time.Second)
 	var activeCount int

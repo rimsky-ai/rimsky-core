@@ -185,6 +185,37 @@ func TestRefreshLoop_HealsUnreachable(t *testing.T) {
 	t.Fatalf("RefreshLoop did not heal; final reachability = %s", got.Reachability)
 }
 
+func TestRefreshLoop_SkipsStaticEntries(t *testing.T) {
+	prober := newFakeProber()
+	disc := NewDiscovery(prober)
+	disc.SetExecutor(PeerEntry{
+		Name:         "static-exec",
+		Endpoint:     "static-exec:9090",
+		Reachability: ReachabilityUnreachable,
+		Static:       true,
+	})
+	disc.SetClaimProducer(PeerEntry{
+		Name:         "static-store",
+		Endpoint:     "static-store:9090",
+		Reachability: ReachabilityUnreachable,
+		Static:       true,
+	})
+
+	disc.refreshAll(context.Background(), slog.Default())
+
+	if got := prober.probeAttempts.Load(); got != 0 {
+		t.Fatalf("refreshAll probed %d time(s), want 0 (static entries must be skipped)", got)
+	}
+	gotExec, ok := disc.GetExecutor("static-exec")
+	if !ok || gotExec.Reachability != ReachabilityUnreachable || !gotExec.LastProbedAt.IsZero() {
+		t.Fatalf("static executor entry changed by refreshAll: %+v", gotExec)
+	}
+	gotStore, ok := disc.GetStore("static-store")
+	if !ok || gotStore.Reachability != ReachabilityUnreachable || !gotStore.LastProbedAt.IsZero() {
+		t.Fatalf("static store entry changed by refreshAll: %+v", gotStore)
+	}
+}
+
 func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 	srv, addr := stubtest.Listen(t, stub.New())
 

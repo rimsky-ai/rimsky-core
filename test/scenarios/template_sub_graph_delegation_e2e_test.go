@@ -170,10 +170,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 			"the %s per-leaf inner-delay should have created a wide enough window for the 25ms poll. "+
 			"If this fails without a delegate-pre-settles bug, widen innerDelay.", innerDelay)
 
-	require.True(t,
-		h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh, 60*time.Second),
-		"sub-graph exit must reach fresh — its terminal fires the carry-rule "+
-			"that propagates the sub-graph's outcome to the calling node")
+	h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh)
 
 	require.Eventually(t, func() bool {
 		var callerState string
@@ -256,9 +253,7 @@ func TestTemplateSubGraphDelegation_ErrorPropagates(t *testing.T) {
 	require.NotNil(t, midNode, "inner-mid node missing")
 	require.NotNil(t, h.FindNode(iid, "inner-exit"), "inner-exit node missing")
 
-	require.True(t,
-		h.WaitForNodeState(midNode.ID, cascade.NodeStateFailed, 60*time.Second),
-		"inner-mid must reach NodeStateFailed (default give_up policy on unknown error class)")
+	h.WaitForNodeState(midNode.ID, cascade.NodeStateFailed)
 
 	require.Eventually(t, func() bool {
 		var callerState string

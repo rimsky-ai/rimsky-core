@@ -9,7 +9,6 @@ package breakpoints
 import (
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -47,7 +46,7 @@ func TestResumeWithOverlay(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status, "instance resume should succeed")
 
-	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
+	hit := waitForHitOnBreakpoint(t, h, bpID)
 
 	status, out := breakpointResume(t, h, iid, bpID, map[string]any{
 		"hit_id":  hit.ID.String(),
@@ -60,8 +59,7 @@ func TestResumeWithOverlay(t *testing.T) {
 	require.NotNil(t, row.ResumeOverlay)
 	require.Equal(t, "overlay-value", row.ResumeOverlay["tag"])
 
-	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
-		"stub should observe the worker dispatch after resume")
+	waitForStubObservedCount(h, "worker", 1)
 	var seen string
 	for _, o := range h.Stub.Observed() {
 		if o.NodeType != "worker" {
@@ -76,6 +74,5 @@ func TestResumeWithOverlay(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker should reach Fresh after the executor returns terminal/success")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 }

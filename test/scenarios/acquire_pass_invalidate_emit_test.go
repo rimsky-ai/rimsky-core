@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -79,11 +78,9 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, monitor)
 
-	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
-		"worker should record settling_signal_type=terminal/error/<class> via error_types: { acquire/unavailable: [pass] }")
+	waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/")
 
-	require.True(t, waitForEventCount(t, h, monitor.ID, "terminal/success", 1, 30*time.Second),
-		"monitor must run after worker reaches fresh (subscription-driven)")
+	waitForEventCount(t, h, monitor.ID, "terminal/success", 1)
 
 	var workerObserved int
 	for _, o := range h.Stub.Observed() {

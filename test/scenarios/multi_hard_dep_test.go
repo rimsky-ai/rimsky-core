@@ -102,11 +102,7 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	require.NotNil(t, cN)
 	h.PostInstanceMessage(iid, "test/wake/trigger", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
-	frameDone := h.WaitForNodeState(cN.ID, cascade.NodeStateFresh, 30*time.Second)
-	require.True(t, frameDone,
-		"boot must terminate: c should reach fresh after both force_upstream_refresh upstreams settle "+
-			"(a never-fresh c means the frame is livelocked on mutual upstream re-seeding); "+
-			"per-type dispatch counts at timeout: %v", dispatchCountsByType(h))
+	h.WaitForNodeState(cN.ID, cascade.NodeStateFresh)
 
 	bootCounts := awaitStableDispatchCounts(t, h)
 	require.GreaterOrEqual(t, bootCounts["c"], 1, "boot: c must have dispatched")

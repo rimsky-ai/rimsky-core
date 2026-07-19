@@ -1,15 +1,22 @@
 # syntax=docker/dockerfile:1.7
 #
 # Test-only image: the production claude-agent executor with the third-party
-# Claude CLI swapped for a hermetic stub. Used by the cross-stack proof
-# `claude_agent_cross_stack_e2e_test.go` to drive the executor's CLI-runner
-# path end-to-end without burning credentials on the real Claude API.
+# Claude CLI swapped for a hermetic stub, and the executor server binary
+# swapped for a variant that additionally registers a witness MCP module
+# (see fakeclaudeserver) so scenario proofs can dispatch the module/
+# http-loopback MCP transport, which has no built-in registration in the
+# shipped binary (module specifiers resolve against Go-embedder-registered
+# factories only). Used by the cross-stack and per-node-divergence proofs
+# (`claude_agent_cross_stack_e2e_test.go`, `claude_agent_per_node_divergence_e2e_test.go`)
+# to drive the executor's CLI-runner path end-to-end without burning
+# credentials on the real Claude API.
 #
 # The base image is built by `make service-images`. This Dockerfile builds the
 # Go stub (which speaks the same MCP-callback wire shape as the real CLI's
-# callback usage), copies it into a known path, and bakes
-# `RIMSKY_EXECUTOR_CLAUDE_BINARY` to point at it; the executor reads that env
-# at startup, so every dispatch spawns the stub instead of `claude` from PATH.
+# callback usage) and the module-registering server variant, copies them into
+# known paths, and bakes `RIMSKY_EXECUTOR_CLAUDE_BINARY` to point at the CLI
+# stub; the executor reads that env at startup, so every dispatch spawns the
+# stub instead of `claude` from PATH.
 #
 # Build context: the rimsky-core repo root (the harness calls
 # `testcontainers.Run` with `FromDockerfile{Context: <repo-root>}`), so the
@@ -25,9 +32,11 @@ COPY examples/go.mod examples/go.sum ./examples/
 RUN cd lib/services && go mod download
 COPY . .
 RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/fake-claude ./test/scenarios/claude_agent_fake_cli/fakeclaude
+RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/fake-claude-server ./test/scenarios/claude_agent_fake_cli/fakeclaudeserver
 
 FROM rimsky-executor-claude-agent:latest
 USER root
 COPY --from=fakebuilder /out/fake-claude /usr/local/bin/fake-claude
+COPY --from=fakebuilder /out/fake-claude-server /app
 USER nonroot
 ENV RIMSKY_EXECUTOR_CLAUDE_BINARY=/usr/local/bin/fake-claude

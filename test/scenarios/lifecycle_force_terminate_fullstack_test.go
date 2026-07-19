@@ -43,8 +43,7 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	n := h.FindNode(iid, "agent")
 	require.NotNil(t, n)
 
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateRunning, 15*time.Second),
-		"agent did not reach running (await-async-stuck precondition)")
+	h.WaitForNodeState(n.ID, cascade.NodeStateRunning)
 
 	resp, err := http.Post(h.ControlBase+"/v1/instances/"+iid.String()+"/terminate",
 		"application/json", nil)
@@ -53,8 +52,7 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode,
 		"terminate must return 200 against the live control-api")
 
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 15*time.Second),
-		"running node-run must be force-failed to failed by terminate")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
 
 	var settling string
 	h.QueryRowSQL(

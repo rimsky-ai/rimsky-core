@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 func testWaitSet(t *testing.T, d persistence.Database) {
@@ -204,5 +205,184 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	}
 	if drainedAttrs[0].TopicKind != "attribute" {
 		t.Fatalf("drained-attr row topic=%q want attribute", drainedAttrs[0].TopicKind)
+	}
+}
+
+// @concept: cascade
+// @decision: walker-rule-per-sender-node
+func testWaitSetGateEvaluatorMethods(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	pendingReceiverID := uuid.New()
+	staleReceiverID := uuid.New()
+	senderAID := uuid.New()
+	senderBID := uuid.New()
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		for _, n := range []struct {
+			id       uuid.UUID
+			nodeType string
+		}{
+			{pendingReceiverID, "gate-pending-receiver"},
+			{staleReceiverID, "gate-stale-receiver"},
+			{senderAID, "gate-sender-a"},
+			{senderBID, "gate-sender-b"},
+		} {
+			if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+				ID: n.id, InstanceID: fix.InstanceID,
+				NodeType: n.nodeType, Executor: "test-executor",
+			}, tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed nodes: %v", err)
+	}
+
+	var pendingReceiverRunID shared.UUID
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		id, err := store.Nodes().CreateCascadePending(ctx, tx, pendingReceiverID, fix.MainRunScopeID, fix.FrameID)
+		pendingReceiverRunID = id
+		return err
+	}); err != nil {
+		t.Fatalf("CreateCascadePending pending receiver: %v", err)
+	}
+	staleReceiverRunID := seedConformanceRunForNode(ctx, t, d, staleReceiverID, fix.FrameID)
+	senderARunID := seedConformanceRunForNode(ctx, t, d, senderAID, fix.FrameID)
+	senderBRunID := seedConformanceRunForNode(ctx, t, d, senderBID, fix.FrameID)
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID: fix.FrameID, ReceiverNodeRunID: pendingReceiverRunID,
+			SenderNodeRunID: senderARunID, TopicKind: "state",
+		}, tx); err != nil {
+			return err
+		}
+		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID: fix.FrameID, ReceiverNodeRunID: pendingReceiverRunID,
+			SenderNodeRunID: senderBRunID, TopicKind: "state",
+		}, tx); err != nil {
+			return err
+		}
+		return store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID: fix.FrameID, ReceiverNodeRunID: staleReceiverRunID,
+			SenderNodeRunID: senderARunID, TopicKind: "state",
+		}, tx)
+	}); err != nil {
+		t.Fatalf("wait_set insert: %v", err)
+	}
+
+	var senderNodes []shared.UUID
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		rows, err := store.WaitSet().ListSenderNodesForReceiver(ctx, fix.FrameID, pendingReceiverRunID, tx)
+		senderNodes = rows
+		return err
+	}); err != nil {
+		t.Fatalf("ListSenderNodesForReceiver: %v", err)
+	}
+	gotSenders := map[shared.UUID]bool{}
+	for _, id := range senderNodes {
+		gotSenders[id] = true
+	}
+	if len(gotSenders) != 2 || !gotSenders[shared.UUID(senderAID)] || !gotSenders[shared.UUID(senderBID)] {
+		t.Fatalf("ListSenderNodesForReceiver: got %v want {%s,%s}", senderNodes, senderAID, senderBID)
+	}
+
+	hasRow := func(receiverRunID, senderRunID shared.UUID) bool {
+		var got bool
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			v, err := store.WaitSet().HasRowForSenderRun(ctx, fix.FrameID, receiverRunID, senderRunID, tx)
+			got = v
+			return err
+		}); err != nil {
+			t.Fatalf("HasRowForSenderRun: %v", err)
+		}
+		return got
+	}
+	if !hasRow(pendingReceiverRunID, senderARunID) {
+		t.Fatalf("HasRowForSenderRun: want true for (pendingReceiver, senderA)")
+	}
+	if !hasRow(pendingReceiverRunID, senderBRunID) {
+		t.Fatalf("HasRowForSenderRun: want true for (pendingReceiver, senderB)")
+	}
+	if hasRow(staleReceiverRunID, senderBRunID) {
+		t.Fatalf("HasRowForSenderRun: want false for (staleReceiver, senderB) - no row inserted")
+	}
+	if hasRow(pendingReceiverRunID, uuid.New()) {
+		t.Fatalf("HasRowForSenderRun: want false for a sender run that was never inserted")
+	}
+
+	hasUndrained := func(receiverRunID shared.UUID) bool {
+		var got bool
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			v, err := store.WaitSet().HasUndrainedRowsForReceiver(ctx, fix.FrameID, receiverRunID, tx)
+			got = v
+			return err
+		}); err != nil {
+			t.Fatalf("HasUndrainedRowsForReceiver: %v", err)
+		}
+		return got
+	}
+	if !hasUndrained(pendingReceiverRunID) {
+		t.Fatalf("HasUndrainedRowsForReceiver: want true before any drain")
+	}
+
+	pendingReceiversFor := func(senderRunID shared.UUID) []shared.UUID {
+		var got []shared.UUID
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			rows, err := store.WaitSet().ListPendingReceiversForDrainedSender(ctx, fix.FrameID, senderRunID, tx)
+			got = rows
+			return err
+		}); err != nil {
+			t.Fatalf("ListPendingReceiversForDrainedSender: %v", err)
+		}
+		return got
+	}
+	containsUUID := func(list []shared.UUID, want shared.UUID) bool {
+		for _, id := range list {
+			if id == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	beforeDrain := pendingReceiversFor(senderARunID)
+	if !containsUUID(beforeDrain, pendingReceiverRunID) {
+		t.Fatalf("ListPendingReceiversForDrainedSender(senderA) before drain: want pendingReceiverRunID present, got %v", beforeDrain)
+	}
+	if containsUUID(beforeDrain, staleReceiverRunID) {
+		t.Fatalf("ListPendingReceiversForDrainedSender(senderA): a receiver run whose state != pending/cascade must never be surfaced, got %v", beforeDrain)
+	}
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderARunID, tx)
+	}); err != nil {
+		t.Fatalf("MarkDrainedBySender senderA: %v", err)
+	}
+	if !hasUndrained(pendingReceiverRunID) {
+		t.Fatalf("HasUndrainedRowsForReceiver: want true after draining only senderA (senderB row still undrained)")
+	}
+	afterDrainA := pendingReceiversFor(senderARunID)
+	if !containsUUID(afterDrainA, pendingReceiverRunID) {
+		t.Fatalf("ListPendingReceiversForDrainedSender(senderA) after drain: want pendingReceiverRunID present, got %v", afterDrainA)
+	}
+	if got := pendingReceiversFor(uuid.New()); len(got) != 0 {
+		t.Fatalf("ListPendingReceiversForDrainedSender: want empty for a sender run with no wait_set rows, got %v", got)
+	}
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderBRunID, tx)
+	}); err != nil {
+		t.Fatalf("MarkDrainedBySender senderB: %v", err)
+	}
+	if hasUndrained(pendingReceiverRunID) {
+		t.Fatalf("HasUndrainedRowsForReceiver: want false once every sender row for the receiver is drained")
+	}
+	afterDrainB := pendingReceiversFor(senderBRunID)
+	if !containsUUID(afterDrainB, pendingReceiverRunID) {
+		t.Fatalf("ListPendingReceiversForDrainedSender(senderB) after drain: want pendingReceiverRunID present, got %v", afterDrainB)
 	}
 }

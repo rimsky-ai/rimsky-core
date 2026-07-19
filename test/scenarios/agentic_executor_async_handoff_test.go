@@ -44,8 +44,7 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	n := h.FindNode(iid, "agent")
 	require.NotNil(t, n)
 
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateRunning, 15*time.Second),
-		"agent did not reach running")
+	h.WaitForNodeState(n.ID, cascade.NodeStateRunning)
 
 	cbURL := "http://" + h.Supervisor.CallbackAddr() + "/v1/callback/ack-1"
 	body, _ := json.Marshal(map[string]any{
@@ -69,8 +68,7 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	}
 	require.Equal(t, http.StatusOK, status, "callback did not become available")
 
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"agent did not reach fresh after async callback")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	var row *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

@@ -7,7 +7,6 @@ package scenarios
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -87,9 +86,7 @@ func driveProducerClassifiedRetry(
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t,
-		h.WaitForEventKind(worker.ID, "transient/retry/1/"+producerClassUnavailable, 30*time.Second),
-		"retry action must emit transient/retry/1/%s on the event log", producerClassUnavailable)
+	h.WaitForEventKind(worker.ID, "transient/retry/1/"+producerClassUnavailable)
 
 	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -104,8 +101,7 @@ func driveProducerClassifiedRetry(
 
 	_, err := sub.SeedPickPolicyItem("@queue", json.RawMessage(`{"v":1}`))
 	require.NoError(t, err, "seed item")
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker should reach fresh after seeding the queue under the retry chain")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 }
 
 func TestProducerClassRouting_ExactMatch(t *testing.T) {

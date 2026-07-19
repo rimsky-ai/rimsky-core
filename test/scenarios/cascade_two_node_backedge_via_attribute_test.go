@@ -8,7 +8,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -109,13 +108,7 @@ func TestCascadeTwoNodeBackedgeViaAttributeInFrame(t *testing.T) {
 	doneSinkNode := h.FindNode(iid, "done_sink")
 	require.NotNil(t, doneSinkNode, "done_sink missing")
 
-	require.True(t,
-		h.WaitForNodeState(doneSinkNode.ID, cascade.NodeStateFresh, 60*time.Second),
-		"done_sink never reached fresh — ping was not re-dispatched on pong's "+
-			"terminal/success back-edge after pong fired from "+
-			"attribute/count/changed (the cascade walker dropped the back-edge "+
-			"when pong's upstream edge to ping was attribute-typed rather than "+
-			"terminal-typed)")
+	h.WaitForNodeState(doneSinkNode.ID, cascade.NodeStateFresh)
 
 	var pingLoopCount, pingDoneCount int
 	h.QueryRowSQL(`

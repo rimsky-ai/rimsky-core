@@ -75,14 +75,9 @@ func postInvalidateMessage(t *testing.T, h *scenario.Harness, instanceID shared.
 	return h.PostInstanceMessage(instanceID, "", nil, idemKey)
 }
 
-func waitForFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.UUID, state string, want int, timeout time.Duration) bool {
+func waitForFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.UUID, state string, want int) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if countFramesByState(t, h, instanceID, state) == want {
-			return true
-		}
+	for countFramesByState(t, h, instanceID, state) != want {
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }

@@ -6,6 +6,7 @@ package scenarios
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -42,8 +43,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
-		"worker should reach parked")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateParked)
 
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "resumed")
 
@@ -59,8 +59,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	t.Logf("parked row: phase=%s resume_at=%v (now=%v, resume_at-now=%v)",
 		phase, *resumeAtStored, time.Now(), time.Until(*resumeAtStored))
 
-	require.True(t, h.WaitForEventKind(worker.ID, "transient/park/snooze", 5*time.Second),
-		"transient/park/snooze signal event should be recorded")
+	h.WaitForEventKind(worker.ID, "transient/park/snooze")
 
 	var parkSettlingSignal string
 	h.QueryRowSQL(
@@ -73,14 +72,45 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	require.Equal(t, "transient/park/snooze", parkSettlingSignal,
 		"park leaf-run lineage row should carry settling_signal_type=transient/park/snooze")
 
-	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
-		"sweep should wake the parked node when resume_at elapses")
+	h.WaitForEventKind(worker.ID, "parked_resume_started")
 	row := lastEventPayload(t, h, worker.ID, "parked_resume_started")
 	require.Equal(t, "deadline_elapsed", row["resume_reason"],
 		"deadline-elapsed wake must persist resume_reason=deadline_elapsed; "+
 			"got %v", row["resume_reason"])
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker should reach fresh after deadline-elapsed resume")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
+}
+
+func TestParkedLifecycle_TagsLandInAuditEvent(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	resumeAt := time.Now().Add(15 * time.Second)
+	h.Stub.WhenType("worker").
+		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "rate_limit", resumeAt).
+		Tags("park-tag-a", "park-tag-b")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "parked-tags-audit", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-park-tags-audit", map[string]any{})
+
+	worker := h.FindNode(iid, "worker")
+	require.NotNil(t, worker)
+
+	h.WaitForNodeState(worker.ID, cascade.NodeStateParked)
+	h.WaitForEventKind(worker.ID, "transient/park/snooze")
+
+	row := lastEventPayload(t, h, worker.ID, "transient/park/snooze")
+	rawTags, ok := row["tags"].([]any)
+	require.True(t, ok, "park audit event payload must carry a tags array; got %+v", row)
+	gotTags := make([]string, 0, len(rawTags))
+	for _, v := range rawTags {
+		gotTags = append(gotTags, fmt.Sprint(v))
+	}
+	require.ElementsMatch(t, []string{"park-tag-a", "park-tag-b"}, gotTags,
+		"park audit event tags must match the executor-emitted Park.tags")
 }
 
 func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
@@ -102,13 +132,10 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
-		"worker should reach parked")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateParked)
 
-	require.True(t, h.WaitForEventKind(worker.ID, "park_timeout", 15*time.Second),
-		"watchdog should fire park_timeout after max_park_duration")
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 15*time.Second),
-		"worker should land in failed after park_timeout")
+	h.WaitForEventKind(worker.ID, "park_timeout")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
 }
 
 func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
@@ -158,8 +185,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
-		"acquirer should reach parked")
+	h.WaitForNodeState(acq.ID, cascade.NodeStateParked)
 
 	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "resumed")
 
@@ -184,17 +210,12 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.Equal(t, 1, lhCount,
 		"held claim_handle row must survive across the active → parked transition")
 
-	require.True(t, h.WaitForEventKind(acq.ID, "parked_resume_started", 30*time.Second),
-		"sweep should wake the parked acquirer")
-	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateFresh, 30*time.Second),
-		"acquirer should reach fresh after resume")
-	require.True(t, h.WaitForNodeState(inh.ID, cascade.NodeStateFresh, 30*time.Second),
-		"inheritor should reach fresh after acquirer commits")
+	h.WaitForEventKind(acq.ID, "parked_resume_started")
+	h.WaitForNodeState(acq.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(inh.ID, cascade.NodeStateFresh)
 
-	require.True(t, h.WaitForAllRunsTerminal(acq.ID, 30*time.Second),
-		"acquirer node-runs should all reach a terminal state after resume completes")
-	require.True(t, h.WaitForAllRunsTerminal(inh.ID, 30*time.Second),
-		"inheritor node-runs should all reach a terminal state after completion")
+	h.WaitForAllRunsTerminal(acq.ID)
+	h.WaitForAllRunsTerminal(inh.ID)
 
 	var activeCount int
 	deadline := time.Now().Add(30 * time.Second)
@@ -270,15 +291,11 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
-		"acquirer should reach parked")
+	h.WaitForNodeState(acq.ID, cascade.NodeStateParked)
 
-	require.True(t, h.WaitForEventKind(acq.ID, "park_timeout", 30*time.Second),
-		"watchdog should fire park_timeout")
-	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateFailed, 30*time.Second),
-		"acquirer should land in failed after park_timeout")
-	require.True(t, h.WaitForAllRunsTerminal(acq.ID, 30*time.Second),
-		"all acquirer node-runs should reach a terminal state after timeout abandon")
+	h.WaitForEventKind(acq.ID, "park_timeout")
+	h.WaitForNodeState(acq.ID, cascade.NodeStateFailed)
+	h.WaitForAllRunsTerminal(acq.ID)
 
 	var abandonedCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,

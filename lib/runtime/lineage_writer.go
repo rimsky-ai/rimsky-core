@@ -77,6 +77,8 @@ type ClaimTerminalRecord struct {
 	Outcome             string         `json:"outcome"`
 	Cause               string         `json:"cause,omitempty"`
 	ProducerMetadata    map[string]any `json:"producer_metadata,omitempty"`
+	// @concept: lineage
+	TerminatingSupervisorID string `json:"terminating_supervisor_id,omitempty"`
 }
 
 func WriteLeafRunLineage(

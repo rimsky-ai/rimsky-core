@@ -387,6 +387,20 @@ func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, t
 	return nil
 }
 
+const prunedFrameIDsSQL = `
+    SELECT frame_id FROM (
+        SELECT f.frame_id, f.ended_at,
+               ROW_NUMBER() OVER (
+                   PARTITION BY f.instance_id
+                   ORDER BY COALESCE(f.ended_at, f.started_at) DESC, f.frame_id DESC
+               ) AS rk
+          FROM rimsky_frames f
+         WHERE f.ended_at IS NOT NULL
+    ) ranked
+    WHERE ranked.rk > $1
+       OR ($2::timestamptz IS NOT NULL AND ranked.ended_at < $2)
+`
+
 func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKept int, cutoff time.Time) (int, error) {
 	countBound := recentFramesKept > 0
 	timeBound := !cutoff.IsZero()
@@ -401,26 +415,60 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 	if timeBound {
 		cutoffArg = cutoff
 	}
-	tag, err := (*tablesImpl)(s).pool.Exec(ctx, `
-        DELETE FROM rimsky_frames
-        WHERE frame_id IN (
-            SELECT frame_id FROM (
-                SELECT f.frame_id, f.ended_at,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY f.instance_id
-                           ORDER BY COALESCE(f.ended_at, f.started_at) DESC, f.frame_id DESC
-                       ) AS rk
-                  FROM rimsky_frames f
-                 WHERE f.ended_at IS NOT NULL
-            ) ranked
-            WHERE ranked.rk > $1
-               OR ($2::timestamptz IS NOT NULL AND ranked.ended_at < $2)
-        )
-    `, countCap, cutoffArg)
+	ti := (*tablesImpl)(s)
+	var affected int
+	err := ti.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		orphaned, err := ti.q(tx).Query(ctx, `
+            SELECT scratch_handle, scratch_handle_backend
+              FROM rimsky_node_runs
+             WHERE scratch_handle IS NOT NULL
+               AND frame_id IN (`+prunedFrameIDsSQL+`)
+        `, countCap, cutoffArg)
+		if err != nil {
+			return fmt.Errorf("select blob-backed scratch handles: %w", err)
+		}
+		type orphanHandle struct {
+			handle  string
+			backend string
+		}
+		var handles []orphanHandle
+		for orphaned.Next() {
+			var handle string
+			var backend *string
+			if scanErr := orphaned.Scan(&handle, &backend); scanErr != nil {
+				orphaned.Close()
+				return fmt.Errorf("scan blob-backed scratch handle: %w", scanErr)
+			}
+			b := ""
+			if backend != nil {
+				b = *backend
+			}
+			handles = append(handles, orphanHandle{handle: handle, backend: b})
+		}
+		orphaned.Close()
+		if err := orphaned.Err(); err != nil {
+			return fmt.Errorf("iterate blob-backed scratch handles: %w", err)
+		}
+		now := time.Now().UTC()
+		for _, h := range handles {
+			if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), tx, h.handle, h.backend, now, ti.BlobRetention()); err != nil {
+				return fmt.Errorf("queue blob orphan %q: %w", h.handle, err)
+			}
+		}
+		tag, err := ti.q(tx).Exec(ctx, `
+            DELETE FROM rimsky_frames
+            WHERE frame_id IN (`+prunedFrameIDsSQL+`)
+        `, countCap, cutoffArg)
+		if err != nil {
+			return fmt.Errorf("delete pruned frames: %w", err)
+		}
+		affected = int(tag.RowsAffected())
+		return nil
+	})
 	if err != nil {
 		return 0, fmt.Errorf("frames.PruneTraceForRetention: %w", err)
 	}
-	return int(tag.RowsAffected()), nil
+	return affected, nil
 }
 
 func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (int, error) {

@@ -139,6 +139,41 @@ func TestFilesystemBackend(t *testing.T) {
 	}
 }
 
+func TestFilesystemBackendReadRangeOutOfBounds(t *testing.T) {
+	t.Parallel()
+	be, err := NewFilesystemBackend(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFilesystemBackend: %v", err)
+	}
+	ctx := context.Background()
+	h, err := be.Write(ctx, BlobKey{}, []byte("short"))
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if _, err := be.ReadRange(ctx, h, 0, 100); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("ReadRange out-of-bounds: want io.ErrUnexpectedEOF, got %v", err)
+	}
+}
+
+func TestFilesystemBackendReadRangeNotFound(t *testing.T) {
+	t.Parallel()
+	be, err := NewFilesystemBackend(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFilesystemBackend: %v", err)
+	}
+	if _, err := be.ReadRange(context.Background(), Handle("fs:aa/bb/nonexistent.bin"), 0, 1); !errors.Is(err, ErrBlobNotFound) {
+		t.Fatalf("ReadRange on missing handle: want ErrBlobNotFound, got %v", err)
+	}
+}
+
+func TestMemoryBackendReadRangeNotFound(t *testing.T) {
+	t.Parallel()
+	be := NewMemoryBackend()
+	if _, err := be.ReadRange(context.Background(), Handle("mem:404"), 0, 1); !errors.Is(err, ErrBlobNotFound) {
+		t.Fatalf("ReadRange on missing handle: want ErrBlobNotFound, got %v", err)
+	}
+}
+
 func TestFilesystemBackendRejectsPathEscape(t *testing.T) {
 	t.Parallel()
 	be, err := NewFilesystemBackend(t.TempDir())

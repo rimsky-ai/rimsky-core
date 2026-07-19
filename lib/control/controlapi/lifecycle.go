@@ -292,12 +292,13 @@ func CloseAndFanOutFrameRootRunScopesForInstance(
 	tplSpec node.TemplateSpec,
 	instanceID shared.UUID,
 	terminalReason string,
-) {
+) error {
 	logger := deps.Logger
 	pag := persistence.ListPagination{Limit: 256}
 	instArg := instanceID
 	filter := persistence.FrameListFilter{InstanceID: &instArg}
 	seen := map[shared.UUID]struct{}{}
+	var firstErr error
 	for {
 		var page persistence.PaginatedListResult[persistence.FrameRow]
 		if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -310,7 +311,10 @@ func CloseAndFanOutFrameRootRunScopesForInstance(
 					"instance_id", instanceID.String(),
 					"error", err.Error())
 			}
-			return
+			if firstErr == nil {
+				firstErr = err
+			}
+			return firstErr
 		}
 		for _, f := range page.Rows {
 			scope := f.RootRunScopeID
@@ -331,12 +335,38 @@ func CloseAndFanOutFrameRootRunScopesForInstance(
 						"root_run_scope_id", scope.String(),
 						"error", err.Error())
 				}
+				if firstErr == nil {
+					firstErr = err
+				}
 				continue
 			}
-			_, _, _ = FanOutRunScopeEvent(ctx, deps, tplSpec, scope, instanceID, terminalReason, nil)
+			_, perPeerErr, err := FanOutRunScopeEvent(ctx, deps, tplSpec, scope, instanceID, terminalReason, nil)
+			if err != nil {
+				if logger != nil {
+					logger.Warn("CloseAndFanOutFrameRootRunScopesForInstance: run-scope fan-out failed",
+						"instance_id", instanceID.String(),
+						"root_run_scope_id", scope.String(),
+						"error", err.Error())
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			if len(perPeerErr) > 0 {
+				if logger != nil {
+					logger.Warn("CloseAndFanOutFrameRootRunScopesForInstance: run-scope fan-out partial failure",
+						"instance_id", instanceID.String(),
+						"root_run_scope_id", scope.String(),
+						"failed_peer_count", len(perPeerErr))
+				}
+				if firstErr == nil {
+					firstErr = fmt.Errorf("run-scope %s: %d peer(s) failed on_run_scope_terminal", scope.String(), len(perPeerErr))
+				}
+			}
 		}
 		if page.NextCursor == "" {
-			return
+			return firstErr
 		}
 		pag.Cursor = page.NextCursor
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -20,7 +21,7 @@ import (
 func assertWorkPair(t *testing.T, h *scenario.Harness, nodeID foundationshared.UUID, wantTerminalKind string) {
 	t.Helper()
 	completed := eventwait.WaitForEvent(h.Ctx, t, h.Persist,
-		eventwait.Matcher{NodeID: &nodeID, Kind: "work_completed"}, 15*time.Second)
+		eventwait.Matcher{NodeID: &nodeID, Kind: "work_completed"})
 	started := eventwait.Events(h.Ctx, t, h.Persist,
 		eventwait.Matcher{NodeID: &nodeID, Kind: "work_started"})
 
@@ -63,10 +64,42 @@ func TestWorkCompletedPairsWorkStartedOnComplete(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	assertWorkPair(t, h, n.ID, "complete")
+}
+
+func TestWorkCompletedSingletonAcrossRetryIterations(t *testing.T) {
+	t.Parallel()
+	const maxRetries = 2
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	h.Stub.WhenType("retrier").Error("always_err", map[string]any{"hint": "permanent"})
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "work-completed-retry-singleton", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{
+				Type: "retrier", Executor: "stub",
+				MaxRetries:   node.IntPtr(maxRetries),
+				RetryBackoff: &node.RetryBackoffConfig{BaseDelayMs: 10, Kind: "linear"},
+				ErrorTypes: map[string]node.ErrorTypePolicy{
+					"stub/always_err": {Action: "retry"},
+				},
+			}),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-work-completed-retry", map[string]any{})
+
+	n := h.FindNode(iid, "retrier")
+	require.NotNil(t, n)
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
+
+	retries := eventwait.Events(h.Ctx, t, h.Persist,
+		eventwait.Matcher{NodeID: &n.ID, KindPrefix: "transient/retry/"})
+	require.Len(t, retries, maxRetries,
+		"precondition: the run must actually iterate through %d in-place retries", maxRetries)
+
+	assertWorkPair(t, h, n.ID, "errored")
 }
 
 func TestWorkCompletedPairsWorkStartedOnErrored(t *testing.T) {
@@ -91,8 +124,36 @@ func TestWorkCompletedPairsWorkStartedOnErrored(t *testing.T) {
 
 	n := h.FindNode(iid, "flaky")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 15*time.Second),
-		"flaky did not reach failed")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
 
 	assertWorkPair(t, h, n.ID, "errored")
+}
+
+func TestWorkCompletedNotEmittedOnPark(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	h.Stub.WhenType("worker").
+		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "hold", time.Now().Add(time.Hour))
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "work-completed-park", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-work-completed-park", map[string]any{})
+
+	n := h.FindNode(iid, "worker")
+	require.NotNil(t, n)
+	h.WaitForNodeState(n.ID, cascade.NodeStateParked)
+
+	started := eventwait.Events(h.Ctx, t, h.Persist,
+		eventwait.Matcher{NodeID: &n.ID, Kind: "work_started"})
+	require.Len(t, started, 1,
+		"a park must still emit its work_started pairing half; work happened, it just didn't finish")
+
+	completed := eventwait.Events(h.Ctx, t, h.Persist,
+		eventwait.Matcher{NodeID: &n.ID, Kind: "work_completed"})
+	require.Empty(t, completed,
+		"a park must emit no work_completed event; the run re-enters and its eventual terminal emits the pairing event")
 }

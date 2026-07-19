@@ -9,7 +9,6 @@ package breakpoints
 import (
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -47,7 +46,7 @@ func TestResumeInvalidOverlay(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
+	hit := waitForHitOnBreakpoint(t, h, bpID)
 
 	badStatus, badOut := breakpointResume(t, h, iid, bpID, map[string]any{
 		"hit_id":  hit.ID.String(),
@@ -71,10 +70,8 @@ func TestResumeInvalidOverlay(t *testing.T) {
 	require.Equal(t, true, goodOut["first_resume"],
 		"the second resume IS the first successful one — prior failure didn't write resumed_at")
 
-	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
-		"stub should observe dispatch after the successful retry")
+	waitForStubObservedCount(h, "worker", 1)
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker should reach Fresh once dispatch lands")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 }

@@ -49,14 +49,14 @@ func TestMultiBreakpointMatch(t *testing.T) {
 	})
 	_, _ = instanceResume(t, h, iid)
 
-	hit1 := waitForHitOnBreakpoint(t, h, bp1, 10*time.Second)
+	hit1 := waitForHitOnBreakpoint(t, h, bp1)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not be called while paused at the first breakpoint")
 
 	status, _ := breakpointResume(t, h, iid, bp1, map[string]any{"hit_id": hit1.ID.String()})
 	require.Equal(t, http.StatusOK, status)
 
-	hit2 := waitForHitOnBreakpoint(t, h, bp2, 10*time.Second)
+	hit2 := waitForHitOnBreakpoint(t, h, bp2)
 	time.Sleep(200 * time.Millisecond)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must remain uncalled while paused at the second breakpoint")
@@ -64,10 +64,8 @@ func TestMultiBreakpointMatch(t *testing.T) {
 	status, _ = breakpointResume(t, h, iid, bp2, map[string]any{"hit_id": hit2.ID.String()})
 	require.Equal(t, http.StatusOK, status)
 
-	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
-		"executor should observe dispatch after both breakpoints resume")
+	waitForStubObservedCount(h, "worker", 1)
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker should reach Fresh after both resumes")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 }

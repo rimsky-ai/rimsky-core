@@ -96,8 +96,5 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 	}, 60*time.Second, 100*time.Millisecond,
 		"all three partition children should reach state=fresh")
 
-	require.True(t,
-		h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh, 60*time.Second),
-		"downstream must reach fresh via cross-scope cascade bridge "+
-			"(PropagateIfChildAfterTerminal → cascadeSubscribersStaleInTx for the parent)")
+	h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh)
 }

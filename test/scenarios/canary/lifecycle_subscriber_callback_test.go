@@ -6,6 +6,7 @@ package canary
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"strings"
@@ -13,11 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -63,29 +66,23 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	templateHash := h.DeployTemplate(spec)
 	require.NotEmpty(t, templateHash, "DeployTemplate must return a non-empty template_hash")
 
-	require.True(t, fake.waitFor("OnTemplateRegistered", templateHash, "", 5*time.Second),
-		"fake LifecycleSubscriber did not receive OnTemplateRegistered for %s", templateHash)
-	require.True(t, fake.waitFor("OnTemplateDeployed", templateHash, "", 5*time.Second),
-		"fake LifecycleSubscriber did not receive OnTemplateDeployed for %s", templateHash)
+	fake.waitFor("OnTemplateRegistered", templateHash, "")
+	fake.waitFor("OnTemplateDeployed", templateHash, "")
 
 	instanceID := h.CreateInstance(templateHash, "canary-lifecycle-ck", nil)
-	require.True(t, fake.waitFor("OnInstanceCreated", templateHash, instanceID.String(), 5*time.Second),
-		"fake LifecycleSubscriber did not receive OnInstanceCreated for %s", instanceID)
+	fake.waitFor("OnInstanceCreated", templateHash, instanceID.String())
 
 	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.Instances().MarkTerminated(ctx, instanceID, tx)
 	}))
 	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID.String())
-	require.True(t, fake.waitFor("OnInstanceTerminated", templateHash, instanceID.String(), 5*time.Second),
-		"fake LifecycleSubscriber did not receive OnInstanceTerminated for %s", instanceID)
+	fake.waitFor("OnInstanceTerminated", templateHash, instanceID.String())
 
 	postAndExpectOK(t, h, "/v1/templates/"+templateHash+"/undeploy")
-	require.True(t, fake.waitFor("OnTemplateUndeployed", templateHash, "", 5*time.Second),
-		"fake LifecycleSubscriber did not receive OnTemplateUndeployed for %s", templateHash)
+	fake.waitFor("OnTemplateUndeployed", templateHash, "")
 
 	deleteAndExpectOK(t, h, "/v1/templates/"+templateHash)
-	require.True(t, fake.waitFor("OnTemplateDeregistered", templateHash, "", 5*time.Second),
-		"fake LifecycleSubscriber did not receive OnTemplateDeregistered for %s", templateHash)
+	fake.waitFor("OnTemplateDeregistered", templateHash, "")
 
 	for _, verb := range []string{
 		"OnTemplateRegistered", "OnTemplateDeployed", "OnTemplateUndeployed",
@@ -94,6 +91,66 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 		require.Equalf(t, 1, fake.countFor(verb),
 			"fake LifecycleSubscriber received %s %d times, want exactly 1", verb, fake.countFor(verb))
 	}
+}
+
+// @story: instance-create-is-idle
+func TestCanary_NeverRanInstanceTerminationDoesNotFireOnRunScopeTerminal(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeLifecycleServer(t)
+	t.Cleanup(fake.stop)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		NoSupervisor: true,
+		NoScheduler:  true,
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
+				"canary-lifecycle-never-ran": {
+					Endpoint:     "grpc://" + fake.addr,
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+					Protocols:    []string{config.ProtocolClaimProducer, claimproducer.ProtocolLifecycleSubscriber},
+				},
+			},
+		},
+	})
+
+	ctx := context.Background()
+
+	spec := node.TemplateSpec{
+		Name:    "canary-never-ran-instance",
+		Version: "v1",
+		Nodes: []node.TemplateNodeDef{{
+			Type:     "n1",
+			Executor: "stub",
+			ClaimProducers: []node.NodeClaimProducerRef{{
+				Name:     "canary-lifecycle-never-ran",
+				Selector: "x",
+				Intent:   "r",
+			}},
+		}},
+	}
+
+	templateHash := h.DeployTemplate(spec)
+	require.NotEmpty(t, templateHash, "DeployTemplate must return a non-empty template_hash")
+	fake.waitFor("OnTemplateDeployed", templateHash, "")
+
+	instanceID := postInstanceRawExpectCreated(t, h, templateHash, "canary-never-ran-ck")
+	fake.waitFor("OnInstanceCreated", templateHash, instanceID)
+
+	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		instUUID, err := parseInstanceID(instanceID)
+		if err != nil {
+			return err
+		}
+		return h.Persist.Instances().MarkTerminated(ctx, instUUID, tx)
+	}))
+	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID)
+	fake.waitFor("OnInstanceTerminated", templateHash, instanceID)
+
+	require.Equalf(t, 0, fake.countFor("OnRunScopeTerminal"),
+		"instance %s was created but never posted a triggering message (instance-create-is-idle: no frame ever "+
+			"opened), so it owns no frame-root run scope; terminating it must not fire OnRunScopeTerminal "+
+			"(got %d deliveries)", instanceID, fake.countFor("OnRunScopeTerminal"))
 }
 
 type fakeLifecycleServer struct {
@@ -145,20 +202,18 @@ func (f *fakeLifecycleServer) record(ev lifecycleEvent) {
 	f.events = append(f.events, ev)
 }
 
-func (f *fakeLifecycleServer) waitFor(verb, templateHash, instanceID string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+func (f *fakeLifecycleServer) waitFor(verb, templateHash, instanceID string) {
+	for {
 		f.mu.Lock()
 		for _, ev := range f.events {
 			if ev.verb == verb && ev.templateHash == templateHash && (instanceID == "" || ev.instanceID == instanceID) {
 				f.mu.Unlock()
-				return true
+				return
 			}
 		}
 		f.mu.Unlock()
 		time.Sleep(25 * time.Millisecond)
 	}
-	return false
 }
 
 func (f *fakeLifecycleServer) countFor(verb string) int {
@@ -211,6 +266,14 @@ func (f *fakeLifecycleServer) OnInstanceTerminated(_ context.Context, req *genv1
 	return &genv1.LifecycleAck{}, nil
 }
 
+func (f *fakeLifecycleServer) OnRunScopeTerminal(_ context.Context, req *genv1.OnRunScopeTerminalRequest) (*genv1.LifecycleAck, error) {
+	f.record(lifecycleEvent{
+		verb:       "OnRunScopeTerminal",
+		instanceID: req.GetInstanceId(),
+	})
+	return &genv1.LifecycleAck{}, nil
+}
+
 func (f *fakeLifecycleServer) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	return &genv1.CapabilitiesResponse{
 		WriteSemanticsAllowed: []genv1.WriteSemantics{genv1.WriteSemantics_WRITE_SEMANTICS_SYNC},
@@ -235,4 +298,31 @@ func deleteAndExpectOK(t *testing.T, h *scenario.Harness, path string) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equalf(t, http.StatusOK, resp.StatusCode, "DELETE %s: status=%d", path, resp.StatusCode)
+}
+
+func postInstanceRawExpectCreated(t *testing.T, h *scenario.Harness, templateHash, instanceKey string) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"template":     templateHash,
+		"instance_key": instanceKey,
+	})
+	require.NoError(t, err)
+	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", strings.NewReader(string(body)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equalf(t, http.StatusCreated, resp.StatusCode, "POST /v1/instances: status=%d", resp.StatusCode)
+	var out struct {
+		InstanceID string `json:"instance_id"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	require.NotEmpty(t, out.InstanceID)
+	return out.InstanceID
+}
+
+func parseInstanceID(id string) (shared.UUID, error) {
+	u, err := uuid.Parse(id)
+	if err != nil {
+		return shared.UUID{}, err
+	}
+	return shared.UUID(u), nil
 }

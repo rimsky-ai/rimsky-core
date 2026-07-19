@@ -27,5 +27,6 @@ func verifyEntriesExist(cfg *licensingConfig, root string) []violation {
 	}
 	check("apache", cfg.apachePrefixes)
 	check("agpl", cfg.agplPrefixes)
+	check("exempt", cfg.exemptEntries)
 	return out
 }

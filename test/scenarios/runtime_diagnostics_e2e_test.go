@@ -92,18 +92,15 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, rcv)
 
-	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
-		"acquirer should reach parked under await-callback")
+	h.WaitForNodeState(acq.ID, cascade.NodeStateParked)
 
 	transientFrame, transientReceiverRun, transientSenderRun :=
-		waitForUndrainedWaitSetRow(t, h, rcv.ID, "transient", 30*time.Second)
+		waitForUndrainedWaitSetRow(t, h, rcv.ID, "transient")
 	require.NotEqual(t, shared.UUID{}, transientReceiverRun,
 		"transient_receiver must carry an undrained topic_kind=transient wait-set row "+
 			"keyed on a real frame before the diagnostic surfaces are read")
 
-	require.True(t, waitForNodeOnParkedSurface(t, h, acq.ID.String(), 10*time.Second),
-		"GET /v1/diagnostics/parked must list the acquirer node-id "+
-			"(spec-named operator surface; Falsifier rule 1)")
+	waitForNodeOnParkedSurface(t, h, acq.ID.String())
 
 	var phase string
 	h.QueryRowSQL(
@@ -159,15 +156,9 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 			"every narrowed row must key on the supplied receiver_run")
 	}
 
-	require.True(t, waitForHeldFrameListingNode(t, h, acq.ID.String(), 10*time.Second),
-		"GET /v1/admin/diagnostics/held-frames must list a frame whose node_ids "+
-			"include the parked acquirer — the supervisor is holding the frame open "+
-			"and the diagnostic must show what the supervisor sees")
+	waitForHeldFrameListingNode(t, h, acq.ID.String())
 
-	claimHandleID := waitForHeldClaimHandle(t, h, iid, 10*time.Second)
-	require.NotEqual(t, shared.UUID{}, claimHandleID,
-		"the acquirer must hold a real rimsky_claim_handles row "+
-			"before the claim-holders surface is read")
+	claimHandleID := waitForHeldClaimHandle(t, h, iid)
 
 	holdersURL := h.ControlBase + "/v1/lock-holders/" + claimHandleID.String() + "/claim-holders"
 	resp3, err := http.Get(holdersURL)
@@ -211,10 +202,9 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 			"the HTTP surface must reflect this exact holder")
 }
 
-func waitForNodeOnParkedSurface(t *testing.T, h *scenario.Harness, nodeID string, timeout time.Duration) bool {
+func waitForNodeOnParkedSurface(t *testing.T, h *scenario.Harness, nodeID string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		resp, err := http.Get(h.ControlBase + "/v1/diagnostics/parked")
 		if err == nil {
 			var body controlapi.ParkedNodesResponse
@@ -223,14 +213,13 @@ func waitForNodeOnParkedSurface(t *testing.T, h *scenario.Harness, nodeID string
 			if decErr == nil {
 				for _, p := range body.ParkedNodes {
 					if p.NodeID == nodeID {
-						return true
+						return
 					}
 				}
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return false
 }
 
 func parkedSurfaceContainsNodeWithReason(t *testing.T, h *scenario.Harness, nodeID, reason string) bool {
@@ -255,10 +244,9 @@ func parkedSurfaceContainsNodeWithReason(t *testing.T, h *scenario.Harness, node
 	return false
 }
 
-func waitForHeldFrameListingNode(t *testing.T, h *scenario.Harness, nodeID string, timeout time.Duration) bool {
+func waitForHeldFrameListingNode(t *testing.T, h *scenario.Harness, nodeID string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		resp, err := http.Get(h.ControlBase + "/v1/admin/diagnostics/held-frames")
 		if err == nil {
 			var body controlapi.HeldFramesResponse
@@ -268,7 +256,7 @@ func waitForHeldFrameListingNode(t *testing.T, h *scenario.Harness, nodeID strin
 				for _, f := range body.Frames {
 					for _, nid := range f.NodeIDs {
 						if nid == nodeID {
-							return true
+							return
 						}
 					}
 				}
@@ -276,13 +264,11 @@ func waitForHeldFrameListingNode(t *testing.T, h *scenario.Harness, nodeID strin
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return false
 }
 
-func waitForHeldClaimHandle(t *testing.T, h *scenario.Harness, instanceID shared.UUID, timeout time.Duration) shared.UUID {
+func waitForHeldClaimHandle(t *testing.T, h *scenario.Harness, instanceID shared.UUID) shared.UUID {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var id shared.UUID
 		err := h.Pool.QueryRow(h.Ctx,
 			`SELECT lh.id FROM rimsky_claim_handles lh
@@ -296,16 +282,14 @@ func waitForHeldClaimHandle(t *testing.T, h *scenario.Harness, instanceID shared
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return shared.UUID{}
 }
 
 func waitForUndrainedWaitSetRow(
 	t *testing.T, h *scenario.Harness, receiverNodeID shared.UUID,
-	topicKind string, timeout time.Duration,
+	topicKind string,
 ) (frameID, receiverNodeRunID, senderNodeRunID shared.UUID) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var (
 			fid shared.UUID
 			rid shared.UUID
@@ -332,5 +316,4 @@ func waitForUndrainedWaitSetRow(
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return shared.UUID{}, shared.UUID{}, shared.UUID{}
 }

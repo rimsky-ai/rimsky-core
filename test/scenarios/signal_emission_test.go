@@ -38,8 +38,7 @@ func TestSignalEmission_TerminalSuccess(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-signal-success", map[string]any{})
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	rows := readEventsForNode(t, h, n.ID)
 	require.True(t, hasEventKind(rows, "terminal/success"),
@@ -76,8 +75,7 @@ func TestSignalEmission_TerminalErrorWithRetryThenGiveUp(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-signal-retry-give-up", map[string]any{})
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 30*time.Second),
-		"worker should land in failed after retry-then-give-up")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
 
 	rows := readEventsForNode(t, h, n.ID)
 	kinds := kindsOf(rows)
@@ -110,8 +108,7 @@ func TestSignalEmission_ParkSnooze(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-signal-park-snooze", map[string]any{})
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateParked, 30*time.Second),
-		"worker did not reach parked")
+	h.WaitForNodeState(n.ID, cascade.NodeStateParked)
 
 	rows := readEventsForNode(t, h, n.ID)
 	require.True(t, hasEventKind(rows, "transient/park/snooze"),
@@ -150,8 +147,7 @@ func TestSignalEmission_TerminalErrorCarriesAttributesDelta(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-signal-error-attrs-delta", map[string]any{})
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 30*time.Second),
-		"worker should land in failed")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
 
 	rows := readEventsForNode(t, h, n.ID)
 	require.True(t, hasEventKind(rows, "terminal/error/stub/foo"),
@@ -189,8 +185,7 @@ func TestSignalEmission_TransientParkAuditOnlyNoAttributesDelta(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-signal-park-no-attrs-delta", map[string]any{})
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateParked, 30*time.Second),
-		"worker did not reach parked")
+	h.WaitForNodeState(n.ID, cascade.NodeStateParked)
 
 	rows := readEventsForNode(t, h, n.ID)
 	require.True(t, hasEventKind(rows, "transient/park/snooze"),

@@ -103,8 +103,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	require.NotNil(t, d)
 	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
-	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
-		"d should reach fresh after the initial frame settles")
+	h.WaitForNodeState(d.ID, cascade.NodeStateFresh)
 
 	countRuns := func(nodeType string) int {
 		n := 0
@@ -126,10 +125,8 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
-		"a should re-reach fresh")
-	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
-		"b should re-reach fresh while c is held")
+	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
 	require.Eventually(t, func() bool { return countRuns("c") >= 2 },
 		30*time.Second, 25*time.Millisecond, "c should dispatch into its hold")
 
@@ -149,10 +146,8 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	}
 
 	close(releaseC)
-	require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 30*time.Second),
-		"c should re-reach fresh after release")
-	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
-		"d should re-reach fresh after the last upstream settles")
+	h.WaitForNodeState(c.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(d.ID, cascade.NodeStateFresh)
 
 	require.Eventually(t, func() bool { return countRuns("d") == baselineDRuns+1 },
 		10*time.Second, 25*time.Millisecond,

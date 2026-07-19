@@ -100,8 +100,7 @@ func TestCascadeDefersDuringFlight_WalkerQueuesNewPendingWithoutMutatingInFlight
 
 	h.PostInstanceMessage(iid, "test/wake", nil, "defers-during-flight-kick")
 
-	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateParked, 30*time.Second),
-		"b's first dispatch (b1) should park after a's self-cascade finishes and b1 clears the gate")
+	h.WaitForNodeState(b.ID, cascade.NodeStateParked)
 
 	bObs := func() []stub.ObservedRequest {
 		var out []stub.ObservedRequest
@@ -128,8 +127,7 @@ func TestCascadeDefersDuringFlight_WalkerQueuesNewPendingWithoutMutatingInFlight
 			"created NEW cascade-driven runs for a's later self-cascade rounds rather than "+
 			"mutating b1's in-flight state. got %d queued", pendingBRuns)
 
-	require.True(t, h.WaitForEventKind(b.ID, "parked_resume_started", 30*time.Second),
-		"deadline sweep should wake the parked b1")
+	h.WaitForEventKind(b.ID, "parked_resume_started")
 
 	deadline := time.Now().Add(45 * time.Second)
 	var observedAfter int

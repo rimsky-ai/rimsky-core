@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -122,12 +121,8 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 	receiver := h.FindNode(iid, "receiver")
 	require.NotNil(t, receiver, "receiver node must exist on the instance")
 
-	require.True(t,
-		h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 20*time.Second),
-		"receiver did not reach fresh — message-virtual-node settle did not stale-mark and dispatch")
-	require.True(t,
-		h.WaitForEventKind(receiver.ID, "terminal/success", 20*time.Second),
-		"receiver did not emit terminal/success — frame did not open with the delivered message")
+	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
+	h.WaitForEventKind(receiver.ID, "terminal/success")
 
 	frames := getFrames(t, h.ControlBase, iid, "")
 	require.NotEmpty(t, frames, "at least one frame must exist for this instance")

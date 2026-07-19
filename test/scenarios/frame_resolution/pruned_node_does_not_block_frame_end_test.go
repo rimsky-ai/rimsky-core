@@ -7,7 +7,6 @@ package frame_resolution
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -42,13 +41,10 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 	require.NotNil(t, middle)
 	require.NotNil(t, leaf)
 
-	require.True(t, h.WaitForNodeState(source.ID, cascade.NodeStateFresh, 15*time.Second),
-		"source did not finish")
-	require.True(t, h.WaitForNodeState(middle.ID, cascade.NodeStateFresh, 15*time.Second),
-		"middle did not finish")
+	h.WaitForNodeState(source.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(middle.ID, cascade.NodeStateFresh)
 
-	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 10*time.Second),
-		"frame did not end despite leaf pruning")
+	waitForFramesByState(t, h, iid, "completed", 1)
 
 	var leafState string
 	err := h.Pool.QueryRow(context.Background(),

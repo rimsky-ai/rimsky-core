@@ -59,13 +59,20 @@ func (h *Handle) Shutdown(ctx context.Context) error {
 	}
 }
 
+const defaultTickInterval = 250 * time.Millisecond
+
+func resolveTickInterval(configured time.Duration) time.Duration {
+	if configured == 0 {
+		return defaultTickInterval
+	}
+	return configured
+}
+
 func Start(cfg Config) *Handle {
 	if cfg.Persist == nil {
 		panic("scheduler.Start: Config.Persist is required (frame engine and invalidate path dereference it)")
 	}
-	if cfg.TickInterval == 0 {
-		cfg.TickInterval = 250 * time.Millisecond
-	}
+	cfg.TickInterval = resolveTickInterval(cfg.TickInterval)
 	if cfg.Logger == nil {
 		cfg.Logger = shared.SilentLogger{}
 	}

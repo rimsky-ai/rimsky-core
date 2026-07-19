@@ -13,7 +13,7 @@ import (
 
 func TestVerifyEntriesExist_FlagsMissingClassificationEntries(t *testing.T) {
 	dir := t.TempDir()
-	for _, d := range []string{"protocols/action", "runtime"} {
+	for _, d := range []string{"protocols/action", "runtime", "bin"} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", d, err)
 		}
@@ -46,9 +46,41 @@ exempt:
 	}
 }
 
+func TestVerifyEntriesExist_FlagsMissingExemptEntry(t *testing.T) {
+	dir := t.TempDir()
+	for _, d := range []string{"protocols", "runtime", "bin"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+	cfg := writeLicensingYAML(t, dir, `apache:
+  - protocols/
+agpl:
+  - runtime/
+exempt:
+  - bin/
+  - LICENSE.missing
+`)
+
+	vs := verifyEntriesExist(cfg, dir)
+
+	if len(vs) != 1 {
+		t.Fatalf("want 1 violation (the missing exempt entry), got %d: %+v", len(vs), vs)
+	}
+	if !strings.Contains(vs[0].message, "LICENSE.missing") {
+		t.Errorf("expected the violation to name %q; got %q", "LICENSE.missing", vs[0].message)
+	}
+	if !strings.Contains(vs[0].message, "exempt") {
+		t.Errorf("expected the violation to identify the exempt bucket; got %q", vs[0].message)
+	}
+	if strings.Contains(vs[0].message, `"bin"`) {
+		t.Errorf("did not expect a violation naming present entry \"bin\"; got %q", vs[0].message)
+	}
+}
+
 func TestVerifyEntriesExist_AllPresent(t *testing.T) {
 	dir := t.TempDir()
-	for _, d := range []string{"protocols", "runtime/peer", "runtime"} {
+	for _, d := range []string{"protocols", "runtime/peer", "runtime", "bin"} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", d, err)
 		}

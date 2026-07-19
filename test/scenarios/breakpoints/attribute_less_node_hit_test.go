@@ -38,15 +38,14 @@ func TestBreakpointFiresOnAttributeLessNode_NotifyOnly(t *testing.T) {
 	})
 	_, _ = instanceResume(t, h, iid)
 
-	hits := waitForHitCount(t, h, bpID, 1, 15*time.Second)
+	hits := waitForHitCount(t, h, bpID, 1)
 	require.Len(t, hits, 1)
 	require.Equal(t, "before_dispatch", string(hits[0].Checkpoint))
 	require.Equal(t, "notify_only", string(hits[0].Mode))
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"notify_only must not block the attribute-less dispatch — worker should reach Fresh")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 }
 
 func TestBreakpointFiresOnAttributeLessNode_PauseBlocks(t *testing.T) {
@@ -69,7 +68,7 @@ func TestBreakpointFiresOnAttributeLessNode_PauseBlocks(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status, "instance resume should succeed")
 
-	hit := waitForHitOnBreakpoint(t, h, bpID, 15*time.Second)
+	hit := waitForHitOnBreakpoint(t, h, bpID)
 
 	time.Sleep(200 * time.Millisecond)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
@@ -79,10 +78,8 @@ func TestBreakpointFiresOnAttributeLessNode_PauseBlocks(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, true, out["resumed"])
 
-	require.True(t, waitForStubObservedCount(h, "worker", 1, 15*time.Second),
-		"the attribute-less worker must dispatch after the breakpoint resume")
+	waitForStubObservedCount(h, "worker", 1)
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"the attribute-less worker should reach Fresh after resume")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 }

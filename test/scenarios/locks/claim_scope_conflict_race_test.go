@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -61,8 +62,8 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	wB := h.FindNode(iidB, "worker")
 	require.NotNil(t, wA)
 	require.NotNil(t, wB)
-	require.True(t, h.WaitForDispatch(wA.ID, 15*time.Second), "wA dispatch row never appeared")
-	require.True(t, h.WaitForDispatch(wB.ID, 15*time.Second), "wB dispatch row never appeared")
+	h.WaitForDispatch(wA.ID)
+	h.WaitForDispatch(wB.ID)
 
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
@@ -152,4 +153,82 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 
 	_ = iidA
 	_ = iidB
+}
+
+func waitForActiveClaimScopeCount(t *testing.T, h *scenario.Harness, producerName string, want int) {
+	t.Helper()
+	for {
+		var n int
+		require.NoError(t, h.Pool.QueryRow(h.Ctx,
+			`SELECT count(*) FROM rimsky_claim_handles
+			  WHERE producer_name = $1 AND lock_kind = 'claim_scope' AND state = 'active'`,
+			producerName,
+		).Scan(&n))
+		if n >= want {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestClaimScope_DisjointScopesCoexist(t *testing.T) {
+	t.Parallel()
+
+	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+	})
+	t.Cleanup(teardown)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
+				"content": {
+					Endpoint:     "grpc://" + endpoint,
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+				},
+			},
+		},
+	})
+
+	releaseA := make(chan struct{})
+	releaseB := make(chan struct{})
+	h.Stub.WhenType("worker-a").HoldUntil(releaseA).Success(map[string]any{}, true, "a")
+	h.Stub.WhenType("worker-b").HoldUntil(releaseB).Success(map[string]any{}, true, "b")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "disjoint-scope-coexist", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "worker-a", Executor: "stub"},
+				scenario.WithClaimProducers(scenario.WriteClaimRef("content", "/scope-a")),
+			),
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "worker-b", Executor: "stub"},
+				scenario.WithClaimProducers(scenario.WriteClaimRef("content", "/scope-b")),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-disjoint-scope-coexist", map[string]any{})
+
+	wA := h.FindNode(iid, "worker-a")
+	wB := h.FindNode(iid, "worker-b")
+	require.NotNil(t, wA)
+	require.NotNil(t, wB)
+	h.WaitForDispatch(wA.ID)
+	h.WaitForDispatch(wB.ID)
+
+	waitForActiveClaimScopeCount(t, h, "content", 2)
+
+	var distinctScopes int
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT count(DISTINCT claim_scope_data) FROM rimsky_claim_handles
+		  WHERE producer_name = 'content' AND lock_kind = 'claim_scope' AND state = 'active'`,
+	).Scan(&distinctScopes))
+	require.Equal(t, 2, distinctScopes,
+		"disjoint (byte-unequal) scopes must hold two distinct ACTIVE claim-scope rows concurrently")
+
+	close(releaseA)
+	close(releaseB)
+	h.WaitForNodeState(wA.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(wB.ID, cascade.NodeStateFresh)
 }

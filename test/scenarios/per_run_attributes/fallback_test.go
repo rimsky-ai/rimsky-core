@@ -6,7 +6,6 @@ package per_run_attributes
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -43,8 +42,7 @@ func TestPerRunAttributes_FallbackOperator_LiteralFires(t *testing.T) {
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w)
 
-	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker should reach fresh — fallback should resolve the missing directive")
+	h.WaitForNodeState(w.ID, cascade.NodeStateFresh)
 
 	var row *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

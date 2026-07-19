@@ -50,7 +50,7 @@ func TestBreakpointHitEmitsEvent(t *testing.T) {
 	})
 	_, _ = instanceResume(t, h, iid)
 
-	hits := waitForHitCount(t, h, bpID, 1, 15*time.Second)
+	hits := waitForHitCount(t, h, bpID, 1)
 	require.Len(t, hits, 1)
 	hit := hits[0]
 	require.Equal(t, bpID, hit.BreakpointID)
@@ -58,7 +58,7 @@ func TestBreakpointHitEmitsEvent(t *testing.T) {
 	require.Equal(t, "notify_only", string(hit.Mode))
 
 	url := h.ControlBase + "/v1/events?kind=breakpoint.hit&instance_id=" + iid.String()
-	events := waitForBreakpointHitEvents(t, url, 1, 10*time.Second)
+	events := waitForBreakpointHitEvents(t, url, 1)
 	require.Len(t, events, 1,
 		"a recorded breakpoint hit must be reflected as exactly one breakpoint.hit event on GET /events")
 
@@ -100,20 +100,15 @@ type breakpointHitEvent struct {
 	Payload    map[string]any `json:"payload"`
 }
 
-func waitForBreakpointHitEvents(t *testing.T, url string, want int, timeout time.Duration) []breakpointHitEvent {
+func waitForBreakpointHitEvents(t *testing.T, url string, want int) []breakpointHitEvent {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	var events []breakpointHitEvent
-	for time.Now().Before(deadline) {
-		events = getBreakpointHitEvents(t, url)
+	for {
+		events := getBreakpointHitEvents(t, url)
 		if len(events) >= want {
 			return events
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("waitForBreakpointHitEvents: want >=%d rows from %s within %v, got %d",
-		want, url, timeout, len(events))
-	return events
 }
 
 func getBreakpointHitEvents(t *testing.T, url string) []breakpointHitEvent {

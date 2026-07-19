@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	mobyclient "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	pgmodule "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -73,6 +74,12 @@ type configBuilder struct {
 	extraEnv          map[string]string
 	sqlite            bool
 	refValidationMode string
+	bundledFS         *bundledFSCfg
+}
+
+type bundledFSCfg struct {
+	hostDir    string
+	configYAML string
 }
 
 const sqliteStatePath = "/var/lib/rimsky/state.db"
@@ -187,6 +194,12 @@ func WithHostPortAccess(ports ...int) Option {
 func WithRefValidationMode(mode string) Option {
 	return func(cb *configBuilder) {
 		cb.refValidationMode = mode
+	}
+}
+
+func WithBundledFilesystemClaimProducer(hostDir, configYAML string) Option {
+	return func(cb *configBuilder) {
+		cb.bundledFS = &bundledFSCfg{hostDir: hostDir, configYAML: configYAML}
 	}
 }
 
@@ -402,6 +415,9 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 		"RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST": alias,
 		"RIMSKY_OBSERVABILITY_REFRESH_INTERVAL":     "5s",
 	}
+	if cb.bundledFS != nil {
+		env["STORE_FILESYSTEM_CONFIG"] = "/etc/rimsky/store-filesystem.yml"
+	}
 	for k, v := range cb.extraEnv {
 		env[k] = v
 	}
@@ -417,6 +433,18 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 		testcontainers.WithWaitStrategy(
 			wait.ForListeningPort("8080/tcp").WithStartupTimeout(120 * time.Second),
 		),
+	}
+	if cb.bundledFS != nil {
+		rimskyOpts = append(rimskyOpts,
+			testcontainers.WithFiles(testcontainers.ContainerFile{
+				Reader:            strings.NewReader(cb.bundledFS.configYAML),
+				ContainerFilePath: "/etc/rimsky/store-filesystem.yml",
+				FileMode:          0o644,
+			}),
+			testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
+				hc.Binds = append(hc.Binds, cb.bundledFS.hostDir+":/workspace:rw,delegated")
+			}),
+		)
 	}
 	if len(cb.hostAccessPorts) > 0 {
 		rimskyOpts = append(rimskyOpts, testcontainers.WithHostPortAccess(cb.hostAccessPorts...))

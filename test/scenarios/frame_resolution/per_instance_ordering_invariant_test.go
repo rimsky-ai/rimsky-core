@@ -107,24 +107,23 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	require.True(t,
-		waitForFramesByState(t, h, iid, "completed", N+1, 30*time.Second) ||
-			eventuallyAllTerminal(h, iid, 30*time.Second),
-		"expected all frames to terminate eventually")
+	waitFramesCompletedOrAllEnded(t, h, iid, N+1)
 }
 
-func eventuallyAllTerminal(h *scenario.Harness, iid shared.UUID, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+func waitFramesCompletedOrAllEnded(t *testing.T, h *scenario.Harness, iid shared.UUID, wantCompleted int) {
+	t.Helper()
+	for {
+		if countFramesByState(t, h, iid, "completed") == wantCompleted {
+			return
+		}
 		var n int
 		_ = h.Pool.QueryRow(context.Background(), `
 			SELECT count(*) FROM rimsky_frames
 			WHERE instance_id = $1 AND ended_at IS NULL
 		`, uuid.UUID(iid)).Scan(&n)
 		if n == 0 {
-			return true
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }

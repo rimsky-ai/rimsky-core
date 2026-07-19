@@ -30,10 +30,12 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 		ctx, t, netName, "claude-agent-fake-session-resume",
 		harness.ClaudeAgentFakeOptions{},
 	)
+	stubEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	rimskyHandle := harness.BringUpRimskyHandle(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithExecutor("claude-agent", executorEndpoint),
+		harness.WithExecutor("stub", stubEndpoint),
 		harness.WithContainerEnv("RIMSKY_LOG_LEVEL", "debug"),
 	)
 	ep := rimskyHandle.Endpoint
@@ -49,6 +51,8 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	tid := deployScenarioTemplate(t, ep, buildSessionResumeTemplate())
 	iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-session-resume")
 	workerNodeID := resolveWorkerNodeID(t, ep, iid, "worker")
+	subWorkerNodeID := resolveWorkerNodeID(t, ep, iid, "sub-worker")
+	callerNodeID := resolveWorkerNodeID(t, ep, iid, "caller")
 
 	postWorkerInvalidate(t, ep, iid, "session-resume-loop")
 
@@ -84,6 +88,34 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 		t.Fatalf("the three worker dispatches MUST share one RunScope (got %q, %q, %q); carry-forward is intra-RunScope and the cascade self-edge keeps the loop inside one frame's RunScope",
 			d1.runScopeID, d2.runScopeID, d3.runScopeID)
 	}
+
+	waitForWorkerDispatchCount(t, ctx, pgPool, subWorkerNodeID, 1, 120*time.Second)
+	dumpWorkerDispatchProvenance(t, ctx, pgPool, subWorkerNodeID)
+	dumpWorkerDispatchProvenance(t, ctx, pgPool, callerNodeID)
+
+	subDispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, subWorkerNodeID)
+	if len(subDispatches) != 1 {
+		t.Fatalf("expected exactly 1 sub-worker dispatch inside the sub-graph invocation, got %d (%v)",
+			len(subDispatches), subDispatches)
+	}
+	subD := subDispatches[0]
+
+	if subD.runScopeID == d3.runScopeID {
+		t.Fatalf("sub-graph worker dispatch shares the parent frame's RunScope (%q) with the three-turn parent worker — "+
+			"a sub-graph invocation must run in its own RunScope, not inherit the calling frame's",
+			subD.runScopeID)
+	}
+
+	callerDispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, callerNodeID)
+	if len(callerDispatches) != 1 {
+		t.Fatalf("expected exactly 1 caller dispatch owning the sub-graph invocation, got %d (%v)",
+			len(callerDispatches), callerDispatches)
+	}
+	callerAttrs := callerDispatches[0].attributes
+	requireFakeCliTurn(t, callerAttrs, 1)
+	requireFakeCliRecall(t, callerAttrs, "")
+	requireFakeCliResumedWith(t, callerAttrs, "")
+	requireSessionTokenWritten(t, callerAttrs, subD.runID)
 }
 
 func buildSessionResumeTemplate() map[string]any {
@@ -100,52 +132,96 @@ func buildSessionResumeTemplate() map[string]any {
 					},
 				},
 			},
-			"nodes": []map[string]any{
+			"graphs": []map[string]any{
 				{
-					"type":     "worker",
-					"executor": "claude-agent",
-					"attributes": map[string]any{
-						"schema": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"model": map[string]any{
-									"type":    "string",
-									"default": "claude-sonnet-4-5",
+					"name": "main",
+					"nodes": []map[string]any{
+						{
+							"type":       "worker",
+							"executor":   "claude-agent",
+							"attributes": sessionResumeAgentAttrs("scenario:session_resume:main"),
+							"subscribes": []map[string]any{
+								{
+									"node":                   "operator/worker-rerun",
+									"type":                   "terminal/success",
+									"force_upstream_refresh": false,
 								},
-								"system_prompt": map[string]any{
-									"type":    "string",
-									"default": "you are a session-resume proof stub. follow the scenario hint in the user prompt verbatim.",
+								{
+									"node":                   "worker",
+									"type":                   "terminal/success",
+									"when":                   "payload.attributes_delta.fake_cli_turn < 3",
+									"force_upstream_refresh": false,
 								},
-								"user_prompt": map[string]any{
-									"type":    "string",
-									"default": "scenario:session_resume:main",
-								},
-								"session_token": map[string]any{
-									"type":     "string",
-									"readOnly": true,
-									"default":  "",
-								},
-								"cli": map[string]any{
-									"type":       "object",
-									"properties": map[string]any{},
-									"default":    map[string]any{},
+							},
+						},
+						{
+							"type":     "caller",
+							"delegate": "reset-check",
+							"subscribes": []map[string]any{
+								{
+									"node":                   "worker",
+									"type":                   "terminal/success",
+									"when":                   "payload.attributes_delta.fake_cli_turn == 3",
+									"force_upstream_refresh": false,
 								},
 							},
 						},
 					},
-					"subscribes": []map[string]any{
+				},
+				{
+					"name":  "reset-check",
+					"entry": "sub-entry",
+					"exit":  "sub-worker",
+					"nodes": []map[string]any{
 						{
-							"node":                   "operator/worker-rerun",
-							"type":                   "terminal/success",
-							"force_upstream_refresh": false,
+							"type":     "sub-entry",
+							"executor": "stub",
 						},
 						{
-							"node":                   "worker",
-							"type":                   "terminal/success",
-							"when":                   "payload.attributes_delta.fake_cli_turn < 3",
-							"force_upstream_refresh": false,
+							"type":       "sub-worker",
+							"executor":   "claude-agent",
+							"attributes": sessionResumeAgentAttrs("scenario:session_resume:main"),
+							"subscribes": []map[string]any{
+								{
+									"node":                   "sub-entry",
+									"type":                   "terminal/*",
+									"force_upstream_refresh": false,
+								},
+							},
 						},
 					},
+				},
+			},
+		},
+	}
+}
+
+func sessionResumeAgentAttrs(userPrompt string) map[string]any {
+	return map[string]any{
+		"schema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"model": map[string]any{
+					"type":    "string",
+					"default": "claude-sonnet-4-5",
+				},
+				"system_prompt": map[string]any{
+					"type":    "string",
+					"default": "you are a session-resume proof stub. follow the scenario hint in the user prompt verbatim.",
+				},
+				"user_prompt": map[string]any{
+					"type":    "string",
+					"default": userPrompt,
+				},
+				"session_token": map[string]any{
+					"type":     "string",
+					"readOnly": true,
+					"default":  "",
+				},
+				"cli": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+					"default":    map[string]any{},
 				},
 			},
 		},

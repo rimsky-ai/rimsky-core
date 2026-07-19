@@ -78,8 +78,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 			"appeared for the worker after the empty-message wake — the "+
 			"supervisor must begin dispatching against the instance after "+
 			"the empty-message wake")
-	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh after the empty-message wake")
+	h.WaitForNodeState(w.ID, cascade.NodeStateFresh)
 
 	listBody := getJSONMapInst(t, h.ControlBase+"/v1/instances?template_hash="+tid)
 	listed := listBody["instances"].([]any)
@@ -152,8 +151,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	termResp := doPost(t, h.ControlBase+"/v1/instances/"+iid.String()+"/terminate", nil)
 	require.Equal(t, http.StatusOK, termResp.status,
 		"terminate must return 200: %s", string(termResp.raw))
-	require.True(t, waitForInstanceTerminatedInst(t, h, iid, 15*time.Second),
-		"terminate must set terminated_at on the instance")
+	waitForInstanceTerminated(t, h, iid)
 
 	delResp := doDelete(t, h.ControlBase+"/v1/instances/"+iid.String())
 	require.Equal(t, http.StatusOK, delResp.status,
@@ -230,20 +228,18 @@ func doDelete(t *testing.T, url string) httpResp {
 	return httpResp{status: resp.StatusCode, raw: raw}
 }
 
-func waitForInstanceTerminatedInst(t *testing.T, h *scenario.Harness, iid shared.UUID, timeout time.Duration) bool {
+func waitForInstanceTerminated(t *testing.T, h *scenario.Harness, iid shared.UUID) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var terminatedAt *time.Time
 		h.QueryRowSQL(
 			`SELECT terminated_at FROM rimsky_instances WHERE id = $1`,
 			[]any{iid}, &terminatedAt)
 		if terminatedAt != nil {
-			return true
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }
 
 func postCreateInstanceIdle(t *testing.T, controlBase, templateHash, instanceKey string) shared.UUID {

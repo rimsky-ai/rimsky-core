@@ -7,6 +7,7 @@ package controlapi
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -61,6 +62,28 @@ func TestAuditRoute_AuthPrefixKindNarrows(t *testing.T) {
 	require.Len(t, rows, 1)
 	r := rows[0].(map[string]any)
 	require.Equal(t, auth.EventKeyRevoked, r["kind"])
+}
+
+func TestAuditRoute_NoKindExcludesNonAuthOperationalEvents(t *testing.T) {
+	h, cleanup := newHarness(t)
+	defer cleanup()
+	seedAuditEvents(t, h)
+	require.NoError(t, h.persist.Transaction(context.Background(),
+		func(ctx context.Context, tx persistence.Tx) error {
+			return h.persist.Events().Append(ctx,
+				persistence.EventAppendInput{Kind: events.KindStateTransition()},
+				tx)
+		}))
+	status, body := h.httpJSON(t, http.MethodGet, "/v1/audit", nil)
+	require.Equal(t, http.StatusOK, status)
+	rows, ok := body["audit"].([]any)
+	require.True(t, ok)
+	require.Len(t, rows, 5)
+	for _, row := range rows {
+		r := row.(map[string]any)
+		require.True(t, strings.HasPrefix(r["kind"].(string), "auth."),
+			"unfiltered /v1/audit returned a non-auth kind %q", r["kind"])
+	}
 }
 
 func TestAuditRoute_NonAuthOperationalKindReturns400(t *testing.T) {

@@ -7,7 +7,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -49,7 +48,5 @@ func TestInprocAttributePassthroughExecutorE2E(t *testing.T) {
 	passthrough := h.FindNode(iid, "passthrough")
 	require.NotNil(t, passthrough, "passthrough node missing from instance")
 
-	require.True(t,
-		h.WaitForNodeState(passthrough.ID, cascade.NodeStateFresh, 30*time.Second),
-		"passthrough MUST reach fresh — proves the in-proc attribute_passthrough handler dispatched and resolved cleanly")
+	h.WaitForNodeState(passthrough.ID, cascade.NodeStateFresh)
 }

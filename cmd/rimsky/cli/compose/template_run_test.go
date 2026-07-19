@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -94,6 +95,75 @@ nodes:
 	got := RunTemplateRun(context.Background(), []string{"--timeout", "90s", specPath})
 	if got != 0 {
 		t.Fatalf("rimsky run (self-host) exited %d, want 0 — the template names no configured executor, so success requires the self-hosted stack to dispatch through the in-proc bundled http-node handler", got)
+	}
+}
+
+// @story: local-orchestrator-zero-config
+func TestRunTemplateRun_SelfHostIgnoresSiblingRimskyYML(t *testing.T) {
+	isolateEndpointEnv(t)
+	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
+
+	workDir := t.TempDir()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+
+	specPath := filepath.Join(workDir, "spec.yml")
+	spec := `name: bundled-selfhost-sibling-ignore
+version: "1"
+frame_timeout_ms: 600000
+nodes:
+  - type: worker
+    executor: http-node
+    attributes:
+      schema:
+        type: object
+        properties:
+          stub_probe:
+            type: boolean
+            default: true
+          stub:
+            type: boolean
+            default: false
+`
+	if err := os.WriteFile(specPath, []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	siblingPath := filepath.Join(workDir, "rimsky.yml")
+	sibling := `named_locks:
+  sibling-only-lock:
+    limit: 1
+`
+	if err := os.WriteFile(siblingPath, []byte(sibling), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := RunTemplateRun(context.Background(), []string{"--timeout", "90s", specPath})
+	if got != 0 {
+		t.Fatalf("rimsky run (self-host) exited %d, want 0", got)
+	}
+
+	runsRoot := filepath.Join(workDir, ".rimsky", "runs")
+	entries, err := os.ReadDir(runsRoot)
+	if err != nil {
+		t.Fatalf("read runs root %q: %v", runsRoot, err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one run dir under %q, got %d", runsRoot, len(entries))
+	}
+	generated, err := os.ReadFile(filepath.Join(runsRoot, entries[0].Name(), "rimsky.yml"))
+	if err != nil {
+		t.Fatalf("read generated rimsky.yml: %v", err)
+	}
+	if strings.Contains(string(generated), "sibling-only-lock") {
+		t.Fatalf("self-host's synthetic rimsky.yml picked up the sibling rimsky.yml's named_locks "+
+			"block — self-host must be zero-config and never read a sibling rimsky.yml:\n%s", generated)
 	}
 }
 

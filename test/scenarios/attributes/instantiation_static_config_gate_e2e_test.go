@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -152,7 +151,6 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		h.PostInstanceMessage(shared.UUID(instanceID), "", nil, "static-gate-wake-"+instanceID.String())
 		root := h.FindNode(shared.UUID(instanceID), "root")
 		require.NotNil(t, root, "the instance must materialize its root node")
-		require.True(t, h.WaitForNodeState(root.ID, cascade.NodeStateFresh, 20*time.Second),
-			"the well-formed instance's root node must run to a terminal Complete state")
+		h.WaitForNodeState(root.ID, cascade.NodeStateFresh)
 	})
 }

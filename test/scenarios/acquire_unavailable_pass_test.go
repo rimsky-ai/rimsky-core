@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -69,8 +68,7 @@ func TestAcquireUnavailablePass(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
-		"worker should record settling_signal_type=terminal/error/acquire/unavailable under error_types: { acquire/unavailable: [pass] }")
+	waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/")
 
 	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

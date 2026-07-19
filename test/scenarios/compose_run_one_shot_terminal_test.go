@@ -147,6 +147,54 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		t.Fatalf("expected >=2 worker nodes recorded by name; got %d", workerNodeCount)
 	}
 
+	var failEventCount int
+	if qerr := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM rimsky_events e
+		  JOIN rimsky_nodes n ON n.id = e.node_id
+		  JOIN rimsky_instances i ON i.id = n.instance_id
+		 WHERE i.instance_key LIKE '%oops%'
+		   AND e.kind = 'terminal/error/stub/failed'
+	`).Scan(&failEventCount); qerr != nil {
+		t.Fatalf("count failing node-run's terminal event in the event log: %v", qerr)
+	}
+	if failEventCount < 1 {
+		t.Fatalf("expected >=1 terminal/error/stub/failed event for the failing node-run "+
+			"in rimsky_events (audit-artifact: the event log must be readable from the "+
+			"artifact); got %d", failEventCount)
+	}
+
+	var failPayload string
+	if qerr := db.QueryRowContext(ctx, `
+		SELECT e.payload FROM rimsky_events e
+		  JOIN rimsky_nodes n ON n.id = e.node_id
+		  JOIN rimsky_instances i ON i.id = n.instance_id
+		 WHERE i.instance_key LIKE '%oops%'
+		   AND e.kind = 'terminal/error/stub/failed'
+		 LIMIT 1
+	`).Scan(&failPayload); qerr != nil {
+		t.Fatalf("read failing node-run's terminal event payload: %v", qerr)
+	}
+	if !strings.Contains(failPayload, `"error_class":"stub/failed"`) {
+		t.Fatalf("failing node-run's terminal event payload missing error_class=stub/failed "+
+			"(audit-artifact: pulling the failing node-run's terminal event out by hand); "+
+			"payload=%s", failPayload)
+	}
+
+	var outcomeAttrData string
+	if qerr := db.QueryRowContext(ctx, `
+		SELECT a.data FROM rimsky_node_attributes a
+		  JOIN rimsky_nodes n ON n.id = a.node_id
+		  JOIN rimsky_instances i ON i.id = n.instance_id
+		 WHERE i.instance_key LIKE '%oops%'
+		 ORDER BY a.updated_at DESC LIMIT 1
+	`).Scan(&outcomeAttrData); qerr != nil {
+		t.Fatalf("read failing node-run's attribute values: %v", qerr)
+	}
+	if !strings.Contains(outcomeAttrData, `"outcome":"fail"`) {
+		t.Fatalf("failing node-run's attribute bag missing outcome=fail "+
+			"(audit-artifact: pulling attribute values out by hand); data=%s", outcomeAttrData)
+	}
+
 	var composeWakeCount int
 	if qerr := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM rimsky_message_idempotencies WHERE idempotency_key LIKE 'compose-wake-%'`).Scan(&composeWakeCount); qerr != nil {

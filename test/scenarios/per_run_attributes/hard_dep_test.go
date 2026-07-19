@@ -89,8 +89,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 	require.NotNil(t, cN)
 	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
-	require.True(t, h.WaitForNodeState(cN.ID, cascade.NodeStateFresh, 15*time.Second),
-		"c should reach fresh after upstream-refresh cascade")
+	h.WaitForNodeState(cN.ID, cascade.NodeStateFresh)
 
 	var cRow *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -193,8 +192,7 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 	require.NotNil(t, bN)
 	require.NotNil(t, cN)
 
-	require.True(t, h.WaitForNodeState(cN.ID, cascade.NodeStateFresh, 15*time.Second),
-		"c should reach fresh after initial cascade")
+	h.WaitForNodeState(cN.ID, cascade.NodeStateFresh)
 
 	var cRow *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

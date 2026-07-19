@@ -111,6 +111,48 @@ func spillHandlePG(t *testing.T, ctx context.Context, d persistence.Database, ru
 	return *handle
 }
 
+func TestPGNodeAttributesBackendMismatchFallsBackToInlineData(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	mem := persistence.NewMemoryBackend()
+	d.SetBlobBackend(mem, 256, time.Hour)
+
+	store := d.Tables()
+	attrs := store.NodeAttributes()
+	nodeID, runID, _ := seedNodeAndRunPG(t, ctx, d, 1)
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return attrs.Upsert(ctx, shared.UUID(runID), shared.UUID(nodeID), map[string]any{"k": "v"}, tx)
+	}); err != nil {
+		t.Fatalf("Upsert seed: %v", err)
+	}
+
+	pgtest.ExecForTest(ctx, t, d,
+		`UPDATE rimsky_node_attributes
+		    SET data                 = $1,
+		        value_handle         = $2,
+		        value_handle_backend = $3
+		  WHERE node_run_id = $4`,
+		`{"inline_survivor":"yes"}`, "handle-under-other-backend", "other-backend", runID,
+	)
+
+	var got *persistence.NodeAttributesRow
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := attrs.GetByRun(ctx, shared.UUID(runID), tx)
+		got = r
+		return err
+	}); err != nil {
+		t.Fatalf("GetByRun: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("GetByRun: row missing")
+	}
+	if got.Data["inline_survivor"] != "yes" {
+		t.Fatalf("GetByRun with mismatched value_handle_backend = %+v; want inline data column fallback", got.Data)
+	}
+}
+
 func TestPGSnapshotBagCarriesForwardSpilledBlobWithoutAliasing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

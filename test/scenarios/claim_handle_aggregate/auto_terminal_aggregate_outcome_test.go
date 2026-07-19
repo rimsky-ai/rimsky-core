@@ -66,14 +66,11 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	require.NotNil(t, acquirer)
 	require.NotNil(t, inheritor)
 
-	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 15*time.Second),
-		"acquirer did not reach fresh")
-	require.True(t, h.WaitForNodeState(inheritor.ID, cascade.NodeStateFresh, 15*time.Second),
-		"inheritor did not reach fresh")
+	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(inheritor.ID, cascade.NodeStateFresh)
 
-	deadline := time.Now().Add(2 * time.Second)
 	var commitCount, abandonCount int
-	for time.Now().Before(deadline) {
+	for commitCount == 0 {
 		commitCount, abandonCount = 0, 0
 		for _, c := range sub.Calls() {
 			switch c.Verb {
@@ -83,10 +80,9 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 				abandonCount++
 			}
 		}
-		if commitCount >= 1 {
-			break
+		if commitCount == 0 {
+			time.Sleep(50 * time.Millisecond)
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
 	require.Equal(t, 1, commitCount,
 		"auto-terminal must fire exactly one commit for the held claim (aggregate-completed)")
@@ -106,13 +102,91 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
 		  WHERE n.instance_id = $1 AND lh.state = 'committed'`, iid,
 	).Scan(&committedLhCount))
-	require.Greater(t, committedLhCount, 0,
-		"at least one lock-holder row must be state=committed after auto-terminal commit")
+	require.Equal(t, 1, committedLhCount,
+		"exactly one claim_handle row (the single shared 'held' claim acquired by the acquirer and "+
+			"inherited by the inheritor) must be state=committed after auto-terminal commit — an "+
+			"over-commit or duplicate-row regression would show up here")
 }
 
 func TestAutoTerminalAggregateFailedFiresGiveUp(t *testing.T) {
-	t.Skip("scenario-level coverage delegated to " +
-		"runtime/auto_terminal_test.go::TestCheckAndFireResolution_AnyFailedFiresGiveUp; " +
-		"that unit test seeds claim-holder rows directly and exercises the " +
-		"aggregate-failed → Abandon routing without needing executor-side error wiring")
+	t.Parallel()
+
+	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+	})
+	t.Cleanup(teardown)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
+				"content": {
+					Endpoint:     "grpc://" + endpoint,
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+				},
+			},
+		},
+	})
+	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "acquired")
+	h.Stub.WhenType("inheritor").Error("forced", map[string]any{"why": "rolling-back"})
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "auto-terminal-failed-giveup", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
+				scenario.WithClaimProducers(scenario.AliasedClaimRef("content", "/region-held-failed", "rw", "held")),
+			),
+			scenario.MakeNode(
+				node.TemplateNodeDef{
+					Type:     "inheritor",
+					Executor: "stub",
+					Holds: map[string]node.HoldsBinding{
+						"held": {From: "acquirer"},
+					},
+					ErrorTypes: map[string]node.ErrorTypePolicy{
+						"stub/forced": {Action: "give_up"},
+					},
+				},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*", ForceUpstreamRefresh: node.BoolPtr(false)}),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-auto-terminal-failed-giveup", map[string]any{})
+
+	acquirer := h.FindNode(iid, "acquirer")
+	inheritor := h.FindNode(iid, "inheritor")
+	require.NotNil(t, acquirer)
+	require.NotNil(t, inheritor)
+
+	h.WaitForNodeState(inheritor.ID, cascade.NodeStateFailed)
+	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFailed)
+
+	var commitCount, abandonCount int
+	for abandonCount == 0 {
+		commitCount, abandonCount = 0, 0
+		for _, c := range sub.Calls() {
+			switch c.Verb {
+			case "commit":
+				commitCount++
+			case "abandon":
+				abandonCount++
+			}
+		}
+		if abandonCount == 0 {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	require.Equal(t, 1, abandonCount,
+		"aggregate-failed must fire exactly one Abandon call to the producer (auto-terminal give_up routing)")
+	require.Equal(t, 0, commitCount,
+		"aggregate-failed must NOT route to Commit")
+
+	var abandonedLhCount int
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT count(*) FROM rimsky_claim_handles lh
+		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
+		  WHERE n.instance_id = $1 AND lh.state = 'abandoned'`, iid,
+	).Scan(&abandonedLhCount))
+	require.Equal(t, 1, abandonedLhCount,
+		"the shared 'held' claim must land in state=abandoned, not committed, after the inheritor's give_up")
 }

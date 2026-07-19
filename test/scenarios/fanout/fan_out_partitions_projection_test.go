@@ -13,7 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-func TestSplitScopeEmitsNSubClaims_InputProjectsOnePartitionPerSubScope(t *testing.T) {
+func TestFanOutPartitionsProjection_OnePartitionPerSubClaim(t *testing.T) {
 	t.Parallel()
 	parentRun := shared.UUID(uuid.New())
 	parentNode := shared.UUID(uuid.New())
@@ -65,7 +65,7 @@ func TestSplitScopeEmitsNSubClaims_InputProjectsOnePartitionPerSubScope(t *testi
 	}
 }
 
-func TestSplitScopeEmitsNSubClaims_EmptyDescriptorListReturnsEmptyPartitions(t *testing.T) {
+func TestFanOutPartitionsProjection_EmptySubClaimListReturnsEmptyPartitions(t *testing.T) {
 	t.Parallel()
 	parts := runtime.FanOutPartitions(nil)
 	if len(parts) != 0 {

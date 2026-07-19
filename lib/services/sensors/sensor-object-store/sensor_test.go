@@ -69,6 +69,33 @@ func TestSubscribe_RegistersInMemory(t *testing.T) {
 	}
 }
 
+func TestSubscribeThenListSubscriptions_RoundTripsResolvedConfig(t *testing.T) {
+	s := NewSensorService("", noopLogger{})
+	s.SetBackend("memory", NewMemoryLister())
+	raw, _ := json.Marshal(map[string]any{
+		"backend":       "memory",
+		"bucket":        "test-bucket",
+		"prefix":        "events/",
+		"poll_interval": "10s",
+	})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := s.ListSubscriptions(context.Background(), &emptypb.Empty{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Subscriptions) != 1 {
+		t.Fatalf("subscriptions: %+v", resp.Subscriptions)
+	}
+	if got := resp.Subscriptions[0].GetResolvedConfig(); string(got) != string(raw) {
+		t.Errorf("resolved_config=%s, want %s", got, raw)
+	}
+}
+
 func TestSubscribe_RejectsBadBackend(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	cfg := map[string]any{"backend": "ftp", "bucket": "b"}
@@ -143,6 +170,7 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	var (
 		obsMu   sync.Mutex
 		obsBody []map[string]any
+		obsIdem []string
 	)
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/v1/instances/") || !strings.HasSuffix(r.URL.Path, "/messages") {
@@ -153,6 +181,7 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 		_ = json.Unmarshal(raw, &body)
 		obsMu.Lock()
 		obsBody = append(obsBody, body)
+		obsIdem = append(obsIdem, r.Header.Get("Idempotency-Key"))
 		obsMu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 	}))
@@ -183,6 +212,12 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	if sub, _ := obsBody[0]["publisher_subscription_id"].(string); sub == "" {
 		t.Errorf("publisher_subscription_id: missing or empty (auth path discriminator)")
 	}
+	if got, want := obsIdem[0], "w1+etag-a"; got != want {
+		t.Errorf("Idempotency-Key[0] = %q, want %q (sub id + object etag)", got, want)
+	}
+	if got, want := obsIdem[1], "w1+etag-b"; got != want {
+		t.Errorf("Idempotency-Key[1] = %q, want %q (sub id + object etag)", got, want)
+	}
 	obsMu.Unlock()
 
 	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
@@ -200,7 +235,40 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	if len(obsBody) != 3 {
 		t.Errorf("post-add messages: %d (want 3)", len(obsBody))
 	}
+	if got, want := obsIdem[2], "w1+etag-c"; got != want {
+		t.Errorf("Idempotency-Key[2] = %q, want %q (sub id + object etag)", got, want)
+	}
 	obsMu.Unlock()
+}
+
+func TestTick_IdempotencyKeyFallsBackToObjectNameWhenETagEmpty(t *testing.T) {
+	var obsIdem string
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		obsIdem = r.Header.Get("Idempotency-Key")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	lister := NewMemoryLister()
+	s.SetBackend("memory", lister)
+	lister.Put("test-bucket", ObjectMeta{Name: "events/no-etag.json", LastModified: pin.Add(-1 * time.Hour), Size: 5, ETag: ""})
+
+	cfg := map[string]any{"backend": "memory", "bucket": "test-bucket", "prefix": "events/", "poll_interval": "10s"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Tick(context.Background())
+
+	if want := "w1+events/no-etag.json"; obsIdem != want {
+		t.Errorf("Idempotency-Key = %q, want %q (sub id + object name when etag is empty)", obsIdem, want)
+	}
 }
 
 func TestTick_LastModifiedWatermark(t *testing.T) {

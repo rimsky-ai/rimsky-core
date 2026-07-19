@@ -17,10 +17,12 @@ import (
 func RunWatch(ctx context.Context, args []string) int {
 	var pollInterval time.Duration
 	var until string
+	var since string
 	fs, common, endpoint, code := runWithCommon("watch", args, func(fs *flag.FlagSet) {
 		fs.DurationVar(&pollInterval, "poll-interval", time.Second, "polling interval")
 		fs.StringVar(&until, "until", "idle",
 			"exit condition: idle (no open frame and no pending messages) or terminated (operator-terminated instance)")
+		fs.StringVar(&since, "since", "", "only events at or after this RFC3339 timestamp")
 	})
 	if code != 0 {
 		return code
@@ -31,7 +33,7 @@ func RunWatch(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky watch <id-or-key> [--poll-interval ...]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky watch <id-or-key> [--poll-interval ...] [--since <RFC3339>]")
 		return 2
 	}
 	c := NewClient(endpoint)
@@ -57,7 +59,7 @@ func RunWatch(ctx context.Context, args []string) int {
 		prevSeen := lastSeenID
 		nextCursor := ""
 		for {
-			page, err := c.ListEvents(signalCtx, ListEventsQuery{InstanceID: id, Cursor: nextCursor, Limit: 100})
+			page, err := c.ListEvents(signalCtx, ListEventsQuery{InstanceID: id, Since: since, Cursor: nextCursor, Limit: 100})
 			if err != nil {
 				if signalCtx.Err() != nil {
 					return 0

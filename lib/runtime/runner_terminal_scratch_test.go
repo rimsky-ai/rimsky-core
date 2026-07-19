@@ -6,12 +6,22 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
+
+type failingWriteBlobBackend struct{ persistence.BlobBackend }
+
+func (failingWriteBlobBackend) Write(context.Context, persistence.BlobKey, []byte) (persistence.Handle, error) {
+	return "", errors.New("simulated blob write failure")
+}
+func (failingWriteBlobBackend) Name() string { return "failing" }
 
 type scratchRecorder struct {
 	persistence.Queue
@@ -98,5 +108,113 @@ func TestApplyTerminalScratchInTx_NonEmptyWritesInline(t *testing.T) {
 	}
 	if rec.last.nodeRunID != acq.NodeRunID {
 		t.Fatalf("dispatch id mismatch: got %v want %v", rec.last.nodeRunID, acq.NodeRunID)
+	}
+}
+
+func TestApplyTerminalScratchInTx_OverThresholdSpillsToBlobBackend(t *testing.T) {
+	t.Parallel()
+	rec := &scratchRecorder{}
+	blob := persistence.NewMemoryBackend()
+	args := RunArgs{
+		Queue:              rec,
+		Blob:               blob,
+		BlobSpillThreshold: 8,
+	}
+	acq := &acquisition{
+		NodeRunID: shared.UUID{1},
+		NodeID:    shared.UUID{2},
+	}
+	payload := []byte("this scratch payload is well over the spill threshold")
+
+	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, payload); err != nil {
+		t.Fatalf("applyTerminalScratchInTx: %v", err)
+	}
+	if rec.writes != 1 {
+		t.Fatalf("expected 1 write, got %d", rec.writes)
+	}
+	if len(rec.last.inline) != 0 {
+		t.Fatalf("expected empty inline for spilled scratch, got %q", rec.last.inline)
+	}
+	if rec.last.handle == "" {
+		t.Fatalf("expected non-empty blob handle for spilled scratch")
+	}
+	if rec.last.handleBackend != blob.Name() {
+		t.Fatalf("handle backend = %q; want %q", rec.last.handleBackend, blob.Name())
+	}
+
+	roundTripped, err := blob.Read(context.Background(), persistence.Handle(rec.last.handle))
+	if err != nil {
+		t.Fatalf("blob.Read(%q): %v", rec.last.handle, err)
+	}
+	if string(roundTripped) != string(payload) {
+		t.Fatalf("round-tripped blob bytes = %q; want %q", roundTripped, payload)
+	}
+}
+
+func TestApplyTerminalScratchInTx_AtOrBelowThresholdStaysInlineDespiteBlob(t *testing.T) {
+	t.Parallel()
+	rec := &scratchRecorder{}
+	blob := persistence.NewMemoryBackend()
+	args := RunArgs{
+		Queue:              rec,
+		Blob:               blob,
+		BlobSpillThreshold: 64,
+	}
+	acq := &acquisition{
+		NodeRunID: shared.UUID{1},
+		NodeID:    shared.UUID{2},
+	}
+	payload := []byte("small scratch")
+
+	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, payload); err != nil {
+		t.Fatalf("applyTerminalScratchInTx: %v", err)
+	}
+	if rec.writes != 1 {
+		t.Fatalf("expected 1 write, got %d", rec.writes)
+	}
+	if string(rec.last.inline) != string(payload) {
+		t.Fatalf("inline bytes mismatch: got %q want %q", rec.last.inline, payload)
+	}
+	if rec.last.handle != "" || rec.last.handleBackend != "" {
+		t.Fatalf("expected empty handle/backend below spill threshold, got handle=%q backend=%q",
+			rec.last.handle, rec.last.handleBackend)
+	}
+}
+
+func TestApplyTerminalScratchInTx_BlobSpillFailureNeverLogsScratchContent(t *testing.T) {
+	t.Parallel()
+	rec := &scratchRecorder{}
+	log := shared.NewCapturingLogger()
+	args := RunArgs{
+		Queue:              rec,
+		Blob:               failingWriteBlobBackend{},
+		BlobSpillThreshold: 4,
+		Logger:             log,
+	}
+	acq := &acquisition{
+		NodeRunID: shared.UUID{1},
+		NodeID:    shared.UUID{2},
+	}
+
+	marker := "top-secret-scratch-payload-marker-9f3a"
+	payload := []byte(strings.Repeat("x", 32) + marker)
+
+	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, payload); err != nil {
+		t.Fatalf("applyTerminalScratchInTx: %v", err)
+	}
+	if string(rec.last.inline) != string(payload) {
+		t.Fatalf("expected write-failure fallback to inline payload, got %q", rec.last.inline)
+	}
+
+	for _, r := range log.Records() {
+		if strings.Contains(r.Msg, marker) {
+			t.Fatalf("log message leaked scratch content: %q", r.Msg)
+		}
+		for k, v := range r.Fields {
+			s := fmt.Sprintf("%v", v)
+			if strings.Contains(s, marker) {
+				t.Fatalf("log field %q leaked scratch content: %q", k, s)
+			}
+		}
 	}
 }

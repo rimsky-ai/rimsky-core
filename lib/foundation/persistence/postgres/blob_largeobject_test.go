@@ -79,6 +79,17 @@ func TestPgLargeObjectBackendReadRangeOutOfBounds(t *testing.T) {
 	}
 }
 
+func TestPgLargeObjectBackendReadRangeNotFound(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	pool, _ := pgtest.StartPostgres(ctx, t)
+	be := pgpersist.NewPgLargeObjectBackend(pool)
+	if _, err := be.ReadRange(ctx, persistence.Handle("pglo:999999999"), 0, 1); !errors.Is(err, persistence.ErrBlobNotFound) {
+		t.Fatalf("ReadRange on missing handle: want ErrBlobNotFound, got %v", err)
+	}
+}
+
 func TestPgLargeObjectBackendRejectsBadHandle(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())

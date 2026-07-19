@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -384,6 +385,8 @@ func stringify(v any) string {
 	switch t := v.(type) {
 	case string:
 		return t
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
 	case fmt.Stringer:
 		return t.String()
 	default:

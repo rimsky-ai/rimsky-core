@@ -67,6 +67,8 @@ type HarnessOpts struct {
 
 	ClaimProducers config.RemoteClaimProducersConfig
 
+	Publishers config.RemotePublishersConfig
+
 	NamedLocks locks.NamedLocksConfig
 
 	LateBindServiceProxies map[string]string
@@ -262,6 +264,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		Host:                   "127.0.0.1",
 		Port:                   0,
 		ClaimProducers:         opts.ClaimProducers,
+		Publishers:             opts.Publishers,
 		NamedLocks:             opts.NamedLocks,
 		Executors:              executorsCfg,
 		LateBindServiceProxies: opts.LateBindServiceProxies,
@@ -432,7 +435,7 @@ func (h *Harness) CreateInstanceWithOverrides(
 	// @decision: test-harness-create-instance-wakes-roots-after-create
 	if h.templateHasStructuralRoot(templateHash) {
 		h.PostInstanceMessage(id, "", nil, "harness-wake-create-"+id.String())
-		h.waitForRootDispatch(id, 5*time.Second)
+		h.waitForRootDispatch(id)
 	}
 	return id
 }
@@ -539,6 +542,7 @@ func (h *Harness) CreateInstanceWithServiceBindings(
 	// @decision: test-harness-create-instance-wakes-roots-after-create
 	if h.templateHasStructuralRoot(templateHash) {
 		h.PostInstanceMessageWithAuth(id, "", nil, "harness-wake-create-"+id.String(), bearerKey)
+		h.waitForRootDispatch(id)
 	}
 	return id
 }
@@ -594,10 +598,9 @@ func (h *Harness) templateHasStructuralRoot(templateHash string) bool {
 	return len(matched) > 0
 }
 
-func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Duration) {
+func (h *Harness) waitForRootDispatch(instanceID shared.UUID) {
 	h.T.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var count int
 		err := h.Pool.QueryRow(h.Ctx, `
             SELECT count(*) FROM rimsky_node_runs d
@@ -681,19 +684,7 @@ func (h *Harness) nodeReachedState(nodeID shared.UUID, state cascade.NodeState) 
 	return false
 }
 
-func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
-	h.T.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if h.nodeReachedState(nodeID, state) {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return false
-}
-
-func (h *Harness) WaitForNodeStateForever(nodeID shared.UUID, state cascade.NodeState) {
+func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState) {
 	h.T.Helper()
 	for !h.nodeReachedState(nodeID, state) {
 		time.Sleep(50 * time.Millisecond)
@@ -709,44 +700,44 @@ func (h *Harness) hasRunEvent(nodeID shared.UUID) bool {
 	return err == nil && count > 0
 }
 
-func (h *Harness) WaitForEventKind(nodeID shared.UUID, kind string, timeout time.Duration) bool {
+func (h *Harness) HasEventKind(nodeID shared.UUID, kind string) bool {
 	h.T.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		var count int
-		err := h.Pool.QueryRow(h.Ctx, `
-            SELECT count(*) FROM rimsky_events
-            WHERE node_id = $1 AND kind = $2
-        `, nodeID, kind).Scan(&count)
-		if err == nil && count > 0 {
-			return true
+	var count int
+	err := h.Pool.QueryRow(h.Ctx, `
+        SELECT count(*) FROM rimsky_events
+        WHERE node_id = $1 AND kind = $2
+    `, nodeID, kind).Scan(&count)
+	return err == nil && count > 0
+}
+
+func (h *Harness) WaitForEventKind(nodeID shared.UUID, kind string) {
+	h.T.Helper()
+	for {
+		if h.HasEventKind(nodeID, kind) {
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }
 
-func (h *Harness) WaitForDispatch(nodeID shared.UUID, timeout time.Duration) bool {
+func (h *Harness) WaitForDispatch(nodeID shared.UUID) {
 	h.T.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var count int
 		err := h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`, nodeID,
 		).Scan(&count)
 		if err == nil && count > 0 {
-			return true
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }
 
 // @concept: node-run
-func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID, timeout time.Duration) bool {
+func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID) {
 	h.T.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var count int
 		err := h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_node_runs
@@ -754,11 +745,10 @@ func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID, timeout time.Durati
 			    AND state IN ('pending','stale','running','held','parked')`, nodeID,
 		).Scan(&count)
 		if err == nil && count == 0 {
-			return true
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }
 
 func (h *Harness) InTx(fn func(tx persistence.Tx) error) error {
@@ -892,6 +882,32 @@ func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 	}
 	if spec.MessageQueueMode != "" {
 		out["message_queue_mode"] = spec.MessageQueueMode
+	}
+	if len(spec.Publishers) > 0 {
+		pubs := make([]map[string]any, 0, len(spec.Publishers))
+		for _, p := range spec.Publishers {
+			pubs = append(pubs, publisherSpecToJSON(p))
+		}
+		out["publishers"] = pubs
+	}
+	return out
+}
+
+func publisherSpecToJSON(p node.PublisherSpec) map[string]any {
+	cfg := any(map[string]any{})
+	if len(p.Config) > 0 {
+		var decoded any
+		if err := json.Unmarshal(p.Config, &decoded); err == nil {
+			cfg = decoded
+		}
+	}
+	out := map[string]any{
+		"name":   p.Name,
+		"kind":   p.Kind,
+		"config": cfg,
+	}
+	if p.MessageType != "" {
+		out["message_type"] = p.MessageType
 	}
 	return out
 }

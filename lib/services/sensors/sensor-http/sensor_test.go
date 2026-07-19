@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -86,6 +88,30 @@ func TestSubscribe_ParsesAndRegisters(t *testing.T) {
 	}
 }
 
+func TestSubscribeThenListSubscriptions_RoundTripsResolvedConfig(t *testing.T) {
+	s := NewSensorService("", loopbackGuard(t), noopLogger{})
+	raw, _ := json.Marshal(map[string]any{"url": "http://example.test/feed.json", "poll_interval": "15s"})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1",
+		InstanceId:              "i1",
+		Kind:                    "http",
+		ResolvedConfig:          raw,
+		MessageType:             "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := s.ListSubscriptions(context.Background(), &emptypb.Empty{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Subscriptions) != 1 {
+		t.Fatalf("subscriptions: %+v", resp.Subscriptions)
+	}
+	if got := resp.Subscriptions[0].GetResolvedConfig(); string(got) != string(raw) {
+		t.Errorf("resolved_config=%s, want %s", got, raw)
+	}
+}
+
 func TestSubscribe_RejectsMissingURL(t *testing.T) {
 	s := NewSensorService("", loopbackGuard(t), noopLogger{})
 	cfg := map[string]any{"poll_interval": "10s"}
@@ -128,6 +154,7 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 		target  atomic.Value
 		obsMu   sync.Mutex
 		obsBody []map[string]any
+		obsIdem []string
 	)
 	target.Store(`{"status":"ready","version":1}`)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +176,7 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 		_ = json.Unmarshal(raw, &body)
 		obsMu.Lock()
 		obsBody = append(obsBody, body)
+		obsIdem = append(obsIdem, r.Header.Get("Idempotency-Key"))
 		obsMu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 	}))
@@ -173,6 +201,13 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	if sub, _ := obsBody[0]["publisher_subscription_id"].(string); sub == "" {
 		t.Errorf("publisher_subscription_id: missing or empty (auth path discriminator)")
 	}
+	wantIdem := func(body string) string {
+		sum := sha256.Sum256([]byte(body))
+		return "w1+" + hex.EncodeToString(sum[:])
+	}
+	if got, want := obsIdem[0], wantIdem(`{"status":"ready","version":1}`); got != want {
+		t.Errorf("Idempotency-Key = %q, want %q (sub id + body sha-256)", got, want)
+	}
 	obsMu.Unlock()
 
 	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
@@ -189,6 +224,9 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	obsMu.Lock()
 	if len(obsBody) != 2 {
 		t.Errorf("messages after change: %d (want 2)", len(obsBody))
+	}
+	if got, want := obsIdem[1], wantIdem(`{"status":"ready","version":2}`); got != want {
+		t.Errorf("Idempotency-Key after change = %q, want %q (sub id + new body sha-256)", got, want)
 	}
 	obsMu.Unlock()
 }
@@ -286,5 +324,81 @@ func TestTick_JSONPathFilter(t *testing.T) {
 	s.Tick(context.Background())
 	if pushed != 1 {
 		t.Errorf("pushed: %d (want 1; jsonpath match)", pushed)
+	}
+}
+
+func TestTick_FailedEmissionDoesNotAdvanceState_NextTickRetriesSameObservation(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ready","version":1}`))
+	}))
+	defer upstream.Close()
+
+	var (
+		rimskyMu   sync.Mutex
+		rimskyFail = true
+		pushed     int
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		rimskyMu.Lock()
+		fail := rimskyFail
+		rimskyMu.Unlock()
+		if fail {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		pushed++
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, loopbackGuard(t), noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	cfg := map[string]any{"url": upstream.URL, "poll_interval": "10s"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Tick(context.Background())
+	if pushed != 0 {
+		t.Fatalf("pushed after exhausted-retry tick: %d (want 0)", pushed)
+	}
+	s.mu.Lock()
+	lastHashAfterFailure := s.watches["w1"].LastHash
+	s.mu.Unlock()
+	if lastHashAfterFailure != "" {
+		t.Fatalf("LastHash advanced to %q despite every emission attempt failing — "+
+			"a real failure must not move the fire-window cursor, or the next tick "+
+			"will treat the unchanged upstream body as already-observed and never retry",
+			lastHashAfterFailure)
+	}
+
+	rimskyMu.Lock()
+	rimskyFail = false
+	rimskyMu.Unlock()
+
+	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
+	s.Tick(context.Background())
+	if pushed != 1 {
+		t.Fatalf("pushed after retry tick (upstream body unchanged, rimsky now healthy): %d (want 1) — "+
+			"the same observation must be retried, not silently dropped, because the prior "+
+			"tick never advanced the fire-window cursor", pushed)
+	}
+	s.mu.Lock()
+	lastHashAfterSuccess := s.watches["w1"].LastHash
+	s.mu.Unlock()
+	if lastHashAfterSuccess == "" {
+		t.Fatal("LastHash must advance once the emission actually succeeds")
+	}
+
+	s.clock = func() time.Time { return pin.Add(30 * time.Second) }
+	s.Tick(context.Background())
+	if pushed != 1 {
+		t.Fatalf("pushed after a tick with the same already-emitted body: %d (want still 1)", pushed)
 	}
 }

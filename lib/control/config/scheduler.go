@@ -27,6 +27,7 @@ type SchedulerConfig struct {
 	SupervisorID            string
 	Blob                    persistence.BlobBackend
 	OrphanBlobSweepInterval time.Duration
+	AuthSweepInterval       time.Duration
 	Metrics                 runtime.MetricsHook
 	Retention               runtime.RetentionConfig
 }
@@ -77,8 +78,12 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		Metrics:                 cfg.Metrics,
 		Retention:               cfg.Retention,
 	}
+	authSweepEvery := cfg.AuthSweepInterval
+	if authSweepEvery == 0 {
+		authSweepEvery = authSweepInterval
+	}
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
-	go runAuthSweepLoop(sweepCtx, persistStore, cfg.Clock, cfg.Logger)
+	go runAuthSweepLoop(sweepCtx, persistStore, cfg.Clock, cfg.Logger, authSweepEvery)
 	return schedulerHandleWithRegistry{
 		inner:       scheduler.Start(inner),
 		registry:    registry,
@@ -88,8 +93,8 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 
 const authSweepInterval = 1 * time.Minute
 
-func runAuthSweepLoop(ctx context.Context, tables persistence.Tables, clock shared.Clock, log shared.Logger) {
-	ticker := time.NewTicker(authSweepInterval)
+func runAuthSweepLoop(ctx context.Context, tables persistence.Tables, clock shared.Clock, log shared.Logger, interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {

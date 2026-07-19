@@ -6,13 +6,13 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -40,8 +40,12 @@ func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 60*time.Second),
-		"worker should land in failed once MaxRetries is reached")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
+
+	retries := eventwait.Events(h.Ctx, t, h.Persist,
+		eventwait.Matcher{NodeID: &worker.ID, KindPrefix: "transient/retry/"})
+	require.Len(t, retries, maxRetries,
+		"give_up must fire only after exactly maxRetries retry attempts, not on the first error")
 
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

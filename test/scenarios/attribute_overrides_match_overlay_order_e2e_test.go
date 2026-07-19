@@ -62,8 +62,7 @@ func TestAttributeOverridesMatchOverlayOrder_LaterWins(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	var got map[string]any
 	deadline := time.Now().Add(5 * time.Second)

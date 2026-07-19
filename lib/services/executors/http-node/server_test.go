@@ -596,9 +596,11 @@ func TestStubMode_RejectsNonObjectStubResponse(t *testing.T) {
 func TestExecute_ProbeParkAwaitCallback(t *testing.T) {
 	s := testServer(t, true)
 	req := newRequest(t, map[string]any{
-		"url":         "http://stub/",
-		"probe_park":  true,
-		"park_reason": "await_callback",
+		"url":               "http://stub/",
+		"probe_park":        true,
+		"park_reason":       "await_callback",
+		"park_reason_label": "conformance-label",
+		"park_reason_note":  "conformance-note",
 	})
 	outcome, _ := s.Execute(context.Background(), req)
 	park := outcome.GetPark()
@@ -607,5 +609,36 @@ func TestExecute_ProbeParkAwaitCallback(t *testing.T) {
 	}
 	if park.GetReason() != genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK {
 		t.Errorf("reason=%v, want PARK_REASON_AWAIT_CALLBACK", park.GetReason())
+	}
+	if park.GetReasonLabel() != "conformance-label" {
+		t.Errorf("reason_label=%q, want conformance-label", park.GetReasonLabel())
+	}
+	if park.GetReasonNote() != "conformance-note" {
+		t.Errorf("reason_note=%q, want conformance-note", park.GetReasonNote())
+	}
+}
+
+func TestExecute_ProbeParkSnoozeHonorsRequestedResumeAt(t *testing.T) {
+	s := testServer(t, true)
+	resumeAt := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	req := newRequest(t, map[string]any{
+		"url":            "http://stub/",
+		"probe_park":     true,
+		"park_reason":    "snooze",
+		"park_resume_at": resumeAt.Format(time.RFC3339Nano),
+	})
+	outcome, _ := s.Execute(context.Background(), req)
+	park := outcome.GetPark()
+	if park == nil {
+		t.Fatalf("expected Park, got %T", outcome.GetOutcome())
+	}
+	if park.GetReason() != genv1.ParkReason_PARK_REASON_SNOOZE {
+		t.Errorf("reason=%v, want PARK_REASON_SNOOZE", park.GetReason())
+	}
+	if park.GetResumeAt() == nil {
+		t.Fatal("resume_at not set")
+	}
+	if got := park.GetResumeAt().AsTime(); !got.Equal(resumeAt) {
+		t.Errorf("resume_at=%v, want %v", got, resumeAt)
 	}
 }

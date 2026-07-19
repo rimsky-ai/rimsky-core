@@ -52,11 +52,9 @@ exempt:
   - go.work
   - go.work.sum
   - .gitignore
-  - .gitattributes
   - .dockerignore
   # Build artifacts and vendor trees. The walker only hard-skips VCS dirs
   # (.git, .svn, .hg); every other "skip me" directory must be listed here.
   - bin/
   - lib/protocols/proto/v1/gen/  # generated bindings — handled separately by protoc plugin
-  - .elves/
   - .claude/   # Claude Code session state, settings, and ephemeral worktrees; not source the project licenses

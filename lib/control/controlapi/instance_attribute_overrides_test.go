@@ -227,12 +227,14 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMismatch_Warns(t *testing.T
 		},
 	}
 	instanceKey := "ck-" + uuid.NewString()
-	status, _ := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        instanceKey,
 		"attribute_overrides": originalOverrides,
 	})
 	require.Equal(t, http.StatusCreated, status)
+	instID, _ := out["instance_id"].(string)
+	require.NotEmpty(t, instID)
 
 	h.logger.Clear()
 
@@ -258,6 +260,14 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMismatch_Warns(t *testing.T
 		}
 	}
 	require.True(t, found, "expected instance.attribute_overrides_replaced_by_idempotent_match WARN; got records=%+v", h.logger.Records())
+
+	getStatus, getOut := h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
+	require.Equal(t, http.StatusOK, getStatus, getOut)
+	persisted, _ := getOut["attribute_overrides"].(map[string]any)
+	require.Equal(t, originalOverrides, persisted,
+		"the idempotent-mismatch create must leave the ORIGINAL attribute_overrides in place, not the mismatched request body")
+	require.NotEqual(t, differentOverrides, persisted,
+		"a mismatched idempotent create must not replace the persisted attribute_overrides")
 }
 
 func TestInstanceCreate_AttributeOverrides_RejectsUnknownTopLevelKey(t *testing.T) {

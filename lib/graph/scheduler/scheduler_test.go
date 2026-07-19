@@ -179,21 +179,33 @@ func TestScheduler_TicksAndStops(t *testing.T) {
 	require.NoError(t, h.Shutdown(ctx))
 }
 
-func TestScheduler_ReadySweep_EnqueuesExecutorNodes(t *testing.T) {
+func TestScheduler_Tick_SweepsPureCascadeReadyButSkipsExecutorNodes(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newSchedFixture(t)
 
-	dep := f.createNode(t, "worker", cascade.NodeStateFresh)
-	target := f.createNode(t, "runner", cascade.NodeStateStale, dep.ID)
+	pure := f.createNode(t, "", cascade.NodeStateStale)
+	execNode := f.createNode(t, "runner", cascade.NodeStateStale)
 
 	require.NoError(t, tick(ctx, f.schedConfig(), nil))
 
-	var count int
+	var pureState string
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT COUNT(*) FROM rimsky_node_runs WHERE node_id = $1`,
-		[]any{target.ID}, &count)
-	assert.Equal(t, 1, count, "expected a dispatch row for the ready node")
+		`SELECT state FROM rimsky_node_runs WHERE node_id = $1`,
+		[]any{pure.ID}, &pureState)
+	assert.Equal(t, "fresh", pureState,
+		"tick must sweep an executorless pure-cascade-ready node to fresh")
+
+	var (
+		execState string
+		claimedBy sql.NullString
+	)
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT state, claimed_by FROM rimsky_node_runs WHERE node_id = $1`,
+		[]any{execNode.ID}, &execState, &claimedBy)
+	assert.Equal(t, "stale", execState,
+		"tick's pure-cascade sweep must not touch an executor node's dispatch row")
+	assert.False(t, claimedBy.Valid, "executor node run must remain unclaimed")
 }
 
 func TestScheduler_OrphanedClaim_Released(t *testing.T) {

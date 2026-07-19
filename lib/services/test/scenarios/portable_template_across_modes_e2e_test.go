@@ -8,11 +8,25 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
+
+const portableFilesystemConfigYAML = `root: /workspace
+sweep_interval_seconds: 60
+admin_port: 9120
+pick_policies:
+  "@docs":
+    root: docs
+    on_commit: recycle
+    on_give_up: recycle
+    visibility_timeout_seconds: 60
+    sync_strategy: on_open
+`
 
 // @story: portable-template-across-modes
 func TestPortableTemplateAcrossModes(t *testing.T) {
@@ -52,6 +66,9 @@ func buildPortableTemplateBody() map[string]any {
 				{
 					"type":     "worker",
 					"executor": "http-node",
+					"claim_producers": []map[string]any{
+						{"name": "store-filesystem", "selector": "@docs", "intent": "rw"},
+					},
 					"attributes": map[string]any{
 						"schema": map[string]any{
 							"type": "object",
@@ -77,9 +94,15 @@ func runPortableTemplateInProc(t *testing.T, templateBytes []byte) portableTermi
 	t.Helper()
 	ctx := context.Background()
 
+	hostDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(hostDir, "docs", "seed"), 0o755); err != nil {
+		t.Fatalf("harness: seed docs folder: %v", err)
+	}
+
 	h := harness.BringUpRimskyHandle(ctx, t,
 		harness.WithSQLite(),
 		harness.WithContainerEnv("RIMSKY_EXECUTOR_STUB_MODE", "1"),
+		harness.WithBundledFilesystemClaimProducer(hostDir, portableFilesystemConfigYAML),
 	)
 	ep := h.Endpoint
 	t.Cleanup(func() {
@@ -97,11 +120,27 @@ func runPortableTemplateContainerized(t *testing.T, templateBytes []byte) portab
 
 	netName := harness.NewNetwork(ctx, t)
 	httpNodeEndpoint := harness.StartHttpNodeStubOnNetwork(ctx, t, netName, "http-node")
+	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
+		harness.FilesystemStoreSpec{
+			PickPolicies: map[string]harness.FilesystemPickPolicy{
+				"@docs": {
+					Root:                     "docs",
+					OnCommit:                 "recycle",
+					OnGiveUp:                 "recycle",
+					VisibilityTimeoutSeconds: 60,
+					SyncStrategy:             "on_open",
+				},
+			},
+			SeedFolders: [][]string{
+				{"docs", "seed"},
+			},
+		})
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithSQLite(),
 		harness.WithExistingNetwork(netName),
 		harness.WithExecutor("http-node", httpNodeEndpoint),
+		harness.WithClaimProducer("store-filesystem", fs.InternalEndpoint),
 	)
 
 	return dispatchAndReadTerminal(t, ep, templateBytes, "ck-portable-template-containerized")

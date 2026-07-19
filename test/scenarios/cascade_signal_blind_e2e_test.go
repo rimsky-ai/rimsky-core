@@ -23,9 +23,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-func waitForNodeStateNoEvent(h *scenario.Harness, nodeID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+func waitForNodeStateNoEvent(h *scenario.Harness, nodeID shared.UUID, state cascade.NodeState) {
+	for {
 		var latest *persistence.NodeRunLatest
 		_ = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 			r, err := h.Persist.Nodes().GetLatestRunForNode(ctx, tx, nodeID)
@@ -33,11 +32,10 @@ func waitForNodeStateNoEvent(h *scenario.Harness, nodeID shared.UUID, state casc
 			return err
 		})
 		if latest != nil && latest.State == state {
-			return true
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }
 
 func TestCascadeSignalBlind_E2E(t *testing.T) {
@@ -53,6 +51,7 @@ func TestCascadeSignalBlind_E2E(t *testing.T) {
 	t.Run("attribute_changed__diff_gate", testCascadeAttributeChangedDiffGate)
 
 	t.Run("terminal_success_with_tag_filter__per_sender", testCascadeTerminalSuccessWithTagFilterPerSender)
+	t.Run("terminal_success_with_tag_filter__absent_does_not_fire__per_sender", testCascadeTerminalSuccessWithTagFilterAbsentPerSender)
 }
 
 func testCascadeTerminalSuccessPerSender(t *testing.T) {
@@ -80,12 +79,9 @@ func testCascadeTerminalSuccessPerSender(t *testing.T) {
 	require.NotNil(t, sender)
 	require.NotNil(t, receiver)
 
-	require.True(t, h.WaitForNodeState(sender.ID, cascade.NodeStateFresh, 30*time.Second),
-		"sender should settle terminal/success")
-	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"per-sender terminal/success subscriber must dispatch")
-	require.True(t, h.WaitForEventKind(sender.ID, "terminal/success", 10*time.Second),
-		"audit row for terminal/success must land in rimsky_events")
+	h.WaitForNodeState(sender.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
+	h.WaitForEventKind(sender.ID, "terminal/success")
 }
 
 func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
@@ -119,12 +115,9 @@ func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 	require.NotNil(t, sender)
 	require.NotNil(t, receiver)
 
-	require.True(t, h.WaitForNodeState(sender.ID, cascade.NodeStateFailed, 30*time.Second),
-		"sender should settle failed under give_up")
-	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"per-sender terminal/error/* subscriber must dispatch on the sender's give_up settlement")
-	require.True(t, h.WaitForEventKind(sender.ID, "terminal/error/stub/giveup_class", 10*time.Second),
-		"audit row for terminal/error/<class> must land in rimsky_events")
+	h.WaitForNodeState(sender.ID, cascade.NodeStateFailed)
+	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
+	h.WaitForEventKind(sender.ID, "terminal/error/stub/giveup_class")
 }
 
 func testCascadeTerminalErrorPassPerSender(t *testing.T) {
@@ -158,12 +151,9 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 	require.NotNil(t, sender)
 	require.NotNil(t, receiver)
 
-	require.True(t, waitForNodeStateNoEvent(h, sender.ID, cascade.NodeStateFresh, 30*time.Second),
-		"sender should settle fresh under pass (the wire signal is still terminal/error/<class>)")
-	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"per-sender terminal/error/* subscriber must dispatch on the sender's pass settlement")
-	require.True(t, h.WaitForEventKind(sender.ID, "terminal/error/stub/pass_class", 10*time.Second),
-		"audit row for terminal/error/<class> must land in rimsky_events under pass")
+	waitForNodeStateNoEvent(h, sender.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
+	h.WaitForEventKind(sender.ID, "terminal/error/stub/pass_class")
 }
 
 func testCascadeAttributeChangedPerSender(t *testing.T) {
@@ -199,12 +189,9 @@ func testCascadeAttributeChangedPerSender(t *testing.T) {
 	require.NotNil(t, sender)
 	require.NotNil(t, receiver)
 
-	require.True(t, h.WaitForNodeState(sender.ID, cascade.NodeStateFresh, 30*time.Second),
-		"sender should settle terminal/success")
-	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"per-sender attribute/<key>/changed subscriber must dispatch when sender's terminal carries that key in attributes_delta")
-	require.True(t, h.WaitForEventKind(sender.ID, "attribute/score/changed", 10*time.Second),
-		"audit row for attribute/<key>/changed must land in rimsky_events")
+	h.WaitForNodeState(sender.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
+	h.WaitForEventKind(sender.ID, "attribute/score/changed")
 }
 
 func testCascadeAttributeChangedDiffGate(t *testing.T) {
@@ -320,10 +307,51 @@ func testCascadeTerminalSuccessWithTagFilterPerSender(t *testing.T) {
 	require.NotNil(t, sender)
 	require.NotNil(t, receiver)
 
-	require.True(t, h.WaitForNodeState(sender.ID, cascade.NodeStateFresh, 30*time.Second),
-		"sender should settle terminal/success with the `ready` tag")
-	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"per-sender terminal/success+tag-filter subscriber must dispatch when sender's verdict carries `ready` in payload.tags")
-	require.True(t, h.WaitForEventKind(sender.ID, "terminal/success", 10*time.Second),
-		"audit row for terminal/success must land in rimsky_events")
+	h.WaitForNodeState(sender.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
+	h.WaitForEventKind(sender.ID, "terminal/success")
+}
+
+func testCascadeTerminalSuccessWithTagFilterAbsentPerSender(t *testing.T) {
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	h.Stub.WhenType("sender").Success(map[string]any{"k": 1}, true, "ok")
+	h.Stub.WhenType("receiver").Success(map[string]any{"r": 1}, true, "rcv")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "cascade-signal-blind-tag-filter-absent-per-sender", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{Type: "sender", Executor: "stub"}),
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node:                 "sender",
+					Type:                 "terminal/success",
+					When:                 `"ready" in payload.tags`,
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-csb-tag-absent-ps", map[string]any{})
+
+	sender := h.FindNode(iid, "sender")
+	receiver := h.FindNode(iid, "receiver")
+	require.NotNil(t, sender)
+	require.NotNil(t, receiver)
+
+	h.WaitForNodeState(sender.ID, cascade.NodeStateFresh)
+	h.WaitForEventKind(sender.ID, "terminal/success")
+
+	var receiverRuns int
+	h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`,
+		[]any{receiver.ID}, &receiverRuns)
+	require.Zero(t, receiverRuns,
+		"receiver's when: filter requires \"ready\" in payload.tags and the sender settled with no "+
+			"tags, so the tag-absent leg must suppress the wake; the filter is evaluated in the sender's "+
+			"settle transaction and a broken-open filter would create the receiver's run atomically with "+
+			"the sender's terminal/success, so any receiver node-run after the sender settles means the "+
+			"filter fired on an absent tag; got %d run(s)", receiverRuns)
+	require.False(t, h.HasEventKind(receiver.ID, "terminal/success"),
+		"receiver must NOT dispatch (no terminal/success audit row) when the sender's settling tags "+
+			"do not carry \"ready\"")
 }

@@ -6,8 +6,12 @@ package launch
 
 import (
 	"errors"
+	"net"
 	"strings"
 	"testing"
+
+	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 func TestFailureReporter_Report(t *testing.T) {
@@ -191,4 +195,67 @@ func TestMetricsPortFor(t *testing.T) {
 			t.Errorf("error %q should name the variable and the offending value", err.Error())
 		}
 	})
+}
+
+func TestMetricsHostFromEnv(t *testing.T) {
+	t.Run("defaults to loopback when unset", func(t *testing.T) {
+		t.Setenv("RIMSKY_METRICS_HOST", "")
+		if got := metricsHostFromEnv(); got != "127.0.0.1" {
+			t.Errorf("metricsHostFromEnv() = %q, want 127.0.0.1", got)
+		}
+	})
+	t.Run("honors an explicit host", func(t *testing.T) {
+		t.Setenv("RIMSKY_METRICS_HOST", "0.0.0.0")
+		if got := metricsHostFromEnv(); got != "0.0.0.0" {
+			t.Errorf("metricsHostFromEnv() = %q, want 0.0.0.0", got)
+		}
+	})
+}
+
+func TestStartMetricsServer_BindFailureReportsAndReturnsNil(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("occupy a port: %v", err)
+	}
+	defer occupied.Close()
+	port := occupied.Addr().(*net.TCPAddr).Port
+
+	reporter := newFailureReporter(1)
+	srv := startMetricsServer("127.0.0.1", "scheduler", port, observability.NewMetricsRegistry(), shared.NewSlogLogger(testLogger(t)), reporter)
+	if srv != nil {
+		t.Fatalf("startMetricsServer returned non-nil server on a bind failure: %+v", srv)
+	}
+
+	select {
+	case err := <-reporter.ch:
+		if !strings.Contains(err.Error(), "metrics endpoint bind") {
+			t.Errorf("reported error %q does not describe a bind failure", err.Error())
+		}
+	default:
+		t.Fatal("bind failure was not reported on the fail channel")
+	}
+}
+
+func TestStartMetricsServer_ServeErrorReportsAsync(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+
+	reporter := newFailureReporter(1)
+	srv := serveMetrics(ln, "scheduler", observability.NewMetricsRegistry(), shared.NewSlogLogger(testLogger(t)), reporter)
+	if srv == nil {
+		t.Fatal("serveMetrics returned nil for a successfully-opened listener")
+	}
+
+	err = <-reporter.ch
+	if err == nil {
+		t.Fatal("expected the async Serve error to be reported")
+	}
+	if !strings.Contains(err.Error(), "metrics endpoint") {
+		t.Errorf("reported error %q does not describe the metrics endpoint serve failure", err.Error())
+	}
 }

@@ -9,7 +9,6 @@ package breakpoints
 import (
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -46,7 +45,7 @@ func TestOrphanHitOnBreakpointDeletion(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
+	hit := waitForHitOnBreakpoint(t, h, bpID)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not see the dispatch while paused at the breakpoint")
 
@@ -55,10 +54,8 @@ func TestOrphanHitOnBreakpointDeletion(t *testing.T) {
 	require.Nil(t, getHitRow(t, h, hit.ID),
 		"hit row should be cascade-deleted along with the parent breakpoint")
 
-	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
-		"executor should observe dispatch after the orphan-hit unblocks the runner")
+	waitForStubObservedCount(h, "worker", 1)
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker should reach Fresh once the runner unblocks via orphan-hit path")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 }

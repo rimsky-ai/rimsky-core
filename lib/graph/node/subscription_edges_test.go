@@ -77,6 +77,47 @@ func TestBuildSubscriptionEdges_NoImplicitEdgeFromSubstitutionRef(t *testing.T) 
 	}
 }
 
+// @concept: template
+func TestBuildSubscriptionEdges_NoImplicitEdgeFromEnvRef(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		{Type: "stage", Executor: "stub",
+			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"out": map[string]any{"type": "string", "source": "out_value"},
+				},
+			}}},
+		{Type: "verify", Executor: "stub",
+			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"in": map[string]any{"type": "string", "source": "{{env.SOME_VAR}}"},
+				},
+			}}},
+	}}
+	out, err := BuildSubscriptionEdges(tmpl, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	// @decision: structural-root-edge-injection-at-registration
+	for _, sender := range out.Senders() {
+		if sender != "" {
+			t.Fatalf("an env directive alone must not register a cascade-coupling subscription edge "+
+				"(only the sanctioned structural-root \"\" sender key is allowed here); got unexpected "+
+				"sender key %q", sender)
+		}
+	}
+
+	nodeRefs := ExtractSubstitutionRefsFromTemplate(tmpl)
+	if len(nodeRefs) != 0 {
+		t.Fatalf("ExtractSubstitutionRefsFromTemplate must not surface an env directive as a node ref; got %v", nodeRefs)
+	}
+	msgRefs := ExtractMessageRefsFromTemplate(tmpl)
+	if len(msgRefs) != 0 {
+		t.Fatalf("ExtractMessageRefsFromTemplate must not surface an env directive as a message ref; got %v", msgRefs)
+	}
+}
+
 func TestBuildSubscriptionEdges_Dedup(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "sender", Executor: "stub"},

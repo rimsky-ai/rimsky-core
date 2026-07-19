@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -44,17 +43,5 @@ func TestGiveUp(t *testing.T) {
 	n := h.FindNode(iid, "flaky")
 	require.NotNil(t, n)
 
-	if !h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 30*time.Second) {
-		var runs *string
-		h.QueryRowSQL(`SELECT string_agg(state || ':seq=' || sequence::text || ':reason=' || creation_reason || ':claim=' || COALESCE(claimed_by,''), E'\n' ORDER BY sequence) FROM rimsky_node_runs WHERE node_id = $1`, []any{n.ID}, &runs)
-		var events *string
-		h.QueryRowSQL(`SELECT string_agg(kind || ':' || COALESCE(payload::text,''), E'\n' ORDER BY id) FROM rimsky_events WHERE node_id = $1`, []any{n.ID}, &events)
-		safe := func(p *string) string {
-			if p == nil {
-				return ""
-			}
-			return *p
-		}
-		t.Fatalf("flaky not failed; runs:\n%s\nevents:\n%s", safe(runs), safe(events))
-	}
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
 }

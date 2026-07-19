@@ -238,6 +238,66 @@ func TestSQLite_FrameRetention_PrunesOldTerminalFramesAndCascadesNodeRuns(t *tes
 	}
 }
 
+// @concept: frame
+// @concept: wait-set
+func TestSQLite_FrameRetention_CascadesWaitSet(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := openSQLite(t)
+	rawDB := sqlitedrv.DBFromDatabase(d)
+	f := seedTraceFixture(t, ctx, d, 1)
+
+	oldFrame := f.oldFrames[0]
+	insertWaitSet := func(frameID, receiverRunID, senderRunID string) {
+		t.Helper()
+		if _, err := rawDB.ExecContext(ctx,
+			`INSERT INTO rimsky_wait_set
+			   (frame_id, receiver_run_id, sender_run_id, topic_kind)
+			 VALUES (?, ?, ?, 'terminal')`,
+			frameID, receiverRunID, senderRunID,
+		); err != nil {
+			t.Fatalf("seed wait_set row for frame %s: %v", frameID, err)
+		}
+	}
+	insertWaitSet(oldFrame, f.recentRun, f.recentRun)
+	insertWaitSet(f.heldFrame, f.heldRun, f.heldRun)
+
+	waitSetCountForFrame := func(frameID string) int {
+		var n int
+		if err := rawDB.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM rimsky_wait_set WHERE frame_id = ?`, frameID,
+		).Scan(&n); err != nil {
+			t.Fatalf("count wait_set rows for frame %s: %v", frameID, err)
+		}
+		return n
+	}
+	if waitSetCountForFrame(oldFrame) != 1 {
+		t.Fatalf("wait_set seed for old frame %s did not land", oldFrame)
+	}
+
+	store := d.Tables()
+	if _, err := store.Frames().PruneTraceForRetention(ctx, 1, f.cutoff); err != nil {
+		t.Fatalf("PruneTraceForRetention: %v", err)
+	}
+
+	if n := waitSetCountForFrame(oldFrame); n != 0 {
+		t.Errorf("wait_set row for reaped frame %s should cascade-delete via the frame_id FK, but %d row(s) survive", oldFrame, n)
+	}
+	if n := waitSetCountForFrame(f.heldFrame); n != 1 {
+		t.Errorf("wait_set row for the in-flight held frame must NEVER be reaped; got %d row(s)", n)
+	}
+
+	var recentRunCount int
+	if err := rawDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM rimsky_node_runs WHERE id = ?`, f.recentRun,
+	).Scan(&recentRunCount); err != nil {
+		t.Fatalf("count recent run: %v", err)
+	}
+	if recentRunCount != 1 {
+		t.Fatalf("recent frame's node_run must survive the reap (sanity check for wait_set isolation), got count=%d", recentRunCount)
+	}
+}
+
 // @concept: event-log
 func TestSQLite_EventRetention_DeleteOlderThan(t *testing.T) {
 	t.Parallel()

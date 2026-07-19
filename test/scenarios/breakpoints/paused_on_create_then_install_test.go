@@ -55,7 +55,7 @@ func TestPausedOnCreateThenInstall(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status, "instance resume should succeed")
 
-	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
+	hit := waitForHitOnBreakpoint(t, h, bpID)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not be called between instance-resume and breakpoint-resume")
 
@@ -64,10 +64,8 @@ func TestPausedOnCreateThenInstall(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, status)
 
-	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
-		"executor should see dispatch after both gates open")
+	waitForStubObservedCount(h, "worker", 1)
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker should reach Fresh once both gates release")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 }

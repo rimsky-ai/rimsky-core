@@ -117,9 +117,7 @@ func TestScratchRoundTripE2E_RetryAfterError(t *testing.T) {
 	n := harness.FindNode(iid, "worker")
 	require.NotNil(t, n, "worker node missing")
 
-	require.True(t,
-		harness.WaitForNodeState(n.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker MUST reach fresh after retry — first dispatch errors with retry policy, second succeeds")
+	harness.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	require.Equal(t, int64(2), atomic.LoadInt64(&h.dispatches),
 		"handler MUST be dispatched exactly twice (first errors, second succeeds via retry)")
@@ -162,9 +160,7 @@ func runDispositionVariant(t *testing.T, disposition string) {
 	iid := harness.CreateInstance(tid, "ck-scratch-"+disposition, map[string]any{})
 	n := harness.FindNode(iid, "worker")
 	require.NotNil(t, n, "worker node missing")
-	require.True(t,
-		harness.WaitForNodeState(n.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker MUST reach fresh after first dispatch — initial scratch attach failed?")
+	harness.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	var dispatchIDText, frameIDText, runScopeIDText string
 	harness.QueryRowSQL(`
@@ -217,4 +213,11 @@ func runDispositionVariant(t *testing.T, disposition string) {
 	require.True(t, bytes.Equal(gotInline, scratchBytes),
 		"%s recovery row MUST carry prior scratch verbatim: want=%x got=%x",
 		disposition, scratchBytes, gotInline)
+
+	for atomic.LoadInt64(&h.dispatches) < 2 {
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, bytes.Equal(h.snapshot(), scratchBytes),
+		"%s recovery dispatch MUST deliver the prior scratch to the real executor handler, not just the row: want=%x got=%x",
+		disposition, scratchBytes, h.snapshot())
 }

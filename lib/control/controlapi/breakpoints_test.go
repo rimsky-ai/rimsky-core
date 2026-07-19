@@ -188,6 +188,80 @@ func TestBreakpoint_DeleteNotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
+func TestBreakpoint_DeleteWrongInstance404(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	_, instA := seedBPInstance(t, h, uuid.NewString())
+	_, instB := seedBPInstance(t, h, uuid.NewString())
+
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instA), map[string]any{
+		"checkpoint": "before_dispatch",
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	bpID, _ := out["breakpoint_id"].(string)
+	require.NotEmpty(t, bpID)
+
+	status, _ = h.httpJSON(t, "DELETE", fmt.Sprintf("/v1/instances/%s/breakpoints/%s", instB, bpID), nil)
+	require.Equal(t, http.StatusNotFound, status,
+		"a breakpoint that exists but belongs to a different instance must 404, not succeed")
+
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoints", instA), nil)
+	require.Equal(t, http.StatusOK, status)
+	bps, _ := out["breakpoints"].([]any)
+	require.Len(t, bps, 1, "the breakpoint must survive the cross-instance delete attempt")
+}
+
+func TestBreakpoint_ResumeHitWrongBreakpoint404(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+	_, instID := seedBPInstance(t, h, uuid.NewString())
+	instUUID := shared.UUID(uuid.MustParse(instID))
+
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
+		"checkpoint": "before_dispatch",
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	bpAStr, _ := out["breakpoint_id"].(string)
+	bpA, err := uuid.Parse(bpAStr)
+	require.NoError(t, err)
+
+	status, out = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
+		"checkpoint": "before_dispatch",
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	bpBStr, _ := out["breakpoint_id"].(string)
+	require.NotEmpty(t, bpBStr)
+
+	var hitID shared.UUID
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		id, _, err := h.persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
+			BreakpointID: shared.UUID(bpA),
+			InstanceID:   instUUID,
+			Checkpoint:   persistence.CheckpointBeforeDispatch,
+			Mode:         persistence.BreakpointModePause,
+			Snapshot: map[string]any{
+				"dispatch_context": map[string]any{
+					"merged_attributes": map[string]any{},
+				},
+			},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		hitID = id
+		return nil
+	}))
+
+	status, _ = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume", instID, bpBStr), map[string]any{
+		"hit_id": hitID.String(),
+	})
+	require.Equal(t, http.StatusNotFound, status,
+		"a hit belonging to a different breakpoint must 404, not resume")
+}
+
 func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

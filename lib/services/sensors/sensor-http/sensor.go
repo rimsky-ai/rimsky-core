@@ -34,6 +34,7 @@ type Watch struct {
 	MatchJSONKey   string
 	MatchJSONVal   string
 	MessageType    string
+	ResolvedConfig []byte
 
 	LastPollAt time.Time
 	LastHash   string
@@ -179,6 +180,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		MatchJSONKey:   cfg.Match.JSONPath.Path,
 		MatchJSONVal:   cfg.Match.JSONPath.Value,
 		MessageType:    messageType,
+		ResolvedConfig: append([]byte(nil), req.GetResolvedConfig()...),
 	}
 	s.mu.Lock()
 	state := s.state
@@ -238,6 +240,7 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			InstanceId:              w.InstanceID,
 			Kind:                    "http",
 			MessageType:             w.MessageType,
+			ResolvedConfig:          w.ResolvedConfig,
 			StartedAt:               timestamppb.New(s.clock()),
 		})
 	}
@@ -300,15 +303,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		s.mu.Unlock()
 		return
 	}
-	cur.LastHash = hash
-	state := s.state
 	s.mu.Unlock()
-	if state != nil {
-		if err := state.UpdateLastHash(ctx, w.SubscriptionID, hash); err != nil {
-			s.logger.Warn("sensor-http.poll.state_update_failed",
-				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
-		}
-	}
 
 	obs := map[string]any{
 		"observed_at": now.UTC().Format(time.RFC3339),
@@ -326,6 +321,23 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	if err := s.postMessage(ctx, w, obs, idemKey); err != nil {
 		s.logger.Warn("sensor-http.message_post_failed",
 			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+		return
+	}
+
+	s.mu.Lock()
+	cur, ok = s.watches[w.SubscriptionID]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	cur.LastHash = hash
+	state := s.state
+	s.mu.Unlock()
+	if state != nil {
+		if err := state.UpdateLastHash(ctx, w.SubscriptionID, hash); err != nil {
+			s.logger.Warn("sensor-http.poll.state_update_failed",
+				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+		}
 	}
 }
 

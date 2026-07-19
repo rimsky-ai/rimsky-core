@@ -37,7 +37,8 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("conformance.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
 	}
-	conn, err := grpc.NewClient(endpoint.URL, grpc.WithTransportCredentials(transportCredsFor(endpoint.TLS)))
+	target := stripScheme(endpoint.URL)
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(transportCredsFor(endpoint.TLS)))
 	if err != nil {
 		return nil, fmt.Errorf("conformance.NewGRPCClient: dial %s: %w", endpoint.URL, err)
 	}

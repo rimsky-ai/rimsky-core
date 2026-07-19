@@ -67,14 +67,17 @@ type dispatchHandler func(protocol string, payload []byte) [][]byte
 type fakeAgent struct {
 	stream genv1.HostAgent_ConnectClient
 
-	mu          sync.Mutex
-	spawnFail   bool
-	spawnDelay  time.Duration
-	dropOnFirst bool
-	stallData   bool
-	handler     dispatchHandler
-	reaped      chan string
-	canceled    chan string
+	mu              sync.Mutex
+	spawnFail       bool
+	spawnDelay      time.Duration
+	dropOnFirst     bool
+	stallData       bool
+	handler         dispatchHandler
+	reaped          chan string
+	canceled        chan string
+	spawnObserver   func(*genv1.Spawn)
+	dispatchCount   int
+	crashOnDispatch int
 }
 
 func connectFakeAgent(t *testing.T, ts *proxyTestServer, apiKey, localBase string, handler dispatchHandler) *fakeAgent {
@@ -109,6 +112,18 @@ func (fa *fakeAgent) setSpawnDelay(d time.Duration) { fa.mu.Lock(); fa.spawnDela
 func (fa *fakeAgent) setDropOnFirst(v bool)         { fa.mu.Lock(); fa.dropOnFirst = v; fa.mu.Unlock() }
 func (fa *fakeAgent) setStallData(v bool)           { fa.mu.Lock(); fa.stallData = v; fa.mu.Unlock() }
 
+func (fa *fakeAgent) setSpawnObserver(f func(*genv1.Spawn)) {
+	fa.mu.Lock()
+	fa.spawnObserver = f
+	fa.mu.Unlock()
+}
+
+func (fa *fakeAgent) setCrashOnDispatch(n int) {
+	fa.mu.Lock()
+	fa.crashOnDispatch = n
+	fa.mu.Unlock()
+}
+
 func (fa *fakeAgent) loop(t *testing.T) {
 	for {
 		frame, err := fa.stream.Recv()
@@ -141,7 +156,11 @@ func (fa *fakeAgent) handleSpawn(sp *genv1.Spawn) {
 	fa.mu.Lock()
 	fail := fa.spawnFail
 	delay := fa.spawnDelay
+	observer := fa.spawnObserver
 	fa.mu.Unlock()
+	if observer != nil {
+		observer(sp)
+	}
 	if delay > 0 {
 		time.Sleep(delay)
 	}
@@ -165,10 +184,21 @@ func (fa *fakeAgent) handleDispatch(df *genv1.DispatchFrame) bool {
 	drop := fa.dropOnFirst
 	stall := fa.stallData
 	handler := fa.handler
+	fa.dispatchCount++
+	crash := fa.crashOnDispatch != 0 && fa.dispatchCount == fa.crashOnDispatch
 	fa.mu.Unlock()
 	if drop {
 		_ = fa.stream.CloseSend()
 		return true
+	}
+	if crash {
+		_ = fa.stream.Send(&genv1.ClientFrame{Body: &genv1.ClientFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
+			SpawnId:  df.GetSpawnId(),
+			Protocol: df.GetProtocol(),
+			StreamId: df.GetStreamId(),
+			Kind:     genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL,
+		}}})
+		return false
 	}
 	if stall {
 		return false

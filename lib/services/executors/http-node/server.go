@@ -303,12 +303,19 @@ func (s *Server) executeParkProbe(ud map[string]any) *genv1.Outcome {
 			fmt.Sprintf("park_reason %q is not in the closed set {await_callback, snooze}", reasonStr))
 	}
 	note, _ := ud["park_reason_note"].(string)
+	label, _ := ud["park_reason_label"].(string)
 	park := &genv1.Park{
-		Reason:     reason,
-		ReasonNote: note,
+		Reason:      reason,
+		ReasonNote:  note,
+		ReasonLabel: label,
 	}
 	if reason == genv1.ParkReason_PARK_REASON_SNOOZE {
 		park.ResumeAt = timestamppb.New(time.Now().Add(30 * time.Second))
+		if raw, _ := ud["park_resume_at"].(string); raw != "" {
+			if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+				park.ResumeAt = timestamppb.New(t)
+			}
+		}
 	}
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}
 }

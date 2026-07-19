@@ -262,6 +262,9 @@ func extractSubstitutionRefRunIDs(record json.RawMessage) []shared.UUID {
 	}
 	out := make([]shared.UUID, 0, len(rec.SubstitutionRefs))
 	for _, r := range rec.SubstitutionRefs {
+		if r.SourceKind != "run" {
+			continue
+		}
 		if u, err := uuid.Parse(r.SourceVersionOrID); err == nil {
 			out = append(out, shared.UUID(u))
 		}

@@ -85,9 +85,11 @@ func cancelInFlightSiblings(
 		if sib.NodeRunID != nil {
 			hint.NodeRunID = *sib.NodeRunID
 		}
-		if acquirer, aErr := args.Persist.Nodes().Get(ctx, sib.HolderNodeID, tx); aErr == nil && acquirer != nil {
-			hint.InstanceID = acquirer.InstanceID
+		instID, err := acquirerInstanceID(ctx, args, tx, sib.HolderNodeID)
+		if err != nil {
+			return nil, fmt.Errorf("cancelInFlightSiblings: %w", err)
 		}
+		hint.InstanceID = instID
 		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
 			ClaimHandleID:       sib.ID,
 			SupervisorID:        args.SupervisorID,
@@ -158,9 +160,11 @@ func cancelDescendantClaims(
 		if d.NodeRunID != nil {
 			hint.NodeRunID = *d.NodeRunID
 		}
-		if acquirer, aErr := args.Persist.Nodes().Get(ctx, d.HolderNodeID, tx); aErr == nil && acquirer != nil {
-			hint.InstanceID = acquirer.InstanceID
+		instID, err := acquirerInstanceID(ctx, args, tx, d.HolderNodeID)
+		if err != nil {
+			return nil, fmt.Errorf("cancelDescendantClaims: %w", err)
 		}
+		hint.InstanceID = instID
 		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
 			ClaimHandleID:       d.ID,
 			SupervisorID:        args.SupervisorID,

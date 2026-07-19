@@ -71,6 +71,71 @@ func TestRunWatch_Chronological(t *testing.T) {
 	}
 }
 
+func TestRunWatch_DrainsFullBacklogAcrossMultiplePagesInChronologicalOrder(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+
+	const total = 150
+	base := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < total; i++ {
+		occurredAt := base.Add(time.Duration(i) * time.Second).Format(time.RFC3339)
+		srv.State.AddEvent(cli.Event{
+			InstanceID: inst.ID,
+			Kind:       "seq_event",
+			OccurredAt: occurredAt,
+			Payload:    map[string]any{"seq": i},
+		})
+	}
+
+	terminatedAt := base.Add(time.Duration(total) * time.Second)
+	srv.State.SetInstanceTerminated(inst.ID, &terminatedAt)
+
+	done := make(chan int, 1)
+	exit := -1
+	out := captureStdout(t, func() {
+		go func() {
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", inst.ID})
+		}()
+		select {
+		case exit = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("watch did not exit promptly on a terminal instance")
+		}
+	})
+	if exit != 0 {
+		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
+	}
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	var seqLines []string
+	for _, ln := range lines {
+		if strings.Contains(ln, "\tseq_event\t") {
+			seqLines = append(seqLines, ln)
+		}
+	}
+	if len(seqLines) != total {
+		t.Fatalf("watch rendered %d seq_event lines, want %d (backlog must fully drain across cursor pages, no drops, no dupes); output:\n%s",
+			len(seqLines), total, out)
+	}
+
+	var lastTS time.Time
+	for i, ln := range seqLines {
+		fields := strings.SplitN(ln, "\t", 2)
+		if len(fields) < 1 {
+			t.Fatalf("malformed watch line %q", ln)
+		}
+		ts, err := time.Parse(time.RFC3339, fields[0])
+		if err != nil {
+			t.Fatalf("unparsable timestamp in line %q: %v", ln, err)
+		}
+		if i > 0 && ts.Before(lastTS) {
+			t.Fatalf("watch feed not chronologically ordered across paginated pages at line %d: %s", i, ln)
+		}
+		lastTS = ts
+	}
+}
+
 func TestRunWatch_ExitsOnIdleInstance(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")

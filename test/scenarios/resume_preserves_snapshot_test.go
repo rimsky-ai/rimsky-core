@@ -81,8 +81,7 @@ func TestResumePreservesSnapshot_DeadlineWakeReusesDispatchTimeBag(t *testing.T)
 
 	h.PostInstanceMessage(iid, "test/wake", nil, "test-wake-init")
 
-	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateParked, 30*time.Second),
-		"b should park after its first dispatch")
+	h.WaitForNodeState(b.ID, cascade.NodeStateParked)
 
 	bInvocations := func() []stub.ObservedRequest {
 		var out []stub.ObservedRequest
@@ -106,10 +105,8 @@ func TestResumePreservesSnapshot_DeadlineWakeReusesDispatchTimeBag(t *testing.T)
 
 	h.Stub.WhenType("b").Success(map[string]any{}, true, "b-resumed")
 
-	require.True(t, h.WaitForEventKind(b.ID, "parked_resume_started", 30*time.Second),
-		"parked sweep must wake b once its deadline elapses")
-	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
-		"b should settle fresh after deadline-driven resume")
+	h.WaitForEventKind(b.ID, "parked_resume_started")
+	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
 
 	allB := bInvocations()
 	require.Equal(t, 2, len(allB),

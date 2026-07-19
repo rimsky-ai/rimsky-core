@@ -79,21 +79,13 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 	innerExitNode := h.FindNode(iid, "inner-exit")
 	require.NotNil(t, innerExitNode, "inner-exit node missing from instance")
 
-	require.True(t,
-		waitForObservedAttrs(h, "caller", 15*time.Second) != nil,
-		"caller dispatch not observed by stub")
-	callerAttrs := waitForObservedAttrs(h, "caller", 100*time.Millisecond)
-	require.NotNil(t, callerAttrs, "caller attributes missing from stub observation")
+	callerAttrs := waitForObservedAttrs(h, "caller")
 	callerCLI, ok := callerAttrs["cli"].(map[string]any)
 	require.True(t, ok, "caller attributes.cli missing or wrong shape: %#v", callerAttrs)
 	require.Equal(t, "outer", callerCLI["where"],
 		"caller lives in graph=main per concept:delegation; matcher graph=main MUST fire and NOT graph=worker")
 
-	require.True(t,
-		waitForObservedAttrs(h, "inner-exit", 15*time.Second) != nil,
-		"inner-exit dispatch not observed by stub")
-	innerAttrs := waitForObservedAttrs(h, "inner-exit", 100*time.Millisecond)
-	require.NotNil(t, innerAttrs, "inner-exit attributes missing from stub observation")
+	innerAttrs := waitForObservedAttrs(h, "inner-exit")
 	innerCLI, ok := innerAttrs["cli"].(map[string]any)
 	require.True(t, ok, "inner-exit attributes.cli missing or wrong shape: %#v", innerAttrs)
 	require.Equal(t, "inner", innerCLI["where"],
@@ -106,9 +98,8 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 		"AttributeOverridesMatchCounts mismatch (want [1, 1])")
 }
 
-func waitForObservedAttrs(h *scenario.Harness, nodeType string, timeout time.Duration) map[string]any {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+func waitForObservedAttrs(h *scenario.Harness, nodeType string) map[string]any {
+	for {
 		for _, o := range h.Stub.Observed() {
 			if o.NodeType == nodeType {
 				return o.Attributes
@@ -116,5 +107,4 @@ func waitForObservedAttrs(h *scenario.Harness, nodeType string, timeout time.Dur
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return nil
 }

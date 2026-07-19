@@ -46,7 +46,7 @@ func TestPauseResumeHappyPath(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status, "instance resume should succeed")
 
-	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
+	hit := waitForHitOnBreakpoint(t, h, bpID)
 	require.NotNil(t, hit.NodeRunID, "hit should carry the node_run_id of the parked dispatch")
 
 	time.Sleep(200 * time.Millisecond)
@@ -65,10 +65,8 @@ func TestPauseResumeHappyPath(t *testing.T) {
 	require.NotNil(t, row.ResumedAt, "resumed_at should be stamped after resume")
 	require.Nil(t, row.ResumeOverlay, "no overlay supplied → resume_overlay stays nil")
 
-	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
-		"stub should observe the worker dispatch after resume")
+	waitForStubObservedCount(h, "worker", 1)
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker should reach Fresh after the executor returns terminal/success")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 }

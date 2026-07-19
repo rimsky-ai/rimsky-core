@@ -121,6 +121,51 @@ func testRenewExpiryForHolderRun(t *testing.T, d persistence.Database) {
 	}
 }
 
+func listOrphanedClaimsContains(ctx context.Context, t *testing.T, d persistence.Database, runID shared.UUID) bool {
+	t.Helper()
+	rows, err := d.Queue().ListOrphanedClaims(ctx)
+	if err != nil {
+		t.Fatalf("ListOrphanedClaims: %v", err)
+	}
+	for _, r := range rows {
+		if r.ID == runID {
+			return true
+		}
+	}
+	return false
+}
+
+// @concept: orphan-reaper
+// @concept: parked-state
+func testSweepExecutorDeadlinesSkipsParkedRow(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	q := d.Queue()
+
+	runID := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, reaperLivenessSup)
+
+	maxQuiet := 30
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return q.RegisterAsyncAck(ctx, tx, runID, "orphan-liveness-ack", time.Now().Add(-1*time.Hour), &maxQuiet, nil, "")
+	}); err != nil {
+		t.Fatalf("RegisterAsyncAck: %v", err)
+	}
+
+	if !listOrphanedClaimsContains(ctx, t, d, runID) {
+		t.Fatalf("precondition: a claimed run with a registered async ack and no recent progress must be a sweep candidate")
+	}
+
+	parkRun(ctx, t, d, persistence.ParkActiveInput{
+		NodeRunID: runID, ExpectedClaimedBy: reaperLivenessSup,
+		ParkedAt: time.Now(), ResumeAt: time.Now().Add(24 * time.Hour),
+		Reason: "await_callback",
+	})
+
+	if listOrphanedClaimsContains(ctx, t, d, runID) {
+		t.Fatalf("a parked run must be un-reapable: SweepExecutorDeadlines must not surface it via ListOrphanedClaims")
+	}
+}
+
 // @concept: claim-co-holdership
 func testCoHolderInsertIdempotent(t *testing.T, d persistence.Database) {
 	ctx := context.Background()

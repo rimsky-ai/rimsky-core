@@ -28,8 +28,7 @@ func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {
 	worker := fx.h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker node should exist")
 
-	require.True(t, fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 45*time.Second),
-		"late-bound worker did not reach fresh via proxy+agent dispatch")
+	fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
 	require.NoError(t, fx.h.InTx(func(tx persistence.Tx) error {
 		return fx.h.Persist.Instances().MarkTerminated(fx.h.Ctx, iid, tx)

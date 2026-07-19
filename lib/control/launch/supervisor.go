@@ -38,6 +38,78 @@ type supervisorYAMLCallback struct {
 	AdvertisePort int    `yaml:"advertise_port"`
 }
 
+type supervisorResolvedConfig struct {
+	SupervisorID        string
+	Concurrency         int
+	LivenessInterval    time.Duration
+	ClaimPollInterval   time.Duration
+	CallbackHost        string
+	CallbackPort        int
+	AdvertiseHost       string
+	AdvertiseHostSource string
+	AdvertisePort       int
+}
+
+func resolveSupervisorConfig(cfg supervisorYAMLConfig) (supervisorResolvedConfig, error) {
+	supID := cfg.SupervisorID
+	if supID == "" {
+		hostname, _ := os.Hostname()
+		supID = fmt.Sprintf("%s-%d", hostname, os.Getpid())
+	}
+
+	concurrency := cfg.Concurrency
+	if concurrency < 1 {
+		concurrency = 4
+	}
+	livenessMs := cfg.LivenessIntervalMs
+	if livenessMs < 100 {
+		livenessMs = 5000
+	}
+	claimPollMs := cfg.ClaimPollIntervalMs
+	if claimPollMs < 50 {
+		claimPollMs = 1000
+	}
+
+	callbackHost := cfg.Callback.Host
+	if callbackHost == "" {
+		callbackHost = "0.0.0.0"
+	}
+	callbackPort := cfg.Callback.Port
+
+	advertiseHost := os.Getenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST")
+	advertiseHostSource := "env:RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST"
+	if advertiseHost == "" {
+		advertiseHost = cfg.Callback.AdvertiseHost
+		advertiseHostSource = "yaml:callback.advertise_host"
+	}
+	if advertiseHost == "" {
+		advertiseHostSource = "unset"
+	}
+	advertisePort := 0
+	if s := os.Getenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return supervisorResolvedConfig{}, fmt.Errorf("invalid RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT %q: %w", s, err)
+		}
+		advertisePort = n
+	}
+	if advertisePort == 0 {
+		advertisePort = cfg.Callback.AdvertisePort
+	}
+
+	return supervisorResolvedConfig{
+		SupervisorID:        supID,
+		Concurrency:         concurrency,
+		LivenessInterval:    time.Duration(livenessMs) * time.Millisecond,
+		ClaimPollInterval:   time.Duration(claimPollMs) * time.Millisecond,
+		CallbackHost:        callbackHost,
+		CallbackPort:        callbackPort,
+		AdvertiseHost:       advertiseHost,
+		AdvertiseHostSource: advertiseHostSource,
+		AdvertisePort:       advertisePort,
+	}, nil
+}
+
 func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations) (StopFunc, <-chan error, error) {
 	cfgPath := os.Getenv("RIMSKY_SUPERVISOR_CONFIG")
 	if cfgPath == "" {
@@ -66,24 +138,13 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	storesCfg := rimskyCfg.ClaimProducers
 	namedLocksCfg := rimskyCfg.NamedLocks
 
-	supID := cfg.SupervisorID
-	if supID == "" {
-		hostname, _ := os.Hostname()
-		supID = fmt.Sprintf("%s-%d", hostname, os.Getpid())
+	resolved, err := resolveSupervisorConfig(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
+		return nil, nil, err
 	}
-
-	concurrency := cfg.Concurrency
-	if concurrency < 1 {
-		concurrency = 4
-	}
-	livenessMs := cfg.LivenessIntervalMs
-	if livenessMs < 100 {
-		livenessMs = 5000
-	}
-	claimPollMs := cfg.ClaimPollIntervalMs
-	if claimPollMs < 50 {
-		claimPollMs = 1000
-	}
+	supID := resolved.SupervisorID
+	concurrency := resolved.Concurrency
 
 	endpoints := map[string]executor.Endpoint{}
 	for name, e := range rimskyCfg.Executors.Executors {
@@ -94,34 +155,11 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		}
 	}
 
-	callbackHost := cfg.Callback.Host
-	if callbackHost == "" {
-		callbackHost = "0.0.0.0"
-	}
-	callbackPort := cfg.Callback.Port
-
-	advertiseHost := os.Getenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST")
-	advertiseHostSource := "env:RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST"
-	if advertiseHost == "" {
-		advertiseHost = cfg.Callback.AdvertiseHost
-		advertiseHostSource = "yaml:callback.advertise_host"
-	}
-	if advertiseHost == "" {
-		advertiseHostSource = "unset"
-	}
-	advertisePort := 0
-	if s := os.Getenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil {
-			advertisePort = n
-		} else {
-			err = fmt.Errorf("invalid RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT %q: %w", s, err)
-			fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
-			return nil, nil, err
-		}
-	}
-	if advertisePort == 0 {
-		advertisePort = cfg.Callback.AdvertisePort
-	}
+	callbackHost := resolved.CallbackHost
+	callbackPort := resolved.CallbackPort
+	advertiseHost := resolved.AdvertiseHost
+	advertiseHostSource := resolved.AdvertiseHostSource
+	advertisePort := resolved.AdvertisePort
 
 	if advertiseHost == "" || advertiseHost == "127.0.0.1" || advertiseHost == "localhost" || advertiseHost == "::1" {
 		log.Warn("callback advertise host is loopback or unset — executors on other hosts/containers cannot reach this supervisor",
@@ -156,13 +194,9 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	disc := observability.RunHandshake(ctx, observability.NewGRPCProber(), execPeers, nil, logger)
 
 	if bundledRegs != nil {
-		for name, ep := range bundledRegs.ExecutorAliases {
-			if _, exists := endpoints[name]; exists {
-				log.Info("bundled executor overridden by configured endpoint", "executor", name)
-				continue
-			}
-			resolver.Register(name, ep)
-		}
+		mergeBundledExecutorAliases(resolver, endpoints, bundledRegs.ExecutorAliases, func(name string) {
+			log.Info("bundled executor overridden by configured endpoint", "executor", name)
+		})
 		bundledRegs.AdvertiseInto(disc)
 	}
 
@@ -182,8 +216,8 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		Clock:                       shared.SystemClock{},
 		Logger:                      log,
 		Concurrency:                 concurrency,
-		LivenessInterval:            time.Duration(livenessMs) * time.Millisecond,
-		ClaimPollInterval:           time.Duration(claimPollMs) * time.Millisecond,
+		LivenessInterval:            resolved.LivenessInterval,
+		ClaimPollInterval:           resolved.ClaimPollInterval,
 		Resolver:                    resolver,
 		ClaimProducers:              storesCfg,
 		NamedLocks:                  namedLocksCfg,
@@ -239,6 +273,18 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		return firstErr
 	}
 	return stop, reporter.ch, nil
+}
+
+func mergeBundledExecutorAliases(resolver *executor.StaticResolver, configured map[string]executor.Endpoint, bundled map[string]executor.Endpoint, onOverride func(name string)) {
+	for name, ep := range bundled {
+		if _, exists := configured[name]; exists {
+			if onOverride != nil {
+				onOverride(name)
+			}
+			continue
+		}
+		resolver.Register(name, ep)
+	}
 }
 
 func loadSupervisorYAML(path string) (supervisorYAMLConfig, error) {

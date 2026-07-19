@@ -15,10 +15,36 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
+
+func countTerminalSuccessEvents(t *testing.T, h *scenario.Harness, nodeID shared.UUID) int {
+	t.Helper()
+	var evs persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nodeID},
+			persistence.ListPagination{Limit: 500}, tx)
+		evs = r
+		return err
+	}))
+	n := 0
+	for _, e := range evs.Events {
+		if e.KindRaw == "terminal/success" {
+			n++
+		}
+	}
+	return n
+}
+
+func waitForTerminalSuccessCount(t *testing.T, h *scenario.Harness, nodeID shared.UUID, want int) {
+	t.Helper()
+	for countTerminalSuccessEvents(t, h, nodeID) < want {
+		time.Sleep(50 * time.Millisecond)
+	}
+}
 
 func TestPureCascadeNode(t *testing.T) {
 	t.Parallel()
@@ -43,28 +69,16 @@ func TestPureCascadeNode(t *testing.T) {
 	hub := h.FindNode(iid, "hub")
 	require.NotNil(t, hub)
 	h.PostInstanceMessage(iid, "test/wake/hub", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
-	require.True(t, h.WaitForNodeState(hub.ID, cascade.NodeStateFresh, 10*time.Second),
-		"hub did not reach fresh after the typed-message wake")
+	h.WaitForNodeState(hub.ID, cascade.NodeStateFresh)
+
+	round1Count := countTerminalSuccessEvents(t, h, hub.ID)
+	require.Equal(t, 1, round1Count, "round 1 must commit exactly one terminal/success signal")
 
 	h.PostInstanceMessage(iid, "test/wake/hub", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	require.True(t, h.WaitForNodeState(hub.ID, cascade.NodeStateFresh, 10*time.Second),
-		"hub did not return to fresh after invalidate")
+	waitForTerminalSuccessCount(t, h, hub.ID, round1Count+1)
+	h.WaitForNodeState(hub.ID, cascade.NodeStateFresh)
 
-	nid := hub.ID
-	var evs persistence.EventListResult
-	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid},
-			persistence.ListPagination{Limit: 500}, tx)
-		evs = r
-		return err
-	}))
-	var sawCommit bool
-	for _, e := range evs.Events {
-		if e.KindRaw == "terminal/success" {
-			sawCommit = true
-			break
-		}
-	}
-	require.True(t, sawCommit, "expected terminal/success signal event for pure-cascade transition")
+	require.Equal(t, round1Count+1, countTerminalSuccessEvents(t, h, hub.ID),
+		"the re-invalidate/re-cascade round must commit exactly one additional terminal/success signal (not zero, not duplicated)")
 }

@@ -14,18 +14,23 @@ import (
 )
 
 func checkTerminals(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
-	out := make([]CheckResult, 0, 4)
-	out = append(out, checkTerminalVerb(ctx, c, "Commit", func(id claimproducer.ClaimID, scope, addr []byte) error {
+	out := make([]CheckResult, 0, 6)
+	commit := func(id claimproducer.ClaimID, scope, addr []byte) error {
 		_, err := c.Commit(ctx, id, scope, addr)
 		return err
-	}))
-	out = append(out, checkTerminalVerb(ctx, c, "Abandon", func(id claimproducer.ClaimID, scope, addr []byte) error {
+	}
+	abandon := func(id claimproducer.ClaimID, scope, addr []byte) error {
 		return c.Abandon(ctx, id, scope, addr)
-	}))
-	out = append(out, checkTerminalVerb(ctx, c, "Release", func(id claimproducer.ClaimID, scope, addr []byte) error {
+	}
+	release := func(id claimproducer.ClaimID, scope, addr []byte) error {
 		return c.Release(ctx, id, scope, addr)
-	}))
-	out = append(out, checkTerminalIdempotency(ctx, c))
+	}
+	out = append(out, checkTerminalVerb(ctx, c, "Commit", commit))
+	out = append(out, checkTerminalVerb(ctx, c, "Abandon", abandon))
+	out = append(out, checkTerminalVerb(ctx, c, "Release", release))
+	out = append(out, checkTerminalIdempotency(ctx, c, "TerminalIdempotency", "Commit", commit))
+	out = append(out, checkTerminalIdempotency(ctx, c, "AbandonTerminalIdempotency", "Abandon", abandon))
+	out = append(out, checkTerminalIdempotency(ctx, c, "ReleaseTerminalIdempotency", "Release", release))
 	return out
 }
 
@@ -46,29 +51,28 @@ func checkTerminalVerb(ctx context.Context, c claimproducer.ClaimProducer, name 
 	return CheckResult{Name: name}
 }
 
-func checkTerminalIdempotency(ctx context.Context, c claimproducer.ClaimProducer) CheckResult {
-	const name = "TerminalIdempotency"
+func checkTerminalIdempotency(ctx context.Context, c claimproducer.ClaimProducer, rowName, verbName string, verb terminalFn) CheckResult {
 	claimID := claimproducer.ClaimID(uuid.New().String())
-	out, err := c.Open(ctx, claimID, terminalProbeSpec(name))
+	out, err := c.Open(ctx, claimID, terminalProbeSpec(rowName))
 	if err != nil {
-		return CheckResult{Name: name, Err: fmt.Errorf("Open for idempotency probe failed: %w", err)}
+		return CheckResult{Name: rowName, Err: fmt.Errorf("Open for idempotency probe failed: %w", err)}
 	}
 	if !out.Available {
-		return CheckResult{Name: name + "Skipped"}
+		return CheckResult{Name: rowName + "Skipped"}
 	}
 	scope, addr := out.Result.ClaimScope, out.Result.Address
-	if _, err := c.Commit(ctx, claimID, scope, addr); err != nil {
-		return CheckResult{Name: name, Err: fmt.Errorf("first Commit failed: %w", err)}
+	if err := verb(claimID, scope, addr); err != nil {
+		return CheckResult{Name: rowName, Err: fmt.Errorf("first %s failed: %w", verbName, err)}
 	}
-	if _, err := c.Commit(ctx, claimID, scope, addr); err != nil {
+	if err := verb(claimID, scope, addr); err != nil {
 		return CheckResult{
-			Name: name,
-			Err: fmt.Errorf("retried (duplicate) Commit on the same claim rejected with %v: "+
+			Name: rowName,
+			Err: fmt.Errorf("retried (duplicate) %s on the same claim rejected with %v: "+
 				"terminal verbs must be idempotent under retry so a lost-ack redelivery "+
-				"does not corrupt producer state", err),
+				"does not corrupt producer state", verbName, err),
 		}
 	}
-	return CheckResult{Name: name}
+	return CheckResult{Name: rowName}
 }
 
 func terminalProbeSpec(probe string) claimproducer.ClaimSpec {

@@ -454,6 +454,28 @@ func TestSubscribe_NormalizesLeadingSlash(t *testing.T) {
 	}
 }
 
+func TestSubscribeThenListSubscriptions_RoundTripsResolvedConfig(t *testing.T) {
+	router := chi.NewRouter()
+	s := NewSensorService("", router, noopLogger{})
+	raw, _ := json.Marshal(map[string]any{"path_prefix": "/wh/abc", "auth": map[string]any{"mode": "none"}})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "webhook", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := s.ListSubscriptions(context.Background(), &emptypb.Empty{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Subscriptions) != 1 {
+		t.Fatalf("subscriptions: %+v", resp.Subscriptions)
+	}
+	if got := resp.Subscriptions[0].GetResolvedConfig(); string(got) != string(raw) {
+		t.Errorf("resolved_config=%s, want %s", got, raw)
+	}
+}
+
 func TestSubscribe_RejectsBadKind(t *testing.T) {
 	router := chi.NewRouter()
 	s := NewSensorService("", router, noopLogger{})
@@ -565,6 +587,39 @@ func TestIdempotencyHeader_FailedPostAllowsRetry(t *testing.T) {
 	defer mu.Unlock()
 	if pushed != 1 {
 		t.Errorf("pushed: %d (want exactly 1: retry delivers, duplicate dedups)", pushed)
+	}
+}
+
+func TestIdempotencyHeader_ComposesSubIDWithIncomingHeader(t *testing.T) {
+	var gotIdem string
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIdem = r.Header.Get("Idempotency-Key")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	router := chi.NewRouter()
+	s := NewSensorService(rimsky.URL, router, noopLogger{})
+	cfg := map[string]any{"path_prefix": "/wh/idem-compose", "idempotency_header": "X-Idem", "auth": map[string]any{"mode": "none"}}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", Kind: "webhook", ResolvedConfig: raw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/idem-compose", bytes.NewReader([]byte(`{"event":"x"}`)))
+	req.Header.Set("X-Idem", "incoming-42")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if want := "w1+incoming-42"; gotIdem != want {
+		t.Errorf("Idempotency-Key = %q, want %q (sub id + incoming idempotency header)", gotIdem, want)
 	}
 }
 

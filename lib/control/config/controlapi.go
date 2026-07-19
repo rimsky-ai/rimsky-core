@@ -24,6 +24,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
@@ -118,13 +119,9 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}
 	if cfg.Bundled != nil {
 		obsLog := slogLoggerFor(cfg.Logger)
-		for name, producer := range cfg.Bundled.ClaimProducerClients() {
-			if _, exists := registry.Get(name); exists {
-				obsLog.Info("bundled claim producer overridden by configured endpoint", "producer", name)
-				continue
-			}
-			registry.Add(name, producer)
-		}
+		mergeBundledClaimProducers(registry, cfg.Bundled.ClaimProducerClients(), func(name string) {
+			obsLog.Info("bundled claim producer overridden by configured endpoint", "producer", name)
+		})
 	}
 	lifecycleReg, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors)
 	if err != nil {
@@ -150,15 +147,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		}
 	}
 	if cfg.Bundled != nil {
-		for name, ep := range cfg.Bundled.ExecutorAliases {
-			if _, exists := executorsByName[name]; exists {
-				continue
-			}
-			executorsByName[name] = controlapi.ExecutorEntry{
-				Transport: ep.Transport,
-				Endpoint:  ep.URL,
-			}
-		}
+		mergeBundledExecutorEntries(executorsByName, cfg.Bundled.ExecutorAliases)
 	}
 	execPeers := make([]observability.PeerSpec, 0, len(cfg.Executors.Executors))
 	for name, e := range cfg.Executors.Executors {
@@ -322,6 +311,18 @@ func buildKindAliases() *node.KindAliasMap {
 		panic(fmt.Sprintf("controlapi: build kind aliases: %v", err))
 	}
 	return m
+}
+
+func mergeBundledExecutorEntries(configured map[string]controlapi.ExecutorEntry, bundled map[string]executor.Endpoint) {
+	for name, ep := range bundled {
+		if _, exists := configured[name]; exists {
+			continue
+		}
+		configured[name] = controlapi.ExecutorEntry{
+			Transport: ep.Transport,
+			Endpoint:  ep.URL,
+		}
+	}
 }
 
 func slogLoggerFor(l shared.Logger) *slog.Logger {

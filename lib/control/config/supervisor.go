@@ -118,13 +118,9 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		if logger == nil {
 			logger = shared.SilentLogger{}
 		}
-		for name, producer := range cfg.Bundled.ClaimProducerClients() {
-			if _, exists := registry.Get(name); exists {
-				logger.Info("bundled claim producer overridden by configured endpoint", "producer", name)
-				continue
-			}
-			registry.Add(name, producer)
-		}
+		mergeBundledClaimProducers(registry, cfg.Bundled.ClaimProducerClients(), func(name string) {
+			logger.Info("bundled claim producer overridden by configured endpoint", "producer", name)
+		})
 		merged := make(map[string]executor.InProcessHandler, len(cfg.ExtraInprocHandlers)+len(cfg.Bundled.ExecutorHandlers))
 		for url, h := range cfg.ExtraInprocHandlers {
 			merged[url] = h

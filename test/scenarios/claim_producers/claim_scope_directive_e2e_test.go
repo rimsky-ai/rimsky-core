@@ -53,8 +53,7 @@ func TestAcceptance_ClaimScopeEndToEnd(t *testing.T) {
 
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker node should exist")
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker did not reach fresh (acquisition + dispatch + terminal must succeed end to end)")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
 	var region any
 	var sawWorkerDispatch bool

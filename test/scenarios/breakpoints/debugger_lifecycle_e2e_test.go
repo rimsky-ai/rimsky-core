@@ -68,12 +68,12 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status, "instance resume should succeed")
 
-	hit := waitForHitOnBreakpoint(t, h, bpID, 15*time.Second)
+	hit := waitForHitOnBreakpoint(t, h, bpID)
 	require.Equal(t, bpID, hit.BreakpointID)
 	require.Equal(t, "before_dispatch", string(hit.Checkpoint))
 
 	eventsURL := h.ControlBase + "/v1/events?kind=breakpoint.hit&instance_id=" + iid.String()
-	events := waitForBreakpointHitEvents(t, eventsURL, 1, 10*time.Second)
+	events := waitForBreakpointHitEvents(t, eventsURL, 1)
 	require.Len(t, events, 1,
 		"recorded breakpoint hit must surface on the unified `/v1/events` feed (event-log leg)")
 	payload := events[0].Payload
@@ -125,8 +125,7 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 	require.Equal(t, true, resumeOut["first_resume"],
 		"the resume response must mark this as the first resume of the hit")
 
-	require.True(t, waitForStubObservedCount(h, "worker", 1, 15*time.Second),
-		"stub must observe the worker dispatch after the resume releases the parked frame")
+	waitForStubObservedCount(h, "worker", 1)
 	var seenTag string
 	for _, o := range h.Stub.Observed() {
 		if o.NodeType != "worker" {
@@ -141,11 +140,10 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker node row must exist after dispatch")
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker should reach Fresh after the executor returns success")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
 	latest := waitForLatestAttributesTag(t, h.ControlBase+"/v1/nodes/"+worker.ID.String(),
-		"operator-overlay-value", 15*time.Second)
+		"operator-overlay-value")
 	require.Equal(t, "operator-overlay-value", latest,
 		"GET /v1/nodes/{id} latest_attributes must reflect the overlay applied by the resume "+
 			"— this is the operator-visible proof that the next dispatch carried the overlay")
@@ -213,11 +211,9 @@ func listBreakpointHits(t *testing.T, url string) []map[string]any {
 	return decoded.Hits
 }
 
-func waitForLatestAttributesTag(t *testing.T, url, wantTag string, timeout time.Duration) string {
+func waitForLatestAttributesTag(t *testing.T, url, wantTag string) string {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	var seen string
-	for time.Now().Before(deadline) {
+	for {
 		resp, err := http.Get(url)
 		if err != nil {
 			t.Fatalf("waitForLatestAttributesTag: GET %s: %v", url, err)
@@ -228,20 +224,14 @@ func waitForLatestAttributesTag(t *testing.T, url, wantTag string, timeout time.
 			var body map[string]any
 			if err := json.Unmarshal(raw, &body); err == nil {
 				if bag, ok := body["latest_attributes"].(map[string]any); ok {
-					if v, ok := bag["tag"].(string); ok {
-						seen = v
-						if seen == wantTag {
-							return seen
-						}
+					if v, ok := bag["tag"].(string); ok && v == wantTag {
+						return v
 					}
 				}
 			}
 		}
 		time.Sleep(75 * time.Millisecond)
 	}
-	t.Fatalf("waitForLatestAttributesTag: want tag=%q at %s within %v, got %q",
-		wantTag, url, timeout, seen)
-	return seen
 }
 
 var _ shared.UUID

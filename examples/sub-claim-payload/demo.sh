@@ -47,7 +47,7 @@ fi
 echo "sub-claim-payload: instance ${INSTANCE_ID} created"
 
 K="scp-$( uuidgen 2>/dev/null || echo "${INSTANCE_KEY}" )"
-MESSAGE_BODY='{"type":"fanout_seed","payload":{"items":[{"key":"a","payload":{"v":1}},{"key":"b","payload":{"v":2}},{"key":"c","payload":{"v":3}}]}}'
+MESSAGE_BODY='{"type":"fanout/seed","payload":{"items":[{"key":"a","payload":{"v":1}},{"key":"b","payload":{"v":2}},{"key":"c","payload":{"v":3}}]}}'
 curl -sS -X POST -H 'Content-Type: application/json' \
     -H "Idempotency-Key: ${K}" \
     --data "${MESSAGE_BODY}" \

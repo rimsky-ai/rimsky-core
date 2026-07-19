@@ -45,31 +45,8 @@ func TestAlwaysPropagateResolution_NewShape(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
-		"a did not reach fresh")
-	if !h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second) {
-		var bLatestDbg *persistence.NodeRunLatest
-		var bRowDbg *persistence.NodeRow
-		_ = h.InTx(func(tx persistence.Tx) error {
-			l, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, b.ID)
-			bLatestDbg = l
-			if err != nil {
-				return err
-			}
-			r, err := h.Persist.Nodes().Get(h.Ctx, b.ID, tx)
-			bRowDbg = r
-			return err
-		})
-		var stateStr string
-		if bLatestDbg != nil {
-			stateStr = string(bLatestDbg.State)
-		}
-		nodeType := ""
-		if bRowDbg != nil {
-			nodeType = bRowDbg.NodeType
-		}
-		t.Fatalf("b did not reach fresh — subscription without a when: predicate should have cascaded despite changed=false; b state=%v node_type=%v", stateStr, nodeType)
-	}
+	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
 
 	var aLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -114,10 +91,8 @@ func TestNeverPropagateResolution_NewShape(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
-		"a did not reach fresh")
-	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
-		"b did not reach fresh — when: payload.changed should fire on changed=true")
+	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
 
 	var aLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -157,8 +132,7 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
-		"a did not reach fresh")
+	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
 	time.Sleep(2 * time.Second)
 
 	var aLatest, bLatest *persistence.NodeRunLatest
@@ -215,8 +189,7 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFailed, 30*time.Second),
-		"a should land in failed")
+	h.WaitForNodeState(a.ID, cascade.NodeStateFailed)
 	time.Sleep(2 * time.Second)
 
 	var aLatest, bLatest *persistence.NodeRunLatest
@@ -271,8 +244,7 @@ func TestExecutorBlockedPassResolution_NewShape(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
-		"worker should record settling_signal_type=terminal/error/<class> under error_types: { executor_blocked: pass }")
+	waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/")
 	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
@@ -307,8 +279,7 @@ func TestExecutorErroredPassResolution_NewShape(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
-		"worker should record settling_signal_type=terminal/error/<class> under error_types: { any_class: pass }")
+	waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/")
 	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
@@ -319,10 +290,9 @@ func TestExecutorErroredPassResolution_NewShape(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, wLatest.State, "worker should be fresh after pass")
 }
 
-func waitForSettlingSignalType(t *testing.T, h *scenario.Harness, nodeID shared.UUID, want string, timeout time.Duration) bool {
+func waitForSettlingSignalType(t *testing.T, h *scenario.Harness, nodeID shared.UUID, want string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var latest *persistence.NodeRunLatest
 		_ = h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, nodeID)
@@ -330,17 +300,15 @@ func waitForSettlingSignalType(t *testing.T, h *scenario.Harness, nodeID shared.
 			return err
 		})
 		if latest != nil && latest.SettlingSignalType != nil && *latest.SettlingSignalType == want {
-			return true
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }
 
-func waitForSettlingSignalTypePrefix(t *testing.T, h *scenario.Harness, nodeID shared.UUID, prefix string, timeout time.Duration) bool {
+func waitForSettlingSignalTypePrefix(t *testing.T, h *scenario.Harness, nodeID shared.UUID, prefix string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var latest *persistence.NodeRunLatest
 		_ = h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, nodeID)
@@ -348,11 +316,10 @@ func waitForSettlingSignalTypePrefix(t *testing.T, h *scenario.Harness, nodeID s
 			return err
 		})
 		if latest != nil && latest.SettlingSignalType != nil && strings.HasPrefix(*latest.SettlingSignalType, prefix) {
-			return true
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }
 
 func TestPureCascadeOutcomeColumn(t *testing.T) {
@@ -376,8 +343,7 @@ func TestPureCascadeOutcomeColumn(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, p)
 
-	require.True(t, h.WaitForNodeState(p.ID, cascade.NodeStateFresh, 30*time.Second),
-		"pure-cascade node p did not reach fresh")
+	h.WaitForNodeState(p.ID, cascade.NodeStateFresh)
 
 	var pLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

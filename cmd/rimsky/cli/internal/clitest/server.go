@@ -723,6 +723,24 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var since, until *time.Time
+	if v := q.Get("since"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid since (RFC3339 required)"})
+			return
+		}
+		since = &t
+	}
+	if v := q.Get("until"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid until (RFC3339 required)"})
+			return
+		}
+		until = &t
+	}
+
 	cursor := q.Get("cursor")
 	var (
 		cursorOccurred time.Time
@@ -740,7 +758,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		cursorOccurred, cursorID, hasCursor = oc, id, true
 	}
 
-	events := s.State.EventsPage(instanceID, cursorOccurred, cursorID, hasCursor, limit)
+	events := s.State.EventsPage(instanceID, since, until, cursorOccurred, cursorID, hasCursor, limit)
 
 	nextCursor := ""
 	if len(events) == limit && len(events) > 0 {

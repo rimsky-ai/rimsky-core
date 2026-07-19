@@ -9,11 +9,11 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
@@ -110,12 +110,7 @@ func TestCascadeTwoNodeBackedgeInFrame(t *testing.T) {
 	doneSinkNode := h.FindNode(iid, "done_sink")
 	require.NotNil(t, doneSinkNode, "done_sink missing")
 
-	require.True(t,
-		h.WaitForNodeState(doneSinkNode.ID, cascade.NodeStateFresh, 60*time.Second),
-		"done_sink never reached fresh — ping was not re-dispatched on pong's "+
-			"terminal/success back-edge (the cascade walker dropped the back-edge "+
-			"to an already-completed receiver, contradicting "+
-			"decision:walker-rule-per-sender-node)")
+	h.WaitForNodeState(doneSinkNode.ID, cascade.NodeStateFresh)
 
 	var pingLoopCount, pingDoneCount int
 	h.QueryRowSQL(`
@@ -146,4 +141,35 @@ func TestCascadeTwoNodeBackedgeInFrame(t *testing.T) {
 		pong.Count())
 	require.Equal(t, int64(1), doneSink.Count(),
 		"done_sink invocations: got %d, want 1", doneSink.Count())
+
+	var instanceFrameCount int
+	h.QueryRowSQL(`SELECT count(*) FROM rimsky_frames WHERE instance_id = $1`,
+		[]any{iid}, &instanceFrameCount)
+	require.Equal(t, 1, instanceFrameCount,
+		"exactly one frame must carry the entire back-edge cycle; got %d frames for the instance "+
+			"(a successor round opening a new frame violates the intra-frame invariant)",
+		instanceFrameCount)
+
+	var pingFrameIDs []shared.UUID
+	h.QuerySQL(`
+		SELECT frame_id FROM rimsky_node_runs
+		 WHERE node_id = $1
+		 ORDER BY sequence ASC`,
+		[]any{pingNode.ID},
+		func(scan func(...any) error) error {
+			var fid shared.UUID
+			if err := scan(&fid); err != nil {
+				return err
+			}
+			pingFrameIDs = append(pingFrameIDs, fid)
+			return nil
+		})
+	require.Len(t, pingFrameIDs, 2,
+		"ping must have exactly two node-runs (round 1 off starter, round 2 off pong's back-edge); got %d",
+		len(pingFrameIDs))
+	require.Equal(t, pingFrameIDs[0], pingFrameIDs[1],
+		"both of ping's dispatches must carry the same frame_id — round 1 frame_id=%s, round 2 (the "+
+			"back-edge redispatch) frame_id=%s; a differing frame_id means the successor round opened a "+
+			"new frame instead of appending to the current frame's queue",
+		pingFrameIDs[0], pingFrameIDs[1])
 }

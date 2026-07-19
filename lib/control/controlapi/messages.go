@@ -147,9 +147,6 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			if inst == nil {
 				return shared.ErrInstanceNotFound
 			}
-			if inst.TerminatedAt != nil {
-				return errInstanceTerminated
-			}
 			// @concept: message-schema
 			tpl, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
 			if err != nil {
@@ -194,9 +191,6 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				sender = row.PublisherName
 				senderSubject = ""
 			}
-			if isDryRun {
-				return errDryRunOK
-			}
 			dedupRow, inserted, err := deps.Persist.MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
 				InstanceID:     instUUID,
 				SenderKind:     dedupSenderKind(senderKind, ident),
@@ -212,6 +206,12 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				finalMessageID = dedupRow.MessageID
 				replayed = true
 				return nil
+			}
+			if inst.TerminatedAt != nil {
+				return errInstanceTerminated
+			}
+			if isDryRun {
+				return errDryRunOK
 			}
 			enqueueReq := persistence.EnqueueMessageRequest{
 				ID:         msgID,

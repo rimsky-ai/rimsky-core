@@ -63,8 +63,7 @@ func TestBreakpointExpiry(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker should reach Fresh after the breakpoint expired (no pause)")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	var hits []persistence.BreakpointHitRow
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {

@@ -12,12 +12,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -82,12 +80,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 	workerNode := h.FindNode(iid, "worker")
 	require.NotNil(t, workerNode,
 		"after deploy, POST /v1/instances must materialize the template's worker node")
-	require.True(t, h.WaitForNodeState(workerNode.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker node must reach the terminal `fresh` state via the real supervisor "+
-			"dispatch path — the `deployed-vs-undeployed state is recorded but not "+
-			"gated on at instance creation` falsifier requires that the supervisor "+
-			"actually drives the instance once deployed (not just that the row was "+
-			"inserted)")
+	h.WaitForNodeState(workerNode.ID, cascade.NodeStateFresh)
 
 	deleteWhileDeployedResp := doRequest(t, http.MethodDelete,
 		h.ControlBase+"/v1/templates/"+templateHash, nil)
@@ -102,9 +95,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 	require.Equal(t, http.StatusOK, terminateResp.status,
 		"POST /v1/instances/{id}/terminate must succeed (we need active=0 to "+
 			"undeploy): %s", terminateResp.bodyStr())
-	require.True(t, waitForInstanceTerminatedLifecycle(t, h, iid, 30*time.Second),
-		"instance must reach terminal (terminated_at set) before undeploy will "+
-			"succeed — the undeploy handler refuses when active > 0")
+	waitForInstanceTerminated(t, h, iid)
 
 	undeployResp := postJSON(t, h.ControlBase+"/v1/templates/"+templateHash+"/undeploy",
 		map[string]any{})
@@ -174,22 +165,6 @@ func listTemplateCount(t *testing.T, base string) int {
 		return 0
 	}
 	return len(templates)
-}
-
-func waitForInstanceTerminatedLifecycle(t *testing.T, h *scenario.Harness, iid shared.UUID, timeout time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		var terminatedAt *time.Time
-		h.QueryRowSQL(
-			`SELECT terminated_at FROM rimsky_instances WHERE id = $1`,
-			[]any{iid}, &terminatedAt)
-		if terminatedAt != nil {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return false
 }
 
 type jsonResp struct {

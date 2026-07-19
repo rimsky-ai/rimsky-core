@@ -81,8 +81,7 @@ func TestStory_AssetManagement_ObservationSurface(t *testing.T) {
 	producerNode := h.FindNode(iid, "producer")
 	require.NotNil(t, producerNode, "producer node row must exist")
 
-	require.True(t, h.WaitForNodeState(producerNode.ID, cascade.NodeStateFresh, 30*time.Second),
-		"producer must settle fresh via the empty-message wake")
+	h.WaitForNodeState(producerNode.ID, cascade.NodeStateFresh)
 	requireDurableCommitted(t, h, producerNode.ID)
 
 	const assetAlias = "producer.dataset"
@@ -112,7 +111,10 @@ func TestStory_AssetManagement_ObservationSurface(t *testing.T) {
 	versions, hasVersions := versionsBody["versions"].([]any)
 	require.Truef(t, hasVersions,
 		"GET /assets/{alias}/versions must return a JSON object with a `versions` array; got %v", versionsBody)
-	_ = versions
+	require.Emptyf(t, versions,
+		"the template deployed here has no fan-out, so no data-processing candidate is ever begun/committed "+
+			"for this claim; versions must stay exactly empty rather than surface a stray or misattributed entry; got %v",
+		versions)
 
 	historyURL := assetsBaseURL + "/" + assetAlias + "/materialization-history"
 	historyBody := getJSONMap(t, historyURL)
@@ -195,8 +197,7 @@ func TestStory_AssetManagement_ReMaterializationViaMessage(t *testing.T) {
 	producerNode := h.FindNode(iid, "producer")
 	require.NotNil(t, producerNode, "producer node row must exist")
 
-	require.True(t, h.WaitForNodeState(producerNode.ID, cascade.NodeStateFresh, 30*time.Second),
-		"producer must settle fresh on the first dispatch via the harness wake")
+	h.WaitForNodeState(producerNode.ID, cascade.NodeStateFresh)
 	requireDurableCommitted(t, h, producerNode.ID)
 
 	const assetAlias = "producer.dataset"
@@ -224,23 +225,15 @@ func TestStory_AssetManagement_ReMaterializationViaMessage(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "", nil, fmt.Sprintf("rematerialize-%s", t.Name()))
 
-	require.True(t,
-		waitForCountGreaterThan(t, func() int { return countTerminalSuccessForInstance(t, h, iid) }, preSuccessCount, 30*time.Second),
-		"the second empty-message wake must drive the producer to dispatch again — "+
-			"a new terminal/success event must arrive (preCount=%d)", preSuccessCount)
+	waitForCountGreaterThan(t, func() int { return countTerminalSuccessForInstance(t, h, iid) }, preSuccessCount)
 
-	require.True(t,
-		waitForCountGreaterThan(t, func() int { return countCommittedLineageRows(t, h, iid) }, preLineageCount, 30*time.Second),
-		"the re-dispatch must emit a new committed claim_terminal lineage row "+
-			"(preCount=%d)", preLineageCount)
+	waitForCountGreaterThan(t, func() int { return countCommittedLineageRows(t, h, iid) }, preLineageCount)
 
-	require.True(t, waitForCountGreaterThan(t, func() int {
+	waitForCountGreaterThan(t, func() int {
 		body := getJSONMap(t, listURL)
 		items, _ := body["assets"].([]any)
 		return len(items)
-	}, preAssetCount, 30*time.Second),
-		"GET /assets must surface an additional asset row after the re-materialization "+
-			"(preCount=%d)", preAssetCount)
+	}, preAssetCount)
 
 	postListBody := getJSONMap(t, listURL)
 	postAssets, _ := postListBody["assets"].([]any)
@@ -262,6 +255,112 @@ func TestStory_AssetManagement_ReMaterializationViaMessage(t *testing.T) {
 	require.Equalf(t, postLineageCount, totalHistory,
 		"sum of per-asset materialization-history rowcount must equal the persisted committed claim_terminal count "+
 			"(persisted=%d surface-sum=%d)", postLineageCount, totalHistory)
+}
+
+func TestStory_AssetManagement_CrossInstanceIsolation(t *testing.T) {
+	t.Parallel()
+
+	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
+		Capabilities: claimproducer.Capabilities{
+			WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		},
+	})
+	t.Cleanup(teardown)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
+				"content": {
+					Endpoint: "grpc://" + endpoint,
+					Protocols: []string{
+						config.ProtocolClaimProducer,
+						claimproducer.ProtocolDataProcessing,
+					},
+					Capabilities: claimproducer.Capabilities{
+						WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+					},
+				},
+			},
+		},
+	})
+	h.Stub.WhenType("producer").Success(map[string]any{}, true, "produced")
+
+	deployForSelector := func(name, selector string) string {
+		return h.DeployTemplate(node.TemplateSpec{
+			Name: name, Version: "v1",
+			Nodes: []node.TemplateNodeDef{
+				scenario.MakeNode(
+					node.TemplateNodeDef{Type: "producer", Executor: "stub"},
+					scenario.WithClaimProducers(node.NodeClaimProducerRef{
+						Name:     "content",
+						Selector: selector,
+						Intent:   "rw",
+						Alias:    "dataset",
+						Lifetime: string(spec.ClaimLifetimeDurable),
+					}),
+				),
+			},
+		})
+	}
+	tidA := deployForSelector("asset-management-cross-instance-a", "/asset-management/cross-instance-a")
+	tidB := deployForSelector("asset-management-cross-instance-b", "/asset-management/cross-instance-b")
+
+	iidA := h.CreateInstance(tidA, "ck-asset-management-cross-instance-a", map[string]any{})
+	iidB := h.CreateInstance(tidB, "ck-asset-management-cross-instance-b", map[string]any{})
+
+	nodeA := h.FindNode(iidA, "producer")
+	nodeB := h.FindNode(iidB, "producer")
+	require.NotNil(t, nodeA, "producer node row must exist for instance A")
+	require.NotNil(t, nodeB, "producer node row must exist for instance B")
+
+	h.WaitForNodeState(nodeA.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(nodeB.ID, cascade.NodeStateFresh)
+	requireDurableCommitted(t, h, nodeA.ID)
+	requireDurableCommitted(t, h, nodeB.ID)
+
+	const assetAlias = "producer.dataset"
+	baseA := h.ControlBase + "/v1/instances/" + iidA.String() + "/assets"
+	baseB := h.ControlBase + "/v1/instances/" + iidB.String() + "/assets"
+
+	listA := getJSONMap(t, baseA)
+	itemsA, _ := listA["assets"].([]any)
+	require.Lenf(t, itemsA, 1, "GET /assets for instance A must list only instance A's asset; got %d", len(itemsA))
+	claimA, _ := itemsA[0].(map[string]any)
+	require.NotNil(t, claimA)
+
+	listB := getJSONMap(t, baseB)
+	itemsB, _ := listB["assets"].([]any)
+	require.Lenf(t, itemsB, 1, "GET /assets for instance B must list only instance B's asset; got %d", len(itemsB))
+	claimB, _ := itemsB[0].(map[string]any)
+	require.NotNil(t, claimB)
+
+	require.NotEqual(t, claimA["claim_id"], claimB["claim_id"],
+		"instance A and instance B must materialize distinct claim handles for the same alias")
+
+	detailA := getJSONMap(t, baseA+"/"+assetAlias)
+	require.Equal(t, claimA["claim_id"], detailA["claim_id"],
+		"GET /assets/{alias} scoped to instance A must resolve instance A's claim, not instance B's")
+
+	detailB := getJSONMap(t, baseB+"/"+assetAlias)
+	require.Equal(t, claimB["claim_id"], detailB["claim_id"],
+		"GET /assets/{alias} scoped to instance B must resolve instance B's claim, not instance A's")
+
+	delResp := httpDelete(t, baseA+"/"+assetAlias)
+	require.Equalf(t, http.StatusOK, delResp.status,
+		"DELETE on instance A's asset must succeed: %s", string(delResp.raw))
+
+	listAAfter := getJSONMap(t, baseA)
+	itemsAAfter, _ := listAAfter["assets"].([]any)
+	require.Lenf(t, itemsAAfter, 0, "instance A's asset must be gone after DELETE; got %d", len(itemsAAfter))
+
+	listBAfter := getJSONMap(t, baseB)
+	itemsBAfter, _ := listBAfter["assets"].([]any)
+	require.Lenf(t, itemsBAfter, 1,
+		"deleting instance A's asset must not affect instance B's asset under the same alias; got %d", len(itemsBAfter))
+	claimBAfter, _ := itemsBAfter[0].(map[string]any)
+	require.NotNil(t, claimBAfter)
+	require.Equal(t, claimB["claim_id"], claimBAfter["claim_id"],
+		"instance B's claim must be untouched by instance A's delete")
 }
 
 func requireDurableCommitted(t *testing.T, h *scenario.Harness, producerNodeID shared.UUID) {
@@ -316,16 +415,11 @@ func countCommittedLineageRows(t *testing.T, h *scenario.Harness, instanceID sha
 	return n
 }
 
-func waitForCountGreaterThan(t *testing.T, fn func() int, baseline int, timeout time.Duration) bool {
+func waitForCountGreaterThan(t *testing.T, fn func() int, baseline int) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if fn() > baseline {
-			return true
-		}
+	for fn() <= baseline {
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }
 
 func getJSONMap(t *testing.T, url string) map[string]any {

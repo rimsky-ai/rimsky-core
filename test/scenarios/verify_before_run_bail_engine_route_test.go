@@ -72,8 +72,7 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
-	require.True(t, h.WaitForDispatch(worker.ID, 10*time.Second),
-		"scheduler should enqueue the worker's dispatch row")
+	h.WaitForDispatch(worker.ID)
 
 	var nodeRunID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,

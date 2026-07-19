@@ -70,6 +70,14 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-signoff-missing")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+
+		// @story: claude-agent
+		errorClass, _ := waitTerminalErrorEventClaudeAgent(t, ep, nodeID, 30*time.Second)
+		if errorClass != "agent/signoff_unobtained" {
+			t.Fatalf("signoff-missing dispatch failed with error_class %q, want %q — "+
+				"a differently-caused failure would satisfy a bare 'failed' assertion undetected",
+				errorClass, "agent/signoff_unobtained")
+		}
 	})
 
 	t.Run("mcp server outside the operator allowlist is refused", func(t *testing.T) {
@@ -81,6 +89,28 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-mcp-refused")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+
+		// @story: claude-agent-mcp-servers-per-node
+		errorClass, errorPayload := waitTerminalErrorEventClaudeAgent(t, ep, nodeID, 30*time.Second)
+		if errorClass != "agent/attribute_invalid" {
+			t.Fatalf("mcp-refused dispatch failed with error_class %q, want %q", errorClass, "agent/attribute_invalid")
+		}
+		if got, _ := errorPayload["disallowed_mcp_server"].(string); got != "inline-bad" {
+			t.Fatalf("mcp-refused error_payload.disallowed_mcp_server = %q, want %q (error_payload=%v)",
+				got, "inline-bad", errorPayload)
+		}
+		if got, _ := errorPayload["instance_id"].(string); got != iid {
+			t.Fatalf("mcp-refused error_payload.instance_id = %q, want the dispatching instance %q (error_payload=%v)",
+				got, iid, errorPayload)
+		}
+		if got, _ := errorPayload["node_id"].(string); got != nodeID {
+			t.Fatalf("mcp-refused error_payload.node_id = %q, want the dispatching node %q (error_payload=%v)",
+				got, nodeID, errorPayload)
+		}
+		reason, _ := errorPayload["reason"].(string)
+		if !strings.Contains(reason, "inline-bad") {
+			t.Fatalf("mcp-refused error_payload.reason %q does not name the disallowed server %q", reason, "inline-bad")
+		}
 	})
 
 	t.Run("expose-env name outside the operator allowlist is refused", func(t *testing.T) {
@@ -92,6 +122,28 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-expose-env-refused")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+
+		// @story: claude-agent-expose-env-per-node
+		errorClass, errorPayload := waitTerminalErrorEventClaudeAgent(t, ep, nodeID, 30*time.Second)
+		if errorClass != "agent/attribute_invalid" {
+			t.Fatalf("expose-env-refused dispatch failed with error_class %q, want %q", errorClass, "agent/attribute_invalid")
+		}
+		if got, _ := errorPayload["disallowed_env_var"].(string); got != "FORBIDDEN_SECRET" {
+			t.Fatalf("expose-env-refused error_payload.disallowed_env_var = %q, want %q (error_payload=%v)",
+				got, "FORBIDDEN_SECRET", errorPayload)
+		}
+		if got, _ := errorPayload["instance_id"].(string); got != iid {
+			t.Fatalf("expose-env-refused error_payload.instance_id = %q, want the dispatching instance %q (error_payload=%v)",
+				got, iid, errorPayload)
+		}
+		if got, _ := errorPayload["node_id"].(string); got != nodeID {
+			t.Fatalf("expose-env-refused error_payload.node_id = %q, want the dispatching node %q (error_payload=%v)",
+				got, nodeID, errorPayload)
+		}
+		reason, _ := errorPayload["reason"].(string)
+		if !strings.Contains(reason, "FORBIDDEN_SECRET") {
+			t.Fatalf("expose-env-refused error_payload.reason %q does not name the disallowed env var %q", reason, "FORBIDDEN_SECRET")
+		}
 	})
 
 	t.Run("upstream rate-limit (stderr + non-zero exit) parks the node as snooze", func(t *testing.T) {
@@ -356,6 +408,69 @@ func hasWorkStartedEvent(t *testing.T, ep harness.RimskyEndpoint, nodeID string)
 		}
 	}
 	return false
+}
+
+func waitTerminalErrorEventClaudeAgent(
+	t *testing.T,
+	ep harness.RimskyEndpoint,
+	nodeID string,
+	deadline time.Duration,
+) (errorClass string, errorPayload map[string]any) {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	for time.Now().Before(end) {
+		if class, payload, ok := latestTerminalErrorEventClaudeAgent(t, ep, nodeID); ok {
+			return class, payload
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("node %s: no terminal/error/* event observed within %v", nodeID, deadline)
+	return "", nil
+}
+
+func latestTerminalErrorEventClaudeAgent(
+	t *testing.T,
+	ep harness.RimskyEndpoint,
+	nodeID string,
+) (errorClass string, errorPayload map[string]any, ok bool) {
+	t.Helper()
+	status, raw := ep.GetJSON(t, "/v1/nodes/"+nodeID, "")
+	if status != http.StatusOK {
+		return "", nil, false
+	}
+	var nodeResp struct {
+		InstanceID string `json:"instance_id"`
+		NodeType   string `json:"node_type"`
+	}
+	if err := json.Unmarshal(raw, &nodeResp); err != nil || nodeResp.InstanceID == "" || nodeResp.NodeType == "" {
+		return "", nil, false
+	}
+	statusE, rawE := ep.GetJSON(t,
+		fmt.Sprintf("/v1/observability/nodes/%s/%s", nodeResp.InstanceID, nodeResp.NodeType), "")
+	if statusE != http.StatusOK {
+		return "", nil, false
+	}
+	var eResp struct {
+		Events []struct {
+			Kind    string         `json:"kind"`
+			Payload map[string]any `json:"payload"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(rawE, &eResp); err != nil {
+		return "", nil, false
+	}
+	for _, e := range eResp.Events {
+		if !strings.HasPrefix(e.Kind, "terminal/error/") {
+			continue
+		}
+		class, _ := e.Payload["error_class"].(string)
+		payload, _ := e.Payload["error_payload"].(map[string]any)
+		if inner, ok := payload["payload"].(map[string]any); ok {
+			payload = inner
+		}
+		return class, payload, true
+	}
+	return "", nil, false
 }
 
 func getLatestAttributesClaudeAgent(t *testing.T, ep harness.RimskyEndpoint, nodeID string) map[string]any {

@@ -180,14 +180,15 @@ func MakeClaimTerminalEvent(rec ClaimTerminalRecord, observedAt time.Time, names
 		Outputs:     []DatasetRef{output},
 		Facets: map[string]any{
 			"rimsky": map[string]any{
-				"sub_claim_handle_ids":   rec.SubClaimHandleIDs,
-				"frame_id":               rec.FrameID,
-				"outcome":                rec.Outcome,
-				"cause":                  rec.Cause,
-				"run_id":                 rec.RunID,
-				"node_id":                rec.NodeID,
-				"parent_claim_handle_id": rec.ParentClaimHandleID,
-				"producer_metadata":      rec.ProducerMetadata,
+				"sub_claim_handle_ids":      rec.SubClaimHandleIDs,
+				"frame_id":                  rec.FrameID,
+				"outcome":                   rec.Outcome,
+				"cause":                     rec.Cause,
+				"run_id":                    rec.RunID,
+				"node_id":                   rec.NodeID,
+				"parent_claim_handle_id":    rec.ParentClaimHandleID,
+				"producer_metadata":         rec.ProducerMetadata,
+				"terminating_supervisor_id": rec.TerminatingSupervisorID,
 			},
 		},
 	}

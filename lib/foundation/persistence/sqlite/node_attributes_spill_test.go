@@ -221,6 +221,42 @@ func TestSnapshotBagCarriesForwardSpilledBlobWithoutAliasing(t *testing.T) {
 	}
 }
 
+func TestNodeAttributesBackendMismatchFallsBackToInlineData(t *testing.T) {
+	t.Setenv(persistence.ProcessRoleEnv, "unified")
+	d := openSQLite(t)
+	ctx := context.Background()
+	rawDB := sqlitedrv.DBFromDatabase(d)
+
+	mem := persistence.NewMemoryBackend()
+	d.SetBlobBackend(mem, 256, time.Hour)
+
+	store := d.Tables()
+	attrs := store.NodeAttributes()
+	nodeID, runID := seedFixtureNodeAndRun(t, rawDB)
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return attrs.Upsert(ctx, runID, nodeID, map[string]any{"k": "v"}, tx)
+	}); err != nil {
+		t.Fatalf("Upsert seed: %v", err)
+	}
+
+	if _, err := rawDB.ExecContext(ctx,
+		`UPDATE rimsky_node_attributes
+		    SET data                 = ?,
+		        value_handle         = ?,
+		        value_handle_backend = ?
+		  WHERE node_run_id = ?`,
+		`{"inline_survivor":"yes"}`, "handle-under-other-backend", "other-backend", runID.String(),
+	); err != nil {
+		t.Fatalf("seed backend mismatch: %v", err)
+	}
+
+	got := readData(t, store, runID)
+	if got["inline_survivor"] != "yes" {
+		t.Fatalf("GetByRun with mismatched value_handle_backend = %+v; want inline data column fallback", got)
+	}
+}
+
 func runScopeOf(t *testing.T, rawDB *sql.DB, runID uuid.UUID) uuid.UUID {
 	t.Helper()
 	var scope string

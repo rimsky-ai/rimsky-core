@@ -18,18 +18,16 @@ func TestHandlerInvalidateOrthogonalToChanged(t *testing.T) {
 		"with sender `resolve: always_propagate` under the new model")
 }
 
-func waitForEventCount(t *testing.T, h *scenario.Harness, nodeID shared.UUID, kind string, want int, timeout time.Duration) bool {
+func waitForEventCount(t *testing.T, h *scenario.Harness, nodeID shared.UUID, kind string, want int) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var count int
 		_ = h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = $2`,
 			nodeID, kind).Scan(&count)
 		if count >= want {
-			return true
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }

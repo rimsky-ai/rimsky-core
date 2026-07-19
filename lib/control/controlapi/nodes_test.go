@@ -7,6 +7,8 @@ package controlapi
 import (
 	"context"
 	"net/http"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -17,6 +19,22 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
+
+// @decision: node-state-retired-from-operator-api
+func TestNodeResponse_NeverSynthesizesSingleValueState(t *testing.T) {
+	t.Parallel()
+	typ := reflect.TypeOf(nodeResponse{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if strings.EqualFold(f.Name, "state") {
+			t.Fatalf("nodeResponse must never carry a synthesized single-value state field; found %q", f.Name)
+		}
+		jsonTag := strings.Split(f.Tag.Get("json"), ",")[0]
+		if strings.EqualFold(jsonTag, "state") {
+			t.Fatalf("nodeResponse must never serialize a %q json key; field %q carries it", jsonTag, f.Name)
+		}
+	}
+}
 
 func TestGetNode_SettlingSignalType(t *testing.T) {
 	t.Parallel()

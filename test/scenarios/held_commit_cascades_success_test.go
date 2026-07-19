@@ -43,8 +43,9 @@ func TestHeldCommitCascadesSuccess(t *testing.T) {
 			},
 		},
 	})
+	inheritorGate := make(chan struct{})
 	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "acquired")
-	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "inheritor-done")
+	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "inheritor-done").HoldUntil(inheritorGate)
 	h.Stub.WhenType("observer").Success(map[string]any{}, true, "observer-saw-commit")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -85,10 +86,21 @@ func TestHeldCommitCascadesSuccess(t *testing.T) {
 	require.NotNil(t, inheritor)
 	require.NotNil(t, observer)
 
-	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
-		"acquirer should commit and reach fresh after the inheritor completes")
-	require.True(t, h.WaitForNodeState(inheritor.ID, cascade.NodeStateFresh, 30*time.Second),
-		"inheritor should reach fresh after dispatching with the inherited claim")
+	h.WaitForNodeState(acquirer.ID, cascade.NodeStateHeld)
+
+	var observerRunsAtHeld int
+	h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`,
+		[]any{observer.ID}, &observerRunsAtHeld)
+	require.Zero(t, observerRunsAtHeld,
+		"B must still be gated at the moment A settles held: the held-terminal cascade emit is filtered "+
+			"to subgraph members only and creates receiver runs atomically with A's held transition, so "+
+			"any observer node-run existing while A is held means the cascade fired to a non-member "+
+			"before auto-terminal commit; got %d run(s)", observerRunsAtHeld)
+
+	close(inheritorGate)
+
+	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(inheritor.ID, cascade.NodeStateFresh)
 
 	requireClaimHandleState(t, h, acquirer.ID, spec.ClaimHandleStateCommitted, true)
 
@@ -103,6 +115,47 @@ func TestHeldCommitCascadesSuccess(t *testing.T) {
 	require.Equal(t, "terminal/success", *acquirerLatest.SettlingSignalType,
 		"acquirer's settling_signal_type must be terminal/success (the auto-terminal commit signal)")
 
-	require.True(t, h.WaitForNodeState(observer.ID, cascade.NodeStateFresh, 30*time.Second),
-		"non-member observer should dispatch and reach fresh AFTER held work commits (deferred cascade path)")
+	h.WaitForNodeState(observer.ID, cascade.NodeStateFresh)
+	h.WaitForEventKind(observer.ID, "terminal/success")
+
+	var acquirerSuccessTimes []time.Time
+	h.QuerySQL(`
+		SELECT occurred_at FROM rimsky_events
+		 WHERE node_id = $1 AND kind = 'terminal/success'
+		 ORDER BY occurred_at ASC`,
+		[]any{acquirer.ID},
+		func(scan func(...any) error) error {
+			var ts time.Time
+			if err := scan(&ts); err != nil {
+				return err
+			}
+			acquirerSuccessTimes = append(acquirerSuccessTimes, ts)
+			return nil
+		})
+	require.Len(t, acquirerSuccessTimes, 2,
+		"acquirer must emit terminal/success exactly twice: once at the held moment (filtered to subgraph "+
+			"members only, so B never sees it) and once at the auto-terminal commit moment (unfiltered, so "+
+			"B sees it); got %d", len(acquirerSuccessTimes))
+
+	var observerSuccessTime time.Time
+	h.QueryRowSQL(`
+		SELECT occurred_at FROM rimsky_events
+		 WHERE node_id = $1 AND kind = 'terminal/success'
+		 ORDER BY occurred_at ASC LIMIT 1`,
+		[]any{observer.ID}, &observerSuccessTime)
+
+	require.False(t, observerSuccessTime.Before(acquirerSuccessTimes[1]),
+		"B must not dispatch before A's auto-terminal commit: B's terminal/success occurred at %s, "+
+			"which must not be earlier than A's second (commit-moment) terminal/success at %s — an "+
+			"earlier B settlement would mean B fired on A's held terminal instead of waiting for commit",
+		observerSuccessTime, acquirerSuccessTimes[1])
+
+	var inheritorRuns int
+	h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`,
+		[]any{inheritor.ID}, &inheritorRuns)
+	require.Equal(t, 1, inheritorRuns,
+		"inheritor (a subgraph member, and itself subscribed to acquirer's terminal/success) must dispatch "+
+			"exactly once from the held-moment member-filtered cascade: the commit-moment cascade is filtered "+
+			"to non-members only, so a member must never see it a second time; got %d run(s), which would mean "+
+			"the non-member filter leaked back to members and double-fired inheritor", inheritorRuns)
 }

@@ -94,6 +94,7 @@ type Watch struct {
 	PathPrefix        string
 	IdempotencyHeader string
 	MessageType       string
+	ResolvedConfig    []byte
 	Auth              *AuthConfig
 
 	mu              sync.Mutex
@@ -216,6 +217,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		PathPrefix:        cfg.PathPrefix,
 		IdempotencyHeader: cfg.IdempotencyHeader,
 		MessageType:       messageType,
+		ResolvedConfig:    append([]byte(nil), req.GetResolvedConfig()...),
 		Auth:              cfg.Auth,
 		StartedAt:         s.clock(),
 	}
@@ -419,6 +421,7 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			InstanceId:              w.InstanceID,
 			Kind:                    "webhook",
 			MessageType:             w.MessageType,
+			ResolvedConfig:          w.ResolvedConfig,
 			StartedAt:               timestamppb.New(w.StartedAt),
 		})
 	}

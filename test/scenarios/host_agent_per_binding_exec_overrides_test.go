@@ -60,16 +60,14 @@ func readExecLog(t *testing.T, path string) []execLogLine {
 	return out
 }
 
-func waitForExecLog(t *testing.T, path string, timeout time.Duration) (execLogLine, bool) {
+func waitForExecLog(t *testing.T, path string) execLogLine {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		if lines := readExecLog(t, path); len(lines) > 0 {
-			return lines[0], true
+			return lines[0]
 		}
 		time.Sleep(75 * time.Millisecond)
 	}
-	return execLogLine{}, false
 }
 
 func TestHostAgentPerBindingExecOverrides(t *testing.T) {
@@ -96,8 +94,7 @@ func TestHostAgentPerBindingExecOverrides(t *testing.T) {
 		worker := fx.h.FindNode(iid, "worker")
 		require.NotNil(t, worker, "worker node should exist")
 
-		line, ok := waitForExecLog(t, execLog, 45*time.Second)
-		require.True(t, ok, "the late-bound child never logged an Execute (dispatch did not reach it)")
+		line := waitForExecLog(t, execLog)
 
 		require.Equal(t, wantArgs, line.Args,
 			"the spawned child must run with the per-binding args (exec.Command(path, binding.args...))")
@@ -119,9 +116,7 @@ func TestHostAgentPerBindingExecOverrides(t *testing.T) {
 
 		const boundedBudget = 15 * time.Second
 		start := time.Now()
-		require.True(t, fx.waitForNodeEventKind(t, iid, "terminal/error/spawn_failed", boundedBudget),
-			"spawn_failed must arrive within the SHORT per-binding timeout (%s), not the 30s global default — "+
-				"a no-bind child should fail the readiness wait at the binding-specified 3s", boundedBudget)
+		fx.waitForNodeEventKind(t, iid, "terminal/error/spawn_failed")
 		require.Less(t, time.Since(start), boundedBudget,
 			"the per-binding timeout must bound the spawn wait below the global default")
 	})
@@ -135,10 +130,8 @@ func TestHostAgentPerBindingExecOverrides(t *testing.T) {
 		worker := fx.h.FindNode(iid, "worker")
 		require.NotNil(t, worker, "worker node should exist")
 
-		require.True(t, fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 45*time.Second),
-			"a binding with no overrides must still spawn and reach fresh (backward compatible)")
-		require.True(t, fx.waitForNodeEventKind(t, iid, "terminal/success", 10*time.Second),
-			"a binding with no overrides must still reach terminal/success")
+		fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
+		fx.waitForNodeEventKind(t, iid, "terminal/success")
 	})
 }
 

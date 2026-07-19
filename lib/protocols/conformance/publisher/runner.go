@@ -5,7 +5,9 @@
 package publisher
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -64,17 +66,39 @@ func checkCapabilities(ctx context.Context, c genv1.PublisherClient, kind string
 	if len(caps.GetSupportedKinds()) == 0 {
 		return CheckResult{Name: "Capabilities", Err: fmt.Errorf("supported_kinds is empty")}
 	}
-	found := false
+	var matched *genv1.PublisherKindCapability
 	for _, k := range caps.GetSupportedKinds() {
 		if k.GetKind() == kind {
-			found = true
+			matched = k
 			break
 		}
 	}
-	if !found {
+	if matched == nil {
 		return CheckResult{
 			Name: "Capabilities",
 			Err:  fmt.Errorf("kind %q not advertised in supported_kinds", kind),
+		}
+	}
+	protocolsHasPublisher := false
+	for _, p := range caps.GetProtocols() {
+		if p == "publisher" {
+			protocolsHasPublisher = true
+			break
+		}
+	}
+	if !protocolsHasPublisher {
+		return CheckResult{
+			Name: "Capabilities",
+			Err:  fmt.Errorf("protocols %v does not advertise the mix-in service protocol \"publisher\"", caps.GetProtocols()),
+		}
+	}
+	if schema := matched.GetConfigSchema(); len(schema) > 0 {
+		var probe any
+		if err := json.Unmarshal(schema, &probe); err != nil {
+			return CheckResult{
+				Name: "Capabilities",
+				Err:  fmt.Errorf("kind %q config_schema does not parse as JSON: %w", kind, err),
+			}
 		}
 	}
 	return CheckResult{Name: "Capabilities"}
@@ -110,6 +134,25 @@ func checkListSubscriptions(ctx context.Context, c genv1.PublisherClient, opts R
 				return CheckResult{
 					Name: "ListSubscriptions",
 					Err:  fmt.Errorf("subscription %q kind %q != expected %q", opts.SubscriptionID, w.GetKind(), opts.Kind),
+				}
+			}
+			if w.GetMessageType() != opts.MessageType {
+				return CheckResult{
+					Name: "ListSubscriptions",
+					Err:  fmt.Errorf("subscription %q message_type %q != expected %q", opts.SubscriptionID, w.GetMessageType(), opts.MessageType),
+				}
+			}
+			if !bytes.Equal(w.GetResolvedConfig(), opts.ResolvedConfig) {
+				return CheckResult{
+					Name: "ListSubscriptions",
+					Err: fmt.Errorf("subscription %q resolved_config %q != expected %q",
+						opts.SubscriptionID, string(w.GetResolvedConfig()), string(opts.ResolvedConfig)),
+				}
+			}
+			if w.GetStartedAt() == nil || w.GetStartedAt().AsTime().IsZero() {
+				return CheckResult{
+					Name: "ListSubscriptions",
+					Err:  fmt.Errorf("subscription %q started_at is unset; ListSubscriptions is the restart-reconciliation surface and must report when the subscription started", opts.SubscriptionID),
 				}
 			}
 			return CheckResult{Name: "ListSubscriptions"}

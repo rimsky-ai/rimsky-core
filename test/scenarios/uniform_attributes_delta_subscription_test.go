@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -45,10 +44,8 @@ func TestUniformAttributesDeltaSubscription_Success(t *testing.T) {
 	require.NotNil(t, p)
 	require.NotNil(t, hr)
 
-	require.True(t, h.WaitForNodeState(p.ID, cascade.NodeStateFresh, 15*time.Second),
-		"producer did not reach fresh")
-	require.True(t, h.WaitForNodeState(hr.ID, cascade.NodeStateFresh, 15*time.Second),
-		"handler should fire on producer's terminal/success carrying payload.attributes_delta.trigger=yes")
+	h.WaitForNodeState(p.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(hr.ID, cascade.NodeStateFresh)
 	require.True(t, handlerDispatched(h, "handler"),
 		"handler stub should have been dispatched at least once")
 }
@@ -83,10 +80,8 @@ func TestUniformAttributesDeltaSubscription_Error(t *testing.T) {
 	require.NotNil(t, p)
 	require.NotNil(t, hr)
 
-	require.True(t, h.WaitForNodeState(p.ID, cascade.NodeStateFailed, 15*time.Second),
-		"producer did not reach failed")
-	require.True(t, h.WaitForNodeState(hr.ID, cascade.NodeStateFresh, 15*time.Second),
-		"handler should fire on producer's terminal/error/* carrying payload.attributes_delta.trigger=yes")
+	h.WaitForNodeState(p.ID, cascade.NodeStateFailed)
+	h.WaitForNodeState(hr.ID, cascade.NodeStateFresh)
 	require.True(t, handlerDispatched(h, "handler"),
 		"handler stub should have been dispatched at least once")
 }

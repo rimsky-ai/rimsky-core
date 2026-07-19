@@ -24,14 +24,7 @@ func EmitTerminalSuccessAndDrainInTx(
 	senderFrameID foundationshared.UUID,
 	changeSummary string,
 ) error {
-	successSig := signalpkg.Signal{
-		Type: signalpkg.TypePath("terminal/success"),
-		Payload: map[string]any{
-			"changed":          false,
-			"attributes_delta": map[string]any{},
-			"change_summary":   changeSummary,
-		},
-	}
+	successSig := signalpkg.BuildTerminalSuccessSignal(false, map[string]any{}, changeSummary, nil)
 	if err := emitSignalInTxOnce(ctx, args, tx,
 		senderNodeID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, successSig); err != nil {
 		return err

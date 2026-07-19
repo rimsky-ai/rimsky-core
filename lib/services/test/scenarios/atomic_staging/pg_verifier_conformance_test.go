@@ -112,19 +112,17 @@ func TestPGFusedStore_ExecutorConformance(t *testing.T) {
 		t.Fatalf("%d/%d executor conformance scenarios failed (passed=%d skipped=%d)",
 			failed, len(results), passed, skipped)
 	}
-	if passed == 0 {
-		t.Fatalf("executor conformance: 0 scenarios passed (skipped=%d)", skipped)
+	if len(results) == 0 {
+		t.Fatal("executor conformance: no scenarios registered")
 	}
-	for _, want := range []string{"cancel", "unknown_ack_id"} {
-		found := false
-		for _, r := range results {
-			if r.Scenario == want && r.Passed {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected non-stub scenario %q to pass; results: %v", want, scenarioNames(results))
+	if skipped != len(results) {
+		t.Fatalf("executor conformance: expected every scenario to skip against the postgres-store "+
+			"verifier executor (not stub-mode conformant); passed=%d skipped=%d results=%v",
+			passed, skipped, scenarioNames(results))
+	}
+	for _, r := range results {
+		if r.Error != "stub mode required" {
+			t.Errorf("executor conformance %s: skipped for unexpected reason %q", r.Scenario, r.Error)
 		}
 	}
 }

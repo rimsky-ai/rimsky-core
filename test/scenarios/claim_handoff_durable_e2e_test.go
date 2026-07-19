@@ -49,8 +49,7 @@ func testClaimHandoffDurable_CrossDispatchPersistence(t *testing.T) {
 		selector:    "/durable-A",
 	})
 
-	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
-		"acquirer should settle fresh in D1")
+	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh)
 
 	requireDurableCommittedHandle(t, h, acquirer.ID)
 
@@ -90,10 +89,8 @@ func testClaimHandoffDurable_CrossDispatchHolds(t *testing.T) {
 		},
 	})
 
-	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
-		"acquirer should settle fresh in D1")
-	require.True(t, h.WaitForNodeState(coHolder.ID, cascade.NodeStateFresh, 30*time.Second),
-		"co-holder should settle fresh in D1 (substitution resolves on the live held claim)")
+	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(coHolder.ID, cascade.NodeStateFresh)
 
 	requireDurableCommittedHandle(t, h, acquirer.ID)
 
@@ -107,9 +104,8 @@ func testClaimHandoffDurable_CrossDispatchHolds(t *testing.T) {
 		"test/wake/"+coHolder.NodeType, nil,
 		fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	requireSecondRun(t, h, coHolder.ID, d1RunID, 30*time.Second)
-	require.True(t, h.WaitForNodeState(coHolder.ID, cascade.NodeStateFresh, 30*time.Second),
-		"co-holder should settle fresh again on D2 (no terminal/error/template_resolution_failed)")
+	requireSecondRun(t, h, coHolder.ID, d1RunID)
+	h.WaitForNodeState(coHolder.ID, cascade.NodeStateFresh)
 
 	d2RunID := latestRunIDForNode(t, h, coHolder.ID)
 	require.NotEqual(t, d1RunID, d2RunID,
@@ -162,8 +158,7 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 	durableIID := h.CreateInstance(durableTid, "ck-claim-handoff-durable-C-owner", map[string]any{})
 	durableAcq := h.FindNode(durableIID, "durable-acquirer")
 	require.NotNil(t, durableAcq)
-	require.True(t, h.WaitForNodeState(durableAcq.ID, cascade.NodeStateFresh, 30*time.Second),
-		"durable acquirer should settle fresh and Promote its claim to committed-durable")
+	h.WaitForNodeState(durableAcq.ID, cascade.NodeStateFresh)
 	requireDurableCommittedHandle(t, h, durableAcq.ID)
 
 	competingTid := h.DeployTemplate(node.TemplateSpec{
@@ -192,38 +187,7 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 	competingAcq := h.FindNode(competingIID, "competing-acquirer")
 	require.NotNil(t, competingAcq)
 
-	if !h.WaitForNodeState(competingAcq.ID, cascade.NodeStateFailed, 30*time.Second) {
-		var compLatest *persistence.NodeRunLatest
-		var owners []persistence.ClaimHandleRow
-		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, competingAcq.ID)
-			if err != nil {
-				return err
-			}
-			compLatest = r
-			rs, err := h.Persist.ClaimHandles().ListByProducerClaimScope(h.Ctx, "queue-store", tx)
-			if err != nil {
-				return err
-			}
-			owners = rs
-			return nil
-		}))
-		owSummary := make([]string, len(owners))
-		for i, ow := range owners {
-			owSummary[i] = string(ow.State) + "/" + string(ow.Lifetime) +
-				" scope=" + string(ow.ClaimScopeData)
-		}
-		var stateStr, sigStr string
-		if compLatest != nil {
-			stateStr = string(compLatest.State)
-			if compLatest.SettlingSignalType != nil {
-				sigStr = *compLatest.SettlingSignalType
-			}
-		}
-		t.Fatalf("competing acquirer must settle failed via acquire/unavailable while durable row occupies the scope; "+
-			"got state=%s settling_signal_type=%v; conflict-set holders=%v",
-			stateStr, sigStr, owSummary)
-	}
+	h.WaitForNodeState(competingAcq.ID, cascade.NodeStateFailed)
 
 	requireSettlingSignalTypePrefix(t, h, competingAcq.ID, "terminal/error/acquire/unavailable")
 
@@ -277,7 +241,7 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 	durableIID := h.CreateInstance(durableTid, "ck-claim-handoff-durable-D-owner", map[string]any{})
 	durableAcq := h.FindNode(durableIID, "durable-acquirer")
 	require.NotNil(t, durableAcq)
-	require.True(t, h.WaitForNodeState(durableAcq.ID, cascade.NodeStateFresh, 30*time.Second))
+	h.WaitForNodeState(durableAcq.ID, cascade.NodeStateFresh)
 	requireDurableCommittedHandle(t, h, durableAcq.ID)
 
 	competingTid := h.DeployTemplate(node.TemplateSpec{
@@ -306,8 +270,7 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 	competingAcq := h.FindNode(competingIID, "competing-acquirer")
 	require.NotNil(t, competingAcq)
 
-	require.True(t, h.WaitForNodeState(competingAcq.ID, cascade.NodeStateFailed, 30*time.Second),
-		"competing acquirer must initially fail with acquire/unavailable")
+	h.WaitForNodeState(competingAcq.ID, cascade.NodeStateFailed)
 
 	deleteAsset(t, h, durableIID, "durable-acquirer.asset")
 
@@ -317,23 +280,7 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 	thirdAcq := h.FindNode(thirdIID, "competing-acquirer")
 	require.NotNil(t, thirdAcq)
 
-	if !h.WaitForNodeState(thirdAcq.ID, cascade.NodeStateFresh, 30*time.Second) {
-		var thirdLatest *persistence.NodeRunLatest
-		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, thirdAcq.ID)
-			thirdLatest = r
-			return err
-		}))
-		var stateStr, sigStr string
-		if thirdLatest != nil {
-			stateStr = string(thirdLatest.State)
-			if thirdLatest.SettlingSignalType != nil {
-				sigStr = *thirdLatest.SettlingSignalType
-			}
-		}
-		t.Fatalf("fresh subsequent acquirer must settle fresh after the durable owner's asset is released; "+
-			"got state=%s settling_signal_type=%v", stateStr, sigStr)
-	}
+	h.WaitForNodeState(thirdAcq.ID, cascade.NodeStateFresh)
 }
 
 func testClaimHandoffDurable_InstanceTerminationRelease(t *testing.T) {
@@ -343,8 +290,7 @@ func testClaimHandoffDurable_InstanceTerminationRelease(t *testing.T) {
 		selector:    "/durable-E",
 	})
 
-	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
-		"acquirer should settle fresh and Promote its durable claim")
+	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh)
 	requireDurableCommittedHandle(t, h, acquirer.ID)
 
 	durableHandleID := readDurableClaimHandle(t, h, acquirer.ID).ID
@@ -352,8 +298,7 @@ func testClaimHandoffDurable_InstanceTerminationRelease(t *testing.T) {
 	instanceID := acquirer.InstanceID
 
 	terminateInstance(t, h, instanceID)
-	require.True(t, waitForInstanceTerminatedDurable(t, h, instanceID, 15*time.Second),
-		"POST /terminate must set terminated_at on the instance row")
+	waitForInstanceTerminated(t, h, instanceID)
 
 	deleteInstance(t, h, instanceID)
 
@@ -585,10 +530,9 @@ func requireInstanceGone(t *testing.T, h *scenario.Harness, instanceID shared.UU
 	}))
 }
 
-func requireSecondRun(t *testing.T, h *scenario.Harness, nodeID, prevRunID shared.UUID, timeout time.Duration) {
+func requireSecondRun(t *testing.T, h *scenario.Harness, nodeID, prevRunID shared.UUID) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var n int
 		require.NoError(t, h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND id <> $2`,
@@ -599,7 +543,6 @@ func requireSecondRun(t *testing.T, h *scenario.Harness, nodeID, prevRunID share
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	require.Fail(t, "no second run row appeared for node after invalidate")
 }
 
 func requireSubstitutedAddrEquals(t *testing.T, h *scenario.Harness, runID shared.UUID, key string, wantAddress json.RawMessage, msg string) {
@@ -681,20 +624,4 @@ func deleteInstance(t *testing.T, h *scenario.Harness, instanceID shared.UUID) {
 	require.NoError(t, json.Unmarshal(body, &out))
 	require.Equal(t, true, out["deleted"],
 		"DELETE response must report deleted=true")
-}
-
-func waitForInstanceTerminatedDurable(t *testing.T, h *scenario.Harness, iid shared.UUID, timeout time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		var terminatedAt *time.Time
-		h.QueryRowSQL(
-			`SELECT terminated_at FROM rimsky_instances WHERE id = $1`,
-			[]any{iid}, &terminatedAt)
-		if terminatedAt != nil {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return false
 }

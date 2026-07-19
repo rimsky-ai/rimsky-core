@@ -74,6 +74,21 @@ func TestWhoAmI_InvalidOrMissingKeyIsUnauthorizedInAuthenticatedMode(t *testing.
 	}
 }
 
+func TestWhoAmI_BadBearerRejectedEvenInAnonymousMode(t *testing.T) {
+	h := newUnseededAuthTestHarness(t)
+	srv := whoamiTestServer(t, h)
+
+	anonStatus, anonBody := getWhoami(t, srv.URL, "")
+	if anonStatus != http.StatusOK || anonBody["kind"] != "anonymous" {
+		t.Fatalf("harness precondition: got status=%d body=%v, want an anonymous-mode 200", anonStatus, anonBody)
+	}
+
+	if status, body := getWhoami(t, srv.URL, "rk_not-a-real-key"); status != http.StatusUnauthorized {
+		t.Fatalf("bad bearer in anonymous mode: got %d (body %v) want 401; "+
+			"a presented-but-invalid token must fail closed, never fall through to the anonymous admin identity", status, body)
+	}
+}
+
 func TestWhoAmI_AnonymousModeReportsAnonymous(t *testing.T) {
 	h := newUnseededAuthTestHarness(t)
 	srv := whoamiTestServer(t, h)

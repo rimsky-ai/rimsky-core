@@ -5,7 +5,6 @@
 package storetest
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"sync"
@@ -46,18 +45,24 @@ type fakeState struct {
 }
 
 type FakeCall struct {
-	Verb            string
-	ClaimID         claimproducer.ClaimID
-	Selector        string
-	Intent          claimproducer.Intent
-	Scope           []byte
-	Address         []byte
-	TemplateID      string
-	InstanceID      string
-	RunScopeID      string
-	ServiceBindings []byte
-	OwnerAPIKeyID   string
-	Sequence        int
+	Verb               string
+	ClaimID            claimproducer.ClaimID
+	Selector           string
+	Intent             claimproducer.Intent
+	Alias              string
+	Lifetime           string
+	Scope              []byte
+	Address            []byte
+	TemplateID         string
+	InstanceID         string
+	InstanceKey        string
+	Params             []byte
+	RunScopeID         string
+	TerminalReason     string
+	TerminatedAtUnixMs int64
+	ServiceBindings    []byte
+	OwnerAPIKeyID      string
+	Sequence           int
 }
 
 func NewFake(name string, caps claimproducer.Capabilities) *Fake {
@@ -86,12 +91,16 @@ func (f *Fake) Open(_ context.Context, claimID claimproducer.ClaimID, spec claim
 		ClaimID:    claimID,
 		Selector:   spec.Selector,
 		Intent:     spec.Intent,
+		Alias:      spec.Alias,
+		Lifetime:   spec.Lifetime,
 		TemplateID: spec.TemplateID,
 		InstanceID: spec.InstanceID,
+		RunScopeID: spec.RunScopeID,
 		Sequence:   nextFakeSequence(),
 	})
 	errFn := f.ErrorFunc
 	openFn := f.OpenFunc
+	caps := f.caps
 	f.mu.Unlock()
 
 	if errFn != nil {
@@ -104,9 +113,17 @@ func (f *Fake) Open(_ context.Context, claimID claimproducer.ClaimID, spec claim
 	}
 	addr, _ := json.Marshal(spec.Selector)
 	scope, _ := json.Marshal(spec.Selector)
+	var rws claimproducer.WriteSemantics
+	if len(caps.WriteSemanticsAllowed) > 0 {
+		rws = caps.WriteSemanticsAllowed[0]
+	}
 	outcome := claimproducer.OpenOutcome{
 		Available: true,
-		Result:    claimproducer.ClaimResult{Address: addr, ClaimScope: scope},
+		Result: claimproducer.ClaimResult{
+			Address:                addr,
+			ClaimScope:             scope,
+			RealizedWriteSemantics: rws,
+		},
 	}
 	f.mu.Lock()
 	f.state[claimID] = fakeState{scope: scope, address: addr}
@@ -214,19 +231,28 @@ func (f *Fake) OnInstanceCreated(_ context.Context, req locks.OnInstanceCreatedR
 		Verb:            "on_instance_created",
 		TemplateID:      req.TemplateHash,
 		InstanceID:      req.InstanceID,
+		InstanceKey:     req.InstanceKey,
+		Params:          cloneBytes(req.Params),
 		ServiceBindings: cloneBytes(req.ServiceBindings),
 		OwnerAPIKeyID:   req.OwnerAPIKeyID,
 	})
 }
 
 func (f *Fake) OnInstanceTerminated(_ context.Context, req locks.OnInstanceTerminatedRequest) error {
-	return f.recordLifecycle("on_instance_terminated", req.TemplateHash, req.InstanceID)
+	return f.recordLifecycleCall(FakeCall{
+		Verb:               "on_instance_terminated",
+		TemplateID:         req.TemplateHash,
+		InstanceID:         req.InstanceID,
+		TerminatedAtUnixMs: req.TerminatedAtUnixMs,
+	})
 }
 
 func (f *Fake) OnRunScopeTerminal(_ context.Context, req locks.OnRunScopeTerminalRequest) error {
 	return f.recordLifecycleCall(FakeCall{
-		Verb:       "on_run_scope_terminal",
-		RunScopeID: req.RunScopeID,
+		Verb:           "on_run_scope_terminal",
+		RunScopeID:     req.RunScopeID,
+		TerminalReason: req.TerminalReason,
+		InstanceID:     req.InstanceID,
 	})
 }
 
@@ -251,11 +277,15 @@ func (f *Fake) ScopesConflict(_ context.Context, a, b []byte) (bool, error) {
 		Sequence: nextFakeSequence(),
 	})
 	fn := f.ScopesConflictFunc
+	supportsScopesConflict := f.caps.SupportsScopesConflict
 	f.mu.Unlock()
-	if fn == nil {
-		return bytes.Equal(a, b), nil
+	if fn != nil {
+		return fn(a, b)
 	}
-	return fn(a, b)
+	if !supportsScopesConflict {
+		return false, claimproducer.ErrScopesConflictUnsupported
+	}
+	return locks.ClaimScopesByteEqual(a, b), nil
 }
 
 func (f *Fake) recordLifecycle(verb, templateID, instanceID string) error {

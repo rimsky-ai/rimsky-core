@@ -26,7 +26,7 @@ func TestActionRegistry_RegisterAndLookup(t *testing.T) {
 	r := NewActionRegistry()
 	if err := r.Register(ActionEntry{
 		Action:   "thing:read",
-		Routes:   []Route{{"GET", "/things"}},
+		Routes:   []Route{{Method: "GET", Path: "/things"}},
 		MCPTools: []string{"thing_list"},
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -48,16 +48,16 @@ func TestActionRegistry_RegisterAndLookup(t *testing.T) {
 
 func TestActionRegistry_RejectsDuplicates(t *testing.T) {
 	r := NewActionRegistry()
-	if err := r.Register(ActionEntry{Action: "a:read", Routes: []Route{{"GET", "/a"}}, MCPTools: []string{"a"}}); err != nil {
+	if err := r.Register(ActionEntry{Action: "a:read", Routes: []Route{{Method: "GET", Path: "/a"}}, MCPTools: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Register(ActionEntry{Action: "a:read", Routes: []Route{{"GET", "/x"}}}); err == nil {
+	if err := r.Register(ActionEntry{Action: "a:read", Routes: []Route{{Method: "GET", Path: "/x"}}}); err == nil {
 		t.Fatalf("expected duplicate-action error")
 	}
-	if err := r.Register(ActionEntry{Action: "b:read", Routes: []Route{{"GET", "/a"}}}); err == nil {
+	if err := r.Register(ActionEntry{Action: "b:read", Routes: []Route{{Method: "GET", Path: "/a"}}}); err == nil {
 		t.Fatalf("expected route-collision error")
 	}
-	if err := r.Register(ActionEntry{Action: "c:read", Routes: []Route{{"GET", "/c"}}, MCPTools: []string{"a"}}); err == nil {
+	if err := r.Register(ActionEntry{Action: "c:read", Routes: []Route{{Method: "GET", Path: "/c"}}, MCPTools: []string{"a"}}); err == nil {
 		t.Fatalf("expected tool-collision error")
 	}
 }
@@ -66,7 +66,7 @@ func TestValidateGrantScope_RejectsUnknownDimension(t *testing.T) {
 	r := NewActionRegistry()
 	if err := r.Register(ActionEntry{
 		Action:          "thing:register",
-		Routes:          []Route{{"POST", "/things"}},
+		Routes:          []Route{{Method: "POST", Path: "/things"}},
 		ScopeDimensions: []string{"thing_tag"},
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -87,7 +87,7 @@ func TestValidateGrantScope_RejectsScopeOnNonscopeableAction(t *testing.T) {
 	r := NewActionRegistry()
 	if err := r.Register(ActionEntry{
 		Action: "thing:read",
-		Routes: []Route{{"GET", "/things"}},
+		Routes: []Route{{Method: "GET", Path: "/things"}},
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestValidateGrantScope_AdmitsKnownDimension(t *testing.T) {
 	r := NewActionRegistry()
 	if err := r.Register(ActionEntry{
 		Action:          "thing:register",
-		Routes:          []Route{{"POST", "/things"}},
+		Routes:          []Route{{Method: "POST", Path: "/things"}},
 		ScopeDimensions: []string{"thing_tag"},
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -125,7 +125,7 @@ func TestValidateGrantScope_AdmitsEmptyScopeOnUnscopeable(t *testing.T) {
 	r := NewActionRegistry()
 	if err := r.Register(ActionEntry{
 		Action: "thing:read",
-		Routes: []Route{{"GET", "/things"}},
+		Routes: []Route{{Method: "GET", Path: "/things"}},
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestV1Registry_TemplateTagDimensionPopulated(t *testing.T) {
 func TestActionRegistry_RejectsAfterBuild(t *testing.T) {
 	r := NewActionRegistry()
 	r.Build()
-	if err := r.Register(ActionEntry{Action: "x:y", Routes: []Route{{"GET", "/x"}}}); err == nil {
+	if err := r.Register(ActionEntry{Action: "x:y", Routes: []Route{{Method: "GET", Path: "/x"}}}); err == nil {
 		t.Fatalf("expected post-build register error")
 	}
 }
@@ -287,11 +287,13 @@ func TestRegistryCoversRouter(t *testing.T) {
 		registerTagsRoutes(v1, deps)
 		registerInstancesRoutes(v1, deps)
 		registerBreakpointsRoutes(v1, deps)
+		registerDebugOverrideRoutes(v1, deps)
 		registerNodesRoutes(v1, deps)
 		registerEventsRoutes(v1, deps)
 		registerAuditRoutes(v1, deps)
 		registerClaimsRoutes(v1, deps)
 		registerMessagesRoutes(v1, deps)
+		registerFramesRoutes(v1, deps)
 		registerAssetsRoutes(v1, deps)
 		registerLineageRoutes(v1, deps)
 		registerAdminDiagnosticsRoutes(v1, deps)

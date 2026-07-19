@@ -178,8 +178,6 @@ func startMetricsServer(host, role string, metricsPort int, mreg *observability.
 	if metricsPort <= 0 {
 		return nil
 	}
-	metricsRouter := chi.NewRouter()
-	observability.MountMetrics(metricsRouter, mreg)
 	addr := fmt.Sprintf("%s:%d", host, metricsPort)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -189,8 +187,14 @@ func startMetricsServer(host, role string, metricsPort int, mreg *observability.
 		}
 		return nil
 	}
+	return serveMetrics(ln, role, mreg, log, report)
+}
+
+func serveMetrics(ln net.Listener, role string, mreg *observability.MetricsRegistry, log shared.Logger, report *failureReporter) *http.Server {
+	metricsRouter := chi.NewRouter()
+	observability.MountMetrics(metricsRouter, mreg)
 	srv := &http.Server{
-		Addr:              addr,
+		Addr:              ln.Addr().String(),
 		Handler:           metricsRouter,
 		ReadHeaderTimeout: 5 * time.Second,
 	}

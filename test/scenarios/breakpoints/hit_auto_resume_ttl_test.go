@@ -51,12 +51,11 @@ func TestHitAutoResumeTTL(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
+	hit := waitForHitOnBreakpoint(t, h, bpID)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not be called while paused at the breakpoint")
 
-	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
-		"executor should observe dispatch after the sweeper auto-resumes the stale hit")
+	waitForStubObservedCount(h, "worker", 1)
 
 	row := getHitRow(t, h, hit.ID)
 	require.NotNil(t, row)
@@ -70,6 +69,5 @@ func TestHitAutoResumeTTL(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker should reach Fresh after the auto-resume + executor terminal")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 }

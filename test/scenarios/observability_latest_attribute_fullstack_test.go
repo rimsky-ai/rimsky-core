@@ -57,8 +57,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	require.NotNil(t, w)
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
-	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh on first run")
+	h.WaitForNodeState(w.ID, cascade.NodeStateFresh)
 	firstRow := latestAttrRow(h, w.ID, h.GetMainRunScopeID(iid))
 	require.NotNil(t, firstRow, "first run should persist a node_attributes row")
 	firstRunID := firstRow.NodeRunID
@@ -97,7 +96,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 		"observability latest_attributes must equal the second run's GetLatestByNode bag")
 
 	pausedIID := createPausedInstanceLatestAttr(t, h, tid, "ck-latest-attr-paused")
-	pausedW := waitForNodeRow(t, h, pausedIID, "worker", 10*time.Second)
+	pausedW := waitForNodeRow(t, h, pausedIID, "worker")
 	require.Nil(t, latestAttrRow(h, pausedW.ID, shared.UUID(uuid.New())),
 		"never-executed node should have no node_attributes row for any scope (paused instance opens no frame, has no root RunScope)")
 
@@ -141,17 +140,14 @@ func createPausedInstanceLatestAttr(t *testing.T, h *scenario.Harness, templateH
 	return shared.UUID(id)
 }
 
-func waitForNodeRow(t *testing.T, h *scenario.Harness, instanceID shared.UUID, nodeType string, timeout time.Duration) *persistence.NodeRow {
+func waitForNodeRow(t *testing.T, h *scenario.Harness, instanceID shared.UUID, nodeType string) *persistence.NodeRow {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		if n := h.FindNode(instanceID, nodeType); n != nil {
 			return n
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("node %q never materialized for instance %s", nodeType, instanceID)
-	return nil
 }
 
 func getJSONMap(t *testing.T, url string) map[string]any {

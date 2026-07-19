@@ -21,13 +21,15 @@ func newFakeMessages() *fakeMessages {
 	return &fakeMessages{rows: make(map[shared.UUID]*persistence.MessageRow)}
 }
 
-type fakeInstancesForEnqueue struct{}
+type fakeInstancesForEnqueue struct {
+	queueModes map[shared.UUID]string
+}
 
 func (f *fakeInstancesForEnqueue) Create(context.Context, persistence.InstanceCreateInput, persistence.Tx) (persistence.InstanceRow, error) {
 	return persistence.InstanceRow{}, nil
 }
-func (f *fakeInstancesForEnqueue) Get(context.Context, shared.UUID, persistence.Tx) (*persistence.InstanceRow, error) {
-	return nil, nil
+func (f *fakeInstancesForEnqueue) Get(_ context.Context, id shared.UUID, _ persistence.Tx) (*persistence.InstanceRow, error) {
+	return &persistence.InstanceRow{ID: id, MessageQueueMode: f.queueModes[id]}, nil
 }
 func (f *fakeInstancesForEnqueue) GetByInstanceKey(context.Context, string, string, persistence.Tx) (*persistence.InstanceRow, error) {
 	return nil, nil
@@ -58,11 +60,14 @@ func (f *fakeInstancesForEnqueue) SetPaused(context.Context, shared.UUID, bool, 
 }
 
 type fakeEnqueueDeps struct {
-	msgs *fakeMessages
+	msgs       *fakeMessages
+	queueModes map[shared.UUID]string
 }
 
-func (d *fakeEnqueueDeps) Instances() persistence.InstanceTable { return &fakeInstancesForEnqueue{} }
-func (d *fakeEnqueueDeps) Messages() persistence.MessagesTable  { return d.msgs }
+func (d *fakeEnqueueDeps) Instances() persistence.InstanceTable {
+	return &fakeInstancesForEnqueue{queueModes: d.queueModes}
+}
+func (d *fakeEnqueueDeps) Messages() persistence.MessagesTable { return d.msgs }
 
 func (f *fakeMessages) Insert(_ context.Context, _ persistence.Tx, req persistence.EnqueueMessageRequest) error {
 	f.rows[req.ID] = &persistence.MessageRow{
@@ -91,7 +96,7 @@ func (f *fakeMessages) MarkDelivered(_ context.Context, _ persistence.Tx, id sha
 func (f *fakeMessages) ListPendingForInstance(_ context.Context, _ persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
 	var out []persistence.MessageRow
 	for _, r := range f.rows {
-		if r.InstanceID != instanceID || r.DeliveredAt != nil {
+		if r.InstanceID != instanceID || r.DeliveredAt != nil || r.Cancelled {
 			continue
 		}
 		out = append(out, *r)

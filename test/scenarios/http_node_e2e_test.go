@@ -96,8 +96,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		okNode := h.FindNode(iid, "ok")
 		require.NotNil(t, okNode)
 
-		require.True(t, h.WaitForNodeState(okNode.ID, cascade.NodeStateFresh, 30*time.Second),
-			"200-leg: node must reach fresh terminal")
+		h.WaitForNodeState(okNode.ID, cascade.NodeStateFresh)
 
 		var row *persistence.NodeAttributesRow
 		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -137,8 +136,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		thr := h.FindNode(iid, "throttled")
 		require.NotNil(t, thr)
 
-		require.True(t, h.WaitForNodeState(thr.ID, cascade.NodeStateParked, 30*time.Second),
-			"429-leg: node must reach parked (NOT errored) when the upstream returns 429")
+		h.WaitForNodeState(thr.ID, cascade.NodeStateParked)
 
 		var phase string
 		var resumeAtStored *time.Time
@@ -156,18 +154,15 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		require.True(t, resumeAtStored.Before(now.Add(30*time.Second)),
 			"429-leg: resume_at %v must reflect Retry-After: 1 (must be ≪ 30s default fallback)", *resumeAtStored)
 
-		require.True(t, h.WaitForEventKind(thr.ID, "parked_resume_started", 30*time.Second),
-			"429-leg: supervisor's SweepParkedNodes must wake the parked node at resume_at")
+		h.WaitForEventKind(thr.ID, "parked_resume_started")
 
 		row := lastEventPayload(t, h, thr.ID, "parked_resume_started")
 		require.Equal(t, "deadline_elapsed", row["resume_reason"],
 			"429-leg: resume_reason must be deadline_elapsed (executor's resume_at fired, not external)")
 
-		require.True(t, h.WaitForNodeState(thr.ID, cascade.NodeStateFresh, 30*time.Second),
-			"429-leg: node must reach fresh after the supervisor wakes and re-dispatches")
+		h.WaitForNodeState(thr.ID, cascade.NodeStateFresh)
 
-		require.True(t, h.WaitForEventKind(thr.ID, "terminal/success", 10*time.Second),
-			"429-leg: terminal/success must land after the resumed re-dispatch")
+		h.WaitForEventKind(thr.ID, "terminal/success")
 	})
 
 	t.Run("leg3_4xx_with_configured_field", func(t *testing.T) {
@@ -194,13 +189,9 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		wc := h.FindNode(iid, "with-class")
 		require.NotNil(t, wc)
 
-		require.True(t, h.WaitForNodeState(wc.ID, cascade.NodeStateFailed, 30*time.Second),
-			"4xx-with-field-leg: node must fail when upstream returns 4xx")
+		h.WaitForNodeState(wc.ID, cascade.NodeStateFailed)
 
-		require.True(t, waitForSettlingSignalTypePrefix(t, h, wc.ID,
-			"terminal/error/http/request_invalid/rate_limited", 30*time.Second),
-			"4xx-with-field-leg: settling signal must be terminal/error/http/request_invalid/rate_limited (proving the configured field %q was consulted)",
-			httpNodeErrorClassField)
+		waitForSettlingSignalTypePrefix(t, h, wc.ID, "terminal/error/http/request_invalid/rate_limited")
 	})
 
 	t.Run("leg4_4xx_without_field", func(t *testing.T) {
@@ -227,12 +218,9 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		nc := h.FindNode(iid, "no-class")
 		require.NotNil(t, nc)
 
-		require.True(t, h.WaitForNodeState(nc.ID, cascade.NodeStateFailed, 30*time.Second),
-			"4xx-no-field-leg: node must fail when upstream returns 4xx")
+		h.WaitForNodeState(nc.ID, cascade.NodeStateFailed)
 
-		require.True(t, waitForSettlingSignalTypePrefix(t, h, nc.ID,
-			"terminal/error/http/request_invalid/_unspecified", 30*time.Second),
-			"4xx-no-field-leg: settling signal must be the stable _unspecified leaf (catch-all for taxonomy-less 4xx bodies)")
+		waitForSettlingSignalTypePrefix(t, h, nc.ID, "terminal/error/http/request_invalid/_unspecified")
 	})
 }
 
@@ -291,8 +279,7 @@ func startHttpNodeBinary(t *testing.T, binary string, errorClassField string) st
 			_ = cmd.Process.Kill()
 		}
 	})
-	require.True(t, dialableWithin(addr, 10*time.Second),
-		"http-node did not come up on %s within 10s", addr)
+	waitDialable(addr)
 	return addr
 }
 
@@ -303,17 +290,4 @@ func pickFreePort(t *testing.T) int {
 	port := lis.Addr().(*net.TCPAddr).Port
 	require.NoError(t, lis.Close())
 	return port
-}
-
-func dialableWithin(addr string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return false
 }

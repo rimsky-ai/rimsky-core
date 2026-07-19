@@ -71,9 +71,7 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 	exitNode := h.FindNode(iid, "inner-exit")
 	require.NotNil(t, exitNode, "inner-exit node missing")
 
-	require.True(t,
-		h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh, 30*time.Second),
-		"inner-exit must reach fresh")
+	h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh)
 
 	require.Eventually(t, func() bool {
 		var closed int

@@ -53,10 +53,8 @@ func TestNodeRunStateAdvancesOnClaim(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh")
-	require.True(t, h.WaitForAllRunsTerminal(n.ID, 5*time.Second),
-		"all node-runs must reach a terminal state (fresh or failed) after the claim resolves")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
+	h.WaitForAllRunsTerminal(n.ID)
 }
 
 func TestClaimHandleIsHeldColumnPopulated(t *testing.T) {

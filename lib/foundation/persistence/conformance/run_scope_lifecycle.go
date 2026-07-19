@@ -222,6 +222,90 @@ func testRunScopeFanoutPartitionUniqueness(t *testing.T, d persistence.Database)
 	}
 }
 
+func runScopeKindFromStructuralFields(r persistence.RunScopeRow) string {
+	if r.ParentRunScopeID == nil && r.ParentNodeRunID == nil {
+		return "root"
+	}
+	if r.PartitionKey == "" {
+		return "sub_graph"
+	}
+	return "fan_out_partition"
+}
+
+func testRunScopeKindDerivableFromStructuralFields(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	rootID := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         rootID,
+			GraphName:  spec.MainGraphName,
+			InstanceID: fix.InstanceID,
+		})
+	}); err != nil {
+		t.Fatalf("Create root: %v", err)
+	}
+
+	parentNodeRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+
+	subGraphID := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:               subGraphID,
+			ParentRunScopeID: &rootID,
+			ParentNodeRunID:  &parentNodeRunID,
+			GraphName:        "subgraph",
+			InstanceID:       fix.InstanceID,
+			PartitionKey:     "",
+		})
+	}); err != nil {
+		t.Fatalf("Create sub-graph: %v", err)
+	}
+
+	fanOutID := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:               fanOutID,
+			ParentRunScopeID: &rootID,
+			ParentNodeRunID:  &parentNodeRunID,
+			GraphName:        spec.MainGraphName,
+			InstanceID:       fix.InstanceID,
+			PartitionKey:     "kind-derivation-key",
+		})
+	}); err != nil {
+		t.Fatalf("Create fan-out partition: %v", err)
+	}
+
+	cases := []struct {
+		id   shared.UUID
+		want string
+	}{
+		{rootID, "root"},
+		{subGraphID, "sub_graph"},
+		{fanOutID, "fan_out_partition"},
+	}
+	for _, c := range cases {
+		var got *persistence.RunScopeRow
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			r, err := store.RunScopes().GetByID(ctx, tx, c.id)
+			got = r
+			return err
+		}); err != nil {
+			t.Fatalf("GetByID %s: %v", c.id, err)
+		}
+		if got == nil {
+			t.Fatalf("scope %s: not found after create", c.id)
+		}
+		if kind := runScopeKindFromStructuralFields(*got); kind != c.want {
+			t.Fatalf("scope %s: kind derived from structural fields = %q, want %q "+
+				"(parent_run_scope_id=%v parent_run_id=%v partition_key=%q)",
+				c.id, kind, c.want, got.ParentRunScopeID, got.ParentNodeRunID, got.PartitionKey)
+		}
+	}
+}
+
 func testRunScopeListParentChain(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)

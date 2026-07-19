@@ -67,8 +67,8 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 	require.NotNil(t, downN)
 	h.PostInstanceMessage(iid, "test/wake/upstream", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
-	require.True(t, h.WaitForNodeState(upN.ID, cascade.NodeStateFresh, 15*time.Second))
-	require.True(t, h.WaitForNodeState(downN.ID, cascade.NodeStateFresh, 15*time.Second))
+	h.WaitForNodeState(upN.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(downN.ID, cascade.NodeStateFresh)
 
 	var downRow *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

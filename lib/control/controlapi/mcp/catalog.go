@@ -197,16 +197,22 @@ func url4QueryFromRemaining(m map[string]json.RawMessage) string {
 }
 
 func pickCanonicalRoute(toolName string, routes []RegistryRoute, args map[string]json.RawMessage) RegistryRoute {
+	for _, r := range routes {
+		if r.Tool == toolName {
+			return r
+		}
+	}
+
 	hasNonAdmin := false
 	for _, r := range routes {
-		if !strings.HasPrefix(r.Path, "/admin/") {
+		if !isAdminRoute(r.Path) {
 			hasNonAdmin = true
 			break
 		}
 	}
 	candidates := make([]RegistryRoute, 0, len(routes))
 	for _, r := range routes {
-		if hasNonAdmin && strings.HasPrefix(r.Path, "/admin/") {
+		if hasNonAdmin && isAdminRoute(r.Path) {
 			continue
 		}
 		candidates = append(candidates, r)
@@ -232,6 +238,10 @@ func pickCanonicalRoute(toolName string, routes []RegistryRoute, args map[string
 		}
 	}
 	return pick
+}
+
+func isAdminRoute(path string) bool {
+	return strings.Contains(path, "/admin/")
 }
 
 func filterRoutes(routes []RegistryRoute, keep func(RegistryRoute) bool) []RegistryRoute {

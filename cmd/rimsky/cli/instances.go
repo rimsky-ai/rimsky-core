@@ -404,16 +404,19 @@ func formatNodeRunCounts(s *NodeRunSummary) string {
 func RunInstanceEvents(ctx context.Context, args []string) int {
 	var follow bool
 	var pollInterval time.Duration
+	var since, until string
 	fs, common, endpoint, code := runWithCommon("instance events", args, func(fs *flag.FlagSet) {
 		fs.BoolVar(&follow, "follow", false, "stream new events")
 		fs.DurationVar(&pollInterval, "poll-interval", time.Second, "polling interval when --follow")
+		fs.StringVar(&since, "since", "", "only events at or after this RFC3339 timestamp")
+		fs.StringVar(&until, "until", "", "only events at or before this RFC3339 timestamp")
 	})
 	if code != 0 {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky instance events <id-or-key> [--follow]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance events <id-or-key> [--follow] [--since <RFC3339>] [--until <RFC3339>]")
 		return 2
 	}
 	c := NewClient(endpoint)
@@ -436,7 +439,7 @@ func RunInstanceEvents(ctx context.Context, args []string) int {
 		prevSeen := lastSeenID
 		nextCursor := ""
 		for {
-			page, err := c.ListEvents(signalCtx, ListEventsQuery{InstanceID: id, Cursor: nextCursor, Limit: 100})
+			page, err := c.ListEvents(signalCtx, ListEventsQuery{InstanceID: id, Since: since, Until: until, Cursor: nextCursor, Limit: 100})
 			if err != nil {
 				if signalCtx.Err() != nil {
 					return 0

@@ -67,10 +67,8 @@ func TestNoOpCommit(t *testing.T) {
 	require.NotNil(t, dep)
 	h.PostInstanceMessage(iid, "test/wake/producer", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
-	require.True(t, h.WaitForNodeState(producer.ID, cascade.NodeStateFresh, 60*time.Second),
-		"producer did not reach fresh")
-	require.True(t, h.WaitForNodeState(dep.ID, cascade.NodeStateFresh, 60*time.Second),
-		"dependent did not reach fresh on first cascade")
+	h.WaitForNodeState(producer.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(dep.ID, cascade.NodeStateFresh)
 
 	var depBefore *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -125,8 +123,7 @@ func TestNoOpCommit(t *testing.T) {
 	require.False(t, changedVal,
 		"second run's terminal/success must carry payload.changed=false")
 
-	require.True(t, h.WaitForNodeState(dep.ID, cascade.NodeStateFresh, 30*time.Second),
-		"dependent should re-reach fresh after idempotent cascade from producer no_op commit")
+	h.WaitForNodeState(dep.ID, cascade.NodeStateFresh)
 
 	_ = depBefore
 }

@@ -56,6 +56,12 @@ var expectedHitColumns = []string{
 	"resume_overlay",
 }
 
+// @concept: run-scope
+var expectedRunScopeColumns = []string{
+	"id", "parent_run_scope_id", "parent_run_id", "graph_name",
+	"partition_key", "instance_id", "created_at", "closed_at",
+}
+
 func TestSchemaConsolidation_FreshDBSchemaShape(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -83,6 +89,33 @@ func TestSchemaConsolidation_FreshDBSchemaShape(t *testing.T) {
 	assertColumnsPresent(t, ctx, pool, "rimsky_instance_breakpoints", expectedBreakpointColumns)
 	assertColumnsPresent(t, ctx, pool, "rimsky_breakpoint_hits", expectedHitColumns)
 	assertColumnsPresent(t, ctx, pool, "rimsky_instances", []string{"paused"})
+}
+
+// @concept: run-scope
+func TestRunScopesColumnSet_HasNoStoredKindColumn(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dsn, terminate := pgtest.StartUnmigratedPostgresDSN(ctx, t)
+	t.Cleanup(terminate)
+
+	d, err := persistence.Open(ctx, persistence.Config{
+		Driver:   "postgres",
+		Postgres: &persistence.PostgresConfig{DSN: dsn},
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	pool, ok := pgpersist.PoolFromDatabaseForTest(d)
+	if !ok {
+		t.Fatalf("PoolFromDatabaseForTest: not a postgres driver")
+	}
+
+	assertColumnsExact(t, ctx, pool, "rimsky_run_scopes", expectedRunScopeColumns)
 }
 
 func TestSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
@@ -198,6 +231,40 @@ func assertColumnsPresent(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	for _, name := range want {
 		if !have[name] {
 			t.Errorf("expected column %s.%s missing", table, name)
+		}
+	}
+}
+
+func assertColumnsExact(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, want []string) {
+	t.Helper()
+	have := map[string]bool{}
+	rows, err := pool.Query(ctx, `
+		SELECT column_name FROM information_schema.columns
+		 WHERE table_schema = current_schema()
+		   AND table_name = $1
+	`, table)
+	if err != nil {
+		t.Fatalf("query columns for %s: %v", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan column for %s: %v", table, err)
+		}
+		have[name] = true
+	}
+	wantSet := map[string]bool{}
+	for _, name := range want {
+		wantSet[name] = true
+		if !have[name] {
+			t.Errorf("expected column %s.%s missing", table, name)
+		}
+	}
+	for name := range have {
+		if !wantSet[name] {
+			t.Errorf("unexpected column %s.%s present; %s must expose only structural fields, never a derived/stored classification column",
+				table, name, table)
 		}
 	}
 }

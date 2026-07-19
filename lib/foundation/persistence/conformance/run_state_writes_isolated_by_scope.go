@@ -344,6 +344,44 @@ func testRunStateWritesIsolated_SetRetryNoProgressForRunInTx(t *testing.T, d per
 	}
 }
 
+func testRunStateWritesIsolated_UpdateStateWritesNoAuditEvent(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	f := seedFixtureSet(ctx, t, d)
+	runID := seedConformanceRunForNode(ctx, t, d, f.NodeID, f.FrameID)
+	store := d.Tables()
+
+	countEvents := func() int {
+		t.Helper()
+		var n int
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			res, err := store.Events().List(ctx, persistence.EventListFilter{InstanceID: &f.InstanceID},
+				persistence.ListPagination{Limit: 1000}, tx)
+			if err != nil {
+				return err
+			}
+			n = len(res.Events)
+			return nil
+		}); err != nil {
+			t.Fatalf("Events().List: %v", err)
+		}
+		return n
+	}
+
+	before := countEvents()
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.Nodes().UpdateState(ctx, runID,
+			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
+	}); err != nil {
+		t.Fatalf("UpdateState: %v", err)
+	}
+	after := countEvents()
+	if after != before {
+		t.Fatalf("UpdateState wrote %d audit event row(s); the per-node state-update path must write NO "+
+			"rimsky_events row (TransitionReason is validation-only, never an audit-write role): before=%d after=%d",
+			after-before, before, after)
+	}
+}
+
 func testRunStateWritesIsolated_NodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)

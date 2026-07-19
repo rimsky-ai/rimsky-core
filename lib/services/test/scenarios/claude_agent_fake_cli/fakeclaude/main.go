@@ -314,6 +314,99 @@ func writeSessionResumeLog(chainID string, state sessionResumeState) {
 	_ = os.WriteFile(sessionResumeLogPath(chainID), raw, 0o644)
 }
 
+const moduleWitnessServerName = "module-witness"
+
+type moduleWitnessClient struct {
+	url       string
+	headers   map[string]string
+	sessionID string
+	nextID    int
+}
+
+func (c *moduleWitnessClient) request(method string, params map[string]any) (map[string]any, error) {
+	c.nextID++
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      c.nextID,
+		"method":  method,
+		"params":  params,
+	})
+	req, err := http.NewRequest(http.MethodPost, c.url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
+	if c.sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" && c.sessionID == "" {
+		c.sessionID = sid
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, raw)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("parse response: %w: %s", err, raw)
+	}
+	if parsed["error"] != nil {
+		errJSON, _ := json.Marshal(parsed["error"])
+		return nil, fmt.Errorf("mcp error: %s", errJSON)
+	}
+	return parsed, nil
+}
+
+func callModuleWitnessTool(entry map[string]any) (string, error) {
+	url, _ := entry["url"].(string)
+	if url == "" {
+		return "", fmt.Errorf("mcp config entry %q has no url", moduleWitnessServerName)
+	}
+	headers := map[string]string{}
+	if hdrRaw, ok := entry["headers"].(map[string]any); ok {
+		for k, v := range hdrRaw {
+			if s, ok := v.(string); ok {
+				headers[k] = s
+			}
+		}
+	}
+	c := &moduleWitnessClient{url: url, headers: headers}
+	if _, err := c.request("initialize", map[string]any{
+		"protocolVersion": "2025-06-18",
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]any{"name": "rimsky-fake-claude-module-witness", "version": "1.0.0"},
+	}); err != nil {
+		return "", fmt.Errorf("initialize: %w", err)
+	}
+	res, err := c.request("tools/call", map[string]any{
+		"name":      "witness",
+		"arguments": map[string]any{},
+	})
+	if err != nil {
+		return "", fmt.Errorf("tools/call: %w", err)
+	}
+	result, _ := res["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		return "", fmt.Errorf("witness tool returned no content")
+	}
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	return text, nil
+}
+
 var perNodeEnvVars = []string{"VALIDATOR_TOKEN", "REVIEWER_SEED"}
 
 func scenarioPerNodeWitness(client *mcpClient, sessionID, mcpConfigPath, userPrompt string) {
@@ -337,6 +430,13 @@ func scenarioPerNodeWitness(client *mcpClient, sessionID, mcpConfigPath, userPro
 		for name, entry := range parsed.McpServers {
 			transport, _ := entry["type"].(string)
 			servers = append(servers, map[string]any{"name": name, "transport": transport})
+			if name == moduleWitnessServerName {
+				text, err := callModuleWitnessTool(entry)
+				if err != nil {
+					fail(fmt.Sprintf("per_node_witness: module-witness tool call failed: %v", err))
+				}
+				observed["module_witness_result"] = text
+			}
 		}
 	}
 	observed["mcp_servers"] = servers

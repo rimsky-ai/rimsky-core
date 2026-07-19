@@ -7,7 +7,6 @@ package scenarios
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -77,9 +76,9 @@ func TestCascadeInvalidate(t *testing.T) {
 	require.NotNil(t, c)
 	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 15*time.Second))
-	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 15*time.Second))
-	require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 15*time.Second))
+	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(c.ID, cascade.NodeStateFresh)
 
 	var bRow *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -93,10 +92,7 @@ func TestCascadeInvalidate(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 20*time.Second),
-		"a did not re-reach fresh")
-	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 20*time.Second),
-		"b did not re-reach fresh")
-	require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 20*time.Second),
-		"c did not re-reach fresh")
+	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(c.ID, cascade.NodeStateFresh)
 }

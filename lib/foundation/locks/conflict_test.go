@@ -89,6 +89,27 @@ func TestModeCoexistsMatrix(t *testing.T) {
 	})
 }
 
+func TestModeCoexistsPanicsOnUnknownWriteSemantics(t *testing.T) {
+	cases := []struct {
+		name string
+		sem  claimproducer.WriteSemantics
+	}{
+		{"zero value", claimproducer.WriteSemanticsUnknown},
+		{"unrecognized non-empty value", claimproducer.WriteSemantics("not-a-real-semantics")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Fatalf("ModeCoexists(%q) did not panic; the zero/unknown write-semantics value must never reach the coexistence matrix", tc.sem)
+				}
+			}()
+			ModeCoexists(claimproducer.IntentRead, claimproducer.IntentRead, tc.sem)
+			t.Fatalf("unreachable: ModeCoexists(%q) should have panicked before returning", tc.sem)
+		})
+	}
+}
+
 func TestModeCoexistsSymmetric(t *testing.T) {
 	intents := []claimproducer.Intent{claimproducer.IntentRead, claimproducer.IntentReadWrite}
 	semantics := []claimproducer.WriteSemantics{

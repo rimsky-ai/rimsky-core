@@ -220,6 +220,8 @@ func TestPrimitiveEqual(t *testing.T) {
 		{"string vs float64 rejected", "1", float64(1), false},
 		{"non-primitive a", map[string]any{}, "x", false},
 		{"non-primitive b", "x", map[string]any{}, false},
+		{"equal maps rejected as non-primitive", map[string]any{"x": 1}, map[string]any{"x": 1}, false},
+		{"equal slices rejected as non-primitive", []any{1, 2}, []any{1, 2}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

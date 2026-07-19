@@ -10,6 +10,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -77,6 +78,9 @@ func applyErrorPolicyWithScratch(
 		releasePC, err := releaseLocksInTx(ctx, args, tx, acq, false, false)
 		if err != nil {
 			return nil, fmt.Errorf("applyErrorPolicy: release locks: %w", err)
+		}
+		if err := deleteAbandonedClaimHandlesForRun(ctx, args, tx, acq.NodeRunID); err != nil {
+			return nil, fmt.Errorf("applyErrorPolicy: clear abandoned claims for requeue: %w", err)
 		}
 		acq.RetryDecision = &decision
 		nodeRunID := acq.NodeRunID
@@ -172,6 +176,28 @@ func applyErrorPolicyWithScratch(
 	}
 	acq.RetryDecision = &decision
 	return chainPostCommit(releasePC, post), nil
+}
+
+// @concept: claim-handle
+func deleteAbandonedClaimHandlesForRun(
+	ctx context.Context, args RunArgs, tx persistence.Tx, nodeRunID foundationshared.UUID,
+) error {
+	if args.ClaimHandles == nil {
+		return nil
+	}
+	rows, err := args.ClaimHandles.ListByNodeRun(ctx, nodeRunID, tx)
+	if err != nil {
+		return fmt.Errorf("deleteAbandonedClaimHandlesForRun: list: %w", err)
+	}
+	for _, row := range rows {
+		if row.State != spec.ClaimHandleStateAbandoned || row.IsHeld {
+			continue
+		}
+		if err := args.ClaimHandles.DeleteResolved(ctx, row.ID, tx); err != nil {
+			return fmt.Errorf("deleteAbandonedClaimHandlesForRun: delete %s: %w", row.ID, err)
+		}
+	}
+	return nil
 }
 
 const defaultInfraRetryCap = 10

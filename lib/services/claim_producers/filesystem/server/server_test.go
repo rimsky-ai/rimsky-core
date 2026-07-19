@@ -195,6 +195,89 @@ func TestSplitScope_BatchPickFewerAvailable(t *testing.T) {
 	}
 }
 
+func TestSplitScope_BatchPick_DirectAddressParentWithoutPolicyRejected(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "direct"), 0o755); err != nil {
+		t.Fatalf("mkdir direct: %v", err)
+	}
+	st, err := fsstore.New(fsstore.Config{Root: root})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	srv := &Server{store: st}
+	if _, err := srv.Open(context.Background(), &genv1.OpenRequest{
+		ClaimId:  "parent",
+		Selector: "direct",
+		Intent:   "rw",
+	}); err != nil {
+		t.Fatalf("Open parent: %v", err)
+	}
+
+	req := &genv1.SplitScopeRequest{
+		ClaimHandleId:    "parent",
+		PartitionRequest: []byte(`{"batch_pick":{"max_items":1}}`),
+	}
+	_, err = srv.SplitScope(context.Background(), req)
+	if err == nil {
+		t.Fatal("SplitScope batch_pick against a direct-address parent with no `policy` field must be rejected, got nil error")
+	}
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("SplitScope: code = %v, want InvalidArgument", status.Code(err))
+	}
+	if !strings.Contains(err.Error(), "was not opened against a pick policy") {
+		t.Fatalf("SplitScope error %q must explain the missing policy", err.Error())
+	}
+}
+
+func TestSplitScope_BatchPick_DirectAddressParentWithExplicitPolicySucceeds(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "direct"), 0o755); err != nil {
+		t.Fatalf("mkdir direct: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "queue"), 0o755); err != nil {
+		t.Fatalf("mkdir queue: %v", err)
+	}
+	for _, name := range []string{"f1", "f2"} {
+		if err := os.MkdirAll(filepath.Join(root, "queue", name), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+	}
+	pp := &fsstore.PickPolicy{
+		Root:              "queue",
+		OnCommit:          action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "on_open",
+	}
+	st, err := fsstore.New(fsstore.Config{
+		Root:         root,
+		PickPolicies: map[string]*fsstore.PickPolicy{"@queue": pp},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	srv := &Server{store: st}
+	if _, err := srv.Open(context.Background(), &genv1.OpenRequest{
+		ClaimId:  "parent",
+		Selector: "direct",
+		Intent:   "rw",
+	}); err != nil {
+		t.Fatalf("Open parent: %v", err)
+	}
+
+	req := &genv1.SplitScopeRequest{
+		ClaimHandleId:    "parent",
+		PartitionRequest: []byte(`{"batch_pick":{"max_items":1,"policy":"@queue"}}`),
+	}
+	resp, err := srv.SplitScope(context.Background(), req)
+	if err != nil {
+		t.Fatalf("SplitScope with an explicit policy against a direct-address parent must succeed: %v", err)
+	}
+	if got, want := len(resp.SubScopes), 1; got != want {
+		t.Fatalf("SubScopes count = %d, want %d", got, want)
+	}
+}
+
 func TestSplitScope_ExpandFolderShape(t *testing.T) {
 	srv, _, root := newServerWithStore(t)
 	parentDir := filepath.Join(root, "expand-parent")

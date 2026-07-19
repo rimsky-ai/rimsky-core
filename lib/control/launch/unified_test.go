@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -133,5 +134,146 @@ func TestUnifiedStack_FailChDeliversFailure(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("FailCh did not deliver the queued failure")
+	}
+}
+
+func stubRunners() (schedulerFn func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig) (StopFunc, <-chan error, error),
+	supervisorFn func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error),
+	controlAPIFn func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error),
+) {
+	fakeStop := func(context.Context) error { return nil }
+	return func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig) (StopFunc, <-chan error, error) {
+			return fakeStop, make(chan error), nil
+		},
+		func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+			return fakeStop, make(chan error), nil
+		},
+		func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+			return fakeStop, make(chan error), nil
+		}
+}
+
+func TestStartUnifiedStack_ForwardsRunnerFailure(t *testing.T) {
+	origScheduler, origSupervisor, origControlAPI := runSchedulerFn, runSupervisorFn, runControlAPIFn
+	defer func() {
+		runSchedulerFn = origScheduler
+		runSupervisorFn = origSupervisor
+		runControlAPIFn = origControlAPI
+	}()
+
+	schedFailCh := make(chan error)
+	fakeStop := func(context.Context) error { return nil }
+	runSchedulerFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig) (StopFunc, <-chan error, error) {
+		return fakeStop, schedFailCh, nil
+	}
+	_, supervisorFn, controlAPIFn := stubRunners()
+	runSupervisorFn = supervisorFn
+	runControlAPIFn = controlAPIFn
+
+	logger := slog.New(slog.NewTextHandler(discardWriter{}, nil))
+	stack, err := StartUnifiedStack(context.Background(), logger, &fakeDriver{}, &config.RimskyConfig{}, &config.BundledRegistrations{})
+	if err != nil {
+		t.Fatalf("StartUnifiedStack: %v", err)
+	}
+	defer stack.Drain(context.Background(), time.Second)
+
+	want := errors.New("scheduler serve loop died")
+	schedFailCh <- want
+
+	got := <-stack.FailCh()
+	if got.Role != "scheduler" || got.Err.Error() != want.Error() {
+		t.Fatalf("forwarded failure = %+v, want role=scheduler err=%v", got, want)
+	}
+}
+
+func TestStartUnifiedStack_IgnoresNilAndClosedRunnerFailure(t *testing.T) {
+	origScheduler, origSupervisor, origControlAPI := runSchedulerFn, runSupervisorFn, runControlAPIFn
+	defer func() {
+		runSchedulerFn = origScheduler
+		runSupervisorFn = origSupervisor
+		runControlAPIFn = origControlAPI
+	}()
+
+	schedFailCh := make(chan error)
+	supFailCh := make(chan error)
+	fakeStop := func(context.Context) error { return nil }
+	runSchedulerFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig) (StopFunc, <-chan error, error) {
+		return fakeStop, schedFailCh, nil
+	}
+	runSupervisorFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+		return fakeStop, supFailCh, nil
+	}
+	_, _, controlAPIFn := stubRunners()
+	runControlAPIFn = controlAPIFn
+
+	logger := slog.New(slog.NewTextHandler(discardWriter{}, nil))
+	stack, err := StartUnifiedStack(context.Background(), logger, &fakeDriver{}, &config.RimskyConfig{}, &config.BundledRegistrations{})
+	if err != nil {
+		t.Fatalf("StartUnifiedStack: %v", err)
+	}
+	defer stack.Drain(context.Background(), time.Second)
+
+	schedFailCh <- nil
+	close(supFailCh)
+
+	select {
+	case got := <-stack.FailCh():
+		t.Fatalf("nil/closed runner errors should not be forwarded, got %+v", got)
+	default:
+	}
+}
+
+func TestStartUnifiedStack_StartupFailureDrainsStartedRoles(t *testing.T) {
+	origScheduler, origSupervisor, origControlAPI := runSchedulerFn, runSupervisorFn, runControlAPIFn
+	defer func() {
+		runSchedulerFn = origScheduler
+		runSupervisorFn = origSupervisor
+		runControlAPIFn = origControlAPI
+	}()
+
+	var (
+		mu               sync.Mutex
+		stopped          []string
+		controlAPICalled bool
+	)
+	runSchedulerFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig) (StopFunc, <-chan error, error) {
+		stop := func(context.Context) error {
+			mu.Lock()
+			stopped = append(stopped, "scheduler")
+			mu.Unlock()
+			return nil
+		}
+		return stop, make(chan error), nil
+	}
+	supervisorErr := errors.New("supervisor boom")
+	runSupervisorFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+		return nil, nil, supervisorErr
+	}
+	runControlAPIFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+		mu.Lock()
+		controlAPICalled = true
+		mu.Unlock()
+		return nil, nil, nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(discardWriter{}, nil))
+	stack, err := StartUnifiedStack(context.Background(), logger, &fakeDriver{}, &config.RimskyConfig{}, &config.BundledRegistrations{})
+	if stack != nil {
+		t.Fatalf("StartUnifiedStack returned non-nil stack on startup failure: %+v", stack)
+	}
+	if err == nil || !strings.Contains(err.Error(), "start supervisor") {
+		t.Fatalf("err = %v, want wrapped 'start supervisor'", err)
+	}
+	if !errors.Is(err, supervisorErr) {
+		t.Fatalf("err = %v, want wraps %v", err, supervisorErr)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(stopped) != 1 || stopped[0] != "scheduler" {
+		t.Fatalf("stopped = %v, want [scheduler] (already-started roles drained in reverse)", stopped)
+	}
+	if controlAPICalled {
+		t.Fatal("control-api runner should never be invoked once supervisor failed to start")
 	}
 }

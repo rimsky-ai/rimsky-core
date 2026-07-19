@@ -62,7 +62,7 @@ func TestAnonymousModeBootstrap(t *testing.T) {
 	if exit2 == 0 {
 		t.Fatalf("auth init (2nd): exit 0; expected non-zero. stdout=%q, stderr=%q. The bootstrap surface must refuse on a deployment with active keys.", stdout2, stderr2)
 	}
-	if strings.Contains(stdout2, "rim_") || strings.Contains(stdout2, plaintext) {
+	if strings.Contains(stdout2, "rk_") || strings.Contains(stdout2, plaintext) {
 		t.Fatalf("auth init (2nd): plaintext appeared on stdout despite refused exit. stdout=%q", stdout2)
 	}
 	if !strings.Contains(stderr2, "already authenticated") && !strings.Contains(stderr2, "already exist") {

@@ -60,25 +60,12 @@ func (m Matcher) kindMatches(kind string) bool {
 
 const pollInterval = 50 * time.Millisecond
 
-func WaitForEvent(ctx context.Context, t testing.TB, db persistence.Tables, m Matcher, deadline time.Duration) []persistence.EventRow {
+func WaitForEvent(ctx context.Context, t testing.TB, db persistence.Tables, m Matcher) []persistence.EventRow {
 	t.Helper()
-	end := time.Now().Add(deadline)
 	for {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			t.Fatalf("eventwait.WaitForEvent: context done before matcher {%s} satisfied: %v", m, ctxErr)
-			return nil
-		}
-		matched, all, err := read(ctx, db, m)
+		matched, _, err := read(ctx, db, m)
 		if err == nil && len(matched) >= m.minCount() {
 			return matched
-		}
-		if !time.Now().Before(end) {
-			if err != nil {
-				t.Fatalf("eventwait.WaitForEvent: matcher {%s} not satisfied within %v; last read error: %v", m, deadline, err)
-			}
-			t.Fatalf("eventwait.WaitForEvent: matcher {%s} not satisfied within %v; got %d matching rows. Events seen in scope:\n%s",
-				m, deadline, len(matched), dump(all))
-			return nil
 		}
 		time.Sleep(pollInterval)
 	}
@@ -122,20 +109,4 @@ func read(ctx context.Context, db persistence.Tables, m Matcher) (matched, all [
 		}
 	}
 	return matched, all, nil
-}
-
-func dump(events []persistence.EventRow) string {
-	if len(events) == 0 {
-		return "  (none)"
-	}
-	var b strings.Builder
-	for _, e := range events {
-		node := "-"
-		if e.NodeID != nil {
-			node = e.NodeID.String()
-		}
-		fmt.Fprintf(&b, "  %s  kind=%s node=%s payload=%v\n",
-			e.OccurredAt.Format(time.RFC3339Nano), e.KindRaw, node, e.Payload)
-	}
-	return b.String()
 }

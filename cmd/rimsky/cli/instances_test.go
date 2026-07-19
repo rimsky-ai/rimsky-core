@@ -260,6 +260,32 @@ func TestRunInstanceEvents_KeyResolution(t *testing.T) {
 	}
 }
 
+func TestRunInstanceEvents_SinceUntilNarrows(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+
+	t0 := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "before", Payload: map[string]any{}, OccurredAt: t0.Format(time.RFC3339)})
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "within", Payload: map[string]any{}, OccurredAt: t0.Add(time.Hour).Format(time.RFC3339)})
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "after", Payload: map[string]any{}, OccurredAt: t0.Add(2 * time.Hour).Format(time.RFC3339)})
+
+	since := t0.Add(30 * time.Minute).Format(time.RFC3339)
+	until := t0.Add(90 * time.Minute).Format(time.RFC3339)
+	out := captureStdout(t, func() {
+		if got := cli.RunInstanceEvents(context.Background(), []string{"--since", since, "--until", until, inst.ID}); got != 0 {
+			t.Errorf("exit %d", got)
+		}
+	})
+
+	if !strings.Contains(out, "\twithin\n") {
+		t.Fatalf("expected the in-window event to appear; output:\n%s", out)
+	}
+	if strings.Contains(out, "\tbefore\n") || strings.Contains(out, "\tafter\n") {
+		t.Fatalf("--since/--until must narrow out events outside the window; output:\n%s", out)
+	}
+}
+
 func TestRunInstanceEvents_Follow_NoDuplicates(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")

@@ -54,8 +54,7 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake", nil, "test-wake-1")
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
-		"worker should park on its first dispatch")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateParked)
 	require.Equal(t, 1, stubWorkerCount(h), "worker invoked exactly once before invalidate")
 
 	pauseResp := postJSON(t,
@@ -130,12 +129,9 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 
 	clock.Advance(15 * time.Second)
 
-	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
-		"advancing the clock past resume_at must let the deadline sweep wake the parked worker run")
+	h.WaitForEventKind(worker.ID, "parked_resume_started")
 
-	require.True(t, waitForStubWorkerCount(h, 3, 30*time.Second),
-		"worker should be invoked three times: (1) parked dispatch, (2) deadline-resume of the same row, "+
-			"(3) operator-invalidate stale dispatched after the predecessor settles")
+	waitForStubWorkerCount(h, 3)
 	require.Equal(t, 3, stubWorkerCount(h),
 		"worker must be invoked exactly three times, no more")
 

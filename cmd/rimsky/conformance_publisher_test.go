@@ -131,6 +131,7 @@ type fixtureSub struct {
 	instanceID     string
 	kind           string
 	messageType    string
+	resolvedConfig []byte
 	startedAt      time.Time
 	cancel         context.CancelFunc
 }
@@ -165,6 +166,7 @@ func (s *fixturePublisher) Subscribe(_ context.Context, req *genv1.SubscribeRequ
 		instanceID:     req.GetInstanceId(),
 		kind:           req.GetKind(),
 		messageType:    req.GetMessageType(),
+		resolvedConfig: append([]byte(nil), req.GetResolvedConfig()...),
 		startedAt:      time.Now(),
 		cancel:         cancel,
 	}
@@ -193,6 +195,7 @@ func (s *fixturePublisher) ListSubscriptions(_ context.Context, _ *emptypb.Empty
 			InstanceId:              sub.instanceID,
 			Kind:                    sub.kind,
 			MessageType:             sub.messageType,
+			ResolvedConfig:          sub.resolvedConfig,
 			StartedAt:               timestamppb.New(sub.startedAt),
 		})
 	}

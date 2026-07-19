@@ -43,6 +43,7 @@ type Watch struct {
 	PollInterval   time.Duration
 	WatermarkField string
 	MessageType    string
+	ResolvedConfig []byte
 
 	LastPollAt    time.Time
 	WatermarkName string
@@ -225,6 +226,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		PollInterval:   interval,
 		WatermarkField: cfg.WatermarkField,
 		MessageType:    messageType,
+		ResolvedConfig: append([]byte(nil), req.GetResolvedConfig()...),
 	}
 	s.mu.Lock()
 	state := s.state
@@ -290,6 +292,7 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			InstanceId:              w.InstanceID,
 			Kind:                    "object-store",
 			MessageType:             w.MessageType,
+			ResolvedConfig:          w.ResolvedConfig,
 			StartedAt:               timestamppb.New(s.clock()),
 		})
 	}

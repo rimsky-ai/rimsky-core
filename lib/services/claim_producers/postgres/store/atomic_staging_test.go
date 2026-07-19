@@ -9,48 +9,16 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	pgmodule "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
 func bootStagingStore(t *testing.T) (*pgxpool.Pool, *Store) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	container, err := pgmodule.Run(ctx,
-		"postgres:14-alpine",
-		pgmodule.WithDatabase("rimsky"),
-		pgmodule.WithUsername("rimsky"),
-		pgmodule.WithPassword("rimsky"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).WithStartupTimeout(60*time.Second),
-		),
-	)
-	if err != nil {
-		t.Skipf("postgres testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() {
-		termCtx, c := context.WithTimeout(context.Background(), 30*time.Second)
-		defer c()
-		_ = container.Terminate(termCtx)
-	})
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
-	}
-	pool, err := pgxpool.New(context.Background(), dsn)
-	if err != nil {
-		t.Fatalf("pgxpool.New: %v", err)
-	}
-	t.Cleanup(pool.Close)
+	pool, dsn := bootPostgresTestContainer(t)
 
 	st, err := New(context.Background(), Config{
 		Connection:     dsn,

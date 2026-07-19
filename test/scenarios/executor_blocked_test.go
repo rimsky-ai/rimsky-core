@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -41,8 +40,7 @@ func TestExecutorBlocked(t *testing.T) {
 	n := h.FindNode(iid, "gated")
 	require.NotNil(t, n)
 
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 30*time.Second),
-		"gated did not reach failed")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
 
 	nid := n.ID
 	var evs persistence.EventListResult

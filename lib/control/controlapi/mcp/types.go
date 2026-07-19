@@ -56,4 +56,5 @@ type RegistryEntry struct {
 type RegistryRoute struct {
 	Method string
 	Path   string
+	Tool   string
 }

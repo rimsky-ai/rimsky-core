@@ -33,6 +33,8 @@ type Entry struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+var assertSameFilesystemFn = assertSameFilesystem
+
 func New(root string) (*Store, error) {
 	if root == "" {
 		return nil, errors.New("atomic-staging: root must be non-empty")
@@ -42,7 +44,7 @@ func New(root string) (*Store, error) {
 			return nil, fmt.Errorf("atomic-staging: mkdir %s: %w", sub, err)
 		}
 	}
-	if err := assertSameFilesystem(
+	if err := assertSameFilesystemFn(
 		filepath.Join(root, "staging"),
 		filepath.Join(root, "canonical"),
 	); err != nil {
@@ -140,10 +142,7 @@ func (s *Store) Abandon(claimID string) error {
 	return s.abandonLocked(claimID)
 }
 
-func (s *Store) Release(claimID, intent string) error {
-	if intent == "r" {
-		return nil
-	}
+func (s *Store) Release(claimID string) error {
 	return s.Abandon(claimID)
 }
 

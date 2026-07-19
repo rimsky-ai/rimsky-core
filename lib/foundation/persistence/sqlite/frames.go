@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -120,6 +121,20 @@ func (s *framesImpl) EndFrameIfSettled(
 	return n == 1, nil
 }
 
+const prunedFrameIDsSQL = `
+    SELECT frame_id FROM (
+        SELECT f.frame_id, f.ended_at,
+               ROW_NUMBER() OVER (
+                   PARTITION BY f.instance_id
+                   ORDER BY COALESCE(f.ended_at, f.started_at) DESC, f.frame_id DESC
+               ) AS rk
+          FROM rimsky_frames f
+         WHERE f.ended_at IS NOT NULL
+    ) ranked
+    WHERE ranked.rk > ?
+       OR (ranked.ended_at IS NOT NULL AND ranked.ended_at < ?)
+`
+
 func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKept int, cutoff time.Time) (int, error) {
 	countBound := recentFramesKept > 0
 	timeBound := !cutoff.IsZero()
@@ -134,30 +149,92 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 	if !timeBound {
 		cutoffArg = formatTime(time.Time{})
 	}
-	res, err := (*tablesImpl)(s).db.ExecContext(ctx, `
-        DELETE FROM rimsky_frames
-         WHERE frame_id IN (
-            SELECT frame_id FROM (
-                SELECT f.frame_id, f.ended_at,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY f.instance_id
-                           ORDER BY COALESCE(f.ended_at, f.started_at) DESC, f.frame_id DESC
-                       ) AS rk
-                  FROM rimsky_frames f
-                 WHERE f.ended_at IS NOT NULL
-            ) ranked
-            WHERE ranked.rk > ?
-               OR (ranked.ended_at IS NOT NULL AND ranked.ended_at < ?)
-         )
-    `, countCap, cutoffArg)
+	ti := (*tablesImpl)(s)
+	frameIDs, err := s.snapshotPrunableFrameIDs(ctx, countCap, cutoffArg)
 	if err != nil {
 		return 0, fmt.Errorf("frames.PruneTraceForRetention: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, err
+	if len(frameIDs) == 0 {
+		return 0, nil
 	}
-	return int(n), nil
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(frameIDs)), ",")
+	frameArgs := make([]any, len(frameIDs))
+	for i, id := range frameIDs {
+		frameArgs[i] = id
+	}
+	var affected int
+	err = ti.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		orphaned, err := ti.q(tx).QueryContext(ctx, `
+            SELECT scratch_handle, scratch_handle_backend
+              FROM rimsky_node_runs
+             WHERE scratch_handle IS NOT NULL
+               AND frame_id IN (`+placeholders+`)
+        `, frameArgs...)
+		if err != nil {
+			return fmt.Errorf("select blob-backed scratch handles: %w", err)
+		}
+		type orphanHandle struct {
+			handle  string
+			backend string
+		}
+		var handles []orphanHandle
+		for orphaned.Next() {
+			var handle string
+			var backend sql.NullString
+			if scanErr := orphaned.Scan(&handle, &backend); scanErr != nil {
+				orphaned.Close()
+				return fmt.Errorf("scan blob-backed scratch handle: %w", scanErr)
+			}
+			handles = append(handles, orphanHandle{handle: handle, backend: backend.String})
+		}
+		orphaned.Close()
+		if err := orphaned.Err(); err != nil {
+			return fmt.Errorf("iterate blob-backed scratch handles: %w", err)
+		}
+		now := time.Now().UTC()
+		for _, h := range handles {
+			if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), tx, h.handle, h.backend, now, ti.BlobRetention()); err != nil {
+				return fmt.Errorf("queue blob orphan %q: %w", h.handle, err)
+			}
+		}
+		res, err := ti.q(tx).ExecContext(ctx, `
+            DELETE FROM rimsky_frames
+             WHERE frame_id IN (`+placeholders+`)
+        `, frameArgs...)
+		if err != nil {
+			return fmt.Errorf("delete pruned frames: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		affected = int(n)
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("frames.PruneTraceForRetention: %w", err)
+	}
+	return affected, nil
+}
+
+func (s *framesImpl) snapshotPrunableFrameIDs(ctx context.Context, countCap int, cutoffArg string) ([]string, error) {
+	rows, err := (*tablesImpl)(s).db.QueryContext(ctx, prunedFrameIDsSQL, countCap, cutoffArg)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot prunable frames: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan prunable frame id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate prunable frame ids: %w", err)
+	}
+	return out, nil
 }
 
 func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (*shared.UUID, error) {

@@ -852,7 +852,7 @@ func TestSubstitute_ClaimScope(t *testing.T) {
 	}
 }
 
-var liveResolverKinds = []string{"claim", "params", "nodes", "child", "messages"}
+var liveResolverKinds = []string{"claim", "params", "nodes", "child", "messages", "env"}
 
 func TestSubstitutionResolverArms(t *testing.T) {
 	t.Parallel()
@@ -863,6 +863,7 @@ func TestSubstitutionResolverArms(t *testing.T) {
 		"nodes":    "nodes.n.attribute.f",
 		"child":    "child.partition_key",
 		"messages": "messages.some-type.f",
+		"env":      "env.RIMSKY_TEST_PROBE_UNSET_VAR_XYZ",
 	}
 	for _, kind := range liveResolverKinds {
 		probe, ok := probes[kind]

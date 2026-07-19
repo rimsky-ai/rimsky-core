@@ -52,8 +52,7 @@ func TestSoftInstancePause(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"initial dispatch should reach Fresh")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 	startCount := stubObservedCount(h, "worker")
 	require.GreaterOrEqual(t, startCount, 1,
 		"first dispatch fired before pause")
@@ -71,8 +70,6 @@ func TestSoftInstancePause(t *testing.T) {
 	status, _ = instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	require.True(t, waitForStubObservedCount(h, "worker", startCount+1, 10*time.Second),
-		"second dispatch should fire after instance resume")
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"second dispatch should reach Fresh post-resume")
+	waitForStubObservedCount(h, "worker", startCount+1)
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 }

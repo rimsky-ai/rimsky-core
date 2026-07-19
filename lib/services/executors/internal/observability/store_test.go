@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -33,8 +34,13 @@ func TestStoreGetTraceEvictedOnUnknown(t *testing.T) {
 func TestStoreAppendAndGetTrace(t *testing.T) {
 	s := NewStore()
 	s.RegisterDispatch("d1")
-	s.AppendEvent("d1", MakeEvent("e1", "", "step_started", "", genv1.Severity_INFO, map[string]any{"step_id": "s1"}))
-	s.AppendEvent("d1", MakeEvent("e2", "e1", "step_completed", "", genv1.Severity_INFO, map[string]any{"step_id": "s1"}))
+	emitted := []*genv1.TraceEvent{
+		MakeEvent("e1", "", "step_started", "", genv1.Severity_INFO, map[string]any{"step_id": "s1"}),
+		MakeEvent("e2", "e1", "step_completed", "", genv1.Severity_INFO, map[string]any{"step_id": "s1"}),
+	}
+	for _, ev := range emitted {
+		s.AppendEvent("d1", ev)
+	}
 	s.MarkTerminal("d1")
 	tr, err := s.GetTrace(context.Background(), &genv1.GetTraceRequest{DispatchId: "d1"})
 	if err != nil {
@@ -43,8 +49,14 @@ func TestStoreAppendAndGetTrace(t *testing.T) {
 	if !tr.GetComplete() {
 		t.Fatalf("expected complete=true after MarkTerminal")
 	}
-	if len(tr.GetEvents()) != 2 {
-		t.Fatalf("events len = %d, want 2", len(tr.GetEvents()))
+	got := tr.GetEvents()
+	if len(got) != len(emitted) {
+		t.Fatalf("events len = %d, want %d", len(got), len(emitted))
+	}
+	for i, want := range emitted {
+		if !proto.Equal(got[i], want) {
+			t.Fatalf("event[%d] = %+v, want %+v (history must return exactly what was emitted, in emission order)", i, got[i], want)
+		}
 	}
 }
 

@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -69,8 +68,7 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
-		"worker should land in failed via error_types: { acquire/unavailable: [give_up] }")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
 
 	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

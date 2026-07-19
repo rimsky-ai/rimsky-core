@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -188,9 +187,7 @@ func TestStoryTypedMessageSubstitution_RuntimeResolutionThroughBackEdge(t *testi
 
 	receiver := h.FindNode(iid, "receiver")
 	require.NotNil(t, receiver)
-	require.True(t,
-		h.WaitForEventKind(receiver.ID, "terminal/success", 20*time.Second),
-		"receiver did not run — substitution may have failed")
+	h.WaitForEventKind(receiver.ID, "terminal/success")
 
 	var resolvedBody []byte
 	h.QueryRowSQL(

@@ -33,8 +33,7 @@ func TestHarnessSmoke(t *testing.T) {
 
 	greet := h.FindNode(iid, "greet")
 	require.NotNil(t, greet)
-	require.True(t, h.WaitForNodeState(greet.ID, cascade.NodeStateFresh, 10*time.Second),
-		"node did not reach fresh within 10s")
+	h.WaitForNodeState(greet.ID, cascade.NodeStateFresh)
 }
 
 func TestHarnessClockInjection(t *testing.T) {

@@ -164,6 +164,41 @@ func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
 	require.NotEmpty(t, out["template_id"])
 }
 
+func TestValidationPipeline_PublisherRoleHonoredAtRegistration(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "pub-1",
+		supportedRoles: []string{"publisher"},
+		errs: []runtime.ValidationFinding{{
+			Class:   "publisher_config_invalid",
+			Message: "bad publisher config",
+			Path:    "/publisher/config",
+		}},
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("vp-pub-" + uuid.NewString())
+	spec := specOf(body)
+	spec["publishers"] = []map[string]any{
+		{
+			"name":         "pub-1",
+			"kind":         "http",
+			"config":       map[string]any{},
+			"message_type": "system/invalidate",
+		},
+	}
+	status, out := vh.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusBadRequest, status, out)
+	require.Contains(t, out["error"], "validation pipeline")
+	errs, _ := out["validation_errors"].([]any)
+	require.NotEmpty(t, errs)
+	require.GreaterOrEqual(t, vfake.publisher, 1,
+		"registering a template with a publisher whose validator advertises the publisher role must invoke ValidatePublisher")
+	require.Equal(t, 0, vfake.executor)
+}
+
 func TestValidationPipeline_WarningsAsErrorsRejects(t *testing.T) {
 	t.Parallel()
 	vfake := &fakeValidator{

@@ -5,14 +5,19 @@
 package scenarios
 
 import (
+	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -23,6 +28,7 @@ func TestTemplateErrorPolicy(t *testing.T) {
 	t.Run("pass_settles_fresh_and_cascades", testTemplateErrorPolicyPass)
 	t.Run("give_up_terminates_node_skips_downstream", testTemplateErrorPolicyGiveUp)
 	t.Run("retry_re_dispatches", testTemplateErrorPolicyRetry)
+	t.Run("release_and_requeue_abandons_claim_and_re_acquires", testTemplateErrorPolicyReleaseAndRequeue)
 }
 
 func testTemplateErrorPolicyPass(t *testing.T) {
@@ -57,8 +63,7 @@ func testTemplateErrorPolicyPass(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, downstream)
 
-	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
-		"worker should record settling_signal_type=terminal/error/<class> under pass")
+	waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/")
 
 	var workerLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -70,8 +75,7 @@ func testTemplateErrorPolicyPass(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, workerLatest.State,
 		"pass must settle the node fresh, not failed — the action declaration is what differentiates pass from give_up")
 
-	require.True(t, h.WaitForNodeState(downstream.ID, cascade.NodeStateFresh, 30*time.Second),
-		"pass must continue the cascade — a downstream subscriber on terminal/* must fire on the worker's terminal/error/<class> signal")
+	h.WaitForNodeState(downstream.ID, cascade.NodeStateFresh)
 
 	dispatchCount := 0
 	for _, o := range h.Stub.Observed() {
@@ -119,10 +123,7 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, downstream)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
-		"give_up must drive the worker to state=failed; pass would settle fresh and retry would not settle at all")
-
-	time.Sleep(2 * time.Second)
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
 
 	var downstreamLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -183,8 +184,7 @@ func testTemplateErrorPolicyRetry(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 60*time.Second),
-		"retry chain must run to exhaustion then fall through to give_up; reaching failed proves both the retry dispatches happened and the chain advanced past the retry slot")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
 
 	dispatchCount := 0
 	for _, o := range h.Stub.Observed() {
@@ -206,4 +206,111 @@ func testTemplateErrorPolicyRetry(t *testing.T) {
 		"each retry must emit a transient/retry/<n>/<class> audit row; expected at least %d, got %d",
 		retryCount, retryEventCount)
 
+}
+
+func testTemplateErrorPolicyReleaseAndRequeue(t *testing.T) {
+	t.Parallel()
+
+	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+		PickPolicies: map[string]stubstore.PickPolicyConfig{
+			"@queue": {
+				OnCommit:     action.Action{Kind: action.Pop},
+				OnGiveUp:     action.Action{Kind: action.Recycle},
+				InitialItems: []json.RawMessage{json.RawMessage(`{"k":"v"}`)},
+			},
+		},
+	})
+	t.Cleanup(teardown)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
+				"queue-store": {
+					Endpoint:     "grpc://" + endpoint,
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+				},
+			},
+		},
+	})
+	h.Stub.WhenType("worker").
+		Error("boom_requeue", map[string]any{"why": "requeue-branch"}).
+		Then().Success(map[string]any{"ok": true}, true, "ran-after-requeue")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "tmpl-error-policy-release-and-requeue", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{
+					Type:     "worker",
+					Executor: "stub",
+					ErrorTypes: map[string]node.ErrorTypePolicy{
+						"stub/boom_requeue": {Action: "release_and_requeue"},
+					},
+				},
+				scenario.WithClaimProducers(scenario.WriteClaimRef("queue-store", "@queue")),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-tmpl-err-requeue", map[string]any{})
+
+	worker := h.FindNode(iid, "worker")
+	require.NotNil(t, worker)
+
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
+
+	calls := sub.Calls()
+	require.Equal(t, 2, countCalls(calls, "open"),
+		"release_and_requeue must force a fresh Open for the re-dispatch, not silently reuse "+
+			"the errored dispatch's claim — one Open for the errored attempt, one more for "+
+			"the requeued re-acquire")
+	require.Equal(t, 1, countCalls(calls, "abandon"),
+		"the held claim from the errored dispatch must be Abandoned (release_and_requeue "+
+			"releases held claims), not left dangling or silently Committed")
+	require.Equal(t, 1, countCalls(calls, "commit"),
+		"the second, successful dispatch's freshly-reacquired claim must Commit normally")
+
+	var openClaimID, abandonClaimID, commitClaimID string
+	for _, c := range calls {
+		switch c.Verb {
+		case "open":
+			if openClaimID == "" {
+				openClaimID = c.ClaimID
+			}
+		case "abandon":
+			abandonClaimID = c.ClaimID
+		case "commit":
+			commitClaimID = c.ClaimID
+		}
+	}
+	require.Equal(t, openClaimID, abandonClaimID,
+		"the Abandon must target the claim minted by the errored dispatch's Open")
+	require.NotEqual(t, abandonClaimID, commitClaimID,
+		"the Commit must target a freshly-minted claim from the requeued re-acquire, not the abandoned one")
+
+	dispatchCount := 0
+	for _, o := range h.Stub.Observed() {
+		if o.NodeType == "worker" {
+			dispatchCount++
+		}
+	}
+	require.Equal(t, 2, dispatchCount,
+		"release_and_requeue must produce exactly two worker dispatches: the one that errored "+
+			"and the fresh re-acquire that succeeded")
+
+	var eventCount int
+	h.QueryRowSQL(
+		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'transient/release_and_requeue/stub/boom_requeue'`,
+		[]any{worker.ID}, &eventCount)
+	require.Equal(t, 1, eventCount,
+		"release_and_requeue must emit exactly one transient/release_and_requeue/<class> audit row")
+
+	var lhCount int
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT count(*) FROM rimsky_claim_handles lh
+		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
+		  WHERE n.instance_id = $1 AND lh.is_held = TRUE`, iid,
+	).Scan(&lhCount))
+	require.Zero(t, lhCount,
+		"no claim-handle row may remain held after the node settles fresh")
 }

@@ -508,6 +508,7 @@ func TestClaimTerminalRecord_TagDisciplineAndOrder(t *testing.T) {
 		{"Outcome", "outcome", false},
 		{"Cause", "cause", true},
 		{"ProducerMetadata", "producer_metadata", true},
+		{"TerminatingSupervisorID", "terminating_supervisor_id", true},
 	}
 	assertStructJSONShape(t, ClaimTerminalRecord{}, want)
 }

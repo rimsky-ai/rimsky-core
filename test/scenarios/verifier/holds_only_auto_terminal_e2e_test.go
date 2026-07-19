@@ -66,10 +66,8 @@ func TestHoldsOnlyAutoTerminal(t *testing.T) {
 	require.NotNil(t, acquirer)
 	require.NotNil(t, coholder)
 
-	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 15*time.Second),
-		"acquirer did not reach fresh")
-	require.True(t, h.WaitForNodeState(coholder.ID, cascade.NodeStateFresh, 15*time.Second),
-		"co-holder did not reach fresh")
+	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(coholder.ID, cascade.NodeStateFresh)
 
 	deadline := time.Now().Add(5 * time.Second)
 	var commitCount, abandonCount int

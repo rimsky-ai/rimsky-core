@@ -114,13 +114,15 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 			"the topic_kind CHECK must admit ('transient','terminal')", count)
 	}
 
-	if err := pgtest.TryExecForTest(ctx, t, d,
-		`INSERT INTO rimsky_wait_set
-		   (frame_id, receiver_run_id, sender_run_id, topic_kind)
-		 VALUES ($1, $2, $3, 'message')`,
-		uuid.UUID(frameID), uuid.UUID(receiverNodeRunID), uuid.UUID(senderNodeRunID),
-	); err == nil {
-		t.Fatalf("insert wait_set row topic_kind='message' returned nil error; " +
-			"the topic_kind CHECK must REJECT 'message' (post-011 retirement)")
+	for _, rejected := range []string{"message", "event"} {
+		if err := pgtest.TryExecForTest(ctx, t, d,
+			`INSERT INTO rimsky_wait_set
+			   (frame_id, receiver_run_id, sender_run_id, topic_kind)
+			 VALUES ($1, $2, $3, $4)`,
+			uuid.UUID(frameID), uuid.UUID(receiverNodeRunID), uuid.UUID(senderNodeRunID), rejected,
+		); err == nil {
+			t.Fatalf("insert wait_set row topic_kind=%q returned nil error; "+
+				"the topic_kind CHECK must REJECT %q (retired value)", rejected, rejected)
+		}
 	}
 }

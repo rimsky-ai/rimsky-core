@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -66,6 +67,36 @@ func TestSubscribe_ParsesAndComputesNextFire(t *testing.T) {
 	}
 	if w.MessageType != "invalidate" {
 		t.Errorf("routing fields: %+v", w)
+	}
+}
+
+func TestSubscribeThenListSubscriptions_RoundTripsResolvedConfig(t *testing.T) {
+	s := NewSensorService("", noopLogger{})
+	raw, _ := json.Marshal(map[string]any{"cron": "*/5 * * * *"})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1",
+		InstanceId:              "i1",
+		Kind:                    "cron",
+		ResolvedConfig:          raw,
+		MessageType:             "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := s.ListSubscriptions(context.Background(), &emptypb.Empty{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Subscriptions) != 1 {
+		t.Fatalf("subscriptions: %+v", resp.Subscriptions)
+	}
+	if got := resp.Subscriptions[0].GetResolvedConfig(); !bytes.Equal(got, raw) {
+		t.Errorf("resolved_config=%s, want %s", got, raw)
+	}
+	if resp.Subscriptions[0].GetMessageType() != "invalidate" {
+		t.Errorf("message_type=%q, want invalidate", resp.Subscriptions[0].GetMessageType())
+	}
+	if resp.Subscriptions[0].GetStartedAt() == nil {
+		t.Error("started_at not set")
 	}
 }
 
@@ -133,8 +164,8 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method: %s", r.Method)
 		}
-		if got := r.Header.Get("Idempotency-Key"); got == "" {
-			t.Errorf("expected Idempotency-Key header")
+		if got, want := r.Header.Get("Idempotency-Key"), "w1+2026-01-01T00:05:00Z"; got != want {
+			t.Errorf("Idempotency-Key = %q, want %q (sub id + fire-window ISO)", got, want)
 		}
 		raw, _ := io.ReadAll(r.Body)
 		var body map[string]any

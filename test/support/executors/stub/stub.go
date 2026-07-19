@@ -7,6 +7,7 @@ package stub
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,25 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
+var cancelProbeHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+func postCancelProbeSignal(callbackURL, ackID string) {
+	if callbackURL == "" {
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, callbackURL+"/v1/callback/"+ackID,
+		strings.NewReader(`{"success":{"changed":false}}`))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := cancelProbeHTTPClient.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
+}
+
 func parkReasonFromStorageForm(s string) genv1.ParkReason {
 	if s == "" {
 		return genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
@@ -26,6 +46,18 @@ func parkReasonFromStorageForm(s string) genv1.ParkReason {
 		return genv1.ParkReason(v)
 	}
 	return genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
+}
+
+func parkResumeAtFromAttrs(attrs map[string]any) *timestamppb.Timestamp {
+	raw, _ := attrs["park_resume_at"].(string)
+	if raw == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return nil
+	}
+	return timestamppb.New(t)
 }
 
 type terminalKind int
@@ -57,11 +89,13 @@ type script struct {
 
 type Stub struct {
 	genv1.UnimplementedExecutorServer
-	mu       sync.Mutex
-	scripts  map[string][]*script
-	callN    map[string]int
-	stubMode bool
-	observed []ObservedRequest
+	mu                sync.Mutex
+	scripts           map[string][]*script
+	callN             map[string]int
+	stubMode          bool
+	ignoreCancelProbe bool
+	forceParkReason   *genv1.ParkReason
+	observed          []ObservedRequest
 }
 
 type ObservedRequest struct {
@@ -88,6 +122,20 @@ func (s *Stub) EnableStubMode() *Stub {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stubMode = true
+	return s
+}
+
+func (s *Stub) IgnoreCancelProbe() *Stub {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ignoreCancelProbe = true
+	return s
+}
+
+func (s *Stub) ForceParkReason(reason genv1.ParkReason) *Stub {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.forceParkReason = &reason
 	return s
 }
 
@@ -216,6 +264,8 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 		CandidateHandles:         candidateHandles,
 	})
 	stubMode := s.stubMode
+	ignoreCancelProbe := s.ignoreCancelProbe
+	forceParkReason := s.forceParkReason
 	q, ok := s.scripts[req.NodeType]
 	var sc *script
 	if ok && len(q) > 0 {
@@ -233,16 +283,39 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 
 	if stubMode {
 		attrs := req.GetAttributes().AsMap()
+		if probe, _ := attrs["probe_cancel"].(bool); probe && !ignoreCancelProbe {
+			postCancelProbeSignal(req.GetCallbackUrl(), "cancel-observed")
+			<-ctx.Done()
+			postCancelProbeSignal(req.GetCallbackUrl(), "cancel-acknowledged")
+			return nil, ctx.Err()
+		}
 		if probe, _ := attrs["probe_park"].(bool); probe {
 			reasonStr, _ := attrs["park_reason"].(string)
 			reasonLabel, _ := attrs["park_reason_label"].(string)
 			reasonNote, _ := attrs["park_reason_note"].(string)
+			resumeAt := parkResumeAtFromAttrs(attrs)
+			reason := parkReasonFromStorageForm(reasonStr)
+			if forceParkReason != nil {
+				reason = *forceParkReason
+			}
 			park := &genv1.Park{
-				Reason:      parkReasonFromStorageForm(reasonStr),
+				Reason:      reason,
 				ReasonLabel: reasonLabel,
 				ReasonNote:  reasonNote,
+				ResumeAt:    resumeAt,
 			}
 			return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}, nil
+		}
+		if probe, _ := attrs["stub_probe"].(bool); probe {
+			delta, err := structpb.NewStruct(map[string]any{"stub": true})
+			if err != nil {
+				return nil, err
+			}
+			return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+				AttributesDelta: delta,
+				Changed:         true,
+				ChangeSummary:   "stub",
+			}}}, nil
 		}
 		delta, err := structpb.NewStruct(StubAttributesFor(req.GetNodeType()))
 		if err != nil {

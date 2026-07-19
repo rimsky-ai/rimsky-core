@@ -7,7 +7,6 @@ package frame_resolution
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -41,8 +40,7 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	leaf := h.FindNode(iid, "leaf")
 	require.NotNil(t, leaf)
 
-	require.True(t, h.WaitForNodeState(leaf.ID, cascade.NodeStateFresh, 15*time.Second),
-		"leaf did not reach fresh")
+	h.WaitForNodeState(leaf.ID, cascade.NodeStateFresh)
 
 	var nullDispatches int
 	err := h.Pool.QueryRow(context.Background(),

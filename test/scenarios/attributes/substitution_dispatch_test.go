@@ -6,7 +6,6 @@ package attributes
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -31,17 +30,23 @@ func TestParamsSubstitutionAtDispatch(t *testing.T) {
 					"properties": map[string]any{
 						"greeting":       map[string]any{"type": "string", "source": "{{params.greeting}}"},
 						"executor_field": map[string]any{"type": "string"},
+						"count":          map[string]any{"type": "integer", "source": "{{params.count}}"},
+						"tagged_id":      map[string]any{"type": "string", "source": "id-{{params.big_id}}-tag"},
 					},
 					"required": []any{"greeting"},
 				}),
 			),
 		},
 	})
-	iid := h.CreateInstance(tid, "ck-subst", map[string]any{"greeting": "hello-world"})
+	iid := h.CreateInstance(tid, "ck-subst", map[string]any{
+		"greeting": "hello-world",
+		"count":    1700000000,
+		"big_id":   1700000000,
+	})
 
 	g := h.FindNode(iid, "greeter")
 	require.NotNil(t, g)
-	require.True(t, h.WaitForNodeState(g.ID, cascade.NodeStateFresh, 15*time.Second))
+	h.WaitForNodeState(g.ID, cascade.NodeStateFresh)
 
 	var row *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -52,6 +57,11 @@ func TestParamsSubstitutionAtDispatch(t *testing.T) {
 	require.NotNil(t, row)
 	require.Equal(t, "hello-world", row.Data["greeting"], "params substitution should resolve at dispatch")
 	require.Equal(t, "from-executor", row.Data["executor_field"], "executor delta should merge into final attributes")
+	require.EqualValues(t, 1700000000, row.Data["count"],
+		"a bare numeric directive must substitute the exact numeric value, not a stringified/rounded form")
+	require.Equal(t, "id-1700000000-tag", row.Data["tagged_id"],
+		"a numeric param embedded in a larger string source must render as plain decimal digits, "+
+			"not Go's default scientific-notation float formatting (e.g. 1.7e+09)")
 }
 
 func TestRequiredFieldMissingParamFailsTemplateResolution(t *testing.T) {
@@ -85,6 +95,5 @@ func TestRequiredFieldMissingParamFailsTemplateResolution(t *testing.T) {
 
 	n := h.FindNode(iid, "needs-param")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 15*time.Second),
-		"missing required substitution should drive node to failed via give_up")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
 }

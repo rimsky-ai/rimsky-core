@@ -27,6 +27,7 @@ func Suite(
 	t.Run("ClaimScopeByteEquality", func(t *testing.T) { testClaimScopeByteEquality(t, factory(t)) })
 	t.Run("OrphanCutoffTime", func(t *testing.T) { testOrphanCutoffTime(t, factory(t)) })
 	t.Run("ReaperSkipsParkedHolder", func(t *testing.T) { testReaperSkipsParkedHolder(t, factory(t)) })
+	t.Run("SweepExecutorDeadlinesSkipsParkedRow", func(t *testing.T) { testSweepExecutorDeadlinesSkipsParkedRow(t, factory(t)) })
 	t.Run("RenewExpiryForHolderRun", func(t *testing.T) { testRenewExpiryForHolderRun(t, factory(t)) })
 	t.Run("CoHolderInsertIdempotent", func(t *testing.T) { testCoHolderInsertIdempotent(t, factory(t)) })
 	t.Run("TxAtomicity", func(t *testing.T) { testTxAtomicity(t, factory(t)) })
@@ -47,7 +48,9 @@ func Suite(
 		t.Run("AffirmAfterCloseErrors", func(t *testing.T) { testRunScopeAffirmAfterClose_ErrRunScopeClosed(t, factory(t)) })
 		t.Run("FanoutPartitionUniqueness", func(t *testing.T) { testRunScopeFanoutPartitionUniqueness(t, factory(t)) })
 		t.Run("ListParentChain", func(t *testing.T) { testRunScopeListParentChain(t, factory(t)) })
+		t.Run("KindDerivableFromStructuralFields", func(t *testing.T) { testRunScopeKindDerivableFromStructuralFields(t, factory(t)) })
 	})
+	t.Run("SettlingSignalTypeNullNotEmptyStringSentinel", func(t *testing.T) { testSettlingSignalTypeNullNotEmptyStringSentinel(t, factory(t)) })
 	t.Run("RunInFlightLookup", func(t *testing.T) {
 		t.Run("SingleRowPerScopePerNode", func(t *testing.T) { testInFlightLookup_SingleRowPerScopePerNode(t, factory(t)) })
 		t.Run("NoFalsePositiveAcrossScopes", func(t *testing.T) { testInFlightLookup_NoFalsePositiveAcrossScopes(t, factory(t)) })
@@ -59,6 +62,7 @@ func Suite(
 	t.Run("ListRunsForInstanceByStates", func(t *testing.T) { testListRunsForInstanceByStates(t, factory(t)) })
 	t.Run("RunStateWritesIsolated", func(t *testing.T) {
 		t.Run("UpdateState", func(t *testing.T) { testRunStateWritesIsolated_UpdateState(t, factory(t)) })
+		t.Run("UpdateStateWritesNoAuditEvent", func(t *testing.T) { testRunStateWritesIsolated_UpdateStateWritesNoAuditEvent(t, factory(t)) })
 		t.Run("BumpLastProgressAt", func(t *testing.T) { testRunStateWritesIsolated_BumpLastProgressAt(t, factory(t)) })
 		t.Run("ClearSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ClearSettlingSignalType(t, factory(t)) })
 		t.Run("ResetFailedTerminalSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t, factory(t)) })
@@ -74,6 +78,7 @@ func Suite(
 	t.Run("NodeAttributesGetLatestByNode", func(t *testing.T) { testNodeAttributesGetLatestByNode(t, factory(t)) })
 	t.Run("NodeAttributesCascadeDeleteWithRun", func(t *testing.T) { testNodeAttributesCascadeDeleteWithRun(t, factory(t), rawExec) })
 	t.Run("NodeAttributesPerRunDenormConsistency", func(t *testing.T) { testNodeAttributesPerRunDenormConsistency(t, factory(t)) })
+	t.Run("NodeRunSummaryBucketMapping", func(t *testing.T) { testNodeRunSummaryBucketMapping(t, factory(t)) })
 	t.Run("InstancesFindAnyByInstanceKey", func(t *testing.T) { testInstancesFindAnyByInstanceKey(t, factory(t)) })
 	t.Run("InstancesAttributeOverridesRoundTrip", func(t *testing.T) { testInstancesAttributeOverridesRoundTrip(t, factory(t)) })
 	t.Run("InstancesAttributeOverridesDefaultsEmpty", func(t *testing.T) { testInstancesAttributeOverridesDefaultsEmpty(t, factory(t)) })
@@ -84,8 +89,10 @@ func Suite(
 	t.Run("StoreLifecycleListByStore", func(t *testing.T) { testStoreLifecycleListByStore(t, factory(t)) })
 	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
 	t.Run("EventsListAuthPayloadFilters", func(t *testing.T) { testEventsListAuthPayloadFilters(t, factory(t)) })
+	t.Run("EventsListPagination", func(t *testing.T) { testEventsListPagination(t, factory(t)) })
 	t.Run("MessagesListByFrameID", func(t *testing.T) { testMessagesListByFrameID(t, factory(t)) })
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
+	t.Run("WaitSetGateEvaluatorMethods", func(t *testing.T) { testWaitSetGateEvaluatorMethods(t, factory(t)) })
 	// @decision: claimant-guard-helper
 	t.Run("ClaimantGuard", func(t *testing.T) {
 		t.Run("HandleUpdates", func(t *testing.T) { testClaimantGuardHandleUpdates(t, factory(t)) })
@@ -132,6 +139,7 @@ func Suite(
 		t.Run("AnchorsAndRepoint", func(t *testing.T) { testClaimHandleAnchorsAndRepoint(t, factory(t)) })
 		t.Run("ChildWalk", func(t *testing.T) { testClaimHandleChildWalk(t, factory(t)) })
 		t.Run("ListByInstanceAndState", func(t *testing.T) { testClaimHandleListByInstanceAndState(t, factory(t)) })
+		t.Run("SurvivesNodeRunDeletion", func(t *testing.T) { testClaimHandleSurvivesNodeRunDeletion(t, factory(t)) })
 	})
 	t.Run("RetentionSweep", func(t *testing.T) {
 		t.Run("ClaimHandles", func(t *testing.T) { testRetentionClaimHandleSweep(t, factory(t)) })

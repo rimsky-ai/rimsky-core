@@ -46,9 +46,9 @@ func TestNotifyOnlyMode(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	h.WaitForNodeStateForever(n.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
-	hits := waitForHitCountForever(t, h, bpID, 1)
+	hits := waitForHitCount(t, h, bpID, 1)
 	require.Len(t, hits, 1)
 	require.Nil(t, hits[0].ResumedAt,
 		"notify_only hit must NOT be auto-resumed; the agent reads it but does not need to release the dispatch")

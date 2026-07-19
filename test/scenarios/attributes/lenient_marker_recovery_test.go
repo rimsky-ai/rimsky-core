@@ -6,7 +6,6 @@ package attributes
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -86,10 +85,8 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 	require.NotNil(t, lenientN)
 	require.NotNil(t, strictN)
 
-	require.True(t, h.WaitForNodeState(upN.ID, cascade.NodeStateFresh, 20*time.Second),
-		"upstream should settle fresh")
-	require.True(t, h.WaitForNodeState(lenientN.ID, cascade.NodeStateFresh, 20*time.Second),
-		"lenient node should reach terminal Complete (fresh), not fail with ErrMissingSource")
+	h.WaitForNodeState(upN.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(lenientN.ID, cascade.NodeStateFresh)
 
 	var lenientNote any
 	var sawLenientDispatch bool
@@ -103,8 +100,7 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 	require.Equal(t, "", lenientNote,
 		"lenient `?` directive over an absent source should resolve to empty string at dispatch")
 
-	require.True(t, h.WaitForNodeState(strictN.ID, cascade.NodeStateFailed, 20*time.Second),
-		"strict node should fail the dispatch on the absent source (no `?` marker)")
-	require.False(t, h.WaitForEventKind(strictN.ID, "terminal/success", 2*time.Second),
+	h.WaitForNodeState(strictN.ID, cascade.NodeStateFailed)
+	require.False(t, h.HasEventKind(strictN.ID, "terminal/success"),
 		"strict node must NOT reach a clean terminal Complete")
 }

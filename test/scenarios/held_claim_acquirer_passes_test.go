@@ -83,8 +83,7 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	require.True(t, waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/", 30*time.Second),
-		"acquirer should record settling_signal_type=terminal/error/<class> under error_types: { acquire/unavailable: [pass] }")
+	waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/")
 
 	time.Sleep(2 * time.Second)
 

@@ -66,6 +66,8 @@ func (s *Server) Abandon(_ context.Context, req *genv1.AbandonRequest) (*genv1.A
 }
 
 func (s *Server) Release(_ context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
-	_ = req
+	if err := s.Store.Release(req.GetClaimId()); err != nil {
+		return nil, err
+	}
 	return &genv1.ReleaseResponse{}, nil
 }

@@ -18,6 +18,9 @@ const (
 	perNodeReviewerSeed = "reviewer-seed-plaintext-do-not-leak-3b2d1e64"
 	perNodeAlphaMcpURL  = "http://127.0.0.1:9999/mcp/alpha"
 	perNodeBetaMcpURL   = "http://127.0.0.1:9999/mcp/beta"
+	perNodeModuleSpecs  = "scenario:per-node-module-witness"
+	perNodeModuleServer = "module-witness"
+	moduleWitnessTextOK = "module-transport-reached"
 )
 
 // @story: claude-agent-mcp-servers-per-node
@@ -32,7 +35,7 @@ func TestClaudeAgentPerNodeDivergence(t *testing.T) {
 	executorEndpoint := harness.StartClaudeAgentFakeOnNetwork(
 		ctx, t, netName, "claude-agent-fake-per-node",
 		harness.ClaudeAgentFakeOptions{
-			McpAllowlist:         []string{"validator", "local-tool"},
+			McpAllowlist:         []string{"validator", "local-tool", perNodeModuleServer},
 			ExposeEnvAllowlist:   []string{"VALIDATOR_TOKEN", "REVIEWER_SEED"},
 			SignoffPrivateKeyPEM: privPEM,
 			ExtraEnv: map[string]string{
@@ -52,21 +55,44 @@ func TestClaudeAgentPerNodeDivergence(t *testing.T) {
 
 	alphaID := resolveWorkerNodeID(t, ep, iid, "worker-alpha")
 	betaID := resolveWorkerNodeID(t, ep, iid, "worker-beta")
+	gammaID := resolveWorkerNodeID(t, ep, iid, "worker-gamma")
 
 	waitNodeSettledClaudeAgent(t, ep, alphaID, "fresh", 120*time.Second)
 	waitNodeSettledClaudeAgent(t, ep, betaID, "fresh", 120*time.Second)
+	waitNodeSettledClaudeAgent(t, ep, gammaID, "fresh", 120*time.Second)
 
 	alphaObs := readPerNodeObservation(t, ep, alphaID)
 	betaObs := readPerNodeObservation(t, ep, betaID)
+	gammaObs := readPerNodeObservation(t, ep, gammaID)
 
 	// @story: claude-agent-mcp-servers-per-node
 	assertMcpServer(t, "worker-alpha", alphaObs, "validator", "http")
 	if hasMcpServer(alphaObs, "local-tool") {
 		t.Fatalf("worker-alpha observed local-tool in its mcp config — per-node MCP declarations are leaking across nodes; alpha bag=%v", alphaObs)
 	}
+	if hasMcpServer(alphaObs, perNodeModuleServer) {
+		t.Fatalf("worker-alpha observed %s in its mcp config — per-node MCP declarations are leaking across nodes; alpha bag=%v", perNodeModuleServer, alphaObs)
+	}
 	assertMcpServer(t, "worker-beta", betaObs, "local-tool", "http")
 	if hasMcpServer(betaObs, "validator") {
 		t.Fatalf("worker-beta observed validator in its mcp config — per-node MCP declarations are leaking across nodes; beta bag=%v", betaObs)
+	}
+	if hasMcpServer(betaObs, perNodeModuleServer) {
+		t.Fatalf("worker-beta observed %s in its mcp config — per-node MCP declarations are leaking across nodes; beta bag=%v", perNodeModuleServer, betaObs)
+	}
+
+	// @story: claude-agent-mcp-servers-per-node
+	assertMcpServer(t, "worker-gamma", gammaObs, perNodeModuleServer, "http")
+	if hasMcpServer(gammaObs, "validator") {
+		t.Fatalf("worker-gamma observed validator in its mcp config — per-node MCP declarations are leaking across nodes; gamma bag=%v", gammaObs)
+	}
+	if hasMcpServer(gammaObs, "local-tool") {
+		t.Fatalf("worker-gamma observed local-tool in its mcp config — per-node MCP declarations are leaking across nodes; gamma bag=%v", gammaObs)
+	}
+	gammaWitnessResult, _ := gammaObs["module_witness_result"].(string)
+	if gammaWitnessResult != moduleWitnessTextOK {
+		t.Fatalf("worker-gamma module transport not reached: module_witness_result = %q, want %q — the CLI child called the module-loopback MCP server's own tool and did not get back the expected witness text, so the module (http-loopback) transport did not resolve to a live server",
+			gammaWitnessResult, moduleWitnessTextOK)
 	}
 
 	// @story: claude-agent-expose-env-per-node
@@ -74,9 +100,12 @@ func TestClaudeAgentPerNodeDivergence(t *testing.T) {
 	assertEnvAbsent(t, "worker-alpha", alphaObs, "REVIEWER_SEED")
 	assertEnvPresent(t, "worker-beta", betaObs, "REVIEWER_SEED", perNodeReviewerSeed)
 	assertEnvAbsent(t, "worker-beta", betaObs, "VALIDATOR_TOKEN")
+	assertEnvAbsent(t, "worker-gamma", gammaObs, "VALIDATOR_TOKEN")
+	assertEnvAbsent(t, "worker-gamma", gammaObs, "REVIEWER_SEED")
 
 	assertNoPlaintext(t, "worker-alpha", ep, alphaID)
 	assertNoPlaintext(t, "worker-beta", ep, betaID)
+	assertNoPlaintext(t, "worker-gamma", ep, gammaID)
 }
 
 func buildPerNodeTemplate(pubPEM string) map[string]any {
@@ -87,6 +116,9 @@ func buildPerNodeTemplate(pubPEM string) map[string]any {
 	betaAttrs := perNodeAgentAttrs("scenario:per_node_witness node_hint beta", pubPEM)
 	setInlineMcpHTTP(betaAttrs, "local-tool", perNodeBetaMcpURL)
 	setExposeEnv(betaAttrs, "REVIEWER_SEED")
+
+	gammaAttrs := perNodeAgentAttrs("scenario:per_node_witness node_hint gamma", pubPEM)
+	setInlineMcpModule(gammaAttrs, perNodeModuleServer, perNodeModuleSpecs)
 
 	return map[string]any{
 		"spec": map[string]any{
@@ -103,6 +135,11 @@ func buildPerNodeTemplate(pubPEM string) map[string]any {
 					"type":       "worker-beta",
 					"executor":   "claude-agent",
 					"attributes": betaAttrs,
+				},
+				{
+					"type":       "worker-gamma",
+					"executor":   "claude-agent",
+					"attributes": gammaAttrs,
 				},
 			},
 		},
@@ -146,6 +183,13 @@ func setInlineMcpHTTP(attrs map[string]any, name, url string) {
 	cliDefault := attrs["schema"].(map[string]any)["properties"].(map[string]any)["cli"].(map[string]any)["default"].(map[string]any)
 	cliDefault["mcp_servers"] = []any{
 		map[string]any{"transport": "http", "name": name, "url": url},
+	}
+}
+
+func setInlineMcpModule(attrs map[string]any, name, module string) {
+	cliDefault := attrs["schema"].(map[string]any)["properties"].(map[string]any)["cli"].(map[string]any)["default"].(map[string]any)
+	cliDefault["mcp_servers"] = []any{
+		map[string]any{"transport": "module", "name": name, "module": module},
 	}
 }
 

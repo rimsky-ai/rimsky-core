@@ -72,22 +72,14 @@ func TestParkedResumeDoesNotSpuriouslyCascadeSuccessSubscriberOnError(t *testing
 	h.PostInstanceMessage(iid, "test/wake/worker", nil,
 		fmt.Sprintf("test-wake-%s-init", t.Name()))
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
-		"worker should reach parked after first dispatch")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateParked)
 
 	h.Stub.WhenType("worker").Error("boom", map[string]any{"why": "post-resume-error"})
 
-	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
-		"sweep should wake the parked worker — this is the call site that previously "+
-			"drove a synthetic terminal/success cascade through "+
-			"walkCascadeForInvalidatedNode; with the downward walk gone, the resume must "+
-			"leave downstream subscribers untouched")
+	h.WaitForEventKind(worker.ID, "parked_resume_started")
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
-		"worker should land in failed after post-resume error+give_up; "+
-			"reaching failed proves the run settled and any pending cascade work has been processed")
-	require.True(t, h.WaitForEventKind(worker.ID, "terminal/error/stub/boom", 5*time.Second),
-		"worker should have recorded the terminal/error/<class> signal")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
+	h.WaitForEventKind(worker.ID, "terminal/error/stub/boom")
 
 	time.Sleep(2 * time.Second)
 

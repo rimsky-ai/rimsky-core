@@ -100,6 +100,5 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	_, err := sub.SeedPickPolicyItem("@queue", json.RawMessage(`{"v":1}`))
 	require.NoError(t, err, "seed item")
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker did not reach fresh after seeding the queue (silent-retry default)")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 }

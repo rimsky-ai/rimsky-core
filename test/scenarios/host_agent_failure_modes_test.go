@@ -19,8 +19,7 @@ func TestHostAgentNotConnected(t *testing.T) {
 	tid := fx.deployLateBindTemplate(t, "fail-not-connected")
 	iid := fx.createLateBindInstance(t, tid, "ck-not-connected", fx.stubBinary)
 
-	require.True(t, fx.waitForNodeEventKind(t, iid, "terminal/error/host_agent_not_connected", 45*time.Second),
-		"expected host_agent_not_connected when no agent is dialed")
+	fx.waitForNodeEventKind(t, iid, "terminal/error/host_agent_not_connected")
 }
 
 func TestBindingNotFound(t *testing.T) {
@@ -29,8 +28,7 @@ func TestBindingNotFound(t *testing.T) {
 	tid := fx.deployLateBindTemplate(t, "fail-binding-not-found")
 	iid := fx.createLateBindInstance(t, tid, "ck-binding-not-found", fx.stubBinary)
 
-	require.True(t, fx.waitForNodeEventKind(t, iid, "terminal/error/binding_not_found", 45*time.Second),
-		"expected binding_not_found when the proxy cannot find the dispatched binding in its cache")
+	fx.waitForNodeEventKind(t, iid, "terminal/error/binding_not_found")
 }
 
 func TestSpawnFailed(t *testing.T) {
@@ -39,8 +37,7 @@ func TestSpawnFailed(t *testing.T) {
 	tid := fx.deployLateBindTemplate(t, "fail-spawn")
 	iid := fx.createLateBindInstance(t, tid, "ck-spawn-failed", "/nonexistent/path/to/binary-xyz")
 
-	require.True(t, fx.waitForNodeEventKind(t, iid, "terminal/error/spawn_failed", 45*time.Second),
-		"expected spawn_failed when the binding path is not executable")
+	fx.waitForNodeEventKind(t, iid, "terminal/error/spawn_failed")
 }
 
 func TestHostAgentDisconnectMidDispatch(t *testing.T) {
@@ -57,11 +54,8 @@ func TestHostAgentDisconnectMidDispatch(t *testing.T) {
 
 	iid := fx.createLateBindInstance(t, tid, "ck-disconnect", fx.stubBinary)
 
-	if fx.waitForNodeEventKind(t, iid, "terminal/error/host_agent_disconnected", 30*time.Second) {
-		return
-	}
-	require.True(t, fx.waitForNodeEventKind(t, iid, "terminal/error/host_agent_not_connected", 20*time.Second),
-		"expected a host-agent disconnect class after the agent dropped mid-flight")
+	fx.waitForNodeEventKind(t, iid,
+		"terminal/error/host_agent_disconnected", "terminal/error/host_agent_not_connected")
 }
 
 func TestProxyReconnectAfterAgentRestart(t *testing.T) {
@@ -87,6 +81,5 @@ func TestProxyReconnectAfterAgentRestart(t *testing.T) {
 
 	worker := fx.h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
-	require.True(t, fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 45*time.Second),
-		"run did not complete after agent reconnect")
+	fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 }

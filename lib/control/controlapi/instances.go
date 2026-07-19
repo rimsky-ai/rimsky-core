@@ -563,7 +563,10 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				terminatedAtMs = inst.TerminatedAt.UnixMilli()
 			}
-			CloseAndFanOutFrameRootRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_deleted")
+			if err := CloseAndFanOutFrameRootRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_deleted"); err != nil && deps.Logger != nil {
+				deps.Logger.Warn("handleDeleteInstance: run-scope fan-out failed",
+					"instance_id", inst.ID.String(), "error", err.Error())
+			}
 			if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
 				EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
 				InstancePayload{TerminatedAtUnixMs: terminatedAtMs}, nil); err != nil {
@@ -737,7 +740,10 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 					"instance_id", inst.ID.String(), "error", err.Error())
 			}
 		} else if tpl != nil {
-			CloseAndFanOutFrameRootRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_terminated")
+			if err := CloseAndFanOutFrameRootRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_terminated"); err != nil && deps.Logger != nil {
+				deps.Logger.Warn("handleTerminateInstance: run-scope fan-out failed",
+					"instance_id", inst.ID.String(), "error", err.Error())
+			}
 		}
 
 		updated, err := resolveInstance(req.Context(), deps, inst.ID.String())
@@ -768,7 +774,18 @@ func failHeldHolderClaims(ctx context.Context, deps AppDeps, holderNodeRunID fou
 		return
 	}
 	for _, h := range holders {
-		if err := deps.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, h.ClaimHandleID, "instance-killed", tx); err != nil && deps.Logger != nil {
+		handle, err := deps.Persist.ClaimHandles().Get(ctx, h.ClaimHandleID, tx)
+		if err != nil {
+			if deps.Logger != nil {
+				deps.Logger.Warn("handleTerminateInstance: load claim handle for held kill failed",
+					"claim_handle_id", h.ClaimHandleID.String(), "error", err.Error())
+			}
+			continue
+		}
+		if handle == nil || handle.HolderSupervisorID == nil {
+			continue
+		}
+		if err := deps.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, h.ClaimHandleID, *handle.HolderSupervisorID, tx); err != nil && deps.Logger != nil {
 			deps.Logger.Warn("handleTerminateInstance: fail active holders failed",
 				"claim_handle_id", h.ClaimHandleID.String(), "error", err.Error())
 		}

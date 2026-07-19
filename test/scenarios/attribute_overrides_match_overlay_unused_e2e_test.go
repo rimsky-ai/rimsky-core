@@ -64,8 +64,7 @@ func TestAttributeOverridesMatchOverlayUnused_CounterZeroForNonFiringEntries(t *
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	var lastCounts []int64
 	require.Eventually(t, func() bool {

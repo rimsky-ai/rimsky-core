@@ -119,9 +119,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 			"change_summary":   "first",
 		},
 	})
-	status, ackBody := postCallbackBody(t, cbBase+"/v1/callback/ack-1", body, 10*time.Second)
-	require.Equal(t, http.StatusOK, status,
-		"first callback should be HTTP 200; got %d body=%s", status, string(ackBody))
+	ackBody := postCallbackBody(t, cbBase+"/v1/callback/ack-1", body)
 	var firstAck callbackAckBody
 	require.NoError(t, json.Unmarshal(ackBody, &firstAck))
 	require.Equal(t, "accepted", firstAck.AckStatus,
@@ -164,10 +162,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 			"change_summary":   "second",
 		},
 	})
-	status2, ackBody2 := postCallbackBody(t, cbBase+"/v1/callback/ack-2", body2, 5*time.Second)
-	require.Equal(t, http.StatusOK, status2,
-		"second callback (rejected) must still be HTTP 200 per ack-but-noop; got %d body=%s",
-		status2, string(ackBody2))
+	ackBody2 := postCallbackBody(t, cbBase+"/v1/callback/ack-2", body2)
 	var secondAck callbackAckBody
 	require.NoError(t, json.Unmarshal(ackBody2, &secondAck))
 	require.Equal(t, "rejected_run_terminal", secondAck.AckStatus,
@@ -180,12 +175,9 @@ type callbackAckBody struct {
 	CurrentNodeRunID *string `json:"current_dispatch_id,omitempty"`
 }
 
-func postCallbackBody(t *testing.T, url string, body []byte, timeout time.Duration) (int, []byte) {
+func postCallbackBody(t *testing.T, url string, body []byte) []byte {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	var lastStatus int
-	var lastBody []byte
-	for time.Now().Before(deadline) {
+	for {
 		resp, err := http.Post(url, "application/json", bytes.NewReader(body))
 		if err != nil {
 			time.Sleep(100 * time.Millisecond)
@@ -193,12 +185,9 @@ func postCallbackBody(t *testing.T, url string, body []byte, timeout time.Durati
 		}
 		b, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		lastStatus = resp.StatusCode
-		lastBody = b
 		if resp.StatusCode == http.StatusOK {
-			return resp.StatusCode, b
+			return b
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return lastStatus, lastBody
 }

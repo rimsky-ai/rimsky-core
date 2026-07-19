@@ -1123,6 +1123,82 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 	}
 }
 
+// @concept: role-template
+func TestRoleTemplates_DebugOperatorGrantsBreakpointVerbsAgentSupervisorDoesNot(t *testing.T) {
+	f := newAuthFixture(t)
+	defer f.Close()
+
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
+		"name":        "admin-bootstrap-debug-boundary",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	adminKey, _ := adminBody["plaintext"].(string)
+	if adminKey == "" {
+		t.Fatalf("mint admin: %+v", adminBody)
+	}
+
+	tplHash := seedDeployedTemplate(t, f, adminKey, "gate6-debug-boundary")
+	code, instBody := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{
+		"template":     tplHash,
+		"instance_key": "gate6-debug-boundary-ck",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create instance: got %d %+v", code, instBody)
+	}
+	instID, _ := instBody["instance_id"].(string)
+	if instID == "" {
+		t.Fatalf("create instance: missing instance_id: %+v", instBody)
+	}
+
+	debugVerbs := []roleEnforceCase{
+		{action: "instance:pause", method: "POST", path: "/v1/instances/" + instID + "/pause"},
+		{action: "instance:resume", method: "POST", path: "/v1/instances/" + instID + "/resume"},
+		{
+			action: "breakpoint:create", method: "POST", path: "/v1/instances/" + instID + "/breakpoints",
+			body: map[string]any{"checkpoint": "before_dispatch"},
+		},
+	}
+
+	mintRoleKey := func(t *testing.T, role string) string {
+		t.Helper()
+		perms := loadRolePermissions(t, role)
+		code, mintResp := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
+			"name":        role + "-debug-boundary-key",
+			"permissions": perms,
+		})
+		if code != http.StatusCreated {
+			t.Fatalf("mint %s-key: got %d %+v; want 201", role, code, mintResp)
+		}
+		key, _ := mintResp["plaintext"].(string)
+		if key == "" {
+			t.Fatalf("mint %s-key: missing plaintext: %+v", role, mintResp)
+		}
+		return key
+	}
+
+	t.Run("debug-operator grant covers pause/resume/breakpoint:create", func(t *testing.T) {
+		key := mintRoleKey(t, "debug-operator")
+		for _, c := range debugVerbs {
+			code, body := f.request(t, c.method, c.path, key, c.body)
+			if code == http.StatusForbidden {
+				t.Fatalf("debug-operator denied action %q (%s %s): got 403; role grant should cover it. body=%+v",
+					c.action, c.method, c.path, body)
+			}
+		}
+	})
+
+	t.Run("agent-supervisor grant excludes pause/resume/breakpoint:create", func(t *testing.T) {
+		key := mintRoleKey(t, "agent-supervisor")
+		for _, c := range debugVerbs {
+			code, body := f.request(t, c.method, c.path, key, c.body)
+			if code != http.StatusForbidden {
+				t.Fatalf("agent-supervisor allowed action %q (%s %s): got %d; role grant must NOT cover it (want 403). body=%+v",
+					c.action, c.method, c.path, code, body)
+			}
+		}
+	})
+}
+
 func TestAnonymousModeBanner_LogsAndStops(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()

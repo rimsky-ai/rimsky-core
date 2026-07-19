@@ -98,18 +98,52 @@ func TestStory_EmptyMessageWakesRoots(t *testing.T) {
 	require.NotNil(t, root2, "root2 node row must exist")
 	require.NotNil(t, down, "down node row must exist")
 
-	require.Truef(t, h.WaitForNodeState(root1.ID, cascade.NodeStateFresh, 15*time.Second),
-		"root1 must dispatch and settle to fresh via the empty-message wake")
-	require.Truef(t, h.WaitForNodeState(root2.ID, cascade.NodeStateFresh, 15*time.Second),
-		"root2 must dispatch and settle to fresh via the empty-message wake")
+	h.WaitForNodeState(root1.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(root2.ID, cascade.NodeStateFresh)
 
-	require.True(t, h.WaitForEventKind(root1.ID, "terminal/success", 10*time.Second),
-		"root1 must have a real terminal/success event (proof of actual dispatch)")
-	require.True(t, h.WaitForEventKind(root2.ID, "terminal/success", 10*time.Second),
-		"root2 must have a real terminal/success event (proof of actual dispatch)")
+	h.WaitForEventKind(root1.ID, "terminal/success")
+	h.WaitForEventKind(root2.ID, "terminal/success")
 
-	require.True(t, h.WaitForEventKind(down.ID, "terminal/success", 15*time.Second),
-		"down must dispatch downstream of root1's settlement (cascade through author-declared edge)")
+	h.WaitForEventKind(down.ID, "terminal/success")
+
+	var emptyTriggerRunID shared.UUID
+	h.QueryRowSQL(`
+		SELECT r.id FROM rimsky_node_runs r
+		  JOIN rimsky_nodes n ON n.id = r.node_id
+		 WHERE n.instance_id = $1 AND n.node_type = ''`,
+		[]any{instUUID}, &emptyTriggerRunID)
+
+	var root1RunID shared.UUID
+	h.QueryRowSQL(`SELECT id FROM rimsky_node_runs WHERE node_id = $1`,
+		[]any{root1.ID}, &root1RunID)
+
+	var downSenderRunIDs []shared.UUID
+	h.QuerySQL(`
+		SELECT w.sender_run_id FROM rimsky_wait_set w
+		  JOIN rimsky_node_runs r ON r.id = w.receiver_run_id
+		 WHERE r.node_id = $1`,
+		[]any{down.ID},
+		func(scan func(...any) error) error {
+			var sid shared.UUID
+			if err := scan(&sid); err != nil {
+				return err
+			}
+			downSenderRunIDs = append(downSenderRunIDs, sid)
+			return nil
+		})
+	require.NotEmpty(t, downSenderRunIDs,
+		"down must carry a wait-set row tying its dispatch to an upstream sender")
+	for _, sid := range downSenderRunIDs {
+		require.NotEqual(t, emptyTriggerRunID, sid,
+			"down is a non-root node with an author-declared subscription (subscribes: root1); its "+
+				"wait-set must never carry a row sent directly by the empty-message trigger run (%s) — "+
+				"that would mean the trigger overreached and stale-marked a non-root subscriber "+
+				"directly instead of down legitimately cascading off root1's terminal/success",
+			emptyTriggerRunID)
+		require.Equal(t, root1RunID, sid,
+			"down's only legitimate wait-set sender is root1's node-run (%s); got sender_run_id=%s",
+			root1RunID, sid)
+	}
 
 	replayStatus, replayBody := postInstanceMessage(t, h, instanceID, "", wakeKey)
 	require.Equal(t, http.StatusOK, replayStatus,
@@ -135,7 +169,22 @@ func TestStory_EmptyMessageWakesRoots(t *testing.T) {
 	require.Equal(t, "operator", msg0["sender_kind"],
 		"the wake envelope's sender_kind must be `operator` (no synthetic-envelope sender_kind=instance row should appear)")
 
-	_ = down
+	var downRunCount int
+	h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`,
+		[]any{down.ID}, &downRunCount)
+	require.Equal(t, 1, downRunCount,
+		"down must have exactly one node-run (its legitimate cascade off root1); got %d — a second "+
+			"run would mean the empty-message trigger also stale-marked the non-root subscriber directly",
+		downRunCount)
+
+	var downCreationReason string
+	h.QueryRowSQL(`SELECT creation_reason FROM rimsky_node_runs WHERE node_id = $1`,
+		[]any{down.ID}, &downCreationReason)
+	require.Equal(t, string(cascade.CreationReasonCascade), downCreationReason,
+		"down's single node-run must be creation_reason=cascade (woken by root1's terminal/success), "+
+			"never message_delivery — message_delivery would mean the empty-message trigger overreached "+
+			"and directly stale-marked a non-root node with author-declared subscriptions",
+	)
 }
 
 func postCreateInstance(t *testing.T, h *scenario.Harness, templateHash, instanceKey string) string {

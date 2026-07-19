@@ -229,14 +229,7 @@ func SettleFromDelegate(
 	}
 	if callingNodeRow != nil {
 		parentFrameID := parent.FrameID
-		exitBridgeSig := signalpkg.Signal{
-			Type: signalpkg.TypePath("terminal/success"),
-			Payload: map[string]any{
-				"changed":          true,
-				"attributes_delta": orEmptyMap(asMap),
-				"change_summary":   "subgraph_exit_carry",
-			},
-		}
+		exitBridgeSig := signalpkg.BuildTerminalSuccessSignal(true, asMap, "subgraph_exit_carry", nil)
 		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
 			parent.NodeID, callingNodeRow.NodeType, parent.NodeRunID,
 			in.InstanceID, parentFrameID, exitBridgeSig); err != nil {
@@ -387,9 +380,11 @@ func SettleFromFanoutChild(
 	if parent.NodeRunID != nil {
 		parentHint.NodeRunID = *parent.NodeRunID
 	}
-	if acquirer, aErr := args.Persist.Nodes().Get(ctx, parent.HolderNodeID, tx); aErr == nil && acquirer != nil {
-		parentHint.InstanceID = acquirer.InstanceID
+	instID, err := acquirerInstanceID(ctx, args, tx, parent.HolderNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("SettleFromFanoutChild: %w", err)
 	}
+	parentHint.InstanceID = instID
 	if *parent.HolderSupervisorID != args.SupervisorID {
 		if err := args.ClaimHandles.ReassignHolderSupervisor(
 			ctx, in.ParentClaimHandleID, *parent.HolderSupervisorID, args.SupervisorID, tx,

@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -556,4 +557,184 @@ func TestCreateMessage_UndeclaredTypeRefused_SurfacesImplicitTypes(t *testing.T)
 	require.True(t, ok, "implicit_types must be a JSON array, got %+v", resp.body)
 	require.ElementsMatch(t, []any{""}, implicit,
 		"the 400-body must advertise the runtime-implicit empty-type so an operator inspecting the response sees the admissible empty entry")
+}
+
+func postMessageForTest(t *testing.T, h *harness, instID string) string {
+	t.Helper()
+	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID),
+		map[string]any{"type": "system/invalidate"},
+		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
+	require.Equal(t, http.StatusCreated, resp.status, resp.body)
+	id, _ := resp.body["message_id"].(string)
+	require.NotEmpty(t, id)
+	return id
+}
+
+func deliverMessageForTest(t *testing.T, h *harness, instID, msgID string, deliveredAt time.Time) shared.UUID {
+	t.Helper()
+	ctx := context.Background()
+	mid := mustParseUUID(t, msgID)
+	rootScope := mainRunScopeIDForInstance(t, h, mustParseUUID(t, instID))
+	var frameID shared.UUID
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		instUUID := mustParseUUID(t, instID)
+		priorRunning, err := h.persist.Frames().GetRunningFrameID(ctx, instUUID, tx)
+		if err != nil {
+			return err
+		}
+		if priorRunning != nil {
+			if _, err := h.persist.Frames().MarkFrameEnded(ctx, *priorRunning, tx); err != nil {
+				return err
+			}
+		}
+		fid, err := h.persist.Frames().InsertRunningFrame(ctx, instUUID, mid, rootScope, 600000, tx)
+		if err != nil {
+			return err
+		}
+		frameID = fid
+		ok, err := h.persist.Messages().MarkDelivered(ctx, tx, mid, frameID, deliveredAt)
+		if err != nil {
+			return err
+		}
+		require.True(t, ok, "MarkDelivered should update exactly one row")
+		return nil
+	}))
+	return frameID
+}
+
+func TestMessages_ListFilteredByPendingTrue(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "pending-true")
+	pendingID := postMessageForTest(t, h, instID)
+	deliveredID := postMessageForTest(t, h, instID)
+	deliverMessageForTest(t, h, instID, deliveredID, time.Now().UTC())
+
+	status, out := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?pending=true", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Len(t, msgs, 1, "pending=true must exclude the delivered message")
+	got := msgs[0].(map[string]any)
+	require.Equal(t, pendingID, got["id"])
+}
+
+func TestMessages_ListFilteredByPendingFalse(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "pending-false")
+	_ = postMessageForTest(t, h, instID)
+	deliveredID := postMessageForTest(t, h, instID)
+	deliverMessageForTest(t, h, instID, deliveredID, time.Now().UTC())
+
+	status, out := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?pending=false", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Len(t, msgs, 1, "pending=false must exclude the still-pending message")
+	got := msgs[0].(map[string]any)
+	require.Equal(t, deliveredID, got["id"])
+}
+
+func TestMessages_ListPendingInvalidReturns400(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "pending-invalid")
+	status, _ := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?pending=1", instID), nil)
+	require.Equal(t, http.StatusBadRequest, status)
+}
+
+func TestMessages_ListFilteredByDeliveredAfterAndBefore(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "delivered-window")
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	earlyID := postMessageForTest(t, h, instID)
+	deliverMessageForTest(t, h, instID, earlyID, base.Add(-time.Hour))
+	inWindowID := postMessageForTest(t, h, instID)
+	deliverMessageForTest(t, h, instID, inWindowID, base)
+	lateID := postMessageForTest(t, h, instID)
+	deliverMessageForTest(t, h, instID, lateID, base.Add(time.Hour))
+
+	after := base.Add(-time.Minute).Format(time.RFC3339)
+	before := base.Add(time.Minute).Format(time.RFC3339)
+	status, out := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?delivered_after=%s&delivered_before=%s", instID, after, before), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Len(t, msgs, 1, "delivered_after/delivered_before must narrow to the in-window message")
+	got := msgs[0].(map[string]any)
+	require.Equal(t, inWindowID, got["id"])
+}
+
+func TestMessages_ListDeliveredAfterInvalidReturns400(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "delivered-after-invalid")
+	status, _ := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?delivered_after=not-a-date", instID), nil)
+	require.Equal(t, http.StatusBadRequest, status)
+}
+
+func TestMessages_ListDeliveredBeforeInvalidReturns400(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "delivered-before-invalid")
+	status, _ := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?delivered_before=not-a-date", instID), nil)
+	require.Equal(t, http.StatusBadRequest, status)
+}
+
+func TestMessages_ListFilteredBySenderKind(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "sender-kind")
+	operatorID := postMessageForTest(t, h, instID)
+
+	status, out := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?sender_kind=operator", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Len(t, msgs, 1)
+	got := msgs[0].(map[string]any)
+	require.Equal(t, operatorID, got["id"])
+
+	status, out = h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?sender_kind=publisher", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ = out["messages"].([]any)
+	require.Empty(t, msgs, "sender_kind filter must exclude non-matching senders")
+}
+
+func TestDedupSenderKind_AnonymousBucketDistinctFromOperatorAndPublisher(t *testing.T) {
+	anon := dedupSenderKind("operator", auth.AnonymousIdentity())
+	require.Equal(t, "anonymous", anon,
+		"an anonymous-mode identity must dedup-bucket as 'anonymous', not 'operator'")
+
+	op := dedupSenderKind("operator", auth.Identity{})
+	require.Equal(t, "operator", op,
+		"a non-anonymous identity must dedup-bucket as 'operator'")
+
+	require.NotEqual(t, anon, op,
+		"the anonymous and operator idempotency dedup buckets must never collide")
+
+	pub := dedupSenderKind("publisher", auth.AnonymousIdentity())
+	require.Equal(t, "publisher", pub,
+		"senderKind=publisher must take priority over identity kind even when the identity is anonymous")
 }

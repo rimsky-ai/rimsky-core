@@ -223,7 +223,7 @@ func DeliverPendingMessages(
 	if msg.InstanceID != instanceID {
 		return DeliveredMessages{}, nil
 	}
-	if msg.DeliveredAt != nil {
+	if msg.DeliveredAt != nil || msg.Cancelled {
 		return DeliveredMessages{}, nil
 	}
 	ok, err := m.MarkDelivered(ctx, tx, triggeringMessageID, frameID, now)

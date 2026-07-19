@@ -51,7 +51,7 @@ func TestPerRunAttributes_FreshScopeDefaultsAtFrameStart(t *testing.T) {
 	require.NotNil(t, w)
 
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
-	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second))
+	h.WaitForNodeState(w.ID, cascade.NodeStateFresh)
 
 	var firstRun *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

@@ -64,14 +64,12 @@ func TestSignalTypeFilter(t *testing.T) {
 	errN := h.FindNode(iid, "err_worker")
 	require.NotNil(t, okN)
 	require.NotNil(t, errN)
-	require.True(t, h.WaitForNodeState(okN.ID, cascade.NodeStateFresh, 15*time.Second),
-		"ok_worker should reach Fresh")
-	require.True(t, h.WaitForNodeState(errN.ID, cascade.NodeStateFailed, 15*time.Second),
-		"err_worker should reach Failed after give_up")
+	h.WaitForNodeState(okN.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(errN.ID, cascade.NodeStateFailed)
 
 	time.Sleep(500 * time.Millisecond)
 
-	hits := waitForHitCount(t, h, bpID, 1, 5*time.Second)
+	hits := waitForHitCount(t, h, bpID, 1)
 	require.Len(t, hits, 1,
 		"signal_type=terminal/error/* should match only the error terminal; got %d hits", len(hits))
 	require.Equal(t, "after_terminal", string(hits[0].Checkpoint),

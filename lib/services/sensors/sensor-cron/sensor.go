@@ -26,6 +26,7 @@ type Watch struct {
 	InstanceID     string
 	CronExpr       string
 	MessageType    string
+	ResolvedConfig []byte
 	NextFireAt     time.Time
 	StartedAt      time.Time
 	LastFireAt     *time.Time
@@ -137,6 +138,7 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 		InstanceID:     req.GetInstanceId(),
 		CronExpr:       cfg.Cron,
 		MessageType:    messageType,
+		ResolvedConfig: append([]byte(nil), req.GetResolvedConfig()...),
 		NextFireAt:     sched.Next(now),
 		StartedAt:      now,
 	}
@@ -188,6 +190,7 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			InstanceId:              w.InstanceID,
 			Kind:                    "cron",
 			MessageType:             w.MessageType,
+			ResolvedConfig:          w.ResolvedConfig,
 			StartedAt:               timestamppb.New(w.StartedAt),
 		})
 	}

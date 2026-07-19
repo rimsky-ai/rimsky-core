@@ -22,6 +22,8 @@ func TestOpenValidation(t *testing.T) {
 		{"postgres-no-dsn", Config{Driver: "postgres", Postgres: &PostgresConfig{}}, "dsn is required"},
 		{"postgres-with-sqlite", Config{Driver: "postgres", Postgres: &PostgresConfig{DSN: "x"}, SQLite: &SQLiteConfig{}}, "mutually exclusive"},
 		{"sqlite-no-path", Config{Driver: "sqlite", SQLite: &SQLiteConfig{}}, "path is required"},
+		{"sqlite-relative-path", Config{Driver: "sqlite", SQLite: &SQLiteConfig{Path: "relative/state.db"}}, "must be absolute"},
+		{"sqlite-with-postgres", Config{Driver: "sqlite", SQLite: &SQLiteConfig{Path: "/tmp/state.db"}, Postgres: &PostgresConfig{DSN: "x"}}, "mutually exclusive"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

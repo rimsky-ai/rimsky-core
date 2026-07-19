@@ -66,6 +66,11 @@ func main() {
 
 	go func() { _ = srv.Serve(lis) }()
 
+	if os.Getenv("STUBCHILD_IGNORE_SIGTERM") != "" {
+		signal.Ignore(syscall.SIGTERM)
+		select {}
+	}
+
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs

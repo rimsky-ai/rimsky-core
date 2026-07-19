@@ -10,7 +10,6 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -116,9 +115,7 @@ func TestLoopCounterCapE2E(t *testing.T) {
 	doneSinkNode := h.FindNode(iid, "done_sink")
 	require.NotNil(t, doneSinkNode, "done_sink missing")
 
-	require.True(t,
-		h.WaitForNodeState(doneSinkNode.ID, cascade.NodeStateFresh, 60*time.Second),
-		"done_sink must reach fresh — loop_counter never reached the done boundary")
+	h.WaitForNodeState(doneSinkNode.ID, cascade.NodeStateFresh)
 
 	var loopCount, doneCount int
 	h.QueryRowSQL(`

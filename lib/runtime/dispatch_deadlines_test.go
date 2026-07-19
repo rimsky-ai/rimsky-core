@@ -72,6 +72,16 @@ func TestResolveMaxQuietPeriod_FallsBackToBuiltinDefault(t *testing.T) {
 	}
 }
 
+func TestResolveMaxQuietPeriod_BuiltinDefaultIsZeroDisabled(t *testing.T) {
+	t.Parallel()
+	got := resolveMaxQuietPeriod(nil, 0)
+	if got != 0 {
+		t.Fatalf("built-in max_quiet_period default = %v, want 0 (disabled) — comparing against the "+
+			"literal, not against defaultMaxQuietPeriod itself, so a regression to the headline default "+
+			"value cannot hide behind a self-referential assertion", got)
+	}
+}
+
 func TestResolveMaxRuntime_PerNodeOverridesDeploymentDefault(t *testing.T) {
 	t.Parallel()
 	node := &spec.TemplateNodeDef{MaxRuntime: "10m"}

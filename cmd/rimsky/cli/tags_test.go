@@ -6,6 +6,7 @@ package cli_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
@@ -56,9 +57,21 @@ func TestRunTagGet_NotFound(t *testing.T) {
 func TestRunTagGet_Found(t *testing.T) {
 	srv := setupClitest(t)
 	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
-	_ = hash
-	if got := cli.RunTagGet(context.Background(), []string{"v1"}); got != 0 {
+	var got int
+	out := captureStdout(t, func() {
+		got = cli.RunTagGet(context.Background(), []string{"v1"})
+	})
+	if got != 0 {
 		t.Errorf("exit %d", got)
+	}
+	if !strings.Contains(out, "template_hash:") {
+		t.Errorf("tag get: stdout must display the template_hash key (CLI vocab), got %q", out)
+	}
+	if !strings.Contains(out, hash) {
+		t.Errorf("tag get: stdout must carry the resolved template hash %q, got %q", hash, out)
+	}
+	if strings.Contains(out, "template_id") {
+		t.Errorf("tag get: stdout must not use the retired template_id display key, got %q", out)
 	}
 }
 

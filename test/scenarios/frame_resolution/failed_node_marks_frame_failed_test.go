@@ -32,8 +32,7 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 15*time.Second),
-		"worker did not reach failed on first fire")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
 
 	deadline := time.Now().Add(5 * time.Second)
 	var first frameRow
@@ -62,11 +61,9 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok")
 	postInvalidateMessage(t, h, iid)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh on second fire")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
-	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 5*time.Second),
-		"expected one completed frame after second fire")
+	waitForFramesByState(t, h, iid, "completed", 1)
 
 	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 2, "expected two frames total")

@@ -418,8 +418,10 @@ func testRegisterAsyncAckRoundTrip(t *testing.T, d persistence.Database) {
 	ackID := "ack-" + uuid.New().String()
 	expectedPrincipal := "executor-" + uuid.New().String()
 	now := time.Now().UTC().Truncate(time.Second)
+	wantMaxQuietSec := 45
+	wantMaxRuntimeSec := 1800
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RegisterAsyncAck(ctx, tx, runID, ackID, now, nil, nil, expectedPrincipal)
+		return q.RegisterAsyncAck(ctx, tx, runID, ackID, now, &wantMaxQuietSec, &wantMaxRuntimeSec, expectedPrincipal)
 	}); err != nil {
 		t.Fatalf("RegisterAsyncAck: %v", err)
 	}
@@ -443,6 +445,16 @@ func testRegisterAsyncAckRoundTrip(t *testing.T, d persistence.Database) {
 		}
 		if got.AsyncAckPrincipal == nil || *got.AsyncAckPrincipal != expectedPrincipal {
 			t.Fatalf("dispatch row AsyncAckPrincipal = %v, want %s (dispatched-executor principal must round-trip)", got.AsyncAckPrincipal, expectedPrincipal)
+		}
+		if got.EffectiveMaxQuietPeriodSeconds == nil || *got.EffectiveMaxQuietPeriodSeconds != wantMaxQuietSec {
+			t.Fatalf("dispatch row EffectiveMaxQuietPeriodSeconds = %v, want %d (the denormalized effective "+
+				"value computed at dispatch time must survive the RegisterAsyncAck round-trip, not just a "+
+				"nil no-op)", got.EffectiveMaxQuietPeriodSeconds, wantMaxQuietSec)
+		}
+		if got.EffectiveMaxRuntimeSeconds == nil || *got.EffectiveMaxRuntimeSeconds != wantMaxRuntimeSec {
+			t.Fatalf("dispatch row EffectiveMaxRuntimeSeconds = %v, want %d (the denormalized effective "+
+				"value computed at dispatch time must survive the RegisterAsyncAck round-trip, not just a "+
+				"nil no-op)", got.EffectiveMaxRuntimeSeconds, wantMaxRuntimeSec)
 		}
 		return nil
 	}); err != nil {

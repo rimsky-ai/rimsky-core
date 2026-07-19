@@ -43,8 +43,7 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 	n := h.FindNode(iid, "agent")
 	require.NotNil(t, n)
 
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateRunning, 15*time.Second),
-		"agent did not reach running")
+	h.WaitForNodeState(n.ID, cascade.NodeStateRunning)
 
 	var dispatchFrameID uuid.UUID
 	err := h.Pool.QueryRow(context.Background(),
@@ -85,11 +84,9 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 	}
 	require.Equal(t, http.StatusOK, status, "callback did not become available")
 
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"agent did not reach fresh after callback")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
-	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 10*time.Second),
-		"frame did not complete after callback resolved")
+	waitForFramesByState(t, h, iid, "completed", 1)
 
 	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 1)

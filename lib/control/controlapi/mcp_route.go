@@ -135,7 +135,7 @@ func (a actionRegistryAdapter) EntryForTool(name string) (mcp.RegistryEntry, boo
 	}
 	routes := make([]mcp.RegistryRoute, 0, len(e.Routes))
 	for _, r := range e.Routes {
-		routes = append(routes, mcp.RegistryRoute{Method: r.Method, Path: r.Path})
+		routes = append(routes, mcp.RegistryRoute{Method: r.Method, Path: r.Path, Tool: r.Tool})
 	}
 	return mcp.RegistryEntry{
 		Action:      e.Action,

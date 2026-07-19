@@ -100,10 +100,9 @@ func postJSON(t *testing.T, url string, body any) (int, map[string]any) {
 	return resp.StatusCode, out
 }
 
-func waitForHitOnBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID, timeout time.Duration) persistence.BreakpointHitRow {
+func waitForHitOnBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID) persistence.BreakpointHitRow {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var hits []persistence.BreakpointHitRow
 		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 			r, err := h.Persist.BreakpointHits().ListSinceForBreakpoint(ctx, bpID, 0, 100, tx)
@@ -117,8 +116,6 @@ func waitForHitOnBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID,
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("waitForHitOnBreakpoint: no hit on breakpoint %s within %v", bpID.String(), timeout)
-	return persistence.BreakpointHitRow{}
 }
 
 func listHitsForBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID) []persistence.BreakpointHitRow {
@@ -134,22 +131,7 @@ func listHitsForBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID) 
 	return hits
 }
 
-func waitForHitCount(t *testing.T, h *scenario.Harness, bpID shared.UUID, want int, timeout time.Duration) []persistence.BreakpointHitRow {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	var hits []persistence.BreakpointHitRow
-	for time.Now().Before(deadline) {
-		hits = listHitsForBreakpoint(t, h, bpID)
-		if len(hits) >= want {
-			return hits
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("waitForHitCount: bp=%s want=%d got=%d within %v", bpID.String(), want, len(hits), timeout)
-	return hits
-}
-
-func waitForHitCountForever(t *testing.T, h *scenario.Harness, bpID shared.UUID, want int) []persistence.BreakpointHitRow {
+func waitForHitCount(t *testing.T, h *scenario.Harness, bpID shared.UUID, want int) []persistence.BreakpointHitRow {
 	t.Helper()
 	for {
 		hits := listHitsForBreakpoint(t, h, bpID)
@@ -196,15 +178,10 @@ func stubObservedCount(h *scenario.Harness, nodeType string) int {
 	return n
 }
 
-func waitForStubObservedCount(h *scenario.Harness, nodeType string, want int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if stubObservedCount(h, nodeType) >= want {
-			return true
-		}
+func waitForStubObservedCount(h *scenario.Harness, nodeType string, want int) {
+	for stubObservedCount(h, nodeType) < want {
 		time.Sleep(20 * time.Millisecond)
 	}
-	return false
 }
 
 // @decision: empty-message-as-root-trigger

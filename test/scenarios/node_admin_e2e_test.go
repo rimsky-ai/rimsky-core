@@ -73,11 +73,8 @@ func TestAcceptance_NodeAdmin_GetAndReset(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, flaky)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker must settle fresh on its first real dispatch")
-	require.True(t, h.WaitForNodeState(flaky.ID, cascade.NodeStateFailed, 30*time.Second),
-		"flaky must reach failed via retry-then-give_up — without a real failed terminal the reset leg's "+
-			"falsifier (counter cleared but supervisor still treats node as exhausted) is untestable")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(flaky.ID, cascade.NodeStateFailed)
 
 	workerDetail := getNodeDetail(t, h, worker.ID)
 	require.Equal(t, worker.ID.String(), workerDetail.ID,
@@ -128,15 +125,8 @@ func TestAcceptance_NodeAdmin_GetAndReset(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "", nil, fmt.Sprintf("test-wake-%s-after-reset", t.Name()))
 
-	require.True(t, waitForTerminalSuccessCountGreaterThan(t, h, flaky.ID, preResetSuccessCount, 30*time.Second),
-		"after POST /reset, the supervisor must genuinely re-dispatch the flaky node — "+
-			"a `terminal/success` signal must arrive against the rescripted-success stub. "+
-			"The falsifier's 'reset clears the visible counter but the supervisor still treats the "+
-			"node as exhausted' shape leaves the count at zero forever (the next-dispatch is silently "+
-			"skipped despite the cleared counter).")
-	require.True(t, h.WaitForNodeState(flaky.ID, cascade.NodeStateFresh, 10*time.Second),
-		"flaky must reach fresh after reset + supervisor re-dispatch — the full re-fire cycle "+
-			"completing end to end is the story's terminal observation")
+	waitForTerminalSuccessCountGreaterThan(t, h, flaky.ID, preResetSuccessCount)
+	h.WaitForNodeState(flaky.ID, cascade.NodeStateFresh)
 
 	finalDetail := getNodeDetail(t, h, flaky.ID)
 	require.NotNil(t, finalDetail.RunSummary,
@@ -166,14 +156,9 @@ func countTerminalSuccess(t *testing.T, h *scenario.Harness, nodeID shared.UUID)
 	return n
 }
 
-func waitForTerminalSuccessCountGreaterThan(t *testing.T, h *scenario.Harness, nodeID shared.UUID, baseline int, timeout time.Duration) bool {
+func waitForTerminalSuccessCountGreaterThan(t *testing.T, h *scenario.Harness, nodeID shared.UUID, baseline int) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if countTerminalSuccess(t, h, nodeID) > baseline {
-			return true
-		}
+	for countTerminalSuccess(t, h, nodeID) <= baseline {
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
 }

@@ -123,6 +123,28 @@ func TestAtomicStaging_StageThenSwap(t *testing.T) {
 	if string(after) != payload {
 		t.Fatalf("canonical bytes after Abandon = %q, want unchanged %q", string(after), payload)
 	}
+
+	openResp3, err := client.Open(ctx, &genv1.OpenRequest{
+		ClaimId:  "claim-3",
+		Selector: scope,
+		Intent:   "rw",
+	})
+	if err != nil {
+		t.Fatalf("open claim-3: %v", err)
+	}
+	staging3 := string(openResp3.GetAcquired().GetAddress())
+	if !dirExists(staging3) {
+		t.Fatalf("Open claim-3 did not reserve staging %q", staging3)
+	}
+	if _, err := client.Release(ctx, &genv1.ReleaseRequest{
+		ClaimId:    "claim-3",
+		ClaimScope: []byte(scope),
+	}); err != nil {
+		t.Fatalf("release claim-3: %v", err)
+	}
+	if dirExists(staging3) {
+		t.Fatalf("staging dir %q must be discarded after Release of an uncommitted claim (Release must delegate to the store, not no-op)", staging3)
+	}
 }
 
 func startProducer(t *testing.T, st *store.Store) (genv1.ClaimProducerClient, func()) {

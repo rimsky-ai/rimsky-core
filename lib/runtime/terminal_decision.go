@@ -88,6 +88,19 @@ type ClaimLineageHint struct {
 	VersionID    string
 }
 
+func acquirerInstanceID(
+	ctx context.Context, args RunArgs, tx persistence.Tx, holderNodeID shared.UUID,
+) (shared.UUID, error) {
+	acquirer, err := args.Persist.Nodes().Get(ctx, holderNodeID, tx)
+	if err != nil {
+		return shared.UUID{}, fmt.Errorf("acquirerInstanceID: Nodes().Get(%s): %w", holderNodeID, err)
+	}
+	if acquirer == nil {
+		return shared.UUID{}, fmt.Errorf("acquirerInstanceID: node %s not found", holderNodeID)
+	}
+	return acquirer.InstanceID, nil
+}
+
 func ResolveClaimHandleTerminal(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	td TerminalDecision,

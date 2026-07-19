@@ -20,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
 func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
@@ -598,4 +599,230 @@ func TestLineageEndpoints_ByProducerReverseLookup(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ = out["records"].([]any)
 	require.Empty(t, records)
+}
+
+func TestLineageEndpoints_AncestorsDepthCappedAtMax(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=999", uuid.NewString()), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	require.EqualValues(t, lineageWalkMaxDepth, out["depth"], "depth must clamp to the walk max")
+}
+
+func TestLineageEndpoints_AncestorsInvalidDepthFallsBackToDefault(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=abc", uuid.NewString()), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	require.EqualValues(t, lineageWalkDefaultDepth, out["depth"], "unparseable depth must fall back to the default")
+}
+
+func TestLineageRunAncestors_NonRunSourceKindRefsExcluded(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID, frameID := seedLineageInstance(t, h, "lin-anc-nonrun")
+	base := time.Now().UTC()
+
+	decoyRunID := uuid.New()
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+		map[string]any{"run_id": decoyRunID.String(), "state": "fresh"}, base, "")
+
+	leafRunID := uuid.New()
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+		map[string]any{
+			"run_id": leafRunID.String(),
+			"state":  "fresh",
+			"substitution_refs": []map[string]any{
+				{"source_kind": "topics-ring", "source_version_or_id": decoyRunID.String()},
+			},
+		}, base.Add(time.Second), "")
+
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=2", leafRunID.String()), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	ancestors, _ := out["ancestors"].([]any)
+	require.Empty(t, ancestors,
+		"a substitution_ref whose source_kind is not \"run\" must not be walked as a run ancestor, "+
+			"even when its source_version_or_id happens to parse as a UUID matching a real lineage record")
+}
+
+func TestLineageEndpoints_BySourceWindowTruncatesAt500(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, frameID := seedLineageInstance(t, h, "lin-bysrc-window")
+	base := time.Now().UTC()
+	srcID := uuid.NewString()
+
+	targetRec, err := json.Marshal(map[string]any{
+		"run_id": uuid.NewString(),
+		"substitution_refs": []map[string]any{
+			{"source_kind": "run", "source_version_or_id": srcID},
+		},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			ID:         shared.UUID(uuid.New()),
+			RecordKind: persistence.LineageRecordKindLeafRun,
+			InstanceID: shared.UUID(instID),
+			FrameID:    shared.UUID(frameID),
+			ObservedAt: base.Add(-1 * time.Hour),
+			Record:     targetRec,
+		}); err != nil {
+			return err
+		}
+		for i := 0; i < 500; i++ {
+			rec, merr := json.Marshal(map[string]any{"run_id": uuid.NewString()})
+			if merr != nil {
+				return merr
+			}
+			if err := h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+				ID:         shared.UUID(uuid.New()),
+				RecordKind: persistence.LineageRecordKindLeafRun,
+				InstanceID: shared.UUID(instID),
+				FrameID:    shared.UUID(frameID),
+				ObservedAt: base.Add(time.Duration(i) * time.Second),
+				Record:     rec,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	status, out := h.httpJSON(t, "GET", "/v1/lineage/by-source/run/"+srcID, nil)
+	require.Equal(t, http.StatusOK, status, out)
+	records, _ := out["records"].([]any)
+	require.Empty(t, records,
+		"the by-source scan window is capped at 500 rows ordered by observed_at DESC; "+
+			"a match older than the newest 500 rows falls outside the window")
+}
+
+func TestLineageEndpoints_ByProducerWindowTruncatesAt500(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, frameID := seedLineageInstance(t, h, "lin-byprod-window")
+	base := time.Now().UTC()
+
+	targetRec, err := json.Marshal(map[string]any{
+		"claim_handle_id": uuid.NewString(),
+		"producer_name":   "window-store",
+		"version_id":      "v1",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			ID:         shared.UUID(uuid.New()),
+			RecordKind: persistence.LineageRecordKindClaimTerminal,
+			InstanceID: shared.UUID(instID),
+			FrameID:    shared.UUID(frameID),
+			ObservedAt: base.Add(-1 * time.Hour),
+			Record:     targetRec,
+			Outcome:    persistence.LineageOutcomeCommitted,
+		}); err != nil {
+			return err
+		}
+		for i := 0; i < 500; i++ {
+			rec, merr := json.Marshal(map[string]any{
+				"claim_handle_id": uuid.NewString(),
+				"producer_name":   "filler-store",
+				"version_id":      "v1",
+			})
+			if merr != nil {
+				return merr
+			}
+			if err := h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+				ID:         shared.UUID(uuid.New()),
+				RecordKind: persistence.LineageRecordKindClaimTerminal,
+				InstanceID: shared.UUID(instID),
+				FrameID:    shared.UUID(frameID),
+				ObservedAt: base.Add(time.Duration(i) * time.Second),
+				Record:     rec,
+				Outcome:    persistence.LineageOutcomeCommitted,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	status, out := h.httpJSON(t, "GET", "/v1/lineage/by-producer/window-store", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	records, _ := out["records"].([]any)
+	require.Empty(t, records,
+		"the by-producer scan window is capped at 500 rows ordered by observed_at DESC; "+
+			"a match older than the newest 500 rows falls outside the window")
+}
+
+func TestLineageRunDescendants_MatchesRuntimeWriterRecordShape(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, frameID := seedLineageInstance(t, h, "lin-desc-writer-shape")
+	parentRunID := shared.UUID(uuid.New())
+	childRunID := shared.UUID(uuid.New())
+	base := time.Now().UTC()
+
+	parentRec := runtime.LeafRunRecord{
+		NodeRunID:          parentRunID,
+		FrameID:            shared.UUID(frameID),
+		State:              "fresh",
+		SettlingSignalType: "terminal/success",
+	}
+	childRec := runtime.LeafRunRecord{
+		NodeRunID:          childRunID,
+		FrameID:            shared.UUID(frameID),
+		ParentNodeRunID:    parentRunID.String(),
+		State:              "fresh",
+		SettlingSignalType: "terminal/success",
+	}
+	parentBytes, err := json.Marshal(parentRec)
+	require.NoError(t, err)
+	childBytes, err := json.Marshal(childRec)
+	require.NoError(t, err)
+
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			ID:         shared.UUID(uuid.New()),
+			RecordKind: persistence.LineageRecordKindLeafRun,
+			InstanceID: shared.UUID(instID),
+			FrameID:    shared.UUID(frameID),
+			ObservedAt: base,
+			Record:     parentBytes,
+		}); err != nil {
+			return err
+		}
+		return h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			ID:         shared.UUID(uuid.New()),
+			RecordKind: persistence.LineageRecordKindLeafRun,
+			InstanceID: shared.UUID(instID),
+			FrameID:    shared.UUID(frameID),
+			ObservedAt: base.Add(time.Second),
+			Record:     childBytes,
+		})
+	}))
+
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/descendants?depth=1", parentRunID.String()), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	descendants, _ := out["descendants"].([]any)
+	require.Len(t, descendants, 1,
+		"descendants walk must find the child using the runtime writer's own LeafRunRecord.parent_run_id json shape")
+	item := descendants[0].(map[string]any)
+	rec, _ := item["record"].(map[string]any)
+	require.Equal(t, childRunID.String(), rec["run_id"])
 }

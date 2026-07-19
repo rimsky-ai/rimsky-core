@@ -43,8 +43,7 @@ func TestHostAgentLateBindAllProtocols(t *testing.T) {
 
 	worker := fx.h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker node should exist")
-	require.True(t, fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 45*time.Second),
-		"late-bound executor worker did not reach fresh — agent/binding/spawn baseline not ready")
+	fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
 	instanceID := iid.String()
 

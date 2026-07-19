@@ -57,7 +57,7 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForDispatch(n.ID, 5*time.Second))
+	h.WaitForDispatch(n.ID)
 
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })

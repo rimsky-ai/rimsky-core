@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -22,12 +21,7 @@ func TestHostAgentAnonymousModeLateBind(t *testing.T) {
 	worker := fx.h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker node should exist")
 
-	require.True(t, fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 45*time.Second),
-		"anonymous-mode late-bound worker did not reach fresh — the proxy must "+
-			"resolve an empty-owner (anonymous) instance to the agent under the "+
-			"anonymous routing identity instead of host_agent_not_connected")
+	fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
-	require.True(t, fx.waitForNodeEventKind(t, iid, "terminal/success", 10*time.Second),
-		"expected terminal/success event from the proxy-tunneled stub executor "+
-			"on an anonymous-mode instance")
+	fx.waitForNodeEventKind(t, iid, "terminal/success")
 }

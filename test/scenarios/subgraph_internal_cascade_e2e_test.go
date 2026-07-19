@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -72,12 +71,8 @@ func TestSubgraphInternalCascadeE2E(t *testing.T) {
 	innerExitNode := h.FindNode(iid, "inner-exit")
 	require.NotNil(t, innerExitNode, "inner-exit node missing")
 
-	require.True(t,
-		h.WaitForNodeState(innerMidNode.ID, cascade.NodeStateFresh, 30*time.Second),
-		"inner-mid must reach fresh via internal cascade")
-	require.True(t,
-		h.WaitForNodeState(innerExitNode.ID, cascade.NodeStateFresh, 30*time.Second),
-		"inner-exit must reach fresh via internal cascade")
+	h.WaitForNodeState(innerMidNode.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(innerExitNode.ID, cascade.NodeStateFresh)
 
 	mainScopeID := h.GetMainRunScopeID(iid)
 	var subgraphScopes int

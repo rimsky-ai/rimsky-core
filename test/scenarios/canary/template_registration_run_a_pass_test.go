@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -67,13 +66,11 @@ func TestCanary_TemplateRegistrationAndRunAPass(t *testing.T) {
 
 	rootNode := h.FindNode(instanceID, "root-worker")
 	require.NotNil(t, rootNode, "root-worker node must exist on the instance")
-	require.True(t, h.WaitForNodeState(rootNode.ID, cascade.NodeStateFresh, 15*time.Second),
-		"root-worker did not reach fresh — supervisor/dispatch path broken")
+	h.WaitForNodeState(rootNode.ID, cascade.NodeStateFresh)
 
 	downstreamNode := h.FindNode(instanceID, "downstream-worker")
 	require.NotNil(t, downstreamNode, "downstream-worker node must exist on the instance")
-	require.True(t, h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh, 15*time.Second),
-		"downstream-worker did not reach fresh — cascade-fire via subscribes: broken")
+	h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh)
 }
 
 func createInstanceViaHTTP(t *testing.T, h *scenario.Harness, templateHash string) uuid.UUID {

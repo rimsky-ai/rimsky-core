@@ -1012,3 +1012,61 @@ func TestResolveAttributes_DispatchGateRejectsInvalidResolvedBag(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateTags_UndeclaredTagRejected(t *testing.T) {
+	declared := func(name string) ([]string, bool) {
+		if name != "exec-a" {
+			return nil, false
+		}
+		return []string{"approved"}, true
+	}
+	dctx := dispatchContext{
+		Args:     RunArgs{DeclaredTagsFor: declared},
+		Acquired: &acquisition{Executor: "exec-a"},
+	}
+
+	rejected := validateTags(context.Background(), dctx, terminalEvent{
+		Kind:    terminalKindComplete,
+		Changed: true,
+		Tags:    []string{"approved", "rogue"},
+	})
+	if rejected.Kind != terminalKindErrored {
+		t.Fatalf("Kind = %v, want terminalKindErrored", rejected.Kind)
+	}
+	if rejected.ErrorClass != "executor_protocol_violation" {
+		t.Fatalf("ErrorClass = %q, want executor_protocol_violation", rejected.ErrorClass)
+	}
+	if rejected.Payload["reason"] != "undeclared_tag" {
+		t.Fatalf("Payload[reason] = %v, want undeclared_tag", rejected.Payload["reason"])
+	}
+	if rejected.Payload["tag"] != "rogue" {
+		t.Fatalf("Payload[tag] = %v, want rogue", rejected.Payload["tag"])
+	}
+	if declaredTags, _ := rejected.Payload["declared_tags"].([]string); len(declaredTags) != 1 || declaredTags[0] != "approved" {
+		t.Fatalf("Payload[declared_tags] = %v, want [approved]", rejected.Payload["declared_tags"])
+	}
+
+	accepted := validateTags(context.Background(), dctx, terminalEvent{
+		Kind:    terminalKindComplete,
+		Changed: true,
+		Tags:    []string{"approved"},
+	})
+	if accepted.Kind != terminalKindComplete {
+		t.Fatalf("declared tag must pass through unrejected, got Kind=%v", accepted.Kind)
+	}
+	if len(accepted.Tags) != 1 || accepted.Tags[0] != "approved" {
+		t.Fatalf("declared tag must be preserved, got %v", accepted.Tags)
+	}
+
+	unknownExecutor := dispatchContext{
+		Args:     RunArgs{DeclaredTagsFor: declared},
+		Acquired: &acquisition{Executor: "exec-unregistered"},
+	}
+	passthrough := validateTags(context.Background(), unknownExecutor, terminalEvent{
+		Kind: terminalKindComplete,
+		Tags: []string{"anything"},
+	})
+	if passthrough.Kind != terminalKindComplete {
+		t.Fatalf("executor with no declared-tags entry must not be rejected, got Kind=%v", passthrough.Kind)
+	}
+}

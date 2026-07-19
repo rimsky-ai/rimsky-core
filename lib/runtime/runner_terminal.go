@@ -86,6 +86,9 @@ func applyTerminal(
 		if inner != nil {
 			inner(ctx)
 		}
+		if acq.RetryDecision != nil && acq.RetryDecision.IsRetry() {
+			return
+		}
 		emitWorkCompleted(ctx, args, acq, kind)
 	}, nil
 }
@@ -223,15 +226,7 @@ func applyTerminalComplete(
 		}
 		heldFilter := subgraphMemberFilter(tmplSpec, acq.NodeType)
 		visited := map[foundationshared.UUID]struct{}{}
-		successSig := signalpkg.Signal{
-			Type: "terminal/success",
-			Payload: map[string]any{
-				"changed":          t.Changed,
-				"attributes_delta": orEmptyMap(t.AttributesDel),
-				"change_summary":   t.ChangeSummary,
-				"tags":             t.Tags,
-			},
-		}
+		successSig := signalpkg.BuildTerminalSuccessSignal(t.Changed, t.AttributesDel, t.ChangeSummary, t.Tags)
 		if err := emitSignalInTxWithFilter(ctx, args, tx,
 			acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 			successSig, visited, heldFilter); err != nil {
@@ -297,15 +292,7 @@ func applyTerminalComplete(
 	// @concept: signal
 	// @concept: wait-set
 	visited := map[foundationshared.UUID]struct{}{}
-	successSig := signalpkg.Signal{
-		Type: "terminal/success",
-		Payload: map[string]any{
-			"changed":          t.Changed,
-			"attributes_delta": orEmptyMap(t.AttributesDel),
-			"change_summary":   t.ChangeSummary,
-			"tags":             t.Tags,
-		},
-	}
+	successSig := signalpkg.BuildTerminalSuccessSignal(t.Changed, t.AttributesDel, t.ChangeSummary, t.Tags)
 	if err := emitSignalInTx(ctx, args, tx,
 		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, successSig, visited); err != nil {
 		return nil, err
@@ -800,13 +787,6 @@ func mergeAttributesDelta(base, delta map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
-}
-
-func orEmptyMap(m map[string]any) map[string]any {
-	if m == nil {
-		return map[string]any{}
-	}
-	return m
 }
 
 func waitSetTopicKindFor(pattern signalpkg.TypePath) string {

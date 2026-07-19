@@ -105,8 +105,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
-	require.True(t, h.WaitForDispatch(worker.ID, 10*time.Second),
-		"scheduler should enqueue the worker's dispatch row")
+	h.WaitForDispatch(worker.ID)
 
 	clientA, err := peer.Dial(h.Ctx, "store-a", "grpc://"+endpointA, peer.TLSModeOff)
 	require.NoError(t, err)

@@ -95,13 +95,20 @@ func (h *Handle) CallbackRegistry() *CallbackRegistry { return h.callbackReg }
 
 func (h *Handle) CallbackServeErr() <-chan error { return h.callbackServeErr }
 
+const defaultClaimPollInterval = 200 * time.Millisecond
+
+func resolveClaimPollInterval(configured time.Duration) time.Duration {
+	if configured == 0 {
+		return defaultClaimPollInterval
+	}
+	return configured
+}
+
 func Start(cfg Config) (*Handle, error) {
 	if cfg.LivenessInterval == 0 {
 		cfg.LivenessInterval = 5 * time.Second
 	}
-	if cfg.ClaimPollInterval == 0 {
-		cfg.ClaimPollInterval = 200 * time.Millisecond
-	}
+	cfg.ClaimPollInterval = resolveClaimPollInterval(cfg.ClaimPollInterval)
 	if cfg.Concurrency < 1 {
 		cfg.Concurrency = 1
 	}

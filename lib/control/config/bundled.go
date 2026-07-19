@@ -30,6 +30,18 @@ type BundledRegistrations struct {
 	ClaimProducerRegistry *rtclaimproducer.InProcessRegistry
 }
 
+func mergeBundledClaimProducers(registry *locks.Registry, bundled map[string]locks.ClaimProducer, onOverride func(name string)) {
+	for name, producer := range bundled {
+		if _, exists := registry.Get(name); exists {
+			if onOverride != nil {
+				onOverride(name)
+			}
+			continue
+		}
+		registry.Add(name, producer)
+	}
+}
+
 func (b *BundledRegistrations) ClaimProducerClients() map[string]locks.ClaimProducer {
 	out := map[string]locks.ClaimProducer{}
 	if b.ClaimProducerRegistry == nil {

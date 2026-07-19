@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -36,11 +35,9 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 15*time.Second),
-		"worker did not reach failed on first fire")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
 
-	require.True(t, waitForFramesByState(t, h, iid, "failed", 1, 5*time.Second),
-		"first frame should end failed")
+	waitForFramesByState(t, h, iid, "failed", 1)
 
 	var priorFrameID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
@@ -65,11 +62,9 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	// @decision: node-reset-as-pure-retry-budget-clear
 	h.PostInstanceMessage(iid, "", nil, "reset-followup-wake-"+iid.String())
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 20*time.Second),
-		"worker did not reach fresh after reset+empty-message; the two-step retry workflow must drive the node back through the cascade")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
-	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 5*time.Second),
-		"second frame should end completed")
+	waitForFramesByState(t, h, iid, "completed", 1)
 
 	var runFrameID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,

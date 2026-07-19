@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -67,7 +66,5 @@ func TestInprocUtilityExecutorE2E(t *testing.T) {
 	counter := h.FindNode(iid, "counter")
 	require.NotNil(t, counter, "counter node missing from instance")
 
-	require.True(t,
-		h.WaitForNodeState(counter.ID, cascade.NodeStateFresh, 30*time.Second),
-		"counter MUST reach fresh — proves the dispatch terminated cleanly without falling through to an unresolved executor")
+	h.WaitForNodeState(counter.ID, cascade.NodeStateFresh)
 }

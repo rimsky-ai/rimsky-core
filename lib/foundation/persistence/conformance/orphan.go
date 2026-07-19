@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func testOrphanCutoffTime(t *testing.T, d persistence.Database) {
@@ -24,6 +25,8 @@ func testOrphanCutoffTime(t *testing.T, d persistence.Database) {
 
 	pastID := uuid.New()
 	futureID := uuid.New()
+	resolvedPastID := uuid.New()
+	lockNameResolvedPast := "orphan-resolved-past"
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
@@ -46,7 +49,17 @@ func testOrphanCutoffTime(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		return nil
+		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID:                 resolvedPastID,
+			LockKind:           persistence.LockKindNamed,
+			LockName:           &lockNameResolvedPast,
+			HolderSupervisorID: supID,
+			HolderNodeID:       fix.NodeID,
+			ExpiresAt:          time.Now().Add(-1 * time.Hour),
+		}, tx); err != nil {
+			return err
+		}
+		return store.ClaimHandles().Promote(ctx, resolvedPastID, supID, spec.ClaimHandleStateCommitted, tx)
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -66,6 +79,10 @@ func testOrphanCutoffTime(t *testing.T, d persistence.Database) {
 		}
 		if r.ID == futureID {
 			t.Fatalf("future-expiring row should not be in ListExpired")
+		}
+		if r.ID == resolvedPastID {
+			t.Fatalf("resolved (committed) row with a past expiry must not be in ListExpired; " +
+				"the reaper candidate predicate must filter on state='active', not expiry alone")
 		}
 	}
 	if !foundPast {

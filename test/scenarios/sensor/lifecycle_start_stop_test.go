@@ -2,127 +2,226 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// @concept: publisher-subscription
 package sensor
 
 import (
 	"context"
+	"encoding/json"
+	"net"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-type fixturePublisher struct {
-	genv1.UnimplementedPublisherServer
-	mu   sync.Mutex
-	subs map[string]subscription
-}
-
-type subscription struct {
+type recordedSubscribe struct {
 	SubscriptionID string
 	InstanceID     string
 	Kind           string
 	MessageType    string
-	StartedAt      time.Time
+	ResolvedConfig []byte
 }
 
-func newFixturePublisher() *fixturePublisher {
-	return &fixturePublisher{subs: make(map[string]subscription)}
+type recordingPublisherPeer struct {
+	genv1.UnimplementedPublisherServer
+	mu           sync.Mutex
+	subscribes   []recordedSubscribe
+	unsubscribes []string
+	live         map[string]recordedSubscribe
 }
 
-func (s *fixturePublisher) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.PublisherCapabilities, error) {
+func newRecordingPublisherPeer() *recordingPublisherPeer {
+	return &recordingPublisherPeer{live: map[string]recordedSubscribe{}}
+}
+
+func (s *recordingPublisherPeer) Capabilities(context.Context, *emptypb.Empty) (*genv1.PublisherCapabilities, error) {
 	return &genv1.PublisherCapabilities{
-		SupportedKinds: []*genv1.PublisherKindCapability{{Kind: "cron"}, {Kind: "http"}},
+		SupportedKinds: []*genv1.PublisherKindCapability{{Kind: "cron"}},
 		Protocols:      []string{"publisher"},
 	}, nil
 }
 
-func (s *fixturePublisher) Subscribe(_ context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
+func (s *recordingPublisherPeer) Subscribe(_ context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.subs[req.GetPublisherSubscriptionId()]; ok {
-		return &genv1.SubscribeResponse{}, nil
-	}
-	s.subs[req.GetPublisherSubscriptionId()] = subscription{
+	rec := recordedSubscribe{
 		SubscriptionID: req.GetPublisherSubscriptionId(),
 		InstanceID:     req.GetInstanceId(),
 		Kind:           req.GetKind(),
 		MessageType:    req.GetMessageType(),
-		StartedAt:      time.Now(),
+		ResolvedConfig: req.GetResolvedConfig(),
 	}
+	s.subscribes = append(s.subscribes, rec)
+	s.live[rec.SubscriptionID] = rec
 	return &genv1.SubscribeResponse{}, nil
 }
 
-func (s *fixturePublisher) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
+func (s *recordingPublisherPeer) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.subs, req.GetPublisherSubscriptionId())
+	s.unsubscribes = append(s.unsubscribes, req.GetPublisherSubscriptionId())
+	delete(s.live, req.GetPublisherSubscriptionId())
 	return &genv1.UnsubscribeResponse{}, nil
 }
 
-func (s *fixturePublisher) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (*genv1.ListSubscriptionsResponse, error) {
+func (s *recordingPublisherPeer) ListSubscriptions(context.Context, *emptypb.Empty) (*genv1.ListSubscriptionsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]*genv1.PublisherSubscriptionDescriptor, 0, len(s.subs))
-	for _, sub := range s.subs {
+	out := make([]*genv1.PublisherSubscriptionDescriptor, 0, len(s.live))
+	for _, sub := range s.live {
 		out = append(out, &genv1.PublisherSubscriptionDescriptor{
 			PublisherSubscriptionId: sub.SubscriptionID,
 			InstanceId:              sub.InstanceID,
 			Kind:                    sub.Kind,
 			MessageType:             sub.MessageType,
-			StartedAt:               timestamppb.New(sub.StartedAt),
+			StartedAt:               timestamppb.Now(),
 		})
 	}
 	return &genv1.ListSubscriptionsResponse{Subscriptions: out}, nil
 }
 
-func TestLifecycleStartStop_RoundTrip(t *testing.T) {
-	t.Parallel()
-	s := newFixturePublisher()
-	ctx := context.Background()
-	if _, err := s.Subscribe(ctx, &genv1.SubscribeRequest{
-		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron",
-		MessageType: "system/invalidate",
-	}); err != nil {
-		t.Fatalf("Subscribe: %v", err)
-	}
-	resp, err := s.ListSubscriptions(ctx, &emptypb.Empty{})
-	if err != nil {
-		t.Fatalf("ListSubscriptions: %v", err)
-	}
-	if len(resp.GetSubscriptions()) != 1 {
-		t.Errorf("ListSubscriptions: expected 1 subscription, got %d", len(resp.GetSubscriptions()))
-	}
-	if _, err := s.Unsubscribe(ctx, &genv1.UnsubscribeRequest{PublisherSubscriptionId: "w1"}); err != nil {
-		t.Fatalf("Unsubscribe: %v", err)
-	}
-	resp, err = s.ListSubscriptions(ctx, &emptypb.Empty{})
-	if err != nil {
-		t.Fatalf("ListSubscriptions: %v", err)
-	}
-	if len(resp.GetSubscriptions()) != 0 {
-		t.Errorf("ListSubscriptions after unsubscribe: expected 0, got %d", len(resp.GetSubscriptions()))
+func (s *recordingPublisherPeer) snapshotSubscribes() []recordedSubscribe {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]recordedSubscribe(nil), s.subscribes...)
+}
+
+func (s *recordingPublisherPeer) snapshotUnsubscribes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.unsubscribes...)
+}
+
+func startPublisherPeer(t *testing.T, impl genv1.PublisherServer) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv := grpc.NewServer()
+	genv1.RegisterPublisherServer(srv, impl)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+	return lis.Addr().String()
+}
+
+func waitForSubscriptionState(t *testing.T, h *scenario.Harness, instanceID any, want string) (id, resolvedConfig string) {
+	t.Helper()
+	for {
+		var subID, state, cfg string
+		h.QueryRowSQL(`
+			SELECT COALESCE(id::text, ''), COALESCE(state, ''), COALESCE(resolved_config::text, '')
+			  FROM rimsky_publisher_subscriptions
+			 WHERE instance_id = $1`,
+			[]any{instanceID}, &subID, &state, &cfg)
+		if state == want {
+			return subID, cfg
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
-func TestLifecycleStartStop_Idempotent(t *testing.T) {
+func TestLifecycleStartStop_RealSubscriptionLifecycle(t *testing.T) {
 	t.Parallel()
-	s := newFixturePublisher()
-	ctx := context.Background()
-	if _, err := s.Subscribe(ctx, &genv1.SubscribeRequest{PublisherSubscriptionId: "w1", Kind: "cron"}); err != nil {
-		t.Fatalf("Subscribe #1: %v", err)
-	}
-	if _, err := s.Subscribe(ctx, &genv1.SubscribeRequest{PublisherSubscriptionId: "w1", Kind: "cron"}); err != nil {
-		t.Errorf("Subscribe #2 (idempotent): %v", err)
-	}
-	if _, err := s.Unsubscribe(ctx, &genv1.UnsubscribeRequest{PublisherSubscriptionId: "w1"}); err != nil {
-		t.Fatalf("Unsubscribe: %v", err)
-	}
-	if _, err := s.Unsubscribe(ctx, &genv1.UnsubscribeRequest{PublisherSubscriptionId: "w1"}); err != nil {
-		t.Errorf("Unsubscribe idempotent: %v", err)
-	}
+	peerImpl := newRecordingPublisherPeer()
+	addr := startPublisherPeer(t, peerImpl)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		Publishers: config.RemotePublishersConfig{
+			Publishers: map[string]config.PublisherEntry{
+				"pub-cron": {Endpoint: "grpc://" + addr, Protocols: []string{"publisher"}},
+			},
+		},
+	})
+	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "done")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "publisher-lifecycle", Version: "1",
+		Messages: []spec.MessageSchema{{Type: "sensor/tick"}},
+		Publishers: []node.PublisherSpec{{
+			Name:        "pub-cron",
+			Kind:        "cron",
+			Config:      json.RawMessage(`{"schedule":"{{params.cron_schedule}}"}`),
+			MessageType: "sensor/tick",
+		}},
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-publisher-lifecycle", map[string]any{
+		"cron_schedule": "*/7 * * * *",
+	})
+
+	subID, resolvedCfg := waitForSubscriptionState(t, h, iid, "active")
+	require.NotEmpty(t, subID)
+	require.Contains(t, resolvedCfg, "*/7 * * * *",
+		"resolved_config must carry the {{params.*}}-resolved value, not the raw placeholder")
+
+	var publisherName, kind, messageType string
+	h.QueryRowSQL(`
+		SELECT publisher_name, kind, message_type
+		  FROM rimsky_publisher_subscriptions
+		 WHERE id = $1`,
+		[]any{subID}, &publisherName, &kind, &messageType)
+	require.Equal(t, "pub-cron", publisherName)
+	require.Equal(t, "cron", kind)
+	require.Equal(t, "sensor/tick", messageType)
+
+	subs := peerImpl.snapshotSubscribes()
+	require.Len(t, subs, 1, "the reconciler must deliver exactly one Subscribe RPC to the remote publisher")
+	require.Equal(t, subID, subs[0].SubscriptionID)
+	require.Equal(t, iid.String(), subs[0].InstanceID)
+	require.Equal(t, "cron", subs[0].Kind)
+	require.Equal(t, "sensor/tick", subs[0].MessageType)
+	require.Contains(t, string(subs[0].ResolvedConfig), "*/7 * * * *",
+		"the Subscribe RPC must carry the resolved config over the wire")
+
+	resp, err := http.Post(h.ControlBase+"/v1/instances/"+iid.String()+"/terminate", "application/json", nil)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Less(t, resp.StatusCode, 300, "terminate instance must succeed")
+
+	waitForSubscriptionState(t, h, iid, "stopped")
+	unsubs := peerImpl.snapshotUnsubscribes()
+	require.Equal(t, []string{subID}, unsubs,
+		"instance termination must send exactly one Unsubscribe RPC for the live subscription")
+}
+
+func TestLifecycleStartStop_UnknownPublisherFailsClosed(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "done")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "publisher-lifecycle-unknown", Version: "1",
+		Messages: []spec.MessageSchema{{Type: "sensor/tick"}},
+		Publishers: []node.PublisherSpec{{
+			Name:        "not-registered-anywhere",
+			Kind:        "cron",
+			Config:      json.RawMessage(`{"schedule":"* * * * *"}`),
+			MessageType: "sensor/tick",
+		}},
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-publisher-unknown", map[string]any{})
+
+	_, _ = waitForSubscriptionState(t, h, iid, "failed")
+	var reason string
+	h.QueryRowSQL(`
+		SELECT failure_reason FROM rimsky_publisher_subscriptions WHERE instance_id = $1`,
+		[]any{iid}, &reason)
+	require.Contains(t, reason, "not-registered-anywhere",
+		"the failure reason must name the unknown publisher")
 }

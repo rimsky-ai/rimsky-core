@@ -47,8 +47,18 @@ func setupClitest(t *testing.T) *clitest.Server {
 func TestRunTemplateRegister_OK(t *testing.T) {
 	_ = setupClitest(t)
 	specPath := writeSpec(t)
-	if got := cli.RunTemplateRegister(context.Background(), []string{specPath}); got != 0 {
+	var got int
+	out := captureStdout(t, func() {
+		got = cli.RunTemplateRegister(context.Background(), []string{specPath})
+	})
+	if got != 0 {
 		t.Errorf("exit %d", got)
+	}
+	if !strings.Contains(out, "template_hash:") {
+		t.Errorf("template register: stdout must display the template_hash key (CLI vocab), got %q", out)
+	}
+	if strings.Contains(out, "template_id") {
+		t.Errorf("template register: stdout must not use the retired template_id display key, got %q", out)
 	}
 }
 

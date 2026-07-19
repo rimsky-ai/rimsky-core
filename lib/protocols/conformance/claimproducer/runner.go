@@ -287,6 +287,8 @@ func checkScopesConflict(ctx context.Context, c claimproducer.ClaimProducer, cap
 		return CheckResult{Name: "ScopesConflictSkipped"}
 	}
 	scope := []byte(`{"k":"v"}`)
+	different := []byte(`{"k":"different"}`)
+
 	conflicts, err := c.ScopesConflict(ctx, scope, append([]byte{}, scope...))
 	if err != nil {
 		return CheckResult{Name: "ScopesConflict", Err: err}
@@ -297,8 +299,32 @@ func checkScopesConflict(ctx context.Context, c claimproducer.ClaimProducer, cap
 			Err:  fmt.Errorf("byte-equal scopes returned Conflicts=false; producer-supplied conflict must agree with byte-equal on identical inputs"),
 		}
 	}
-	if _, err := c.ScopesConflict(ctx, scope, []byte(`{"k":"different"}`)); err != nil {
+
+	first, err := c.ScopesConflict(ctx, scope, different)
+	if err != nil {
 		return CheckResult{Name: "ScopesConflict", Err: err}
+	}
+	second, err := c.ScopesConflict(ctx, scope, different)
+	if err != nil {
+		return CheckResult{Name: "ScopesConflict", Err: err}
+	}
+	if second != first {
+		return CheckResult{
+			Name: "ScopesConflict",
+			Err: fmt.Errorf("ScopesConflict(a, b) returned %v then %v on repeated calls with identical inputs; "+
+				"the conflict predicate must be a deterministic function of its inputs, not random", first, second),
+		}
+	}
+	reversed, err := c.ScopesConflict(ctx, different, scope)
+	if err != nil {
+		return CheckResult{Name: "ScopesConflict", Err: err}
+	}
+	if reversed != first {
+		return CheckResult{
+			Name: "ScopesConflict",
+			Err: fmt.Errorf("ScopesConflict(a, b)=%v but ScopesConflict(b, a)=%v; the overlap predicate must be symmetric",
+				first, reversed),
+		}
 	}
 	return CheckResult{Name: "ScopesConflict"}
 }

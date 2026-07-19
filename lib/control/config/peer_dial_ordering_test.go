@@ -114,3 +114,48 @@ func TestStartSupervisor_MTLSWiresIdentityBeforeOutboundDial(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = handle.Shutdown(context.Background()) })
 }
+
+func TestStartSupervisor_UnreachablePeerFailsStartupFast(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
+	db, err := persistence.Open(ctx, persistence.Config{Driver: "sqlite", SQLite: &persistence.SQLiteConfig{Path: dbPath}})
+	if err != nil {
+		t.Fatalf("persistence.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	lis, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	unreachable := lis.Addr().String()
+	if err := lis.Close(); err != nil {
+		t.Fatalf("Close listener to free the port for a refused connection: %v", err)
+	}
+
+	handle, err := StartSupervisor(SupervisorConfig{
+		SupervisorID: "supervisor-unreachable-peer",
+		Driver:       db,
+		Clock:        shared.SystemClock{},
+		Logger:       shared.SilentLogger{},
+		Resolver:     executor.NewStaticResolver(nil),
+		CallbackHost: "127.0.0.1",
+		CallbackPort: 0,
+		PeerAuth:     peer.PeerAuthNone,
+		ClaimProducers: RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
+			"items-store": {
+				Endpoint:     unreachable,
+				TLS:          peer.TLSModeOff,
+				Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+			},
+		}},
+	})
+	if err == nil {
+		_ = handle.Shutdown(context.Background())
+		t.Fatalf("StartSupervisor dialed a claim producer with nothing listening at %q — "+
+			"process startup must fail fast on an unreachable peer, not start with a broken registry", unreachable)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -23,26 +24,43 @@ func TestDeadLetter_CancelledNotDelivered(t *testing.T) {
 	instanceID := shared.UUID(uuid.New())
 	frameID := shared.UUID(uuid.New())
 	now := time.Now().UTC()
+	deps := &fakeEnqueueDeps{msgs: m, queueModes: map[shared.UUID]string{instanceID: "coalesce"}}
 
-	triggerID := shared.UUID(uuid.New())
-	if err := runtime.EnqueueMessage(ctx, nil, &fakeEnqueueDeps{msgs: m}, persistence.EnqueueMessageRequest{
-		ID:         triggerID,
+	staleID := shared.UUID(uuid.New())
+	require.NoError(t, runtime.EnqueueMessage(ctx, nil, deps, persistence.EnqueueMessageRequest{
+		ID:         staleID,
 		InstanceID: instanceID,
 		Type:       "invalidate",
 		Sender:     "sensor-cron",
 		SenderKind: "publisher",
 		ReceivedAt: now,
-	}); err != nil {
-		t.Fatalf("EnqueueMessage live: %v", err)
-	}
-	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, triggerID, now)
-	if err != nil {
-		t.Fatalf("DeliverPendingMessages: %v", err)
-	}
-	if len(delivered.Messages) != 1 {
-		t.Fatalf("expected 1 delivered (the live publisher message), got %d", len(delivered.Messages))
-	}
-	if delivered.Messages[0].SenderKind != "publisher" {
-		t.Errorf("delivered.sender_kind: got %s want publisher", delivered.Messages[0].SenderKind)
-	}
+	}))
+	liveID := shared.UUID(uuid.New())
+	require.NoError(t, runtime.EnqueueMessage(ctx, nil, deps, persistence.EnqueueMessageRequest{
+		ID:         liveID,
+		InstanceID: instanceID,
+		Type:       "invalidate",
+		Sender:     "sensor-cron",
+		SenderKind: "publisher",
+		ReceivedAt: now.Add(time.Second),
+	}))
+
+	stale, err := m.Get(ctx, staleID)
+	require.NoError(t, err)
+	require.True(t, stale.Cancelled, "coalesce receipt must cancel the superseded pending message")
+	require.Nil(t, stale.DeliveredAt, "a cancelled message must never be marked delivered")
+
+	pending, err := m.ListPendingForInstance(ctx, nil, instanceID)
+	require.NoError(t, err)
+	require.Len(t, pending, 1, "the cancelled message must not surface as pending")
+	require.Equal(t, liveID, pending[0].ID)
+
+	deadLettered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, staleID, now)
+	require.NoError(t, err)
+	require.Empty(t, deadLettered.Messages, "a cancelled message must never be delivered, even if named as a frame's trigger")
+
+	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, liveID, now)
+	require.NoError(t, err)
+	require.Len(t, delivered.Messages, 1, "the surviving message must still deliver")
+	require.Equal(t, "publisher", delivered.Messages[0].SenderKind)
 }

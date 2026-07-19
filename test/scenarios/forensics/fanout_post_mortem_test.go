@@ -96,6 +96,8 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 		}
 		require.Equal(t, want, rows[0].Outcome,
 			"child %d outcome: got %s want %s", i, rows[0].Outcome, want)
+		require.Equal(t, inst, rows[0].InstanceID,
+			"child %d lineage row must carry the owning instance id, not a lost/zero value", i)
 	}
 	parentRows, err := backend.Lineage().GetByClaimHandleID(ctx, parentID)
 	require.NoError(t, err)
@@ -103,6 +105,10 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 		"parent must emit exactly one claim_terminal row after all children resolve")
 	require.Equal(t, persistence.LineageOutcomeCommitted, parentRows[0].Outcome,
 		"threshold(max_failures=1) tolerates one abandon → parent Commits")
+	require.Equal(t, inst, parentRows[0].InstanceID,
+		"the auto-fired parent claim_terminal row must carry the owning instance id — this is the "+
+			"re-derived-from-holder-node path (SettleFromFanoutChild), not a value the caller supplied directly, "+
+			"so a regression that drops the acquirer-node lookup would silently zero this field")
 
 	var commitPage persistence.EventListResult
 	var abandonPage persistence.EventListResult

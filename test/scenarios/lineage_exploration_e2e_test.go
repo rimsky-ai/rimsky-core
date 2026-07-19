@@ -100,8 +100,7 @@ func TestLineageExploration(t *testing.T) {
 	consumerNode := h.FindNode(iid, "consumer")
 	require.NotNil(t, consumerNode, "consumer node missing on the instance")
 
-	require.True(t, waitForLineageReady(t, h, iid, producerNode.ID, consumerNode.ID, 90*time.Second),
-		"both producer and consumer must emit a leaf_run lineage row")
+	waitForLineageReady(t, h, iid, producerNode.ID, consumerNode.ID)
 
 	producerRunID := mostRecentRunID(t, h, iid, producerNode.ID)
 	require.NotEqual(t, "", producerRunID,
@@ -411,11 +410,9 @@ func mustUUID(s string) uuid.UUID {
 func waitForLineageReady(
 	t *testing.T, h *scenario.Harness,
 	instanceID, producerNodeID, consumerNodeID interface{ String() string },
-	timeout time.Duration,
-) bool {
+) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		var nProducer, nConsumer int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -432,9 +429,8 @@ func waitForLineageReady(
 			   AND record->>'node_id' = $2
 		`, []any{mustUUID(instanceID.String()), consumerNodeID.String()}, &nConsumer)
 		if nProducer >= 1 && nConsumer >= 1 {
-			return true
+			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return false
 }

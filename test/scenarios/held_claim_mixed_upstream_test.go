@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -104,13 +103,10 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 	require.NotNil(t, bNode)
 	require.NotNil(t, c)
 
-	require.True(t, waitForSettlingSignalTypePrefix(t, h, a.ID, "terminal/error/", 30*time.Second),
-		"a should record settling_signal_type=terminal/error/<class>")
-	require.True(t, waitForSettlingSignalType(t, h, c.ID, "terminal/success", 30*time.Second),
-		"c should record settling_signal_type=terminal/success")
+	waitForSettlingSignalTypePrefix(t, h, a.ID, "terminal/error/")
+	waitForSettlingSignalType(t, h, c.ID, "terminal/success")
 
-	require.True(t, h.WaitForNodeState(bNode.ID, cascade.NodeStateFailed, 30*time.Second),
-		"b should land in failed via template_resolution_failed → give_up")
+	h.WaitForNodeState(bNode.ID, cascade.NodeStateFailed)
 
 	var bLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

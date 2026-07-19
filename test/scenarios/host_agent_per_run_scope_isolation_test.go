@@ -5,17 +5,26 @@
 package scenarios
 
 import (
+	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 )
@@ -189,4 +198,81 @@ func partitionsServedByDistinctChildren(byPartition map[string]map[string]bool, 
 		}
 	}
 	return true
+}
+
+func TestHostAgentPerRunScopeReapIsolation(t *testing.T) {
+	pidLog := t.TempDir() + "/stub-pid.log"
+	t.Setenv("STUBCHILD_PID_LOG", pidLog)
+
+	fx := newHostAgentFixture(t, fixtureOpts{withAgent: true})
+
+	tid := fx.deployLateBindTemplate(t, "late-bind-reap-isolation")
+	iid := fx.createLateBindInstance(t, tid, "ck-reap-isolation", fx.stubBinary)
+
+	worker := fx.h.FindNode(iid, "worker")
+	require.NotNil(t, worker, "worker node should exist")
+	fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
+
+	conn, err := grpc.NewClient(fx.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	execClient := genv1.NewExecutorClient(conn)
+	alphaScope := uuid.NewString()
+	betaScope := uuid.NewString()
+
+	dispatchReapIsolationChild(t, execClient, iid.String(), alphaScope)
+	dispatchReapIsolationChild(t, execClient, iid.String(), betaScope)
+
+	alphaPID := onlyPID(t, readScopePIDs(t, pidLog, alphaScope))
+	betaPID := onlyPID(t, readScopePIDs(t, pidLog, betaScope))
+	require.NotEqual(t, alphaPID, betaPID, "sibling run-scopes must spawn distinct children")
+
+	_, err = genv1.NewLifecycleSubscriberClient(conn).OnRunScopeTerminal(context.Background(), &genv1.OnRunScopeTerminalRequest{
+		RunScopeId:     alphaScope,
+		InstanceId:     iid.String(),
+		TerminalReason: "test_probe",
+	})
+	require.NoError(t, err, "OnRunScopeTerminal for the alpha run-scope must succeed")
+
+	for processAlive(t, alphaPID) {
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	require.True(t, processAlive(t, betaPID),
+		"closing the alpha run-scope (%s) reaped the beta sibling's child (pid %s) too; sibling scopes must reap independently", alphaScope, betaPID)
+}
+
+func dispatchReapIsolationChild(t *testing.T, client genv1.ExecutorClient, instanceID, runScopeID string) {
+	t.Helper()
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "x-rimsky-service-name", lateBindServiceName)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	_, err := client.Execute(ctx, &genv1.ExecuteRequest{
+		InstanceId: instanceID,
+		RunScopeId: runScopeID,
+		NodeId:     uuid.NewString(),
+	})
+	require.NoError(t, err, "Execute for run-scope %s must succeed", runScopeID)
+}
+
+func readScopePIDs(t *testing.T, pidLog, scopeID string) map[string]bool {
+	t.Helper()
+	return readPIDLog(t, pidLog)[scopeID]
+}
+
+func onlyPID(t *testing.T, pids map[string]bool) string {
+	t.Helper()
+	require.Len(t, pids, 1, "expected exactly one pid to have served this run-scope, got %v", pids)
+	for pid := range pids {
+		return pid
+	}
+	return ""
+}
+
+func processAlive(t *testing.T, pidStr string) bool {
+	t.Helper()
+	pid, err := strconv.Atoi(pidStr)
+	require.NoError(t, err, "pid %q must parse", pidStr)
+	return syscall.Kill(pid, 0) == nil
 }

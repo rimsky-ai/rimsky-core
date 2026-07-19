@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -69,8 +68,7 @@ func TestAcquireUnavailable_RoutesViaErrorTypes(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
-		"worker should land in failed via error_types: { acquire/unavailable: give_up }")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
 
 	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -83,9 +81,7 @@ func TestAcquireUnavailable_RoutesViaErrorTypes(t *testing.T) {
 	require.Contains(t, *wLatest.SettlingSignalType, "terminal/error/",
 		"give_up should record settling_signal_type=terminal/error/<class>")
 
-	require.True(t,
-		h.WaitForEventKind(worker.ID, "terminal/error/acquire/unavailable", 5*time.Second),
-		"OnError must emit canonical terminal/error/acquire/unavailable on the audit log")
+	h.WaitForEventKind(worker.ID, "terminal/error/acquire/unavailable")
 
 	require.Empty(t, h.Stub.Observed(),
 		"executor must not be invoked when acquire/unavailable routes to give_up")
@@ -134,6 +130,5 @@ func TestAcquireUnavailable_NoPolicyFailsFast(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
-		"worker should fail-fast when no acquire/unavailable policy is declared")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
 }

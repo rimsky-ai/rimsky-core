@@ -190,6 +190,49 @@ func TestSendCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 	}
 }
 
+func TestSendCascadeMessage_NotCancelledByLaterRollback(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := openEmitTestDB(t)
+	instanceID := seedEmitInstance(t, ctx, d)
+	nodeID := shared.UUID(uuid.New())
+	frameID := shared.UUID(uuid.New())
+
+	msgID, replayed, err := sendCascadeMessage(ctx, d.Tables(),
+		instanceID, nodeID, frameID, "ping/recheck", []byte(`{"pong_status":"ok"}`))
+	if err != nil {
+		t.Fatalf("sendCascadeMessage: %v", err)
+	}
+	if replayed {
+		t.Errorf("first emit must not be a replay")
+	}
+
+	row, err := d.Tables().Messages().Get(ctx, msgID)
+	if err != nil {
+		t.Fatalf("Messages.Get (pre-rollback): %v", err)
+	}
+	if row == nil {
+		t.Fatalf("expected the sent envelope to be durably committed immediately, before any later transaction runs")
+	}
+
+	sentinelErr := errors.New("simulated terminal-resolution failure after the message was already sent")
+	terminalErr := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return sentinelErr
+	})
+	if !errors.Is(terminalErr, sentinelErr) {
+		t.Fatalf("expected sentinel error to propagate, got %v", terminalErr)
+	}
+
+	postRow, err := d.Tables().Messages().Get(ctx, msgID)
+	if err != nil {
+		t.Fatalf("Messages.Get (post-rollback): %v", err)
+	}
+	if postRow == nil {
+		t.Fatalf("the already-sent message must survive a later terminal-resolution transaction's rollback " +
+			"(message emission is not part of the terminal-apply tx); got nil after the sentinel rollback")
+	}
+}
+
 func TestSendCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

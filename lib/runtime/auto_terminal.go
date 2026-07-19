@@ -92,9 +92,11 @@ func CheckAndFireResolution(
 	if row.NodeRunID != nil {
 		hint.NodeRunID = *row.NodeRunID
 	}
-	if acquirer, aErr := args.Persist.Nodes().Get(ctx, row.HolderNodeID, tx); aErr == nil && acquirer != nil {
-		hint.InstanceID = acquirer.InstanceID
+	instID, err := acquirerInstanceID(ctx, args, tx, row.HolderNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("CheckAndFireResolution: %w", err)
 	}
+	hint.InstanceID = instID
 	if args.CheckAndFireHook != nil {
 		args.CheckAndFireHook(ctx)
 	}
@@ -116,10 +118,11 @@ func CheckAndFireResolution(
 	if err != nil {
 		// @concept: error-policy
 		if cls := producerErrorClassOf(err); cls != "" {
-			if rerr := routeHeldClaimVerbError(ctx, args, tx, row, td, cls); rerr != nil {
+			rpc, rerr := routeHeldClaimVerbError(ctx, args, tx, row, td, cls)
+			if rerr != nil {
 				return nil, fmt.Errorf("CheckAndFireResolution: route verb error: %w", rerr)
 			}
-			return nil, nil
+			return rpc, nil
 		}
 		return nil, fmt.Errorf("CheckAndFireResolution: %w", err)
 	}
@@ -131,7 +134,7 @@ func CheckAndFireResolution(
 func routeHeldClaimVerbError(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	row *persistence.ClaimHandleRow, td TerminalDecision, errorClass string,
-) error {
+) (postCommitFn, error) {
 	var senderNodeRunID, senderFrameID shared.UUID
 	if row.NodeRunID != nil {
 		senderNodeRunID = *row.NodeRunID
@@ -151,14 +154,20 @@ func routeHeldClaimVerbError(
 	if err := emitSignalInTxOnce(ctx, args, tx,
 		row.HolderNodeID, holderNodeType, senderNodeRunID, td.LineageHint.InstanceID,
 		senderFrameID, sig); err != nil {
-		return fmt.Errorf("emit claim-terminal error signal: %w", err)
+		return nil, fmt.Errorf("emit claim-terminal error signal: %w", err)
 	}
 	abandonTD := td
 	abandonTD.Outcome = OutcomeAbandon
 	if err := promoteHandleState(ctx, args, tx, abandonTD); err != nil {
-		return fmt.Errorf("promote handle after verb error: %w", err)
+		return nil, fmt.Errorf("promote handle after verb error: %w", err)
 	}
-	return nil
+	// @concept: claim-handle
+	// @decision: held-as-state-not-phase
+	pc, err := emitDeferredHeldCascade(ctx, args, tx, abandonTD)
+	if err != nil {
+		return nil, fmt.Errorf("deferred held cascade after verb error: %w", err)
+	}
+	return pc, nil
 }
 
 func expectedInheritorsMissing(

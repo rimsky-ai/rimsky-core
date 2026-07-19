@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -130,9 +129,7 @@ func TestStoryCascadeSend_SendsAndOpensNextFrame(t *testing.T) {
 	require.NotNil(t, h.FindNode(iid, "pong"))
 	require.NotNil(t, h.FindNode(iid, "sender"))
 
-	require.True(t,
-		h.WaitForEventKind(tailNode.ID, "terminal/success", 30*time.Second),
-		"tail did not emit terminal/success — cascade-send pipeline broken (pong → sender → sent message → tail)")
+	h.WaitForEventKind(tailNode.ID, "terminal/success")
 
 	var sentMsgID, sentSender, sentSenderKind string
 	var sentBody []byte

@@ -17,7 +17,10 @@ import (
 func TestRunTerminals(t *testing.T) {
 	t.Run("honest", func(t *testing.T) {
 		results := Run(context.Background(), newFakeProducer())
-		for _, name := range []string{"Commit", "Abandon", "Release", "TerminalIdempotency"} {
+		for _, name := range []string{
+			"Commit", "Abandon", "Release",
+			"TerminalIdempotency", "AbandonTerminalIdempotency", "ReleaseTerminalIdempotency",
+		} {
 			r := findRow(t, results, name)
 			if r.Err != nil {
 				t.Errorf("row %q expected to PASS, got Err: %v", name, r.Err)
@@ -39,9 +42,41 @@ func TestRunTerminals(t *testing.T) {
 		fp := newFakeProducer()
 		fp.failDuplicateTerminal = true
 		results := Run(context.Background(), fp)
-		r := findRow(t, results, "TerminalIdempotency")
-		if r.Err == nil {
-			t.Errorf("TerminalIdempotency row expected non-nil Err when a retried terminal verb errors, got PASS")
+		for _, name := range []string{"TerminalIdempotency", "AbandonTerminalIdempotency", "ReleaseTerminalIdempotency"} {
+			r := findRow(t, results, name)
+			if r.Err == nil {
+				t.Errorf("%s row expected non-nil Err when a retried terminal verb errors, got PASS", name)
+			}
+		}
+	})
+
+	t.Run("duplicate_abandon_only_fails_abandon_idempotency", func(t *testing.T) {
+		fp := newFakeProducer()
+		fp.failDuplicateVerb = "abandon"
+		results := Run(context.Background(), fp)
+		if r := findRow(t, results, "AbandonTerminalIdempotency"); r.Err == nil {
+			t.Errorf("AbandonTerminalIdempotency row expected non-nil Err when retried Abandon errors, got PASS")
+		}
+		for _, name := range []string{"TerminalIdempotency", "ReleaseTerminalIdempotency"} {
+			r := findRow(t, results, name)
+			if r.Err != nil {
+				t.Errorf("%s row expected to PASS when only Abandon retry errors, got Err: %v", name, r.Err)
+			}
+		}
+	})
+
+	t.Run("duplicate_release_only_fails_release_idempotency", func(t *testing.T) {
+		fp := newFakeProducer()
+		fp.failDuplicateVerb = "release"
+		results := Run(context.Background(), fp)
+		if r := findRow(t, results, "ReleaseTerminalIdempotency"); r.Err == nil {
+			t.Errorf("ReleaseTerminalIdempotency row expected non-nil Err when retried Release errors, got PASS")
+		}
+		for _, name := range []string{"TerminalIdempotency", "AbandonTerminalIdempotency"} {
+			r := findRow(t, results, name)
+			if r.Err != nil {
+				t.Errorf("%s row expected to PASS when only Release retry errors, got Err: %v", name, r.Err)
+			}
 		}
 	})
 }
@@ -67,6 +102,7 @@ type fakeProducer struct {
 	commitErr error
 
 	failDuplicateTerminal bool
+	failDuplicateVerb     string
 
 	terminalCalls map[claimproducer.ClaimID]int
 }
@@ -99,22 +135,22 @@ func (f *fakeProducer) Commit(_ context.Context, claimID claimproducer.ClaimID, 
 	if f.commitErr != nil {
 		return claimproducer.CommitResult{}, f.commitErr
 	}
-	return claimproducer.CommitResult{}, f.recordTerminal(claimID)
+	return claimproducer.CommitResult{}, f.recordTerminal("commit", claimID)
 }
 
 func (f *fakeProducer) Abandon(_ context.Context, claimID claimproducer.ClaimID, _ []byte, _ []byte) error {
-	return f.recordTerminal(claimID)
+	return f.recordTerminal("abandon", claimID)
 }
 
 func (f *fakeProducer) Release(_ context.Context, claimID claimproducer.ClaimID, _ []byte, _ []byte) error {
-	return f.recordTerminal(claimID)
+	return f.recordTerminal("release", claimID)
 }
 
-func (f *fakeProducer) recordTerminal(claimID claimproducer.ClaimID) error {
+func (f *fakeProducer) recordTerminal(verb string, claimID claimproducer.ClaimID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.terminalCalls[claimID]++
-	if f.failDuplicateTerminal && f.terminalCalls[claimID] > 1 {
+	if f.terminalCalls[claimID] > 1 && (f.failDuplicateTerminal || f.failDuplicateVerb == verb) {
 		return fmt.Errorf("duplicate terminal verb rejected for claim %s (non-idempotent)", claimID)
 	}
 	return nil

@@ -9,7 +9,6 @@ package breakpoints
 import (
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -55,37 +54,11 @@ func TestConcurrentFrameCorrectness(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
+	hit := waitForHitOnBreakpoint(t, h, bpID)
 
 	nb := h.FindNode(iid, "worker_b")
 	require.NotNil(t, nb)
-	if !h.WaitForNodeState(nb.ID, cascade.NodeStateFresh, 15*time.Second) {
-		h.QuerySQL(`
-			SELECT r.id::text, n.node_type, r.phase::text, r.state::text, r.claimed_by
-			  FROM rimsky_node_runs r
-			  JOIN rimsky_nodes n ON n.id = r.node_id
-			 WHERE n.instance_id = $1
-			 ORDER BY r.enqueued_at
-		`, []any{iid}, func(scan func(...any) error) error {
-			var id, nt, phase, state string
-			var claimedBy *string
-			if err := scan(&id, &nt, &phase, &state, &claimedBy); err != nil {
-				return err
-			}
-			cb := "<nil>"
-			if claimedBy != nil {
-				cb = *claimedBy
-			}
-			t.Logf("  run id=%s node_type=%s phase=%s state=%s claimed_by=%s",
-				id, nt, phase, state, cb)
-			return nil
-		})
-		t.Logf("stub.Observed (%d entries):", len(h.Stub.Observed()))
-		for i, o := range h.Stub.Observed() {
-			t.Logf("  [%d] node_type=%s", i, o.NodeType)
-		}
-		t.Fatalf("worker_b must complete while worker_a remains paused at the breakpoint")
-	}
+	h.WaitForNodeState(nb.ID, cascade.NodeStateFresh)
 	require.GreaterOrEqual(t, stubObservedCount(h, "worker_b"), 1,
 		"executor must observe worker_b dispatch during the pause window")
 	require.Equal(t, 0, stubObservedCount(h, "worker_a"),
@@ -98,8 +71,7 @@ func TestConcurrentFrameCorrectness(t *testing.T) {
 
 	na := h.FindNode(iid, "worker_a")
 	require.NotNil(t, na)
-	require.True(t, h.WaitForNodeState(na.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker_a should reach Fresh after the breakpoint resume")
+	h.WaitForNodeState(na.ID, cascade.NodeStateFresh)
 	require.GreaterOrEqual(t, stubObservedCount(h, "worker_a"), 1,
 		"executor must observe worker_a dispatch post-resume")
 }

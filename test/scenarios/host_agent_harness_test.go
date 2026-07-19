@@ -209,14 +209,13 @@ func (fx *hostAgentFixture) createLateBindInstance(t *testing.T, templateHash, i
 	return fx.h.CreateInstanceWithServiceBindings(templateHash, instanceKey, fx.adminKey, map[string]any{}, bindings)
 }
 
-func (fx *hostAgentFixture) waitForNodeEventKind(t *testing.T, instanceID shared.UUID, kind string, timeout time.Duration) bool {
+func (fx *hostAgentFixture) waitForNodeEventKind(t *testing.T, instanceID shared.UUID, kinds ...string) string {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	for {
 		worker := fx.h.FindNode(instanceID, "worker")
 		if worker != nil {
 			nid := worker.ID
-			var seen bool
+			var seen string
 			_ = fx.h.InTx(func(tx persistence.Tx) error {
 				r, err := fx.h.Persist.Events().List(fx.h.Ctx,
 					persistence.EventListFilter{NodeID: &nid},
@@ -225,18 +224,19 @@ func (fx *hostAgentFixture) waitForNodeEventKind(t *testing.T, instanceID shared
 					return err
 				}
 				for _, e := range r.Events {
-					if e.KindRaw == kind {
-						seen = true
-						return nil
+					for _, kind := range kinds {
+						if e.KindRaw == kind {
+							seen = kind
+							return nil
+						}
 					}
 				}
 				return nil
 			})
-			if seen {
-				return true
+			if seen != "" {
+				return seen
 			}
 		}
 		time.Sleep(75 * time.Millisecond)
 	}
-	return false
 }

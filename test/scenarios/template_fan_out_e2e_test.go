@@ -162,9 +162,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 			"out-of-order relative to the children",
 		leafDelay)
 
-	require.True(t,
-		h.WaitForNodeState(parentNode.ID, cascade.NodeStateFresh, 60*time.Second),
-		"parent fan-out node must reach NodeStateFresh once all three sub-claim children Succeed under strict aggregation")
+	h.WaitForNodeState(parentNode.ID, cascade.NodeStateFresh)
 }
 
 func TestTemplateFanOut_AbandonPropagatesToParentError(t *testing.T) {
@@ -231,10 +229,7 @@ func TestTemplateFanOut_AbandonPropagatesToParentError(t *testing.T) {
 	}, 60*time.Second, 50*time.Millisecond,
 		"sub-claim materialization must precede leaf execution — three sub-claim rows expected")
 
-	require.True(t,
-		h.WaitForNodeState(parentNode.ID, cascade.NodeStateFailed, 90*time.Second),
-		"parent fan-out node must reach NodeStateFailed once any sub-claim is Abandon'd under strict aggregation "+
-			"(strict_failed projection from runtime/run_tree.go::aggregateStrict)")
+	h.WaitForNodeState(parentNode.ID, cascade.NodeStateFailed)
 
 	var parentSettlingSig string
 	var lastReadErr error

@@ -29,8 +29,7 @@ func TestFrameInFlightBlocksNextSerialQueue(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, waitForFramesByState(t, h, iid, "running", 1, 5*time.Second),
-		"first frame did not enter running")
+	waitForFramesByState(t, h, iid, "running", 1)
 
 	postInvalidateMessage(t, h, iid)
 

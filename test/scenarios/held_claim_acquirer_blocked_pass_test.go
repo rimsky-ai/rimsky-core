@@ -90,8 +90,7 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	require.True(t, waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/", 30*time.Second),
-		"acquirer should record settling_signal_type=terminal/error/<class> under error_types: { executor_blocked: { policy: [pass] } }")
+	waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/")
 
 	deadline := time.Now().Add(30 * time.Second)
 	var activeCount int

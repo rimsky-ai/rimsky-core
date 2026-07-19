@@ -52,25 +52,33 @@ func TestScopeClaimEndToEnd(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
-	deadline := time.Now().Add(2 * time.Second)
-	var sawOpen, sawTerminal bool
-	for time.Now().Before(deadline) {
+	var openCount, commitCount, abandonCount, deleteCount, releaseCount int
+	for commitCount == 0 {
+		openCount, commitCount, abandonCount, deleteCount, releaseCount = 0, 0, 0, 0, 0
 		for _, c := range sub.Calls() {
 			switch c.Verb {
 			case "open":
-				sawOpen = true
-			case "commit", "abandon", "delete", "release":
-				sawTerminal = true
+				openCount++
+			case "commit":
+				commitCount++
+			case "abandon":
+				abandonCount++
+			case "delete":
+				deleteCount++
+			case "release":
+				releaseCount++
 			}
 		}
-		if sawOpen && sawTerminal {
-			break
+		if commitCount == 0 {
+			time.Sleep(50 * time.Millisecond)
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
-	require.True(t, sawOpen, "expected stub store to receive Open over the wire")
-	require.True(t, sawTerminal, "expected stub store to receive a terminal verb over the wire")
+	require.Equal(t, 1, openCount, "expected exactly one Open over the wire")
+	require.Equal(t, 1, commitCount,
+		"expected exactly one Commit terminal verb — the successful write-claim dispatch's sole resolution")
+	require.Equal(t, 0, abandonCount, "a successful dispatch must not also fire Abandon (double terminal)")
+	require.Equal(t, 0, deleteCount, "a successful write-claim dispatch must not fire Delete")
+	require.Equal(t, 0, releaseCount, "a successful write-claim dispatch must not fire Release")
 }

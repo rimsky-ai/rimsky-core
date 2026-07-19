@@ -7,6 +7,7 @@ package conformance
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -312,4 +313,120 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 	if a, _ := got[0].Payload["action"].(string); a != "auth:create" {
 		t.Fatalf("composed-filter row action = %q, want auth:create", a)
 	}
+}
+
+func testEventsListPagination(t *testing.T, d persistence.Database) {
+	t.Helper()
+	defer d.Close()
+	ctx := context.Background()
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store := d.Tables()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	occurredAt := func(seconds int) *time.Time {
+		tm := base.Add(time.Duration(seconds) * time.Second)
+		return &tm
+	}
+
+	appendEvent := func(at *time.Time) persistence.EventRow {
+		var appended persistence.EventRow
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			if err := store.Events().Append(ctx, persistence.EventAppendInput{
+				Kind:       events.KindWorkStarted(),
+				OccurredAt: at,
+			}, tx); err != nil {
+				return err
+			}
+			r, err := store.Events().List(ctx, persistence.EventListFilter{}, persistence.ListPagination{Limit: 1}, tx)
+			if err != nil {
+				return err
+			}
+			if len(r.Events) != 1 {
+				t.Fatalf("appendEvent: List after append returned %d rows, want 1", len(r.Events))
+			}
+			appended = r.Events[0]
+			return nil
+		}); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+		return appended
+	}
+
+	e1 := appendEvent(occurredAt(0))
+	e2 := appendEvent(occurredAt(0))
+	e3 := appendEvent(occurredAt(1))
+	e4 := appendEvent(occurredAt(1))
+	e5 := appendEvent(occurredAt(2))
+
+	wantOrder := []int64{e5.ID, e4.ID, e3.ID, e2.ID, e1.ID}
+
+	var full persistence.EventListResult
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.Events().List(ctx, persistence.EventListFilter{}, persistence.ListPagination{Limit: 50}, tx)
+		full = r
+		return err
+	}); err != nil {
+		t.Fatalf("List unpaginated: %v", err)
+	}
+	if len(full.Events) != len(wantOrder) {
+		t.Fatalf("unpaginated List: got %d events, want %d", len(full.Events), len(wantOrder))
+	}
+	for i, want := range wantOrder {
+		if full.Events[i].ID != want {
+			t.Fatalf("unpaginated List order[%d] = %d, want %d (full order %v)", i, full.Events[i].ID, want, idsOf(full.Events))
+		}
+	}
+	if full.NextCursor != "" {
+		t.Fatalf("unpaginated List (fewer than limit): NextCursor = %q, want empty", full.NextCursor)
+	}
+
+	var walked []int64
+	cursor := ""
+	for page := 0; ; page++ {
+		if page > len(wantOrder) {
+			t.Fatalf("pagination did not terminate; walked so far: %v", walked)
+		}
+		var res persistence.EventListResult
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			r, err := store.Events().List(ctx, persistence.EventListFilter{},
+				persistence.ListPagination{Limit: 2, Cursor: cursor}, tx)
+			res = r
+			return err
+		}); err != nil {
+			t.Fatalf("List page %d: %v", page, err)
+		}
+		for _, e := range res.Events {
+			walked = append(walked, e.ID)
+		}
+		if res.NextCursor == "" {
+			break
+		}
+		cursor = res.NextCursor
+	}
+	if len(walked) != len(wantOrder) {
+		t.Fatalf("paginated walk visited %d events, want %d; got %v want %v", len(walked), len(wantOrder), walked, wantOrder)
+	}
+	for i, want := range wantOrder {
+		if walked[i] != want {
+			t.Fatalf("paginated walk order[%d] = %d, want %d (full walk %v)", i, walked[i], want, walked)
+		}
+	}
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		_, err := store.Events().List(ctx, persistence.EventListFilter{},
+			persistence.ListPagination{Limit: 2, Cursor: "not-valid-base64!!"}, tx)
+		return err
+	}); err == nil {
+		t.Fatalf("List with malformed cursor: want error, got nil")
+	}
+}
+
+func idsOf(rows []persistence.EventRow) []int64 {
+	out := make([]int64, len(rows))
+	for i, r := range rows {
+		out[i] = r.ID
+	}
+	return out
 }

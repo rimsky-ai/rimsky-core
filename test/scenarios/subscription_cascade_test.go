@@ -46,8 +46,19 @@ func TestSubscriptionCascade_MultipleInvalidatorDrain(t *testing.T) {
 	r := h.FindNode(iid, "r")
 	require.NotNil(t, r)
 
-	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
-		"r should reach fresh after a, b, c settle")
+	h.WaitForNodeState(r.ID, cascade.NodeStateFresh)
+
+	countRuns := func(nodeType string) int {
+		n := 0
+		for _, obs := range h.Stub.Observed() {
+			if obs.NodeType == nodeType {
+				n++
+			}
+		}
+		return n
+	}
+	require.Equal(t, 1, countRuns("r"),
+		"r subscribes to a,b,c settling in the same frame and must drain into a single dispatch, not once per settling sender")
 }
 
 func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
@@ -98,8 +109,7 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	require.NotNil(t, c)
 	require.NotNil(t, r)
 
-	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
-		"r should reach fresh initially")
+	h.WaitForNodeState(r.ID, cascade.NodeStateFresh)
 
 	countRuns := func(nodeType string) int {
 		n := 0
@@ -122,8 +132,7 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
-		"a should re-reach fresh")
+	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
 
 	require.Eventually(t, func() bool {
 		return countRuns("b") >= 2 && countRuns("c") >= 2
@@ -151,16 +160,13 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	assertReceiverNotDispatchEligible("midpoint 1 (b and c in-flight)")
 
 	close(releaseB)
-	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
-		"b should re-reach fresh after release")
+	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
 
 	assertReceiverNotDispatchEligible("midpoint 2 (c in-flight after b settled)")
 
 	close(releaseC)
-	require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 30*time.Second),
-		"c should re-reach fresh after release")
-	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
-		"r should re-reach fresh after both senders settle")
+	h.WaitForNodeState(c.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(r.ID, cascade.NodeStateFresh)
 
 	require.Eventually(t, func() bool { return countRuns("r") == baselineRuns+1 },
 		10*time.Second, 25*time.Millisecond, "r should run exactly once after the last upstream settles")
@@ -201,10 +207,8 @@ func TestSubscriptionCascade_TerminalErrorPrefixMatchesPerSender(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, monitor)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
-		"worker should reach failed via give_up")
-	require.True(t, h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh, 30*time.Second),
-		"monitor should reach fresh after per-sender terminal/error/<class> cascade fires")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
+	h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh)
 }
 
 func TestSubscriptionCascade_UnsubscribedNodeStaysIdle(t *testing.T) {
@@ -235,10 +239,8 @@ func TestSubscriptionCascade_UnsubscribedNodeStaysIdle(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, monitor)
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker should reach fresh")
-	require.True(t, h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh, 30*time.Second),
-		"monitor should reach fresh on the harness-injected empty wake")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
+	h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh)
 
 	monitorID := monitor.ID
 	monitorDispatchEvents := func() int {
@@ -250,8 +252,7 @@ func TestSubscriptionCascade_UnsubscribedNodeStaysIdle(t *testing.T) {
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "w-ok-2")
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker should re-reach fresh")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -294,8 +295,7 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 	r := h.FindNode(iid, "r")
 	require.NotNil(t, r)
 
-	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
-		"r should reach fresh after initial settle")
+	h.WaitForNodeState(r.ID, cascade.NodeStateFresh)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -355,8 +355,7 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 		"self-subscription must re-fire the node after a fresh_changed commit")
 
 	h.Stub.WhenType("drain").Success(map[string]any{"k": 2}, false, "no_change")
-	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
-		"node should settle at fresh once the stub stops reporting changed=true")
+	h.WaitForNodeState(d.ID, cascade.NodeStateFresh)
 
 	var prev int
 	require.Eventually(t, func() bool {

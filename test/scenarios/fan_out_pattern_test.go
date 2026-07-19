@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -61,7 +60,6 @@ func TestFanOutPattern(t *testing.T) {
 	for _, typ := range []string{"child_a", "child_b", "child_c"} {
 		c := h.FindNode(iid, typ)
 		require.NotNil(t, c, "missing %s", typ)
-		require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 30*time.Second),
-			"%s did not reach fresh", typ)
+		h.WaitForNodeState(c.ID, cascade.NodeStateFresh)
 	}
 }

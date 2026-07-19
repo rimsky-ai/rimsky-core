@@ -990,6 +990,52 @@ func TestTemplateValidator_Tags(t *testing.T) {
 		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
+
+	t.Run("subscription When payload.tags literal not in sender's declared_tags warns", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:    "demo",
+			Version: "1.0.0",
+			Nodes: []TemplateNodeDef{
+				{Type: "a", Executor: "h"},
+				{Type: "b", Executor: "h", Subscribes: []SubscriptionEntry{
+					{Node: "a", Type: "terminal/success", When: `"undeclared_tag" in payload.tags`, ForceUpstreamRefresh: BoolPtr(false)},
+				}},
+			},
+		}
+		hooks := RegistryHooks{
+			ExecutorDeclaredTags: func(string) ([]string, bool) { return []string{"declared_tag"}, true },
+		}
+		res := ValidateTemplate(spec, hooks)
+		found := false
+		for _, w := range res.Warnings {
+			if w.Path == "nodes[1].subscribes[0].when" && strings.Contains(w.Msg, "undeclared_tag") {
+				found = true
+			}
+		}
+		require.True(t, found, "expected a warning naming the undeclared tag at nodes[1].subscribes[0].when; warnings: %+v", res.Warnings)
+	})
+
+	t.Run("subscription When payload.tags literal in sender's declared_tags does not warn", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:    "demo",
+			Version: "1.0.0",
+			Nodes: []TemplateNodeDef{
+				{Type: "a", Executor: "h"},
+				{Type: "b", Executor: "h", Subscribes: []SubscriptionEntry{
+					{Node: "a", Type: "terminal/success", When: `"declared_tag" in payload.tags`, ForceUpstreamRefresh: BoolPtr(false)},
+				}},
+			},
+		}
+		hooks := RegistryHooks{
+			ExecutorDeclaredTags: func(string) ([]string, bool) { return []string{"declared_tag"}, true },
+		}
+		res := ValidateTemplate(spec, hooks)
+		for _, w := range res.Warnings {
+			if w.Path == "nodes[1].subscribes[0].when" {
+				t.Fatalf("unexpected undeclared-tag warning for a declared literal: %+v", w)
+			}
+		}
+	})
 }
 
 func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
@@ -1092,6 +1138,9 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 				{
 					Type:     "verify",
 					Executor: "h",
+					Subscribes: []SubscriptionEntry{
+						{Node: "stage", Type: "attribute/*", ForceUpstreamRefresh: BoolPtr(false)},
+					},
 					Attributes: &NodeAttributesDef{Schema: map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -1106,6 +1155,15 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 		}
 		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		require.False(t, res.Ok())
+		found := false
+		for _, e := range res.Errors {
+			if strings.Contains(e.Msg, "empty trailing segment") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected diagnostic naming the empty trailing segment, got errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
+		}
 	})
 }
 
@@ -1151,11 +1209,21 @@ func TestValidator_FallbackOperator_ChainsRejected(t *testing.T) {
 		Name:    "demo",
 		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
-			{Type: "a", Executor: "h"},
+			{Type: "a", Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"x": map[string]any{"type": "string", "default": ""},
+					},
+				}},
+			},
 			{Type: "b", Executor: "h"},
 			{
 				Type:     "c",
 				Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "a", Type: "attribute/x/changed", ForceUpstreamRefresh: BoolPtr(false)},
+				},
 				Attributes: &NodeAttributesDef{Schema: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1169,8 +1237,15 @@ func TestValidator_FallbackOperator_ChainsRejected(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
-	if res.Ok() {
-		t.Fatalf("expected error for multi-pipe chain")
+	require.False(t, res.Ok(), "expected error for multi-pipe chain")
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "multi-pipe fallback chain") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected diagnostic naming the multi-pipe fallback chain, got errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 	}
 }
 

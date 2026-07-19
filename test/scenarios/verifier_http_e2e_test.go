@@ -91,8 +91,7 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 		okNode := h.FindNode(iid, "verify-ok")
 		require.NotNil(t, okNode)
 
-		require.True(t, h.WaitForNodeState(okNode.ID, cascade.NodeStateFresh, 30*time.Second),
-			"2xx-leg: node must reach fresh terminal")
+		h.WaitForNodeState(okNode.ID, cascade.NodeStateFresh)
 
 		gotBody := rec.lastBody("/ok")
 		require.NotEmpty(t, gotBody, "2xx-leg: upstream must have received a body")
@@ -133,12 +132,9 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 		rj := h.FindNode(iid, "verify-reject")
 		require.NotNil(t, rj)
 
-		require.True(t, h.WaitForNodeState(rj.ID, cascade.NodeStateFailed, 30*time.Second),
-			"4xx-leg: node must fail when upstream returns 4xx")
+		h.WaitForNodeState(rj.ID, cascade.NodeStateFailed)
 
-		require.True(t, waitForSettlingSignalTypePrefix(t, h, rj.ID,
-			"terminal/error/verifier/check_failed/rate_limited", 30*time.Second),
-			"4xx-leg: settling signal must be terminal/error/verifier/check_failed/rate_limited (proving the upstream's class field surfaced)")
+		waitForSettlingSignalTypePrefix(t, h, rj.ID, "terminal/error/verifier/check_failed/rate_limited")
 
 		gotBody := rec.lastBody("/reject")
 		require.NotEmpty(t, gotBody, "4xx-leg: upstream must have received a body")
@@ -178,12 +174,9 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 		bm := h.FindNode(iid, "verify-boom")
 		require.NotNil(t, bm)
 
-		require.True(t, h.WaitForNodeState(bm.ID, cascade.NodeStateFailed, 30*time.Second),
-			"5xx-leg: node must fail when upstream returns 5xx (must NOT resolve to success)")
+		h.WaitForNodeState(bm.ID, cascade.NodeStateFailed)
 
-		require.True(t, waitForSettlingSignalTypePrefix(t, h, bm.ID,
-			"terminal/error/verifier/check_failed", 30*time.Second),
-			"5xx-leg: settling signal must be a terminal/error/verifier/check_failed* path")
+		waitForSettlingSignalTypePrefix(t, h, bm.ID, "terminal/error/verifier/check_failed")
 
 		gotBody := rec.lastBody("/boom")
 		require.NotEmpty(t, gotBody, "5xx-leg: upstream must have received a body")
@@ -271,7 +264,6 @@ func startVerifierHTTPBinary(t *testing.T, binary string) string {
 			_ = cmd.Process.Kill()
 		}
 	})
-	require.True(t, dialableWithin(addr, 10*time.Second),
-		"verifier-http did not come up on %s within 10s", addr)
+	waitDialable(addr)
 	return addr
 }

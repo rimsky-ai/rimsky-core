@@ -71,9 +71,7 @@ func TestCommitResponseFields_PlainNode_VersionIDPersisted(t *testing.T) {
 
 	n := h.FindNode(iid, "plain-commit")
 	require.NotNil(t, n, "plain-commit node missing")
-	require.True(t,
-		h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 60*time.Second),
-		"plain-commit node must reach its success terminal")
+	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	var versionID, state string
 	require.Eventually(t, func() bool {
@@ -151,9 +149,7 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 
 	parentNode := h.FindNode(iid, "cr-fan-parent")
 	require.NotNil(t, parentNode, "cr-fan-parent node missing")
-	require.True(t,
-		h.WaitForNodeState(parentNode.ID, cascade.NodeStateFresh, 90*time.Second),
-		"parent fan-out node must reach its aggregate success terminal")
+	h.WaitForNodeState(parentNode.ID, cascade.NodeStateFresh)
 
 	require.Eventually(t, func() bool {
 		var committedParents int

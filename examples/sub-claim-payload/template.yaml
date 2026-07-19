@@ -17,7 +17,7 @@ description: |
   per-child.
 
 messages:
-  - type: fanout_seed
+  - type: fanout/seed
     body_schema:
       type: object
       properties:
@@ -39,12 +39,15 @@ nodes:
         intent: rw
         alias: fs_queue
     subscribes:
-      - node: fanout_seed
+      - node: fanout/seed
         type: terminal/success
         force_upstream_refresh: false
+    error_types:
+      acquire/unavailable:
+        action: retry
     fan_out:
       claim: fs_queue
-      partition_request: "{\"list\":{{messages.fanout_seed.items}}}"
+      partition_request: "{\"list\":{{messages.fanout/seed.items}}}"
       error_policy:
         kind: best_effort
     attributes:

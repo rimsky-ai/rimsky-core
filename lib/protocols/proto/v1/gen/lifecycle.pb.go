@@ -387,10 +387,9 @@ type OnRunScopeTerminalRequest struct {
 	// instance_id is the owning instance of the terminating run-scope.
 	// Populated at every firing site (control-api for main scopes; the
 	// supervisor for sub-graph and fanout-partition scopes). The
-	// host-agent-proxy keys lazily-spawned children by instance id (its v1
-	// dispatch-observable scope), so the reap path matches on instance_id
-	// rather than run_scope_id. Empty only for legacy callers that predate
-	// this field.
+	// host-agent-proxy keys lazily-spawned children by run_scope_id, falling
+	// back to instance_id only when run_scope_id is empty (legacy callers
+	// that predate this field, or scopes with no narrower identity).
 	InstanceId    string `protobuf:"bytes,3,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

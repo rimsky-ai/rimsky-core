@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -22,9 +21,7 @@ func TestHostAgentLateBindExecutorHappyPath(t *testing.T) {
 	worker := fx.h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker node should exist")
 
-	require.True(t, fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 45*time.Second),
-		"late-bound worker did not reach fresh via proxy+agent dispatch")
+	fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
-	require.True(t, fx.waitForNodeEventKind(t, iid, "terminal/success", 10*time.Second),
-		"expected terminal/success event from the proxy-tunneled stub executor")
+	fx.waitForNodeEventKind(t, iid, "terminal/success")
 }

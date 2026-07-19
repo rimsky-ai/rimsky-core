@@ -419,3 +419,78 @@ func TestSpawnMissingBinaryReturnsError(t *testing.T) {
 		t.Fatal("expected spawn error for missing binary")
 	}
 }
+
+// @story: local-orchestrator-zero-config
+func TestSpawnWritesRealSystemPromptAndMcpConfigFilesUnderFreshTempDirForARealSubprocessToRead(t *testing.T) {
+	binary := writeFakeCli(t, `
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--system-prompt-file" ]; then
+    echo "SYSTEM_PROMPT_PATH:$arg"
+    echo "SYSTEM_PROMPT_CONTENT:$(cat "$arg")"
+  fi
+  if [ "$prev" = "--mcp-config" ]; then
+    echo "MCP_CONFIG_PATH:$arg"
+    echo "MCP_CONFIG_CONTENT:$(cat "$arg")"
+  fi
+  prev="$arg"
+done
+exit 0
+`)
+	runner := NewClaudeCliRunner(CliRunnerOpts{BinaryPath: binary})
+	req := baseReq(func(r *CliSpawnRequest) {
+		r.SystemPrompt = "REAL-FS-SIDE-EFFECT-SYSTEM-PROMPT-9f3c1"
+		r.Tools = []CliToolConfig{
+			{Kind: CliToolKindMcpHTTP, Name: "docs", URL: "http://127.0.0.1:9999/mcp"},
+		}
+	})
+	handle, err := runner.Spawn(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout strings.Builder
+	var mu sync.Mutex
+	handle.OnStdout(func(chunk string) { mu.Lock(); stdout.WriteString(chunk); mu.Unlock() })
+	result := handle.WaitExit()
+	if result.ExitCode == nil || *result.ExitCode != 0 {
+		t.Fatalf("exit = %+v, want code 0", result)
+	}
+	mu.Lock()
+	out := stdout.String()
+	mu.Unlock()
+
+	if !strings.Contains(out, "SYSTEM_PROMPT_CONTENT:"+req.SystemPrompt) {
+		t.Fatalf("the real subprocess did not read back the system-prompt file's real content; stdout=%q", out)
+	}
+	if !strings.Contains(out, `"docs"`) || !strings.Contains(out, "http://127.0.0.1:9999/mcp") {
+		t.Fatalf("the real subprocess did not read back the mcp-config file's real content; stdout=%q", out)
+	}
+
+	tmpRoot := os.TempDir()
+	for _, marker := range []string{"SYSTEM_PROMPT_PATH:", "MCP_CONFIG_PATH:"} {
+		idx := strings.Index(out, marker)
+		if idx < 0 {
+			t.Fatalf("missing %s marker in stdout=%q", marker, out)
+		}
+		line := out[idx+len(marker):]
+		if nl := strings.IndexByte(line, '\n'); nl >= 0 {
+			line = line[:nl]
+		}
+		path, err := filepath.EvalSymlinks(filepath.Dir(line))
+		if err != nil {
+			t.Fatalf("resolve %s dir %q: %v", marker, line, err)
+		}
+		resolvedTmpRoot, err := filepath.EvalSymlinks(tmpRoot)
+		if err != nil {
+			t.Fatalf("resolve os.TempDir(): %v", err)
+		}
+		if !strings.HasPrefix(path, resolvedTmpRoot) {
+			t.Fatalf("%s %q was not written under a real OS temp dir %q — "+
+				"a stub/canned reply would not need to materialize a real, fresh, per-run "+
+				"working directory on disk", marker, line, resolvedTmpRoot)
+		}
+		if !strings.Contains(filepath.Base(filepath.Dir(line)), "rimsky-cli-") {
+			t.Fatalf("%s %q is not under a fresh rimsky-cli-* run directory", marker, line)
+		}
+	}
+}

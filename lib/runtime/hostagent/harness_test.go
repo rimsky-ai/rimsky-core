@@ -6,6 +6,7 @@ package hostagent
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -29,6 +30,7 @@ type fakeProxy struct {
 	connected     chan struct{}
 	connectedOnce sync.Once
 	clientFrame   chan *genv1.ClientFrame
+	disconnect    chan struct{}
 }
 
 func startFakeProxy(t *testing.T) *fakeProxy {
@@ -41,6 +43,7 @@ func startFakeProxy(t *testing.T) *fakeProxy {
 		addr:        lis.Addr().String(),
 		connected:   make(chan struct{}),
 		clientFrame: make(chan *genv1.ClientFrame, 64),
+		disconnect:  make(chan struct{}),
 	}
 	srv := grpc.NewServer()
 	genv1.RegisterHostAgentServer(srv, fp)
@@ -71,19 +74,39 @@ func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 		return err
 	}
 
+	recvCh := make(chan *genv1.ClientFrame)
+	errCh := make(chan error, 1)
+	go func() {
+		for {
+			frame, recvErr := stream.Recv()
+			if recvErr != nil {
+				errCh <- recvErr
+				return
+			}
+			recvCh <- frame
+		}
+	}()
+
 	for {
-		frame, recvErr := stream.Recv()
-		if recvErr != nil {
-			return recvErr
-		}
-		if _, isHB := frame.GetBody().(*genv1.ClientFrame_Heartbeat); isHB {
-			continue
-		}
 		select {
-		case fp.clientFrame <- frame:
-		default:
+		case frame := <-recvCh:
+			if _, isHB := frame.GetBody().(*genv1.ClientFrame_Heartbeat); isHB {
+				continue
+			}
+			select {
+			case fp.clientFrame <- frame:
+			default:
+			}
+		case recvErr := <-errCh:
+			return recvErr
+		case <-fp.disconnect:
+			return errors.New("forced disconnect")
 		}
 	}
+}
+
+func (fp *fakeProxy) forceDisconnect() {
+	close(fp.disconnect)
 }
 
 func (fp *fakeProxy) waitConnected(t *testing.T) *genv1.Register {
