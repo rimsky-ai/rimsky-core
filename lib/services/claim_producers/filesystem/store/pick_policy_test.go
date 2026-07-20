@@ -191,7 +191,7 @@ func TestOpenPickPolicy_RejectsTraversalClaimID(t *testing.T) {
 		t.Fatal("traversal claim_id must not create a sentinel outside the store root")
 	}
 
-	inProgDir := filepath.Join(policyStateDir(root, "@docs-ring"), "in_progress")
+	inProgDir := filepath.Join(PolicyStateDir(root, "@docs-ring"), "in_progress")
 	entries, err := os.ReadDir(inProgDir)
 	must(t, err)
 	if len(entries) != 0 {
@@ -480,7 +480,7 @@ func entryClaimID(t *testing.T, entry string) string {
 
 func ageInProgressEntry(t *testing.T, root, selector string) {
 	t.Helper()
-	inProg := filepath.Join(policyStateDir(root, selector), "in_progress")
+	inProg := filepath.Join(PolicyStateDir(root, selector), "in_progress")
 	entries, err := os.ReadDir(inProg)
 	must(t, err)
 	if len(entries) != 1 {
@@ -544,7 +544,7 @@ func TestSweep_OrphanExpiredSentinelIsUnlinkedNotRequeued(t *testing.T) {
 	ageInProgressEntry(t, root, "@r")
 	must(t, st.sweepOnce())
 
-	state := policyStateDir(root, "@r")
+	state := PolicyStateDir(root, "@r")
 	inProgEntries, _ := os.ReadDir(filepath.Join(state, "in_progress"))
 	if len(inProgEntries) != 0 {
 		t.Errorf("orphan expired sentinel should be unlinked from in_progress, got %v", inProgEntries)
@@ -571,7 +571,7 @@ func TestOpenPickPolicy_OrphanAvailableSentinelIsSkippedAndCleaned(t *testing.T)
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
 
-	availDir := filepath.Join(policyStateDir(root, "@r"), "available")
+	availDir := filepath.Join(PolicyStateDir(root, "@r"), "available")
 	sentinel, ferr := os.OpenFile(filepath.Join(availDir, "alpha"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	must(t, ferr)
 	must(t, sentinel.Close())
@@ -602,7 +602,7 @@ func TestBatchPop_OrphanAvailableSentinelIsSkippedAndCleaned(t *testing.T) {
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
 
-	availDir := filepath.Join(policyStateDir(root, "@r"), "available")
+	availDir := filepath.Join(PolicyStateDir(root, "@r"), "available")
 	sentinel, ferr := os.OpenFile(filepath.Join(availDir, "alpha"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	must(t, ferr)
 	must(t, sentinel.Close())

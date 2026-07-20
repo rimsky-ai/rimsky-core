@@ -13,6 +13,7 @@ import (
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-shape-checks/checks"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
 )
 
 type Server struct {
@@ -29,19 +30,19 @@ func (s *Server) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1.O
 func (s *Server) executeCore(req *genv1.ExecuteRequest) *genv1.Outcome {
 	ud := req.GetAttributes().AsMap()
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
-		return stubSuccess()
+		return execoutcome.StubSuccess("verifier-shape-checks stub")
 	}
 	specs, err := parseChecks(ud)
 	if err != nil {
-		return erroredOutcome("verifier/attribute_invalid", err.Error())
+		return execoutcome.Errored("verifier/attribute_invalid", err.Error())
 	}
 	rows, rowsPresent, err := parseRows(ud)
 	if err != nil {
-		return erroredOutcome("verifier/attribute_invalid", err.Error())
+		return execoutcome.Errored("verifier/attribute_invalid", err.Error())
 	}
 	if !rowsPresent {
 		if missing := firstRowLevelKind(specs); missing != "" {
-			return erroredOutcome("verifier/attribute_invalid",
+			return execoutcome.Errored("verifier/attribute_invalid",
 				fmt.Sprintf("attributes.rows (array) required: check %q needs row-level data", missing))
 		}
 	}
@@ -69,7 +70,7 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest) *genv1.Outcome {
 		}
 	}
 	if len(configErrors) > 0 {
-		return erroredOutcome("verifier/attribute_invalid", configErrorMessage(configErrors))
+		return execoutcome.Errored("verifier/attribute_invalid", configErrorMessage(configErrors))
 	}
 	if blockingFailures > 0 {
 		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
@@ -228,20 +229,4 @@ func summarize(results []scoredResult) string {
 		parts = append(parts, fmt.Sprintf("%s=%s", sr.Kind, mark))
 	}
 	return strings.Join(parts, ", ")
-}
-
-func erroredOutcome(class, msg string) *genv1.Outcome {
-	payload, _ := structpb.NewStruct(map[string]any{"message": msg})
-	return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
-		ErrorClass: class, Payload: payload,
-	}}}
-}
-
-func stubSuccess() *genv1.Outcome {
-	delta, _ := structpb.NewStruct(map[string]any{"stub": true})
-	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
-		AttributesDelta: delta,
-		Changed:         false,
-		ChangeSummary:   "verifier-shape-checks stub",
-	}}}
 }

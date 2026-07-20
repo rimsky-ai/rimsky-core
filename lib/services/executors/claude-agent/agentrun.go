@@ -155,12 +155,7 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 
 	summary := "stub"
 	if attrs["stub_probe"] != true {
-		return AgentOutcome{
-			Kind:            OutcomeComplete,
-			AttributesDelta: map[string]any{"stub": true, "session_token": opts.SessionID},
-			Changed:         true,
-			ChangeSummary:   &summary,
-		}
+		return defaultStubCompleteOutcome(opts.SessionID, &summary)
 	}
 
 	if stubResponse, present := attrs["stub_response"]; present {
@@ -182,11 +177,15 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 			ChangeSummary:   &summary,
 		}
 	}
+	return defaultStubCompleteOutcome(opts.SessionID, &summary)
+}
+
+func defaultStubCompleteOutcome(sessionID string, changeSummary *string) AgentOutcome {
 	return AgentOutcome{
 		Kind:            OutcomeComplete,
-		AttributesDelta: map[string]any{"stub": true, "session_token": opts.SessionID},
+		AttributesDelta: map[string]any{"stub": true, "session_token": sessionID},
 		Changed:         true,
-		ChangeSummary:   &summary,
+		ChangeSummary:   changeSummary,
 	}
 }
 
@@ -941,12 +940,12 @@ func resolveHostServers(
 			}
 		}
 		switch s.Transport {
-		case "http":
+		case mcpTransportHTTP:
 			if s.URL == "" {
 				return nil, nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers entry %q (http) requires a non-empty url", s.Name)}
 			}
 			tools = append(tools, CliToolConfig{Kind: CliToolKindMcpHTTP, Name: s.Name, URL: s.URL, Headers: s.Headers})
-		case "stdio":
+		case mcpTransportStdio:
 			if !allowlist.Open() {
 				return nil, nil, &mcpDisallowedError{
 					ServerName: s.Name,
@@ -959,7 +958,7 @@ func resolveHostServers(
 				return nil, nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers entry %q (stdio) requires a non-empty command", s.Name)}
 			}
 			tools = append(tools, CliToolConfig{Kind: CliToolKindMcpStdio, Name: s.Name, Command: s.Command, Args: s.Args, Env: s.Env})
-		case "module", "http-loopback":
+		case mcpTransportModule, mcpTransportHTTPLoopback:
 			if s.Module == "" {
 				return nil, nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers entry %q (%s) requires a non-empty module specifier", s.Name, s.Transport)}
 			}
@@ -975,8 +974,7 @@ func resolveHostServers(
 				Headers: map[string]string{"Authorization": "Bearer " + bearerToken},
 			})
 		default:
-			return nil, nil, &CliConfigError{Message: fmt.Sprintf(
-				"cli.mcp_servers entry %q has unknown transport %q (expected http | stdio | module | http-loopback)", s.Name, s.Transport)}
+			return nil, nil, unknownMcpTransportError(fmt.Sprintf("cli.mcp_servers entry %q", s.Name), s.Transport)
 		}
 		allowedTools = append(allowedTools, autoAllow(s.Name, s.AllowedTools)...)
 	}

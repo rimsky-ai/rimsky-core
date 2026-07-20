@@ -68,15 +68,15 @@ func (c *Client) Release(ctx context.Context, claimID claimproducer.ClaimID, sco
 }
 
 func (c *Client) SplitScope(ctx context.Context, req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
-	if !c.caps.SupportsSplitScope {
-		return claimproducer.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
+	if err := GateSplitScope(c.caps); err != nil {
+		return claimproducer.SplitClaimScopeResponse{}, err
 	}
 	return c.SplitScopeWire(ctx, req)
 }
 
 func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) {
-	if !c.caps.SupportsScopesConflict {
-		return claimproducer.ErrScopesConflictUnsupportedFallback(a, b), nil
+	if fallback, gated := GateScopesConflict(c.caps, a, b); gated {
+		return fallback, nil
 	}
 	return c.ScopesConflictWire(ctx, a, b)
 }

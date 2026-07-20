@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
 )
 
 // @concept: executor
@@ -116,7 +117,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 
 	urlStr, _ := ud["url"].(string)
 	if urlStr == "" {
-		return erroredOutcome("http/attribute_invalid", "attributes.url required"), nil
+		return execoutcome.Errored("http/attribute_invalid", "attributes.url required"), nil
 	}
 
 	if s.stubMode {
@@ -140,12 +141,12 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 
 	reqBody, ctype, err := buildRequestBody(ud, req.GetAttributes().AsMap())
 	if err != nil {
-		return erroredOutcome("http/attribute_invalid", err.Error()), nil
+		return execoutcome.Errored("http/attribute_invalid", err.Error()), nil
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, method, urlStr, reqBody)
 	if err != nil {
-		return erroredOutcome("http/attribute_invalid", err.Error()), nil
+		return execoutcome.Errored("http/attribute_invalid", err.Error()), nil
 	}
 	if hdrs, ok := ud["headers"].(map[string]any); ok {
 		for k, v := range hdrs {
@@ -163,7 +164,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
-		return erroredOutcome(classifyTransportErr(err), err.Error()), nil
+		return execoutcome.Errored(classifyTransportErr(err), err.Error()), nil
 	}
 	defer resp.Body.Close()
 
@@ -173,7 +174,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
-		return erroredOutcome(classifyTransportErr(err), "read body: "+err.Error()), nil
+		return execoutcome.Errored(classifyTransportErr(err), "read body: "+err.Error()), nil
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests && !statusOK(resp.StatusCode, expectStatus) {
@@ -189,14 +190,14 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 		if errorClassField == "" {
 			errorClassField = DefaultErrorClassField
 		}
-		return erroredOutcome(
+		return execoutcome.Errored(
 			classifyUnexpectedStatus(resp.StatusCode, body, errorClassField),
 			fmt.Sprintf("status=%d, body=%s", resp.StatusCode, truncate(string(body), 512))), nil
 	}
 
 	delta, err := buildAttributesDelta(body, resp.Header.Get("Content-Type"))
 	if err != nil {
-		return erroredOutcome("http/response_unparseable", err.Error()), nil
+		return execoutcome.Errored("http/response_unparseable", err.Error()), nil
 	}
 
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
@@ -275,13 +276,13 @@ func (s *Server) executeStub(req *genv1.ExecuteRequest) *genv1.Outcome {
 	if sr, ok := ud["stub_response"]; ok {
 		m, ok := sr.(map[string]any)
 		if !ok {
-			return erroredOutcome("http/attribute_invalid", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
+			return execoutcome.Errored("http/attribute_invalid", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
 		}
 		delta = m
 	}
 	v, err := structpb.NewStruct(delta)
 	if err != nil {
-		return erroredOutcome("http/attribute_invalid", "stub_response not JSON-representable: "+err.Error())
+		return execoutcome.Errored("http/attribute_invalid", "stub_response not JSON-representable: "+err.Error())
 	}
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
 		AttributesDelta: v,
@@ -412,14 +413,6 @@ func parkedOutcome(resumeAt time.Time) *genv1.Outcome {
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: &genv1.Park{
 		ResumeAt: timestamppb.New(resumeAt),
 		Tags:     []string{TagRateLimited},
-	}}}
-}
-
-func erroredOutcome(class, msg string) *genv1.Outcome {
-	payload, _ := structpb.NewStruct(map[string]any{"error": msg})
-	return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
-		ErrorClass: class,
-		Payload:    payload,
 	}}}
 }
 

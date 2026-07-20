@@ -12,7 +12,7 @@ import (
 )
 
 func TestObservability_Capabilities(t *testing.T) {
-	s := NewObservabilityServer()
+	s := NewObservabilityServer("http://bridge.invalid")
 	caps, err := s.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
@@ -23,10 +23,13 @@ func TestObservability_Capabilities(t *testing.T) {
 	if caps.GetRetentionAfterTerminalSeconds() != retentionSeconds {
 		t.Fatalf("retention = %d, want %d", caps.GetRetentionAfterTerminalSeconds(), retentionSeconds)
 	}
+	if caps.GetHttpBridgeUrl() != "http://bridge.invalid" {
+		t.Fatalf("http_bridge_url = %q, want the constructor-supplied URL", caps.GetHttpBridgeUrl())
+	}
 }
 
 func TestObservability_DelegatesToSharedStore(t *testing.T) {
-	s := NewObservabilityServer()
+	s := NewObservabilityServer("")
 	s.RegisterDispatch("d1")
 	s.AppendEvent("d1", MakeEvent("e1", "", "step_started", "", genv1.Severity_INFO, map[string]any{"step_id": "s1"}))
 	s.MarkTerminal("d1")

@@ -5,6 +5,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
@@ -98,7 +99,22 @@ func TestNew_LedgerMaxRecordsDefaultsTo1024(t *testing.T) {
 	}
 	t.Cleanup(st.Close)
 
-	if got := st.Ledger().max; got != defaultLedgerMaxRecords {
-		t.Fatalf("ledger.max = %d, want default %d", got, defaultLedgerMaxRecords)
+	for i := 0; i < defaultLedgerMaxRecords; i++ {
+		id := fmt.Sprintf("closed-%d", i)
+		st.Ledger().RecordOpen(id, "/x", nil, nil)
+		st.Ledger().RecordTerminal(id, "claim_committed", nil)
+	}
+	if _, ok := st.Ledger().Get("closed-0"); !ok {
+		t.Fatal("closed-0 should still be present with exactly defaultLedgerMaxRecords entries recorded")
+	}
+
+	st.Ledger().RecordOpen("closed-overflow", "/x", nil, nil)
+	st.Ledger().RecordTerminal("closed-overflow", "claim_committed", nil)
+
+	if _, ok := st.Ledger().Get("closed-0"); ok {
+		t.Fatal("closed-0 should have been evicted once defaultLedgerMaxRecords was exceeded")
+	}
+	if _, ok := st.Ledger().Get("closed-overflow"); !ok {
+		t.Fatal("closed-overflow must survive eviction")
 	}
 }

@@ -313,39 +313,10 @@ instances:
 
 func tagListed(t *testing.T, ep harness.RimskyEndpoint, name string) bool {
 	t.Helper()
-	cursor := ""
-	for {
-		path := "/v1/tags"
-		if cursor != "" {
-			path += "?cursor=" + cursor
-		}
-		status, raw := ep.GetJSON(t, path, "")
-		if status != http.StatusOK {
-			t.Fatalf("GET %s returned %d, want 200\nbody: %s", path, status, string(raw))
-		}
-		var resp struct {
-			Tags []struct {
-				Tag string `json:"tag"`
-			} `json:"tags"`
-			NextCursor string `json:"next_cursor"`
-		}
-		if err := json.Unmarshal(raw, &resp); err != nil {
-			t.Fatalf("decode GET %s response: %v\nbody: %s", path, err, string(raw))
-		}
-		for _, tg := range resp.Tags {
-			if tg.Tag == name {
-				return true
-			}
-		}
-		if resp.NextCursor == "" {
-			return false
-		}
-		cursor = resp.NextCursor
-	}
+	return tagListedAuth(t, ep, "", name)
 }
 
 func instanceGetStatus(t *testing.T, ep harness.RimskyEndpoint, key string) int {
 	t.Helper()
-	status, _ := ep.GetJSON(t, "/v1/instances/"+key, "")
-	return status
+	return instanceGetStatusAuth(t, ep, "", key)
 }

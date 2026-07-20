@@ -6,7 +6,6 @@ package httpnode
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -20,25 +19,15 @@ const retentionSeconds = observability.RetentionSeconds
 type ObservabilityServer struct {
 	genv1.UnimplementedExecutorObservabilityServer
 
-	store             *observability.Store
-	httpBridgeURLOnce sync.Once
-	httpBridgeURLMu   sync.RWMutex
-	httpBridgeURL     string
+	store         *observability.Store
+	httpBridgeURL string
 }
 
-func NewObservabilityServer() *ObservabilityServer {
-	return &ObservabilityServer{store: observability.NewStore()}
+func NewObservabilityServer(httpBridgeURL string) *ObservabilityServer {
+	return &ObservabilityServer{store: observability.NewStore(), httpBridgeURL: httpBridgeURL}
 }
 
 func (s *ObservabilityServer) Store() *observability.Store { return s.store }
-
-func (s *ObservabilityServer) SetHTTPBridgeURL(u string) {
-	s.httpBridgeURLOnce.Do(func() {
-		s.httpBridgeURLMu.Lock()
-		defer s.httpBridgeURLMu.Unlock()
-		s.httpBridgeURL = u
-	})
-}
 
 func (s *ObservabilityServer) SetIdleTimeout(d time.Duration) { s.store.SetIdleTimeout(d) }
 
@@ -55,14 +44,11 @@ func (s *ObservabilityServer) MarkTerminal(nodeRunID string) { s.store.MarkTermi
 func (s *ObservabilityServer) SweepEvicted(now time.Time) { s.store.SweepEvicted(now) }
 
 func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
-	s.httpBridgeURLMu.RLock()
-	url := s.httpBridgeURL
-	s.httpBridgeURLMu.RUnlock()
 	return &genv1.ObservabilityCapabilities{
 		SupportsTraceGet:              true,
 		SupportsTraceStream:           true,
 		RetentionAfterTerminalSeconds: retentionSeconds,
-		HttpBridgeUrl:                 url,
+		HttpBridgeUrl:                 s.httpBridgeURL,
 		ExpectedAttributesSchema:      SchemaBytes(),
 		DeclaredTags:                  DeclaredTags(),
 		DeclaredErrorClasses:          DeclaredErrorClasses(),
@@ -81,8 +67,8 @@ func MakeEvent(eventID, parentID, category, message string, sev genv1.Severity, 
 	return observability.MakeEvent(eventID, parentID, category, message, sev, attrs)
 }
 
-func RegisterObservability(srv *grpc.Server) *ObservabilityServer {
-	o := NewObservabilityServer()
+func RegisterObservability(srv *grpc.Server, httpBridgeURL string) *ObservabilityServer {
+	o := NewObservabilityServer(httpBridgeURL)
 	genv1.RegisterExecutorObservabilityServer(srv, o)
 	return o
 }

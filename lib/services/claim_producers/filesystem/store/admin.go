@@ -99,11 +99,10 @@ func (s *Store) AdminHandler() http.Handler {
 			http.Error(w, "folder not found", http.StatusNotFound)
 			return
 		}
-		availSentinel := filepath.Join(policyStateDir(s.root, selector), "available", folder)
+		availSentinel := filepath.Join(PolicyStateDir(s.root, selector), "available", folder)
 		epoch := time.Unix(0, 0)
 		if err := os.Chtimes(availSentinel, epoch, epoch); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				// sentinel missing — distinguish "raced into in_progress" from "not enqueued yet"
 				if folderInProgress(s.root, selector, folder) {
 					http.Error(w, "folder is in_progress", http.StatusConflict)
 					return
@@ -119,10 +118,8 @@ func (s *Store) AdminHandler() http.Handler {
 	return mux
 }
 
-// folderInProgress returns true if any sentinel under .fs-store/<sel>/in_progress/
-// parses to <folder>. Used by bump-to-head to distinguish 409 from 404.
 func folderInProgress(storeRoot, selector, folder string) bool {
-	dir := filepath.Join(policyStateDir(storeRoot, selector), "in_progress")
+	dir := filepath.Join(PolicyStateDir(storeRoot, selector), "in_progress")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false

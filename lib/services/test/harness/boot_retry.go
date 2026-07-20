@@ -25,42 +25,60 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 }
 
 func runWithRetry(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*testcontainers.DockerContainer, error) {
-	var lastErr error
-	for attempt := 1; attempt <= bootMaxAttempts; attempt++ {
-		c, err := testcontainers.Run(ctx, img, opts...)
-		if err == nil {
-			return c, nil
-		}
-		if c != nil {
-			terminateBootFailure(ctx, c, err)
-		}
-		if imagetag.IsMissingLocalImage(img, err) {
-			return nil, imagetag.MissingImageError(img, err)
-		}
-		lastErr = err
-		if attempt < bootMaxAttempts {
-			time.Sleep(time.Duration(attempt) * bootRetryBackoff)
-		}
-	}
-	return nil, fmt.Errorf("after %d boot attempts: %w", bootMaxAttempts, lastErr)
+	return runContainerWithRetry(ctx,
+		func(ctx context.Context) (*testcontainers.DockerContainer, error) {
+			c, err := testcontainers.Run(ctx, img, opts...)
+			if err != nil && c != nil {
+				terminateBootFailure(ctx, c, err)
+			}
+			return c, err
+		},
+		func(err error) (error, bool) {
+			if imagetag.IsMissingLocalImage(img, err) {
+				return imagetag.MissingImageError(img, err), true
+			}
+			return nil, false
+		},
+	)
 }
 
 func runPostgresWithRetry(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*pgmodule.PostgresContainer, error) {
+	return runContainerWithRetry(ctx,
+		func(ctx context.Context) (*pgmodule.PostgresContainer, error) {
+			c, err := pgmodule.Run(ctx, img, opts...)
+			if err != nil && c != nil {
+				terminateBootFailure(ctx, c, err)
+			}
+			return c, err
+		},
+		nil,
+	)
+}
+
+func runContainerWithRetry[T any](
+	ctx context.Context,
+	run func(context.Context) (T, error),
+	failFast func(error) (error, bool),
+) (T, error) {
 	var lastErr error
 	for attempt := 1; attempt <= bootMaxAttempts; attempt++ {
-		c, err := pgmodule.Run(ctx, img, opts...)
+		c, err := run(ctx)
 		if err == nil {
 			return c, nil
 		}
-		if c != nil {
-			terminateBootFailure(ctx, c, err)
+		if failFast != nil {
+			if ffErr, abort := failFast(err); abort {
+				var zero T
+				return zero, ffErr
+			}
 		}
 		lastErr = err
 		if attempt < bootMaxAttempts {
 			time.Sleep(time.Duration(attempt) * bootRetryBackoff)
 		}
 	}
-	return nil, fmt.Errorf("after %d boot attempts: %w", bootMaxAttempts, lastErr)
+	var zero T
+	return zero, fmt.Errorf("after %d boot attempts: %w", bootMaxAttempts, lastErr)
 }
 
 func terminateBootFailure(ctx context.Context, c testcontainers.Container, bootErr error) {

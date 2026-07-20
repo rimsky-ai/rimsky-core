@@ -64,21 +64,7 @@ func TestAttributeOverridesMatchOverlayOrder_LaterWins(t *testing.T) {
 	require.NotNil(t, n)
 	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
-	var got map[string]any
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, o := range h.Stub.Observed() {
-			if o.NodeType == "worker" {
-				got = o.Attributes
-				break
-			}
-		}
-		if got != nil {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	require.NotNil(t, got, "stub did not record any worker dispatch")
+	got := waitForObservedAttrs(h, "worker")
 
 	cli, ok := got["cli"].(map[string]any)
 	require.True(t, ok, "attributes.cli missing: %#v", got)

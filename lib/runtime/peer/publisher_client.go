@@ -87,11 +87,7 @@ func DialPublisher(_ context.Context, name, endpoint, tlsMode string) (*Publishe
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(target,
-		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
-		grpc.WithChainUnaryInterceptor(ServiceNameUnaryInterceptor, TLSModeUnaryInterceptor(name, tlsMode)),
-		grpc.WithChainStreamInterceptor(ServiceNameStreamInterceptor, TLSModeStreamInterceptor(name, tlsMode)),
-	)
+	conn, err := grpc.NewClient(target, dialOptions(name, tlsMode)...)
 	if err != nil {
 		return nil, fmt.Errorf("remote publisher %q: dial %q: %w", name, endpoint, err)
 	}

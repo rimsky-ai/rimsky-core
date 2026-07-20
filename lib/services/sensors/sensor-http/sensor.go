@@ -21,8 +21,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorpub"
 )
 
 type Watch struct {
@@ -398,29 +398,8 @@ func sha256Hex(b []byte) string {
 }
 
 func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[string]any, idempotencyKey string) error {
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-	envelope := map[string]any{
-		"type":                      w.MessageType,
-		"payload":                   json.RawMessage(payloadBytes),
-		"sender":                    "sensor-http",
-		"publisher_subscription_id": w.SubscriptionID,
-	}
-	raw, err := publisherkit.MarshalEnvelope(envelope)
-	if err != nil {
-		return err
-	}
-	url := s.rimskyEndpoint + "/v1/instances/" + w.InstanceID + "/messages"
-	res := publisherkit.Send(ctx, s.httpClient, s.logger, nil, publisherkit.Request{
-		URL:            url,
-		Envelope:       raw,
-		IdempotencyKey: idempotencyKey,
-		PublisherName:  "sensor-http",
-		SubscriptionID: w.SubscriptionID,
-	})
-	return res.Err
+	return sensorpub.PostMessage(ctx, s.httpClient, s.logger, s.rimskyEndpoint, "sensor-http",
+		w.MessageType, w.InstanceID, w.SubscriptionID, payload, idempotencyKey)
 }
 
 func (s *SensorService) Run(ctx context.Context) {

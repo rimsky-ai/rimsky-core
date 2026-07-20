@@ -140,7 +140,7 @@ func TestSensorWebhook_RestartRecoversMountAndWatermark(t *testing.T) {
 	ctx := context.Background()
 
 	netName := harness.NewNetwork(ctx, t)
-	statePGContainer := startSensorStatePostgres(ctx, t, netName)
+	statePGContainer := startSensorStatePostgres(ctx, t, netName, "sensor-webhook-pg")
 
 	rimskyAlias := harness.NextRimskyAlias()
 	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
@@ -218,7 +218,7 @@ func deploySensorWebhookRestartTemplate(t *testing.T, ep harness.RimskyEndpoint)
 	if err != nil {
 		t.Fatalf("marshal sensor config: %v", err)
 	}
-	body := map[string]any{
+	return deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":    "sensor-webhook-restart-recovery",
 			"version": "1",
@@ -254,27 +254,7 @@ func deploySensorWebhookRestartTemplate(t *testing.T, ep harness.RimskyEndpoint)
 				},
 			},
 		},
-	}
-	status, raw := ep.PostJSON(t, "/v1/templates", body)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /templates: %d %s", status, string(raw))
-	}
-	var resp struct {
-		TemplateID string `json:"template_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode template response: %v: %s", err, string(raw))
-	}
-	if resp.TemplateID == "" {
-		t.Fatalf("template_id empty: %s", string(raw))
-	}
-	deployStatus, deployRaw := ep.PostJSON(t,
-		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
-	if deployStatus != http.StatusOK {
-		t.Fatalf("POST /templates/%s/deploy: %d %s",
-			resp.TemplateID, deployStatus, string(deployRaw))
-	}
-	return resp.TemplateID
+	})
 }
 
 func postWebhook(t *testing.T, url string, body []byte) (int, []byte) {
@@ -497,7 +477,7 @@ func deploySensorWebhookTemplate(t *testing.T, ep harness.RimskyEndpoint) string
 	if err != nil {
 		t.Fatalf("marshal sensor config: %v", err)
 	}
-	body := map[string]any{
+	return deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":    "sensor-webhook-e2e",
 			"version": "1",
@@ -533,47 +513,10 @@ func deploySensorWebhookTemplate(t *testing.T, ep harness.RimskyEndpoint) string
 				},
 			},
 		},
-	}
-	status, raw := ep.PostJSON(t, "/v1/templates", body)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /templates: %d %s", status, string(raw))
-	}
-	var resp struct {
-		TemplateID string `json:"template_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode template response: %v: %s", err, string(raw))
-	}
-	if resp.TemplateID == "" {
-		t.Fatalf("template_id empty: %s", string(raw))
-	}
-	deployStatus, deployRaw := ep.PostJSON(t,
-		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
-	if deployStatus != http.StatusOK {
-		t.Fatalf("POST /templates/%s/deploy: %d %s",
-			resp.TemplateID, deployStatus, string(deployRaw))
-	}
-	return resp.TemplateID
+	})
 }
 
 func createSensorWebhookInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("POST /instances: %d %s", status, string(raw))
-	}
-	var resp struct {
-		InstanceID string `json:"instance_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode instance response: %v: %s", err, string(raw))
-	}
-	if resp.InstanceID == "" {
-		t.Fatalf("instance_id empty: %s", string(raw))
-	}
-	return resp.InstanceID
+	return createScenarioInstanceNoWake(t, ep, templateID, instanceKey)
 }

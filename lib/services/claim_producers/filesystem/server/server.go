@@ -26,8 +26,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/lifecycle"
 	fsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/store"
+	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/listarray"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 

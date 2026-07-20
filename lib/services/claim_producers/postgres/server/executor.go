@@ -37,14 +37,17 @@ func NewExecutorObservabilityServer() *ExecutorObservabilityServer {
 	return &ExecutorObservabilityServer{}
 }
 
+const (
+	attributeInvalidClass     = "pg/attribute_invalid"
+	connectionLostClass       = "pg/connection_lost"
+	verifierCheckFailedPrefix = "pg/verifier_check_failed/"
+)
+
 func declaredErrorClasses() []string {
 	return []string{
-		"pg/attribute_invalid",
-		"pg/claim_unavailable",
-		"pg/connection_lost",
-		"pg/not_atomically_replaceable",
-		"pg/swap_failed",
-		"pg/verifier_check_failed/*",
+		attributeInvalidClass,
+		connectionLostClass,
+		verifierCheckFailedPrefix + "*",
 	}
 }
 
@@ -65,25 +68,25 @@ func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequ
 	ud := req.GetAttributes().AsMap()
 	schema, table, specs, err := parseVerifierAttributes(ud)
 	if err != nil {
-		return verifierErrorOutcome("pg/attribute_invalid", err.Error(), nil), nil
+		return verifierErrorOutcome(attributeInvalidClass, err.Error(), nil), nil
 	}
 	pool := e.store.Pool()
 	if pool == nil {
 		// @concept: signal
-		return verifierErrorOutcome("pg/connection_lost", "postgres store has no live connection pool", nil), nil
+		return verifierErrorOutcome(connectionLostClass, "postgres store has no live connection pool", nil), nil
 	}
 	conn := pgxPoolConn{pool: pool}
 	results, err := sqlchecks.Run(ctx, conn, schema, table, specs)
 	if err != nil {
-		return verifierErrorOutcome("pg/attribute_invalid", err.Error(), nil), nil
+		return verifierErrorOutcome(attributeInvalidClass, err.Error(), nil), nil
 	}
 	if msg, ok := firstInfraError(results); ok {
-		return verifierErrorOutcome("pg/connection_lost", msg, nil), nil
+		return verifierErrorOutcome(connectionLostClass, msg, nil), nil
 	}
 	if anyFailed(results) {
 		failedKind := firstFailedCheckKind(results)
 		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
-			ErrorClass: "pg/verifier_check_failed/" + failedKind,
+			ErrorClass: verifierCheckFailedPrefix + failedKind,
 			Payload:    buildVerifierFailurePayload(results),
 		}}}, nil
 	}

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -232,8 +233,9 @@ func (s *ExecutorServer) postFailure(
 	decorateBody func(body map[string]any),
 ) {
 	errorClass := "agent/internal_error"
-	if IsCliConfigError(err) {
-		errorClass = "agent/attribute_invalid"
+	var cliConfigErr *CliConfigError
+	if errors.As(err, &cliConfigErr) {
+		errorClass = cliConfigErr.ErrorClass()
 	}
 	logger.Error("agent run failed", "error", err.Error(), "error_class", errorClass)
 	if s.cfg.Observability != nil {

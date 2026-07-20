@@ -40,12 +40,12 @@ func TestFSCrossQueueConcurrency(t *testing.T) {
 		})
 	_ = fs
 
-	harness.StartExecutorStubOnNetwork(ctx, t, netName)
+	executorEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithClaimProducer("docs", fs.InternalEndpoint),
-		harness.WithExecutor("stub", "executor-stub:9300"),
+		harness.WithExecutor("stub", executorEndpoint),
 	)
 
 	templateID := deployTemplate(t, ep, map[string]any{

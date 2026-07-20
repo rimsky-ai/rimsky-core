@@ -128,7 +128,7 @@ func New(cfg Config) (*Store, error) {
 		for _, w := range res.Warnings {
 			slog.Warn(w)
 		}
-		dir := filepath.Join(cfg.Root, ".fs-store", trimAtPrefix(selector))
+		dir := PolicyStateDir(cfg.Root, selector)
 		for _, sub := range []string{"available", "in_progress"} {
 			if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 				return nil, fmt.Errorf("filesystem store: mkdir %s: %w", filepath.Join(dir, sub), err)

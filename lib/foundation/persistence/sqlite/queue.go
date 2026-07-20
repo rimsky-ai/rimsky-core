@@ -926,7 +926,7 @@ func scanDispatchRow(row scannable) (persistence.DispatchRow, error) {
 	if terr != nil {
 		return persistence.DispatchRow{}, terr
 	}
-	r.Tags = dedupTags(rawTags)
+	r.Tags = shared.DedupStrings(rawTags)
 	if r.RequiredClaimProducers == nil {
 		r.RequiredClaimProducers = []string{}
 	}
@@ -943,22 +943,6 @@ func scanDispatchRow(row scannable) (persistence.DispatchRow, error) {
 		r.AsyncAckPrincipal = &v
 	}
 	return r, nil
-}
-
-func dedupTags(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, t := range in {
-		if _, ok := seen[t]; ok {
-			continue
-		}
-		seen[t] = struct{}{}
-		out = append(out, t)
-	}
-	return out
 }
 
 func encodeDispatchCursor(enqueued time.Time, id shared.UUID) string {

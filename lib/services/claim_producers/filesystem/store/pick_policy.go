@@ -46,7 +46,7 @@ func parseFromRight(name string) (folder, claimID string, claimedNanos int64, er
 	return name[:prev], name[prev+1 : lastDot], n, nil
 }
 
-func policyStateDir(storeRoot, selector string) string {
+func PolicyStateDir(storeRoot, selector string) string {
 	return filepath.Join(storeRoot, ".fs-store", trimAtPrefix(selector))
 }
 
@@ -54,7 +54,7 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 	pp.syncMu.Lock()
 	defer pp.syncMu.Unlock()
 	subRoot := filepath.Join(s.root, pp.Root)
-	state := policyStateDir(s.root, selector)
+	state := PolicyStateDir(s.root, selector)
 	availDir := filepath.Join(state, "available")
 	inProgDir := filepath.Join(state, "in_progress")
 
@@ -138,7 +138,7 @@ func removeDrainedIfPresent(state string) {
 }
 
 func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (claimproducer.OpenOutcome, error) {
-	state := policyStateDir(s.root, selector)
+	state := PolicyStateDir(s.root, selector)
 	availDir := filepath.Join(state, "available")
 	inProgDir := filepath.Join(state, "in_progress")
 	drainedPath := filepath.Join(state, "drained")
@@ -191,10 +191,20 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (claimp
 	return claimproducer.OpenOutcome{Available: false}, nil
 }
 
-func (s *Store) tryRenameClaim(claimID, selector string, pp *PickPolicy, availDir, inProgDir string) (claimproducer.OpenOutcome, bool, error) {
+type claimedFolder struct {
+	folder       string
+	absPath      string
+	subPath      string
+	addr         []byte
+	scope        []byte
+	payload      []byte
+	claimedNanos int64
+}
+
+func (s *Store) claimNextAvailable(availDir, inProgDir string, pp *PickPolicy, claimFileID string) (claimedFolder, bool, error) {
 	entries, err := os.ReadDir(availDir)
 	if err != nil {
-		return claimproducer.OpenOutcome{}, false, fmt.Errorf("filesystem store: readdir available: %w", err)
+		return claimedFolder{}, false, fmt.Errorf("filesystem store: readdir available: %w", err)
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		ii, _ := entries[i].Info()
@@ -212,48 +222,68 @@ func (s *Store) tryRenameClaim(claimID, selector string, pp *PickPolicy, availDi
 		absPath := filepath.Join(s.root, subPath)
 		if _, statErr := os.Stat(absPath); statErr != nil {
 			if rmErr := os.Remove(src); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
-				return claimproducer.OpenOutcome{}, false, fmt.Errorf("filesystem store: unlink orphan available sentinel %q: %w", folder, rmErr)
+				return claimedFolder{}, false, fmt.Errorf("filesystem store: unlink orphan available sentinel %q: %w", folder, rmErr)
 			}
 			continue
 		}
 		nowNanos := time.Now().UnixNano()
-		dst := filepath.Join(inProgDir, fmt.Sprintf("%s.%s.%d", folder, claimID, nowNanos))
+		dst := filepath.Join(inProgDir, fmt.Sprintf("%s.%s.%d", folder, claimFileID, nowNanos))
 		if err := os.Rename(src, dst); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
-			return claimproducer.OpenOutcome{}, false, fmt.Errorf("filesystem store: claim rename: %w", err)
+			return claimedFolder{}, false, fmt.Errorf("filesystem store: claim rename: %w", err)
 		}
-		remaining, _ := os.ReadDir(availDir)
-		lastItem := len(remaining) == 0
-
 		addr, err := json.Marshal(absPath)
 		if err != nil {
-			return claimproducer.OpenOutcome{}, false, err
+			return claimedFolder{}, false, err
 		}
 		scope, err := s.scopeBytes(subPath)
 		if err != nil {
-			return claimproducer.OpenOutcome{}, false, err
+			return claimedFolder{}, false, err
 		}
 		payload, err := json.Marshal(map[string]string{"folder": folder})
 		if err != nil {
-			return claimproducer.OpenOutcome{}, false, err
+			return claimedFolder{}, false, err
 		}
-		s.mu.Lock()
-		s.claims[claimID] = absPath
-		s.mu.Unlock()
-		s.ledger.RecordOpen(claimID, selector, addr, scope)
-		return claimproducer.OpenOutcome{
-			Available: true,
-			Result: claimproducer.ClaimResult{
-				Address:                json.RawMessage(addr),
-				Payload:                json.RawMessage(payload),
-				ClaimScope:             json.RawMessage(scope),
-				RealizedWriteSemantics: claimproducer.WriteSemanticsSync,
-			},
-		}, lastItem, nil
+		return claimedFolder{
+			folder:       folder,
+			absPath:      absPath,
+			subPath:      subPath,
+			addr:         addr,
+			scope:        scope,
+			payload:      payload,
+			claimedNanos: nowNanos,
+		}, true, nil
 	}
-	return claimproducer.OpenOutcome{Available: false}, false, nil
+	return claimedFolder{}, false, nil
+}
+
+func (s *Store) tryRenameClaim(claimID, selector string, pp *PickPolicy, availDir, inProgDir string) (claimproducer.OpenOutcome, bool, error) {
+	claimed, ok, err := s.claimNextAvailable(availDir, inProgDir, pp, claimID)
+	if err != nil {
+		return claimproducer.OpenOutcome{}, false, err
+	}
+	if !ok {
+		return claimproducer.OpenOutcome{Available: false}, false, nil
+	}
+
+	remaining, _ := os.ReadDir(availDir)
+	lastItem := len(remaining) == 0
+
+	s.mu.Lock()
+	s.claims[claimID] = claimed.absPath
+	s.mu.Unlock()
+	s.ledger.RecordOpen(claimID, selector, claimed.addr, claimed.scope)
+	return claimproducer.OpenOutcome{
+		Available: true,
+		Result: claimproducer.ClaimResult{
+			Address:                json.RawMessage(claimed.addr),
+			Payload:                json.RawMessage(claimed.payload),
+			ClaimScope:             json.RawMessage(claimed.scope),
+			RealizedWriteSemantics: claimproducer.WriteSemanticsSync,
+		},
+	}, lastItem, nil
 }
 
 type PickedItem struct {
@@ -299,7 +329,7 @@ func (s *Store) BatchPop(_ context.Context, selector string, claimIDs []string) 
 	if !ok {
 		return nil, fmt.Errorf("filesystem store: BatchPop: unknown pick policy %q", selector)
 	}
-	state := policyStateDir(s.root, selector)
+	state := PolicyStateDir(s.root, selector)
 	availDir := filepath.Join(state, "available")
 	inProgDir := filepath.Join(state, "in_progress")
 
@@ -335,63 +365,24 @@ func (s *Store) BatchPop(_ context.Context, selector string, claimIDs []string) 
 }
 
 func (s *Store) popOne(claimID, selector string, pp *PickPolicy, availDir, inProgDir string) (PickedItem, bool, error) {
-	entries, err := os.ReadDir(availDir)
+	_ = selector
+	claimed, ok, err := s.claimNextAvailable(availDir, inProgDir, pp, batchLeaseIDPrefix+claimID)
 	if err != nil {
-		return PickedItem{}, false, fmt.Errorf("filesystem store: BatchPop readdir available: %w", err)
+		return PickedItem{}, false, err
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		ii, _ := entries[i].Info()
-		jj, _ := entries[j].Info()
-		if ii != nil && jj != nil && !ii.ModTime().Equal(jj.ModTime()) {
-			return ii.ModTime().Before(jj.ModTime())
-		}
-		return entries[i].Name() < entries[j].Name()
-	})
-	for _, entry := range entries {
-		folder := entry.Name()
-		src := filepath.Join(availDir, folder)
-		subPath := filepath.Join(pp.Root, folder)
-		absPath := filepath.Join(s.root, subPath)
-		if _, statErr := os.Stat(absPath); statErr != nil {
-			if rmErr := os.Remove(src); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
-				return PickedItem{}, false, fmt.Errorf("filesystem store: unlink orphan available sentinel %q: %w", folder, rmErr)
-			}
-			continue
-		}
-		nowNanos := time.Now().UnixNano()
-		leaseToken := batchLeaseToken(claimID, nowNanos)
-		dst := filepath.Join(inProgDir, fmt.Sprintf("%s.%s.%d", folder, batchLeaseIDPrefix+claimID, nowNanos))
-		if err := os.Rename(src, dst); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return PickedItem{}, false, fmt.Errorf("filesystem store: BatchPop claim rename: %w", err)
-		}
-		addr, err := json.Marshal(absPath)
-		if err != nil {
-			return PickedItem{}, false, err
-		}
-		scope, err := s.scopeBytes(subPath)
-		if err != nil {
-			return PickedItem{}, false, err
-		}
-		payload, err := json.Marshal(map[string]string{"folder": folder})
-		if err != nil {
-			return PickedItem{}, false, err
-		}
-		_ = selector
-		return PickedItem{
-			ClaimID:         claimID,
-			Folder:          folder,
-			AbsPath:         absPath,
-			SubPath:         subPath,
-			AddressBytes:    addr,
-			ClaimScopeBytes: scope,
-			PayloadBytes:    payload,
-			LeaseToken:      leaseToken,
-		}, true, nil
+	if !ok {
+		return PickedItem{}, false, nil
 	}
-	return PickedItem{}, false, nil
+	return PickedItem{
+		ClaimID:         claimID,
+		Folder:          claimed.folder,
+		AbsPath:         claimed.absPath,
+		SubPath:         claimed.subPath,
+		AddressBytes:    claimed.addr,
+		ClaimScopeBytes: claimed.scope,
+		PayloadBytes:    claimed.payload,
+		LeaseToken:      batchLeaseToken(claimID, claimed.claimedNanos),
+	}, true, nil
 }
 
 func isDirEmpty(dir string) (bool, error) {
@@ -409,7 +400,7 @@ func drainedFileExists(path string) bool {
 
 func (s *Store) findByClaimID(claimID string) (pp *PickPolicy, selector, entry, folder string) {
 	for sel, candidate := range s.pickPolicies {
-		inProg := filepath.Join(policyStateDir(s.root, sel), "in_progress")
+		inProg := filepath.Join(PolicyStateDir(s.root, sel), "in_progress")
 		entries, err := os.ReadDir(inProg)
 		if err != nil {
 			continue
@@ -458,7 +449,7 @@ func (s *Store) findByScope(scope []byte, leaseToken string) (pp *PickPolicy, se
 		if strings.ContainsRune(wantFolder, filepath.Separator) {
 			continue
 		}
-		inProg := filepath.Join(policyStateDir(s.root, sel), "in_progress")
+		inProg := filepath.Join(PolicyStateDir(s.root, sel), "in_progress")
 		entries, err := os.ReadDir(inProg)
 		if err != nil {
 			continue
@@ -481,8 +472,8 @@ func (s *Store) findByScope(scope []byte, leaseToken string) (pp *PickPolicy, se
 }
 
 func (s *Store) applyPickAction(pp *PickPolicy, selector, entry, folder string, act action.Action) error {
-	inProgDir := filepath.Join(policyStateDir(s.root, selector), "in_progress")
-	availDir := filepath.Join(policyStateDir(s.root, selector), "available")
+	inProgDir := filepath.Join(PolicyStateDir(s.root, selector), "in_progress")
+	availDir := filepath.Join(PolicyStateDir(s.root, selector), "available")
 	src := filepath.Join(inProgDir, entry)
 	switch act.Kind {
 	case action.Pop:

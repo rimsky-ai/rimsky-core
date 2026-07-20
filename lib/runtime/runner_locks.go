@@ -60,52 +60,49 @@ func producerNameForSpec(sp any) string {
 
 func buildLockSpecs(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	nd *persistence.NodeRow, def *node.TemplateNodeDef, inst *persistence.InstanceRow,
+	nd *persistence.NodeRow, def *node.TemplateNodeDef, tmpl *node.TemplateSpec, inst *persistence.InstanceRow,
 	nodeRunID, frameID, runScopeID shared.UUID,
-) ([]any, error) {
+) ([]any, map[string]claimproducer.ClaimResult, error) {
 	if def == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var paramsRaw json.RawMessage
 	if inst != nil && len(inst.Params) > 0 {
 		b, err := json.Marshal(inst.Params)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		paramsRaw = b
-	}
-	deps, err := BuildAttributeDeps(ctx, tx, args, nodeRunID, frameID)
-	if err != nil {
-		return nil, err
 	}
 	var templateHash string
 	if inst != nil {
 		templateHash = inst.TemplateHash
 	}
-	registryTypes := declaredMessageTypesForTemplate(ctx, args, templateHash, tx)
-	heldClaims, err := loadInheritedClaimsForNode(ctx, args, tx, nd, frameID)
-	if err != nil {
-		return nil, fmt.Errorf("buildLockSpecs: load inherited claims: %w", err)
+	var instanceID shared.UUID
+	if nd != nil {
+		instanceID = nd.InstanceID
 	}
-	resolveCtx := attributes.ResolveContext{
-		Params:                paramsRaw,
-		Deps:                  deps,
-		Claim:                 heldClaims,
-		RegistryDeclaredTypes: registryTypes,
+	heldClaims, err := loadInheritedClaimsForNode(ctx, args, tx, instanceID, tmpl, def, frameID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("buildLockSpecs: load inherited claims: %w", err)
+	}
+	resolveCtx, err := buildResolveContextForAcquisition(ctx, args, tx, frameID, nodeRunID, templateHash, paramsRaw, heldClaims)
+	if err != nil {
+		return nil, nil, fmt.Errorf("buildLockSpecs: build resolve context: %w", err)
 	}
 
 	out := make([]any, 0, len(def.Locks)+len(def.ClaimProducers))
 	for _, l := range def.Locks {
 		nameSub, err := attributes.Substitute(l.Name, resolveCtx)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, locks.NamedLockSpec{Name: nameSub, TemplateName: l.Name})
 	}
 	for _, sref := range def.ClaimProducers {
 		selectorSub, err := attributes.Substitute(sref.Selector, resolveCtx)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, claimproducer.ClaimSpec{
 			ProducerName: sref.Name,
@@ -120,42 +117,70 @@ func buildLockSpecs(
 			Lifetime: sref.Lifetime,
 		})
 	}
-	return out, nil
+	return out, heldClaims, nil
 }
 
 func loadInheritedClaimsForNode(
-	ctx context.Context, args RunArgs, tx persistence.Tx, nd *persistence.NodeRow, frameID shared.UUID,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	instanceID shared.UUID, tmplSpec *node.TemplateSpec, nodeDef *node.TemplateNodeDef, frameID shared.UUID,
 ) (map[string]claimproducer.ClaimResult, error) {
-	if nd == nil {
-		return nil, nil
-	}
-	inst, err := args.Persist.Instances().Get(ctx, nd.InstanceID, tx)
-	if err != nil {
-		return nil, fmt.Errorf("loadInheritedClaimsForNode: Instances.Get: %w", err)
-	}
-	if inst == nil {
-		return nil, nil
-	}
-	tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-	if err != nil {
-		return nil, fmt.Errorf("loadInheritedClaimsForNode: Templates.GetByHash: %w", err)
-	}
-	if tmpl == nil {
-		return nil, nil
-	}
-	nodeDef := LookupNodeDef(&tmpl.Spec, nd.NodeType)
-	if nodeDef == nil {
+	if tmplSpec == nil || nodeDef == nil {
 		return nil, nil
 	}
 	if len(nodeDef.Holds) == 0 {
 		return nil, nil
 	}
 	out := map[string]claimproducer.ClaimResult{}
-	if err := collectCoHeldClaims(ctx, args, tx, &tmpl.Spec, nd.InstanceID, nodeDef, out, frameID); err != nil {
+	if err := collectCoHeldClaims(ctx, args, tx, tmplSpec, instanceID, nodeDef, out, frameID); err != nil {
 		return nil, err
 	}
 	if len(out) == 0 {
 		return nil, nil
+	}
+	return out, nil
+}
+
+type resolvedHold struct {
+	alias        string
+	binding      node.HoldsBinding
+	upstreamNode *persistence.NodeRow
+	claimHandle  *persistence.ClaimHandleRow
+}
+
+// @concept: claim-co-holdership
+func resolveHolds(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	instanceID shared.UUID, tmplSpec *node.TemplateSpec, nodeDef *node.TemplateNodeDef,
+	frameID shared.UUID, requireUpstreamNode bool,
+) ([]resolvedHold, error) {
+	if nodeDef == nil || len(nodeDef.Holds) == 0 {
+		return nil, nil
+	}
+	var out []resolvedHold
+	for alias, binding := range nodeDef.Holds {
+		upstreamType := binding.From
+		if upstreamType == "" {
+			continue
+		}
+		upstreamNode, err := findInstanceNodeByType(ctx, args, tx, instanceID, upstreamType)
+		if err != nil {
+			return nil, fmt.Errorf("resolveHolds: find upstream node (alias %q): %w", alias, err)
+		}
+		if upstreamNode == nil {
+			if requireUpstreamNode {
+				return nil, fmt.Errorf("resolveHolds: upstream node-type %q not found in instance %s (alias %q)",
+					upstreamType, instanceID.String(), alias)
+			}
+			continue
+		}
+		lh, err := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmplSpec, upstreamType, alias, frameID)
+		if err != nil {
+			return nil, fmt.Errorf("resolveHolds: lookup claim handle (alias %q): %w", alias, err)
+		}
+		if lh == nil {
+			continue
+		}
+		out = append(out, resolvedHold{alias: alias, binding: binding, upstreamNode: upstreamNode, claimHandle: lh})
 	}
 	return out, nil
 }
@@ -166,36 +191,19 @@ func collectCoHeldClaims(
 	tmplSpec *node.TemplateSpec, instanceID shared.UUID,
 	nodeDef *node.TemplateNodeDef, out map[string]claimproducer.ClaimResult, frameID shared.UUID,
 ) error {
-	if nodeDef == nil || len(nodeDef.Holds) == 0 {
-		return nil
+	resolved, err := resolveHolds(ctx, args, tx, instanceID, tmplSpec, nodeDef, frameID, false)
+	if err != nil {
+		return fmt.Errorf("collectCoHeldClaims: %w", err)
 	}
-	for alias, binding := range nodeDef.Holds {
-		upstreamType := binding.From
-		if upstreamType == "" {
-			continue
-		}
-		upstreamNode, err := findInstanceNodeByType(ctx, args, tx, instanceID, upstreamType)
-		if err != nil {
-			return fmt.Errorf("collectCoHeldClaims: lookup upstream node (alias %q): %w", alias, err)
-		}
-		if upstreamNode == nil {
-			continue
-		}
-		lh, err := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmplSpec, upstreamType, alias, frameID)
-		if err != nil {
-			return fmt.Errorf("collectCoHeldClaims: lookup claim handle (alias %q): %w", alias, err)
-		}
-		if lh == nil {
-			continue
-		}
-		localAlias := alias
-		if binding.As != "" {
-			localAlias = binding.As
+	for _, r := range resolved {
+		localAlias := r.alias
+		if r.binding.As != "" {
+			localAlias = r.binding.As
 		}
 		out[localAlias] = claimproducer.ClaimResult{
-			Address:    lh.Address,
-			Payload:    lh.Payload,
-			ClaimScope: lh.ClaimScopeData,
+			Address:    r.claimHandle.Address,
+			Payload:    r.claimHandle.Payload,
+			ClaimScope: r.claimHandle.ClaimScopeData,
 		}
 	}
 	return nil

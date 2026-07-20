@@ -33,10 +33,7 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("executor.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
 	}
-	conn, err := grpc.NewClient(endpoint.URL,
-		grpc.WithTransportCredentials(peer.TransportCredentials(endpoint.TLS)),
-		grpc.WithChainUnaryInterceptor(peer.ServiceNameUnaryInterceptor, peer.TLSModeUnaryInterceptor(endpoint.URL, endpoint.TLS)),
-	)
+	conn, err := grpc.NewClient(endpoint.URL, peer.UnaryDialOptions(endpoint.URL, endpoint.TLS)...)
 	if err != nil {
 		return nil, fmt.Errorf("executor.NewGRPCClient: dial %s: %w", endpoint.URL, err)
 	}

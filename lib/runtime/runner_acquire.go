@@ -367,7 +367,7 @@ func tryAcquire(
 		runScopeID = row.RunScopeID
 	}
 	// @decision: walker-rule-per-sender-node
-	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst, cand.NodeRunID, cand.FrameID, runScopeID)
+	specs, heldClaims, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, tmpl, inst, cand.NodeRunID, cand.FrameID, runScopeID)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
 			"node_id", cand.NodeID.String(), "error", err.Error())
@@ -477,12 +477,8 @@ func tryAcquire(
 		out.InstanceAttributeOverrides = inst.AttributeOverrides
 		out.TemplateHash = inst.TemplateHash
 	}
-	held, err := loadInheritedClaimsForNode(ctx, args, tx, nd, cand.FrameID)
-	if err != nil {
-		return acquisition{PartialLocks: acquiredLocks}, false, fmt.Errorf("tryAcquire: load inherited claims: %w", err)
-	}
-	if len(held) > 0 {
-		out.HeldClaims = held
+	if len(heldClaims) > 0 {
+		out.HeldClaims = heldClaims
 	}
 	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, livenessInterval); err != nil {
 		return acquisition{PartialLocks: acquiredLocks}, false, err

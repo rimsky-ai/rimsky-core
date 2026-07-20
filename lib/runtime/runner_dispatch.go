@@ -272,7 +272,7 @@ func readExecutorOutcome(
 			Changed:       oc.Success.Changed,
 			ChangeSummary: oc.Success.ChangeSummary,
 			Scratch:       oc.Success.Scratch,
-			Tags:          dedupTagsRT(oc.Success.Tags),
+			Tags:          shared.DedupStrings(oc.Success.Tags),
 		}
 		if oc.Success.AttributesDelta != nil {
 			t.AttributesDel = oc.Success.AttributesDelta.AsMap()
@@ -288,7 +288,7 @@ func readExecutorOutcome(
 			ErrorClass: oc.Error.ErrorClass,
 			Payload:    map[string]any{"payload": payloadGo},
 			Scratch:    oc.Error.Scratch,
-			Tags:       dedupTagsRT(oc.Error.Tags),
+			Tags:       shared.DedupStrings(oc.Error.Tags),
 		}
 		if oc.Error.AttributesDelta != nil {
 			t.AttributesDel = oc.Error.AttributesDelta.AsMap()
@@ -308,7 +308,7 @@ func readExecutorOutcome(
 			Kind:         terminalKindPark,
 			ParkResumeAt: oc.Park.ResumeAt.AsTime(),
 			Scratch:      oc.Park.Scratch,
-			Tags:         dedupTagsRT(oc.Park.Tags),
+			Tags:         shared.DedupStrings(oc.Park.Tags),
 		}
 		return validateTags(ctx, dctx, t), ""
 	case *genv1.Outcome_AwaitAsync:
@@ -319,22 +319,6 @@ func readExecutorOutcome(
 			ErrorClass: "executor_returned_unknown_outcome",
 		}, ""
 	}
-}
-
-func dedupTagsRT(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, t := range in {
-		if _, ok := seen[t]; ok {
-			continue
-		}
-		seen[t] = struct{}{}
-		out = append(out, t)
-	}
-	return out
 }
 
 func validateTags(_ context.Context, dctx dispatchContext, t terminalEvent) terminalEvent {

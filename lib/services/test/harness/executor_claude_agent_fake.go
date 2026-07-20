@@ -86,22 +86,5 @@ func StartClaudeAgentFakeOnNetwork(
 
 func DumpClaudeAgentFakeLogsForFailure(t testing.TB, c testcontainers.Container) {
 	t.Helper()
-	rc, err := c.Logs(context.Background())
-	if err != nil {
-		t.Logf("harness: cannot read claude-agent-fake logs: %v", err)
-		return
-	}
-	defer rc.Close()
-	out := make([]byte, 0, 16384)
-	buf := make([]byte, 4096)
-	for {
-		n, rerr := rc.Read(buf)
-		if n > 0 {
-			out = append(out, buf[:n]...)
-		}
-		if rerr != nil {
-			break
-		}
-	}
-	t.Logf("=== claude-agent-fake container logs ===\n%s\n=== end logs ===", string(out))
+	dumpLogsForFailure(t, "claude-agent-fake", c)
 }

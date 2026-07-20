@@ -60,8 +60,8 @@ func (c *Client) Release(ctx context.Context, claimID protocol.ClaimID, scope, a
 }
 
 func (c *Client) SplitScope(ctx context.Context, req protocol.SplitClaimScopeRequest) (protocol.SplitClaimScopeResponse, error) {
-	if !c.caps.SupportsSplitScope {
-		return protocol.SplitClaimScopeResponse{}, protocol.ErrSplitScopeUnsupported
+	if err := peer.GateSplitScope(c.caps); err != nil {
+		return protocol.SplitClaimScopeResponse{}, err
 	}
 	resp, err := c.handler.SplitScope(ctx, req)
 	if err != nil {
@@ -71,8 +71,8 @@ func (c *Client) SplitScope(ctx context.Context, req protocol.SplitClaimScopeReq
 }
 
 func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) {
-	if !c.caps.SupportsScopesConflict {
-		return protocol.ErrScopesConflictUnsupportedFallback(a, b), nil
+	if fallback, gated := peer.GateScopesConflict(c.caps, a, b); gated {
+		return fallback, nil
 	}
 	conflicts, err := c.handler.ScopesConflict(ctx, a, b)
 	if err != nil {

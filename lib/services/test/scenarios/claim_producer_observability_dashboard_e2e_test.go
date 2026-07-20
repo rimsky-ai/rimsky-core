@@ -465,7 +465,7 @@ func categoriesEqual(a, b []string) bool {
 
 func deployObsTemplate(t *testing.T, ep harness.RimskyEndpoint, name string) string {
 	t.Helper()
-	body := map[string]any{
+	return deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":    name,
 			"version": "1",
@@ -479,50 +479,12 @@ func deployObsTemplate(t *testing.T, ep harness.RimskyEndpoint, name string) str
 				},
 			},
 		},
-	}
-	status, raw := ep.PostJSON(t, "/v1/templates", body)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /v1/templates: %d %s", status, string(raw))
-	}
-	var resp struct {
-		TemplateID string `json:"template_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode template response: %v: %s", err, string(raw))
-	}
-	if resp.TemplateID == "" {
-		t.Fatalf("template_id empty: %s", string(raw))
-	}
-	deployStatus, deployRaw := ep.PostJSON(t,
-		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
-	if deployStatus != http.StatusOK {
-		t.Fatalf("POST /v1/templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
-	}
-	return resp.TemplateID
+	})
 }
 
-// @decision: test-harness-create-instance-wakes-roots-after-create
 func createObsInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("POST /v1/instances: %d %s", status, string(raw))
-	}
-	var resp struct {
-		InstanceID string `json:"instance_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode instance response: %v: %s", err, string(raw))
-	}
-	if resp.InstanceID == "" {
-		t.Fatalf("instance_id empty: %s", string(raw))
-	}
-	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "claim-producer-obs", instanceKey)
-	return resp.InstanceID
+	return createScenarioInstanceFromSource(t, ep, templateID, instanceKey, "claim-producer-obs")
 }
 
 func waitForLedgerClaimCount(t *testing.T, bridge string, want int, deadline time.Duration) {

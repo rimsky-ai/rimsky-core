@@ -44,6 +44,8 @@ type DatasetRef struct {
 
 const openLineageProducerURI = "https://github.com/rimsky-ai/rimsky-core/lib/services/subscribers/openlineage"
 
+const openLineageRunEventSchemaURL = "https://openlineage.io/spec/1-0-5/OpenLineage.json#/$defs/RunEvent"
+
 func rimskyFacet(name string, fields map[string]any) map[string]any {
 	out := make(map[string]any, len(fields)+2)
 	for k, v := range fields {
@@ -160,7 +162,7 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, namespace string)
 		EventType:   "COMPLETE",
 		EventTime:   observedAt.UTC().Format(time.RFC3339Nano),
 		ProducerURI: openLineageProducerURI,
-		SchemaURL:   "https://openlineage.io/spec/1-0-5/OpenLineage.json#/$defs/RunEvent",
+		SchemaURL:   openLineageRunEventSchemaURL,
 		Run:         RunRef{RunID: runID, Facets: runFacets},
 		Job:         JobRef{Namespace: namespace, Name: jobName},
 		Inputs:      inputs,
@@ -210,7 +212,7 @@ func MakeClaimTerminalEvent(rec ClaimTerminalRecord, observedAt time.Time, names
 		EventType:   eventType,
 		EventTime:   observedAt.UTC().Format(time.RFC3339Nano),
 		ProducerURI: openLineageProducerURI,
-		SchemaURL:   "https://openlineage.io/spec/1-0-5/OpenLineage.json#/$defs/RunEvent",
+		SchemaURL:   openLineageRunEventSchemaURL,
 		Run:         RunRef{RunID: runID, Facets: runFacets},
 		Job:         JobRef{Namespace: namespace, Name: rec.ProducerName + jobSuffix},
 		Outputs:     []DatasetRef{output},

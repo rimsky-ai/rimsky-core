@@ -3,7 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @decision: three-dispatch-deadlines
-// @decision: three-dispatch-deadlines
 
 package runtime
 
@@ -69,7 +68,6 @@ func parseDispatchDeadline(s string) (time.Duration, bool) {
 	return d, true
 }
 
-// @decision: three-dispatch-deadlines
 // @decision: three-dispatch-deadlines
 func computeEffectiveDeadlineSecs(node *spec.TemplateNodeDef, quietDefault, runtimeDefault time.Duration) (*int, *int) {
 	quiet := resolveMaxQuietPeriod(node, quietDefault)

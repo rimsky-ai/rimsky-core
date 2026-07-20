@@ -262,7 +262,7 @@ func (s *ObservabilityServer) pickPoliciesView() (*genv1.AdminView, error) {
 	sort.Strings(selectors)
 	for _, sel := range selectors {
 		pp := s.pickPolicies[sel]
-		dirRoot := filepath.Join(s.root, ".fs-store", trimAt(sel))
+		dirRoot := fsstore.PolicyStateDir(s.root, sel)
 		avail, _ := countDir(filepath.Join(dirRoot, "available"))
 		inProg, _ := countDir(filepath.Join(dirRoot, "in_progress"))
 		rows = append(rows, map[string]any{
@@ -301,7 +301,7 @@ func (s *ObservabilityServer) policyItemsView(selector string) (*genv1.AdminView
 	if _, ok := s.pickPolicies[selector]; !ok {
 		return nil, status.Errorf(codes.NotFound, "selector %q not configured", selector)
 	}
-	dirRoot := filepath.Join(s.root, ".fs-store", trimAt(selector))
+	dirRoot := fsstore.PolicyStateDir(s.root, selector)
 	rows := make([]any, 0)
 	for _, state := range []string{"available", "in_progress"} {
 		entries, err := os.ReadDir(filepath.Join(dirRoot, state))
@@ -332,13 +332,6 @@ func countDir(path string) (int, error) {
 		return 0, err
 	}
 	return len(entries), nil
-}
-
-func trimAt(s string) string {
-	if len(s) > 0 && s[0] == '@' {
-		return s[1:]
-	}
-	return s
 }
 
 func (s *Server) RegisterObservability(grpcSrv *grpc.Server, root string, pickPolicies map[string]*fsstore.PickPolicy) *ObservabilityServer {

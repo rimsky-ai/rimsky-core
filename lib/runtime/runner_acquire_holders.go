@@ -52,30 +52,14 @@ func insertCoHolderClaimHoldersAtAcquire(
 	if nd == nil {
 		return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: node %s not found", cand.NodeID.String())
 	}
-	frameID := cand.FrameID
-	for alias, binding := range nodeDef.Holds {
-		upstreamType := binding.From
-		if upstreamType == "" {
-			continue
-		}
-		upstreamNode, err := findInstanceNodeByType(ctx, args, tx, nd.InstanceID, upstreamType)
-		if err != nil {
-			return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: find upstream node (alias %q): %w", alias, err)
-		}
-		if upstreamNode == nil {
-			return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: upstream node-type %q not found in instance %s (alias %q)",
-				upstreamType, nd.InstanceID.String(), alias)
-		}
-		lh, err := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmpl, upstreamType, alias, frameID)
-		if err != nil {
-			return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: lookup claim handle (alias %q): %w", alias, err)
-		}
-		if lh == nil {
-			continue
-		}
+	resolved, err := resolveHolds(ctx, args, tx, nd.InstanceID, tmpl, nodeDef, cand.FrameID, true)
+	if err != nil {
+		return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: %w", err)
+	}
+	for _, r := range resolved {
 		if err := args.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:              uuid.New(),
-			ClaimHandleID:   lh.ID,
+			ClaimHandleID:   r.claimHandle.ID,
 			HolderNodeRunID: cand.NodeRunID,
 		}, tx); err != nil {
 			return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: holds: %w", err)

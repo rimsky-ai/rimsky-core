@@ -20,7 +20,7 @@ import (
 )
 
 func drainedPathFor(root, selector string) string {
-	return filepath.Join(policyStateDir(root, selector), "drained")
+	return filepath.Join(PolicyStateDir(root, selector), "drained")
 }
 
 func TestOnDrain_SinglePass(t *testing.T) {
@@ -200,7 +200,7 @@ func TestOnDrain_RaceUnderConcurrentOpens(t *testing.T) {
 	if available == 0 {
 		t.Errorf("expected at least one Acquired; got 0")
 	}
-	state := policyStateDir(root, "@r")
+	state := PolicyStateDir(root, "@r")
 	entries, _ := os.ReadDir(state)
 	drainedCount := 0
 	for _, e := range entries {

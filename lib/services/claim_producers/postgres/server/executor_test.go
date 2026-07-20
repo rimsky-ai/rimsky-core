@@ -310,11 +310,33 @@ func TestExecutor_Capabilities(t *testing.T) {
 		have[c] = true
 	}
 	for _, must := range []string{
-		"pg/attribute_invalid",
-		"pg/verifier_check_failed/*",
+		attributeInvalidClass,
+		verifierCheckFailedPrefix + "*",
 	} {
 		if !have[must] {
 			t.Errorf("declared_error_classes missing %q (got %v)", must, got)
+		}
+	}
+}
+
+func TestExecutor_Capabilities_DoesNotDeclareProducerOnlyClasses(t *testing.T) {
+	obs := NewExecutorObservabilityServer()
+	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	got := caps.GetDeclaredErrorClasses()
+	have := map[string]bool{}
+	for _, c := range got {
+		have[c] = true
+	}
+	for _, producerOnly := range []string{
+		pgsstore.ClaimUnavailableClass,
+		pgsstore.SwapFailedClass,
+		pgsstore.NotReplaceableClass,
+	} {
+		if have[producerOnly] {
+			t.Errorf("declared_error_classes contains %q, a claim-producer Open/Commit class the Executor's Execute path never emits (got %v)", producerOnly, got)
 		}
 	}
 }

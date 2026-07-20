@@ -110,12 +110,12 @@ func TestClaudeAgentPerNodeDivergence(t *testing.T) {
 
 func buildPerNodeTemplate(pubPEM string) map[string]any {
 	alphaAttrs := perNodeAgentAttrs("scenario:per_node_witness node_hint alpha", pubPEM)
-	setInlineMcpHTTP(alphaAttrs, "validator", perNodeAlphaMcpURL)
-	setExposeEnv(alphaAttrs, "VALIDATOR_TOKEN")
+	withInlineMcpServer("validator", perNodeAlphaMcpURL)(alphaAttrs)
+	withExposeEnv("VALIDATOR_TOKEN")(alphaAttrs)
 
 	betaAttrs := perNodeAgentAttrs("scenario:per_node_witness node_hint beta", pubPEM)
-	setInlineMcpHTTP(betaAttrs, "local-tool", perNodeBetaMcpURL)
-	setExposeEnv(betaAttrs, "REVIEWER_SEED")
+	withInlineMcpServer("local-tool", perNodeBetaMcpURL)(betaAttrs)
+	withExposeEnv("REVIEWER_SEED")(betaAttrs)
 
 	gammaAttrs := perNodeAgentAttrs("scenario:per_node_witness node_hint gamma", pubPEM)
 	setInlineMcpModule(gammaAttrs, perNodeModuleServer, perNodeModuleSpecs)
@@ -178,27 +178,11 @@ func perNodeAgentAttrs(userPrompt, pubPEM string) map[string]any {
 	return attrs
 }
 
-func setInlineMcpHTTP(attrs map[string]any, name, url string) {
-	cliDefault := attrs["schema"].(map[string]any)["properties"].(map[string]any)["cli"].(map[string]any)["default"].(map[string]any)
-	cliDefault["mcp_servers"] = []any{
-		map[string]any{"transport": "http", "name": name, "url": url},
-	}
-}
-
 func setInlineMcpModule(attrs map[string]any, name, module string) {
 	cliDefault := attrs["schema"].(map[string]any)["properties"].(map[string]any)["cli"].(map[string]any)["default"].(map[string]any)
 	cliDefault["mcp_servers"] = []any{
 		map[string]any{"transport": "module", "name": name, "module": module},
 	}
-}
-
-func setExposeEnv(attrs map[string]any, names ...string) {
-	cliDefault := attrs["schema"].(map[string]any)["properties"].(map[string]any)["cli"].(map[string]any)["default"].(map[string]any)
-	exposeEnv := make([]any, 0, len(names))
-	for _, n := range names {
-		exposeEnv = append(exposeEnv, n)
-	}
-	cliDefault["expose_env"] = exposeEnv
 }
 
 func readPerNodeObservation(t *testing.T, ep harness.RimskyEndpoint, nodeID string) map[string]any {

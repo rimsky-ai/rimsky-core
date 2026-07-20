@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -20,7 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorpub"
 )
 
 type ObjectMeta struct {
@@ -467,29 +466,8 @@ func seenNameSet(names []string) map[string]struct{} {
 }
 
 func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[string]any, idempotencyKey string) error {
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-	envelope := map[string]any{
-		"type":                      w.MessageType,
-		"payload":                   json.RawMessage(payloadBytes),
-		"sender":                    "sensor-object-store",
-		"publisher_subscription_id": w.SubscriptionID,
-	}
-	raw, err := publisherkit.MarshalEnvelope(envelope)
-	if err != nil {
-		return err
-	}
-	messageURL := strings.TrimRight(s.rimskyEndpoint, "/") + "/v1/instances/" + url.PathEscape(w.InstanceID) + "/messages"
-	res := publisherkit.Send(ctx, s.httpClient, s.logger, nil, publisherkit.Request{
-		URL:            messageURL,
-		Envelope:       raw,
-		IdempotencyKey: idempotencyKey,
-		PublisherName:  "sensor-object-store",
-		SubscriptionID: w.SubscriptionID,
-	})
-	return res.Err
+	return sensorpub.PostMessage(ctx, s.httpClient, s.logger, s.rimskyEndpoint, "sensor-object-store",
+		w.MessageType, w.InstanceID, w.SubscriptionID, payload, idempotencyKey)
 }
 
 func (s *SensorService) Run(ctx context.Context) {

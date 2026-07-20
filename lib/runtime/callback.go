@@ -414,7 +414,7 @@ func (c *CallbackServer) reconstructAcquisition(
 		return err
 	}
 	acq.Locks = acqLocks
-	held, err := loadInheritedClaimsForNode(ctx, args, tx, nd, acq.FrameID)
+	held, err := loadInheritedClaimsForNode(ctx, args, tx, nd.InstanceID, tmpl, acq.NodeDef, acq.FrameID)
 	if err != nil {
 		return fmt.Errorf("reconstructAcquisition: load inherited claims: %w", err)
 	}
@@ -577,7 +577,7 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 			Changed:       body.Success.Changed,
 			ChangeSummary: body.Success.ChangeSummary,
 			AttributesDel: body.Success.AttributesDelta,
-			Tags:          dedupTagsRT(body.Success.Tags),
+			Tags:          shared.DedupStrings(body.Success.Tags),
 			Scratch:       body.Success.Scratch,
 		}, nil
 	case body.Error != nil:
@@ -586,7 +586,7 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 			ErrorClass:    body.Error.ErrorClass,
 			Payload:       map[string]any{"payload": body.Error.Payload},
 			AttributesDel: body.Error.AttributesDelta,
-			Tags:          dedupTagsRT(body.Error.Tags),
+			Tags:          shared.DedupStrings(body.Error.Tags),
 			Scratch:       body.Error.Scratch,
 		}, nil
 	case body.Park != nil:
@@ -600,7 +600,7 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 		return terminalEvent{
 			Kind:         terminalKindPark,
 			ParkResumeAt: pt,
-			Tags:         dedupTagsRT(body.Park.Tags),
+			Tags:         shared.DedupStrings(body.Park.Tags),
 			Scratch:      body.Park.Scratch,
 		}, nil
 	}

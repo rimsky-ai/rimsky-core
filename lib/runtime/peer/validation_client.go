@@ -125,11 +125,7 @@ func DialValidation(_ context.Context, name, endpoint, tlsMode string, supported
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(target,
-		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
-		grpc.WithChainUnaryInterceptor(ServiceNameUnaryInterceptor, TLSModeUnaryInterceptor(name, tlsMode)),
-		grpc.WithChainStreamInterceptor(ServiceNameStreamInterceptor, TLSModeStreamInterceptor(name, tlsMode)),
-	)
+	conn, err := grpc.NewClient(target, dialOptions(name, tlsMode)...)
 	if err != nil {
 		return nil, fmt.Errorf("remote validation %q: dial %q: %w", name, endpoint, err)
 	}
@@ -146,10 +142,7 @@ func FetchExecutorValidationRoles(ctx context.Context, name, endpoint, tlsMode s
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(target,
-		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
-		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),
-	)
+	conn, err := grpc.NewClient(target, capabilityDialOptions(name, tlsMode)...)
 	if err != nil {
 		return nil, fmt.Errorf("remote executor %q: dial %q: %w", name, endpoint, err)
 	}
@@ -166,10 +159,7 @@ func FetchPublisherValidationRoles(ctx context.Context, name, endpoint, tlsMode 
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(target,
-		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
-		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),
-	)
+	conn, err := grpc.NewClient(target, capabilityDialOptions(name, tlsMode)...)
 	if err != nil {
 		return nil, fmt.Errorf("remote publisher %q: dial %q: %w", name, endpoint, err)
 	}

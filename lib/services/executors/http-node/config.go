@@ -27,14 +27,14 @@ type Opts struct {
 const DefaultErrorClassField = "error_class"
 
 func LoadOptsFromEnv() (Opts, error) {
-	opts := Opts{Host: env("RIMSKY_EXECUTOR_HTTP_NODE_HOST", "0.0.0.0")}
+	opts := Opts{Host: envOr("RIMSKY_EXECUTOR_HTTP_NODE_HOST", "0.0.0.0")}
 	opts.GRPCPort = agentport.Resolve("RIMSKY_EXECUTOR_HTTP_NODE_PORT", 9091)
-	opts.HTTPPort = atoi(env("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT", strconv.Itoa(opts.GRPCPort+1)))
-	opts.TimeoutMs = atoi(env("RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS", "60000"))
-	opts.MaxBodyBytes = atoi(env("RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES", "10485760"))
-	opts.StubMode = env("RIMSKY_EXECUTOR_STUB_MODE", "0") == "1"
-	opts.HTTPBridgeURL = env("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL", "")
-	opts.ErrorClassField = env("RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD", DefaultErrorClassField)
+	opts.HTTPPort = atoiOr("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT", opts.GRPCPort+1)
+	opts.TimeoutMs = atoiOr("RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS", 60000)
+	opts.MaxBodyBytes = atoiOr("RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES", 10485760)
+	opts.StubMode = envOr("RIMSKY_EXECUTOR_STUB_MODE", "0") == "1"
+	opts.HTTPBridgeURL = envOr("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL", "")
+	opts.ErrorClassField = envOr("RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD", DefaultErrorClassField)
 	guard, err := egress.NewGuardFromEnv("RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST")
 	if err != nil {
 		return Opts{}, err
@@ -43,11 +43,21 @@ func LoadOptsFromEnv() (Opts, error) {
 	return opts, nil
 }
 
-func env(k, d string) string {
+func envOr(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
 	}
-	return d
+	return def
 }
 
-func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
+func atoiOr(k string, def int) int {
+	v := os.Getenv(k)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}

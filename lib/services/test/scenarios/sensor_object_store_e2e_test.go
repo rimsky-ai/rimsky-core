@@ -39,7 +39,7 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	ctx := context.Background()
 
 	netName := harness.NewNetwork(ctx, t)
-	statePG := startSensorObjectStoreStatePostgres(ctx, t, netName)
+	statePG := startSensorStatePostgres(ctx, t, netName, "sensor-object-store-pg")
 
 	rimskyAlias := harness.NextRimskyAlias()
 	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
@@ -56,7 +56,7 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	statePool := connectSensorObjectStoreStatePostgres(ctx, t, statePG.hostDSN)
+	statePool := connectSensorStatePostgres(ctx, t, statePG.hostDSN)
 	defer statePool.Close()
 	subID := waitForSensorObjectStoreSubscriptionPersisted(t, ctx, statePool, 60*time.Second)
 	t.Logf("sensor-object-store persisted subscription %s", subID)
@@ -204,26 +204,6 @@ func requireObjectStoreMessagePayload(t *testing.T, ep harness.RimskyEndpoint, i
 		want, instanceID, lastSeen, label)
 }
 
-type sensorObjectStoreStatePostgres struct {
-	internalDSN string
-	hostDSN     string
-}
-
-func startSensorObjectStoreStatePostgres(ctx context.Context, t *testing.T, networkName string) sensorObjectStoreStatePostgres {
-	t.Helper()
-	dsn, hostDSN := harness.StartFreshPostgresWithAlias(ctx, t, networkName, "sensor-object-store-pg")
-	return sensorObjectStoreStatePostgres{internalDSN: dsn, hostDSN: hostDSN}
-}
-
-func connectSensorObjectStoreStatePostgres(ctx context.Context, t *testing.T, hostDSN string) *pgxpool.Pool {
-	t.Helper()
-	pool, err := pgxpool.New(ctx, hostDSN)
-	if err != nil {
-		t.Fatalf("connect sensor-object-store state postgres: %v", err)
-	}
-	return pool
-}
-
 func waitForSensorObjectStoreSubscriptionPersisted(t *testing.T, ctx context.Context, pool *pgxpool.Pool, deadline time.Duration) string {
 	t.Helper()
 	end := time.Now().Add(deadline)
@@ -318,7 +298,7 @@ func deployObjectStoreSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 	if err != nil {
 		t.Fatalf("marshal sensor config: %v", err)
 	}
-	body := map[string]any{
+	return deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":    "sensor-object-store-e2e",
 			"version": "1",
@@ -353,47 +333,10 @@ func deployObjectStoreSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 				},
 			},
 		},
-	}
-	status, raw := ep.PostJSON(t, "/v1/templates", body)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /templates: %d %s", status, string(raw))
-	}
-	var resp struct {
-		TemplateID string `json:"template_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode template response: %v: %s", err, string(raw))
-	}
-	if resp.TemplateID == "" {
-		t.Fatalf("template_id empty: %s", string(raw))
-	}
-	deployStatus, deployRaw := ep.PostJSON(t,
-		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
-	if deployStatus != http.StatusOK {
-		t.Fatalf("POST /templates/%s/deploy: %d %s",
-			resp.TemplateID, deployStatus, string(deployRaw))
-	}
-	return resp.TemplateID
+	})
 }
 
 func createObjectStoreSensorInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("POST /instances: %d %s", status, string(raw))
-	}
-	var resp struct {
-		InstanceID string `json:"instance_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode instance response: %v: %s", err, string(raw))
-	}
-	if resp.InstanceID == "" {
-		t.Fatalf("instance_id empty: %s", string(raw))
-	}
-	return resp.InstanceID
+	return createScenarioInstanceNoWake(t, ep, templateID, instanceKey)
 }

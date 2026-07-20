@@ -19,6 +19,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/checkspec"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
 )
 
 // @concept: executor
@@ -38,24 +40,24 @@ func NewServer(stubMode bool) *Server {
 func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	ud := req.GetAttributes().AsMap()
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
-		return stubSuccess(), nil
+		return execoutcome.StubSuccess("verifier-http stub"), nil
 	}
 	urlStr, _ := ud["url"].(string)
 	if urlStr == "" {
-		return erroredOutcome("verifier/attribute_invalid", "attributes.url required"), nil
+		return execoutcome.Errored("verifier/attribute_invalid", "attributes.url required"), nil
 	}
 	if s.stubMode {
-		return stubSuccess(), nil
+		return execoutcome.StubSuccess("verifier-http stub"), nil
 	}
 	timeout := 60 * time.Second
-	if ms, ok := numeric(ud["timeout_ms"]); ok && ms > 0 {
+	if ms, ok := checkspec.Numeric(ud["timeout_ms"]); ok && ms > 0 {
 		timeout = time.Duration(ms) * time.Millisecond
 	}
 	expected := defaultExpectedStatus()
 	if es, ok := ud["expected_status"].([]any); ok && len(es) > 0 {
 		var exact []int
 		for _, v := range es {
-			if n, ok := numeric(v); ok {
+			if n, ok := checkspec.Numeric(v); ok {
 				exact = append(exact, int(n))
 			}
 		}
@@ -65,7 +67,7 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	if body, ok := ud["body"]; ok && body != nil {
 		raw, err := json.Marshal(body)
 		if err != nil {
-			return erroredOutcome("verifier/attribute_invalid", "body not JSON-serialisable: "+err.Error()), nil
+			return execoutcome.Errored("verifier/attribute_invalid", "body not JSON-serialisable: "+err.Error()), nil
 		}
 		bodyReader = bytes.NewReader(raw)
 	}
@@ -74,7 +76,7 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	defer cancel()
 	httpReq, err := http.NewRequestWithContext(dispatchCtx, http.MethodPost, urlStr, bodyReader)
 	if err != nil {
-		return erroredOutcome("verifier/attribute_invalid", err.Error()), nil
+		return execoutcome.Errored("verifier/attribute_invalid", err.Error()), nil
 	}
 	if bodyReader != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -83,7 +85,7 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
-		return erroredOutcome(classifyTransportErr(err), err.Error()), nil
+		return execoutcome.Errored(classifyTransportErr(err), err.Error()), nil
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -177,20 +179,6 @@ func (s expectedStatusSet) describe() any {
 	return out
 }
 
-func numeric(v any) (float64, bool) {
-	switch x := v.(type) {
-	case float64:
-		return x, true
-	case float32:
-		return float64(x), true
-	case int:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	}
-	return 0, false
-}
-
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return strings.ToValidUTF8(s, "")
@@ -210,20 +198,4 @@ func classifyTransportErr(err error) string {
 		return "verifier/timeout"
 	}
 	return "verifier/network_error"
-}
-
-func erroredOutcome(class, msg string) *genv1.Outcome {
-	payload, _ := structpb.NewStruct(map[string]any{"message": msg})
-	return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
-		ErrorClass: class, Payload: payload,
-	}}}
-}
-
-func stubSuccess() *genv1.Outcome {
-	delta, _ := structpb.NewStruct(map[string]any{"stub": true})
-	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
-		AttributesDelta: delta,
-		Changed:         false,
-		ChangeSummary:   "verifier-http stub",
-	}}}
 }

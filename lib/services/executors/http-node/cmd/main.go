@@ -51,8 +51,7 @@ func main() {
 	}
 	grpcSrv := grpc.NewServer(identity.GRPCServerOptions()...)
 	genv1.RegisterExecutorServer(grpcSrv, s)
-	obs := httpnode.RegisterObservability(grpcSrv)
-	obs.SetHTTPBridgeURL(opts.HTTPBridgeURL)
+	obs := httpnode.RegisterObservability(grpcSrv, opts.HTTPBridgeURL)
 	s.SetObservability(obs)
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {

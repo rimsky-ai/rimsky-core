@@ -13,6 +13,91 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
+type cancelWalkOpts struct {
+	outcome                    TerminalOutcome
+	skip                       func(row persistence.ClaimHandleRow) bool
+	parentClaimHandleID        func(row persistence.ClaimHandleRow) *shared.UUID
+	lineageParentClaimHandleID *shared.UUID
+}
+
+// @concept: claim-tree
+// @concept: fan-out
+// @concept: cancel-siblings
+func cancelClaimHandleWalk(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	rows []persistence.ClaimHandleRow, opts cancelWalkOpts,
+) (postCommitFn, error) {
+	var post postCommitFn
+	for _, row := range rows {
+		if opts.skip != nil && opts.skip(row) {
+			continue
+		}
+		if row.State != spec.ClaimHandleStateActive {
+			continue
+		}
+		if row.HolderSupervisorID == nil || *row.HolderSupervisorID != args.SupervisorID {
+			continue
+		}
+		current, err := args.ClaimHandles.LockForUpdate(ctx, row.ID, tx)
+		if err != nil {
+			return nil, fmt.Errorf("cancelClaimHandleWalk: LockForUpdate %s: %w", row.ID, err)
+		}
+		if current == nil || current.State != spec.ClaimHandleStateActive {
+			continue
+		}
+		producerName := ""
+		if row.ProducerName != nil {
+			producerName = *row.ProducerName
+		}
+		producer, ok := args.StoreRegistry.Get(producerName)
+		if !ok {
+			return nil, fmt.Errorf("cancelClaimHandleWalk: unknown producer %q for claim handle %s",
+				producerName, row.ID)
+		}
+		hint := ClaimLineageHint{
+			ProducerName: producerName,
+			VersionID:    row.VersionID,
+			NodeID:       row.HolderNodeID,
+		}
+		if row.FrameID != nil {
+			hint.FrameID = *row.FrameID
+		}
+		if row.NodeRunID != nil {
+			hint.NodeRunID = *row.NodeRunID
+		}
+		instID, err := acquirerInstanceID(ctx, args, tx, row.HolderNodeID)
+		if err != nil {
+			return nil, fmt.Errorf("cancelClaimHandleWalk: %w", err)
+		}
+		hint.InstanceID = instID
+		var parentClaimHandleID *shared.UUID
+		if opts.parentClaimHandleID != nil {
+			parentClaimHandleID = opts.parentClaimHandleID(row)
+		}
+		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+			ClaimHandleID:              row.ID,
+			SupervisorID:               args.SupervisorID,
+			Source:                     HeldTerminal,
+			Outcome:                    opts.outcome,
+			Producer:                   producer,
+			Scope:                      []byte(row.ClaimScopeData),
+			Address:                    []byte(row.Address),
+			LeaseToken:                 row.ProducerLeaseToken,
+			Lifetime:                   row.Lifetime,
+			CandidateHandle:            row.ProducerCandidateHandle,
+			ProducerName:               producerName,
+			LineageHint:                hint,
+			ParentClaimHandleID:        parentClaimHandleID,
+			LineageParentClaimHandleID: opts.lineageParentClaimHandleID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("cancelClaimHandleWalk: force-Abandon %s: %w", row.ID, err)
+		}
+		post = chainPostCommit(post, pc)
+	}
+	return post, nil
+}
+
 // @concept: claim-tree
 // @concept: fan-out
 // @concept: cancel-siblings
@@ -46,72 +131,15 @@ func cancelInFlightSiblings(
 	if err != nil {
 		return nil, fmt.Errorf("cancelInFlightSiblings: ListChildClaimHandles: %w", err)
 	}
-	var post postCommitFn
-	for _, sib := range siblings {
-		if sib.ID == triggerID {
-			continue
-		}
-		if sib.State != spec.ClaimHandleStateActive {
-			continue
-		}
-		if sib.HolderSupervisorID == nil || *sib.HolderSupervisorID != args.SupervisorID {
-			continue
-		}
-		current, err := args.ClaimHandles.LockForUpdate(ctx, sib.ID, tx)
-		if err != nil {
-			return nil, fmt.Errorf("cancelInFlightSiblings: LockForUpdate sibling %s: %w",
-				sib.ID, err)
-		}
-		if current == nil || current.State != spec.ClaimHandleStateActive {
-			continue
-		}
-		producerName := ""
-		if sib.ProducerName != nil {
-			producerName = *sib.ProducerName
-		}
-		producer, ok := args.StoreRegistry.Get(producerName)
-		if !ok {
-			return nil, fmt.Errorf("cancelInFlightSiblings: unknown producer %q for sibling %s",
-				producerName, sib.ID)
-		}
-		hint := ClaimLineageHint{
-			ProducerName: producerName,
-			VersionID:    sib.VersionID,
-			NodeID:       sib.HolderNodeID,
-		}
-		if sib.FrameID != nil {
-			hint.FrameID = *sib.FrameID
-		}
-		if sib.NodeRunID != nil {
-			hint.NodeRunID = *sib.NodeRunID
-		}
-		instID, err := acquirerInstanceID(ctx, args, tx, sib.HolderNodeID)
-		if err != nil {
-			return nil, fmt.Errorf("cancelInFlightSiblings: %w", err)
-		}
-		hint.InstanceID = instID
-		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
-			ClaimHandleID:       sib.ID,
-			SupervisorID:        args.SupervisorID,
-			Source:              HeldTerminal,
-			Outcome:             OutcomeAbandonSiblingCancel,
-			Producer:            producer,
-			Scope:               []byte(sib.ClaimScopeData),
-			Address:             []byte(sib.Address),
-			LeaseToken:          sib.ProducerLeaseToken,
-			Lifetime:            sib.Lifetime,
-			CandidateHandle:     sib.ProducerCandidateHandle,
-			ProducerName:        producerName,
-			LineageHint:         hint,
-			ParentClaimHandleID: sib.ParentClaimHandleID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("cancelInFlightSiblings: force-Abandon sibling %s: %w",
-				sib.ID, err)
-		}
-		post = chainPostCommit(post, pc)
-	}
-	return post, nil
+	return cancelClaimHandleWalk(ctx, args, tx, siblings, cancelWalkOpts{
+		outcome: OutcomeAbandonSiblingCancel,
+		skip: func(row persistence.ClaimHandleRow) bool {
+			return row.ID == triggerID
+		},
+		parentClaimHandleID: func(row persistence.ClaimHandleRow) *shared.UUID {
+			return row.ParentClaimHandleID
+		},
+	})
 }
 
 // @concept: claim-tree
@@ -125,68 +153,8 @@ func cancelDescendantClaims(
 	if err != nil {
 		return nil, fmt.Errorf("cancelDescendantClaims: ListChildClaimHandles: %w", err)
 	}
-	var post postCommitFn
-	for _, d := range descendants {
-		if d.State != spec.ClaimHandleStateActive {
-			continue
-		}
-		if d.HolderSupervisorID == nil || *d.HolderSupervisorID != args.SupervisorID {
-			continue
-		}
-		current, err := args.ClaimHandles.LockForUpdate(ctx, d.ID, tx)
-		if err != nil {
-			return nil, fmt.Errorf("cancelDescendantClaims: LockForUpdate descendant %s: %w",
-				d.ID, err)
-		}
-		if current == nil || current.State != spec.ClaimHandleStateActive {
-			continue
-		}
-		producerName := ""
-		if d.ProducerName != nil {
-			producerName = *d.ProducerName
-		}
-		producer, ok := args.StoreRegistry.Get(producerName)
-		if !ok {
-			return nil, fmt.Errorf("cancelDescendantClaims: unknown producer %q for descendant %s",
-				producerName, d.ID)
-		}
-		hint := ClaimLineageHint{
-			ProducerName: producerName,
-			VersionID:    d.VersionID,
-			NodeID:       d.HolderNodeID,
-		}
-		if d.FrameID != nil {
-			hint.FrameID = *d.FrameID
-		}
-		if d.NodeRunID != nil {
-			hint.NodeRunID = *d.NodeRunID
-		}
-		instID, err := acquirerInstanceID(ctx, args, tx, d.HolderNodeID)
-		if err != nil {
-			return nil, fmt.Errorf("cancelDescendantClaims: %w", err)
-		}
-		hint.InstanceID = instID
-		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
-			ClaimHandleID:              d.ID,
-			SupervisorID:               args.SupervisorID,
-			Source:                     HeldTerminal,
-			Outcome:                    OutcomeAbandonDescendantCancel,
-			Producer:                   producer,
-			Scope:                      []byte(d.ClaimScopeData),
-			Address:                    []byte(d.Address),
-			LeaseToken:                 d.ProducerLeaseToken,
-			Lifetime:                   d.Lifetime,
-			CandidateHandle:            d.ProducerCandidateHandle,
-			ProducerName:               producerName,
-			LineageHint:                hint,
-			ParentClaimHandleID:        nil,
-			LineageParentClaimHandleID: &rowID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("cancelDescendantClaims: force-Abandon descendant %s: %w",
-				d.ID, err)
-		}
-		post = chainPostCommit(post, pc)
-	}
-	return post, nil
+	return cancelClaimHandleWalk(ctx, args, tx, descendants, cancelWalkOpts{
+		outcome:                    OutcomeAbandonDescendantCancel,
+		lineageParentClaimHandleID: &rowID,
+	})
 }

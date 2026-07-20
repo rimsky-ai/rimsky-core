@@ -256,27 +256,26 @@ func parseMcpServers(v any) ([]McpServerInput, error) {
 			AllowedTools: stringArrayOrNil(e["allowed_tools"]),
 		}
 		switch transport {
-		case "http":
+		case mcpTransportHTTP:
 			entry.URL = stringOrEmpty(e["url"])
 			if entry.URL == "" {
 				return nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers[%d] (http) requires a non-empty url", i)}
 			}
 			entry.Headers = stringMapOrNil(e["headers"])
-		case "stdio":
+		case mcpTransportStdio:
 			entry.Command = stringOrEmpty(e["command"])
 			if entry.Command == "" {
 				return nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers[%d] (stdio) requires a non-empty command", i)}
 			}
 			entry.Args = stringArrayOrNil(e["args"])
 			entry.Env = stringMapOrNil(e["env"])
-		case "module", "http-loopback":
+		case mcpTransportModule, mcpTransportHTTPLoopback:
 			entry.Module = stringOrEmpty(e["module"])
 			if entry.Module == "" {
 				return nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers[%d] (%s) requires a non-empty module specifier", i, transport)}
 			}
 		default:
-			return nil, &CliConfigError{Message: fmt.Sprintf(
-				"cli.mcp_servers[%d] has unknown transport %q (expected http | stdio | module | http-loopback)", i, transport)}
+			return nil, unknownMcpTransportError(fmt.Sprintf("cli.mcp_servers[%d]", i), transport)
 		}
 		out = append(out, entry)
 	}

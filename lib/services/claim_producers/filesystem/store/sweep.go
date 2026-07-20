@@ -37,7 +37,7 @@ func (s *Store) sweepOnce() error {
 		if pp.VisibilityTimeout <= 0 {
 			continue
 		}
-		state := policyStateDir(s.root, selector)
+		state := PolicyStateDir(s.root, selector)
 		inProg := filepath.Join(state, "in_progress")
 		avail := filepath.Join(state, "available")
 		entries, err := os.ReadDir(inProg)

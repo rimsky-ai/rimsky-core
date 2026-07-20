@@ -9,6 +9,8 @@ import (
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/status"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
 type ProducerCallError struct {
@@ -57,4 +59,18 @@ func extractStatusMessage(err error) string {
 		return err.Error()
 	}
 	return st.Message()
+}
+
+func GateSplitScope(caps claimproducer.Capabilities) error {
+	if caps.SupportsSplitScope {
+		return nil
+	}
+	return claimproducer.ErrSplitScopeUnsupported
+}
+
+func GateScopesConflict(caps claimproducer.Capabilities, a, b []byte) (fallback, gated bool) {
+	if caps.SupportsScopesConflict {
+		return false, false
+	}
+	return claimproducer.ErrScopesConflictUnsupportedFallback(a, b), true
 }

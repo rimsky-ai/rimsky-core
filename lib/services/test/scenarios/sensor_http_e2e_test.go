@@ -55,7 +55,7 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	hostPort := hostPortOf(t, upstream.URL)
 
 	netName := harness.NewNetwork(ctx, t)
-	statePG := startSensorHTTPStatePostgres(ctx, t, netName)
+	statePG := startSensorStatePostgres(ctx, t, netName, "sensor-http-pg")
 
 	rimskyAlias := harness.NextRimskyAlias()
 	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
@@ -91,7 +91,7 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	requirePublisherMessageCountStable(t, ep, instanceID, 1,
 		5*httpPollInterval, "exactly-one-after-first-match")
 
-	statePool := connectSensorHTTPStatePostgres(ctx, t, statePG.hostDSN)
+	statePool := connectSensorStatePostgres(ctx, t, statePG.hostDSN)
 	defer statePool.Close()
 	subID, originalLastHash := waitForSensorHttpRowWithHash(t, ctx, statePool, 20*time.Second)
 	t.Logf("sensor-http persisted subscription %s with last_hash=%s before restart",
@@ -130,26 +130,6 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 		5*httpPollInterval, "exactly-one-after-second-match")
 
 	requireSensorHttpHashAdvanced(t, ctx, statePool, subID, originalLastHash, 20*time.Second)
-}
-
-type sensorHttpStatePostgres struct {
-	internalDSN string
-	hostDSN     string
-}
-
-func startSensorHTTPStatePostgres(ctx context.Context, t *testing.T, networkName string) sensorHttpStatePostgres {
-	t.Helper()
-	dsn, hostDSN := harness.StartFreshPostgresWithAlias(ctx, t, networkName, "sensor-http-pg")
-	return sensorHttpStatePostgres{internalDSN: dsn, hostDSN: hostDSN}
-}
-
-func connectSensorHTTPStatePostgres(ctx context.Context, t *testing.T, hostDSN string) *pgxpool.Pool {
-	t.Helper()
-	pool, err := pgxpool.New(ctx, hostDSN)
-	if err != nil {
-		t.Fatalf("connect sensor-http state postgres: %v", err)
-	}
-	return pool
 }
 
 func waitForSensorHttpRowWithHash(t *testing.T, ctx context.Context, pool *pgxpool.Pool, deadline time.Duration) (string, string) {
@@ -336,7 +316,7 @@ func deploySensorHttpTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedUR
 	if err != nil {
 		t.Fatalf("marshal sensor config: %v", err)
 	}
-	body := map[string]any{
+	return deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":    "sensor-http-e2e",
 			"version": "1",
@@ -372,47 +352,10 @@ func deploySensorHttpTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedUR
 				},
 			},
 		},
-	}
-	status, raw := ep.PostJSON(t, "/v1/templates", body)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /templates: %d %s", status, string(raw))
-	}
-	var resp struct {
-		TemplateID string `json:"template_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode template response: %v: %s", err, string(raw))
-	}
-	if resp.TemplateID == "" {
-		t.Fatalf("template_id empty: %s", string(raw))
-	}
-	deployStatus, deployRaw := ep.PostJSON(t,
-		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
-	if deployStatus != http.StatusOK {
-		t.Fatalf("POST /templates/%s/deploy: %d %s",
-			resp.TemplateID, deployStatus, string(deployRaw))
-	}
-	return resp.TemplateID
+	})
 }
 
 func createSensorHttpInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("POST /instances: %d %s", status, string(raw))
-	}
-	var resp struct {
-		InstanceID string `json:"instance_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode instance response: %v: %s", err, string(raw))
-	}
-	if resp.InstanceID == "" {
-		t.Fatalf("instance_id empty: %s", string(raw))
-	}
-	return resp.InstanceID
+	return createScenarioInstanceNoWake(t, ep, templateID, instanceKey)
 }

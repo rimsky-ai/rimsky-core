@@ -133,17 +133,17 @@ func startSplitControlAPI(ctx context.Context, t testing.TB, cb *configBuilder, 
 
 	hostIP, err := c.Host(ctx)
 	if err != nil {
-		dumpLogsForFailure(t, c)
+		dumpLogsForFailure(t, "split control-api", c)
 		t.Fatalf("harness: split control-api host: %v", err)
 	}
 	mapped, err := c.MappedPort(ctx, "8080")
 	if err != nil {
-		dumpLogsForFailure(t, c)
+		dumpLogsForFailure(t, "split control-api", c)
 		t.Fatalf("harness: split control-api mapped port: %v", err)
 	}
 	baseURL := fmt.Sprintf("http://%s:%s", hostIP, mapped.Port())
 	if err := waitForHealth(ctx, baseURL, healthDeadline); err != nil {
-		dumpLogsForFailure(t, c)
+		dumpLogsForFailure(t, "split control-api", c)
 		t.Fatalf("harness: split control-api /health did not return 200: %v", err)
 	}
 	return baseURL
@@ -180,7 +180,7 @@ func startSplitRole(ctx context.Context, t testing.TB, cb *configBuilder, spec s
 	)
 	if err != nil {
 		if c != nil {
-			dumpLogsForFailure(t, c)
+			dumpLogsForFailure(t, "split "+spec.role, c)
 		}
 		t.Fatalf("harness: start split %s: %v", spec.role, err)
 	}

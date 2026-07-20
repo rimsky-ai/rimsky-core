@@ -71,6 +71,18 @@ func deployScenarioTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[st
 // @decision: test-harness-create-instance-wakes-roots-after-create
 func createScenarioInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
+	return createScenarioInstanceFromSource(t, ep, templateID, instanceKey, "scenario")
+}
+
+func createScenarioInstanceFromSource(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey, wakeSource string) string {
+	t.Helper()
+	instanceID := createScenarioInstanceNoWake(t, ep, templateID, instanceKey)
+	ep.EmptyWakeAfterCreate(t, instanceID, wakeSource, instanceKey)
+	return instanceID
+}
+
+func createScenarioInstanceNoWake(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
+	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":     templateID,
 		"instance_key": instanceKey,
@@ -88,8 +100,59 @@ func createScenarioInstance(t *testing.T, ep harness.RimskyEndpoint, templateID,
 	if resp.InstanceID == "" {
 		t.Fatalf("instance_id empty: %s", string(raw))
 	}
-	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "scenario", instanceKey)
 	return resp.InstanceID
+}
+
+func nodeDispatchState(o harness.NodeObservability) string {
+	switch {
+	case o.RunSummary.FailedCount > 0:
+		return "failed"
+	case o.RunSummary.FreshCount > 0 && o.RunSummary.ActiveCount == 0 && o.RunSummary.PendingCount == 0:
+		return "fresh"
+	default:
+		return "in-flight"
+	}
+}
+
+func TestNodeDispatchState(t *testing.T) {
+	cases := []struct {
+		name string
+		obs  harness.NodeObservability
+		want string
+	}{
+		{
+			name: "fresh when idle and fresh count positive",
+			obs:  harness.NodeObservability{RunSummary: harness.NodeRunSummary{FreshCount: 1}},
+			want: "fresh",
+		},
+		{
+			name: "in-flight when fresh count positive but a run is still active",
+			obs:  harness.NodeObservability{RunSummary: harness.NodeRunSummary{FreshCount: 1, ActiveCount: 1}},
+			want: "in-flight",
+		},
+		{
+			name: "in-flight when fresh count positive but a run is still pending",
+			obs:  harness.NodeObservability{RunSummary: harness.NodeRunSummary{FreshCount: 1, PendingCount: 1}},
+			want: "in-flight",
+		},
+		{
+			name: "failed takes priority over fresh",
+			obs:  harness.NodeObservability{RunSummary: harness.NodeRunSummary{FreshCount: 1, FailedCount: 1}},
+			want: "failed",
+		},
+		{
+			name: "in-flight when nothing settled yet",
+			obs:  harness.NodeObservability{},
+			want: "in-flight",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nodeDispatchState(tc.obs); got != tc.want {
+				t.Fatalf("nodeDispatchState(%+v) = %q, want %q", tc.obs.RunSummary, got, tc.want)
+			}
+		})
+	}
 }
 
 func waitForDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
@@ -99,14 +162,7 @@ func waitForDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, instanceID,
 		sawDispatch bool
 	)
 	obs, ok := ep.PollNodeObservability(t, instanceID, nodeType, deadline, func(o harness.NodeObservability) bool {
-		switch {
-		case o.RunSummary.FailedCount > 0:
-			lastState = "failed"
-		case o.RunSummary.FreshCount > 0 && o.RunSummary.ActiveCount == 0 && o.RunSummary.PendingCount == 0:
-			lastState = "fresh"
-		default:
-			lastState = "in-flight"
-		}
+		lastState = nodeDispatchState(o)
 		sawDispatch = sawDispatch || o.HasEventKind("work_started")
 		return sawDispatch && (lastState == "fresh" || lastState == "failed")
 	})

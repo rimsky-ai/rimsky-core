@@ -31,7 +31,7 @@ func TestBuildLockSpecs_PopulatesTemplateAndInstanceScopeFromInstance(t *testing
 		},
 	}
 
-	specs, err := buildLockSpecs(ctx, RunArgs{}, nil, nil, def, inst, shared.UUID{}, shared.UUID{}, shared.UUID{})
+	specs, _, err := buildLockSpecs(ctx, RunArgs{}, nil, nil, def, nil, inst, shared.UUID{}, shared.UUID{}, shared.UUID{})
 	if err != nil {
 		t.Fatalf("buildLockSpecs: %v", err)
 	}

@@ -56,7 +56,7 @@ func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 		t.Fatalf("rimsky instance get %s exited %d (want 0)", instanceID, getCode)
 	}
 
-	waitForExampleDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
+	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
 
 	readmeArgs := documentedRunInvocation(t, ep.BaseURL, specPath)
 	_, readmeCode := captureRunRun(t, ctx, readmeArgs)
@@ -125,23 +125,4 @@ func repoExampleSpecPath(t *testing.T, rel string) string {
 		t.Fatalf("shipped example spec %s not found at %s: %v — the example must ship as a real on-disk file", rel, path, err)
 	}
 	return path
-}
-
-func waitForExampleDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
-	t.Helper()
-	var sawDispatch bool
-	obs, ok := ep.PollNodeObservability(t, instanceID, nodeType, deadline, func(o harness.NodeObservability) bool {
-		sawDispatch = sawDispatch || o.HasEventKind("work_started")
-		return sawDispatch && (o.RunSummary.FreshCount > 0 || o.RunSummary.FailedCount > 0)
-	})
-	if !ok {
-		t.Fatalf("node %q on instance %s (driven by `rimsky run`) did not complete a real dispatch "+
-			"within %v; run_summary.fresh_count=%d failed_count=%d, work_started seen=%v",
-			nodeType, instanceID, deadline, obs.RunSummary.FreshCount, obs.RunSummary.FailedCount, sawDispatch)
-	}
-	if obs.RunSummary.FailedCount > 0 {
-		t.Fatalf("node %q dispatched via `rimsky run` but settled with failed_count=%d, want "+
-			"all-fresh — the stub executor returns Success, so any failed run is a real "+
-			"dev-loop defect", nodeType, obs.RunSummary.FailedCount)
-	}
 }

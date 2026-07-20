@@ -2,14 +2,14 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package store
+package claimledger
 
 import (
 	"testing"
 	"time"
 )
 
-func TestPgLedgerOpenAndCommit(t *testing.T) {
+func TestLedgerOpenAndCommit(t *testing.T) {
 	l := NewClaimLedger(10)
 	l.RecordOpen("c1", "/foo", []byte(`"a"`), []byte(`"r"`))
 	rec, ok := l.Get("c1")
@@ -29,7 +29,7 @@ func TestPgLedgerOpenAndCommit(t *testing.T) {
 	}
 }
 
-func TestPgLedgerListPagination(t *testing.T) {
+func TestLedgerListPagination(t *testing.T) {
 	l := NewClaimLedger(10)
 	for i := 0; i < 4; i++ {
 		l.RecordOpen("c"+string(rune('0'+i)), "/x", nil, nil)
@@ -44,7 +44,7 @@ func TestPgLedgerListPagination(t *testing.T) {
 	}
 }
 
-func TestPgLedgerStateFilter(t *testing.T) {
+func TestLedgerStateFilter(t *testing.T) {
 	l := NewClaimLedger(10)
 	l.RecordOpen("a", "/x", nil, nil)
 	l.RecordOpen("b", "/y", nil, nil)
@@ -59,7 +59,7 @@ func TestPgLedgerStateFilter(t *testing.T) {
 	}
 }
 
-func TestPgLedgerNilSafe(t *testing.T) {
+func TestLedgerNilSafe(t *testing.T) {
 	var l *ClaimLedger
 	l.RecordOpen("x", "/y", nil, nil)
 	if _, ok := l.Get("x"); ok {
@@ -72,7 +72,7 @@ func TestPgLedgerNilSafe(t *testing.T) {
 	l.RecordEvent("x", "claim_commit_failed", "ERROR", nil)
 }
 
-func TestPgLedgerRecordEvent_NonTerminal(t *testing.T) {
+func TestLedgerRecordEvent_NonTerminal(t *testing.T) {
 	l := NewClaimLedger(10)
 	l.RecordOpen("c1", "/foo", []byte(`"a"`), []byte(`"r"`))
 	l.RecordEvent("c1", "claim_commit_failed", "ERROR", map[string]any{
@@ -105,7 +105,7 @@ func TestPgLedgerRecordEvent_NonTerminal(t *testing.T) {
 	}
 }
 
-func TestPgLedgerEviction_NeverEvictsOpenRecords(t *testing.T) {
+func TestLedgerEviction_NeverEvictsOpenRecords(t *testing.T) {
 	l := NewClaimLedger(3)
 	for i := 0; i < 5; i++ {
 		l.RecordOpen(string(rune('a'+i)), "/x", nil, nil)
@@ -121,7 +121,7 @@ func TestPgLedgerEviction_NeverEvictsOpenRecords(t *testing.T) {
 	}
 }
 
-func TestPgLedgerEviction_EvictsClosedRecordsBeforeCap(t *testing.T) {
+func TestLedgerEviction_EvictsClosedRecordsBeforeCap(t *testing.T) {
 	l := NewClaimLedger(3)
 	l.RecordOpen("closed-1", "/x", nil, nil)
 	l.RecordTerminal("closed-1", "claim_committed", nil)
@@ -139,7 +139,7 @@ func TestPgLedgerEviction_EvictsClosedRecordsBeforeCap(t *testing.T) {
 	}
 }
 
-func TestPgLedgerRecordEvent_DefaultSeverity(t *testing.T) {
+func TestLedgerRecordEvent_DefaultSeverity(t *testing.T) {
 	l := NewClaimLedger(10)
 	l.RecordOpen("c1", "/foo", nil, nil)
 	l.RecordEvent("c1", "claim_progress", "", nil)
@@ -147,5 +147,41 @@ func TestPgLedgerRecordEvent_DefaultSeverity(t *testing.T) {
 	tail := rec.History[len(rec.History)-1]
 	if tail.Severity != "INFO" {
 		t.Fatalf("tail severity = %q, want INFO (default)", tail.Severity)
+	}
+}
+
+func TestLedgerSubscribeWithSnapshot_ClosesOnTerminal(t *testing.T) {
+	l := NewClaimLedger(10)
+	l.RecordOpen("c1", "/foo", nil, nil)
+	history, rec, ch, unsub := l.SubscribeWithSnapshot("c1")
+	defer unsub()
+	if rec == nil || rec.State != ClaimStateOpen {
+		t.Fatalf("snapshot record = %+v, want OPEN", rec)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history = %+v, want one claim_opened event", history)
+	}
+	l.RecordTerminal("c1", "claim_committed", nil)
+	ev, ok := <-ch
+	if !ok {
+		t.Fatal("expected the terminal event on the channel before it closes")
+	}
+	if ev.Category != "claim_committed" {
+		t.Fatalf("event category = %q, want claim_committed", ev.Category)
+	}
+	if _, ok := <-ch; ok {
+		t.Fatal("subscription channel should be closed after the terminal event")
+	}
+}
+
+func TestLedgerSubscribeWithSnapshot_UnknownClaimClosedChannel(t *testing.T) {
+	l := NewClaimLedger(10)
+	history, rec, ch, unsub := l.SubscribeWithSnapshot("missing")
+	defer unsub()
+	if history != nil || rec != nil {
+		t.Fatalf("history=%v rec=%v, want nil for an unknown claim", history, rec)
+	}
+	if _, ok := <-ch; ok {
+		t.Fatal("subscription channel for an unknown claim should already be closed")
 	}
 }

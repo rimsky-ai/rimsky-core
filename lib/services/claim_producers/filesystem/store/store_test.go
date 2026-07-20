@@ -224,7 +224,7 @@ func TestBatchPopRejectsTraversalClaimID(t *testing.T) {
 	if _, err := st.BatchPop(context.Background(), "@queue", []string{"../escape"}); err == nil {
 		t.Fatal("BatchPop with traversal claim_id: expected error, got nil")
 	}
-	inProgDir := filepath.Join(policyStateDir(root, "@queue"), "in_progress")
+	inProgDir := filepath.Join(PolicyStateDir(root, "@queue"), "in_progress")
 	entries, err := os.ReadDir(inProgDir)
 	if err != nil {
 		t.Fatalf("readdir in_progress: %v", err)

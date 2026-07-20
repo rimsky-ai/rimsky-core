@@ -78,50 +78,44 @@ func (a *agent) dispatchClaimProducer(ctx context.Context, child *liveChild, df 
 	a.sendDispatchData(df, respBytes)
 }
 
+type protoPtr[T any] interface {
+	*T
+	proto.Message
+}
+
+func callUnary[ReqT any, Req protoPtr[ReqT], RespT any, Resp protoPtr[RespT]](ctx context.Context, payload []byte, call func(context.Context, Req) (Resp, error)) ([]byte, error) {
+	var reqZero ReqT
+	req := Req(&reqZero)
+	if err := proto.Unmarshal(payload, req); err != nil {
+		return nil, fmt.Errorf("unmarshal request: %w", err)
+	}
+	resp, err := call(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return proto.Marshal(resp)
+}
+
 func forwardClaimProducerUnary(ctx context.Context, child *liveChild, verb genv1.DispatchFrame_ClaimProducerVerb, payload []byte) ([]byte, error) {
 	client := genv1.NewClaimProducerClient(child.conn)
 
 	switch verb {
 	case genv1.DispatchFrame_CLAIM_PRODUCER_VERB_OPEN:
-		var req genv1.OpenRequest
-		if err := proto.Unmarshal(payload, &req); err != nil {
-			return nil, fmt.Errorf("unmarshal open request: %w", err)
-		}
-		resp, callErr := client.Open(ctx, &req)
-		if callErr != nil {
-			return nil, callErr
-		}
-		return proto.Marshal(resp)
+		return callUnary[genv1.OpenRequest](ctx, payload, func(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
+			return client.Open(ctx, req)
+		})
 	case genv1.DispatchFrame_CLAIM_PRODUCER_VERB_COMMIT:
-		var req genv1.CommitRequest
-		if err := proto.Unmarshal(payload, &req); err != nil {
-			return nil, fmt.Errorf("unmarshal commit request: %w", err)
-		}
-		resp, callErr := client.Commit(ctx, &req)
-		if callErr != nil {
-			return nil, callErr
-		}
-		return proto.Marshal(resp)
+		return callUnary[genv1.CommitRequest](ctx, payload, func(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
+			return client.Commit(ctx, req)
+		})
 	case genv1.DispatchFrame_CLAIM_PRODUCER_VERB_ABANDON:
-		var req genv1.AbandonRequest
-		if err := proto.Unmarshal(payload, &req); err != nil {
-			return nil, fmt.Errorf("unmarshal abandon request: %w", err)
-		}
-		resp, callErr := client.Abandon(ctx, &req)
-		if callErr != nil {
-			return nil, callErr
-		}
-		return proto.Marshal(resp)
+		return callUnary[genv1.AbandonRequest](ctx, payload, func(ctx context.Context, req *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
+			return client.Abandon(ctx, req)
+		})
 	case genv1.DispatchFrame_CLAIM_PRODUCER_VERB_RELEASE:
-		var req genv1.ReleaseRequest
-		if err := proto.Unmarshal(payload, &req); err != nil {
-			return nil, fmt.Errorf("unmarshal release request: %w", err)
-		}
-		resp, callErr := client.Release(ctx, &req)
-		if callErr != nil {
-			return nil, callErr
-		}
-		return proto.Marshal(resp)
+		return callUnary[genv1.ReleaseRequest](ctx, payload, func(ctx context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
+			return client.Release(ctx, req)
+		})
 	default:
 		return nil, fmt.Errorf("unspecified claim-producer verb %v", verb)
 	}

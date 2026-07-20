@@ -33,7 +33,7 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 
 	netName := harness.NewNetwork(ctx, t)
 
-	statePGContainer := startSensorStatePostgres(ctx, t, netName)
+	statePGContainer := startSensorStatePostgres(ctx, t, netName, "sensor-cron-pg")
 
 	rimskyAlias := harness.NextRimskyAlias()
 	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
@@ -78,9 +78,9 @@ type sensorStatePostgres struct {
 	hostDSN     string
 }
 
-func startSensorStatePostgres(ctx context.Context, t *testing.T, networkName string) sensorStatePostgres {
+func startSensorStatePostgres(ctx context.Context, t *testing.T, networkName, alias string) sensorStatePostgres {
 	t.Helper()
-	dsn, hostDSN := harness.StartFreshPostgresWithAlias(ctx, t, networkName, "sensor-cron-pg")
+	dsn, hostDSN := harness.StartFreshPostgresWithAlias(ctx, t, networkName, alias)
 	return sensorStatePostgres{internalDSN: dsn, hostDSN: hostDSN}
 }
 
@@ -223,7 +223,7 @@ func deployCronSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	if err != nil {
 		t.Fatalf("marshal cron config: %v", err)
 	}
-	body := map[string]any{
+	return deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":    "sensor-cron-restart",
 			"version": "1",
@@ -258,46 +258,10 @@ func deployCronSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 				},
 			},
 		},
-	}
-	status, raw := ep.PostJSON(t, "/v1/templates", body)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /templates: %d %s", status, string(raw))
-	}
-	var resp struct {
-		TemplateID string `json:"template_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode template response: %v: %s", err, string(raw))
-	}
-	if resp.TemplateID == "" {
-		t.Fatalf("template_id empty: %s", string(raw))
-	}
-	deployStatus, deployRaw := ep.PostJSON(t,
-		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
-	if deployStatus != http.StatusOK {
-		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
-	}
-	return resp.TemplateID
+	})
 }
 
 func createCronSensorInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("POST /instances: %d %s", status, string(raw))
-	}
-	var resp struct {
-		InstanceID string `json:"instance_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode instance response: %v: %s", err, string(raw))
-	}
-	if resp.InstanceID == "" {
-		t.Fatalf("instance_id empty: %s", string(raw))
-	}
-	return resp.InstanceID
+	return createScenarioInstanceNoWake(t, ep, templateID, instanceKey)
 }

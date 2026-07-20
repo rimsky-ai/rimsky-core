@@ -4,8 +4,6 @@
 
 package claudeagent
 
-import "errors"
-
 type CliConfigError struct {
 	Message string
 }
@@ -13,8 +11,3 @@ type CliConfigError struct {
 func (e *CliConfigError) Error() string { return e.Message }
 
 func (e *CliConfigError) ErrorClass() string { return "agent/attribute_invalid" }
-
-func IsCliConfigError(err error) bool {
-	var target *CliConfigError
-	return errors.As(err, &target)
-}

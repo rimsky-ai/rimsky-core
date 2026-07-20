@@ -15,16 +15,31 @@ import (
 	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
+func UnaryDialOptions(name, tlsMode string) []grpc.DialOption {
+	return []grpc.DialOption{
+		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
+		grpc.WithChainUnaryInterceptor(ServiceNameUnaryInterceptor, TLSModeUnaryInterceptor(name, tlsMode)),
+	}
+}
+
+func dialOptions(name, tlsMode string) []grpc.DialOption {
+	return append(UnaryDialOptions(name, tlsMode),
+		grpc.WithChainStreamInterceptor(ServiceNameStreamInterceptor, TLSModeStreamInterceptor(name, tlsMode)))
+}
+
+func capabilityDialOptions(name, tlsMode string) []grpc.DialOption {
+	return []grpc.DialOption{
+		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
+		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),
+	}
+}
+
 func Dial(ctx context.Context, name, endpoint, tlsMode string) (*Client, error) {
 	target, err := stripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(target,
-		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
-		grpc.WithChainUnaryInterceptor(ServiceNameUnaryInterceptor, TLSModeUnaryInterceptor(name, tlsMode)),
-		grpc.WithChainStreamInterceptor(ServiceNameStreamInterceptor, TLSModeStreamInterceptor(name, tlsMode)),
-	)
+	conn, err := grpc.NewClient(target, dialOptions(name, tlsMode)...)
 	if err != nil {
 		return nil, fmt.Errorf("remote producer %q: dial %q: %w", name, endpoint, err)
 	}
@@ -52,11 +67,7 @@ func DialLifecycle(_ context.Context, name, endpoint, tlsMode string) (*Lifecycl
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(target,
-		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
-		grpc.WithChainUnaryInterceptor(ServiceNameUnaryInterceptor, TLSModeUnaryInterceptor(name, tlsMode)),
-		grpc.WithChainStreamInterceptor(ServiceNameStreamInterceptor, TLSModeStreamInterceptor(name, tlsMode)),
-	)
+	conn, err := grpc.NewClient(target, dialOptions(name, tlsMode)...)
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle subscriber %q: dial %q: %w", name, endpoint, err)
 	}

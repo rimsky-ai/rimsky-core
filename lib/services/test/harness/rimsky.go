@@ -243,7 +243,7 @@ func (h *RimskyHandle) DumpRimskyLogs(t testing.TB) {
 	if h.container == nil {
 		return
 	}
-	dumpLogsForFailure(t, h.container)
+	dumpLogsForFailure(t, "rimsky/all", h.container)
 }
 
 func (h *RimskyHandle) TopProcesses(ctx context.Context, t testing.TB) [][]string {
@@ -454,25 +454,25 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 
 	hostIP, err := rimsky.Host(ctx)
 	if err != nil {
-		dumpLogsForFailure(t, rimsky)
+		dumpLogsForFailure(t, "rimsky/all", rimsky)
 		t.Fatalf("harness: rimsky host: %v", err)
 	}
 	mapped, err := rimsky.MappedPort(ctx, "8080")
 	if err != nil {
-		dumpLogsForFailure(t, rimsky)
+		dumpLogsForFailure(t, "rimsky/all", rimsky)
 		t.Fatalf("harness: rimsky mapped port: %v", err)
 	}
 	baseURL := fmt.Sprintf("http://%s:%s", hostIP, mapped.Port())
 
 	mappedCb, err := rimsky.MappedPort(ctx, "9100")
 	if err != nil {
-		dumpLogsForFailure(t, rimsky)
+		dumpLogsForFailure(t, "rimsky/all", rimsky)
 		t.Fatalf("harness: rimsky callback mapped port: %v", err)
 	}
 	callbackBaseURL := fmt.Sprintf("http://%s:%s", hostIP, mappedCb.Port())
 
 	if err := waitForHealth(ctx, baseURL, healthDeadline); err != nil {
-		dumpLogsForFailure(t, rimsky)
+		dumpLogsForFailure(t, "rimsky/all", rimsky)
 		t.Fatalf("harness: rimsky /health did not return 200: %v", err)
 	}
 	return rimsky, baseURL, callbackBaseURL
@@ -617,16 +617,16 @@ func waitForHealth(ctx context.Context, baseURL string, deadline time.Duration) 
 	}
 }
 
-func dumpLogsForFailure(t testing.TB, c testcontainers.Container) {
+func dumpLogsForFailure(t testing.TB, label string, c testcontainers.Container) {
 	t.Helper()
 	rc, err := c.Logs(context.Background())
 	if err != nil {
-		t.Logf("harness: cannot read rimsky logs: %v", err)
+		t.Logf("harness: cannot read %s logs: %v", label, err)
 		return
 	}
 	defer rc.Close()
 	out, _ := io.ReadAll(rc)
-	t.Logf("=== rimsky/all container logs ===\n%s\n=== end logs ===", string(out))
+	t.Logf("=== %s container logs ===\n%s\n=== end logs ===", label, string(out))
 }
 
 func renderRimskyYAML(internalDSN string, cb *configBuilder) string {

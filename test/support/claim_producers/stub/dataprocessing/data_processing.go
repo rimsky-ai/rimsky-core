@@ -222,11 +222,15 @@ func (s *Server) SplitScope(_ context.Context, req *genv1.SplitScopeRequest) (*g
 	if fn != nil {
 		return fn(req)
 	}
+	return DecodeSplitScope(req.GetPartitionRequest())
+}
+
+func DecodeSplitScope(partitionRequest []byte) (*genv1.SplitScopeResponse, error) {
 	var probe struct {
 		PartitionKeys []string          `json:"partition_keys"`
 		List          []json.RawMessage `json:"list"`
 	}
-	if err := json.Unmarshal(req.GetPartitionRequest(), &probe); err != nil {
+	if err := json.Unmarshal(partitionRequest, &probe); err != nil {
 		return nil, fmt.Errorf("stub.SplitScope: decode partition_request: %w", err)
 	}
 	if probe.List != nil {

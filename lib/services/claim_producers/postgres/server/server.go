@@ -23,8 +23,8 @@ import (
 
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/lifecycle"
 	pgsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/store"
+	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/listarray"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 
