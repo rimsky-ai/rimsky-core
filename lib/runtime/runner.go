@@ -127,6 +127,7 @@ type AsyncContext struct {
 	NodeType           string
 	Executor           string
 	NodeDef            *node.TemplateNodeDef
+	GraphName          string
 	ResolvedAttributes map[string]any
 	AttributesSchema   map[string]any
 	AsyncAckPrincipal  string

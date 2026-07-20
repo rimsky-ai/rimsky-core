@@ -124,6 +124,7 @@ func newDriveSetupWithPartitionKey(
 		FrameID:            frameID,
 		NodeType:           "leaf",
 		Executor:           "stub",
+		GraphName:          "main",
 		ResolvedAttributes: map[string]any{},
 		AttributesSchema:   schema,
 	})
@@ -232,7 +233,7 @@ func TestDriveTerminal_RejectedCallbackSkipsAfterTerminalBreakpoint(t *testing.T
 		"a late/duplicate callback rejected as already-terminal must not mint a phantom after_terminal hit")
 }
 
-func TestDriveTerminal_AsyncCallbackAfterTerminalBreakpoint_ChildKeyRecoveredGraphNameLost(t *testing.T) {
+func TestDriveTerminal_AsyncCallbackAfterTerminalBreakpoint_ChildKeyAndGraphNameRecovered(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := newDriveSetupWithPartitionKey(ctx, t, "sup-asyncctx-2413", nil, nil, "partition-a")
@@ -257,10 +258,10 @@ func TestDriveTerminal_AsyncCallbackAfterTerminalBreakpoint_ChildKeyRecoveredGra
 
 	require.Equal(t, "partition-a", dispatchContext["child_key"],
 		"async-callback after_terminal recovers child_key from the resolved run scope's partition key")
-	require.Equal(t, "", dispatchContext["graph"],
-		"async-callback after_terminal still carries no graph name: AsyncContext has no GraphName field "+
-			"to carry reconstructAcquisition's resolved value through driveTerminal (breakpoint.md, ledger 2413) — "+
-			"a graph-scoped breakpoint can never match this checkpoint on the async path")
+	require.Equal(t, "main", dispatchContext["graph"],
+		"async-callback after_terminal now recovers graph name: AsyncContext carries GraphName from "+
+			"registration through to driveTerminal's breakpoint eval (breakpoint.md, ledger 2413) — "+
+			"a graph-scoped breakpoint can match this checkpoint on the async path")
 }
 
 func TestCallback_ConcurrentDuplicateCallbacks_AckOutcomeNeverSwapped(t *testing.T) {

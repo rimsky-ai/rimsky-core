@@ -249,6 +249,7 @@ func registerAsyncIfSet(dctx dispatchContext, asyncAck, peerPrincipal string) bo
 		NodeType:           acq.NodeType,
 		Executor:           acq.Executor,
 		NodeDef:            acq.NodeDef,
+		GraphName:          acq.GraphName,
 		ResolvedAttributes: dctx.Attributes,
 		AttributesSchema:   dctx.AttributesSchema,
 		AsyncAckPrincipal:  peerPrincipal,
