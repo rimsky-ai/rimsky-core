@@ -5,16 +5,7 @@
 package shared
 
 import (
-	"strings"
-
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-)
-
-type Severity = spec.Severity
-
-const (
-	SeverityError   = spec.SeverityError
-	SeverityWarning = spec.SeverityWarning
 )
 
 type BackoffKind = spec.BackoffKind
@@ -23,30 +14,3 @@ const (
 	BackoffLinear      = spec.BackoffLinear
 	BackoffExponential = spec.BackoffExponential
 )
-
-type JitterKind = spec.JitterKind
-
-const (
-	JitterNone      = spec.JitterNone
-	JitterPlusMinus = spec.JitterPlusMinus
-)
-
-type AccessKind string
-
-const (
-	AccessInline AccessKind = "inline"
-	AccessSQL    AccessKind = "sql"
-	AccessMCP    AccessKind = "mcp"
-	AccessREST   AccessKind = "rest"
-)
-
-type MessageType string
-
-const (
-	MessageInvalidate  MessageType = "invalidate"
-	MessageRecalculate MessageType = "recalculate"
-)
-
-func RenderResourcePath(segs []string) string {
-	return strings.Join(segs, ":")
-}

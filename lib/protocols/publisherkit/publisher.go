@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,8 +43,6 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 		200 * time.Millisecond,
 		566 * time.Millisecond,
 	}
-	var lastErr error
-	var lastStatus int
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, req.URL, bytes.NewReader(req.Envelope))
 		if err != nil {
@@ -57,8 +54,6 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 		}
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			lastErr = err
-			lastStatus = 0
 			if !shouldRetry(attempt, maxAttempts, ctx, sleep, delays) {
 				return Result{Err: err, Status: 0, Attempts: attempt}
 			}
@@ -66,7 +61,6 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		lastStatus = resp.StatusCode
 		if resp.StatusCode < 300 {
 			return Result{Status: resp.StatusCode, Attempts: attempt}
 		}
@@ -84,15 +78,12 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 				Attempts: attempt,
 			}
 		}
-		lastErr = fmt.Errorf("rimsky %s → %d", req.URL, resp.StatusCode)
+		lastErr := fmt.Errorf("rimsky %s → %d", req.URL, resp.StatusCode)
 		if !shouldRetry(attempt, maxAttempts, ctx, sleep, delays) {
 			return Result{Err: lastErr, Status: resp.StatusCode, Attempts: attempt}
 		}
 	}
-	if lastErr == nil {
-		lastErr = errors.New("publisher.post: retries exhausted")
-	}
-	return Result{Err: lastErr, Status: lastStatus, Attempts: maxAttempts}
+	panic("publisherkit.Send: loop exited without returning — shouldRetry must return false by the final attempt")
 }
 
 func shouldRetry(attempt, max int, ctx context.Context, sleep Sleeper, delays []time.Duration) bool {

@@ -117,7 +117,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	for i, n := range spec.Nodes {
 		base := fmt.Sprintf("nodes[%d]", i)
 		validateSubscribes(n, base, declared, declaredMessages, messageBodyFieldsForCEL, hooks, spec, &res)
-		validateErrorTypes(n, base, declared, hooks, &res)
+		validateErrorTypes(n, base, hooks, &res)
 		validateExecutorCoherence(n, base, hooks, &res)
 		validateExecutorDeclared(n, base, hooks, &res)
 		validateKindDeclaration(n, base, hooks, &res)
@@ -284,7 +284,7 @@ func ApplyFrameResolutionDefaults(*TemplateSpec) {
 
 // @concept: error-policy
 // @concept: signal
-func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks RegistryHooks, res *ValidationResult) {
+func validateErrorTypes(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
 	validActions := map[string]bool{
 		spec.ActionPass:              true,
 		spec.ActionGiveUp:            true,
@@ -353,7 +353,6 @@ func isRuntimeSynthesizedErrorClass(className string) bool {
 		"template_validation_failed",
 		"executor_schema_unavailable",
 		"attributes_schema_failed",
-		"retry_loop_no_progress",
 		"unresolved_executor",
 		"executor_sync_timeout":
 		return true
@@ -417,24 +416,22 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			})
 			continue
 		}
-		if s.Node != "" {
-			_, isDeclaredNode := declared[s.Node]
-			_, isDeclaredMessage := declaredMessages[s.Node]
-			if !isDeclaredNode && !isDeclaredMessage {
-				if strings.Contains(s.Node, "/") {
-					res.Errors = append(res.Errors, ValidationError{
-						Path: sbase + ".node",
-						Msg: fmt.Sprintf("subscription `node: %q` is shaped like a message-type-path but is not declared in the template's `messages:` registry",
-							s.Node),
-					})
-				} else {
-					res.Errors = append(res.Errors, ValidationError{
-						Path: sbase + ".node",
-						Msg:  fmt.Sprintf("subscription `node: %q` does not reference a declared node", s.Node),
-					})
-				}
-				continue
+		_, isDeclaredNode := declared[s.Node]
+		_, isDeclaredMessage := declaredMessages[s.Node]
+		if !isDeclaredNode && !isDeclaredMessage {
+			if strings.Contains(s.Node, "/") {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: sbase + ".node",
+					Msg: fmt.Sprintf("subscription `node: %q` is shaped like a message-type-path but is not declared in the template's `messages:` registry",
+						s.Node),
+				})
+			} else {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: sbase + ".node",
+					Msg:  fmt.Sprintf("subscription `node: %q` does not reference a declared node", s.Node),
+				})
 			}
+			continue
 		}
 		if strings.TrimSpace(s.Type) == "" {
 			res.Errors = append(res.Errors, ValidationError{

@@ -22,8 +22,7 @@ func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
 }
 
 type HeldFramesResponse struct {
-	Frames               []HeldFrameEntry  `json:"frames"`
-	FramesWithoutFrameID []ParkedNodeEntry `json:"frames_without_frame_id,omitempty"`
+	Frames []HeldFrameEntry `json:"frames"`
 }
 
 type HeldFrameEntry struct {
@@ -60,19 +59,6 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 			}
 			groups := map[string]*HeldFrameEntry{}
 			for _, p := range parked {
-				if p.FrameID == "" {
-					entry := ParkedNodeEntry{
-						InstanceID: p.InstanceID,
-						NodeID:     p.NodeID,
-						ParkedAt:   p.ParkedAt,
-					}
-					if !p.ResumeAt.IsZero() {
-						ra := p.ResumeAt
-						entry.ResumeAt = &ra
-					}
-					out.FramesWithoutFrameID = append(out.FramesWithoutFrameID, entry)
-					continue
-				}
 				key := p.FrameID
 				g, ok := groups[key]
 				if !ok {

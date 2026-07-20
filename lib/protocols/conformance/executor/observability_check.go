@@ -86,9 +86,6 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 		if len(tr.GetEvents()) != 0 {
 			return fmt.Errorf("GetTrace on missing dispatch returned %d events, want 0 (spec §2.6)", len(tr.GetEvents()))
 		}
-		if err := validateStandardEvents(tr.GetEvents()); err != nil {
-			return fmt.Errorf("GetTrace events: %w", err)
-		}
 		logf("observability: GetTrace evicted-shape OK\n")
 	}
 	if caps.GetSupportsTraceStream() {

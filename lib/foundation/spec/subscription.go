@@ -19,20 +19,6 @@ type SubscriptionEntry struct {
 	ResolvesViaCallingNode bool `yaml:"resolves_via_calling_node,omitempty" json:"resolves_via_calling_node,omitempty"`
 }
 
-const (
-	MessageSenderKindOperator  = "operator"
-	MessageSenderKindPublisher = "publisher"
-	MessageSenderKindInstance  = "instance"
-)
-
-const (
-	NodeStateFresh   = "fresh"
-	NodeStateStale   = "stale"
-	NodeStateRunning = "running"
-	NodeStateFailed  = "failed"
-	NodeStateParked  = "parked"
-)
-
 func BoolPtr(v bool) *bool { return &v }
 
 func IntPtr(v int) *int { return &v }

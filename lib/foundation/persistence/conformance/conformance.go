@@ -178,10 +178,6 @@ func Suite(
 	t.Run("FrameSettlement", func(t *testing.T) {
 		t.Run("NoPendingNodes", func(t *testing.T) { testFrameSettlementNoPendingNodes(t, factory(t)) })
 		t.Run("HasFailedNode", func(t *testing.T) { testFrameSettlementHasFailedNode(t, factory(t)) })
-		t.Run("MarkSourceNodeStale", func(t *testing.T) { testFrameSettlementMarkSourceNodeStale(t, factory(t)) })
-		t.Run("MarkSourceNodeStaleRequiredClaimProducers", func(t *testing.T) {
-			testMarkSourceNodeStaleCarriesRequiredClaimProducers(t, factory(t))
-		})
 		t.Run("OrphanDispatches", func(t *testing.T) { testFrameSettlementOrphanDispatches(t, factory(t)) })
 	})
 	t.Run("ClaimHandleQueries", func(t *testing.T) {

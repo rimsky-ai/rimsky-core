@@ -128,7 +128,7 @@ func (s *claimHoldersImpl) FailAllActiveByClaimHandle(
 		    AND EXISTS (
 		      SELECT 1 FROM rimsky_claim_handles
 		       WHERE id = $1
-		         AND `+claimantGuard("", 2)+`
+		         AND `+claimantGuard(2)+`
 		    )`,
 		claimHandleID, supervisorID,
 	)

@@ -340,60 +340,6 @@ func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UU
 	return &fid, nil
 }
 
-func (s *framesImpl) MarkSourceNodeStale(
-	ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx persistence.Tx,
-) (bool, error) {
-	// @concept: run-scope
-	res, err := s.q(tx).ExecContext(ctx, `
-        INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
-        SELECT ?, n.id, n.executor,
-               COALESCE((
-                 SELECT json_group_array(json_extract(store.value, '$.name'))
-                   FROM rimsky_instances i
-                   JOIN rimsky_templates t ON t.id = i.template_hash
-                   JOIN json_each(t.spec, '$.nodes') AS nd
-                   JOIN json_each(nd.value, '$.claim_producers') AS store
-                  WHERE i.id = n.instance_id
-                    AND json_extract(nd.value, '$.type') = n.node_type
-               ), '[]'),
-               ?, 'stale', 'cascade',
-               COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = f.root_run_scope_id), 0) + 1,
-               ?, f.root_run_scope_id
-          FROM rimsky_nodes n
-          JOIN rimsky_frames f ON f.frame_id = ?
-         WHERE n.id = ?
-           AND n.instance_id = ?
-           AND NOT EXISTS (
-             SELECT 1 FROM rimsky_node_runs r
-              WHERE r.node_id = ?
-                AND r.state IN ('pending','stale','running','held','parked')
-           )
-    `, uuid.New().String(), nowUTC(), nodeID.String(), frameID.String(), frameID.String(), nodeID.String(), instanceID.String(), nodeID.String())
-	if err != nil {
-		return false, fmt.Errorf("frames.MarkSourceNodeStale: insert run row: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if n == 1 {
-		return true, nil
-	}
-	var anyMatched int
-	if err := s.q(tx).QueryRowContext(ctx, `
-        SELECT EXISTS (
-            SELECT 1 FROM rimsky_node_runs r
-             WHERE r.node_id = ?
-               AND r.state = 'stale'
-               AND r.frame_id = ?
-        )
-    `, nodeID.String(), frameID.String()).Scan(&anyMatched); err != nil {
-		return false, fmt.Errorf("frames.MarkSourceNodeStale: existence check: %w", err)
-	}
-	return anyMatched != 0, nil
-}
-
 func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persistence.Tx) ([]persistence.OrphanFrameDispatch, error) {
 	rows, err := s.q(tx).QueryContext(ctx, `
         SELECT d.id, d.claimed_by, d.frame_id

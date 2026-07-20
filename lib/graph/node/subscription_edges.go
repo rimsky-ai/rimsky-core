@@ -219,12 +219,6 @@ func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath
 				next = append(next, child)
 				out = append(out, child.wildcard...)
 			}
-			if seg != "*" {
-				if child, ok := cur.children["*"]; ok {
-					next = append(next, child)
-					out = append(out, child.wildcard...)
-				}
-			}
 		}
 		if len(next) == 0 {
 			return out

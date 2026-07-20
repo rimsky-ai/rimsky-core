@@ -459,7 +459,6 @@ func (a *blobBackendAdapter) Delete(ctx context.Context, handle blobbackend.Hand
 func openBlobBackend(ctx context.Context, name, root, dsn string) (persistence.BlobBackend, func(), error) {
 	switch name {
 	case "memory":
-		_ = os.Setenv(persistence.ProcessRoleEnv, "unified")
 		return persistence.NewMemoryBackend(), func() {}, nil
 	case "filesystem":
 		if root == "" {

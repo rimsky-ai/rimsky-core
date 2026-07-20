@@ -278,10 +278,6 @@ func testFrameRowCascadeImmutable(t *testing.T, d persistence.Database) {
 		t.Fatalf("pre-cascade frame row = %+v, want state=running with ended_at unset", before)
 	}
 
-	frameOp(ctx, t, d, "cascade write set: MarkSourceNodeStale", func(tx persistence.Tx) error {
-		_, err := frames.MarkSourceNodeStale(ctx, fix.InstanceID, fix.NodeID, fix.FrameID, tx)
-		return err
-	})
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	frameOp(ctx, t, d, "cascade write set: run state transitions", func(tx persistence.Tx) error {
 		if err := d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateRunning, nil, false); err != nil {

@@ -66,7 +66,7 @@ func applyErrorPolicyWithScratchAndSettleHook(
 		return nil, fmt.Errorf("applyErrorPolicy: load evaluator state: %w", err)
 	}
 	maxRetries, backoff := resolveRetryConfig(acq.NodeDef)
-	resolved := node.Evaluate(policy, state, errorClass, maxRetries, backoff, nil)
+	resolved := node.Evaluate(policy, state, maxRetries, backoff, nil)
 	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.NodeRunID, resolved.NewState, tx); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: persist evaluator state: %w", err)
 	}

@@ -171,7 +171,6 @@ func TestQueue_BumpAndSweepConcurrent_NoDeadlock(t *testing.T) {
 	)
 	var wg sync.WaitGroup
 	wg.Add(bumpGoroutines + sweepGoroutines)
-	bumpDone := make(chan struct{})
 
 	for g := 0; g < bumpGoroutines; g++ {
 		go func() {
@@ -205,7 +204,6 @@ func TestQueue_BumpAndSweepConcurrent_NoDeadlock(t *testing.T) {
 			}()
 		}
 		wg2.Wait()
-		close(bumpDone)
 	}()
 
 	finished := make(chan struct{})

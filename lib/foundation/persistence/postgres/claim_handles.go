@@ -34,12 +34,8 @@ var claimHandleColNames = []string{
 
 var claimHandleCols = strings.Join(claimHandleColNames, ", ")
 
-func claimantGuard(alias string, n int) string {
-	col := "holder_supervisor_id"
-	if alias != "" {
-		col = alias + "." + col
-	}
-	return fmt.Sprintf("%s = $%d", col, n)
+func claimantGuard(n int) string {
+	return fmt.Sprintf("holder_supervisor_id = $%d", n)
 }
 
 func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandleInsertInput, tx persistence.Tx) error {
@@ -93,7 +89,7 @@ func (s *claimHandlesImpl) UpdateAddress(
 	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET address = $1
-		  WHERE id = $2 AND `+claimantGuard("", 3),
+		  WHERE id = $2 AND `+claimantGuard(3),
 		nullableJSONB(address), id, supervisorID,
 	)
 	if err != nil {
@@ -111,7 +107,7 @@ func (s *claimHandlesImpl) UpdatePayload(
 	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET payload = $1
-		  WHERE id = $2 AND `+claimantGuard("", 3),
+		  WHERE id = $2 AND `+claimantGuard(3),
 		nullableJSONB(payload), id, supervisorID,
 	)
 	if err != nil {
@@ -134,7 +130,7 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET realized_write_semantics = $1
-		  WHERE id = $2 AND `+claimantGuard("", 3),
+		  WHERE id = $2 AND `+claimantGuard(3),
 		v, id, supervisorID,
 	)
 	if err != nil {
@@ -152,7 +148,7 @@ func (s *claimHandlesImpl) UpdateClaimScope(
 	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET claim_scope_data = $1
-		  WHERE id = $2 AND `+claimantGuard("", 3),
+		  WHERE id = $2 AND `+claimantGuard(3),
 		nullableJSONB(scope), id, supervisorID,
 	)
 	if err != nil {
@@ -172,7 +168,7 @@ func (s *claimHandlesImpl) UpdateNodeRunID(
 		    SET node_run_id = $1
 		  WHERE id = $2
 		    AND state = 'active'
-		    AND `+claimantGuard("", 3),
+		    AND `+claimantGuard(3),
 		nodeRunID, id, supervisorID,
 	)
 	if err != nil {
@@ -195,7 +191,7 @@ func (s *claimHandlesImpl) ReassignHolderSupervisor(
 		    SET holder_supervisor_id = $1
 		  WHERE id = $2
 		    AND state = 'active'
-		    AND `+claimantGuard("", 3),
+		    AND `+claimantGuard(3),
 		toSupervisorID, id, fromSupervisorID,
 	)
 	if err != nil {
@@ -359,7 +355,7 @@ func (s *claimHandlesImpl) Promote(
 		        resolved_at = now()
 		  WHERE id = $1
 		    AND state = 'active'
-		    AND `+claimantGuard("", 2),
+		    AND `+claimantGuard(2),
 		id, supervisorID, string(newState))
 	if err != nil {
 		return fmt.Errorf("claimhandles.Promote: %w", err)
@@ -412,7 +408,7 @@ func (s *claimHandlesImpl) SetVersionID(
 	}
 	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles SET version_id = $1
-		 WHERE id = $2 AND (`+claimantGuard("", 3)+`
+		 WHERE id = $2 AND (`+claimantGuard(3)+`
 		    OR (holder_supervisor_id IS NULL AND state <> 'active'))`,
 		v, id, supervisorID)
 	if err != nil {
@@ -468,7 +464,7 @@ func (s *claimHandlesImpl) RenewExpiryForHolderRun(ctx context.Context, nodeRunI
 func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
 	cmd, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handles
-		 WHERE id = $1 AND `+claimantGuard("", 2),
+		 WHERE id = $1 AND `+claimantGuard(2),
 		id, expectedSupervisorID,
 	)
 	if err != nil {
@@ -516,7 +512,7 @@ func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, 
 	tag, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handles
 		 WHERE id = $1
-		   AND `+claimantGuard("", 2)+`
+		   AND `+claimantGuard(2)+`
 		   AND expires_at < now()
 		   AND state = 'active'
 		   AND NOT EXISTS (
@@ -615,7 +611,7 @@ func (s *claimHandlesImpl) SetAggregationPolicy(
 	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET aggregation_policy = $1
-		  WHERE id = $2 AND `+claimantGuard("", 3),
+		  WHERE id = $2 AND `+claimantGuard(3),
 		nullableJSONB(policy), id, supervisorID,
 	)
 	if err != nil {
@@ -633,7 +629,7 @@ func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET expected_children_count = expected_children_count + $1
-		  WHERE id = $2 AND `+claimantGuard("", 3),
+		  WHERE id = $2 AND `+claimantGuard(3),
 		delta, id, supervisorID,
 	)
 	if err != nil {
@@ -660,7 +656,7 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET `+column+` = `+column+` + $1
-		  WHERE id = $2 AND `+claimantGuard("", 3),
+		  WHERE id = $2 AND `+claimantGuard(3),
 		delta, id, supervisorID,
 	)
 	if err != nil {

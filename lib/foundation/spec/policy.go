@@ -4,12 +4,6 @@
 
 package spec
 
-import (
-	"time"
-
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
-)
-
 type ErrorTypePolicy struct {
 	Action         string `yaml:"action" json:"action"`
 	ReasonTemplate string `yaml:"reason_template,omitempty" json:"reason_template,omitempty"`
@@ -41,33 +35,3 @@ const (
 	ActionPass              = "pass"
 	ActionReleaseAndRequeue = "release_and_requeue"
 )
-
-// @concept: error-policy
-type DispatchDisposition string
-
-const (
-	DispositionEnd           DispatchDisposition = "end"
-	DispositionRetry         DispatchDisposition = "retry"
-	DispositionParkAsync     DispatchDisposition = "park_async"
-	DispositionParkScheduled DispatchDisposition = "park_scheduled"
-)
-
-// @concept: error-policy
-type SettledColor string
-
-const (
-	ColorFresh  SettledColor = "fresh"
-	ColorFailed SettledColor = "failed"
-	ColorParked SettledColor = "parked"
-)
-
-// @concept: error-policy
-// @concept: signal
-type Resolution struct {
-	Signal              signal.Signal
-	DispatchDisposition DispatchDisposition
-	Color               SettledColor
-	RetryDiscardClaims  bool
-	RetryDelayMs        int
-	WakeAt              time.Time
-}

@@ -88,6 +88,12 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 	if frameID == nil {
 		t.Fatalf("seedNode: state=%q requires a non-nil frame_id (rimsky_node_runs.frame_id NOT NULL)", state)
 	}
+	seedNodeRun(t, ctx, d, instanceID, nodeID, state, *frameID)
+}
+
+func seedNodeRun(t *testing.T, ctx context.Context, d persistence.Database,
+	instanceID uuid.UUID, nodeID uuid.UUID, state string, frameID uuid.UUID) {
+	t.Helper()
 	var mainScopeID uuid.UUID
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
@@ -395,13 +401,7 @@ func TestEndFrameIfSettled_ConcurrentRunInsertCannotEndFrame(t *testing.T) {
 	}()
 
 	<-endObserved
-	var matched bool
-	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		var err error
-		matched, err = d.Tables().Frames().MarkSourceNodeStale(ctx, instanceID, node, frameID, tx)
-		return err
-	}))
-	require.True(t, matched, "concurrent insert must create an in-flight run")
+	seedNodeRun(t, ctx, d, instanceID, node, "stale", frameID)
 	close(insertCommitted)
 
 	out := <-result

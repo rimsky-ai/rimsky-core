@@ -51,7 +51,7 @@ func ValidateAndPersistResume(
 			if postOverlay == nil {
 				postOverlay = map[string]any{}
 			}
-			schema, schemaOK := lookupEffectiveSchemaForHit(args, hit)
+			schema, schemaOK := lookupEffectiveSchemaForHit(hit)
 			if schemaOK {
 				if vErr := attributes.Validate(schema, postOverlay, attributes.PhaseDispatch); vErr != nil {
 					return shared.Wrap(shared.ErrResumeOverlayInvalid, vErr.Error(), nil)
@@ -75,7 +75,7 @@ func ValidateAndPersistResume(
 	return &result, nil
 }
 
-func lookupEffectiveSchemaForHit(_ RunArgs, hit *persistence.BreakpointHitRow) (map[string]any, bool) {
+func lookupEffectiveSchemaForHit(hit *persistence.BreakpointHitRow) (map[string]any, bool) {
 	if hit == nil || hit.Snapshot == nil {
 		return nil, false
 	}

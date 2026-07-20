@@ -36,7 +36,7 @@ func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Qu
 	if err := runFrameEndDetection(ctx, store, logger, scopeFanout, m); err != nil {
 		return fmt.Errorf("frame.RunTick: frame-end: %w", err)
 	}
-	if err := runOpenNewFrames(ctx, store, queue, logger); err != nil {
+	if err := runOpenNewFrames(ctx, store, logger); err != nil {
 		return fmt.Errorf("frame.RunTick: open: %w", err)
 	}
 	if err := runReapOrphanFrameDispatches(ctx, store, queue, logger); err != nil {
@@ -158,8 +158,7 @@ func closeSettledFrameScopeTree(
 	return nil
 }
 
-func runOpenNewFrames(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger) error {
-	_ = queue
+func runOpenNewFrames(ctx context.Context, store persistence.Tables, logger Logger) error {
 	var picks []persistence.PendingMessagePick
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ps, err := store.Messages().PickPendingMessagesForIdleInstances(ctx, tx)

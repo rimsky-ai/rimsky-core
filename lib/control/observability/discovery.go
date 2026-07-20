@@ -14,7 +14,6 @@ type Reachability string
 const (
 	ReachabilityReachable   Reachability = "reachable"
 	ReachabilityUnreachable Reachability = "unreachable"
-	ReachabilityDegraded    Reachability = "degraded"
 )
 
 type CustomUI struct {

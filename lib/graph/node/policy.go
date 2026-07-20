@@ -21,7 +21,6 @@ type (
 func Evaluate(
 	policy *ErrorTypePolicy,
 	state EvaluatorState,
-	errorClass string,
 	maxRetries int,
 	backoff BackoffConfig,
 	rng func() float64,

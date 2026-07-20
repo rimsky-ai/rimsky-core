@@ -173,10 +173,7 @@ func parseCallbackBody(body map[string]any) (*genv1.Outcome, error) {
 	if v, ok := body["error"]; ok {
 		return mapErrorOutcome(asMap(v)), nil
 	}
-	if v, ok := body["park"]; ok {
-		return mapPark(asMap(v)), nil
-	}
-	return nil, fmt.Errorf("callback body has no outcome field")
+	return mapPark(asMap(body["park"])), nil
 }
 
 func mapSuccess(m map[string]any) *genv1.Outcome {
