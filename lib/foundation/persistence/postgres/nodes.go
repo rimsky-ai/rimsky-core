@@ -7,7 +7,9 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -101,28 +103,26 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 	if limit <= 0 {
 		limit = 100
 	}
-	var cursor *foundationshared.UUID
+	var cursorCreatedAt, cursorID any
 	if pag.Cursor != "" {
-		u, err := uuid.Parse(pag.Cursor)
+		createdAt, id, err := decodeNodeCursor(pag.Cursor)
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.NodeRow]{}, fmt.Errorf("nodes.listByInstancePaged: bad cursor: %w", err)
 		}
-		cursor = &u
+		cursorCreatedAt = createdAt
+		cursorID = id
 	}
 	rows, err := ex.Query(ctx,
 		`SELECT `+nodeCols+` `+nodeSelect+`
 		 WHERE n.instance_id = $1
 		   AND (
-		     $2::uuid IS NULL
-		     OR (n.created_at, n.id) > (
-		       (SELECT created_at FROM rimsky_nodes WHERE id = $2::uuid),
-		       $2::uuid
-		     )
+		     $2::timestamptz IS NULL
+		     OR (n.created_at, n.id) > ($2, $5::uuid)
 		   )
 		   AND ($4 = '' OR $4 = ANY(n.tags))
 		 ORDER BY n.created_at ASC, n.id ASC
 		 LIMIT $3`,
-		instanceID, cursor, limit, filter.Tag,
+		instanceID, cursorCreatedAt, limit, filter.Tag, cursorID,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.NodeRow]{}, fmt.Errorf("nodes.listByInstancePaged: %w", err)
@@ -134,7 +134,8 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
-		nextCursor = out[len(out)-1].ID.String()
+		last := out[len(out)-1]
+		nextCursor = encodeNodeCursor(last.CreatedAt, last.ID)
 	}
 	return persistence.PaginatedListResult[persistence.NodeRow]{Rows: out, NextCursor: nextCursor}, nil
 }
@@ -335,7 +336,7 @@ func (s *nodesImpl) enforceAndUpdate(
 		return fmt.Errorf("nodes.updateState: run-row update: %w", err)
 	}
 	if _, err := ex.Exec(ctx,
-		`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`,
+		`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1 AND ended_at IS NULL`,
 		frameIDScan,
 	); err != nil {
 		return fmt.Errorf("nodes.updateState: refresh frame progress: %w", err)
@@ -345,7 +346,7 @@ func (s *nodesImpl) enforceAndUpdate(
 
 // @concept: error-policy
 func (s *nodesImpl) UpdateRunEvaluatorState(ctx context.Context, runID foundationshared.UUID, es spec.EvaluatorState, tx persistence.Tx) error {
-	_, err := s.q(tx).Exec(ctx,
+	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
 		   SET retry_counter = $2
 		 WHERE id = $1`,
@@ -353,6 +354,9 @@ func (s *nodesImpl) UpdateRunEvaluatorState(ctx context.Context, runID foundatio
 	)
 	if err != nil {
 		return fmt.Errorf("nodes.UpdateRunEvaluatorState: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("nodes.UpdateRunEvaluatorState: %w", persistence.ErrRunRowMissing)
 	}
 	return nil
 }
@@ -690,6 +694,32 @@ func collectNodes(rows pgx.Rows) ([]persistence.NodeRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+type nodeCursor struct {
+	C time.Time `json:"c"`
+	I string    `json:"i"`
+}
+
+func encodeNodeCursor(createdAt time.Time, id foundationshared.UUID) string {
+	b, _ := json.Marshal(nodeCursor{C: createdAt, I: id.String()})
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeNodeCursor(s string) (time.Time, foundationshared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	var c nodeCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	id, err := uuid.Parse(c.I)
+	if err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	return c.C, foundationshared.UUID(id), nil
 }
 
 func nullableString(s string) any {

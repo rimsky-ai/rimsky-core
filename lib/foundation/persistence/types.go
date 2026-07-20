@@ -20,7 +20,7 @@ type Config struct {
 type PostgresConfig struct {
 	DSN             string
 	MaxOpenConns    int
-	MaxIdleConns    int
+	MinConns        int
 	ConnMaxLifetime time.Duration
 }
 

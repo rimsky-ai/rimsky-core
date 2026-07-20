@@ -111,11 +111,14 @@ func Suite(
 	t.Run("NodeAttributesPerRunDenormConsistency", func(t *testing.T) { testNodeAttributesPerRunDenormConsistency(t, factory(t)) })
 	t.Run("NodeRunSummaryBucketMapping", func(t *testing.T) { testNodeRunSummaryBucketMapping(t, factory(t)) })
 	t.Run("InstancesFindAnyByInstanceKey", func(t *testing.T) { testInstancesFindAnyByInstanceKey(t, factory(t)) })
+	t.Run("InstancesCreateConflictErrorsDistinguishIDFromKey", func(t *testing.T) { testInstancesCreateConflictErrorsDistinguishIDFromKey(t, factory(t)) })
+	t.Run("InstancesListPaginationSurvivesCursorRowDeletion", func(t *testing.T) { testInstancesListPaginationSurvivesCursorRowDeletion(t, factory(t)) })
 	t.Run("InstancesAttributeOverridesRoundTrip", func(t *testing.T) { testInstancesAttributeOverridesRoundTrip(t, factory(t)) })
 	t.Run("InstancesAttributeOverridesDefaultsEmpty", func(t *testing.T) { testInstancesAttributeOverridesDefaultsEmpty(t, factory(t)) })
 	t.Run("InstancesDeleteCascadeRunScopeTree", func(t *testing.T) {
 		testInstancesDeleteCascadeRunScopeTree(t, factory(t), rawQuery)
 	})
+	t.Run("CreateChildNodeRunRefusesClosedScope", func(t *testing.T) { testCreateChildNodeRunRefusesClosedScope(t, factory(t)) })
 	t.Run("LifecycleIdempotencyListByClaimProducer", func(t *testing.T) { testLifecycleIdempotencyListByClaimProducer(t, factory(t)) })
 	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
 	t.Run("EventsListAuthPayloadFilters", func(t *testing.T) { testEventsListAuthPayloadFilters(t, factory(t)) })
@@ -123,6 +126,7 @@ func Suite(
 	t.Run("MessagesListByFrameID", func(t *testing.T) { testMessagesListByFrameID(t, factory(t)) })
 	t.Run("MessagesListPendingForInstanceReturnsAllPending", func(t *testing.T) { testMessagesListPendingForInstanceReturnsAllPending(t, factory(t)) })
 	t.Run("MessagesListBySender", func(t *testing.T) { testMessagesListBySender(t, factory(t)) })
+	t.Run("MessagesListFiltersByType", func(t *testing.T) { testMessagesListFiltersByType(t, factory(t)) })
 	t.Run("MessagesMarkDeliveredExcludesCancelled", func(t *testing.T) { testMessagesMarkDeliveredExcludesCancelled(t, factory(t)) })
 	t.Run("MessagesScanNullPayload", func(t *testing.T) { testMessagesScanNullPayload(t, factory(t)) })
 	t.Run("MessagesScanNonNullPayload", func(t *testing.T) { testMessagesScanNonNullPayload(t, factory(t)) })
@@ -169,6 +173,7 @@ func Suite(
 	t.Run("FrameLifecycle", func(t *testing.T) {
 		t.Run("Default", func(t *testing.T) { testFrameLifecycleSerialQueue(t, factory(t)) })
 		t.Run("CascadeImmutableRow", func(t *testing.T) { testFrameRowCascadeImmutable(t, factory(t)) })
+		t.Run("EndedHeartbeatDoesNotBumpLastProgressAt", func(t *testing.T) { testFrameEndedHeartbeatDoesNotBumpLastProgressAt(t, factory(t)) })
 	})
 	t.Run("FrameSettlement", func(t *testing.T) {
 		t.Run("NoPendingNodes", func(t *testing.T) { testFrameSettlementNoPendingNodes(t, factory(t)) })
@@ -202,8 +207,10 @@ func Suite(
 		t.Run("SetRunRequiredStoresReusesStaleRun", func(t *testing.T) { testSetRunRequiredStores_ReusesStaleRun(t, factory(t)) })
 	})
 	t.Run("LineageQueryByParentRunID", func(t *testing.T) { testLineageQueryByParentRunID(t, factory(t)) })
+	t.Run("LineageQueryPaginatesWithCursor", func(t *testing.T) { testLineageQueryPaginatesWithCursor(t, factory(t)) })
 	t.Run("LineageCountOlderThanMatchesDelete", func(t *testing.T) { testLineageCountOlderThanMatchesDelete(t, factory(t)) })
 	t.Run("APIKeys", func(t *testing.T) { testAPIKeys(t, factory(t)) })
 	t.Run("DeploymentCA", func(t *testing.T) { TestDeploymentCA(t, factory(t)) })
 	t.Run("TemplatesInsertIdempotent", func(t *testing.T) { testTemplatesInsertIdempotent(t, factory(t)) })
+	t.Run("TemplatesListPaginationSurvivesCursorRowDeletion", func(t *testing.T) { testTemplatesListPaginationSurvivesCursorRowDeletion(t, factory(t)) })
 }

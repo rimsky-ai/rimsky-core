@@ -42,11 +42,9 @@ func CompileWhenWithBodyFields(typeSpec TypePath, when string, bodyFields map[st
 	if issues != nil && issues.Err() != nil {
 		return nil, fmt.Errorf("invalid CEL expression %q: %w", when, issues.Err())
 	}
-	if !strings.HasSuffix(string(typeSpec), "*") {
-		if schemaType, ok := PayloadSchemaForType(typeSpec); ok {
-			if err := checkPayloadFields(checked, schemaType); err != nil {
-				return nil, fmt.Errorf("invalid CEL expression %q: %w", when, err)
-			}
+	if schemaType, ok := PayloadSchemaForType(typeSpec); ok {
+		if err := checkPayloadFields(checked, schemaType); err != nil {
+			return nil, fmt.Errorf("invalid CEL expression %q: %w", when, err)
 		}
 	}
 	// @story: typed-message-substitution

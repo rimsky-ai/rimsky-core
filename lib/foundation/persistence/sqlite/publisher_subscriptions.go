@@ -143,12 +143,15 @@ func scanPublisherSubscriptions(rows *sql.Rows) ([]persistence.PublisherSubscrip
 		); err != nil {
 			return nil, err
 		}
-		if u, err := uuid.Parse(idStr); err == nil {
-			w.ID = u
+		u, err := uuid.Parse(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite.PublisherSubscriptions: parse id: %w", err)
 		}
-		if u, err := uuid.Parse(instanceStr); err == nil {
-			w.InstanceID = u
+		w.ID = u
+		if u, err = uuid.Parse(instanceStr); err != nil {
+			return nil, fmt.Errorf("sqlite.PublisherSubscriptions: parse instance_id: %w", err)
 		}
+		w.InstanceID = u
 		if startedAtStr.Valid {
 			t, err := parseTime(startedAtStr.String)
 			if err != nil {

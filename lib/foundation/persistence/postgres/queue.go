@@ -184,7 +184,7 @@ func (q *queueImpl) SelectCandidates(
 		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
 		        AND w.drained_at IS NULL
 		    )
-		  ORDER BY d.enqueued_at, d.sequence, d.id
+		  ORDER BY d.enqueued_at, d.id
 		  LIMIT $3
 		  FOR UPDATE OF d SKIP LOCKED`,
 		acceptedClaimProducers, acceptedExecutors, limit, req.LateBindExecutorProxy, req.LateBindClaimProducerProxy,
@@ -368,6 +368,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 		if r.RequiredClaimProducers == nil {
 			r.RequiredClaimProducers = []string{}
 		}
+		r.Tags = dedupTags(r.Tags)
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -512,6 +513,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 	if r.RequiredClaimProducers == nil {
 		r.RequiredClaimProducers = []string{}
 	}
+	r.Tags = dedupTags(r.Tags)
 	return &r, nil
 }
 
@@ -627,6 +629,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		if r.RequiredClaimProducers == nil {
 			r.RequiredClaimProducers = []string{}
 		}
+		r.Tags = dedupTags(r.Tags)
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -711,6 +714,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 	if r.RequiredClaimProducers == nil {
 		r.RequiredClaimProducers = []string{}
 	}
+	r.Tags = dedupTags(r.Tags)
 	return &r, nil
 }
 
@@ -788,6 +792,22 @@ func (q *queueImpl) ListInFlightRunStates(
 		return nil, fmt.Errorf("postgres.ListInFlightRunStates: rows: %w", err)
 	}
 	return out, nil
+}
+
+func dedupTags(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, t := range in {
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
 }
 
 func encodeDispatchCursor(enqueued time.Time, id shared.UUID) string {

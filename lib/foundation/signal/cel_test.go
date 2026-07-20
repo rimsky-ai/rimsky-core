@@ -93,6 +93,16 @@ func TestCompileWhen_RejectsUnknownFieldExact(t *testing.T) {
 	}
 }
 
+func TestCompileWhen_RejectsUnknownFieldOnUniformWildcardFamily(t *testing.T) {
+	_, err := CompileWhen("terminal/error/*", "payload.eror_class == 'x'")
+	if err == nil {
+		t.Fatalf("CompileWhen: expected unknown-field error on terminal/error/* (uniform TerminalErrorPayload family)")
+	}
+	if !strings.Contains(err.Error(), "eror_class") {
+		t.Fatalf("CompileWhen error should name the missing field; got %v", err)
+	}
+}
+
 func TestCompileWhen_AttributesDeltaOnError(t *testing.T) {
 	p, err := CompileWhen("terminal/error/agent/rate_limited",
 		"'transient' in payload.attributes_delta")

@@ -6,6 +6,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -92,10 +93,15 @@ func (s *templatesImpl) List(
 		v := string(filter.State)
 		stateFilter = &v
 	}
-	var cursor *string
+	var cursorRegisteredAt any
+	var cursorID any
 	if pag.Cursor != "" {
-		v := pag.Cursor
-		cursor = &v
+		registeredAt, id, err := decodeTemplateCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.TemplateRow]{}, fmt.Errorf("templates.list: bad cursor: %w", err)
+		}
+		cursorRegisteredAt = registeredAt
+		cursorID = id
 	}
 	var tagFilter *string
 	if filter.Tag != "" {
@@ -108,11 +114,8 @@ func (s *templatesImpl) List(
 		 FROM rimsky_templates t
 		 WHERE ($1::text IS NULL OR state = $1)
 		   AND (
-		     $2::text IS NULL
-		     OR (registered_at, id) < (
-		       (SELECT registered_at FROM rimsky_templates WHERE id = $2),
-		       $2
-		     )
+		     $2::timestamptz IS NULL
+		     OR (registered_at, id) < ($2, $5::text)
 		   )
 		   AND (
 		     $4::text IS NULL
@@ -123,7 +126,7 @@ func (s *templatesImpl) List(
 		   )
 		 ORDER BY registered_at DESC, id DESC
 		 LIMIT $3`,
-		stateFilter, cursor, limit, tagFilter,
+		stateFilter, cursorRegisteredAt, limit, tagFilter, cursorID,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.TemplateRow]{}, fmt.Errorf("templates.list: %w", err)
@@ -143,7 +146,8 @@ func (s *templatesImpl) List(
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
-		nextCursor = out[len(out)-1].ID
+		last := out[len(out)-1]
+		nextCursor = encodeTemplateCursor(last.RegisteredAt, last.ID)
 	}
 	return persistence.PaginatedListResult[persistence.TemplateRow]{Rows: out, NextCursor: nextCursor}, nil
 }
@@ -209,4 +213,26 @@ func scanTemplate(sc scannable) (persistence.TemplateRow, error) {
 		RegisteredAt: registeredAt,
 		Source:       source,
 	}, nil
+}
+
+type templateCursor struct {
+	R time.Time `json:"r"`
+	I string    `json:"i"`
+}
+
+func encodeTemplateCursor(registeredAt time.Time, id string) string {
+	b, _ := json.Marshal(templateCursor{R: registeredAt, I: id})
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeTemplateCursor(s string) (time.Time, string, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	var c templateCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, "", err
+	}
+	return c.R, c.I, nil
 }

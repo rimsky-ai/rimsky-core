@@ -9,9 +9,13 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/internal/pgtest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func TestPGEvents_TypedKindRoundTrip(t *testing.T) {
@@ -97,5 +101,50 @@ func TestPGEvents_UnmarshalRejectsCorruptKind(t *testing.T) {
 	}
 	if !errors.Is(err, events.ErrUnknownKind) {
 		t.Fatalf("List error = %v, want ErrUnknownKind", err)
+	}
+}
+
+func TestPGEvents_LastTerminalByNodesRejectsCorruptPayload(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	store := d.Tables()
+
+	templateHash := "sha256-" + uuid.NewString()
+	instanceID := shared.UUID(uuid.New())
+	nodeID := shared.UUID(uuid.New())
+	tmpl := spec.TemplateSpec{
+		Name: "events-last-terminal-fixture", Version: "1",
+		Nodes: []spec.TemplateNodeDef{{Type: "fixture-node-type", Executor: "test-executor"}},
+	}
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID: templateHash, Spec: tmpl, State: persistence.TemplateStateRegistered, Source: "direct",
+		}, tx); err != nil {
+			return err
+		}
+		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID: instanceID, TemplateHash: templateHash,
+		}, tx); err != nil {
+			return err
+		}
+		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: nodeID, InstanceID: instanceID, NodeType: "fixture-node-type", Executor: "test-executor",
+		}, tx); err != nil {
+			return err
+		}
+		return store.Events().Append(ctx,
+			persistence.EventAppendInput{Kind: events.KindWorkCompleted(), NodeID: &nodeID}, tx)
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	pgtest.ExecForTest(ctx, t, d,
+		`UPDATE rimsky_events SET payload = '"not an object"'::jsonb WHERE node_id = $1`, nodeID)
+	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, err := store.Events().LastTerminalByNodes(ctx, []shared.UUID{nodeID}, tx)
+		return err
+	})
+	if err == nil {
+		t.Fatal("LastTerminalByNodes with corrupt payload did not error")
 	}
 }

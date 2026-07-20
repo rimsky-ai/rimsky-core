@@ -311,7 +311,8 @@ func testMessagesListBySender(t *testing.T, d persistence.Database) {
 		t.Fatalf("Sender(publisher-nonexistent) = %d rows, want 0", len(gotUnknown))
 	}
 
-	gotKindOnly := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, SenderKind: "publisher"})
+	publisherKind := "publisher"
+	gotKindOnly := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, SenderKind: &publisherKind})
 	if len(gotKindOnly) != 2 {
 		t.Fatalf("SenderKind(publisher) = %d rows, want 2 (both publisher-a and publisher-b)", len(gotKindOnly))
 	}
@@ -551,6 +552,64 @@ func testMessagesListCursorPagination(t *testing.T, d persistence.Database) {
 		if !seenSet[id] {
 			t.Fatalf("message %s never appeared across any page; cursor pagination must not drop rows", id)
 		}
+	}
+}
+
+func testMessagesListFiltersByType(t *testing.T, d persistence.Database) {
+	t.Helper()
+	defer d.Close()
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	insert := func(msgType string) shared.UUID {
+		t.Helper()
+		id := shared.UUID(uuid.New())
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+				ID:         id,
+				InstanceID: fix.InstanceID,
+				Type:       msgType,
+				Sender:     "fixture-sender",
+				SenderKind: "operator",
+				ReceivedAt: time.Now().UTC(),
+			})
+		}); err != nil {
+			t.Fatalf("Messages.Insert(type=%q): %v", msgType, err)
+		}
+		return id
+	}
+
+	emptyWakeMsg := insert("")
+	typedMsg := insert("fixture/typed")
+
+	list := func(f persistence.MessageListFilter) []persistence.MessageRow {
+		t.Helper()
+		res, err := store.Messages().List(ctx, f, persistence.ListPagination{Limit: 50})
+		if err != nil {
+			t.Fatalf("Messages.List: %v", err)
+		}
+		return res.Rows
+	}
+
+	emptyType := ""
+	gotEmpty := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, Type: &emptyType})
+	if len(gotEmpty) != 1 || gotEmpty[0].ID != emptyWakeMsg {
+		t.Fatalf("Type(\"\") = %v, want exactly [%s]", gotEmpty, emptyWakeMsg)
+	}
+	if !gotEmpty[0].IsEmptyWake() {
+		t.Fatalf("Type(\"\") row %v, want IsEmptyWake() true", gotEmpty[0])
+	}
+
+	typedType := "fixture/typed"
+	gotTyped := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, Type: &typedType})
+	if len(gotTyped) != 1 || gotTyped[0].ID != typedMsg {
+		t.Fatalf("Type(fixture/typed) = %v, want exactly [%s]", gotTyped, typedMsg)
+	}
+
+	gotUnfiltered := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID})
+	if len(gotUnfiltered) != 3 {
+		t.Fatalf("Type(nil) = %d rows, want 3 (no filter applied: 2 inserted here + 1 fixture message)", len(gotUnfiltered))
 	}
 }
 

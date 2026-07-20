@@ -19,6 +19,59 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
+// @concept: run-scope
+func testCreateChildNodeRunRefusesClosedScope(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	mainScopeRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+
+	fanoutScopeID := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:               fanoutScopeID,
+			ParentRunScopeID: &fix.MainRunScopeID,
+			ParentNodeRunID:  &mainScopeRunID,
+			GraphName:        spec.MainGraphName,
+			InstanceID:       fix.InstanceID,
+			PartitionKey:     "closed-part",
+		})
+	}); err != nil {
+		t.Fatalf("Create fanout RunScope: %v", err)
+	}
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.RunScopes().Close(ctx, tx, fanoutScopeID)
+	}); err != nil {
+		t.Fatalf("Close fanout RunScope: %v", err)
+	}
+
+	childRunID := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+			NodeRunID:    childRunID,
+			NodeID:       fix.NodeID,
+			FrameID:      fix.FrameID,
+			RunScopeID:   fanoutScopeID,
+			ExecutorName: "test-executor",
+		})
+	}); err != nil {
+		t.Fatalf("CreateChildNodeRun into closed scope: %v", err)
+	}
+
+	var got *persistence.NodeRunTreeRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.NodeRunTree().GetByID(ctx, tx, childRunID)
+		got = r
+		return err
+	}); err != nil {
+		t.Fatalf("GetByID after closed-scope CreateChildNodeRun: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("CreateChildNodeRun inserted a row into a closed run scope: %+v", got)
+	}
+}
+
 func testInstancesDeleteCascadeRunScopeTree(
 	t *testing.T, d persistence.Database,
 	rawQuery func(t *testing.T, d persistence.Database, sql string, args ...any) []RawQueryRow,

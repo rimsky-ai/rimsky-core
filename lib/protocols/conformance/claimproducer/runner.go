@@ -10,8 +10,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/check"
@@ -195,7 +198,6 @@ func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps cl
 		return []CheckResult{{Name: "SplitScopeSkipped"}}
 	}
 	defer func() {
-		_ = c.Abandon(ctx, claimID, openOut.Result.ClaimScope, openOut.Result.Address, "")
 		_ = c.Release(ctx, claimID, openOut.Result.ClaimScope, openOut.Result.Address, "")
 	}()
 
@@ -381,12 +383,15 @@ func containsErrorSubstring(err error, substrs ...string) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
+	if st, ok := status.FromError(err); ok && st.Code() == codes.Unimplemented {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
 	for _, s := range substrs {
 		if s == "" {
 			continue
 		}
-		if bytes.Contains([]byte(msg), []byte(s)) {
+		if strings.Contains(msg, strings.ToLower(s)) {
 			return true
 		}
 	}

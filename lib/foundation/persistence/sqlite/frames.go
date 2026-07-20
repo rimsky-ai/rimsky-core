@@ -507,10 +507,8 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
 		}
-		if cols.startedAt.Valid {
-			if t, err := parseTime(cols.startedAt.String); err == nil {
-				lastStarted = t
-			}
+		if r.StartedAt != nil {
+			lastStarted = *r.StartedAt
 		}
 		out = append(out, r)
 	}
@@ -603,20 +601,14 @@ func (c frameObservabilityCols) toFrameRow(caller string) (persistence.FrameRow,
 		}
 		r.RootRunScopeID = rsid
 	}
-	if c.startedAt.Valid {
-		if t, err := parseTime(c.startedAt.String); err == nil {
-			r.StartedAt = &t
-		}
+	if r.StartedAt, err = parseNullableTime(c.startedAt); err != nil {
+		return persistence.FrameRow{}, fmt.Errorf("%s: started_at: %w", caller, err)
 	}
-	if c.endedAt.Valid {
-		if t, err := parseTime(c.endedAt.String); err == nil {
-			r.EndedAt = &t
-		}
+	if r.EndedAt, err = parseNullableTime(c.endedAt); err != nil {
+		return persistence.FrameRow{}, fmt.Errorf("%s: ended_at: %w", caller, err)
 	}
-	if c.lastProgressAt.Valid {
-		if t, err := parseTime(c.lastProgressAt.String); err == nil {
-			r.LastProgressAt = &t
-		}
+	if r.LastProgressAt, err = parseNullableTime(c.lastProgressAt); err != nil {
+		return persistence.FrameRow{}, fmt.Errorf("%s: last_progress_at: %w", caller, err)
 	}
 	return r, nil
 }
@@ -755,10 +747,8 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		if mKind.Valid {
 			r.MessageSenderKind = mKind.String
 		}
-		if cols.startedAt.Valid {
-			if t, err := parseTime(cols.startedAt.String); err == nil {
-				lastStarted = t
-			}
+		if r.StartedAt != nil {
+			lastStarted = *r.StartedAt
 		}
 		out = append(out, r)
 	}

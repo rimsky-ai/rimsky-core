@@ -11,6 +11,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	sqlitepersist "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite/migrations"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
@@ -71,12 +72,18 @@ func TestSQLiteMigration024RebuildPreservesChildRows(t *testing.T) {
 		}
 	}
 
-	if _, err := db.ExecContext(ctx,
-		`DELETE FROM rimsky_migrations WHERE filename = '024-retire-frame-timeout.sql'`); err != nil {
-		t.Fatalf("unmark 024: %v", err)
+	sqlBytes, err := migrations.FS.ReadFile("024-retire-frame-timeout.sql")
+	if err != nil {
+		t.Fatalf("read 024 migration file: %v", err)
 	}
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+		t.Fatalf("disable foreign_keys: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, string(sqlBytes)); err != nil {
 		t.Fatalf("re-apply 024 against populated db: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
+		t.Fatalf("re-enable foreign_keys: %v", err)
 	}
 
 	var frames, runs int

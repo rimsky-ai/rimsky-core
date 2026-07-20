@@ -126,7 +126,7 @@ func TestMigratorRun_QueryHasErrorPropagates(t *testing.T) {
 func TestMigratorRun_ReleaseFailureDoesNotFailRunAndIsSafeWithNilLogger(t *testing.T) {
 	locker := &fakeMigratorLocker{releaseErr: errors.New("release boom")}
 	m := Migrator{
-		FS:       fstest.MapFS{},
+		FS:       fstest.MapFS{"001-first.sql": &fstest.MapFile{Data: []byte("-- first")}},
 		QueryHas: func(context.Context, string) (bool, error) { return false, nil },
 		ApplyOne: func(context.Context, string, string) error { return nil },
 	}
@@ -135,6 +135,44 @@ func TestMigratorRun_ReleaseFailureDoesNotFailRunAndIsSafeWithNilLogger(t *testi
 	}
 	if locker.releaseCall != 1 {
 		t.Fatalf("release called %d times, want 1", locker.releaseCall)
+	}
+}
+
+func TestMigratorRun_EmptyFSIsAStartupError(t *testing.T) {
+	m := Migrator{
+		FS:       fstest.MapFS{"not-sql.txt": &fstest.MapFile{Data: []byte("not a migration")}},
+		QueryHas: func(context.Context, string) (bool, error) { return false, nil },
+		ApplyOne: func(context.Context, string, string) error { return nil },
+	}
+	err := m.Run(context.Background(), &fakeMigratorLocker{}, nil)
+	if err == nil {
+		t.Fatalf("Run: got nil error, want a startup error for zero .sql migration files")
+	}
+}
+
+func TestMigratorRun_OutOfOrderFileIsRejected(t *testing.T) {
+	fsys := fstest.MapFS{
+		"021-later.sql": &fstest.MapFile{Data: []byte("-- later")},
+		"005-early.sql": &fstest.MapFile{Data: []byte("-- early")},
+	}
+	applied := map[string]bool{"021-later.sql": true}
+	var applyCalls []string
+	m := Migrator{
+		FS: fsys,
+		QueryHas: func(_ context.Context, filename string) (bool, error) {
+			return applied[filename], nil
+		},
+		ApplyOne: func(_ context.Context, _ string, filename string) error {
+			applyCalls = append(applyCalls, filename)
+			return nil
+		},
+	}
+	err := m.Run(context.Background(), &fakeMigratorLocker{}, nil)
+	if err == nil {
+		t.Fatalf("Run: got nil error, want a rejection of 005-early.sql sorting below applied 021-later.sql")
+	}
+	if len(applyCalls) != 0 {
+		t.Fatalf("ApplyOne calls = %v, want none (out-of-order file must be rejected before applying)", applyCalls)
 	}
 }
 

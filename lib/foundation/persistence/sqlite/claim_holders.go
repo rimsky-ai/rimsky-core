@@ -72,7 +72,7 @@ func (s *claimHoldersImpl) ListByHolderRun(ctx context.Context, holderNodeRunID 
 }
 
 func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx) error {
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_holders
 		    SET state = ?,
 		        completed_at = ?
@@ -82,13 +82,20 @@ func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state p
 	if err != nil {
 		return fmt.Errorf("claim_holders.Complete: %w", err)
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claim_holders.Complete: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return persistence.ErrClaimHolderNotActive
+	}
 	return nil
 }
 
 func (s *claimHoldersImpl) CompleteByClaimHandleAndRun(
 	ctx context.Context, claimHandleID, holderNodeRunID shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_holders
 		    SET state = ?,
 		        completed_at = ?
@@ -99,6 +106,13 @@ func (s *claimHoldersImpl) CompleteByClaimHandleAndRun(
 	)
 	if err != nil {
 		return fmt.Errorf("claim_holders.CompleteByClaimHandleAndRun: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claim_holders.CompleteByClaimHandleAndRun: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return persistence.ErrClaimHolderNotActive
 	}
 	return nil
 }

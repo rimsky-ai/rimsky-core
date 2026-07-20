@@ -156,7 +156,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	}
 
 	if err := runtime.SweepExecutorDeadlines(ctx, conductorArgs); err != nil {
-		return err
+		log.Warn("tick: SweepExecutorDeadlines failed", "error", err.Error())
 	}
 
 	if cfg.ClaimHandles != nil {
@@ -165,7 +165,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 			ClaimHandles: cfg.ClaimHandles,
 			Logger:       log,
 		}); err != nil {
-			return err
+			log.Warn("tick: SweepOrphanedClaimHandles failed", "error", err.Error())
 		}
 	}
 

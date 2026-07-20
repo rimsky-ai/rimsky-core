@@ -120,9 +120,10 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 	}
 
 	missingRunID2 := uuid.New()
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+	err = inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.NodeAttributes().MergeDelta(ctx, missingRunID2, nil, tx)
-	}); err != nil {
-		t.Fatalf("MergeDelta nil-delta on missing row: expected silent no-op, got %v", err)
+	})
+	if !errors.Is(err, persistence.ErrNotFound) {
+		t.Fatalf("MergeDelta nil-delta on missing row: got %v, want ErrNotFound (must match the non-nil delta contract)", err)
 	}
 }

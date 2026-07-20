@@ -53,10 +53,12 @@ func (b *apiKeysImpl) Insert(ctx context.Context, k persistence.APIKey, tx persi
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
-			if strings.Contains(err.Error(), "rimsky_api_keys.key_hash") {
+			switch {
+			case strings.Contains(err.Error(), "rimsky_api_keys.key_hash"):
 				return persistence.ErrAPIKeyHashCollision
+			case strings.Contains(err.Error(), "rimsky_api_keys.name"):
+				return persistence.ErrAPIKeyNameTaken
 			}
-			return persistence.ErrAPIKeyNameTaken
 		}
 		return fmt.Errorf("sqlite.APIKeys.Insert: %w", err)
 	}
@@ -152,7 +154,10 @@ func (b *apiKeysImpl) markRevokedInTx(ctx context.Context, id shared.UUID, now t
 	if err != nil {
 		return false, false, fmt.Errorf("sqlite.APIKeys.MarkRevoked: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, false, fmt.Errorf("sqlite.APIKeys.MarkRevoked.rowsAffected: %w", err)
+	}
 	if n == 1 {
 		return true, true, nil
 	}

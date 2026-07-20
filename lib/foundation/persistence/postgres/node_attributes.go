@@ -33,10 +33,22 @@ func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.
 		   JOIN rimsky_node_runs r ON r.id = a.node_run_id
 		  WHERE a.node_id = $1
 		    AND r.run_scope_id = $2
-		  ORDER BY a.updated_at DESC
+		  ORDER BY a.updated_at DESC, r.sequence DESC
 		  LIMIT 1`, nodeID, runScopeID,
 	)
 	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, tx, row, "GetLatestByNode")
+}
+
+func blobWriteIsTransactional(bb persistence.BlobBackend) bool {
+	_, ok := bb.(persistence.TxBlobBackend)
+	return ok
+}
+
+func blobBackendName(bb persistence.BlobBackend) string {
+	if bb == nil {
+		return "<none>"
+	}
+	return bb.Name()
 }
 
 func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, tx persistence.Tx, row pgx.Row, op string) (*persistence.NodeAttributesRow, error) {
@@ -54,13 +66,17 @@ func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, tx persis
 		return nil, fmt.Errorf("node_attributes.%s: %w", op, err)
 	}
 	out.UpdatedAt = when
-	if handle != nil && *handle != "" && bb != nil && handleBkend != nil && *handleBkend == bb.Name() {
+	if handle != nil && *handle != "" {
+		if bb == nil || handleBkend == nil || *handleBkend != bb.Name() {
+			rowBackend := "<none>"
+			if handleBkend != nil {
+				rowBackend = *handleBkend
+			}
+			return nil, fmt.Errorf("node_attributes.%s: row has value_handle %q on backend %q, but active blob backend is %q",
+				op, *handle, rowBackend, blobBackendName(bb))
+		}
 		bytes, err := persistence.ReadBlobInTx(ctx, bb, tx, persistence.Handle(*handle))
 		if err != nil {
-			if errors.Is(err, persistence.ErrBlobNotFound) {
-				out.Data = map[string]any{}
-				return &out, nil
-			}
 			return nil, fmt.Errorf("node_attributes.%s: blob.Read(%s): %w", op, *handle, err)
 		}
 		m := map[string]any{}
@@ -141,6 +157,11 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 		)
 	}
 	if err != nil {
+		if newHandle != "" && !blobWriteIsTransactional(si.blob) {
+			if delErr := si.blob.Delete(ctx, persistence.Handle(newHandle)); delErr != nil {
+				return fmt.Errorf("node_attributes.Upsert: %w (cleanup of orphaned blob %s also failed: %v)", err, newHandle, delErr)
+			}
+		}
 		return fmt.Errorf("node_attributes.Upsert: %w", err)
 	}
 
@@ -156,7 +177,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 
 func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, delta map[string]any, tx persistence.Tx) error {
 	if delta == nil {
-		_, err := s.q(tx).Exec(ctx,
+		tag, err := s.q(tx).Exec(ctx,
 			`UPDATE rimsky_node_attributes
 			    SET updated_at = now()
 			  WHERE node_run_id = $1`,
@@ -164,6 +185,9 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, 
 		)
 		if err != nil {
 			return fmt.Errorf("node_attributes.MergeDelta: touch: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return fmt.Errorf("node_attributes.MergeDelta: touch: %w", persistence.ErrNotFound)
 		}
 		return nil
 	}

@@ -6,6 +6,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 )
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
+
+var errInstanceIDConflict = errors.New("instances.create: instance id already exists")
 
 const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, paused, service_bindings, created_by_api_key_id, message_queue_mode`
 
@@ -59,10 +62,16 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	)
 	out, err := scanInstance(row)
 	if err != nil {
-		if isUniqueViolation(err) {
-			return persistence.InstanceRow{}, foundationshared.Wrap(foundationshared.ErrInstanceKeyConflict,
-				"instance_key already registered for template",
-				map[string]any{"template_hash": in.TemplateHash, "instance_key": in.InstanceKey})
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			switch pgErr.ConstraintName {
+			case "rimsky_instances_pkey":
+				return persistence.InstanceRow{}, errInstanceIDConflict
+			case "rimsky_instances_template_hash_instance_key_key":
+				return persistence.InstanceRow{}, foundationshared.Wrap(foundationshared.ErrInstanceKeyConflict,
+					"instance_key already registered for template",
+					map[string]any{"template_hash": in.TemplateHash, "instance_key": in.InstanceKey})
+			}
 		}
 		return persistence.InstanceRow{}, fmt.Errorf("instances.create: %w", err)
 	}
@@ -130,13 +139,15 @@ func (s *instancesImpl) List(
 	if limit <= 0 {
 		limit = 100
 	}
-	var cursor *foundationshared.UUID
+	var cursorCreatedAt any
+	var cursorID any
 	if pag.Cursor != "" {
-		u, err := uuid.Parse(pag.Cursor)
+		createdAt, id, err := decodeInstanceCursor(pag.Cursor)
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.InstanceRow]{}, fmt.Errorf("instances.list: bad cursor: %w", err)
 		}
-		cursor = &u
+		cursorCreatedAt = createdAt
+		cursorID = id
 	}
 	var tmplHash *string
 	if filter.TemplateHash != "" {
@@ -158,15 +169,12 @@ func (s *instancesImpl) List(
 		     OR ($2::boolean = false AND terminated_at IS NOT NULL)
 		   )
 		   AND (
-		     $3::uuid IS NULL
-		     OR (created_at, id) < (
-		       (SELECT created_at FROM rimsky_instances WHERE id = $3::uuid),
-		       $3::uuid
-		     )
+		     $3::timestamptz IS NULL
+		     OR (created_at, id) < ($3, $5::uuid)
 		   )
 		 ORDER BY created_at DESC, id DESC
 		 LIMIT $4`,
-		tmplHash, activeArg, cursor, limit,
+		tmplHash, activeArg, cursorCreatedAt, limit, cursorID,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.InstanceRow]{}, fmt.Errorf("instances.list: %w", err)
@@ -186,7 +194,8 @@ func (s *instancesImpl) List(
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
-		nextCursor = out[len(out)-1].ID.String()
+		last := out[len(out)-1]
+		nextCursor = encodeInstanceCursor(last.CreatedAt, last.ID)
 	}
 	return persistence.PaginatedListResult[persistence.InstanceRow]{Rows: out, NextCursor: nextCursor}, nil
 }
@@ -357,18 +366,36 @@ func scanInstanceRows(rows pgx.Rows) (persistence.InstanceRow, error) {
 	return scanInstance(rows)
 }
 
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code == "23505"
-	}
-	return false
-}
-
 func isFKViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		return pgErr.Code == "23503"
 	}
 	return false
+}
+
+type instanceCursor struct {
+	C time.Time `json:"c"`
+	I string    `json:"i"`
+}
+
+func encodeInstanceCursor(createdAt time.Time, id foundationshared.UUID) string {
+	b, _ := json.Marshal(instanceCursor{C: createdAt, I: id.String()})
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeInstanceCursor(s string) (time.Time, foundationshared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	var c instanceCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	id, err := uuid.Parse(c.I)
+	if err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	return c.C, foundationshared.UUID(id), nil
 }

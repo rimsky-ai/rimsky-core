@@ -7,9 +7,11 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -18,6 +20,8 @@ import (
 )
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
+
+var errInstanceIDConflict = errors.New("instances.create: instance id already exists")
 
 const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, paused, service_bindings, created_by_api_key_id, message_queue_mode`
 
@@ -64,10 +68,15 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	)
 	out, err := scanInstance(row)
 	if err != nil {
-		if isUniqueViolation(err) {
-			return persistence.InstanceRow{}, foundationshared.Wrap(foundationshared.ErrInstanceKeyConflict,
-				"instance_key already registered for template",
-				map[string]any{"template_hash": in.TemplateHash, "instance_key": in.InstanceKey})
+		if code, ok := sqliteErrorCode(err); ok {
+			switch code {
+			case sqliteConstraintPrimaryKey:
+				return persistence.InstanceRow{}, errInstanceIDConflict
+			case sqliteConstraintUnique:
+				return persistence.InstanceRow{}, foundationshared.Wrap(foundationshared.ErrInstanceKeyConflict,
+					"instance_key already registered for template",
+					map[string]any{"template_hash": in.TemplateHash, "instance_key": in.InstanceKey})
+			}
 		}
 		return persistence.InstanceRow{}, fmt.Errorf("instances.create: %w", err)
 	}
@@ -131,13 +140,14 @@ func (s *instancesImpl) List(
 	if limit <= 0 {
 		limit = 100
 	}
-	var cursor any
+	var cursorCreatedAt, cursorID any
 	if pag.Cursor != "" {
-		u, err := uuid.Parse(pag.Cursor)
+		createdAt, id, err := decodeInstanceCursor(pag.Cursor)
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.InstanceRow]{}, fmt.Errorf("instances.list: bad cursor: %w", err)
 		}
-		cursor = u.String()
+		cursorCreatedAt = formatTime(createdAt)
+		cursorID = id.String()
 	}
 	var tmplHash any
 	if filter.TemplateHash != "" {
@@ -163,14 +173,11 @@ func (s *instancesImpl) List(
 		   )
 		   AND (
 		     ? IS NULL
-		     OR (created_at, id) < (
-		       (SELECT created_at FROM rimsky_instances WHERE id = ?),
-		       ?
-		     )
+		     OR (created_at, id) < (?, ?)
 		   )
 		 ORDER BY created_at DESC, id DESC
 		 LIMIT ?`,
-		tmplHash, tmplHash, activeArg, activeArg, activeArg, cursor, cursor, cursor, limit,
+		tmplHash, tmplHash, activeArg, activeArg, activeArg, cursorCreatedAt, cursorCreatedAt, cursorID, limit,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.InstanceRow]{}, fmt.Errorf("instances.list: %w", err)
@@ -190,7 +197,8 @@ func (s *instancesImpl) List(
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
-		nextCursor = out[len(out)-1].ID.String()
+		last := out[len(out)-1]
+		nextCursor = encodeInstanceCursor(last.CreatedAt, last.ID)
 	}
 	return persistence.PaginatedListResult[persistence.InstanceRow]{Rows: out, NextCursor: nextCursor}, nil
 }
@@ -375,4 +383,34 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		out.CreatedByAPIKeyID = &parsed
 	}
 	return out, nil
+}
+
+type instanceCursor struct {
+	C string `json:"c"`
+	I string `json:"i"`
+}
+
+func encodeInstanceCursor(createdAt time.Time, id foundationshared.UUID) string {
+	b, _ := json.Marshal(instanceCursor{C: formatTime(createdAt), I: id.String()})
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeInstanceCursor(s string) (time.Time, foundationshared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	var c instanceCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	createdAt, err := parseTime(c.C)
+	if err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	id, err := uuid.Parse(c.I)
+	if err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	return createdAt, foundationshared.UUID(id), nil
 }

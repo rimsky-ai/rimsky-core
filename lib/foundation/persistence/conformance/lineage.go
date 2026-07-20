@@ -94,6 +94,91 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 	}
 }
 
+func testLineageQueryPaginatesWithCursor(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	insertLeaf := func(t *testing.T, runID shared.UUID, observedAt time.Time) shared.UUID {
+		t.Helper()
+		rec := map[string]any{
+			"run_id":               runID.String(),
+			"frame_id":             fix.FrameID.String(),
+			"state":                "fresh",
+			"settling_signal_type": "terminal/success",
+		}
+		recBytes, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatalf("marshal lineage record: %v", err)
+		}
+		rowID := shared.UUID(uuid.New())
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return store.Lineage().Insert(ctx, tx, persistence.LineageRow{
+				ID:         rowID,
+				RecordKind: persistence.LineageRecordKindLeafRun,
+				InstanceID: fix.InstanceID,
+				FrameID:    fix.FrameID,
+				ObservedAt: observedAt,
+				Record:     recBytes,
+			})
+		}); err != nil {
+			t.Fatalf("Lineage.Insert: %v", err)
+		}
+		return rowID
+	}
+
+	base := time.Now().UTC()
+	var want []shared.UUID
+	for i := 0; i < 5; i++ {
+		want = append(want, insertLeaf(t, shared.UUID(uuid.New()), base.Add(time.Duration(i)*time.Second)))
+	}
+
+	q := persistence.LineageQuery{InstanceID: &fix.InstanceID, Kind: persistence.LineageRecordKindLeafRun}
+
+	page1, err := store.Lineage().Query(ctx, q, persistence.ListPagination{Limit: 2})
+	if err != nil {
+		t.Fatalf("Lineage.Query page1: %v", err)
+	}
+	if len(page1.Rows) != 2 {
+		t.Fatalf("Lineage.Query page1: got %d rows want 2", len(page1.Rows))
+	}
+	if page1.NextCursor == "" {
+		t.Fatalf("Lineage.Query page1: NextCursor empty, want a continuation cursor")
+	}
+
+	page2, err := store.Lineage().Query(ctx, q, persistence.ListPagination{Limit: 2, Cursor: page1.NextCursor})
+	if err != nil {
+		t.Fatalf("Lineage.Query page2: %v", err)
+	}
+	if len(page2.Rows) != 2 {
+		t.Fatalf("Lineage.Query page2: got %d rows want 2", len(page2.Rows))
+	}
+
+	page3, err := store.Lineage().Query(ctx, q, persistence.ListPagination{Limit: 2, Cursor: page2.NextCursor})
+	if err != nil {
+		t.Fatalf("Lineage.Query page3: %v", err)
+	}
+	if len(page3.Rows) != 1 {
+		t.Fatalf("Lineage.Query page3: got %d rows want 1", len(page3.Rows))
+	}
+	if page3.NextCursor != "" {
+		t.Fatalf("Lineage.Query page3: NextCursor = %q, want empty at end of list", page3.NextCursor)
+	}
+
+	seen := map[shared.UUID]struct{}{}
+	for _, r := range append(append(page1.Rows, page2.Rows...), page3.Rows...) {
+		if _, dup := seen[r.ID]; dup {
+			t.Fatalf("Lineage.Query: row %s returned on more than one page", r.ID)
+		}
+		seen[r.ID] = struct{}{}
+	}
+	for _, id := range want {
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("Lineage.Query: row %s missing across all pages", id)
+		}
+	}
+}
+
 func testLineageCountOlderThanMatchesDelete(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)

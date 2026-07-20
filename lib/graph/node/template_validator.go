@@ -139,9 +139,10 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	// @concept: message-schema
 	messageRefs := ExtractMessageRefsFromTemplate(*spec)
 	messageBodyFields := buildMessageBodyFieldSet(spec)
-	for receiverType, list := range messageRefs {
+	for _, receiverType := range sortedMessageRefKeys(messageRefs) {
+		list := messageRefs[receiverType]
 		for _, ref := range list {
-			path := fmt.Sprintf("nodes[%s].attributes.schema (substitution ref)", receiverType)
+			path := substitutionRefPath(declared, receiverType, ref)
 			if _, ok := declaredMessages[ref.TypeName]; !ok {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
@@ -263,7 +264,12 @@ func validateDefaults(spec *TemplateSpec, hooks RegistryHooks, res *ValidationRe
 			known[ex] = struct{}{}
 		}
 	}
+	execNames := make([]string, 0, len(spec.Defaults.Attributes.ByExecutor))
 	for execName := range spec.Defaults.Attributes.ByExecutor {
+		execNames = append(execNames, execName)
+	}
+	sort.Strings(execNames)
+	for _, execName := range execNames {
 		if _, ok := known[execName]; !ok {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: fmt.Sprintf("defaults.attributes.by_executor[%q]", execName),
@@ -303,7 +309,13 @@ func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks 
 			}
 		}
 	}
-	for className, policy := range n.ErrorTypes {
+	errorClassNames := make([]string, 0, len(n.ErrorTypes))
+	for className := range n.ErrorTypes {
+		errorClassNames = append(errorClassNames, className)
+	}
+	sort.Strings(errorClassNames)
+	for _, className := range errorClassNames {
+		policy := n.ErrorTypes[className]
 		if !validActions[policy.Action] {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: fmt.Sprintf("%s.error_types[%s].action", base, className),
@@ -342,7 +354,8 @@ func isRuntimeSynthesizedErrorClass(className string) bool {
 		"executor_schema_unavailable",
 		"attributes_schema_failed",
 		"retry_loop_no_progress",
-		"unresolved_executor":
+		"unresolved_executor",
+		"executor_sync_timeout":
 		return true
 	}
 	return false
@@ -517,7 +530,15 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			idx: i, refresh: *s.ForceUpstreamRefresh,
 		})
 	}
-	for k, entries := range groups {
+	groupKeys := make([]subKey, 0, len(groups))
+	for k := range groups {
+		groupKeys = append(groupKeys, k)
+	}
+	sort.Slice(groupKeys, func(i, j int) bool {
+		return groups[groupKeys[i]][0].idx < groups[groupKeys[j]][0].idx
+	})
+	for _, k := range groupKeys {
+		entries := groups[k]
 		if len(entries) < 2 {
 			continue
 		}
@@ -544,6 +565,33 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 
 // @concept: attribute
 // @concept: node-subscription
+func substitutionRefPath(declared map[string]int, receiverType string, ref substitutionRef) string {
+	origin := "attributes.schema"
+	switch {
+	case strings.HasPrefix(ref.AttributeProperty, "claim_producers["):
+		origin = ref.AttributeProperty
+	case strings.HasPrefix(ref.AttributeProperty, "locks["):
+		origin = ref.AttributeProperty
+	case ref.AttributeProperty == "fan_out.partition_request":
+		origin = ref.AttributeProperty
+	case ref.AttributeProperty != "":
+		origin = "attributes.schema." + ref.AttributeProperty
+	}
+	if idx, ok := declared[receiverType]; ok {
+		return fmt.Sprintf("nodes[%d].%s (substitution ref)", idx, origin)
+	}
+	return fmt.Sprintf("nodes[%s].%s (substitution ref)", receiverType, origin)
+}
+
+func sortedMessageRefKeys[T any](m map[string][]T) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func validateSubstitutionRefExistence(
 	spec *TemplateSpec,
 	declared map[string]int,
@@ -551,9 +599,10 @@ func validateSubstitutionRefExistence(
 	refs map[string][]substitutionRef,
 	res *ValidationResult,
 ) {
-	for receiverType, list := range refs {
+	for _, receiverType := range sortedMessageRefKeys(refs) {
+		list := refs[receiverType]
 		for _, ref := range list {
-			path := fmt.Sprintf("nodes[%s].attributes.schema (substitution ref)", receiverType)
+			path := substitutionRefPath(declared, receiverType, ref)
 			senderIdx, declaredOk := declared[ref.TypeName]
 			if !declaredOk {
 				res.Errors = append(res.Errors, ValidationError{
@@ -604,7 +653,8 @@ func validateSubstitutionRefCoverage(
 		}
 		indexByReceiver[n.Type] = idx
 	}
-	for receiverType, list := range refs {
+	for _, receiverType := range sortedMessageRefKeys(refs) {
+		list := refs[receiverType]
 		idx := indexByReceiver[receiverType]
 		for _, ref := range list {
 			suggestedType, covered := coverageMatch(idx, ref)
@@ -629,7 +679,8 @@ func validateSubstitutionRefCoverage(
 		}
 	}
 	// @story: typed-message-substitution
-	for receiverType, list := range messageRefsByReceiver {
+	for _, receiverType := range sortedMessageRefKeys(messageRefsByReceiver) {
+		list := messageRefsByReceiver[receiverType]
 		idx := indexByReceiver[receiverType]
 		for _, ref := range list {
 			adapted := substitutionRef{
@@ -717,6 +768,14 @@ func rejectAuthorSetInternalFlags(spec *TemplateSpec, res *ValidationResult) {
 				Path: path + ".is_subgraph_exit",
 				Msg:  "is_subgraph_exit is set by subgraph canonicalization and may not be declared by a template author",
 			})
+		}
+		for si, s := range n.Subscribes {
+			if s.ResolvesViaCallingNode {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: fmt.Sprintf("%s.subscribes[%d].resolves_via_calling_node", path, si),
+					Msg:  "resolves_via_calling_node is set by subgraph canonicalization and may not be declared by a template author",
+				})
+			}
 		}
 	}
 	for i := range spec.Nodes {
@@ -828,7 +887,7 @@ func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHook
 func validateClaimProducers(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
 	seenAlias := make(map[string]int, len(n.ClaimProducers))
 	for j, s := range n.ClaimProducers {
-		sbase := fmt.Sprintf("%s.stores[%d]", base, j)
+		sbase := fmt.Sprintf("%s.claim_producers[%d]", base, j)
 		name := strings.TrimSpace(s.Name)
 		if name == "" {
 			res.Errors = append(res.Errors, ValidationError{
@@ -868,7 +927,7 @@ func validateClaimProducers(n TemplateNodeDef, base string, hooks RegistryHooks,
 		if prev, dup := seenAlias[alias]; dup {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase + ".alias",
-				Msg:  fmt.Sprintf("duplicate claim alias %q (already at stores[%d])", alias, prev),
+				Msg:  fmt.Sprintf("duplicate claim alias %q (already at claim_producers[%d])", alias, prev),
 			})
 			continue
 		}

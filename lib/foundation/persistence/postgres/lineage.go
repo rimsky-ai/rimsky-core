@@ -6,9 +6,12 @@ package postgres
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -90,6 +93,14 @@ func (b *lineageImpl) Query(ctx context.Context, q persistence.LineageQuery, pag
 		args = append(args, *q.ObservedBefore)
 		where += fmt.Sprintf(" AND observed_at < $%d", len(args))
 	}
+	if pag.Cursor != "" {
+		cursorObserved, cursorID, err := decodeLineageCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.LineageRow]{}, fmt.Errorf("postgres.Lineage.Query: bad cursor: %w", err)
+		}
+		args = append(args, cursorObserved, cursorID)
+		where += fmt.Sprintf(" AND (observed_at, id) < ($%d, $%d)", len(args)-1, len(args))
+	}
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 100
@@ -108,7 +119,39 @@ func (b *lineageImpl) Query(ctx context.Context, q persistence.LineageQuery, pag
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.LineageRow]{}, err
 	}
-	return persistence.PaginatedListResult[persistence.LineageRow]{Rows: out}, nil
+	var nextCursor string
+	if len(out) == limit && len(out) > 0 {
+		last := out[len(out)-1]
+		nextCursor = encodeLineageCursor(last.ObservedAt, last.ID)
+	}
+	return persistence.PaginatedListResult[persistence.LineageRow]{Rows: out, NextCursor: nextCursor}, nil
+}
+
+type lineageCursor struct {
+	O time.Time `json:"o"`
+	I string    `json:"i"`
+}
+
+func encodeLineageCursor(observedAt time.Time, id shared.UUID) string {
+	c := lineageCursor{O: observedAt, I: id.String()}
+	b, _ := json.Marshal(c)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeLineageCursor(s string) (time.Time, shared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	var c lineageCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	id, err := uuid.Parse(c.I)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	return c.O, shared.UUID(id), nil
 }
 
 const queryByParentRunIDSQL = `

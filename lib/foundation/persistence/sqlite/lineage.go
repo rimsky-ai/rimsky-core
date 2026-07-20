@@ -7,6 +7,8 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -92,6 +94,14 @@ func (b *lineageImpl) Query(ctx context.Context, q persistence.LineageQuery, pag
 		args = append(args, formatTime(*q.ObservedBefore))
 		conds = append(conds, "observed_at < ?")
 	}
+	if pag.Cursor != "" {
+		cursorObserved, cursorID, err := decodeLineageCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.LineageRow]{}, fmt.Errorf("sqlite.Lineage.Query: bad cursor: %w", err)
+		}
+		args = append(args, formatTime(cursorObserved), cursorID.String())
+		conds = append(conds, "(observed_at, id) < (?, ?)")
+	}
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 100
@@ -111,7 +121,39 @@ func (b *lineageImpl) Query(ctx context.Context, q persistence.LineageQuery, pag
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.LineageRow]{}, err
 	}
-	return persistence.PaginatedListResult[persistence.LineageRow]{Rows: out}, nil
+	var nextCursor string
+	if len(out) == limit && len(out) > 0 {
+		last := out[len(out)-1]
+		nextCursor = encodeLineageCursor(last.ObservedAt, last.ID)
+	}
+	return persistence.PaginatedListResult[persistence.LineageRow]{Rows: out, NextCursor: nextCursor}, nil
+}
+
+type lineageCursor struct {
+	O time.Time `json:"o"`
+	I string    `json:"i"`
+}
+
+func encodeLineageCursor(observedAt time.Time, id shared.UUID) string {
+	c := lineageCursor{O: observedAt, I: id.String()}
+	b, _ := json.Marshal(c)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeLineageCursor(s string) (time.Time, shared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	var c lineageCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	id, err := uuid.Parse(c.I)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	return c.O, shared.UUID(id), nil
 }
 
 const sqliteQueryByParentRunIDSQL = `

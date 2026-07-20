@@ -6,10 +6,13 @@ package persistence
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
+
+var ErrClaimHolderNotActive = errors.New("persistence: claim-holder row not found or not active")
 
 type ClaimHolderState string
 

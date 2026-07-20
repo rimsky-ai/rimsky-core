@@ -41,7 +41,10 @@ func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput
 		instanceIDArg(in.InstanceID), nodeIDArg(in.NodeID),
 		kindWire, payloadBytes, occurredAt,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("events.append: %w", err)
+	}
+	return nil
 }
 
 func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.EventListResult, error) {
@@ -195,11 +198,10 @@ func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.U
 		r.OccurredAt = occurredAt
 		if len(payload) > 0 {
 			m := map[string]any{}
-			if err := json.Unmarshal(payload, &m); err == nil {
-				r.Payload = m
-			} else {
-				r.Payload = map[string]any{}
+			if err := json.Unmarshal(payload, &m); err != nil {
+				return nil, fmt.Errorf("events.lastTerminalByNodes: unmarshal payload: %w", err)
 			}
+			r.Payload = m
 		} else {
 			r.Payload = map[string]any{}
 		}

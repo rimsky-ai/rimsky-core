@@ -7,9 +7,11 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -85,9 +87,14 @@ func (s *templatesImpl) List(
 	if filter.State != "" {
 		stateFilter = string(filter.State)
 	}
-	var cursor any
+	var cursorRegisteredAt, cursorID any
 	if pag.Cursor != "" {
-		cursor = pag.Cursor
+		registeredAt, id, err := decodeTemplateCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.TemplateRow]{}, fmt.Errorf("templates.list: bad cursor: %w", err)
+		}
+		cursorRegisteredAt = formatTime(registeredAt)
+		cursorID = id
 	}
 	var tagFilter any
 	if filter.Tag != "" {
@@ -100,10 +107,7 @@ func (s *templatesImpl) List(
 		 WHERE (? IS NULL OR state = ?)
 		   AND (
 		     ? IS NULL
-		     OR (registered_at, id) < (
-		       (SELECT registered_at FROM rimsky_templates WHERE id = ?),
-		       ?
-		     )
+		     OR (registered_at, id) < (?, ?)
 		   )
 		   AND (
 		     ? IS NULL
@@ -114,7 +118,7 @@ func (s *templatesImpl) List(
 		   )
 		 ORDER BY registered_at DESC, id DESC
 		 LIMIT ?`,
-		stateFilter, stateFilter, cursor, cursor, cursor, tagFilter, tagFilter, limit,
+		stateFilter, stateFilter, cursorRegisteredAt, cursorRegisteredAt, cursorID, tagFilter, tagFilter, limit,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.TemplateRow]{}, fmt.Errorf("templates.list: %w", err)
@@ -134,9 +138,36 @@ func (s *templatesImpl) List(
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
-		nextCursor = out[len(out)-1].ID
+		last := out[len(out)-1]
+		nextCursor = encodeTemplateCursor(last.RegisteredAt, last.ID)
 	}
 	return persistence.PaginatedListResult[persistence.TemplateRow]{Rows: out, NextCursor: nextCursor}, nil
+}
+
+type templateCursor struct {
+	R string `json:"r"`
+	I string `json:"i"`
+}
+
+func encodeTemplateCursor(registeredAt time.Time, id string) string {
+	b, _ := json.Marshal(templateCursor{R: formatTime(registeredAt), I: id})
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeTemplateCursor(s string) (time.Time, string, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	var c templateCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, "", err
+	}
+	registeredAt, err := parseTime(c.R)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	return registeredAt, c.I, nil
 }
 
 func (s *templatesImpl) UpdateState(ctx context.Context, hash string, newState persistence.TemplateState, tx persistence.Tx) error {

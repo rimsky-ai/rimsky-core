@@ -95,7 +95,7 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 		s := ws
 		v = &s
 	}
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET realized_write_semantics = ?
 		  WHERE id = ? AND `+claimantGuardClause,
@@ -104,13 +104,20 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 	if err != nil {
 		return fmt.Errorf("claimhandles.UpdateRealizedWriteSemantics: %w", err)
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claimhandles.UpdateRealizedWriteSemantics: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
+	}
 	return nil
 }
 
 func (s *claimHandlesImpl) UpdateAddress(
 	ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET address = ?
 		  WHERE id = ? AND `+claimantGuardClause,
@@ -119,13 +126,20 @@ func (s *claimHandlesImpl) UpdateAddress(
 	if err != nil {
 		return fmt.Errorf("claimhandles.UpdateAddress: %w", err)
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claimhandles.UpdateAddress: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
+	}
 	return nil
 }
 
 func (s *claimHandlesImpl) UpdatePayload(
 	ctx context.Context, id shared.UUID, supervisorID string, payload json.RawMessage, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET payload = ?
 		  WHERE id = ? AND `+claimantGuardClause,
@@ -134,13 +148,20 @@ func (s *claimHandlesImpl) UpdatePayload(
 	if err != nil {
 		return fmt.Errorf("claimhandles.UpdatePayload: %w", err)
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claimhandles.UpdatePayload: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
+	}
 	return nil
 }
 
 func (s *claimHandlesImpl) UpdateClaimScope(
 	ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET claim_scope_data = ?
 		  WHERE id = ? AND `+claimantGuardClause,
@@ -148,6 +169,13 @@ func (s *claimHandlesImpl) UpdateClaimScope(
 	)
 	if err != nil {
 		return fmt.Errorf("claimhandles.UpdateClaimScope: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claimhandles.UpdateClaimScope: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -422,13 +450,20 @@ func (s *claimHandlesImpl) SetVersionID(
 	if versionID != "" {
 		v = versionID
 	}
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles SET version_id = ?
 		 WHERE id = ? AND (`+claimantGuardClause+`
 		    OR (holder_supervisor_id IS NULL AND state <> 'active'))`,
 		v, id.String(), supervisorID)
 	if err != nil {
 		return fmt.Errorf("claimhandles.SetVersionID: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claimhandles.SetVersionID: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -440,7 +475,7 @@ func (s *claimHandlesImpl) SetAggregationPolicy(
 	if len(policy) > 0 {
 		v = string(policy)
 	}
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET aggregation_policy = ?
 		  WHERE id = ? AND `+claimantGuardClause,
@@ -449,13 +484,20 @@ func (s *claimHandlesImpl) SetAggregationPolicy(
 	if err != nil {
 		return fmt.Errorf("claimhandles.SetAggregationPolicy: %w", err)
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claimhandles.SetAggregationPolicy: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
+	}
 	return nil
 }
 
 func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 	ctx context.Context, id shared.UUID, supervisorID string, delta int, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET expected_children_count = expected_children_count + ?
 		  WHERE id = ? AND `+claimantGuardClause,
@@ -463,6 +505,13 @@ func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 	)
 	if err != nil {
 		return fmt.Errorf("claimhandles.BumpExpectedChildrenCount: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claimhandles.BumpExpectedChildrenCount: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -479,7 +528,7 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	default:
 		return fmt.Errorf("claimhandles.BumpChildOutcomeCount: unknown outcome %q (want commit|abandon)", outcome)
 	}
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET `+column+` = `+column+` + ?
 		  WHERE id = ? AND `+claimantGuardClause,
@@ -487,6 +536,13 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	)
 	if err != nil {
 		return fmt.Errorf("claimhandles.BumpChildOutcomeCount: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claimhandles.BumpChildOutcomeCount: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -541,13 +597,20 @@ func (s *claimHandlesImpl) RenewExpiryForHolderRun(ctx context.Context, nodeRunI
 }
 
 func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`DELETE FROM rimsky_claim_handles
 		 WHERE id = ? AND `+claimantGuardClause,
 		id.String(), expectedSupervisorID,
 	)
 	if err != nil {
 		return fmt.Errorf("claimhandles.Delete: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("claimhandles.Delete: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }

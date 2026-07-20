@@ -77,7 +77,7 @@ func (s *claimHoldersImpl) ListByHolderRun(ctx context.Context, holderNodeRunID 
 
 func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx) error {
 	ex := s.q(tx)
-	_, err := ex.Exec(ctx,
+	cmd, err := ex.Exec(ctx,
 		`UPDATE rimsky_claim_holders
 		    SET state = $2,
 		        completed_at = now()
@@ -87,6 +87,9 @@ func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state p
 	if err != nil {
 		return fmt.Errorf("claim_holders.Complete: %w", err)
 	}
+	if cmd.RowsAffected() == 0 {
+		return persistence.ErrClaimHolderNotActive
+	}
 	return nil
 }
 
@@ -94,7 +97,7 @@ func (s *claimHoldersImpl) CompleteByClaimHandleAndRun(
 	ctx context.Context, claimHandleID, holderNodeRunID shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx,
 ) error {
 	ex := s.q(tx)
-	_, err := ex.Exec(ctx,
+	cmd, err := ex.Exec(ctx,
 		`UPDATE rimsky_claim_holders
 		    SET state = $3,
 		        completed_at = now()
@@ -105,6 +108,9 @@ func (s *claimHoldersImpl) CompleteByClaimHandleAndRun(
 	)
 	if err != nil {
 		return fmt.Errorf("claim_holders.CompleteByClaimHandleAndRun: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return persistence.ErrClaimHolderNotActive
 	}
 	return nil
 }

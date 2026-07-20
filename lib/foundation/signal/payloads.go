@@ -110,9 +110,10 @@ func orEmptyMap(m map[string]any) map[string]any {
 
 func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
 	s := string(t)
-	if s == "" || strings.HasSuffix(s, "*") {
+	if s == "" {
 		return nil, false
 	}
+	trimmed := strings.TrimSuffix(s, "*")
 	switch {
 	case s == "terminal/success":
 		return reflect.TypeOf(TerminalSuccessPayload{}), true
@@ -120,11 +121,11 @@ func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
 		return reflect.TypeOf(TransientParkPayload{}), true
 	case s == "transient/await_async":
 		return reflect.TypeOf(TransientAwaitAsyncPayload{}), true
-	case strings.HasPrefix(s, "terminal/error/"):
+	case strings.HasPrefix(trimmed, "terminal/error/"):
 		return reflect.TypeOf(TerminalErrorPayload{}), true
-	case strings.HasPrefix(s, "transient/retry/"):
+	case strings.HasPrefix(trimmed, "transient/retry/"):
 		return reflect.TypeOf(TransientRetryPayload{}), true
-	case strings.HasPrefix(s, "attribute/") && strings.HasSuffix(s, "/changed"):
+	case strings.HasPrefix(trimmed, "attribute/") && strings.HasSuffix(trimmed, "/changed"):
 		return reflect.TypeOf(AttributeChangedPayload{}), true
 	}
 	return nil, false

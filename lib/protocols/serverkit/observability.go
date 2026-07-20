@@ -6,7 +6,9 @@ package serverkit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,7 +59,7 @@ func obsListClaimsHandler(srv genv1.ClaimProducerObservabilityServer) http.Handl
 		}
 		if v := r.URL.Query().Get("limit"); v != "" {
 			n, err := strconv.Atoi(v)
-			if err != nil {
+			if err != nil || n < 0 || n > math.MaxUint32 {
 				http.Error(w, "bad limit", http.StatusBadRequest)
 				return
 			}
@@ -137,7 +139,11 @@ func handleClaimStreamHTTP(w http.ResponseWriter, r *http.Request, srv genv1.Cla
 	flusher, _ := w.(http.Flusher)
 	stream := &sseClaimStream{w: w, ctx: r.Context(), flusher: flusher}
 	if err := srv.StreamClaim(&genv1.StreamClaimRequest{ClaimId: claimID}, stream); err != nil {
-		if _, werr := fmt.Fprintf(w, "data: {\"error\":%q}\n\n", err.Error()); werr == nil {
+		errJSON, jerr := json.Marshal(err.Error())
+		if jerr != nil {
+			return
+		}
+		if _, werr := fmt.Fprintf(w, "data: {\"error\":%s}\n\n", errJSON); werr == nil {
 			if flusher != nil {
 				flusher.Flush()
 			}

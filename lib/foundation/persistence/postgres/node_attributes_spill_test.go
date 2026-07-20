@@ -110,7 +110,7 @@ func spillHandlePG(t *testing.T, ctx context.Context, d persistence.Database, ru
 	return *handle
 }
 
-func TestPGNodeAttributesBackendMismatchFallsBackToInlineData(t *testing.T) {
+func TestPGNodeAttributesBackendMismatchErrors(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -136,19 +136,12 @@ func TestPGNodeAttributesBackendMismatchFallsBackToInlineData(t *testing.T) {
 		`{"inline_survivor":"yes"}`, "handle-under-other-backend", "other-backend", runID,
 	)
 
-	var got *persistence.NodeAttributesRow
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := attrs.GetByRun(ctx, shared.UUID(runID), tx)
-		got = r
+	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, err := attrs.GetByRun(ctx, shared.UUID(runID), tx)
 		return err
-	}); err != nil {
-		t.Fatalf("GetByRun: %v", err)
-	}
-	if got == nil {
-		t.Fatalf("GetByRun: row missing")
-	}
-	if got.Data["inline_survivor"] != "yes" {
-		t.Fatalf("GetByRun with mismatched value_handle_backend = %+v; want inline data column fallback", got.Data)
+	})
+	if err == nil {
+		t.Fatalf("GetByRun with mismatched value_handle_backend must error, not silently degrade to inline/empty data")
 	}
 }
 

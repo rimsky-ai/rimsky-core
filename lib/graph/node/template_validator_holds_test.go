@@ -595,7 +595,7 @@ func TestValidateClaimProducers_RejectsInvalidLifetime(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].stores[0].lifetime")
+	hasErrorAt(t, res, "nodes[0].claim_producers[0].lifetime")
 }
 
 func TestValidateClaimProducers_DurableOkAgainstNonDataProcessingProducer(t *testing.T) {

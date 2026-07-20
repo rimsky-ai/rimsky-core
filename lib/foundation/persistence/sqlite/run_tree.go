@@ -115,12 +115,17 @@ func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx,
 		    SELECT 1 FROM rimsky_node_runs
 		     WHERE node_id = ? AND run_scope_id = ?
 		       AND state IN ('running','held','parked')
-		  )`,
+		  )
+		    AND EXISTS (
+		      SELECT 1 FROM rimsky_run_scopes rs
+		       WHERE rs.id = ? AND rs.closed_at IS NULL
+		    )`,
 		in.NodeRunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
 		formatTime(enqueuedAt), in.FrameID.String(), in.RunScopeID.String(),
 		in.NodeID.String(), in.RunScopeID.String(),
 		policyArg,
 		in.NodeID.String(), in.RunScopeID.String(),
+		in.RunScopeID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.CreateChildNodeRun: %w", err)
@@ -188,19 +193,33 @@ func (b *runTreeImpl) UpdateStateAndOutcome(
 		changedArg = 1
 	}
 	if settlingSignalType == nil {
-		_, err := b.q(tx).ExecContext(ctx,
+		res, err := b.q(tx).ExecContext(ctx,
 			`UPDATE rimsky_node_runs SET state = ?, changed = ? WHERE id = ?`,
 			string(state), changedArg, runID.String())
 		if err != nil {
 			return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: %w", err)
 		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: rows-affected: %w", err)
+		}
+		if n == 0 {
+			return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: %w", persistence.ErrRunRowMissing)
+		}
 		return nil
 	}
-	_, err := b.q(tx).ExecContext(ctx,
+	res, err := b.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs SET state = ?, settling_signal_type = ?, changed = ? WHERE id = ?`,
 		string(state), *settlingSignalType, changedArg, runID.String())
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: %w", persistence.ErrRunRowMissing)
 	}
 	return nil
 }
@@ -216,10 +235,17 @@ func (b *runTreeImpl) UpdateAggregationPolicy(
 	if len(bytes) > 0 {
 		arg = string(bytes)
 	}
-	_, err = b.q(tx).ExecContext(ctx,
+	res, err := b.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs SET aggregation_policy = ? WHERE id = ?`, arg, runID.String())
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.UpdateAggregationPolicy: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite.run_tree.UpdateAggregationPolicy: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("sqlite.run_tree.UpdateAggregationPolicy: %w", persistence.ErrRunRowMissing)
 	}
 	return nil
 }

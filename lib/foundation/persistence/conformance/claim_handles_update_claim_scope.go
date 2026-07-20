@@ -7,12 +7,14 @@ package conformance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func testClaimHandlesUpdateClaimScope(t *testing.T, d persistence.Database) {
@@ -64,10 +66,11 @@ func testClaimHandlesUpdateClaimScope(t *testing.T, d persistence.Database) {
 	}
 
 	otherSup := "different-supervisor"
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().UpdateClaimScope(ctx, claimHandleID, otherSup, scopeA, tx)
-	}); err != nil {
-		t.Fatalf("UpdateClaimScope (wrong sup): %v", err)
+	})
+	if !errors.Is(err, spec.ErrIllegalClaimHandleTransition) {
+		t.Fatalf("UpdateClaimScope (wrong sup): got err %v, want ErrIllegalClaimHandleTransition", err)
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.ClaimHandles().Get(ctx, claimHandleID, tx)

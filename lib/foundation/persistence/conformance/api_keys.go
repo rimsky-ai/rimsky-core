@@ -316,6 +316,31 @@ func testAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 
+	t.Run("DuplicateIDIsNotMisreportedAsNameTaken", func(t *testing.T) {
+		dupID := uuid.New()
+		hashA := sha256Of([]byte("rk_dup_id_a"))
+		hashB := sha256Of([]byte("rk_dup_id_b"))
+		mustInsert(t, ctx, tables, keys, persistence.APIKey{
+			ID: dupID, KeyHash: hashA[:], Name: "dup-id-a",
+			Permissions: []byte(`[{"action":"*"}]`), CreatedAt: now,
+		})
+		err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return keys.Insert(ctx, persistence.APIKey{
+				ID: dupID, KeyHash: hashB[:], Name: "dup-id-b",
+				Permissions: []byte(`[{"action":"*"}]`), CreatedAt: now,
+			}, tx)
+		})
+		if err == nil {
+			t.Fatalf("duplicate id insert must error")
+		}
+		if errors.Is(err, persistence.ErrAPIKeyNameTaken) {
+			t.Fatalf("duplicate id misreported as ErrAPIKeyNameTaken: %v", err)
+		}
+		if errors.Is(err, persistence.ErrAPIKeyHashCollision) {
+			t.Fatalf("duplicate id misreported as ErrAPIKeyHashCollision: %v", err)
+		}
+	})
+
 	t.Run("Transaction_Rollback", func(t *testing.T) {
 		id := uuid.New()
 		hash := sha256Of([]byte("rk_rollback"))

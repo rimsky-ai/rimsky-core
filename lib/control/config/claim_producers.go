@@ -309,7 +309,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			Postgres *struct {
 				DSN             string        `yaml:"dsn"`
 				MaxOpenConns    int           `yaml:"max_open_conns"`
-				MaxIdleConns    int           `yaml:"max_idle_conns"`
+				MinConns        int           `yaml:"min_conns"`
 				ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
 			} `yaml:"postgres"`
 			SQLite *struct {
@@ -511,7 +511,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		pcfg.Postgres = &persistence.PostgresConfig{
 			DSN:             wrapper.Persistence.Postgres.DSN,
 			MaxOpenConns:    wrapper.Persistence.Postgres.MaxOpenConns,
-			MaxIdleConns:    wrapper.Persistence.Postgres.MaxIdleConns,
+			MinConns:        wrapper.Persistence.Postgres.MinConns,
 			ConnMaxLifetime: wrapper.Persistence.Postgres.ConnMaxLifetime,
 		}
 	}

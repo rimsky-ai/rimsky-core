@@ -187,7 +187,7 @@ func (q *queueImpl) SelectCandidates(
 		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
 		        AND w.drained_at IS NULL
 		    )
-		  ORDER BY d.enqueued_at, d.sequence, d.id`,
+		  ORDER BY d.enqueued_at, d.id`,
 		nowUTC(),
 	)
 	if err != nil {

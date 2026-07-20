@@ -101,7 +101,11 @@ func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx,
 		    SELECT 1 FROM rimsky_node_runs
 		     WHERE node_id = $2 AND run_scope_id = $7
 		       AND state IN ('running','held','parked')
-		  )`,
+		  )
+		    AND EXISTS (
+		      SELECT 1 FROM rimsky_run_scopes rs
+		       WHERE rs.id = $7 AND rs.closed_at IS NULL
+		    )`,
 		in.NodeRunID, in.NodeID, executor, stores, enqueuedAt, in.FrameID, in.RunScopeID, nullableBytes(policy),
 	)
 	if err != nil {
@@ -177,19 +181,25 @@ func (b *runTreeImpl) UpdateStateAndOutcome(
 	state cascade.NodeState, settlingSignalType *string, changed bool,
 ) error {
 	if settlingSignalType == nil {
-		_, err := b.q(tx).Exec(ctx,
+		cmd, err := b.q(tx).Exec(ctx,
 			`UPDATE rimsky_node_runs SET state = $2, changed = $3 WHERE id = $1`,
 			runID, string(state), changed)
 		if err != nil {
 			return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", err)
 		}
+		if cmd.RowsAffected() == 0 {
+			return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", persistence.ErrRunRowMissing)
+		}
 		return nil
 	}
-	_, err := b.q(tx).Exec(ctx,
+	cmd, err := b.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs SET state = $2, settling_signal_type = $3, changed = $4 WHERE id = $1`,
 		runID, string(state), *settlingSignalType, changed)
 	if err != nil {
 		return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", persistence.ErrRunRowMissing)
 	}
 	return nil
 }
@@ -201,11 +211,14 @@ func (b *runTreeImpl) UpdateAggregationPolicy(
 	if err != nil {
 		return fmt.Errorf("run_tree.UpdateAggregationPolicy: marshal: %w", err)
 	}
-	_, err = b.q(tx).Exec(ctx,
+	cmd, err := b.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs SET aggregation_policy = $2 WHERE id = $1`,
 		runID, nullableBytes(bytes))
 	if err != nil {
 		return fmt.Errorf("run_tree.UpdateAggregationPolicy: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("run_tree.UpdateAggregationPolicy: %w", persistence.ErrRunRowMissing)
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,23 +96,21 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 	if limit <= 0 {
 		limit = 100
 	}
-	var cursor any
+	var cursorCreatedAt, cursorID any
 	if pag.Cursor != "" {
-		u, err := uuid.Parse(pag.Cursor)
+		createdAt, id, err := decodeNodeCursor(pag.Cursor)
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.NodeRow]{}, fmt.Errorf("nodes.listByInstancePaged: bad cursor: %w", err)
 		}
-		cursor = u.String()
+		cursorCreatedAt = formatTime(createdAt)
+		cursorID = id.String()
 	}
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+nodeCols+` `+nodeSelect+`
 		 WHERE n.instance_id = ?
 		   AND (
 		     ? IS NULL
-		     OR (n.created_at, n.id) > (
-		       (SELECT created_at FROM rimsky_nodes WHERE id = ?),
-		       ?
-		     )
+		     OR (n.created_at, n.id) > (?, ?)
 		   )
 		   AND (
 		     ? = ''
@@ -119,7 +118,7 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 		   )
 		 ORDER BY n.created_at ASC, n.id ASC
 		 LIMIT ?`,
-		instanceID.String(), cursor, cursor, cursor,
+		instanceID.String(), cursorCreatedAt, cursorCreatedAt, cursorID,
 		filter.Tag, filter.Tag,
 		limit,
 	)
@@ -133,7 +132,8 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
-		nextCursor = out[len(out)-1].ID.String()
+		last := out[len(out)-1]
+		nextCursor = encodeNodeCursor(last.CreatedAt, last.ID)
 	}
 	return persistence.PaginatedListResult[persistence.NodeRow]{Rows: out, NextCursor: nextCursor}, nil
 }
@@ -346,7 +346,7 @@ func (s *nodesImpl) enforceAndUpdate(
 		return fmt.Errorf("nodes.updateState: run-row update: %w", err)
 	}
 	if _, err := ex.ExecContext(ctx,
-		`UPDATE rimsky_frames SET last_progress_at = ? WHERE frame_id = ?`,
+		`UPDATE rimsky_frames SET last_progress_at = ? WHERE frame_id = ? AND ended_at IS NULL`,
 		nowUTC(), frameIDStr,
 	); err != nil {
 		return fmt.Errorf("nodes.updateState: refresh frame progress: %w", err)
@@ -356,11 +356,21 @@ func (s *nodesImpl) enforceAndUpdate(
 
 // @concept: error-policy
 func (s *nodesImpl) UpdateRunEvaluatorState(ctx context.Context, runID foundationshared.UUID, es spec.EvaluatorState, tx persistence.Tx) error {
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs SET retry_counter = ? WHERE id = ?`,
 		es.RetryCounter, runID.String(),
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("nodes.updateRunEvaluatorState: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("nodes.updateRunEvaluatorState: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("nodes.updateRunEvaluatorState: %w", persistence.ErrRunRowMissing)
+	}
+	return nil
 }
 
 // @concept: error-policy
@@ -792,6 +802,36 @@ func collectNodes(rows *sql.Rows) ([]persistence.NodeRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+type nodeCursor struct {
+	C string `json:"c"`
+	I string `json:"i"`
+}
+
+func encodeNodeCursor(createdAt time.Time, id foundationshared.UUID) string {
+	b, _ := json.Marshal(nodeCursor{C: formatTime(createdAt), I: id.String()})
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeNodeCursor(s string) (time.Time, foundationshared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	var c nodeCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	createdAt, err := parseTime(c.C)
+	if err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	id, err := uuid.Parse(c.I)
+	if err != nil {
+		return time.Time{}, foundationshared.UUID{}, err
+	}
+	return createdAt, foundationshared.UUID(id), nil
 }
 
 // @concept: cascade

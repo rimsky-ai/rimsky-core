@@ -187,7 +187,7 @@ func TestValidateClaimProducers_Error_MissingIntent(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].stores[0].intent")
+	hasErrorAt(t, res, "nodes[0].claim_producers[0].intent")
 }
 
 func TestValidateClaimProducers_Error_DuplicateAlias(t *testing.T) {
@@ -205,7 +205,24 @@ func TestValidateClaimProducers_Error_DuplicateAlias(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].stores[1].alias")
+	hasErrorAt(t, res, "nodes[0].claim_producers[1].alias")
+}
+
+func TestValidateSubstitutionRef_ClaimProducerSelectorOriginNotMisreportedAsAttributesSchema(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{{
+			Type:     "receiver",
+			Executor: "h",
+			ClaimProducers: []NodeClaimProducerRef{
+				{Name: "content", Intent: "r", Selector: "{{nodes.ghost.attribute.x}}"},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].claim_producers[0].selector (substitution ref)")
 }
 
 func TestValidateClaimProducers_Error_UnknownStoreKind(t *testing.T) {
@@ -220,7 +237,7 @@ func TestValidateClaimProducers_Error_UnknownStoreKind(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].stores[0].name")
+	hasErrorAt(t, res, "nodes[0].claim_producers[0].name")
 }
 
 func TestHoldingSubgraphsForTemplate_HeldChain(t *testing.T) {
@@ -513,6 +530,28 @@ func TestValidateErrorTypes_AcceptsDeclaredWildcardClass(t *testing.T) {
 	for _, e := range res.Errors {
 		if strings.HasPrefix(e.Path, "nodes[1].error_types") {
 			t.Fatalf("unexpected error on error_types path: %+v", e)
+		}
+	}
+}
+
+func TestValidateErrorTypes_AcceptsRuntimeSynthesizedExecutorSyncTimeout(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1",
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "http"},
+			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
+				"executor_sync_timeout": {Action: "retry"},
+			}},
+		},
+	}
+	hooks := RegistryHooks{
+		ExecutorDeclared:             func(string) bool { return true },
+		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/timeout"}, true },
+	}
+	res := ValidateTemplate(spec, hooks)
+	for _, w := range res.Warnings {
+		if strings.HasPrefix(w.Path, "nodes[1].error_types") {
+			t.Fatalf("executor_sync_timeout is runtime-synthesized (runner_dispatch.go) and must not warn as undeclared: %+v", w)
 		}
 	}
 }
@@ -2315,7 +2354,7 @@ func TestValidateMessageSubstitutionRef_Error_UnknownType(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[receiver].attributes.schema (substitution ref)")
+	hasErrorAt(t, res, "nodes[0].attributes.schema")
 }
 
 func TestValidateMessageSubstitutionRef_Error_UnknownField(t *testing.T) {
@@ -2341,7 +2380,7 @@ func TestValidateMessageSubstitutionRef_Error_UnknownField(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[receiver].attributes.schema (substitution ref)")
+	hasErrorAt(t, res, "nodes[0].attributes.schema")
 }
 
 func TestValidateMessageSubstitutionRef_Ok_BareWholeBodyPull(t *testing.T) {
@@ -2399,7 +2438,7 @@ func TestValidateMessageSubstitutionRef_Error_NamedFieldAgainstEmptyBody(t *test
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[receiver].attributes.schema (substitution ref)")
+	hasErrorAt(t, res, "nodes[0].attributes.schema")
 }
 
 func sendsMessageOKSpec(t *testing.T) *TemplateSpec {

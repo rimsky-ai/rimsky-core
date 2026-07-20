@@ -56,6 +56,23 @@ func TestValidate_RejectsAuthorSetIsSubgraphExit_FlatForm(t *testing.T) {
 	}
 }
 
+func TestValidate_RejectsAuthorSetResolvesViaCallingNode_FlatForm(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Nodes: []TemplateNodeDef{
+			{Type: "sneaky", Executor: "stub", Subscribes: []SubscriptionEntry{
+				{Node: "other", Type: "terminal/success", ForceUpstreamRefresh: BoolPtr(false), ResolvesViaCallingNode: true},
+			}},
+			{Type: "other", Executor: "stub"},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	if !hasErrorContaining(msgs, "resolves_via_calling_node is set by subgraph canonicalization") {
+		t.Fatalf("expected rejection of author-set resolves_via_calling_node; got: %v", msgs)
+	}
+}
+
 func TestValidate_RejectsAuthorSetInternalFlag_GraphsForm(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "tmpl",

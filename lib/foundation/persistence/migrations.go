@@ -48,16 +48,31 @@ func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Lo
 			files = append(files, e.Name())
 		}
 	}
+	if len(files) == 0 {
+		return fmt.Errorf("persistence.Migrator: no .sql migration files found in embedded FS root; refusing to boot against an unmigrated schema")
+	}
 	sort.Strings(files)
 
-	applied := 0
+	hasByFile := make(map[string]bool, len(files))
+	var maxApplied string
 	for _, filename := range files {
 		has, err := m.QueryHas(ctx, filename)
 		if err != nil {
 			return fmt.Errorf("persistence.Migrator: check %s: %w", filename, err)
 		}
-		if has {
+		hasByFile[filename] = has
+		if has && filename > maxApplied {
+			maxApplied = filename
+		}
+	}
+
+	applied := 0
+	for _, filename := range files {
+		if hasByFile[filename] {
 			continue
+		}
+		if maxApplied != "" && filename < maxApplied {
+			return fmt.Errorf("persistence.Migrator: %s sorts before already-applied %s; migrations are append-only and must sort after every applied file", filename, maxApplied)
 		}
 		sqlBytes, err := fs.ReadFile(m.FS, filename)
 		if err != nil {

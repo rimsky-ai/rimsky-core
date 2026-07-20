@@ -7,13 +7,20 @@ package sqlite
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	sqlite3 "modernc.org/sqlite"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+)
+
+const (
+	sqliteConstraintUnique     = 2067
+	sqliteConstraintPrimaryKey = 1555
+	sqliteConstraintForeignKey = 787
 )
 
 const timeLayoutFixedNanos = "2006-01-02T15:04:05.000000000Z07:00"
@@ -39,6 +46,17 @@ func parseTime(s string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("parseTime: %q: %w", s, err)
 	}
 	return t.UTC(), nil
+}
+
+func parseNullableTime(ns sql.NullString) (*time.Time, error) {
+	if !ns.Valid || ns.String == "" {
+		return nil, nil
+	}
+	t, err := parseTime(ns.String)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 func nullableJSONB(b json.RawMessage) any {
@@ -109,21 +127,26 @@ func parseUUID(s string) (shared.UUID, error) {
 	return uuid.Parse(s)
 }
 
+func sqliteErrorCode(err error) (int, bool) {
+	var sErr *sqlite3.Error
+	if errors.As(err, &sErr) {
+		return sErr.Code(), true
+	}
+	return 0, false
+}
+
 func isUniqueViolation(err error) bool {
-	if err == nil {
+	code, ok := sqliteErrorCode(err)
+	if !ok {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "UNIQUE constraint failed") ||
-		strings.Contains(msg, "PRIMARY KEY constraint failed") ||
-		strings.Contains(msg, "constraint failed: UNIQUE")
+	return code == sqliteConstraintUnique
 }
 
 func isFKViolation(err error) bool {
-	if err == nil {
+	code, ok := sqliteErrorCode(err)
+	if !ok {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "FOREIGN KEY constraint failed") ||
-		strings.Contains(msg, "constraint failed: FOREIGN KEY")
+	return code == sqliteConstraintForeignKey
 }

@@ -136,16 +136,16 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 		args = append(args, filter.InstanceID.String())
 		conds = append(conds, "instance_id = ?")
 	}
-	if filter.Type != "" {
-		args = append(args, filter.Type)
+	if filter.Type != nil {
+		args = append(args, *filter.Type)
 		conds = append(conds, "type = ?")
 	}
 	if filter.Sender != "" {
 		args = append(args, filter.Sender)
 		conds = append(conds, "sender = ?")
 	}
-	if filter.SenderKind != "" {
-		args = append(args, filter.SenderKind)
+	if filter.SenderKind != nil {
+		args = append(args, *filter.SenderKind)
 		conds = append(conds, "sender_kind = ?")
 	}
 	if filter.FrameID != nil {
@@ -318,16 +318,20 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 		if payload != nil {
 			m.Payload = payload
 		}
-		if u, err := uuid.Parse(idStr); err == nil {
-			m.ID = u
+		u, err := uuid.Parse(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite.Messages: parse id: %w", err)
 		}
-		if u, err := uuid.Parse(instanceStr); err == nil {
-			m.InstanceID = u
+		m.ID = u
+		if u, err = uuid.Parse(instanceStr); err != nil {
+			return nil, fmt.Errorf("sqlite.Messages: parse instance_id: %w", err)
 		}
+		m.InstanceID = u
 		if frameStr.Valid {
-			if u, err := uuid.Parse(frameStr.String); err == nil {
-				m.FrameID = &u
+			if u, err = uuid.Parse(frameStr.String); err != nil {
+				return nil, fmt.Errorf("sqlite.Messages: parse frame_id: %w", err)
 			}
+			m.FrameID = &u
 		}
 		if deliveredAtStr.Valid {
 			t, err := parseTime(deliveredAtStr.String)

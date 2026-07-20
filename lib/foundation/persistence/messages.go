@@ -40,9 +40,9 @@ type EnqueueMessageRequest struct {
 
 type MessageListFilter struct {
 	InstanceID      *shared.UUID
-	Type            string
+	Type            *string
 	Sender          string
-	SenderKind      string
+	SenderKind      *string
 	FrameID         *shared.UUID
 	DeliveredAfter  *time.Time
 	DeliveredBefore *time.Time

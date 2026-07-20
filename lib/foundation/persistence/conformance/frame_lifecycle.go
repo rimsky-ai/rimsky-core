@@ -206,6 +206,62 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 	})
 }
 
+func testFrameEndedHeartbeatDoesNotBumpLastProgressAt(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	frames := d.Tables().Frames()
+	supID := "supervisor-ended-frame-heartbeat"
+
+	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, supID)
+
+	frameOp(ctx, t, d, "end frame before heartbeat", func(tx persistence.Tx) error {
+		transitioned, err := frames.MarkFrameEnded(ctx, fix.FrameID, tx)
+		if err != nil {
+			return err
+		}
+		if !transitioned {
+			t.Fatalf("MarkFrameEnded did not transition the running frame")
+		}
+		return nil
+	})
+
+	var before *persistence.FrameRow
+	frameOp(ctx, t, d, "snapshot ended frame", func(tx persistence.Tx) error {
+		row, err := frames.GetForObservability(ctx, fix.FrameID, tx)
+		before = row
+		return err
+	})
+	if before == nil || before.EndedAt == nil {
+		t.Fatalf("ended frame row = %+v, want ended_at set", before)
+	}
+
+	sig := "terminal/error/test_failure"
+	frameOp(ctx, t, d, "heartbeat run in ended frame", func(tx persistence.Tx) error {
+		return d.Tables().Nodes().UpdateState(ctx, nodeRunID,
+			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &sig, tx)
+	})
+
+	var after *persistence.FrameRow
+	frameOp(ctx, t, d, "re-snapshot ended frame", func(tx persistence.Tx) error {
+		row, err := frames.GetForObservability(ctx, fix.FrameID, tx)
+		after = row
+		return err
+	})
+	if after == nil {
+		t.Fatalf("frame row vanished after heartbeat")
+	}
+	beforeStr, afterStr := "<nil>", "<nil>"
+	if before.LastProgressAt != nil {
+		beforeStr = before.LastProgressAt.String()
+	}
+	if after.LastProgressAt != nil {
+		afterStr = after.LastProgressAt.String()
+	}
+	if beforeStr != afterStr {
+		t.Fatalf("heartbeat on a run in an ended frame bumped last_progress_at: before=%s after=%s", beforeStr, afterStr)
+	}
+}
+
 // @decision: frame-isolation-is-structural
 func testFrameRowCascadeImmutable(t *testing.T, d persistence.Database) {
 	ctx := context.Background()

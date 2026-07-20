@@ -47,7 +47,10 @@ func (c *advisoryLockerImpl) TrySchedulerTick(ctx context.Context) (bool, func()
 		return false, nil, nil
 	}
 	release := func() {
-		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", RimskySchedulerTickLockKey)
+		if _, err := conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", RimskySchedulerTickLockKey); err != nil {
+			slog.Default().Warn("scheduler tick advisory unlock failed",
+				"lock_key", RimskySchedulerTickLockKey, "err", err)
+		}
 		conn.Release()
 	}
 	return true, release, nil

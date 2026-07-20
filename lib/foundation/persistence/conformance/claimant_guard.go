@@ -195,26 +195,34 @@ func testClaimantGuardHandleUpdates(t *testing.T, d persistence.Database) {
 		t.Fatalf("seeded handle missing")
 	}
 
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ch := store.ClaimHandles()
-		if err := ch.UpdateAddress(ctx, in.ID, guardSupB, json.RawMessage(`{"addr":"stolen"}`), tx); err != nil {
-			return err
+	wrongClaimantWrites := []struct {
+		name string
+		op   func(ctx context.Context, tx persistence.Tx) error
+	}{
+		{"UpdateAddress", func(ctx context.Context, tx persistence.Tx) error {
+			return store.ClaimHandles().UpdateAddress(ctx, in.ID, guardSupB, json.RawMessage(`{"addr":"stolen"}`), tx)
+		}},
+		{"UpdatePayload", func(ctx context.Context, tx persistence.Tx) error {
+			return store.ClaimHandles().UpdatePayload(ctx, in.ID, guardSupB, json.RawMessage(`{"payload":"stolen"}`), tx)
+		}},
+		{"UpdateRealizedWriteSemantics", func(ctx context.Context, tx persistence.Tx) error {
+			return store.ClaimHandles().UpdateRealizedWriteSemantics(ctx, in.ID, guardSupB, "exclusive", tx)
+		}},
+		{"UpdateClaimScope", func(ctx context.Context, tx persistence.Tx) error {
+			return store.ClaimHandles().UpdateClaimScope(ctx, in.ID, guardSupB, json.RawMessage(`{"path":"/guard/stolen"}`), tx)
+		}},
+		{"SetVersionID", func(ctx context.Context, tx persistence.Tx) error {
+			return store.ClaimHandles().SetVersionID(ctx, in.ID, guardSupB, "v-stolen", tx)
+		}},
+		{"SetAggregationPolicy", func(ctx context.Context, tx persistence.Tx) error {
+			return store.ClaimHandles().SetAggregationPolicy(ctx, in.ID, guardSupB, json.RawMessage(`{"mode":"stolen"}`), tx)
+		}},
+	}
+	for _, w := range wrongClaimantWrites {
+		err := store.Transaction(ctx, w.op)
+		if !errors.Is(err, spec.ErrIllegalClaimHandleTransition) {
+			t.Fatalf("wrong-claimant %s: got err %v, want ErrIllegalClaimHandleTransition (claimant-guarded content writes have no field-repoint carve-out)", w.name, err)
 		}
-		if err := ch.UpdatePayload(ctx, in.ID, guardSupB, json.RawMessage(`{"payload":"stolen"}`), tx); err != nil {
-			return err
-		}
-		if err := ch.UpdateRealizedWriteSemantics(ctx, in.ID, guardSupB, "exclusive", tx); err != nil {
-			return err
-		}
-		if err := ch.UpdateClaimScope(ctx, in.ID, guardSupB, json.RawMessage(`{"path":"/guard/stolen"}`), tx); err != nil {
-			return err
-		}
-		if err := ch.SetVersionID(ctx, in.ID, guardSupB, "v-stolen", tx); err != nil {
-			return err
-		}
-		return ch.SetAggregationPolicy(ctx, in.ID, guardSupB, json.RawMessage(`{"mode":"stolen"}`), tx)
-	}); err != nil {
-		t.Fatalf("wrong-claimant updates: %v", err)
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "guarded UPDATEs")
 
@@ -280,17 +288,25 @@ func testClaimantGuardHandleCounterBumps(t *testing.T, d persistence.Database) {
 	seedGuardClaimHandle(ctx, t, d, in)
 	before := getGuardClaimHandle(ctx, t, d, in.ID)
 
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ch := store.ClaimHandles()
-		if err := ch.BumpExpectedChildrenCount(ctx, in.ID, guardSupB, 3, tx); err != nil {
-			return err
+	wrongClaimantBumps := []struct {
+		name string
+		op   func(ctx context.Context, tx persistence.Tx) error
+	}{
+		{"BumpExpectedChildrenCount", func(ctx context.Context, tx persistence.Tx) error {
+			return store.ClaimHandles().BumpExpectedChildrenCount(ctx, in.ID, guardSupB, 3, tx)
+		}},
+		{"BumpChildOutcomeCount(commit)", func(ctx context.Context, tx persistence.Tx) error {
+			return store.ClaimHandles().BumpChildOutcomeCount(ctx, in.ID, guardSupB, "commit", 2, tx)
+		}},
+		{"BumpChildOutcomeCount(abandon)", func(ctx context.Context, tx persistence.Tx) error {
+			return store.ClaimHandles().BumpChildOutcomeCount(ctx, in.ID, guardSupB, "abandon", 1, tx)
+		}},
+	}
+	for _, w := range wrongClaimantBumps {
+		err := store.Transaction(ctx, w.op)
+		if !errors.Is(err, spec.ErrIllegalClaimHandleTransition) {
+			t.Fatalf("wrong-claimant %s: got err %v, want ErrIllegalClaimHandleTransition", w.name, err)
 		}
-		if err := ch.BumpChildOutcomeCount(ctx, in.ID, guardSupB, "commit", 2, tx); err != nil {
-			return err
-		}
-		return ch.BumpChildOutcomeCount(ctx, in.ID, guardSupB, "abandon", 1, tx)
-	}); err != nil {
-		t.Fatalf("wrong-claimant bumps: %v", err)
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "counter bumps")
 
@@ -460,14 +476,15 @@ func testClaimantGuardHandleDelete(t *testing.T, d persistence.Database) {
 	seedGuardClaimHandle(ctx, t, d, in)
 	before := getGuardClaimHandle(ctx, t, d, in.ID)
 
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Delete(ctx, in.ID, guardSupB, tx)
-	}); err != nil {
-		t.Fatalf("wrong-claimant Delete: %v", err)
+	})
+	if !errors.Is(err, spec.ErrIllegalClaimHandleTransition) {
+		t.Fatalf("wrong-claimant Delete: got err %v, want ErrIllegalClaimHandleTransition", err)
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "Delete")
 
-	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	err = store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().DeleteResolved(ctx, in.ID, tx)
 	})
 	if !errors.Is(err, spec.ErrIllegalClaimHandleTransition) {

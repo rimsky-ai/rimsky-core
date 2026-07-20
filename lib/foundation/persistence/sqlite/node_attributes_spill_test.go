@@ -221,7 +221,7 @@ func TestSnapshotBagCarriesForwardSpilledBlobWithoutAliasing(t *testing.T) {
 	}
 }
 
-func TestNodeAttributesBackendMismatchFallsBackToInlineData(t *testing.T) {
+func TestNodeAttributesBackendMismatchErrors(t *testing.T) {
 	t.Setenv(persistence.ProcessRoleEnv, "unified")
 	d := openSQLite(t)
 	ctx := context.Background()
@@ -251,9 +251,12 @@ func TestNodeAttributesBackendMismatchFallsBackToInlineData(t *testing.T) {
 		t.Fatalf("seed backend mismatch: %v", err)
 	}
 
-	got := readData(t, store, runID)
-	if got["inline_survivor"] != "yes" {
-		t.Fatalf("GetByRun with mismatched value_handle_backend = %+v; want inline data column fallback", got)
+	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, err := store.NodeAttributes().GetByRun(ctx, runID, tx)
+		return err
+	})
+	if err == nil {
+		t.Fatalf("GetByRun with mismatched value_handle_backend must error, not silently degrade to inline/empty data")
 	}
 }
 

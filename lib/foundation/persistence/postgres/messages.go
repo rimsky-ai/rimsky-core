@@ -134,16 +134,16 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 		args = append(args, *filter.InstanceID)
 		where += fmt.Sprintf(" AND instance_id = $%d", len(args))
 	}
-	if filter.Type != "" {
-		args = append(args, filter.Type)
+	if filter.Type != nil {
+		args = append(args, *filter.Type)
 		where += fmt.Sprintf(" AND type = $%d", len(args))
 	}
 	if filter.Sender != "" {
 		args = append(args, filter.Sender)
 		where += fmt.Sprintf(" AND sender = $%d", len(args))
 	}
-	if filter.SenderKind != "" {
-		args = append(args, filter.SenderKind)
+	if filter.SenderKind != nil {
+		args = append(args, *filter.SenderKind)
 		where += fmt.Sprintf(" AND sender_kind = $%d", len(args))
 	}
 	if filter.FrameID != nil {

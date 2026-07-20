@@ -62,8 +62,8 @@ func open(ctx context.Context, cfg persistence.PostgresConfig) (persistence.Data
 	if cfg.MaxOpenConns > 0 {
 		pcfg.MaxConns = int32(cfg.MaxOpenConns)
 	}
-	if cfg.MaxIdleConns > 0 {
-		pcfg.MinConns = int32(cfg.MaxIdleConns)
+	if cfg.MinConns > 0 {
+		pcfg.MinConns = int32(cfg.MinConns)
 	}
 	if cfg.ConnMaxLifetime > 0 {
 		pcfg.MaxConnLifetime = cfg.ConnMaxLifetime

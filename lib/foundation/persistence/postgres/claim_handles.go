@@ -90,7 +90,7 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 func (s *claimHandlesImpl) UpdateAddress(
 	ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).Exec(ctx,
+	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET address = $1
 		  WHERE id = $2 AND `+claimantGuard("", 3),
@@ -99,13 +99,16 @@ func (s *claimHandlesImpl) UpdateAddress(
 	if err != nil {
 		return fmt.Errorf("claimhandles.UpdateAddress: %w", err)
 	}
+	if cmd.RowsAffected() == 0 {
+		return spec.ErrIllegalClaimHandleTransition
+	}
 	return nil
 }
 
 func (s *claimHandlesImpl) UpdatePayload(
 	ctx context.Context, id shared.UUID, supervisorID string, payload json.RawMessage, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).Exec(ctx,
+	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET payload = $1
 		  WHERE id = $2 AND `+claimantGuard("", 3),
@@ -113,6 +116,9 @@ func (s *claimHandlesImpl) UpdatePayload(
 	)
 	if err != nil {
 		return fmt.Errorf("claimhandles.UpdatePayload: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -125,7 +131,7 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 		s := ws
 		v = &s
 	}
-	_, err := s.q(tx).Exec(ctx,
+	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET realized_write_semantics = $1
 		  WHERE id = $2 AND `+claimantGuard("", 3),
@@ -134,13 +140,16 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 	if err != nil {
 		return fmt.Errorf("claimhandles.UpdateRealizedWriteSemantics: %w", err)
 	}
+	if cmd.RowsAffected() == 0 {
+		return spec.ErrIllegalClaimHandleTransition
+	}
 	return nil
 }
 
 func (s *claimHandlesImpl) UpdateClaimScope(
 	ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).Exec(ctx,
+	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET claim_scope_data = $1
 		  WHERE id = $2 AND `+claimantGuard("", 3),
@@ -148,6 +157,9 @@ func (s *claimHandlesImpl) UpdateClaimScope(
 	)
 	if err != nil {
 		return fmt.Errorf("claimhandles.UpdateClaimScope: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -398,13 +410,16 @@ func (s *claimHandlesImpl) SetVersionID(
 	if versionID != "" {
 		v = &versionID
 	}
-	_, err := s.q(tx).Exec(ctx,
+	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles SET version_id = $1
 		 WHERE id = $2 AND (`+claimantGuard("", 3)+`
 		    OR (holder_supervisor_id IS NULL AND state <> 'active'))`,
 		v, id, supervisorID)
 	if err != nil {
 		return fmt.Errorf("claimhandles.SetVersionID: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -451,13 +466,16 @@ func (s *claimHandlesImpl) RenewExpiryForHolderRun(ctx context.Context, nodeRunI
 }
 
 func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
-	_, err := s.q(tx).Exec(ctx,
+	cmd, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handles
 		 WHERE id = $1 AND `+claimantGuard("", 2),
 		id, expectedSupervisorID,
 	)
 	if err != nil {
 		return fmt.Errorf("claimhandles.Delete: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -594,7 +612,7 @@ func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter pers
 func (s *claimHandlesImpl) SetAggregationPolicy(
 	ctx context.Context, id shared.UUID, supervisorID string, policy json.RawMessage, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).Exec(ctx,
+	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET aggregation_policy = $1
 		  WHERE id = $2 AND `+claimantGuard("", 3),
@@ -603,13 +621,16 @@ func (s *claimHandlesImpl) SetAggregationPolicy(
 	if err != nil {
 		return fmt.Errorf("claimhandles.SetAggregationPolicy: %w", err)
 	}
+	if cmd.RowsAffected() == 0 {
+		return spec.ErrIllegalClaimHandleTransition
+	}
 	return nil
 }
 
 func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 	ctx context.Context, id shared.UUID, supervisorID string, delta int, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).Exec(ctx,
+	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET expected_children_count = expected_children_count + $1
 		  WHERE id = $2 AND `+claimantGuard("", 3),
@@ -617,6 +638,9 @@ func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 	)
 	if err != nil {
 		return fmt.Errorf("claimhandles.BumpExpectedChildrenCount: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -633,7 +657,7 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	default:
 		return fmt.Errorf("claimhandles.BumpChildOutcomeCount: unknown outcome %q (want commit|abandon)", outcome)
 	}
-	_, err := s.q(tx).Exec(ctx,
+	cmd, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET `+column+` = `+column+` + $1
 		  WHERE id = $2 AND `+claimantGuard("", 3),
@@ -641,6 +665,9 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	)
 	if err != nil {
 		return fmt.Errorf("claimhandles.BumpChildOutcomeCount: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }

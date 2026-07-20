@@ -138,7 +138,8 @@ func TestPayloadSchemaForType(t *testing.T) {
 		{"event/discovered", nil, false},
 		{"message/invalidate/operator/self", nil, false},
 		{"terminal/*", nil, false},
-		{"terminal/error/*", nil, false},
+		{"terminal/error/*", reflect.TypeOf(TerminalErrorPayload{}), true},
+		{"transient/retry/*", reflect.TypeOf(TransientRetryPayload{}), true},
 		{"attribute/*", nil, false},
 	}
 	for _, c := range cases {

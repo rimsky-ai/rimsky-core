@@ -305,9 +305,15 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 		instUUID := shared.UUID(instanceID)
 		filter := persistence.MessageListFilter{
 			InstanceID: &instUUID,
-			Type:       q.Get("type"),
 			Sender:     q.Get("sender"),
-			SenderKind: q.Get("sender_kind"),
+		}
+		if q.Has("type") {
+			v := q.Get("type")
+			filter.Type = &v
+		}
+		if q.Has("sender_kind") {
+			v := q.Get("sender_kind")
+			filter.SenderKind = &v
 		}
 		if s := q.Get("frame_id"); s != "" {
 			frameID, err := uuid.Parse(s)

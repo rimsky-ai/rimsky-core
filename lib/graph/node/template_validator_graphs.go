@@ -261,7 +261,7 @@ func mergeClaimProducersOnAbsorb(callerClaimProducers, entryClaimProducers []Nod
 		}
 		if !storeRefIdentical(existing, s) {
 			errs = append(errs, ValidationError{
-				Path: fmt.Sprintf("%s.stores[%s]", basePath, alias),
+				Path: fmt.Sprintf("%s.claim_producers[%s]", basePath, alias),
 				Msg: fmt.Sprintf(
 					"subgraph_absorption_alias_conflict: store alias %q declared on both the calling node and the absorbed entry with diverging bindings; rename one side",
 					alias),

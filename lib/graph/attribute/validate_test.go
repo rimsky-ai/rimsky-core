@@ -5,6 +5,7 @@
 package attributes
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -51,7 +52,7 @@ func TestValidate_TypeMismatch(t *testing.T) {
 		t.Fatalf("expected ErrSchemaValidation, got %T", err)
 	}
 	var ve *ErrSchemaValidation
-	if !errAs(err, &ve) {
+	if !errors.As(err, &ve) {
 		t.Fatalf("errors.As failed")
 	}
 	if ve.Phase != PhaseCommit {
@@ -157,20 +158,4 @@ func TestValidate_WholeDirectiveLift(t *testing.T) {
 			t.Fatalf("expected validation to pass for integer lift, got %v", err)
 		}
 	})
-}
-
-func errAs(err error, target **ErrSchemaValidation) bool {
-	for cur := err; cur != nil; {
-		if v, ok := cur.(*ErrSchemaValidation); ok {
-			*target = v
-			return true
-		}
-		type unwrapper interface{ Unwrap() error }
-		u, ok := cur.(unwrapper)
-		if !ok {
-			break
-		}
-		cur = u.Unwrap()
-	}
-	return false
 }
