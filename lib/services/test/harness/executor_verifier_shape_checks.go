@@ -15,13 +15,13 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const verifierShapeChecksImage = "rimsky-executor-verifier-shape-checks:latest"
+const verifierShapeChecksImage = "rimsky-executor-verifier-shape-checks"
 
 func StartVerifierShapeChecksOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (endpoint string) {
 	t.Helper()
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 
-	c, err := runWithRetry(ctx, verifierShapeChecksImage,
+	c, err := runWithRetry(ctx, ImageRef(verifierShapeChecksImage),
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_HOST": "0.0.0.0",

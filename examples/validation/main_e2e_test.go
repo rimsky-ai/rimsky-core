@@ -162,11 +162,11 @@ func validatedTemplate(name, selector string) map[string]any {
 	}
 }
 
-const exampleValidatorImage = "rimsky-example/validation:latest"
+const exampleValidatorImage = "rimsky-example/validation"
 
 func startExampleValidatorOnNetwork(ctx context.Context, t *testing.T, networkName, alias string) (endpoint string) {
 	t.Helper()
-	c, err := testcontainers.Run(ctx, exampleValidatorImage,
+	c, err := harness.Run(ctx, harness.ImageRef(exampleValidatorImage),
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithExposedPorts("9400/tcp"),
 		testcontainers.WithWaitStrategy(

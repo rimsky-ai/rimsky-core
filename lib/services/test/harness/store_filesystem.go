@@ -19,7 +19,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const storeFilesystemImage = "rimsky-claim-producer-filesystem:latest"
+const storeFilesystemImage = "rimsky-claim-producer-filesystem"
 
 type FilesystemStoreSpec struct {
 	PickPolicies         map[string]FilesystemPickPolicy `yaml:"pick_policies"`
@@ -70,7 +70,7 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 		exposedPorts = append(exposedPorts, "9110/tcp")
 	}
 
-	c, err := runWithRetry(ctx, storeFilesystemImage,
+	c, err := runWithRetry(ctx, ImageRef(storeFilesystemImage),
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"STORE_FILESYSTEM_CONFIG": "/etc/store/config.yml",

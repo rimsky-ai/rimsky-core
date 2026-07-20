@@ -11,12 +11,18 @@ import (
 
 	"github.com/testcontainers/testcontainers-go"
 	pgmodule "github.com/testcontainers/testcontainers-go/modules/postgres"
+
+	"github.com/rimsky-ai/rimsky-core/test/support/imagetag"
 )
 
 const (
 	bootMaxAttempts  = 3
 	bootRetryBackoff = 5 * time.Second
 )
+
+func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*testcontainers.DockerContainer, error) {
+	return runWithRetry(ctx, img, opts...)
+}
 
 func runWithRetry(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*testcontainers.DockerContainer, error) {
 	var lastErr error
@@ -27,6 +33,9 @@ func runWithRetry(ctx context.Context, img string, opts ...testcontainers.Contai
 		}
 		if c != nil {
 			terminateBootFailure(ctx, c, err)
+		}
+		if imagetag.IsMissingLocalImage(img, err) {
+			return nil, imagetag.MissingImageError(img, err)
 		}
 		lastErr = err
 		if attempt < bootMaxAttempts {

@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	stubExecutorImage  = "rimsky-test/stubexecutor:latest"
+	stubExecutorImage  = "rimsky-test/stubexecutor"
 	sharedStubAlias    = "executor-stub"
 	sharedStubErrAlias = "executor-stub-erroring"
 )
@@ -57,7 +57,7 @@ func launchExecutorStub(ctx context.Context, networkName, alias string, forceErr
 	if forceError {
 		env["EXECUTOR_STUB_FORCE_ERROR"] = "1"
 	}
-	_, err := runWithRetry(ctx, stubExecutorImage,
+	_, err := runWithRetry(ctx, ImageRef(stubExecutorImage),
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9300/tcp"),

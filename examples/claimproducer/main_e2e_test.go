@@ -338,11 +338,11 @@ func categorize(active, pending, fresh, failed int) string {
 	return "idle"
 }
 
-const exampleClaimProducerImage = "rimsky-example/claim-producer:latest"
+const exampleClaimProducerImage = "rimsky-example/claim-producer"
 
 func startExampleClaimProducerOnNetwork(ctx context.Context, t *testing.T, networkName, alias string) (endpoint string) {
 	t.Helper()
-	c, err := testcontainers.Run(ctx, exampleClaimProducerImage,
+	c, err := harness.Run(ctx, harness.ImageRef(exampleClaimProducerImage),
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithExposedPorts("9400/tcp"),
 		testcontainers.WithWaitStrategy(

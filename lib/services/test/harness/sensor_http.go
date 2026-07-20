@@ -15,7 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const sensorHTTPImage = "rimsky-sensor-http:latest"
+const sensorHTTPImage = "rimsky-sensor-http"
 
 func StartSensorHTTP(ctx context.Context, t testing.TB, networkName, alias, rimskyEndpoint string, hostAccessPorts ...int) (endpoint string) {
 	t.Helper()
@@ -108,7 +108,7 @@ func runSensorHTTPContainer(ctx context.Context, t testing.TB, networkName, alia
 	if len(hostAccessPorts) > 0 {
 		opts = append(opts, testcontainers.WithHostPortAccess(hostAccessPorts...))
 	}
-	c, err := runWithRetry(ctx, sensorHTTPImage, opts...)
+	c, err := runWithRetry(ctx, ImageRef(sensorHTTPImage), opts...)
 	if err != nil {
 		t.Fatalf("harness: start sensor-http: %v", err)
 	}

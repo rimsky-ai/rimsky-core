@@ -15,7 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const sensorCronImage = "rimsky-sensor-cron:latest"
+const sensorCronImage = "rimsky-sensor-cron"
 
 type SensorCronHandle struct {
 	Endpoint string
@@ -83,7 +83,7 @@ func runSensorCronContainer(ctx context.Context, t testing.TB, networkName, alia
 	if stateDSN != "" {
 		env["RIMSKY_SENSOR_CRON_STATE_DSN"] = stateDSN
 	}
-	c, err := runWithRetry(ctx, sensorCronImage,
+	c, err := runWithRetry(ctx, ImageRef(sensorCronImage),
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9081/tcp"),

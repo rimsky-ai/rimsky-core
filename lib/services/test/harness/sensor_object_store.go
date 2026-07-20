@@ -15,7 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const sensorObjectStoreImage = "rimsky-sensor-object-store:latest"
+const sensorObjectStoreImage = "rimsky-sensor-object-store"
 
 const sensorObjectStoreBucketRoot = "/data/object-store"
 
@@ -98,7 +98,7 @@ func runSensorObjectStoreContainer(ctx context.Context, t testing.TB, networkNam
 		// @story: sensor-object-store
 		env["RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN"] = stateDSN
 	}
-	c, err := runWithRetry(ctx, sensorObjectStoreImage,
+	c, err := runWithRetry(ctx, ImageRef(sensorObjectStoreImage),
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9083/tcp"),

@@ -17,7 +17,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const storePostgresImage = "rimsky-claim-producer-postgres:latest"
+const storePostgresImage = "rimsky-claim-producer-postgres"
 
 type PostgresOnNetwork struct {
 	InternalDSN string
@@ -83,7 +83,7 @@ func StartPostgresStore(ctx context.Context, t testing.TB, networkName, alias st
 
 	configYAML := renderPostgresStoreConfig(spec)
 
-	c, err := runWithRetry(ctx, storePostgresImage,
+	c, err := runWithRetry(ctx, ImageRef(storePostgresImage),
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"STORE_POSTGRES_CONFIG": "/etc/store/config.yml",

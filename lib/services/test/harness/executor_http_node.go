@@ -23,7 +23,7 @@ func StartHttpNodeStubOnNetwork(ctx context.Context, t testing.TB, networkName, 
 		"RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT": "9092",
 		"RIMSKY_EXECUTOR_STUB_MODE":           "1",
 	}
-	c, err := runWithRetry(ctx, "rimsky-executor-http-node:latest",
+	c, err := runWithRetry(ctx, ImageRef("rimsky-executor-http-node"),
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9091/tcp", "9092/tcp"),

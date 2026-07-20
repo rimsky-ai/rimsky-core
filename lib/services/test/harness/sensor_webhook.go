@@ -15,7 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const sensorWebhookImage = "rimsky-sensor-webhook:latest"
+const sensorWebhookImage = "rimsky-sensor-webhook"
 
 type SensorWebhookHandle struct {
 	GRPCEndpoint   string
@@ -91,7 +91,7 @@ func runSensorWebhookContainer(
 	if stateDSN != "" {
 		env["RIMSKY_SENSOR_WEBHOOK_STATE_DSN"] = stateDSN
 	}
-	c, err := runWithRetry(ctx, sensorWebhookImage,
+	c, err := runWithRetry(ctx, ImageRef(sensorWebhookImage),
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9084/tcp", "9184/tcp"),

@@ -15,12 +15,12 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const overlapProducerImage = "rimsky-test/overlapproducer:latest"
+const overlapProducerImage = "rimsky-test/overlapproducer"
 
 func StartOverlapClaimProducerOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (endpoint string) {
 	t.Helper()
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
-	c, err := runWithRetry(ctx, overlapProducerImage,
+	c, err := runWithRetry(ctx, ImageRef(overlapProducerImage),
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"OVERLAP_PRODUCER_BIND": "0.0.0.0:9400",

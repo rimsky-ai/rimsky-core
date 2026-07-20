@@ -45,7 +45,7 @@ func nextAliasSuffix() uint64 {
 	return aliasCounter.Add(1)
 }
 
-const rimskyAllImage = "rimsky-all-in-one:latest"
+const rimskyAllImage = "rimsky-all-in-one"
 
 const healthDeadline = 90 * time.Second
 
@@ -442,7 +442,7 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 	if len(cb.hostAccessPorts) > 0 {
 		rimskyOpts = append(rimskyOpts, testcontainers.WithHostPortAccess(cb.hostAccessPorts...))
 	}
-	rimsky, err := runWithRetry(ctx, rimskyAllImage, rimskyOpts...)
+	rimsky, err := runWithRetry(ctx, ImageRef(rimskyAllImage), rimskyOpts...)
 	if err != nil {
 		t.Fatalf("harness: start rimsky/all: %v", err)
 	}

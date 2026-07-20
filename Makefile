@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images test-images push-images publish-protocols check-clean smoke-all test-all test-race test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images test-images reap-images check-image-freshness push-images publish-protocols check-clean smoke-all test-all test-race test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -97,14 +97,13 @@ test-examples:
 
 # test-all builds the core + service + test images BEFORE running any
 # module's tests: the services scenarios under lib/services/test/ (and the
-# examples cross-stack proofs) pull rimsky-all-in-one:latest, the
-# bundled-service :latest tags, and the test-only rimsky-test/* +
-# rimsky-example/* tags from the LOCAL docker daemon. Without the image
-# prerequisites, those suites exercise whatever image happened to be on disk
-# from a prior build — a stale-image pass that silently waves through
-# regressions in the live source. Building first means every test-all run
-# proves the source tree as it stands. Docker layer caching keeps the
-# rebuild cheap when nothing image-relevant changed.
+# examples cross-stack proofs) resolve every rimsky image by the content-
+# addressed :$(SRC_TAG) of the tree they run from (RIMSKY_IMAGE_TAG
+# overrides; never :latest), so a suite can only ever find an image built
+# from its own source — a stale image is unrepresentable and shows up as a
+# loud image-not-found naming the build command. Building first means every
+# test-all run proves the source tree as it stands. Docker layer caching
+# keeps the rebuild cheap when nothing image-relevant changed.
 test-all: core-images service-images test-images test-root test-foundation test-protocols test-services test-examples
 
 # Local test-speed observability. Runs every Go test across all modules under
@@ -172,6 +171,26 @@ cli-release:
 	done; \
 	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky_windows_amd64.exe ./cmd/rimsky/
 
+# Content-addressed image tag: a git tree-object hash of the working tree,
+# derived by tools/image-src-tag.sh (shared with the services test harness).
+# Every local image build below is tagged :$(SRC_TAG) alongside its existing
+# tags, so an image either matches the tree that asks for it or does not
+# exist — the docker-suite harness resolves by SRC_TAG, never :latest.
+# Lazily computed once per make invocation, only when a rule expands it.
+SRC_TAG = $(eval SRC_TAG := $(shell ./tools/image-src-tag.sh))$(SRC_TAG)
+
+IMAGE_LABELS = --label org.rimsky.project=rimsky-core --label org.rimsky.src-tree=$(SRC_TAG)
+
+# $(call build-image,<dockerfile>,<image>[,<extra docker-build args>])
+define build-image
+docker build -f $(1) $(IMAGE_LABELS) $(3) -t $(2):$(VERSION) -t $(2):latest -t $(2):$(SRC_TAG) .
+endef
+
+# Test-only images are never published, so no $(VERSION) tag.
+define build-test-image
+docker build -f $(1) $(IMAGE_LABELS) -t $(2):latest -t $(2):$(SRC_TAG) .
+endef
+
 # Distributed images, built from this tree (Dockerfiles live in dockerfiles/).
 # Four images:
 #   rimsky                  — all role binaries + rimsky-entrypoint under one
@@ -185,15 +204,13 @@ cli-release:
 #                             (Dockerfile.go-base, single binary).
 #   rimsky-conformance      — bundled protocol conformance runners; pick one
 #                             by container command (Dockerfile.conformance).
-# Each image is tagged $(VERSION) + latest. The CLI ships as a binary
-# (`make cli` / `make cli-release`), not an image.
+# Each image is tagged $(VERSION) + latest + $(SRC_TAG). The CLI ships as a
+# binary (`make cli` / `make cli-release`), not an image.
 core-images:
-	docker build -f dockerfiles/Dockerfile.rimsky -t rimsky:$(VERSION) -t rimsky:latest .
-	docker build -f dockerfiles/Dockerfile.all-in-one --build-arg RIMSKY_BASE=rimsky:$(VERSION) \
-	  -t rimsky-all-in-one:$(VERSION) -t rimsky-all-in-one:latest .
-	docker build -f dockerfiles/Dockerfile.go-base --build-arg BINARY=rimsky-host-agent-proxy \
-	  -t rimsky-host-agent-proxy:$(VERSION) -t rimsky-host-agent-proxy:latest .
-	docker build -f dockerfiles/Dockerfile.conformance -t rimsky-conformance:$(VERSION) -t rimsky-conformance:latest .
+	$(call build-image,dockerfiles/Dockerfile.rimsky,rimsky)
+	$(call build-image,dockerfiles/Dockerfile.all-in-one,rimsky-all-in-one,--build-arg RIMSKY_BASE=rimsky:$(VERSION))
+	$(call build-image,dockerfiles/Dockerfile.go-base,rimsky-host-agent-proxy,--build-arg BINARY=rimsky-host-agent-proxy)
+	$(call build-image,dockerfiles/Dockerfile.conformance,rimsky-conformance)
 
 # Bundled-service images: the consumption-side services (stores, sensors,
 # subscribers, executors) shipped by rimsky as images. Each Dockerfile lives
@@ -201,34 +218,48 @@ core-images:
 # repo root so the build can reach lib/protocols + lib/services + go.work
 # (the bundled services build against the in-tree protocols module via the
 # workspace, with no published-tag pin). Each image is tagged $(VERSION) +
-# latest, with a `rimsky-` prefix matching the core-image naming.
+# latest + $(SRC_TAG), with a `rimsky-` prefix matching the core-image naming.
 service-images:
-	docker build -f lib/services/claim_producers/filesystem/Dockerfile.filesystem -t rimsky-claim-producer-filesystem:$(VERSION) -t rimsky-claim-producer-filesystem:latest .
-	docker build -f lib/services/claim_producers/postgres/Dockerfile.postgres -t rimsky-claim-producer-postgres:$(VERSION) -t rimsky-claim-producer-postgres:latest .
-	docker build -f lib/services/sensors/sensor-cron/Dockerfile.sensor-cron -t rimsky-sensor-cron:$(VERSION) -t rimsky-sensor-cron:latest .
-	docker build -f lib/services/sensors/sensor-http/Dockerfile.sensor-http -t rimsky-sensor-http:$(VERSION) -t rimsky-sensor-http:latest .
-	docker build -f lib/services/sensors/sensor-object-store/Dockerfile.sensor-object-store -t rimsky-sensor-object-store:$(VERSION) -t rimsky-sensor-object-store:latest .
-	docker build -f lib/services/sensors/sensor-webhook/Dockerfile.sensor-webhook -t rimsky-sensor-webhook:$(VERSION) -t rimsky-sensor-webhook:latest .
-	docker build -f lib/services/subscribers/openlineage/Dockerfile.openlineage -t rimsky-subscriber-openlineage:$(VERSION) -t rimsky-subscriber-openlineage:latest .
-	docker build -f lib/services/executors/http-node/Dockerfile.http-node -t rimsky-executor-http-node:$(VERSION) -t rimsky-executor-http-node:latest .
-	docker build -f lib/services/executors/verifier-http/Dockerfile.verifier-http -t rimsky-executor-verifier-http:$(VERSION) -t rimsky-executor-verifier-http:latest .
-	docker build -f lib/services/executors/verifier-shape-checks/Dockerfile.verifier-shape-checks -t rimsky-executor-verifier-shape-checks:$(VERSION) -t rimsky-executor-verifier-shape-checks:latest .
-	docker build -f lib/services/executors/claude-agent/Dockerfile -t rimsky-executor-claude-agent:$(VERSION) -t rimsky-executor-claude-agent:latest .
+	$(call build-image,lib/services/claim_producers/filesystem/Dockerfile.filesystem,rimsky-claim-producer-filesystem)
+	$(call build-image,lib/services/claim_producers/postgres/Dockerfile.postgres,rimsky-claim-producer-postgres)
+	$(call build-image,lib/services/sensors/sensor-cron/Dockerfile.sensor-cron,rimsky-sensor-cron)
+	$(call build-image,lib/services/sensors/sensor-http/Dockerfile.sensor-http,rimsky-sensor-http)
+	$(call build-image,lib/services/sensors/sensor-object-store/Dockerfile.sensor-object-store,rimsky-sensor-object-store)
+	$(call build-image,lib/services/sensors/sensor-webhook/Dockerfile.sensor-webhook,rimsky-sensor-webhook)
+	$(call build-image,lib/services/subscribers/openlineage/Dockerfile.openlineage,rimsky-subscriber-openlineage)
+	$(call build-image,lib/services/executors/http-node/Dockerfile.http-node,rimsky-executor-http-node)
+	$(call build-image,lib/services/executors/verifier-http/Dockerfile.verifier-http,rimsky-executor-verifier-http)
+	$(call build-image,lib/services/executors/verifier-shape-checks/Dockerfile.verifier-shape-checks,rimsky-executor-verifier-shape-checks)
+	$(call build-image,lib/services/executors/claude-agent/Dockerfile,rimsky-executor-claude-agent)
 
 # Test-only images consumed by the services/examples integration harnesses.
-# Built ONCE here by stable name (never published, so :latest only) and
-# referenced BY NAME from the tests — never rebuilt inline at test time.
-# An inline testcontainers WithDockerfile build with the repo root as
+# Built ONCE here by stable name (never published, so :latest + :$(SRC_TAG)
+# only) and referenced BY NAME from the tests — never rebuilt inline at test
+# time. An inline testcontainers WithDockerfile build with the repo root as
 # context re-tags on every source edit, orphaning the prior image ID as a
 # dangling <none> layer stack each run; hundreds of those accumulate and
 # wedge the daemon. Build context stays the repo root for the same reason
 # as service-images: the Go builds need go.work + the workspace modules.
 test-images:
-	docker build -f lib/services/test/stubexecutor/Dockerfile.stubexecutor -t rimsky-test/stubexecutor:latest .
-	docker build -f lib/services/test/scenarios/claude_agent_fake_cli/Dockerfile.fake-claude-agent -t rimsky-test/claude-agent-fake:latest .
-	docker build -f lib/services/test/overlapproducer/Dockerfile.overlapproducer -t rimsky-test/overlapproducer:latest .
-	docker build -f examples/claimproducer/Dockerfile.example -t rimsky-example/claim-producer:latest .
-	docker build -f examples/validation/Dockerfile.example -t rimsky-example/validation:latest .
+	$(call build-test-image,lib/services/test/stubexecutor/Dockerfile.stubexecutor,rimsky-test/stubexecutor)
+	$(call build-test-image,lib/services/test/scenarios/claude_agent_fake_cli/Dockerfile.fake-claude-agent,rimsky-test/claude-agent-fake)
+	$(call build-test-image,lib/services/test/overlapproducer/Dockerfile.overlapproducer,rimsky-test/overlapproducer)
+	$(call build-test-image,examples/claimproducer/Dockerfile.example,rimsky-example/claim-producer)
+	$(call build-test-image,examples/validation/Dockerfile.example,rimsky-example/validation)
+
+# Retention for the content-addressed :src-* tags — one accumulates per source
+# tree built. Prunes rimsky-labeled images older than REAP_HOURS (default 72)
+# except image IDs still pointed to by :latest or :$(VERSION), then prunes
+# dangling rimsky-labeled layers. Prints what it removes.
+REAP_HOURS ?= 72
+reap-images:
+	REAP_HOURS=$(REAP_HOURS) VERSION=$(VERSION) ./tools/reap-images.sh
+
+# Determinism guard for the SRC_TAG derivation: proves (in a temp git repo)
+# that an unchanged tree hashes identically twice and a content change moves
+# the hash, plus the resolver's env-override plumbing. No docker required.
+check-image-freshness:
+	go test ./test/support/imagetag -count=1 -v
 
 # The 15-image set published by this repo. Single source of truth for `scan`
 # and (in symbolic form) push-images. Order matters for push-images:

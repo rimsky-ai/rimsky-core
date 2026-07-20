@@ -20,9 +20,11 @@ import (
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/rimsky-ai/rimsky-core/test/support/imagetag"
 )
 
-const rimskyAllInOneImage = "rimsky-all-in-one:latest"
+const rimskyAllInOneImage = "rimsky-all-in-one"
 
 const ctxDemoHealthDeadline = 90 * time.Second
 
@@ -92,7 +94,8 @@ func TestCtxDemo(t *testing.T) {
 func bringUpRimskyAllInOne(ctx context.Context, t *testing.T, alias string) string {
 	t.Helper()
 
-	c, err := testcontainers.Run(ctx, rimskyAllInOneImage,
+	img := imagetag.Ref(rimskyAllInOneImage)
+	c, err := testcontainers.Run(ctx, img,
 		testcontainers.WithExposedPorts("8080/tcp"),
 		testcontainers.WithEnv(map[string]string{
 			"RIMSKY_CONTROL_API_HOST": "0.0.0.0",
@@ -103,6 +106,9 @@ func bringUpRimskyAllInOne(ctx context.Context, t *testing.T, alias string) stri
 		),
 	)
 	if err != nil {
+		if imagetag.IsMissingLocalImage(img, err) {
+			err = imagetag.MissingImageError(img, err)
+		}
 		t.Fatalf("[%s] start rimsky-all-in-one: %v", alias, err)
 	}
 	t.Cleanup(func() {

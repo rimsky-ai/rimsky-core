@@ -16,7 +16,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const claudeAgentFakeImage = "rimsky-test/claude-agent-fake:latest"
+const claudeAgentFakeImage = "rimsky-test/claude-agent-fake"
 
 type ClaudeAgentFakeOptions struct {
 	McpAllowlist         []string
@@ -61,7 +61,7 @@ func StartClaudeAgentFakeOnNetwork(
 		})
 	}
 
-	c, err := runWithRetry(ctx, claudeAgentFakeImage,
+	c, err := runWithRetry(ctx, ImageRef(claudeAgentFakeImage),
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithFiles(files...),

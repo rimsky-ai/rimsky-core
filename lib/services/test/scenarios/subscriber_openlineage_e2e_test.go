@@ -27,7 +27,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-const openLineageSubscriberImage = "rimsky-subscriber-openlineage:latest"
+const openLineageSubscriberImage = "rimsky-subscriber-openlineage"
 
 const openLineageNamespace = "rimsky-e2e-namespace"
 
@@ -269,10 +269,9 @@ func startOpenLineageSubscriber(
 			wait.ForLog("openlineage.starting").WithStartupTimeout(60 * time.Second),
 		),
 	}
-	c, err := testcontainers.Run(ctx, openLineageSubscriberImage, opts...)
+	c, err := harness.Run(ctx, harness.ImageRef(openLineageSubscriberImage), opts...)
 	if err != nil {
-		t.Fatalf("harness: start openlineage subscriber container: %v "+
-			"(did you run `make service-images`?)", err)
+		t.Fatalf("harness: start openlineage subscriber container: %v", err)
 	}
 	t.Cleanup(func() {
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
