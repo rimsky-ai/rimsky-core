@@ -515,6 +515,61 @@ func (s *nodesImpl) GetRunSummary(ctx context.Context, nodeID foundationshared.U
 	return out, rows.Err()
 }
 
+// @concept: node
+func (s *nodesImpl) GetRunSummaryForNodes(ctx context.Context, nodeIDs []foundationshared.UUID, tx persistence.Tx) (map[foundationshared.UUID]persistence.NodeRunSummary, error) {
+	out := make(map[foundationshared.UUID]persistence.NodeRunSummary, len(nodeIDs))
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	placeholders, args := nodeIDPlaceholders(nodeIDs)
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT node_id, state, count(*)
+		   FROM rimsky_node_runs
+		  WHERE node_id IN (`+placeholders+`)
+		  GROUP BY node_id, state`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunSummaryForNodes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nodeIDStr string
+		var state string
+		var count int
+		if err := rows.Scan(&nodeIDStr, &state, &count); err != nil {
+			return nil, fmt.Errorf("GetRunSummaryForNodes: scan: %w", err)
+		}
+		nodeID, err := uuid.Parse(nodeIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("GetRunSummaryForNodes: parse node_id: %w", err)
+		}
+		summary := out[nodeID]
+		switch cascade.NodeState(state) {
+		case cascade.NodeStateRunning, cascade.NodeStateHeld, cascade.NodeStateParked:
+			summary.ActiveCount += count
+		case cascade.NodeStatePending, cascade.NodeStateStale:
+			summary.PendingCount += count
+		case cascade.NodeStateFresh:
+			summary.FreshCount += count
+		case cascade.NodeStateFailed:
+			summary.FailedCount += count
+		}
+		out[nodeID] = summary
+	}
+	return out, rows.Err()
+}
+
+func nodeIDPlaceholders(nodeIDs []foundationshared.UUID) (string, []any) {
+	placeholders := make([]string, 0, len(nodeIDs))
+	args := make([]any, 0, len(nodeIDs))
+	for _, id := range nodeIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id.String())
+	}
+	return strings.Join(placeholders, ","), args
+}
+
 // @concept: signal
 func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) (bool, error) {
 	var n int
@@ -872,6 +927,72 @@ func (s *nodesImpl) GetLatestRunForNode(
 		nodeID.String(),
 	)
 	return scanLatestRow(row)
+}
+
+// @concept: node-run
+// @decision: sequence-scope-monotonic
+func (s *nodesImpl) GetLatestRunForNodes(
+	ctx context.Context, tx persistence.Tx, nodeIDs []foundationshared.UUID,
+) (map[foundationshared.UUID]persistence.NodeRunLatest, error) {
+	out := make(map[foundationshared.UUID]persistence.NodeRunLatest, len(nodeIDs))
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	placeholders, args := nodeIDPlaceholders(nodeIDs)
+	rows, err := s.q(tx).QueryContext(ctx,
+		`WITH ranked AS (
+		     SELECT id, node_id, run_scope_id, frame_id, sequence, state,
+		            settling_signal_type, COALESCE(claimed_by, '') AS claimed_by,
+		            ROW_NUMBER() OVER (
+		                PARTITION BY node_id
+		                ORDER BY CASE WHEN state IN ('pending','stale','running','held','parked') THEN 0 ELSE 1 END,
+		                         enqueued_at DESC, sequence DESC, id DESC
+		            ) AS rn
+		       FROM rimsky_node_runs
+		      WHERE node_id IN (`+placeholders+`)
+		 )
+		 SELECT id, node_id, run_scope_id, frame_id, sequence, state, settling_signal_type, claimed_by
+		   FROM ranked
+		  WHERE rn = 1`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("GetLatestRunForNodes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			runIDStr      string
+			nodeIDStr     string
+			runScopeIDStr string
+			frameIDStr    string
+			r             persistence.NodeRunLatest
+			state         string
+			sigType       sql.NullString
+		)
+		if err := rows.Scan(&runIDStr, &nodeIDStr, &runScopeIDStr, &frameIDStr, &r.Sequence, &state, &sigType, &r.ClaimedBy); err != nil {
+			return nil, fmt.Errorf("GetLatestRunForNodes: scan: %w", err)
+		}
+		if r.NodeRunID, err = uuid.Parse(runIDStr); err != nil {
+			return nil, fmt.Errorf("GetLatestRunForNodes: parse run_id: %w", err)
+		}
+		if r.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
+			return nil, fmt.Errorf("GetLatestRunForNodes: parse node_id: %w", err)
+		}
+		if r.RunScopeID, err = uuid.Parse(runScopeIDStr); err != nil {
+			return nil, fmt.Errorf("GetLatestRunForNodes: parse run_scope_id: %w", err)
+		}
+		if r.FrameID, err = uuid.Parse(frameIDStr); err != nil {
+			return nil, fmt.Errorf("GetLatestRunForNodes: parse frame_id: %w", err)
+		}
+		r.State = cascade.NodeState(state)
+		if sigType.Valid {
+			v := sigType.String
+			r.SettlingSignalType = &v
+		}
+		out[r.NodeID] = r
+	}
+	return out, rows.Err()
 }
 
 // @concept: node-run

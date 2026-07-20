@@ -59,6 +59,22 @@ func TestCreateTag_RejectsHashShape(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
+func TestCreateTag_RejectsHashShape_UppercaseHex(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("hashy-upper-tag-"+uuid.NewString()))
+	tplID := out["template_id"].(string)
+
+	hashShape := "sha256-" + repeatHex("B", 64)
+	status, body := h.httpJSON(t, "POST", "/v1/tags", map[string]any{
+		"tag": hashShape, "template": tplID,
+	})
+	require.Equal(t, http.StatusBadRequest, status, body,
+		"an uppercase-hex hash-shaped string must be rejected as a tag identifier same as lowercase")
+}
+
 func TestCreateTag_RejectsSlash(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -87,6 +103,58 @@ func TestListTags(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, listed)
 	tags := listed["tags"].([]any)
 	require.NotEmpty(t, tags)
+}
+
+func TestMoveTag_HappyPath_RepointsTag(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	_, oldOut := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("move-old-"+uuid.NewString()))
+	oldTplID := oldOut["template_id"].(string)
+	_, newOut := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("move-new-"+uuid.NewString()))
+	newTplID := newOut["template_id"].(string)
+
+	tag := "movable-" + uuid.NewString()
+	status, createOut := h.httpJSON(t, "POST", "/v1/tags", map[string]any{"tag": tag, "template": oldTplID})
+	require.Equal(t, http.StatusCreated, status, createOut)
+	require.Equal(t, oldTplID, createOut["template_id"])
+
+	status, moveOut := h.httpJSON(t, "PUT", "/v1/tags/"+tag, map[string]any{"template": newTplID})
+	require.Equal(t, http.StatusOK, status, moveOut)
+	require.Equal(t, tag, moveOut["tag"])
+	require.Equal(t, newTplID, moveOut["template_id"], "move must repoint the tag to the new template")
+	require.NotEqual(t, oldTplID, moveOut["template_id"])
+
+	status, listed := h.httpJSON(t, "GET", "/v1/tags", nil)
+	require.Equal(t, http.StatusOK, status, listed)
+	tags, _ := listed["tags"].([]any)
+	found := false
+	for _, tg := range tags {
+		row, _ := tg.(map[string]any)
+		if row["tag"] != tag {
+			continue
+		}
+		found = true
+		require.Equal(t, newTplID, row["template_id"],
+			"the moved tag must resolve to the new template on subsequent reads, not the original")
+	}
+	require.True(t, found, "moved tag must still be listed")
+}
+
+func TestCreateTag_RejectsComposePrefixWithoutOriginHeader(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("compose-tag-"+uuid.NewString()))
+	tplID := out["template_id"].(string)
+
+	status, body := h.httpJSON(t, "POST", "/v1/tags", map[string]any{
+		"tag": "compose:env-" + uuid.NewString(), "template": tplID,
+	})
+	require.Equal(t, http.StatusBadRequest, status, body,
+		"the compose: prefix is reserved for the compose command and must be rejected from a plain caller")
 }
 
 func TestMoveTag_404OnMissing(t *testing.T) {

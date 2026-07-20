@@ -49,9 +49,25 @@ func TestTemplateRegister_RejectsUnknownExecutor(t *testing.T) {
 	nodes[0]["executor"] = "ghost-executor"
 	spec["nodes"] = nodes
 
-	status, _ := h.httpJSON(t, "POST", "/v1/templates", body)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusBadRequest, status,
 		"unknown-executor template must be rejected at register time")
+
+	rawErrs, ok := out["validation_errors"].([]any)
+	require.True(t, ok, "response must carry a validation_errors array, got: %v", out)
+	found := false
+	for _, raw := range rawErrs {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if msg, _ := entry["msg"].(string); strings.Contains(msg, "ghost-executor") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found,
+		"a validation_errors entry must name the unknown executor reference, got: %v", rawErrs)
 }
 
 func TestTemplateRegister_RejectsDelegateCycleOverRoute(t *testing.T) {
@@ -160,6 +176,66 @@ func TestTemplateValidate_CleanSpecOk(t *testing.T) {
 		"validate must not persist even for a clean spec")
 }
 
+func TestTemplateValidate_DegradesToVerdictWithoutRunningPipelineOnStaticFailure(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	reqBody := map[string]any{
+		"spec": map[string]any{
+			"name":    "validate-delegate-cycle-" + uuid.NewString(),
+			"version": "1",
+			"graphs": []map[string]any{
+				{
+					"name": "main",
+					"nodes": []map[string]any{
+						{"type": "m", "delegate": "g1"},
+					},
+				},
+				{
+					"name":  "g1",
+					"entry": "g1n",
+					"exit":  "g1x",
+					"nodes": []map[string]any{
+						{"type": "g1n", "delegate": "g2"},
+						{"type": "g1x", "subscribes": []map[string]any{{"node": "g1n", "type": "terminal/*", "force_upstream_refresh": false}}},
+					},
+				},
+				{
+					"name":  "g2",
+					"entry": "g2n",
+					"exit":  "g2x",
+					"nodes": []map[string]any{
+						{"type": "g2n", "delegate": "g1"},
+						{"type": "g2x", "subscribes": []map[string]any{{"node": "g2n", "type": "terminal/*", "force_upstream_refresh": false}}},
+					},
+				},
+			},
+		},
+	}
+
+	status, out := h.httpJSON(t, "POST", "/v1/templates/validate", reqBody)
+	require.Equal(t, http.StatusOK, status,
+		"a statically-invalid spec must degrade to an ok:false verdict, not 500")
+	require.Equal(t, false, out["ok"])
+
+	rawErrs, ok := out["validation_errors"].([]any)
+	require.True(t, ok, "response must carry a validation_errors array, got: %v", out)
+	found := false
+	for _, raw := range rawErrs {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if msg, _ := entry["msg"].(string); strings.Contains(msg, "subgraph_recursion_unsupported") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found,
+		"a validation_errors entry must name subgraph_recursion_unsupported, got: %v", rawErrs)
+}
+
 func TestTemplateRegister_Idempotent(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -177,6 +253,8 @@ func TestTemplateRegister_Idempotent(t *testing.T) {
 		fake, ok := s.(*storetest.Fake)
 		require.True(t, ok)
 		preCounts[name] = len(fake.Calls())
+		require.Greater(t, preCounts[name], 0,
+			"the first register must have fired at least one fake interaction for %q (e.g. OnTemplateRegistered), or the no-refire check below is vacuous", name)
 	}
 
 	status2, out2 := h.httpJSON(t, "POST", "/v1/templates", body)
@@ -223,9 +301,24 @@ func TestTemplateRegister_RejectsHashShapedTag(t *testing.T) {
 
 	hashShape := "sha256-" + repeatHex("a", 64)
 	body := templateBodyWithTag("hashy-"+uuid.NewString(), hashShape)
-	status, _ := h.httpJSON(t, "POST", "/v1/templates", body)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusBadRequest, status,
 		"hash-shaped tag must be rejected at register time")
+	require.Equal(t, "invalid tag identifier", out["error"],
+		"the rejection must be pinned to the tag-shape rule, not any other 400 reason")
+}
+
+func TestTemplateRegister_RejectsHashShapedTag_UppercaseHex(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	hashShape := "sha256-" + repeatHex("A", 64)
+	body := templateBodyWithTag("hashy-upper-"+uuid.NewString(), hashShape)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusBadRequest, status,
+		"an uppercase-hex hash-shaped tag must be rejected same as lowercase")
+	require.Equal(t, "invalid tag identifier", out["error"])
 }
 
 func TestTemplateRegister_MovesExistingTagOnFreshInsertWhenCallerHasTagSet(t *testing.T) {
@@ -313,22 +406,27 @@ func TestTemplateDeploy_StateTransitions(t *testing.T) {
 	_, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	tplID := out["template_id"].(string)
 
-	status, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
+	status, out1 := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "deployed", out1["state"])
 
 	status, out2 := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, true, out2["no_op"])
-
-	status, _ = h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/undeploy", map[string]any{})
-	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "deployed", out2["state"], "a no-op re-deploy must still report the current state")
 
 	status, out3 := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/undeploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
-	require.Equal(t, true, out3["no_op"])
+	require.Equal(t, "undeployed", out3["state"])
 
-	status, _ = h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
+	status, out4 := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/undeploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, true, out4["no_op"])
+	require.Equal(t, "undeployed", out4["state"], "a no-op re-undeploy must still report the current state")
+
+	status, out5 := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "deployed", out5["state"])
 }
 
 func TestTemplateUndeploy_RefusedWithActiveInstances(t *testing.T) {
@@ -571,7 +669,7 @@ func TestRegisterTemplate_ReferenceValidationStrict(t *testing.T) {
 
 func registerWarningsContainAdvisory(t *testing.T, out map[string]any) bool {
 	t.Helper()
-	return warningsContainAdvisoryByKey(t, out, "message")
+	return warningsContainAdvisoryByKey(t, out, "msg")
 }
 
 func validateWarningsContainAdvisory(t *testing.T, out map[string]any) bool {

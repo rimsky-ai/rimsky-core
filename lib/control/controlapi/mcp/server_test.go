@@ -53,6 +53,33 @@ func TestMCPInitialize(t *testing.T) {
 	if _, ok := caps["tools"]; !ok {
 		t.Fatalf("missing tools capability: %+v", caps)
 	}
+	if m["protocolVersion"] != "2025-06-18" {
+		t.Fatalf("expected default protocolVersion when the client omits one; got %+v", m["protocolVersion"])
+	}
+}
+
+func TestMCPInitialize_EchoesSupportedRequestedVersion(t *testing.T) {
+	server := &mcp.Server{Tools: &fakeCatalog{}}
+	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)
+	if resp.Error != nil {
+		t.Fatalf("initialize: %v", resp.Error)
+	}
+	m := resp.Result.(map[string]any)
+	if m["protocolVersion"] != "2025-06-18" {
+		t.Fatalf("server must echo back a protocolVersion it supports; got %+v", m["protocolVersion"])
+	}
+}
+
+func TestMCPInitialize_FallsBackForUnsupportedRequestedVersion(t *testing.T) {
+	server := &mcp.Server{Tools: &fakeCatalog{}}
+	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}`)
+	if resp.Error != nil {
+		t.Fatalf("initialize: %v", resp.Error)
+	}
+	m := resp.Result.(map[string]any)
+	if m["protocolVersion"] != "2025-06-18" {
+		t.Fatalf("server must fall back to a version it supports for an unsupported request; got %+v", m["protocolVersion"])
+	}
 }
 
 func TestMCPToolsList(t *testing.T) {
@@ -115,6 +142,62 @@ func TestMCPToolsCall_OmitsIsErrorOnSuccess(t *testing.T) {
 	}
 	if m["isError"] != false {
 		t.Fatalf("CallToolResult.isError must be false on a successful tool call; got %+v", m)
+	}
+}
+
+func TestMCPSession_MissingHeaderOnNonInitializeIs400(t *testing.T) {
+	server := &mcp.Server{Tools: &fakeCatalog{}}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected HTTP 400 for a non-initialize request without a session; got %d", w.Code)
+	}
+	var resp mcp.Response
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Error == nil || resp.Error.Code != mcp.CodeSessionRequired {
+		t.Fatalf("expected CodeSessionRequired; got %+v", resp.Error)
+	}
+}
+
+func TestMCPSession_UnknownSessionIs404(t *testing.T) {
+	server := &mcp.Server{Tools: &fakeCatalog{}}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
+	req.Header.Set("Mcp-Session-Id", "not-a-real-session")
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected HTTP 404 for an unknown session; got %d", w.Code)
+	}
+	var resp mcp.Response
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Error == nil || resp.Error.Code != mcp.CodeSessionNotFound {
+		t.Fatalf("expected CodeSessionNotFound; got %+v", resp.Error)
+	}
+}
+
+func TestMCPSession_DeleteTerminatesSession(t *testing.T) {
+	server := &mcp.Server{Tools: &fakeCatalog{}}
+	sid := mustInitSession(t, server)
+
+	delReq := httptest.NewRequest("DELETE", "/mcp", nil)
+	delReq.Header.Set("Mcp-Session-Id", sid)
+	delW := httptest.NewRecorder()
+	server.ServeHTTP(delW, delReq)
+	if delW.Code != http.StatusOK {
+		t.Fatalf("expected 200 from session termination; got %d", delW.Code)
+	}
+
+	postReq := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
+	postReq.Header.Set("Mcp-Session-Id", sid)
+	postW := httptest.NewRecorder()
+	server.ServeHTTP(postW, postReq)
+	if postW.Code != http.StatusNotFound {
+		t.Fatalf("expected the terminated session to be rejected with 404; got %d", postW.Code)
 	}
 }
 
@@ -272,17 +355,46 @@ func TestMCPInvalidJSON(t *testing.T) {
 	}
 }
 
+func mustInitSession(t *testing.T, s *mcp.Server) string {
+	t.Helper()
+	resp, hdr := serveRPCWithHeaders(t, s, "", `{"jsonrpc":"2.0","id":0,"method":"initialize"}`)
+	if resp.Error != nil {
+		t.Fatalf("initialize: %v", resp.Error)
+	}
+	sid := hdr.Get("Mcp-Session-Id")
+	if sid == "" {
+		t.Fatalf("initialize did not issue an Mcp-Session-Id header")
+	}
+	return sid
+}
+
 func serveRPC(t *testing.T, s *mcp.Server, body string) mcp.Response {
+	t.Helper()
+	sid := ""
+	var probe struct {
+		Method string `json:"method"`
+	}
+	if json.Unmarshal([]byte(body), &probe) == nil && probe.Method != "initialize" {
+		sid = mustInitSession(t, s)
+	}
+	resp, _ := serveRPCWithHeaders(t, s, sid, body)
+	return resp
+}
+
+func serveRPCWithHeaders(t *testing.T, s *mcp.Server, sessionID, body string) (mcp.Response, http.Header) {
 	t.Helper()
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/mcp", strings.NewReader(body))
 	req = req.WithContext(context.Background())
+	if sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", sessionID)
+	}
 	s.ServeHTTP(w, req)
 	var resp mcp.Response
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v\n%s", err, w.Body.String())
 	}
-	return resp
+	return resp, w.Header()
 }
 
 func TestCatalogFiltered(t *testing.T) {

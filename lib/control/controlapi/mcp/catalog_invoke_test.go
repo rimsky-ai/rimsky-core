@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -195,7 +196,7 @@ func TestCatalogInvoke_AppliesProtocolSkin(t *testing.T) {
 	}
 }
 
-func TestCatalogInvoke_GETMapsScalarArgsToQueryAndDropsObjectsArrays(t *testing.T) {
+func TestCatalogInvoke_GETMapsScalarArgsToQuery(t *testing.T) {
 	r := chi.NewRouter()
 	var sawQuery url.Values
 	r.Get("/things", func(w http.ResponseWriter, req *http.Request) {
@@ -211,18 +212,78 @@ func TestCatalogInvoke_GETMapsScalarArgsToQueryAndDropsObjectsArrays(t *testing.
 	}
 	cat := &mcp.Catalog{Registry: reg, Router: r}
 
-	args := json.RawMessage(`{"type":"widget","obj":{"a":1},"arr":[1,2]}`)
+	args := json.RawMessage(`{"type":"widget"}`)
 	if _, _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_list", args); mcpErr != nil {
 		t.Fatalf("unexpected error %+v", mcpErr)
 	}
 	if got := sawQuery.Get("type"); got != "widget" {
 		t.Fatalf("scalar arg must map to a query param; got type=%q", got)
 	}
-	if sawQuery.Has("obj") {
-		t.Fatalf("object-shaped arg must be dropped from the query string, got %v", sawQuery)
+}
+
+func TestCatalogInvoke_GETRejectsObjectAndArrayArgsInsteadOfSilentlyDropping(t *testing.T) {
+	r := chi.NewRouter()
+	called := false
+	r.Get("/things", func(w http.ResponseWriter, req *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	reg := &fakeRegistry{
+		tools: []string{"thing_list"},
+		entries: map[string]mcp.RegistryEntry{
+			"thing_list": {Action: "thing:list", Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/things"}}},
+		},
 	}
-	if sawQuery.Has("arr") {
-		t.Fatalf("array-shaped arg must be dropped from the query string, got %v", sawQuery)
+	cat := &mcp.Catalog{Registry: reg, Router: r}
+
+	args := json.RawMessage(`{"type":"widget","obj":{"a":1},"arr":[1,2]}`)
+	_, _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_list", args)
+	if mcpErr == nil {
+		t.Fatalf("expected an error naming the unencodable object/array arguments, got none")
+	}
+	if mcpErr.Code != mcp.CodeInvalidParams {
+		t.Fatalf("expected CodeInvalidParams, got %+v", mcpErr)
+	}
+	if !strings.Contains(mcpErr.Message, "arr") || !strings.Contains(mcpErr.Message, "obj") {
+		t.Fatalf("expected the error to name the unencodable keys, got %q", mcpErr.Message)
+	}
+	if called {
+		t.Fatalf("router must not be reached when a query arg cannot be encoded")
+	}
+}
+
+func TestCatalogInvoke_DryRunArgThreadsToQueryParamForWriteMethods(t *testing.T) {
+	r := chi.NewRouter()
+	var sawQuery url.Values
+	var sawBody map[string]any
+	r.Post("/things", func(w http.ResponseWriter, req *http.Request) {
+		defer func() { _ = req.Body.Close() }()
+		sawQuery = req.URL.Query()
+		_ = json.NewDecoder(req.Body).Decode(&sawBody)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	reg := &fakeRegistry{
+		tools: []string{"thing_create"},
+		entries: map[string]mcp.RegistryEntry{
+			"thing_create": {Action: "thing:create", Routes: []mcp.RegistryRoute{{Method: "POST", Path: "/things"}}},
+		},
+	}
+	cat := &mcp.Catalog{Registry: reg, Router: r}
+
+	args := json.RawMessage(`{"name":"widget","dry_run":true}`)
+	if _, _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_create", args); mcpErr != nil {
+		t.Fatalf("unexpected error %+v", mcpErr)
+	}
+	if got := sawQuery.Get("dry_run"); got != "true" {
+		t.Fatalf("dry_run tool arg must thread to the ?dry_run query param the auth middleware reads; got %q (query=%v)", got, sawQuery)
+	}
+	if _, ok := sawBody["dry_run"]; ok {
+		t.Fatalf("dry_run must be consumed into the query string, not leaked into the request body: %+v", sawBody)
+	}
+	if sawBody["name"] != "widget" {
+		t.Fatalf("other body fields must still reach the request body: %+v", sawBody)
 	}
 }
 

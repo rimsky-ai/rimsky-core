@@ -33,9 +33,12 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 			log.Error("control api port resolution", "error", err.Error())
 			return nil, nil, err
 		}
-		if n != 0 {
-			port = n
+		if n <= 0 {
+			err = fmt.Errorf("invalid RIMSKY_CONTROL_API_PORT=%q: must be a positive integer", s)
+			log.Error("control api port resolution", "error", err.Error())
+			return nil, nil, err
 		}
+		port = n
 	}
 
 	metricsPort, err := metricsPortFor("control-api", rimskyCfg.Topology)
@@ -85,7 +88,7 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 
 	reporter := newFailureReporter(2)
-	metricsSrv := startMetricsServer(host, "control-api", metricsPort, mreg, log, reporter)
+	metricsSrv := startMetricsServer(metricsHostFromEnv(), "control-api", metricsPort, mreg, log, reporter)
 
 	stopped := make(chan struct{})
 	var stoppedOnce sync.Once

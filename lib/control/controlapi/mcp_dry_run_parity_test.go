@@ -30,8 +30,9 @@ import (
 )
 
 type mcpParityHarness struct {
-	srv *httptest.Server
-	db  persistence.Database
+	srv          *httptest.Server
+	db           persistence.Database
+	mcpSessionID string
 }
 
 func newMCPParityHarness(t *testing.T) *mcpParityHarness {
@@ -103,7 +104,29 @@ func (h *mcpParityHarness) mintKey(t *testing.T, name, permissionsJSON string) s
 	return plaintext
 }
 
+func (h *mcpParityHarness) ensureMCPSession(t *testing.T, bearer string) string {
+	t.Helper()
+	if h.mcpSessionID != "" {
+		return h.mcpSessionID
+	}
+	_, hdr, out := h.httpWithHeaders(t, "POST", "/v1/mcp", bearer, "", map[string]any{"jsonrpc": "2.0", "id": 0, "method": "initialize"})
+	sid := hdr.Get("Mcp-Session-Id")
+	require.NotEmpty(t, sid, "mcp initialize must issue a session id: %v", out)
+	h.mcpSessionID = sid
+	return sid
+}
+
 func (h *mcpParityHarness) http(t *testing.T, method, path, bearer string, body any) (int, map[string]any) {
+	t.Helper()
+	sessionID := ""
+	if method == http.MethodPost && path == "/v1/mcp" {
+		sessionID = h.ensureMCPSession(t, bearer)
+	}
+	status, _, out := h.httpWithHeaders(t, method, path, bearer, sessionID, body)
+	return status, out
+}
+
+func (h *mcpParityHarness) httpWithHeaders(t *testing.T, method, path, bearer, mcpSessionID string, body any) (int, http.Header, map[string]any) {
 	t.Helper()
 	var reqBody io.Reader
 	if body != nil {
@@ -117,6 +140,9 @@ func (h *mcpParityHarness) http(t *testing.T, method, path, bearer string, body 
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
+	if mcpSessionID != "" {
+		req.Header.Set("Mcp-Session-Id", mcpSessionID)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -126,7 +152,7 @@ func (h *mcpParityHarness) http(t *testing.T, method, path, bearer string, body 
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &out)
 	}
-	return resp.StatusCode, out
+	return resp.StatusCode, resp.Header, out
 }
 
 func (h *mcpParityHarness) attemptedRowForAction(t *testing.T, action string) map[string]any {

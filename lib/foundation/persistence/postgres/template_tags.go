@@ -33,6 +33,32 @@ func (s *templateTagsImpl) Upsert(ctx context.Context, tag, templateID string, t
 	return nil
 }
 
+func (s *templateTagsImpl) InsertIfAbsent(ctx context.Context, tag, templateID string, tx persistence.Tx) (bool, error) {
+	ex := s.q(tx)
+	cmd, err := ex.Exec(ctx,
+		`INSERT INTO rimsky_template_tags (tag, template_id, updated_at)
+		 VALUES ($1, $2, now())
+		 ON CONFLICT (tag) DO NOTHING`,
+		tag, templateID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("template_tags.insertIfAbsent: %w", err)
+	}
+	return cmd.RowsAffected() > 0, nil
+}
+
+func (s *templateTagsImpl) UpdateIfExists(ctx context.Context, tag, templateID string, tx persistence.Tx) (bool, error) {
+	ex := s.q(tx)
+	cmd, err := ex.Exec(ctx,
+		`UPDATE rimsky_template_tags SET template_id = $2, updated_at = now() WHERE tag = $1`,
+		tag, templateID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("template_tags.updateIfExists: %w", err)
+	}
+	return cmd.RowsAffected() > 0, nil
+}
+
 func (s *templateTagsImpl) Get(ctx context.Context, tag string, tx persistence.Tx) (*persistence.TemplateTagRow, error) {
 	ex := s.q(tx)
 	row := ex.QueryRow(ctx,

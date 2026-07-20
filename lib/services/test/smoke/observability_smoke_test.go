@@ -27,7 +27,7 @@ func TestObservabilitySmoke(t *testing.T) {
 		path    string
 		wantKey string
 	}{
-		{"/v1/observability/system/summary", "node_counts"},
+		{"/v1/observability/system/summary", "node_runs_by_state"},
 		{"/v1/observability/system/health", "control_api_status"},
 		{"/v1/observability/templates", "templates"},
 		{"/v1/observability/instances", "instances"},

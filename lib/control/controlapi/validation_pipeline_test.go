@@ -115,6 +115,9 @@ func TestValidationPipeline_RejectsOnError(t *testing.T) {
 	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
+	_, listBefore := vh.httpJSON(t, "GET", "/v1/templates", nil)
+	beforeCount := len(listBefore["templates"].([]any))
+
 	body := validTemplateBody("vp-err-" + uuid.NewString())
 	status, out := vh.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
@@ -122,6 +125,23 @@ func TestValidationPipeline_RejectsOnError(t *testing.T) {
 	errs, _ := out["validation_errors"].([]any)
 	require.NotEmpty(t, errs)
 	require.GreaterOrEqual(t, vfake.executor, 1)
+
+	found := false
+	for _, raw := range errs {
+		e, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if e["path"] == "/executor/attributes/foo" && strings.Contains(fmt.Sprint(e["msg"]), "missing required field foo") {
+			found = true
+		}
+	}
+	require.True(t, found,
+		"the fake validator's finding (path and message) must survive to the wire unmodified, got: %v", errs)
+
+	_, listAfter := vh.httpJSON(t, "GET", "/v1/templates", nil)
+	require.Equal(t, beforeCount, len(listAfter["templates"].([]any)),
+		"a pipeline-rejected template must not be persisted")
 }
 
 func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
@@ -143,6 +163,21 @@ func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
 	status, out := vh.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status, out)
 	require.NotEmpty(t, out["template_id"])
+
+	warns, ok := out["validation_warnings"].([]any)
+	require.True(t, ok, "response must carry validation_warnings, got: %v", out)
+	found := false
+	for _, raw := range warns {
+		w, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if w["path"] == "/executor/attributes/bar" && strings.Contains(fmt.Sprint(w["msg"]), "field bar is deprecated") {
+			found = true
+		}
+	}
+	require.True(t, found,
+		"a warnings-only pipeline outcome must still surface the warning in the response, got: %v", warns)
 }
 
 func TestValidationPipeline_PublisherRoleHonoredAtRegistration(t *testing.T) {
@@ -218,10 +253,31 @@ func TestValidationPipeline_WarningsAsErrorsRejects(t *testing.T) {
 	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
+	_, listBefore := vh.httpJSON(t, "GET", "/v1/templates", nil)
+	beforeCount := len(listBefore["templates"].([]any))
+
 	body := validTemplateBody("vp-waserrs-" + uuid.NewString())
 	status, out := vh.httpJSON(t, "POST", "/v1/templates?warnings_as_errors=true", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 	require.Equal(t, true, out["warnings_as_errors"])
+
+	warns, ok := out["validation_warnings"].([]any)
+	require.True(t, ok, "the rejection body must still carry the warning findings, got: %v", out)
+	found := false
+	for _, raw := range warns {
+		w, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.Contains(fmt.Sprint(w["path"]), "worker") {
+			found = true
+		}
+	}
+	require.True(t, found, "the triggering warning must be present in the rejection body, got: %v", warns)
+
+	_, listAfter := vh.httpJSON(t, "GET", "/v1/templates", nil)
+	require.Equal(t, beforeCount, len(listAfter["templates"].([]any)),
+		"a warnings_as_errors rejection must not persist the template")
 }
 
 func TestValidationPipeline_ValidateEndpointMergesPipelineErrors(t *testing.T) {
@@ -317,7 +373,7 @@ func TestValidationPipeline_UnreachableValidatorPermissiveWarn_SucceedsWithWarni
 	found := false
 	for _, raw := range warns {
 		w, ok := raw.(map[string]any)
-		if ok && strings.Contains(fmt.Sprint(w["message"]), "connection refused") {
+		if ok && strings.Contains(fmt.Sprint(w["msg"]), "connection refused") {
 			found = true
 		}
 	}
@@ -346,7 +402,7 @@ func TestValidationPipeline_UnreachableValidatorStrict_RejectsRegistration(t *te
 	found := false
 	for _, raw := range errs {
 		e, ok := raw.(map[string]any)
-		if ok && strings.Contains(fmt.Sprint(e["message"]), "connection refused") {
+		if ok && strings.Contains(fmt.Sprint(e["msg"]), "connection refused") {
 			found = true
 		}
 	}

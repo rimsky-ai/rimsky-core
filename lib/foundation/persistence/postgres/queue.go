@@ -592,7 +592,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		instanceID = *filter.InstanceID
 	}
 	rows, err := q.pool.Query(ctx,
-		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
+		`SELECT d.id, d.node_id, d.state, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
 		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
@@ -617,8 +617,9 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	var out []persistence.DispatchRow
 	for rows.Next() {
 		var r persistence.DispatchRow
+		var state string
 		if err := rows.Scan(
-			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredClaimProducers,
+			&r.ID, &r.NodeID, &state, &r.ExecutorName, &r.RequiredClaimProducers,
 			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 			&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 			&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
@@ -626,6 +627,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		); err != nil {
 			return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 		}
+		r.State = cascade.NodeState(state)
 		if r.RequiredClaimProducers == nil {
 			r.RequiredClaimProducers = []string{}
 		}
@@ -686,7 +688,7 @@ func (q *queueImpl) CountParked(ctx context.Context) (int, error) {
 
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.pool.QueryRow(ctx,
-		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
+		`SELECT d.id, d.node_id, d.state, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
 		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
@@ -696,8 +698,9 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		    AND d.state IN ('pending','stale','running','held','parked')`, id,
 	)
 	var r persistence.DispatchRow
+	var state string
 	if err := row.Scan(
-		&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredClaimProducers,
+		&r.ID, &r.NodeID, &state, &r.ExecutorName, &r.RequiredClaimProducers,
 		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 		&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 		&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
@@ -708,6 +711,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		}
 		return nil, err
 	}
+	r.State = cascade.NodeState(state)
 	if r.RequiredClaimProducers == nil {
 		r.RequiredClaimProducers = []string{}
 	}

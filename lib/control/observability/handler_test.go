@@ -73,6 +73,68 @@ func TestHandler_SystemSummary_EmptyDB(t *testing.T) {
 	}
 }
 
+func TestHandler_SystemHealth_ReportsBackendAgnosticDatabaseStatus(t *testing.T) {
+	d := newSQLiteDriver(t)
+	disc := observability.NewDiscovery(&nopProber{})
+	deps := observability.Deps{
+		Tables:    d.Tables(),
+		Queue:     d.Queue(),
+		Driver:    d,
+		Discovery: disc,
+	}
+	r := newRouter(t, deps)
+	req := httptest.NewRequest("GET", "/v1/observability/system/health", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := body["postgres_status"]; ok {
+		t.Fatalf("response must not hardcode postgres_status on a backend-agnostic health check, got: %v", body)
+	}
+	if got := body["database_status"]; got != "ok" {
+		t.Fatalf("database_status = %v, want ok (this driver is a live sqlite backend)", got)
+	}
+}
+
+func TestHandler_SystemSummary_SeparatesPerRunCountsFromPerNodeCount(t *testing.T) {
+	d := newSQLiteDriver(t)
+	disc := observability.NewDiscovery(&nopProber{})
+	deps := observability.Deps{
+		Tables:    d.Tables(),
+		Queue:     d.Queue(),
+		Discovery: disc,
+	}
+	r := newRouter(t, deps)
+	req := httptest.NewRequest("GET", "/v1/observability/system/summary", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := body["node_counts"]; ok {
+		t.Fatalf("node_counts must no longer mix per-run-row counts with the per-node nodes_without_runs count, got: %v", body)
+	}
+	byState, ok := body["node_runs_by_state"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected node_runs_by_state map, got: %v", body["node_runs_by_state"])
+	}
+	if _, ok := byState["no_runs"]; ok {
+		t.Fatalf("node_runs_by_state must not carry the per-node no_runs entry, got: %v", byState)
+	}
+	if _, ok := body["nodes_without_runs"]; !ok {
+		t.Fatalf("expected a top-level nodes_without_runs field, got: %v", body)
+	}
+}
+
 func TestHandler_ListClaimProducers_DeclaredOnly(t *testing.T) {
 	d := newSQLiteDriver(t)
 	disc := observability.RunHandshake(context.Background(), &nopProber{},
@@ -100,6 +162,68 @@ func TestHandler_ListClaimProducers_DeclaredOnly(t *testing.T) {
 	}
 	if len(body.ClaimProducers) != 1 || body.ClaimProducers[0]["name"] != "topics-ring" {
 		t.Fatalf("stores = %+v", body.ClaimProducers)
+	}
+}
+
+func TestHandler_ListClaimProducers_EmptyRendersAsArrayNotOmitted(t *testing.T) {
+	d := newSQLiteDriver(t)
+	disc := observability.NewDiscovery(&nopProber{})
+	deps := observability.Deps{
+		Tables:    d.Tables(),
+		Queue:     d.Queue(),
+		Discovery: disc,
+	}
+	r := newRouter(t, deps)
+	req := httptest.NewRequest("GET", "/v1/observability/claim-producers", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	raw, ok := body["claim_producers"]
+	if !ok {
+		t.Fatalf("claim_producers key must be present (as an empty array) even with none configured, got: %v", body)
+	}
+	arr, ok := raw.([]any)
+	if !ok || len(arr) != 0 {
+		t.Fatalf("claim_producers = %v (%T), want an empty array", raw, raw)
+	}
+}
+
+func TestHandler_GetClaimProducer_DeclaredButUncachedSynthesizesUnreachableEntry(t *testing.T) {
+	d := newSQLiteDriver(t)
+	disc := observability.NewDiscovery(&nopProber{})
+	deps := observability.Deps{
+		Tables:         d.Tables(),
+		Queue:          d.Queue(),
+		ClaimProducers: []observability.PeerSpec{{Name: "topics-ring", Endpoint: "store:9000"}},
+		Discovery:      disc,
+	}
+	r := newRouter(t, deps)
+	req := httptest.NewRequest("GET", "/v1/observability/claim-producers/topics-ring", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Peer map[string]any `json:"peer"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Peer["name"] != "topics-ring" {
+		t.Fatalf("peer.name = %v, want topics-ring (declared-but-uncached peer must synthesize a real entry, not a zero-value one); peer=%+v", body.Peer["name"], body.Peer)
+	}
+	if body.Peer["endpoint"] != "store:9000" {
+		t.Fatalf("peer.endpoint = %v, want store:9000; peer=%+v", body.Peer["endpoint"], body.Peer)
+	}
+	if body.Peer["reachability_status"] != string(observability.ReachabilityUnreachable) {
+		t.Fatalf("peer.reachability_status = %v, want %q; peer=%+v", body.Peer["reachability_status"], observability.ReachabilityUnreachable, body.Peer)
 	}
 }
 

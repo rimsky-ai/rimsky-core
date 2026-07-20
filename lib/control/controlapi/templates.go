@@ -59,9 +59,9 @@ type templateRegisterRequest struct {
 }
 
 type templateRegisterResponse struct {
-	TemplateID         string                      `json:"template_id"`
-	Tags               []string                    `json:"tags,omitempty"`
-	ValidationWarnings []runtime.ValidationFinding `json:"validation_warnings,omitempty"`
+	TemplateID         string              `json:"template_id"`
+	Tags               []string            `json:"tags,omitempty"`
+	ValidationWarnings []map[string]string `json:"validation_warnings,omitempty"`
 }
 
 type templateListItem struct {
@@ -223,7 +223,7 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error":               shared.ErrTemplateValidation.Error(),
 				"validation_errors":   entries,
-				"validation_warnings": staticWarningsToFindings(res.Warnings),
+				"validation_warnings": findingsToProjection(staticWarningsToFindings(res.Warnings)),
 			})
 			return
 		}
@@ -264,19 +264,10 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 		if len(outcome.Errors) > 0 || (warningsAsErrors && len(mergedWarnings) > 0) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error":               "template validation pipeline rejected the registration",
-				"validation_errors":   outcome.Errors,
-				"validation_warnings": mergedWarnings,
+				"validation_errors":   findingsToProjection(outcome.Errors),
+				"validation_warnings": findingsToProjection(mergedWarnings),
 				"warnings_as_errors":  warningsAsErrors,
 			})
-			return
-		}
-
-		if WriteDryRunResponse(w, req, "would_have_registered", map[string]any{
-			"template_hash":       hash,
-			"tag":                 tag,
-			"source":              source,
-			"validation_warnings": mergedWarnings,
-		}) {
 			return
 		}
 
@@ -291,6 +282,15 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if existing != nil {
+			if WriteDryRunResponse(w, req, "would_have_registered", map[string]any{
+				"template_hash":       hash,
+				"tag":                 tag,
+				"source":              source,
+				"validation_warnings": findingsToProjection(mergedWarnings),
+				"already_registered":  true,
+			}) {
+				return
+			}
 			if tag != "" {
 				err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 					return upsertTagIfNotConflicting(ctx, deps, tx, req, tag, hash)
@@ -308,8 +308,17 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusOK, templateRegisterResponse{
 				TemplateID:         hash,
 				Tags:               tags,
-				ValidationWarnings: mergedWarnings,
+				ValidationWarnings: findingsToProjection(mergedWarnings),
 			})
+			return
+		}
+
+		if WriteDryRunResponse(w, req, "would_have_registered", map[string]any{
+			"template_hash":       hash,
+			"tag":                 tag,
+			"source":              source,
+			"validation_warnings": findingsToProjection(mergedWarnings),
+		}) {
 			return
 		}
 
@@ -362,7 +371,7 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 		writeJSON(w, http.StatusCreated, templateRegisterResponse{
 			TemplateID:         hash,
 			Tags:               tags,
-			ValidationWarnings: mergedWarnings,
+			ValidationWarnings: findingsToProjection(mergedWarnings),
 		})
 	}
 }
@@ -388,6 +397,20 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 			validationErrors = append(validationErrors, map[string]any{"path": e.Path, "msg": e.Msg})
 		}
 		validationErrors = append(validationErrors, res.StructuredErrors...)
+
+		validationWarnings := make([]map[string]string, 0, len(res.Warnings))
+		for _, wn := range res.Warnings {
+			validationWarnings = append(validationWarnings, map[string]string{"path": wn.Path, "msg": wn.Msg})
+		}
+
+		if !res.Ok() {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":                  false,
+				"validation_errors":   validationErrors,
+				"validation_warnings": validationWarnings,
+			})
+			return
+		}
 
 		node.ApplyFrameResolutionDefaults(&spec)
 		node.CanonicalizeKindSugar(&spec, deps.KindAliases)
@@ -422,10 +445,6 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 
 		for _, e := range outcome.Errors {
 			validationErrors = append(validationErrors, findingToProjectionAny(e))
-		}
-		validationWarnings := make([]map[string]string, 0, len(res.Warnings)+len(outcome.Warnings))
-		for _, wn := range res.Warnings {
-			validationWarnings = append(validationWarnings, map[string]string{"path": wn.Path, "msg": wn.Msg})
 		}
 		for _, wn := range outcome.Warnings {
 			validationWarnings = append(validationWarnings, findingToProjection(wn))
@@ -469,6 +488,14 @@ func findingToProjection(f runtime.ValidationFinding) map[string]string {
 func findingToProjectionAny(f runtime.ValidationFinding) map[string]any {
 	p := findingToProjection(f)
 	return map[string]any{"path": p["path"], "msg": p["msg"]}
+}
+
+func findingsToProjection(fs []runtime.ValidationFinding) []map[string]string {
+	out := make([]map[string]string, 0, len(fs))
+	for _, f := range fs {
+		out = append(out, findingToProjection(f))
+	}
+	return out
 }
 
 func handleListTemplates(deps AppDeps) http.HandlerFunc {
@@ -894,7 +921,7 @@ func looksLikeHash(s string) bool {
 	if !strings.HasPrefix(s, "sha256-") {
 		return false
 	}
-	suffix := s[len("sha256-"):]
+	suffix := strings.ToLower(s[len("sha256-"):])
 	if len(suffix) != 64 {
 		return false
 	}
@@ -914,6 +941,11 @@ func tagsForTemplate(ctx context.Context, deps AppDeps, templateHash string) []s
 		rows = r
 		return err
 	}); err != nil {
+		if deps.Logger != nil {
+			deps.Logger.Warn("tagsForTemplate: list tags failed; presenting template as untagged",
+				"template_hash", templateHash,
+				"error", err.Error())
+		}
 		return nil
 	}
 	out := make([]string, 0, len(rows))

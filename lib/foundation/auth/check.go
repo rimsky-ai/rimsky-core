@@ -43,6 +43,15 @@ func CheckGrant(grant Grant, requestAction string, target map[string]string) Che
 	return CheckResult{Allowed: true, MatchedIdx: bestIdx, Mode: bestMode}
 }
 
+func HasAnyGrant(grant Grant, requestAction string) bool {
+	for _, e := range grant {
+		if ActionMatches(e.Action, requestAction) {
+			return true
+		}
+	}
+	return false
+}
+
 func ValidateGrant(grant Grant) error {
 	if len(grant) == 0 {
 		return fmt.Errorf("grant is empty")

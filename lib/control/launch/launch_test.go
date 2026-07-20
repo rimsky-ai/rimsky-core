@@ -5,6 +5,7 @@
 package launch
 
 import (
+	"context"
 	"errors"
 	"net"
 	"strings"
@@ -193,6 +194,63 @@ func TestMetricsPortFor(t *testing.T) {
 			t.Errorf("error %q should name the variable and the offending value", err.Error())
 		}
 	})
+}
+
+func TestRunControlAPI_PortValidation(t *testing.T) {
+	clearEnv := func(t *testing.T) {
+		t.Setenv("RIMSKY_CONTROL_API_HOST", "")
+		t.Setenv("RIMSKY_CONTROL_API_PORT", "")
+	}
+
+	cases := []struct {
+		name string
+		port string
+	}{
+		{"non-numeric", "eighty"},
+		{"zero", "0"},
+		{"negative", "-1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("RIMSKY_CONTROL_API_PORT", tc.port)
+			_, _, err := RunControlAPI(context.Background(), testLogger(t), nil, nil, nil, nil)
+			if err == nil {
+				t.Fatalf("RIMSKY_CONTROL_API_PORT=%q must be a startup-fatal error, not silently accepted", tc.port)
+			}
+			if !strings.Contains(err.Error(), "RIMSKY_CONTROL_API_PORT") || !strings.Contains(err.Error(), tc.port) {
+				t.Errorf("error %q should name RIMSKY_CONTROL_API_PORT and the offending value %q", err.Error(), tc.port)
+			}
+		})
+	}
+}
+
+func TestRunScheduler_TickMsValidation(t *testing.T) {
+	clearEnv := func(t *testing.T) {
+		t.Setenv("RIMSKY_SCHEDULER_TICK_MS", "")
+	}
+
+	cases := []struct {
+		name string
+		tick string
+	}{
+		{"non-numeric", "25O"},
+		{"zero", "0"},
+		{"negative", "-1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("RIMSKY_SCHEDULER_TICK_MS", tc.tick)
+			_, _, err := RunScheduler(context.Background(), testLogger(t), nil, nil, nil)
+			if err == nil {
+				t.Fatalf("RIMSKY_SCHEDULER_TICK_MS=%q must be a startup-fatal error, not silently defaulted", tc.tick)
+			}
+			if !strings.Contains(err.Error(), "RIMSKY_SCHEDULER_TICK_MS") || !strings.Contains(err.Error(), tc.tick) {
+				t.Errorf("error %q should name RIMSKY_SCHEDULER_TICK_MS and the offending value %q", err.Error(), tc.tick)
+			}
+		})
+	}
 }
 
 func TestMetricsHostFromEnv(t *testing.T) {

@@ -42,7 +42,7 @@ func newBreakpointResourceCatalog(deps AppDeps) mcp.ResourceCatalog {
 
 func (c *breakpointResourceCatalog) List(r *http.Request) ([]mcp.Resource, error) {
 	ident, _ := IdentityFromContextOK(r.Context())
-	if !auth.CheckGrant(ident.Permissions, "breakpoint:read", nil).Allowed {
+	if !auth.HasAnyGrant(ident.Permissions, "breakpoint:read") {
 		return []mcp.Resource{}, nil
 	}
 	out := []mcp.Resource{}
@@ -87,7 +87,7 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 
 	ident, _ := IdentityFromContextOK(r.Context())
 	if !auth.CheckGrant(ident.Permissions, "breakpoint:read", nil).Allowed {
-		return nil, &mcp.Error{Code: mcp.CodeInternalError, Message: "permission denied: breakpoint:read"}
+		return nil, &mcp.Error{Code: mcp.CodeInvalidParams, Message: "permission denied: breakpoint:read"}
 	}
 
 	var (

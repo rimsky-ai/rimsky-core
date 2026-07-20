@@ -5,9 +5,10 @@
 package cli
 
 import (
-	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/roles"
 	"testing"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/roles"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )

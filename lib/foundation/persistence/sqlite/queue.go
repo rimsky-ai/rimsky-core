@@ -440,7 +440,7 @@ func (q *queueImpl) ForceRemoveForNodeInTx(ctx context.Context, nodeID shared.UU
 
 func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.DispatchRow, error) {
 	rows, err := q.db.QueryContext(ctx,
-		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
+		`SELECT id, node_id, state, executor_name, required_stores, enqueued_at,
 		        claimed_by, claimed_at, frame_id, async_ack_id,
 		        async_ack_registered_at, last_progress_at, tags,
 		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
@@ -578,7 +578,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 		return nil, errors.New("sqlite.LookupRunByAsyncAckID: tx required")
 	}
 	row := q.q(tx).QueryRowContext(ctx,
-		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
+		`SELECT id, node_id, state, executor_name, required_stores, enqueued_at,
 		        claimed_by, claimed_at, frame_id, async_ack_id,
 		        async_ack_registered_at, last_progress_at, tags,
 		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
@@ -669,7 +669,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		args = append(args, formatTime(oc), id.String())
 	}
 	args = append(args, limit)
-	q1 := `SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
+	q1 := `SELECT d.id, d.node_id, d.state, d.executor_name, d.required_stores, d.enqueued_at,
 	        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 	        d.async_ack_registered_at, d.last_progress_at, d.tags,
 	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
@@ -738,7 +738,7 @@ func (q *queueImpl) CountParked(ctx context.Context) (int, error) {
 
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.db.QueryRowContext(ctx,
-		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
+		`SELECT d.id, d.node_id, d.state, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
 	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
@@ -873,6 +873,7 @@ func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
 	var (
 		idStr                     string
 		nodeIDStr                 string
+		stateStr                  string
 		executorName              sql.NullString
 		requiredClaimProducersStr string
 		enqueuedAtStr             string
@@ -889,13 +890,14 @@ func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
 		r                         persistence.DispatchRow
 	)
 	if err := row.Scan(
-		&idStr, &nodeIDStr, &executorName, &requiredClaimProducersStr,
+		&idStr, &nodeIDStr, &stateStr, &executorName, &requiredClaimProducersStr,
 		&enqueuedAtStr, &claimedBy, &claimedAtStr, &frameIDStr,
 		&asyncAckID, &asyncAckRegisteredAt, &lastProgressAtStr, &tagsStr,
 		&maxQuietSec, &maxRuntimeSec, &asyncAckPrincipal,
 	); err != nil {
 		return persistence.DispatchRow{}, err
 	}
+	r.State = cascade.NodeState(stateStr)
 	var err error
 	if r.ID, err = uuid.Parse(idStr); err != nil {
 		return persistence.DispatchRow{}, err

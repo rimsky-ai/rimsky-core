@@ -238,6 +238,91 @@ func TestTemplateLifecycle_DeployGetListDelete(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
+func TestListTemplates_StateFilter(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	registeredOnlyBody := validTemplateBody("state-filter-registered-" + uuid.NewString())
+	status, out := h.httpJSON(t, "POST", "/v1/templates", registeredOnlyBody)
+	require.Equal(t, http.StatusCreated, status, out)
+	registeredOnlyID := out["template_id"].(string)
+
+	deployedBody := validTemplateBody("state-filter-deployed-" + uuid.NewString())
+	status, out = h.httpJSON(t, "POST", "/v1/templates", deployedBody)
+	require.Equal(t, http.StatusCreated, status, out)
+	deployedID := out["template_id"].(string)
+	status, _ = h.httpJSON(t, "POST", "/v1/templates/"+deployedID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, status)
+
+	containsID := func(templates []any, id string) bool {
+		for _, tpl := range templates {
+			row, _ := tpl.(map[string]any)
+			if row["id"] == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	status, listOut := h.httpJSON(t, "GET", "/v1/templates?state=deployed", nil)
+	require.Equal(t, http.StatusOK, status, listOut)
+	deployedList, _ := listOut["templates"].([]any)
+	require.True(t, containsID(deployedList, deployedID), "state=deployed must include the deployed template")
+	require.False(t, containsID(deployedList, registeredOnlyID), "state=deployed must exclude the registered-only template")
+
+	status, listOut = h.httpJSON(t, "GET", "/v1/templates?state=registered", nil)
+	require.Equal(t, http.StatusOK, status, listOut)
+	registeredList, _ := listOut["templates"].([]any)
+	require.True(t, containsID(registeredList, registeredOnlyID), "state=registered must include the registered-only template")
+	require.False(t, containsID(registeredList, deployedID), "state=registered must exclude the deployed template")
+}
+
+func TestListTemplates_CursorAndLimitPagination(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	prefix := "page-tpl-" + uuid.NewString() + "-"
+	ids := map[string]bool{}
+	for i := 0; i < 3; i++ {
+		status, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody(fmt.Sprintf("%s%d", prefix, i)))
+		require.Equal(t, http.StatusCreated, status, out)
+		ids[out["template_id"].(string)] = true
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		path := "/v1/templates?limit=1"
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		status, out := h.httpJSON(t, "GET", path, nil)
+		require.Equal(t, http.StatusOK, status, out)
+		rows, _ := out["templates"].([]any)
+		require.LessOrEqual(t, len(rows), 1, "limit=1 must cap each page at 1 row")
+		for _, r := range rows {
+			row, _ := r.(map[string]any)
+			id, _ := row["id"].(string)
+			require.False(t, seen[id], "cursor pagination must not repeat a row across pages: %s", id)
+			seen[id] = true
+		}
+		next, _ := out["next_cursor"].(string)
+		pages++
+		require.Less(t, pages, 1000, "pagination did not terminate")
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+
+	for id := range ids {
+		require.True(t, seen[id], "template %s created for this test must appear somewhere across the paginated walk", id)
+	}
+}
+
 func TestTemplateDeploy_NewShape_ClaimProducersAndLocks(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -478,6 +563,57 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	require.Equal(t, 0, resetFrameCount,
 		"post-spec the reset endpoint must not enqueue any node/reset frame")
 	_ = nodeRow
+}
+
+func TestOperatorReset_AppendsOperatorOverrideAuditEvent(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	inst := seedInstance(t, h, "op-rst-audit-"+uuid.NewString())
+	nodeRow := firstNode(t, h, inst)
+
+	mainScopeID := shared.UUID(uuid.New())
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
+        VALUES ($1, 'main', $2, '', now())
+    `, uuid.UUID(mainScopeID), inst.ID)
+	msgID := uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_messages
+            (id, instance_id, type, sender_kind, sender, payload, received_at)
+        VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
+    `, msgID, inst.ID)
+	frameID := uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_frames
+            (frame_id, instance_id, started_at, triggering_message_id, root_run_scope_id)
+        VALUES ($1, $2, now(), $3, $4)
+    `, frameID, inst.ID, msgID, mainScopeID)
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_node_runs
+            (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
+        VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', $2, now(), $3, 0)
+    `, nodeRow.ID, frameID, mainScopeID)
+
+	status, _ := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/reset", nil)
+	require.Equal(t, http.StatusOK, status)
+
+	instID := inst.ID
+	var res persistence.EventListResult
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		res, err = h.persist.Events().List(ctx, persistence.EventListFilter{
+			InstanceID: &instID,
+			Kind:       events.KindOperatorOverride().String(),
+		}, persistence.ListPagination{Limit: 10}, tx)
+		return err
+	}))
+	require.Len(t, res.Events, 1, "reset must append exactly one operator_override audit event")
+	require.NotNil(t, res.Events[0].NodeID)
+	require.Equal(t, nodeRow.ID.String(), res.Events[0].NodeID.String())
+	require.Equal(t, "reset", res.Events[0].Payload["action"])
 }
 
 func TestOperatorKill_RouteRemoved(t *testing.T) {

@@ -71,6 +71,14 @@ func Suite(
 		t.Run("PerNodeStates", func(t *testing.T) { testListInFlightRunStates(t, factory(t)) })
 	})
 	t.Run("ListRunsForInstanceByStates", func(t *testing.T) { testListRunsForInstanceByStates(t, factory(t)) })
+	t.Run("NodeBatchLookups", func(t *testing.T) {
+		t.Run("GetRunSummaryForNodes", func(t *testing.T) { testGetRunSummaryForNodes(t, factory(t)) })
+		t.Run("GetLatestRunForNodes", func(t *testing.T) { testGetLatestRunForNodes(t, factory(t)) })
+	})
+	t.Run("TemplateTagsConditionalWrites", func(t *testing.T) {
+		t.Run("InsertIfAbsent", func(t *testing.T) { testTemplateTagsInsertIfAbsent(t, factory(t)) })
+		t.Run("UpdateIfExists", func(t *testing.T) { testTemplateTagsUpdateIfExists(t, factory(t)) })
+	})
 	t.Run("RunStateWritesIsolated", func(t *testing.T) {
 		t.Run("UpdateState", func(t *testing.T) { testRunStateWritesIsolated_UpdateState(t, factory(t)) })
 		t.Run("UpdateStateWritesNoAuditEvent", func(t *testing.T) { testRunStateWritesIsolated_UpdateStateWritesNoAuditEvent(t, factory(t)) })

@@ -11,13 +11,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 )
 
 type Server struct {
 	Tools     ToolCatalog
 	Resources ResourceCatalog
+
+	mu       sync.Mutex
+	sessions map[string]time.Time
 }
 
 type ToolCatalog interface {
@@ -51,8 +56,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveStream(w, r)
 	case http.MethodPost:
 		s.servePost(w, r)
+	case http.MethodDelete:
+		s.serveDelete(w, r)
 	default:
-		w.Header().Set("Allow", "GET, POST")
+		w.Header().Set("Allow", "GET, POST, DELETE")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -71,6 +78,17 @@ func (s *Server) servePost(w http.ResponseWriter, r *http.Request) {
 	if req.JSONRPC != "2.0" {
 		writeRPCError(w, req.ID, CodeInvalidRequest, "jsonrpc must be 2.0")
 		return
+	}
+	if req.Method != "initialize" {
+		sid := r.Header.Get(sessionHeader)
+		if sid == "" {
+			writeRPCErrorStatus(w, http.StatusBadRequest, req.ID, CodeSessionRequired, "missing "+sessionHeader+" header: call initialize first")
+			return
+		}
+		if !s.touchSession(sid) {
+			writeRPCErrorStatus(w, http.StatusNotFound, req.ID, CodeSessionNotFound, "unknown or terminated session: "+sid)
+			return
+		}
 	}
 	if isNotification(req.ID) {
 		w.WriteHeader(http.StatusAccepted)
@@ -92,7 +110,24 @@ func (s *Server) servePost(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) serveDelete(w http.ResponseWriter, r *http.Request) {
+	if sid := r.Header.Get(sessionHeader); sid != "" {
+		s.closeSession(sid)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func (s *Server) serveStream(w http.ResponseWriter, r *http.Request) {
+	sid := r.Header.Get(sessionHeader)
+	if sid == "" {
+		http.Error(w, "missing "+sessionHeader+" header: call initialize first", http.StatusBadRequest)
+		return
+	}
+	if !s.touchSession(sid) {
+		http.Error(w, "unknown or terminated session: "+sid, http.StatusNotFound)
+		return
+	}
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -101,9 +136,7 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	if sid := r.Header.Get(sessionHeader); sid != "" {
-		w.Header().Set(sessionHeader, sid)
-	}
+	w.Header().Set(sessionHeader, sid)
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
@@ -127,6 +160,46 @@ const sessionHeader = "Mcp-Session-Id"
 
 const streamKeepAlive = 25 * time.Second
 
+const sessionIdleTimeout = 30 * time.Minute
+
+func (s *Server) openSession() string {
+	id := newSessionID()
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sessions == nil {
+		s.sessions = make(map[string]time.Time)
+	}
+	for existing, last := range s.sessions {
+		if now.Sub(last) > sessionIdleTimeout {
+			delete(s.sessions, existing)
+		}
+	}
+	s.sessions[id] = now
+	return id
+}
+
+func (s *Server) touchSession(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	last, ok := s.sessions[id]
+	if !ok {
+		return false
+	}
+	if time.Since(last) > sessionIdleTimeout {
+		delete(s.sessions, id)
+		return false
+	}
+	s.sessions[id] = time.Now()
+	return true
+}
+
+func (s *Server) closeSession(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, id)
+}
+
 func isNotification(id json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(id)
 	return len(trimmed) == 0 || string(trimmed) == "null"
@@ -140,10 +213,34 @@ func newSessionID() string {
 	return hex.EncodeToString(b[:])
 }
 
+const defaultProtocolVersion = "2025-06-18"
+
+var supportedProtocolVersions = []string{defaultProtocolVersion}
+
+func negotiateProtocolVersion(requested string) string {
+	if requested == "" {
+		return defaultProtocolVersion
+	}
+	for _, v := range supportedProtocolVersions {
+		if v == requested {
+			return requested
+		}
+	}
+	return defaultProtocolVersion
+}
+
 func (s *Server) handleInitialize(w http.ResponseWriter, req Request) {
-	w.Header().Set(sessionHeader, newSessionID())
+	var params struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+	version := negotiateProtocolVersion(params.ProtocolVersion)
+	sid := s.openSession()
+	w.Header().Set(sessionHeader, sid)
 	writeRPCResult(w, req.ID, map[string]any{
-		"protocolVersion": "2025-06-18",
+		"protocolVersion": version,
 		"capabilities": map[string]any{
 			"tools":     map[string]any{},
 			"resources": map[string]any{"subscribe": false, "listChanged": false},
@@ -234,11 +331,18 @@ func (s *Server) handleResourcesRead(w http.ResponseWriter, r *http.Request, req
 	})
 }
 
+func normalizeID(id json.RawMessage) json.RawMessage {
+	if len(bytes.TrimSpace(id)) == 0 {
+		return json.RawMessage("null")
+	}
+	return id
+}
+
 func writeRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
 	w.Header().Set("Content-Type", "application/json")
-	resp := Response{JSONRPC: "2.0", ID: id, Result: result}
+	resp := Response{JSONRPC: "2.0", ID: normalizeID(id), Result: result}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		_, _ = fmt.Fprintf(w, `{"error":"encode: %s"}`, err.Error())
+		slog.Default().Error("mcp.write_response_failed", "error", err.Error())
 	}
 }
 
@@ -248,8 +352,17 @@ func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, msg stri
 
 func writeRPCErrorObj(w http.ResponseWriter, id json.RawMessage, e *Error) {
 	w.Header().Set("Content-Type", "application/json")
-	resp := Response{JSONRPC: "2.0", ID: id, Error: e}
+	resp := Response{JSONRPC: "2.0", ID: normalizeID(id), Error: e}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		_, _ = fmt.Fprintf(w, `{"error":"encode: %s"}`, err.Error())
+		slog.Default().Error("mcp.write_response_failed", "error", err.Error())
+	}
+}
+
+func writeRPCErrorStatus(w http.ResponseWriter, status int, id json.RawMessage, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	resp := Response{JSONRPC: "2.0", ID: normalizeID(id), Error: &Error{Code: code, Message: msg}}
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Default().Error("mcp.write_response_failed", "error", err.Error())
 	}
 }

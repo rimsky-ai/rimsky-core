@@ -16,7 +16,7 @@ type Request struct {
 
 type Response struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
+	ID      json.RawMessage `json:"id"`
 	Result  any             `json:"result,omitempty"`
 	Error   *Error          `json:"error,omitempty"`
 }
@@ -39,6 +39,9 @@ const (
 	CodeMethodNotFound = -32601
 	CodeInvalidParams  = -32602
 	CodeInternalError  = -32603
+
+	CodeSessionRequired = -32000
+	CodeSessionNotFound = -32001
 )
 
 type Registry interface {

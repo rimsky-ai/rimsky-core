@@ -494,6 +494,46 @@ func (s *nodesImpl) GetRunSummary(ctx context.Context, nodeID foundationshared.U
 	return out, rows.Err()
 }
 
+// @concept: node
+func (s *nodesImpl) GetRunSummaryForNodes(ctx context.Context, nodeIDs []foundationshared.UUID, tx persistence.Tx) (map[foundationshared.UUID]persistence.NodeRunSummary, error) {
+	out := make(map[foundationshared.UUID]persistence.NodeRunSummary, len(nodeIDs))
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.q(tx).Query(ctx,
+		`SELECT node_id, state, count(*)
+		   FROM rimsky_node_runs
+		  WHERE node_id = ANY($1)
+		  GROUP BY node_id, state`,
+		nodeIDs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunSummaryForNodes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nodeID foundationshared.UUID
+		var state string
+		var count int
+		if err := rows.Scan(&nodeID, &state, &count); err != nil {
+			return nil, fmt.Errorf("GetRunSummaryForNodes: scan: %w", err)
+		}
+		summary := out[nodeID]
+		switch cascade.NodeState(state) {
+		case cascade.NodeStateRunning, cascade.NodeStateHeld, cascade.NodeStateParked:
+			summary.ActiveCount += count
+		case cascade.NodeStatePending, cascade.NodeStateStale:
+			summary.PendingCount += count
+		case cascade.NodeStateFresh:
+			summary.FreshCount += count
+		case cascade.NodeStateFailed:
+			summary.FailedCount += count
+		}
+		out[nodeID] = summary
+	}
+	return out, rows.Err()
+}
+
 func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) (bool, error) {
 	ex := s.q(tx)
 	var exists bool
@@ -802,6 +842,46 @@ func (s *nodesImpl) GetLatestRunForNode(
 		nodeID,
 	)
 	return scanLatestRow(row)
+}
+
+// @concept: node-run
+// @decision: sequence-scope-monotonic
+func (s *nodesImpl) GetLatestRunForNodes(
+	ctx context.Context, tx persistence.Tx, nodeIDs []foundationshared.UUID,
+) (map[foundationshared.UUID]persistence.NodeRunLatest, error) {
+	out := make(map[foundationshared.UUID]persistence.NodeRunLatest, len(nodeIDs))
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.q(tx).Query(ctx,
+		`SELECT DISTINCT ON (node_id)
+		        id, node_id, run_scope_id, frame_id, sequence, state,
+		        settling_signal_type, COALESCE(claimed_by, '')
+		   FROM rimsky_node_runs
+		  WHERE node_id = ANY($1)
+		  ORDER BY node_id,
+		           CASE WHEN state IN ('pending','stale','running','held','parked') THEN 0 ELSE 1 END,
+		           enqueued_at DESC, sequence DESC, id DESC`,
+		nodeIDs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("GetLatestRunForNodes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			r       persistence.NodeRunLatest
+			state   string
+			sigType *string
+		)
+		if err := rows.Scan(&r.NodeRunID, &r.NodeID, &r.RunScopeID, &r.FrameID, &r.Sequence, &state, &sigType, &r.ClaimedBy); err != nil {
+			return nil, fmt.Errorf("GetLatestRunForNodes: scan: %w", err)
+		}
+		r.State = cascade.NodeState(state)
+		r.SettlingSignalType = sigType
+		out[r.NodeID] = r
+	}
+	return out, rows.Err()
 }
 
 // @concept: node-run

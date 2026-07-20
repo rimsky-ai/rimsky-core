@@ -827,6 +827,9 @@ func (f *fakeNodesDeps) GetCascadeMode(_ context.Context, _ shared.UUID, _ persi
 func (f *fakeNodesDeps) GetRunSummary(_ context.Context, _ shared.UUID, _ persistence.Tx) (persistence.NodeRunSummary, error) {
 	return persistence.NodeRunSummary{}, nil
 }
+func (f *fakeNodesDeps) GetRunSummaryForNodes(_ context.Context, _ []shared.UUID, _ persistence.Tx) (map[shared.UUID]persistence.NodeRunSummary, error) {
+	return nil, nil
+}
 func (f *fakeNodesDeps) FindLatestCascadePending(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
@@ -837,6 +840,9 @@ func (f *fakeNodesDeps) LockReceiverCascade(_ context.Context, _ persistence.Tx,
 	return nil
 }
 func (f *fakeNodesDeps) GetLatestRunForNode(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.NodeRunLatest, error) {
+	return nil, nil
+}
+func (f *fakeNodesDeps) GetLatestRunForNodes(_ context.Context, _ persistence.Tx, _ []shared.UUID) (map[shared.UUID]persistence.NodeRunLatest, error) {
 	return nil, nil
 }
 func (f *fakeNodesDeps) ListRunsForInstanceByStates(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []cascade.NodeState) ([]persistence.NodeRunLatest, error) {

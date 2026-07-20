@@ -180,6 +180,9 @@ func (noopNodes) GetCascadeMode(context.Context, shared.UUID, persistence.Tx) (c
 func (noopNodes) GetRunSummary(context.Context, shared.UUID, persistence.Tx) (persistence.NodeRunSummary, error) {
 	return persistence.NodeRunSummary{}, nil
 }
+func (noopNodes) GetRunSummaryForNodes(context.Context, []shared.UUID, persistence.Tx) (map[shared.UUID]persistence.NodeRunSummary, error) {
+	return nil, nil
+}
 func (noopNodes) FindLatestCascadePending(context.Context, persistence.Tx, shared.UUID, shared.UUID, shared.UUID) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
@@ -190,6 +193,9 @@ func (noopNodes) LockReceiverCascade(context.Context, persistence.Tx, shared.UUI
 	return nil
 }
 func (noopNodes) GetLatestRunForNode(context.Context, persistence.Tx, shared.UUID) (*persistence.NodeRunLatest, error) {
+	return nil, nil
+}
+func (noopNodes) GetLatestRunForNodes(context.Context, persistence.Tx, []shared.UUID) (map[shared.UUID]persistence.NodeRunLatest, error) {
 	return nil, nil
 }
 func (noopNodes) ListRunsForInstanceByStates(context.Context, persistence.Tx, shared.UUID, []cascade.NodeState) ([]persistence.NodeRunLatest, error) {

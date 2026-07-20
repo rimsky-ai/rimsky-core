@@ -15,6 +15,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
+const unifiedStackDrainTimeout = 5 * time.Second
+
 type RoleFailure struct {
 	Role string
 	Err  error
@@ -73,7 +75,7 @@ func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persiste
 	for _, r := range runners {
 		stop, runnerFail, err := r.run(ctx, logger.With("role", r.name))
 		if err != nil {
-			stack.Drain(context.Background(), 5*time.Second)
+			stack.Drain(context.Background(), unifiedStackDrainTimeout)
 			return nil, fmt.Errorf("start %s: %w", r.name, err)
 		}
 		stack.stops = append(stack.stops, stop)
@@ -89,5 +91,11 @@ func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persiste
 			}
 		}(r.name, runnerFail)
 	}
+
+	go func() {
+		<-ctx.Done()
+		stack.Drain(context.Background(), unifiedStackDrainTimeout)
+	}()
+
 	return stack, nil
 }

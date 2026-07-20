@@ -6,6 +6,7 @@ package controlapi
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -187,8 +188,12 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 					"action": "reset",
 				},
 			}, tx)
-		}); err != nil && deps.Logger != nil {
-			deps.Logger.Warn("handleResetNode: append operator_override audit event failed",
+		}); err != nil {
+			auditLogger := deps.Logger
+			if auditLogger == nil {
+				auditLogger = shared.NewSlogLogger(slog.Default())
+			}
+			auditLogger.Warn("handleResetNode: append operator_override audit event failed",
 				"node_id", id.String(),
 				"error", err.Error())
 		}
@@ -221,18 +226,21 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			page = p
+			nodeIDs := make([]shared.UUID, 0, len(page.Rows))
 			for _, n := range page.Rows {
-				s, err := deps.Persist.Nodes().GetRunSummary(ctx, n.ID, tx)
-				if err != nil {
-					return err
-				}
-				summaryByID[n.ID] = s
-				latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, n.ID)
-				if err != nil {
-					return err
-				}
-				if latest != nil && latest.SettlingSignalType != nil {
-					settlingByID[n.ID] = *latest.SettlingSignalType
+				nodeIDs = append(nodeIDs, n.ID)
+			}
+			summaryByID, err = deps.Persist.Nodes().GetRunSummaryForNodes(ctx, nodeIDs, tx)
+			if err != nil {
+				return err
+			}
+			latestByID, err := deps.Persist.Nodes().GetLatestRunForNodes(ctx, tx, nodeIDs)
+			if err != nil {
+				return err
+			}
+			for id, latest := range latestByID {
+				if latest.SettlingSignalType != nil {
+					settlingByID[id] = *latest.SettlingSignalType
 				}
 			}
 			return nil
@@ -263,7 +271,9 @@ func resolveInstance(ctx context.Context, deps AppDeps, idOrKey string) (*persis
 		}); err != nil {
 			return nil, err
 		}
-		return out, nil
+		if out != nil {
+			return out, nil
+		}
 	}
 	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := deps.Persist.Instances().FindAnyByInstanceKey(ctx, idOrKey, tx)

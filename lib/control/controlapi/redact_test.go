@@ -5,8 +5,10 @@
 package controlapi
 
 import (
+	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,4 +87,62 @@ func TestApplyParamsRedact_SentinelRedactsAllTopLevelKeys(t *testing.T) {
 	require.Equal(t, "[REDACTED]", out["token"])
 	require.Equal(t, "[REDACTED]", out["nested"],
 		"the fail-closed sentinel must redact whole top-level subtrees, not just scalar leaves")
+}
+
+func TestInstanceGet_RendersRedactedParamAsRedactedString(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	body := map[string]any{
+		"spec": map[string]any{
+			"name":          "redact-http-" + uuid.NewString(),
+			"version":       "v1",
+			"params_redact": []string{"api_token"},
+			"nodes": []map[string]any{
+				{"type": "root", "executor": "worker"},
+			},
+		},
+	}
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusCreated, status, out)
+	tplID := out["template_id"].(string)
+	status, _ = h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, status)
+
+	status, createOut := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+		"template":     tplID,
+		"instance_key": "ck-" + uuid.NewString(),
+		"params": map[string]any{
+			"api_token": "super-secret-value",
+			"visible":   "plain-value",
+		},
+	})
+	require.Equal(t, http.StatusCreated, status, createOut)
+	instID := createOut["instance_id"].(string)
+
+	status, getOut := h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
+	require.Equal(t, http.StatusOK, status, getOut)
+	params, ok := getOut["params"].(map[string]any)
+	require.True(t, ok, "expected a params object in the GET response: %+v", getOut)
+	require.Equal(t, "[REDACTED]", params["api_token"],
+		"a param declared in the template's params_redact must render as [REDACTED] over HTTP")
+	require.Equal(t, "plain-value", params["visible"],
+		"a param not declared in params_redact must render unredacted")
+
+	status, listOut := h.httpJSON(t, "GET", "/v1/instances", nil)
+	require.Equal(t, http.StatusOK, status, listOut)
+	instances, _ := listOut["instances"].([]any)
+	found := false
+	for _, item := range instances {
+		row, _ := item.(map[string]any)
+		if row["id"] != instID {
+			continue
+		}
+		found = true
+		listParams, _ := row["params"].(map[string]any)
+		require.Equal(t, "[REDACTED]", listParams["api_token"],
+			"the list endpoint must apply the same params_redact as the get endpoint")
+	}
+	require.True(t, found, "created instance must appear in the list")
 }

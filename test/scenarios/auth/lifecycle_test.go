@@ -136,6 +136,12 @@ func (f *authFixture) request(t *testing.T, method, path, key string, body any) 
 
 func (f *authFixture) requestWithHeader(t *testing.T, method, path, key string, body any, headerKey, headerVal string) (int, map[string]any) {
 	t.Helper()
+	status, _, out := f.requestFull(t, method, path, key, body, headerKey, headerVal)
+	return status, out
+}
+
+func (f *authFixture) requestFull(t *testing.T, method, path, key string, body any, headerKey, headerVal string) (int, http.Header, map[string]any) {
+	t.Helper()
 	var reader io.Reader
 	if body != nil {
 		raw, _ := json.Marshal(body)
@@ -161,7 +167,22 @@ func (f *authFixture) requestWithHeader(t *testing.T, method, path, key string, 
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &out)
 	}
-	return resp.StatusCode, out
+	return resp.StatusCode, resp.Header, out
+}
+
+func (f *authFixture) mcpSession(t *testing.T, key string) string {
+	t.Helper()
+	status, hdr, out := f.requestFull(t, "POST", "/v1/mcp", key, map[string]any{
+		"jsonrpc": "2.0", "id": 0, "method": "initialize",
+	}, "", "")
+	if status != http.StatusOK {
+		t.Fatalf("mcp initialize: got %d, want 200: %+v", status, out)
+	}
+	sid := hdr.Get("Mcp-Session-Id")
+	if sid == "" {
+		t.Fatalf("mcp initialize did not issue an Mcp-Session-Id header")
+	}
+	return sid
 }
 
 func TestBootstrap_AnonymousToAuthenticated(t *testing.T) {
@@ -354,18 +375,11 @@ func TestObservabilityDashboard_GatedAndPopulated(t *testing.T) {
 	if active, _ := summary["instances_active"].(float64); active < 1 {
 		t.Fatalf("instances_active = %v; want >= 1 (seeded one instance): %+v", summary["instances_active"], summary)
 	}
-	nodeCounts, ok := summary["node_counts"].(map[string]any)
-	if !ok {
-		t.Fatalf("node_counts missing or wrong shape: %+v", summary["node_counts"])
+	if _, ok := summary["node_runs_by_state"].(map[string]any); !ok {
+		t.Fatalf("node_runs_by_state missing or wrong shape: %+v", summary["node_runs_by_state"])
 	}
-	var totalNodes float64
-	for _, v := range nodeCounts {
-		if n, ok := v.(float64); ok {
-			totalNodes += n
-		}
-	}
-	if totalNodes < 1 {
-		t.Fatalf("node_counts state buckets all zero (%+v); want >= 1 node from the seeded instance", nodeCounts)
+	if nodesTotal, _ := summary["nodes_total"].(float64); nodesTotal < 1 {
+		t.Fatalf("nodes_total = %v; want >= 1 node from the seeded instance (nodes_total is the per-node count; node_runs_by_state is a separate per-run-row breakdown and can be legitimately all-zero before any node has run): %+v", summary["nodes_total"], summary)
 	}
 }
 
@@ -530,9 +544,10 @@ func TestMCPSkin_FiltersByGrant(t *testing.T) {
 	})
 	roKey := roBody["plaintext"].(string)
 
-	code, listResp := f.request(t, "POST", "/v1/mcp", adminKey, map[string]any{
+	adminSession := f.mcpSession(t, adminKey)
+	code, listResp := f.requestWithHeader(t, "POST", "/v1/mcp", adminKey, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
-	})
+	}, "Mcp-Session-Id", adminSession)
 	if code != 200 {
 		t.Fatalf("admin tools/list: %d %+v", code, listResp)
 	}
@@ -547,9 +562,10 @@ func TestMCPSkin_FiltersByGrant(t *testing.T) {
 		t.Fatalf("admin tools/list should include instance_create")
 	}
 
-	code, listResp = f.request(t, "POST", "/v1/mcp", roKey, map[string]any{
+	roSession := f.mcpSession(t, roKey)
+	code, listResp = f.requestWithHeader(t, "POST", "/v1/mcp", roKey, map[string]any{
 		"jsonrpc": "2.0", "id": 2, "method": "tools/list",
-	})
+	}, "Mcp-Session-Id", roSession)
 	if code != 200 {
 		t.Fatalf("ro tools/list: %d %+v", code, listResp)
 	}
@@ -820,9 +836,10 @@ func TestMCPSkin_OperatorRoleKeyWorks(t *testing.T) {
 	})
 	opKey := opBody["plaintext"].(string)
 
-	code, body := f.request(t, "POST", "/v1/mcp", opKey, map[string]any{
+	opSession := f.mcpSession(t, opKey)
+	code, body := f.requestWithHeader(t, "POST", "/v1/mcp", opKey, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
-	})
+	}, "Mcp-Session-Id", opSession)
 	if code != 200 {
 		t.Fatalf("expected 200 on POST /mcp with operator-shape key; got %d %+v", code, body)
 	}
@@ -860,7 +877,8 @@ func TestMCPSkin_ToolsCallParityCreatesInstance(t *testing.T) {
 	}
 
 	mcpKey := "ck-mcp"
-	code, mcpResp := f.request(t, "POST", "/v1/mcp", adminKey, map[string]any{
+	adminSession := f.mcpSession(t, adminKey)
+	code, mcpResp := f.requestWithHeader(t, "POST", "/v1/mcp", adminKey, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
@@ -871,7 +889,7 @@ func TestMCPSkin_ToolsCallParityCreatesInstance(t *testing.T) {
 				"instance_key": mcpKey,
 			},
 		},
-	})
+	}, "Mcp-Session-Id", adminSession)
 	if code != http.StatusOK {
 		t.Fatalf("MCP tools/call: expected 200; got %d %+v", code, mcpResp)
 	}

@@ -294,7 +294,7 @@ func TestResources_Read_PermissionDenied(t *testing.T) {
 	uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits", instID)
 	_, rpcErr := cat.Read(req, uri)
 	require.NotNil(t, rpcErr, "expected permission denial")
-	require.Equal(t, mcp.CodeInternalError, rpcErr.Code)
+	require.Equal(t, mcp.CodeInvalidParams, rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "permission denied")
 }
 

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -45,7 +46,7 @@ func (c *Catalog) Filtered(r *http.Request) []Tool {
 		if !ok {
 			continue
 		}
-		if !auth.CheckGrant(ident.Permissions, entry.Action, nil).Allowed {
+		if !auth.HasAnyGrant(ident.Permissions, entry.Action) {
 			continue
 		}
 		schema := c.Schemas[name]
@@ -90,19 +91,17 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	}
 
 	idempotencyKey := extractIdempotencyKey(remaining)
+	dryRunVal, hasDryRun := extractDryRun(remaining)
 
 	var body io.Reader = http.NoBody
 	hasBody := false
 	switch route.Method {
 	case "GET", "DELETE":
-		q := urlQueryFromRemaining(remaining)
-		if q != "" {
-			if strings.Contains(path, "?") {
-				path += "&" + q
-			} else {
-				path += "?" + q
-			}
+		q, dropped := urlQueryFromRemaining(remaining)
+		if len(dropped) > 0 {
+			return nil, false, &Error{Code: CodeInvalidParams, Message: "cannot encode object/array-valued argument(s) as query params: " + strings.Join(dropped, ", ")}
 		}
+		path = appendQueryString(path, q)
 	default:
 		if len(remaining) > 0 {
 			bs, err := json.Marshal(remaining)
@@ -112,6 +111,9 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 			body = bytes.NewReader(bs)
 			hasBody = true
 		}
+	}
+	if hasDryRun {
+		path = appendQueryString(path, url.Values{"dry_run": {dryRunVal}}.Encode())
 	}
 
 	innerCtx := context.WithValue(r.Context(), chi.RouteCtxKey, (*chi.Context)(nil))
@@ -167,6 +169,38 @@ func extractIdempotencyKey(args map[string]json.RawMessage) string {
 	return key
 }
 
+const dryRunArgName = "dry_run"
+
+func extractDryRun(args map[string]json.RawMessage) (string, bool) {
+	raw, ok := args[dryRunArgName]
+	if !ok {
+		return "", false
+	}
+	delete(args, dryRunArgName)
+	var flag bool
+	if err := json.Unmarshal(raw, &flag); err == nil {
+		if flag {
+			return "true", true
+		}
+		return "false", true
+	}
+	var str string
+	if err := json.Unmarshal(raw, &str); err == nil {
+		return str, true
+	}
+	return strings.Trim(strings.TrimSpace(string(raw)), `"`), true
+}
+
+func appendQueryString(path, q string) string {
+	if q == "" {
+		return path
+	}
+	if strings.Contains(path, "?") {
+		return path + "&" + q
+	}
+	return path + "?" + q
+}
+
 func substitutePathParams(pattern string, args map[string]json.RawMessage) (string, map[string]json.RawMessage, error) {
 	remaining := map[string]json.RawMessage{}
 	for k, v := range args {
@@ -197,14 +231,16 @@ func substitutePathParams(pattern string, args map[string]json.RawMessage) (stri
 	return out, remaining, nil
 }
 
-func urlQueryFromRemaining(m map[string]json.RawMessage) string {
+func urlQueryFromRemaining(m map[string]json.RawMessage) (string, []string) {
 	values := url.Values{}
+	var dropped []string
 	for k, v := range m {
 		trim := strings.TrimSpace(string(v))
 		if trim == "" {
 			continue
 		}
 		if trim[0] == '{' || trim[0] == '[' {
+			dropped = append(dropped, k)
 			continue
 		}
 		var str string
@@ -213,7 +249,8 @@ func urlQueryFromRemaining(m map[string]json.RawMessage) string {
 		}
 		values.Add(k, str)
 	}
-	return values.Encode()
+	sort.Strings(dropped)
+	return values.Encode(), dropped
 }
 
 func pickCanonicalRoute(toolName string, routes []RegistryRoute, args map[string]json.RawMessage) RegistryRoute {

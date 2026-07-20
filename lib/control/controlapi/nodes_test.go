@@ -77,6 +77,89 @@ func TestGetNode_SettlingSignalType(t *testing.T) {
 		"unsettled node must omit settling_signal_type, got %v", got)
 }
 
+func TestResolveInstance_FallsBackToKeyLookupForUUIDShapedKey(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	tplBody := validTemplateBody("resolve-uuidkey-" + uuid.NewString())
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
+	tplID := out["template_id"].(string)
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
+
+	uuidShapedKey := uuid.NewString()
+	status, createOut := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+		"template":     tplID,
+		"instance_key": uuidShapedKey,
+	})
+	require.Equal(t, http.StatusCreated, status, createOut)
+	instanceID, _ := createOut["instance_id"].(string)
+	require.NotEmpty(t, instanceID)
+	require.NotEqual(t, uuidShapedKey, instanceID,
+		"instance_key and instance_id must differ for this to exercise the id-miss-then-key-fallback path")
+
+	status, getOut := h.httpJSON(t, "GET", "/v1/instances/"+uuidShapedKey, nil)
+	require.Equal(t, http.StatusOK, status, getOut)
+	require.Equal(t, instanceID, getOut["id"],
+		"a UUID-shaped instance_key that misses the id lookup must fall back to key lookup")
+}
+
+func TestGetNode_ErrorBranches(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	status, out := h.httpJSON(t, "GET", "/v1/nodes/not-a-uuid", nil)
+	require.Equal(t, http.StatusBadRequest, status, out)
+
+	status, out = h.httpJSON(t, "GET", "/v1/nodes/"+uuid.NewString(), nil)
+	require.Equal(t, http.StatusNotFound, status, out)
+}
+
+func TestListInstanceNodes_CursorAndLimitPagination(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	inst := seedInstance(t, h, "node-page-"+uuid.NewString())
+	for i := 0; i < 3; i++ {
+		require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			_, err := h.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
+				ID:         shared.UUID(uuid.New()),
+				InstanceID: inst.ID,
+				NodeType:   "extra-node-type",
+				Executor:   "test-executor",
+			}, tx)
+			return err
+		}))
+	}
+
+	status, page1 := h.httpJSON(t, "GET", "/v1/instances/"+inst.ID.String()+"/nodes?limit=2", nil)
+	require.Equal(t, http.StatusOK, status, page1)
+	rows1, _ := page1["nodes"].([]any)
+	require.Len(t, rows1, 2, "limit=2 must cap the page at 2 rows")
+	cursor, _ := page1["next_cursor"].(string)
+	require.NotEmpty(t, cursor, "a further page must be signaled via next_cursor")
+
+	seen := map[string]bool{}
+	for _, r := range rows1 {
+		row, _ := r.(map[string]any)
+		seen[row["id"].(string)] = true
+	}
+
+	status, page2 := h.httpJSON(t, "GET", "/v1/instances/"+inst.ID.String()+"/nodes?limit=2&cursor="+cursor, nil)
+	require.Equal(t, http.StatusOK, status, page2)
+	rows2, _ := page2["nodes"].([]any)
+	require.NotEmpty(t, rows2, "cursor-continued page must return the remaining rows")
+	for _, r := range rows2 {
+		row, _ := r.(map[string]any)
+		id, _ := row["id"].(string)
+		require.False(t, seen[id], "cursor pagination must not repeat a row already seen on page 1: %s", id)
+	}
+}
+
 func seedTerminalRunWithSignalType(
 	ctx context.Context, t *testing.T, h *harness,
 	inst persistence.InstanceRow, nodeID shared.UUID, signalType string,

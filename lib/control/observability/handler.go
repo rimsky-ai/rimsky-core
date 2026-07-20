@@ -113,11 +113,6 @@ func internalErr(w http.ResponseWriter, err error) {
 	writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 }
 
-type peerListResponse struct {
-	ClaimProducers []PeerEntry `json:"claim_producers,omitempty"`
-	Executors      []PeerEntry `json:"executors,omitempty"`
-}
-
 func handleListClaimProducers(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entries := []PeerEntry{}
@@ -125,12 +120,7 @@ func handleListClaimProducers(deps Deps) http.HandlerFunc {
 		for _, e := range deps.ClaimProducers {
 			cached, ok := deps.Discovery.GetStore(e.Name)
 			if !ok {
-				cached = PeerEntry{
-					Name:                  e.Name,
-					Endpoint:              e.Endpoint,
-					ObservabilityEndpoint: chooseObsEndpoint(e.ObservabilityEndpoint, e.Endpoint),
-					Reachability:          ReachabilityUnreachable,
-				}
+				cached = unreachablePeerEntry(e)
 			}
 			entries = append(entries, cached)
 			seen[e.Name] = true
@@ -141,7 +131,7 @@ func handleListClaimProducers(deps Deps) http.HandlerFunc {
 			}
 			entries = append(entries, cached)
 		}
-		writeJSON(w, http.StatusOK, peerListResponse{ClaimProducers: entries})
+		writeJSON(w, http.StatusOK, map[string]any{"claim_producers": entries})
 	}
 }
 
@@ -149,9 +139,13 @@ func handleGetClaimProducer(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
 		cached, ok := deps.Discovery.GetStore(name)
-		if !ok && !peerExists(deps.ClaimProducers, name) {
-			notFound(w, "unknown store")
-			return
+		if !ok {
+			spec, declared := findPeerSpec(deps.ClaimProducers, name)
+			if !declared {
+				notFound(w, "unknown store")
+				return
+			}
+			cached = unreachablePeerEntry(spec)
 		}
 		var lifecycle []persistence.LifecycleIdempotencyRow
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
@@ -177,12 +171,7 @@ func handleListExecutors(deps Deps) http.HandlerFunc {
 		for _, e := range deps.Executors {
 			cached, ok := deps.Discovery.GetExecutor(e.Name)
 			if !ok {
-				cached = PeerEntry{
-					Name:                  e.Name,
-					Endpoint:              e.Endpoint,
-					ObservabilityEndpoint: chooseObsEndpoint(e.ObservabilityEndpoint, e.Endpoint),
-					Reachability:          ReachabilityUnreachable,
-				}
+				cached = unreachablePeerEntry(e)
 			}
 			entries = append(entries, cached)
 			seen[e.Name] = true
@@ -193,7 +182,7 @@ func handleListExecutors(deps Deps) http.HandlerFunc {
 			}
 			entries = append(entries, cached)
 		}
-		writeJSON(w, http.StatusOK, peerListResponse{Executors: entries})
+		writeJSON(w, http.StatusOK, map[string]any{"executors": entries})
 	}
 }
 
@@ -201,21 +190,34 @@ func handleGetExecutor(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
 		cached, ok := deps.Discovery.GetExecutor(name)
-		if !ok && !peerExists(deps.Executors, name) {
-			notFound(w, "unknown executor")
-			return
+		if !ok {
+			spec, declared := findPeerSpec(deps.Executors, name)
+			if !declared {
+				notFound(w, "unknown executor")
+				return
+			}
+			cached = unreachablePeerEntry(spec)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"peer": cached})
 	}
 }
 
-func peerExists(peers []PeerSpec, name string) bool {
+func findPeerSpec(peers []PeerSpec, name string) (PeerSpec, bool) {
 	for _, p := range peers {
 		if p.Name == name {
-			return true
+			return p, true
 		}
 	}
-	return false
+	return PeerSpec{}, false
+}
+
+func unreachablePeerEntry(spec PeerSpec) PeerEntry {
+	return PeerEntry{
+		Name:                  spec.Name,
+		Endpoint:              spec.Endpoint,
+		ObservabilityEndpoint: chooseObsEndpoint(spec.ObservabilityEndpoint, spec.Endpoint),
+		Reachability:          ReachabilityUnreachable,
+	}
 }
 
 func handleListTemplates(deps Deps) http.HandlerFunc {
@@ -508,8 +510,15 @@ func handleListNodeRuns(deps Deps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
+		stateFilter := r.URL.Query().Get("state")
+		switch stateFilter {
+		case "", "pending", "claimed":
+		default:
+			badRequest(w, "invalid state (pending or claimed required)")
+			return
+		}
 		filter := persistence.DispatchListFilter{
-			State:        r.URL.Query().Get("state"),
+			State:        stateFilter,
 			ExecutorName: r.URL.Query().Get("executor_name"),
 		}
 		if v := r.URL.Query().Get("instance_id"); v != "" {
@@ -527,15 +536,11 @@ func handleListNodeRuns(deps Deps) http.HandlerFunc {
 		}
 		out := make([]map[string]any, 0, len(res.Rows))
 		for _, row := range res.Rows {
-			state := "pending"
-			if row.ClaimedBy != nil {
-				state = "claimed"
-			}
 			out = append(out, map[string]any{
 				"id":               row.ID,
 				"node_id":          row.NodeID,
 				"executor_name":    row.ExecutorName,
-				"state":            state,
+				"state":            row.State,
 				"claimed_by":       row.ClaimedBy,
 				"enqueued_at":      row.EnqueuedAt,
 				"claimed_at":       row.ClaimedAt,
@@ -567,34 +572,41 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 			return
 		}
 		if match == nil {
-			notFound(w, "dispatch not found (terminal-deleted)")
+			notFound(w, "dispatch not found in the live queue (this view only covers pending/stale/running/held/parked runs; a settled run is still readable via the lineage surface)")
 			return
-		}
-		state := "pending"
-		if match.ClaimedBy != nil {
-			state = "claimed"
 		}
 		var claimID *shared.UUID
 		var instanceID *shared.UUID
 		var nodeType string
-		_ = inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
-			if holder, err := deps.Tables.ClaimHandles().GetByFrameAndNode(ctx, match.NodeID, match.FrameID, tx); err == nil && holder != nil {
+		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
+			holder, err := deps.Tables.ClaimHandles().GetByFrameAndNode(ctx, match.NodeID, match.FrameID, tx)
+			if err != nil {
+				return err
+			}
+			if holder != nil {
 				claimID = &holder.ID
 			}
-			if nodeRow, err := deps.Tables.Nodes().Get(ctx, match.NodeID, tx); err == nil && nodeRow != nil {
+			nodeRow, err := deps.Tables.Nodes().Get(ctx, match.NodeID, tx)
+			if err != nil {
+				return err
+			}
+			if nodeRow != nil {
 				id := nodeRow.InstanceID
 				instanceID = &id
 				nodeType = nodeRow.NodeType
 			}
 			return nil
-		})
+		}); err != nil {
+			internalErr(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":               match.ID,
 			"node_id":          match.NodeID,
 			"instance_id":      instanceID,
 			"node_type":        nodeType,
 			"executor_name":    match.ExecutorName,
-			"state":            state,
+			"state":            match.State,
 			"claimed_by":       match.ClaimedBy,
 			"claimed_at":       match.ClaimedAt,
 			"last_progress_at": match.LastProgressAt,
@@ -758,20 +770,20 @@ func handleSystemHealth(deps Deps) http.HandlerFunc {
 			internalErr(w, err)
 			return
 		}
-		pgStatus := "unknown"
+		dbStatus := "unknown"
 		if deps.Driver != nil {
 			pingCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 			err := deps.Driver.Ping(pingCtx)
 			cancel()
 			if err == nil {
-				pgStatus = "ok"
+				dbStatus = "ok"
 			} else {
-				pgStatus = "degraded: " + err.Error()
+				dbStatus = "degraded: " + err.Error()
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"control_api_status": "ok",
-			"postgres_status":    pgStatus,
+			"database_status":    dbStatus,
 			"supervisors":        sups,
 			"executors":          deps.Discovery.ListExecutors(),
 			"claim_producers":    deps.Discovery.ListClaimProducers(),
@@ -817,7 +829,7 @@ func handleSystemSummary(deps Deps) http.HandlerFunc {
 		if nodesWithoutRuns < 0 {
 			nodesWithoutRuns = 0
 		}
-		nodeCounts := map[string]int{
+		nodeRunsByState := map[string]int{
 			string(cascade.NodeStateFresh):   counts[cascade.NodeStateFresh],
 			string(cascade.NodeStatePending): counts[cascade.NodeStatePending],
 			string(cascade.NodeStateStale):   counts[cascade.NodeStateStale],
@@ -825,7 +837,6 @@ func handleSystemSummary(deps Deps) http.HandlerFunc {
 			string(cascade.NodeStateHeld):    counts[cascade.NodeStateHeld],
 			string(cascade.NodeStateParked):  counts[cascade.NodeStateParked],
 			string(cascade.NodeStateFailed):  counts[cascade.NodeStateFailed],
-			"no_runs":                        nodesWithoutRuns,
 		}
 		dispatchClaimed, err := deps.Queue.CountLive(r.Context(), persistence.DispatchListFilter{State: "claimed"})
 		if err != nil {
@@ -838,8 +849,9 @@ func handleSystemSummary(deps Deps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"node_counts":          nodeCounts,
+			"node_runs_by_state":   nodeRunsByState,
 			"nodes_total":          nodesTotal,
+			"nodes_without_runs":   nodesWithoutRuns,
 			"node_runs_total":      runsTotal,
 			"instances_active":     active,
 			"instances_terminated": terminated,

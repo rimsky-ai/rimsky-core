@@ -289,6 +289,52 @@ func TestStartUnifiedStack_IgnoresNilAndClosedRunnerFailure(t *testing.T) {
 	}
 }
 
+func TestStartUnifiedStack_CtxCancelDrainsStartedRoles(t *testing.T) {
+	origScheduler, origSupervisor, origControlAPI := runSchedulerFn, runSupervisorFn, runControlAPIFn
+	defer func() {
+		runSchedulerFn = origScheduler
+		runSupervisorFn = origSupervisor
+		runControlAPIFn = origControlAPI
+	}()
+
+	stoppedCh := make(chan string, 3)
+	makeStop := func(name string) StopFunc {
+		return func(context.Context) error {
+			stoppedCh <- name
+			return nil
+		}
+	}
+	runSchedulerFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, persistence.BlobBackend) (StopFunc, <-chan error, error) {
+		return makeStop("scheduler"), make(chan error), nil
+	}
+	runSupervisorFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations, persistence.BlobBackend) (StopFunc, <-chan error, error) {
+		return makeStop("supervisor"), make(chan error), nil
+	}
+	runControlAPIFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations, persistence.BlobBackend) (StopFunc, <-chan error, error) {
+		return makeStop("control-api"), make(chan error), nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	logger := slog.New(slog.NewTextHandler(discardWriter{}, nil))
+	stack, err := StartUnifiedStack(ctx, logger, &fakeDriver{}, &config.RimskyConfig{}, &config.BundledRegistrations{})
+	if err != nil {
+		t.Fatalf("StartUnifiedStack: %v", err)
+	}
+	_ = stack
+
+	cancel()
+
+	seen := map[string]bool{}
+	for len(seen) < 3 {
+		seen[<-stoppedCh] = true
+	}
+	for _, want := range []string{"scheduler", "supervisor", "control-api"} {
+		if !seen[want] {
+			t.Errorf("cancelling the startup ctx did not drain role %q", want)
+		}
+	}
+}
+
 func TestStartUnifiedStack_StartupFailureDrainsStartedRoles(t *testing.T) {
 	origScheduler, origSupervisor, origControlAPI := runSchedulerFn, runSupervisorFn, runControlAPIFn
 	defer func() {

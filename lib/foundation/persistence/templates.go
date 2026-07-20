@@ -56,6 +56,8 @@ type TemplateTagRow struct {
 
 type TemplateTagTable interface {
 	Upsert(ctx context.Context, tag, templateID string, tx Tx) error
+	InsertIfAbsent(ctx context.Context, tag, templateID string, tx Tx) (inserted bool, err error)
+	UpdateIfExists(ctx context.Context, tag, templateID string, tx Tx) (updated bool, err error)
 	Get(ctx context.Context, tag string, tx Tx) (*TemplateTagRow, error)
 	ListByTemplate(ctx context.Context, templateID string, tx Tx) ([]TemplateTagRow, error)
 	List(ctx context.Context, pag ListPagination, tx Tx) (PaginatedListResult[TemplateTagRow], error)

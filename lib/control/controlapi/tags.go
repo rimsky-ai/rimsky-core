@@ -96,10 +96,17 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 		}) {
 			return
 		}
+		var inserted bool
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			return deps.Persist.TemplateTags().Upsert(ctx, body.Tag, hash, tx)
+			ok, err := deps.Persist.TemplateTags().InsertIfAbsent(ctx, body.Tag, hash, tx)
+			inserted = ok
+			return err
 		}); err != nil {
 			writeError(w, err)
+			return
+		}
+		if !inserted {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "tag already exists"})
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -179,10 +186,17 @@ func handleMoveTag(deps AppDeps) http.HandlerFunc {
 		}) {
 			return
 		}
+		var updated bool
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			return deps.Persist.TemplateTags().Upsert(ctx, tag, hash, tx)
+			ok, err := deps.Persist.TemplateTags().UpdateIfExists(ctx, tag, hash, tx)
+			updated = ok
+			return err
 		}); err != nil {
 			writeError(w, err)
+			return
+		}
+		if !updated {
+			notFoundResp(w, "tag not found")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

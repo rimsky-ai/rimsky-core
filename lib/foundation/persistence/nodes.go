@@ -117,6 +117,9 @@ type NodeTable interface {
 	// @concept: node
 	GetRunSummary(ctx context.Context, nodeID shared.UUID, tx Tx) (NodeRunSummary, error)
 
+	// @concept: node
+	GetRunSummaryForNodes(ctx context.Context, nodeIDs []shared.UUID, tx Tx) (map[shared.UUID]NodeRunSummary, error)
+
 	// @concept: cascade
 	// @decision: walker-rule-per-sender-node
 	FindLatestCascadePending(ctx context.Context, tx Tx, nodeID, runScopeID, frameID shared.UUID) (*NodeRunForGate, error)
@@ -134,6 +137,9 @@ type NodeTable interface {
 
 	// @concept: node-run
 	GetLatestRunForNode(ctx context.Context, tx Tx, nodeID shared.UUID) (*NodeRunLatest, error)
+
+	// @concept: node-run
+	GetLatestRunForNodes(ctx context.Context, tx Tx, nodeIDs []shared.UUID) (map[shared.UUID]NodeRunLatest, error)
 
 	// @concept: node-run
 	ListRunsForInstanceByStates(ctx context.Context, tx Tx, instanceID shared.UUID, states []cascade.NodeState) ([]NodeRunLatest, error)

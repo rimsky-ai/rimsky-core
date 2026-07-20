@@ -66,8 +66,13 @@ func (f *failureReporter) Close() {
 }
 
 func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, preOpenedBlob persistence.BlobBackend) (StopFunc, <-chan error, error) {
-	tickMs := atoiDefault(os.Getenv("RIMSKY_SCHEDULER_TICK_MS"), 250)
 	log := shared.NewSlogLogger(logger)
+
+	tickMs, err := positiveIntEnv("RIMSKY_SCHEDULER_TICK_MS", 250)
+	if err != nil {
+		log.Error("scheduler tick_ms resolution", "error", err.Error())
+		return nil, nil, err
+	}
 
 	metricsPort, err := metricsPortFor("scheduler", rimskyCfg.Topology)
 	if err != nil {
@@ -226,9 +231,17 @@ func serveMetrics(ln net.Listener, role string, mreg *observability.MetricsRegis
 	return srv
 }
 
-func atoiDefault(s string, d int) int {
-	if n, err := strconv.Atoi(s); err == nil && n > 0 {
-		return n
+func positiveIntEnv(name string, dflt int) (int, error) {
+	s := os.Getenv(name)
+	if s == "" {
+		return dflt, nil
 	}
-	return d
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s=%q: not a number", name, s)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("invalid %s=%q: must be a positive integer", name, s)
+	}
+	return n, nil
 }
