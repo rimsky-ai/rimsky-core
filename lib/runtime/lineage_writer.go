@@ -87,6 +87,9 @@ func WriteLeafRunLineage(
 	if rec.State == "" {
 		return fmt.Errorf("WriteLeafRunLineage: state required")
 	}
+	if rec.SettlingSignalType == "" {
+		return fmt.Errorf("WriteLeafRunLineage: settling_signal_type required")
+	}
 	payload, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("WriteLeafRunLineage: marshal: %w", err)
@@ -152,6 +155,7 @@ type LeafRunEmitInput struct {
 	Changed            bool
 	TerminalKind       string
 	NodeAlias          string
+	TemplateNodeAlias  string
 	ExecutorName       string
 	Params             map[string]any
 	AttributesMerged   map[string]any
@@ -214,6 +218,10 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 	if in.ParentNodeRunID != nil {
 		parentNodeRunID = in.ParentNodeRunID.String()
 	}
+	templateNodeAlias := in.TemplateNodeAlias
+	if templateNodeAlias == "" {
+		templateNodeAlias = in.NodeAlias
+	}
 	frameTriggerKind, triggerMessageID := frameTriggerFieldsFor(ctx, args, in.FrameID)
 	rec := LeafRunRecord{
 		NodeRunID:          in.NodeRunID,
@@ -221,7 +229,7 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 		FrameID:            in.FrameID,
 		ChildKey:           in.ChildKey,
 		NodeAlias:          in.NodeAlias,
-		TemplateNodeAlias:  in.NodeAlias,
+		TemplateNodeAlias:  templateNodeAlias,
 		ParentNodeRunID:    parentNodeRunID,
 		FrameTriggerKind:   frameTriggerKind,
 		TriggerMessageID:   triggerMessageID,

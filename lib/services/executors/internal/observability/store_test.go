@@ -155,6 +155,49 @@ func TestStoreStreamTraceNoDropUnderConcurrentAppend(t *testing.T) {
 	}
 }
 
+func TestStoreStreamTrace_IdleTimeoutIsDistinctFromGenuineCompletion(t *testing.T) {
+	const nodeRunID = "idle-d1"
+	s := NewStore()
+	s.SetIdleTimeout(5 * time.Millisecond)
+	s.RegisterDispatch(nodeRunID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := &fakeStreamTraceServer{ctx: ctx}
+
+	streamDone := make(chan error, 1)
+	go func() {
+		streamDone <- s.StreamTrace(&genv1.StreamTraceRequest{DispatchId: nodeRunID}, stream)
+	}()
+
+	select {
+	case <-streamDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("StreamTrace did not return after the idle timeout elapsed")
+	}
+
+	got := stream.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one sentinel event, got %d: %+v", len(got), got)
+	}
+	if got[0].EventId == "trace_complete" || got[0].Category == "trace_complete" {
+		t.Fatalf("idle timeout must not send the same trace_complete sentinel as a genuine terminal "+
+			"(GetTrace still reports Complete=false); got %+v", got[0])
+	}
+	if got[0].EventId != "trace_idle_timeout" {
+		t.Fatalf("EventId = %q, want trace_idle_timeout", got[0].EventId)
+	}
+
+	trace, err := s.GetTrace(context.Background(), &genv1.GetTraceRequest{DispatchId: nodeRunID})
+	if err != nil {
+		t.Fatalf("GetTrace: %v", err)
+	}
+	if trace.GetComplete() {
+		t.Fatal("GetTrace reports Complete=true after only an idle timeout, not a genuine terminal " +
+			"— this is exactly the inconsistency the distinct sentinel must prevent a consumer from missing")
+	}
+}
+
 func TestStoreSweepEvicted(t *testing.T) {
 	s := NewStore()
 	s.RegisterDispatch("d1")

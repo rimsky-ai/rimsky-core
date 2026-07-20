@@ -34,7 +34,7 @@ func TestValidatorHooks_BuiltinDeclaredErrorClasses_CapabilitiesBranch(t *testin
 	hooks := validatorHooksFor(deps, node.TemplateSpec{})
 	classes, ok := hooks.ExecutorDeclaredErrorClasses(loop_counter.ExecutorAlias)
 	require.True(t, ok, "builtin alias must advertise a known error-class vocabulary")
-	require.Contains(t, classes, loop_counter.AttributesSchemaInvalidClass)
+	require.Contains(t, classes, loop_counter.AttributesSchemaFailedClass)
 }
 
 func TestValidatorHooks_BuiltinDeclaredErrorClasses_KindAliasesBranch(t *testing.T) {
@@ -43,7 +43,7 @@ func TestValidatorHooks_BuiltinDeclaredErrorClasses_KindAliasesBranch(t *testing
 	hooks := validatorHooksFor(deps, node.TemplateSpec{})
 	classes, ok := hooks.ExecutorDeclaredErrorClasses(loop_counter.ExecutorAlias)
 	require.True(t, ok, "builtin alias must advertise a known error-class vocabulary")
-	require.Contains(t, classes, loop_counter.AttributesSchemaInvalidClass)
+	require.Contains(t, classes, loop_counter.AttributesSchemaFailedClass)
 }
 
 func loopCounterErrorTypesSpec(className string) node.TemplateSpec {
@@ -78,7 +78,7 @@ func vocabularyWarnings(res node.ValidationResult) []string {
 func TestTemplateRegistration_LoopCounterEmittedErrorClassIsInVocabulary(t *testing.T) {
 	t.Parallel()
 	deps := AppDeps{KindAliases: builtinAliasKindMap(t)}
-	tmpl := loopCounterErrorTypesSpec(loop_counter.AttributesSchemaInvalidClass)
+	tmpl := loopCounterErrorTypesSpec(loop_counter.AttributesSchemaFailedClass)
 	res := node.ValidateTemplate(&tmpl, validatorHooksFor(deps, tmpl))
 	require.Empty(t, vocabularyWarnings(res),
 		"error_types on loop_counter's genuinely-emitted class must not draw a vocabulary warning")

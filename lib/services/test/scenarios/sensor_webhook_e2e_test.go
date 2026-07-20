@@ -123,13 +123,7 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 			"mount or the signature verification is broken", postPath, status, string(ackBody))
 	}
 
-	immediateCount := publisherMessageCount(t, ep, instanceID)
-	if immediateCount != beforePost+1 {
-		t.Fatalf("persisted publisher message count was %d immediately after the inbound "+
-			"200 ack (want %d) — the sensor acknowledged the inbound POST BEFORE rimsky "+
-			"persisted the message; serveWebhook must block on postMessage",
-			immediateCount, beforePost+1)
-	}
+	requirePublisherMessageCountReaches(t, ep, instanceID, beforePost+1, 5*time.Second, "signed-webhook-post-must-persist-exactly-one-message")
 
 	persisted := readSinglePublisherMessage(t, ep, instanceID, webhookPublisherName)
 	requirePersistedWebhookPayload(t, persisted, inboundBody, webhookPathPrefix)

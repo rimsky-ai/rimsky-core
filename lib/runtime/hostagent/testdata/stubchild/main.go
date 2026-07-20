@@ -38,6 +38,10 @@ func main() {
 		return
 	}
 
+	if os.Getenv("STUBCHILD_EXIT_IMMEDIATELY") != "" {
+		os.Exit(0)
+	}
+
 	lis, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "stubchild: listen %s: %v\n", port, err)
@@ -165,9 +169,13 @@ func recordExec() {
 	_, _ = f.Write(append(line, '\n'))
 }
 
-func (s *stubExecutor) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+func (s *stubExecutor) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	recordPID(req.GetRunScopeId())
 	recordExec()
+	if os.Getenv("STUBCHILD_EXECUTE_BLOCK_UNTIL_CANCEL") != "" {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	success := &genv1.Success{Changed: true}
 	if os.Getenv("STUBCHILD_EXECUTE_ECHO") != "" {
 		delta, _ := structpb.NewStruct(map[string]any{"echoed_node_id": req.GetNodeId()})

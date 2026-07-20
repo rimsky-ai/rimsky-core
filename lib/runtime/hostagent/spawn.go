@@ -115,13 +115,22 @@ func spawnOnPickedPort(ctx context.Context, params SpawnServiceParams, pickPort 
 		readyTimeout = 30 * time.Second
 	}
 
-	if !waitPortReady(ctx, port, exited, readyTimeout, params.DialTLS) {
+	switch waitPortReady(ctx, port, exited, readyTimeout, params.DialTLS) {
+	case portReady:
+		return &SpawnedService{Cmd: cmd, Port: port, Exited: exited}, nil
+	case portWaitCtxDone:
+		killProcess(cmd)
+		<-exited
+		return nil, ctx.Err()
+	case portWaitChildExited:
+		killProcess(cmd)
+		<-exited
+		return nil, fmt.Errorf("child exited before binding port %d: %w", port, errChildDidNotBind)
+	default:
 		killProcess(cmd)
 		<-exited
 		return nil, fmt.Errorf("child did not bind port %d within %s: %w", port, readyTimeout, errChildDidNotBind)
 	}
-
-	return &SpawnedService{Cmd: cmd, Port: port, Exited: exited}, nil
 }
 
 func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAck {
@@ -426,22 +435,31 @@ func FreeLocalPort() (int, error) {
 	return port, nil
 }
 
-func waitPortReady(ctx context.Context, port int, exited <-chan struct{}, timeout time.Duration, dialTLS *tls.Config) bool {
+type portWaitOutcome int
+
+const (
+	portReady portWaitOutcome = iota
+	portWaitCtxDone
+	portWaitChildExited
+	portWaitTimedOut
+)
+
+func waitPortReady(ctx context.Context, port int, exited <-chan struct{}, timeout time.Duration, dialTLS *tls.Config) portWaitOutcome {
 	deadline := time.Now().Add(timeout)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	for {
 		select {
 		case <-ctx.Done():
-			return false
+			return portWaitCtxDone
 		case <-exited:
-			return false
+			return portWaitChildExited
 		default:
 		}
 		if probeReady(addr, dialTLS) {
-			return true
+			return portReady
 		}
 		if time.Now().After(deadline) {
-			return false
+			return portWaitTimedOut
 		}
 		time.Sleep(portDialInterval)
 	}

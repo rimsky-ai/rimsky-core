@@ -65,9 +65,26 @@ func TestVerifyRequiredSignoffsRejectsEmptySignatureBag(t *testing.T) {
 		[]RequiredSignoff{{PublicKey: signer.publicKeyPEM, Path: "endpoints"}},
 		delta, "disp-1", nil,
 	)
-	want := []UnmetSignoff{{Path: "endpoints", Reason: "missing"}}
+	want := []UnmetSignoff{{Path: "endpoints", Reason: UnmetSignoffReasonMissing}}
 	if res.OK || !reflect.DeepEqual(res.Unmet, want) {
 		t.Fatalf("expected missing, got %+v", res)
+	}
+}
+
+func TestVerifyRequiredSignoffsMalformedConfiguredKeyIsConfigErrorNotInvalid(t *testing.T) {
+	signer := makeTestSigner(t)
+	delta := map[string]any{"endpoints": []any{map[string]any{"url": "x"}}}
+	sig := signer.sign(t, "disp-1", delta["endpoints"])
+	res := VerifyRequiredSignoffs(
+		[]RequiredSignoff{{PublicKey: "not a real PEM at all", Path: "endpoints"}},
+		delta, "disp-1", []string{sig},
+	)
+	want := []UnmetSignoff{{Path: "endpoints", Reason: UnmetSignoffReasonConfigError}}
+	if res.OK || !reflect.DeepEqual(res.Unmet, want) {
+		t.Fatalf("expected config_error (a malformed configured key is a node-config problem, not a bad signature), got %+v", res)
+	}
+	if !res.HasConfigError() {
+		t.Fatal("HasConfigError() = false, want true")
 	}
 }
 
@@ -79,7 +96,7 @@ func TestVerifyRequiredSignoffsRejectsSignatureOverDifferentValue(t *testing.T) 
 		[]RequiredSignoff{{PublicKey: signer.publicKeyPEM, Path: "endpoints"}},
 		delta, "disp-1", []string{sig},
 	)
-	want := []UnmetSignoff{{Path: "endpoints", Reason: "invalid"}}
+	want := []UnmetSignoff{{Path: "endpoints", Reason: UnmetSignoffReasonInvalid}}
 	if res.OK || !reflect.DeepEqual(res.Unmet, want) {
 		t.Fatalf("expected invalid, got %+v", res)
 	}
@@ -94,7 +111,7 @@ func TestVerifyRequiredSignoffsRejectsSignatureFromDifferentKey(t *testing.T) {
 		[]RequiredSignoff{{PublicKey: required.publicKeyPEM, Path: "endpoints"}},
 		delta, "disp-1", []string{sig},
 	)
-	want := []UnmetSignoff{{Path: "endpoints", Reason: "invalid"}}
+	want := []UnmetSignoff{{Path: "endpoints", Reason: UnmetSignoffReasonInvalid}}
 	if res.OK || !reflect.DeepEqual(res.Unmet, want) {
 		t.Fatalf("expected invalid, got %+v", res)
 	}
@@ -108,7 +125,7 @@ func TestVerifyRequiredSignoffsRejectsSignatureBoundToDifferentDispatchID(t *tes
 		[]RequiredSignoff{{PublicKey: signer.publicKeyPEM, Path: "endpoints"}},
 		delta, "disp-1", []string{sig},
 	)
-	want := []UnmetSignoff{{Path: "endpoints", Reason: "invalid"}}
+	want := []UnmetSignoff{{Path: "endpoints", Reason: UnmetSignoffReasonInvalid}}
 	if res.OK || !reflect.DeepEqual(res.Unmet, want) {
 		t.Fatalf("expected invalid, got %+v", res)
 	}
@@ -134,7 +151,7 @@ func TestVerifyRequiredSignoffsRequiresEveryKeyForMultiplePaths(t *testing.T) {
 	}
 
 	onlyOne := VerifyRequiredSignoffs(required, delta, "disp-1", []string{sigA})
-	want := []UnmetSignoff{{Path: "summary", Reason: "invalid"}}
+	want := []UnmetSignoff{{Path: "summary", Reason: UnmetSignoffReasonInvalid}}
 	if onlyOne.OK || !reflect.DeepEqual(onlyOne.Unmet, want) {
 		t.Fatalf("expected summary invalid, got %+v", onlyOne)
 	}
@@ -151,7 +168,7 @@ func TestVerifyRequiredSignoffsIsolatesPaths(t *testing.T) {
 		[]RequiredSignoff{{PublicKey: signer.publicKeyPEM, Path: "summary"}},
 		delta, "disp-1", []string{sigEndpoints},
 	)
-	want := []UnmetSignoff{{Path: "summary", Reason: "invalid"}}
+	want := []UnmetSignoff{{Path: "summary", Reason: UnmetSignoffReasonInvalid}}
 	if res.OK || !reflect.DeepEqual(res.Unmet, want) {
 		t.Fatalf("expected invalid, got %+v", res)
 	}
@@ -189,7 +206,7 @@ func TestVerifyRequiredSignoffsSupportsRootSignature(t *testing.T) {
 		[]RequiredSignoff{{PublicKey: signer.publicKeyPEM}},
 		delta, "disp-1", nil,
 	)
-	want := []UnmetSignoff{{Path: "$", Reason: "missing"}}
+	want := []UnmetSignoff{{Path: "$", Reason: UnmetSignoffReasonMissing}}
 	if missing.OK || !reflect.DeepEqual(missing.Unmet, want) {
 		t.Fatalf("expected root missing, got %+v", missing)
 	}

@@ -473,6 +473,10 @@ func (p *callbackToolProvider) callTool(name string, arguments json.RawMessage) 
 		if args.Token == "" || args.ErrorClass == "" {
 			return invalidParams("token and error_class are required")
 		}
+		if !errorClassDeclared(args.ErrorClass) {
+			return invalidParams(fmt.Sprintf(
+				"error_class %q is not in this executor's declared vocabulary", args.ErrorClass))
+		}
 		entry, errResult := lookup(args.Token, "report_error")
 		if errResult != nil {
 			return errResult, nil

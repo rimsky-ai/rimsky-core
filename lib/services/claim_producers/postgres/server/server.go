@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -344,10 +343,8 @@ func (s *Server) splitPartitionPolicy(ctx context.Context, _ parentClaimInfo, po
 }
 
 func classifyPartitionPolicyError(err error, policyName string) error {
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "params_schema") && strings.Contains(msg, "missing from request"),
-		strings.Contains(msg, "params_schema (ParamOrder) is empty"):
+	var ce *pgsstore.ClassedError
+	if errors.As(err, &ce) && ce.Class == pgsstore.PartitionPolicyInvalidRequestClass {
 		return status.Errorf(codes.InvalidArgument,
 			"postgres store: SplitScope partition_policy %q: %v", policyName, err)
 	}

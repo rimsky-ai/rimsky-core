@@ -169,17 +169,17 @@ type fakeValidation struct{}
 
 func (fakeValidation) Name() string             { return "fake-validation" }
 func (fakeValidation) SupportedRoles() []string { return []string{"claim_producer"} }
-func (fakeValidation) ValidateExecutor(context.Context, clientiface.ValidateExecutorInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
-	return nil, nil, nil
+func (fakeValidation) ValidateExecutor(context.Context, clientiface.ValidateExecutorInput) (clientiface.ValidationOutcome, error) {
+	return clientiface.ValidationOutcome{}, nil
 }
-func (fakeValidation) ValidateClaimProducer(context.Context, clientiface.ValidateClaimProducerInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
-	return nil, nil, nil
+func (fakeValidation) ValidateClaimProducer(context.Context, clientiface.ValidateClaimProducerInput) (clientiface.ValidationOutcome, error) {
+	return clientiface.ValidationOutcome{}, nil
 }
-func (fakeValidation) ValidatePublisher(context.Context, clientiface.ValidatePublisherInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
-	return nil, nil, nil
+func (fakeValidation) ValidatePublisher(context.Context, clientiface.ValidatePublisherInput) (clientiface.ValidationOutcome, error) {
+	return clientiface.ValidationOutcome{}, nil
 }
-func (fakeValidation) ValidateLifecycleSubscriber(context.Context, clientiface.ValidateLifecycleSubscriberInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
-	return nil, nil, nil
+func (fakeValidation) ValidateLifecycleSubscriber(context.Context, clientiface.ValidateLifecycleSubscriberInput) (clientiface.ValidationOutcome, error) {
+	return clientiface.ValidationOutcome{}, nil
 }
 
 type fakeDataProcessing struct{}

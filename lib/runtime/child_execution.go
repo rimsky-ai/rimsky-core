@@ -238,8 +238,18 @@ func SettleFromDelegate(
 	}
 	var fanoutPC postCommitFn
 	if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
-		if inst, err := instTbl.Get(ctx, exitScope.InstanceID, tx); err == nil && inst != nil {
-			if tpl, err := tplTbl.GetByHash(ctx, inst.TemplateHash, tx); err == nil && tpl != nil {
+		inst, err := instTbl.Get(ctx, exitScope.InstanceID, tx)
+		if err != nil && args.Logger != nil {
+			args.Logger.Warn("SettleFromDelegate: instance lookup failed; subgraph_exit fan-out skipped",
+				"instance_id", exitScope.InstanceID.String(), "error", err.Error())
+		}
+		if err == nil && inst != nil {
+			tpl, err := tplTbl.GetByHash(ctx, inst.TemplateHash, tx)
+			if err != nil && args.Logger != nil {
+				args.Logger.Warn("SettleFromDelegate: template lookup failed; subgraph_exit fan-out skipped",
+					"template_hash", inst.TemplateHash, "error", err.Error())
+			}
+			if err == nil && tpl != nil {
 				fanoutPC = fanOutRunScopeEventPostCommit(args, tpl.Spec, exit.RunScopeID,
 					exitScope.InstanceID, "subgraph_exit")
 			}
@@ -460,8 +470,18 @@ func SettleFromFanoutChild(
 				return nil, fmt.Errorf("SettleFromFanoutChild: close partition scope %s: %w", childRun.RunScopeID, err)
 			}
 			if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
-				if inst, err := instTbl.Get(ctx, childScope.InstanceID, tx); err == nil && inst != nil {
-					if tpl, err := tplTbl.GetByHash(ctx, inst.TemplateHash, tx); err == nil && tpl != nil {
+				inst, err := instTbl.Get(ctx, childScope.InstanceID, tx)
+				if err != nil && args.Logger != nil {
+					args.Logger.Warn("SettleFromFanoutChild: instance lookup failed; fanout_partition_terminal fan-out skipped",
+						"instance_id", childScope.InstanceID.String(), "error", err.Error())
+				}
+				if err == nil && inst != nil {
+					tpl, err := tplTbl.GetByHash(ctx, inst.TemplateHash, tx)
+					if err != nil && args.Logger != nil {
+						args.Logger.Warn("SettleFromFanoutChild: template lookup failed; fanout_partition_terminal fan-out skipped",
+							"template_hash", inst.TemplateHash, "error", err.Error())
+					}
+					if err == nil && tpl != nil {
 						post = chainPostCommit(post, fanOutRunScopeEventPostCommit(args, tpl.Spec,
 							childRun.RunScopeID, childScope.InstanceID, "fanout_partition_terminal"))
 					}

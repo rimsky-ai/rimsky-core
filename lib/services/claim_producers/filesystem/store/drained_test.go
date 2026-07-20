@@ -139,7 +139,7 @@ func TestOnDrain_SweepClearsDrained(t *testing.T) {
 	}
 
 	ageInProgressEntry(t, root, "@r")
-	must(t, st.sweepOnce())
+	st.sweepOnce()
 	if _, err := os.Stat(drainedPathFor(root, "@r")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("drained should be cleared by sweep reclaim; stat err = %v", err)
 	}

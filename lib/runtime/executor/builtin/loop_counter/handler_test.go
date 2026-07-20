@@ -79,9 +79,9 @@ func TestExecute_SchemaViolationsReturnError(t *testing.T) {
 			if errOut == nil {
 				t.Fatalf("expected Error outcome, got %T", outcome.GetOutcome())
 			}
-			if errOut.GetErrorClass() != "attributes_schema_invalid" {
+			if errOut.GetErrorClass() != AttributesSchemaFailedClass {
 				t.Errorf("Error.ErrorClass = %q, want %q",
-					errOut.GetErrorClass(), "attributes_schema_invalid")
+					errOut.GetErrorClass(), AttributesSchemaFailedClass)
 			}
 		})
 	}

@@ -534,21 +534,28 @@ func (c *CallbackServer) runArgs(supervisorID string, storeRegistry *locks.Regis
 
 func (c *CallbackServer) findCanonicalSuccessor(ctx context.Context, ac AsyncContext) *shared.UUID {
 	var successor *shared.UUID
-	_ = c.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := c.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		row, err := c.Persist.Nodes().GetRunByDispatchIDForUpdate(ctx, ac.NodeRunID, tx)
-		if err != nil || row == nil {
+		if err != nil {
+			return err
+		}
+		if row == nil {
 			return nil
 		}
 		nextID, ok, err := c.Queue.GetInFlightRunForNode(ctx, tx, row.NodeID, row.RunScopeID)
-		if err != nil || !ok {
-			return nil
+		if err != nil {
+			return err
 		}
-		if nextID == ac.NodeRunID {
+		if !ok || nextID == ac.NodeRunID {
 			return nil
 		}
 		successor = &nextID
 		return nil
-	})
+	}); err != nil && c.Logger != nil {
+		c.Logger.Warn("callback: findCanonicalSuccessor lookup failed; current_dispatch_id omitted from ack",
+			"node_run_id", ac.NodeRunID.String(),
+			"error", err.Error())
+	}
 	return successor
 }
 
@@ -671,7 +678,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 	}
 
 	scope := resolveAcqScope(ctx, args, acq)
-	terminalSig := signalForTerminal(args, t)
+	terminalSig := signalForTerminal(args, acq, t)
 	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
 		InstanceID:       acq.InstanceID,
 		NodeID:           acq.NodeID,

@@ -184,11 +184,15 @@ func substituteFanOutPartitionRequest(
 		}
 		claims[alias] = held
 	}
+	instanceParams, err := instanceParamsRaw(out)
+	if err != nil {
+		return nil, fmt.Errorf("substituteFanOutPartitionRequest: marshal instance params: %w", err)
+	}
 	resolveCtx, err := buildResolveContextForAcquisition(
 		ctx, args, tx,
 		frameID, out.NodeRunID,
 		out.TemplateHash,
-		instanceParamsRaw(out),
+		instanceParams,
 		claims,
 	)
 	if err != nil {
@@ -208,15 +212,15 @@ func substituteFanOutPartitionRequest(
 	return b, nil
 }
 
-func instanceParamsRaw(out *acquisition) json.RawMessage {
+func instanceParamsRaw(out *acquisition) (json.RawMessage, error) {
 	if out == nil || len(out.InstanceParams) == 0 {
-		return nil
+		return nil, nil
 	}
 	b, err := json.Marshal(out.InstanceParams)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return b
+	return b, nil
 }
 
 // @concept: executor

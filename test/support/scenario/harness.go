@@ -166,6 +166,14 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		Clock:    clock,
 	}
 
+	lateBindProxies := opts.LateBindServiceProxies
+	peersForSpec := func(tplSpec node.TemplateSpec) []string {
+		return controlapi.LifecyclePeersForSpec(
+			controlapi.AppDeps{LateBindServiceProxies: lateBindProxies},
+			tplSpec,
+		)
+	}
+
 	if !opts.NoScheduler {
 		sh, err := config.StartScheduler(config.SchedulerConfig{
 			Driver:                driver,
@@ -176,6 +184,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			ClaimProducers:        opts.ClaimProducers,
 			NamedLocks:            opts.NamedLocks,
 			SupervisorID:          "scenario-scheduler",
+			LifecyclePeersForSpec: peersForSpec,
 		})
 		if err != nil {
 			t.Fatalf("scenario: start scheduler: %v", err)
@@ -206,17 +215,6 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			Endpoint:  ep.URL,
 			TLS:       ep.TLS,
 			Protocols: protocols,
-		}
-	}
-
-	var peersForSpec func(node.TemplateSpec) []string
-	if len(opts.LateBindServiceProxies) > 0 {
-		lateBindProxies := opts.LateBindServiceProxies
-		peersForSpec = func(tplSpec node.TemplateSpec) []string {
-			return controlapi.LifecyclePeersForSpec(
-				controlapi.AppDeps{LateBindServiceProxies: lateBindProxies},
-				tplSpec,
-			)
 		}
 	}
 
@@ -605,7 +603,9 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID) {
             WHERE n.instance_id = $1
               AND n.node_type != ''
         `, instanceID).Scan(&count)
-		if err == nil && count > 0 {
+		if err != nil {
+			h.T.Logf("waitForRootDispatch: dispatch-count probe failed; retrying next tick: %v", err)
+		} else if count > 0 {
 			return
 		}
 		if h.Scheduler == nil {
@@ -618,15 +618,23 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID) {
 func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	h.T.Helper()
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil)
+	if err := frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil); err != nil {
+		h.T.Logf("driveFrameAndEnqueue: frame.RunTick (pre-sweep) failed; retrying next tick: %v", err)
+	}
 	// @decision: empty-message-as-root-trigger
-	_ = runtime.SweepDeliverMessagesForRunningFrames(h.Ctx, h.Persist,
-		shared.SilentLogger{}, time.Now())
-	_, _ = scheduler.ProcessPureCascade(h.Ctx, scheduler.PureCascadeArgs{
+	if err := runtime.SweepDeliverMessagesForRunningFrames(h.Ctx, h.Persist,
+		shared.SilentLogger{}, time.Now()); err != nil {
+		h.T.Logf("driveFrameAndEnqueue: SweepDeliverMessagesForRunningFrames failed; retrying next tick: %v", err)
+	}
+	if _, err := scheduler.ProcessPureCascade(h.Ctx, scheduler.PureCascadeArgs{
 		Persist: h.Persist, Queue: h.Queue, Clock: shared.SystemClock{},
 		Logger: shared.SilentLogger{},
-	})
-	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil)
+	}); err != nil {
+		h.T.Logf("driveFrameAndEnqueue: ProcessPureCascade failed; retrying next tick: %v", err)
+	}
+	if err := frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil); err != nil {
+		h.T.Logf("driveFrameAndEnqueue: frame.RunTick (post-cascade) failed; retrying next tick: %v", err)
+	}
 	var (
 		rows           []persistence.NodeRow
 		runningFrameID *shared.UUID
@@ -644,6 +652,7 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 		runningFrameID = fr
 		return nil
 	}); err != nil {
+		h.T.Logf("driveFrameAndEnqueue: seed lookup (ready-for-dispatch nodes / running frame) failed; retrying next tick: %v", err)
 		return
 	}
 	if runningFrameID == nil {
@@ -653,13 +662,15 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 		if n.InstanceID != instanceID {
 			continue
 		}
-		_ = h.Queue.Enqueue(h.Ctx, persistence.DispatchRequest{
+		if err := h.Queue.Enqueue(h.Ctx, persistence.DispatchRequest{
 			NodeID:                 n.ID,
 			ExecutorName:           n.Executor,
 			RequiredClaimProducers: []string{},
 			EnqueuedAt:             time.Now(),
 			FrameID:                *runningFrameID,
-		})
+		}); err != nil {
+			h.T.Logf("driveFrameAndEnqueue: Enqueue node %s failed; retrying next tick: %v", n.ID.String(), err)
+		}
 	}
 }
 

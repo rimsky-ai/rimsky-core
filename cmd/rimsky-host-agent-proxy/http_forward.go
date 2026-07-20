@@ -16,6 +16,7 @@ import (
 	"time"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
 const (
@@ -57,9 +58,7 @@ func (f *httpForwarder) handle(agent *agentConnection, fwd *genv1.LocalHttpForwa
 		f.reply(agent, fwd.GetForwardId(), http.StatusBadGateway, []byte(err.Error()), nil)
 		return
 	}
-	for k, v := range fwd.GetHeaders() {
-		req.Header.Set(k, v)
-	}
+	hostagent.ApplyJoinedHeaders(req.Header, fwd.GetHeaders())
 
 	resp, err := f.client.Do(req)
 	if err != nil {
@@ -70,10 +69,7 @@ func (f *httpForwarder) handle(agent *agentConnection, fwd *genv1.LocalHttpForwa
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxForwardResponseBytes))
-	headers := map[string]string{}
-	for k := range resp.Header {
-		headers[k] = resp.Header.Get(k)
-	}
+	headers := hostagent.JoinHeaderValues(resp.Header)
 	f.reply(agent, fwd.GetForwardId(), resp.StatusCode, body, headers)
 }
 

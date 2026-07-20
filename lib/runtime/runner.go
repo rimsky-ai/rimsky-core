@@ -239,7 +239,7 @@ func RunNode(
 	}
 
 	scope := resolveAcqScope(ctx, args, &acq)
-	terminalSig := signalForTerminal(args, terminal)
+	terminalSig := signalForTerminal(args, &acq, terminal)
 	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
 		InstanceID:       acq.InstanceID,
 		NodeID:           acq.NodeID,

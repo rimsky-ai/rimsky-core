@@ -26,13 +26,11 @@ func (s *Store) RunSweep(ctx context.Context, interval time.Duration) {
 			return
 		case <-t.C:
 		}
-		if err := s.sweepOnce(); err != nil {
-			slog.Warn("filesystem store: sweep", "error", err.Error())
-		}
+		s.sweepOnce()
 	}
 }
 
-func (s *Store) sweepOnce() error {
+func (s *Store) sweepOnce() {
 	for selector, pp := range s.pickPolicies {
 		if pp.VisibilityTimeout <= 0 {
 			continue
@@ -76,5 +74,4 @@ func (s *Store) sweepOnce() error {
 			removeDrainedIfPresent(state)
 		}
 	}
-	return nil
 }

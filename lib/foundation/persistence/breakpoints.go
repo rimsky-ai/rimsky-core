@@ -84,7 +84,7 @@ type BreakpointHitTable interface {
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*BreakpointHitRow, error)
 	ListSinceForInstance(ctx context.Context, instanceID shared.UUID, sinceSeq int64, limit int, tx Tx) ([]BreakpointHitRow, error)
 	ListSinceForBreakpoint(ctx context.Context, bpID shared.UUID, sinceSeq int64, limit int, tx Tx) ([]BreakpointHitRow, error)
-	Resume(ctx context.Context, id shared.UUID, byKey string, overlay map[string]any, tx Tx) error
+	Resume(ctx context.Context, id shared.UUID, byKey string, overlay map[string]any, tx Tx) (resumed bool, err error)
 	AutoResumeStale(ctx context.Context, now time.Time, tx Tx) (int, error)
 	DropOldest(ctx context.Context, bpID shared.UUID, keepCount int, tx Tx) (int, error)
 	UnresumedCount(ctx context.Context, bpID shared.UUID, tx Tx) (int, error)

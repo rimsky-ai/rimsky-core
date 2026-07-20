@@ -52,7 +52,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		return nil
 	}
 
-	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return sb.Events().Append(ctx, persistence.EventAppendInput{
 			InstanceID: &target.InstanceID,
 			NodeID:     &args.TargetNodeID,
@@ -63,7 +63,12 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 				"target_node_id": args.TargetNodeID.String(),
 			},
 		}, tx)
-	})
+	}); err != nil {
+		log.Warn("RecalculateNode: message_received audit event append failed",
+			"node_id", args.TargetNodeID.String(),
+			"source_node_id", sourceStr,
+			"error", err.Error())
+	}
 
 	if target.Executor == "" {
 		return nil

@@ -111,6 +111,11 @@ func LoadOptsFromEnv() (Opts, error) {
 		return Opts{}, fmt.Errorf("admin_port is required when pick_policies is configured")
 	}
 
+	grpcPort, err := agentport.Override(cfg.GRPCPort)
+	if err != nil {
+		return Opts{}, err
+	}
+
 	return Opts{
 		Configured:       true,
 		Root:             cfg.Root,
@@ -120,7 +125,7 @@ func LoadOptsFromEnv() (Opts, error) {
 		EnableLifecycle:  cfg.EnableLifecycle,
 		LedgerMaxRecords: cfg.LedgerMaxRecords,
 		Host:             host,
-		GRPCPort:         agentport.Override(cfg.GRPCPort),
+		GRPCPort:         grpcPort,
 		HTTPPort:         cfg.HTTPPort,
 		AdminPort:        cfg.AdminPort,
 	}, nil

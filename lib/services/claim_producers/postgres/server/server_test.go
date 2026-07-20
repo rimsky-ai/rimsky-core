@@ -297,3 +297,21 @@ func TestSplitScope_PartitionPolicyShape(t *testing.T) {
 		t.Errorf("PartitionKey=item-other should not be present (filtered by status=open)")
 	}
 }
+
+func TestClassifyPartitionPolicyError_ClassifiesByTypeNotMessageText(t *testing.T) {
+	invalidReq := &pgsstore.ClassedError{
+		Class: pgsstore.PartitionPolicyInvalidRequestClass,
+		Err:   fmt.Errorf("policy supplies 1 params but params_schema (ParamOrder) is empty"),
+	}
+	got := classifyPartitionPolicyError(invalidReq, "my-policy")
+	if status.Code(got) != codes.InvalidArgument {
+		t.Fatalf("Code = %v, want InvalidArgument for a %s-classed error", status.Code(got), pgsstore.PartitionPolicyInvalidRequestClass)
+	}
+
+	otherErr := fmt.Errorf("policy supplies 1 params but params_schema (ParamOrder) is empty")
+	got = classifyPartitionPolicyError(otherErr, "my-policy")
+	if status.Code(got) != codes.Internal {
+		t.Fatalf("Code = %v, want Internal for an error carrying the same prose but no ClassedError type",
+			status.Code(got))
+	}
+}

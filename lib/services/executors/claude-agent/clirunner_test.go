@@ -6,10 +6,12 @@ package claudeagent
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -518,6 +520,79 @@ exit 0
 		}
 		if !strings.Contains(filepath.Base(filepath.Dir(line)), "rimsky-cli-") {
 			t.Fatalf("%s %q is not under a fresh rimsky-cli-* run directory", marker, line)
+		}
+	}
+}
+
+type presetChunkReader struct {
+	ch <-chan []byte
+}
+
+func (r *presetChunkReader) Read(buf []byte) (int, error) {
+	chunk, ok := <-r.ch
+	if !ok {
+		return 0, io.EOF
+	}
+	return copy(buf, chunk), nil
+}
+
+func TestRegisterStreamConcurrentWithPump_NeverReordersChunks(t *testing.T) {
+	const iterations = 300
+	const chunks = 50
+
+	for iter := 0; iter < iterations; iter++ {
+		h := &realCliHandle{}
+		ch := make(chan []byte, chunks)
+		for i := 0; i < chunks; i++ {
+			ch <- []byte(strconv.Itoa(i))
+		}
+		close(ch)
+		reader := &presetChunkReader{ch: ch}
+
+		var mu sync.Mutex
+		var received []int
+		record := func(chunk string) {
+			n, err := strconv.Atoi(chunk)
+			if err != nil {
+				t.Errorf("iteration %d: non-numeric chunk %q delivered to callback", iter, chunk)
+				return
+			}
+			mu.Lock()
+			received = append(received, n)
+			mu.Unlock()
+		}
+
+		var pumps sync.WaitGroup
+		pumps.Add(2)
+		var starters sync.WaitGroup
+		starters.Add(2)
+		start := make(chan struct{})
+		go func() {
+			starters.Done()
+			<-start
+			h.pump(reader, &h.stdoutCbs, &h.stdoutHist, &pumps)
+		}()
+		go func() {
+			defer pumps.Done()
+			starters.Done()
+			<-start
+			h.registerStream(&h.stdoutCbs, &h.stdoutHist, record)
+		}()
+		starters.Wait()
+		close(start)
+		pumps.Wait()
+
+		mu.Lock()
+		got := append([]int{}, received...)
+		mu.Unlock()
+		if len(got) != chunks {
+			t.Fatalf("iteration %d: delivered %d chunks, want %d (no chunk may be lost or duplicated): %v",
+				iter, len(got), chunks, got)
+		}
+		for i := 1; i < len(got); i++ {
+			if got[i] <= got[i-1] {
+				t.Fatalf("iteration %d: chunks delivered out of order: %v", iter, got)
+			}
 		}
 	}
 }

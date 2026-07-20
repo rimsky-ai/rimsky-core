@@ -93,9 +93,13 @@ func LoadOptsFromEnv() (Opts, error) {
 	if err != nil {
 		return Opts{}, err
 	}
+	grpcPort, err = agentport.Override(grpcPort)
+	if err != nil {
+		return Opts{}, err
+	}
 	opts := Opts{
 		Host:                    envOr("RIMSKY_EXECUTOR_HOST", "0.0.0.0"),
-		GrpcPort:                agentport.Override(grpcPort),
+		GrpcPort:                grpcPort,
 		HTTPPort:                httpPort,
 		CallbackHost:            envOr("RIMSKY_EXECUTOR_CALLBACK_HOST", "127.0.0.1"),
 		SilenceTimeoutMsDefault: silenceMs,

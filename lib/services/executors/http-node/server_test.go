@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -658,5 +660,21 @@ func TestExecute_ProbeCancelSignalsObservedThenAcknowledgedAndSurfacesCanceled(t
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestErroredOutcome_InvalidUTF8MessageIsSanitizedNotDropped(t *testing.T) {
+	invalid := "truncated body: \xff\xfe not valid utf-8"
+	outcome := execoutcome.Errored("http/transport_err", invalid)
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Outcome_Error, got %T", outcome.GetOutcome())
+	}
+	got := errOut.GetPayload().AsMap()["message"]
+	if got == nil || got == "" {
+		t.Fatalf("payload[message] must not be dropped for an invalid-UTF-8 message; got %v", got)
+	}
+	if !strings.Contains(fmt.Sprint(got), "truncated body") {
+		t.Fatalf("payload[error] = %v, want it to still carry the readable prefix of the diagnostic", got)
 	}
 }

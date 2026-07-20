@@ -131,13 +131,13 @@ func (b *breakpointHitsImpl) ListSinceForBreakpoint(ctx context.Context, bpID sh
 	return scanSqliteBreakpointHits(rows)
 }
 
-func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey string, overlay map[string]any, tx persistence.Tx) error {
+func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey string, overlay map[string]any, tx persistence.Tx) (bool, error) {
 	ex := b.q(tx)
 	var overlayArg any
 	if overlay != nil {
 		bb, err := json.Marshal(overlay)
 		if err != nil {
-			return fmt.Errorf("sqlite.breakpointHits.resume: marshal overlay: %w", err)
+			return false, fmt.Errorf("sqlite.breakpointHits.resume: marshal overlay: %w", err)
 		}
 		overlayArg = string(bb)
 	}
@@ -148,25 +148,25 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 		  WHERE id = ? AND resumed_at IS NULL`,
 		nowStr, byKey, overlayArg, id.String())
 	if err != nil {
-		return fmt.Errorf("sqlite.breakpointHits.resume: %w", err)
+		return false, fmt.Errorf("sqlite.breakpointHits.resume: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("sqlite.breakpointHits.resume.rowsAffected: %w", err)
+		return false, fmt.Errorf("sqlite.breakpointHits.resume.rowsAffected: %w", err)
 	}
 	if n == 1 {
-		return nil
+		return true, nil
 	}
 	var resumedAt sql.NullString
 	err = ex.QueryRowContext(ctx,
 		`SELECT resumed_at FROM rimsky_breakpoint_hits WHERE id = ?`, id.String()).Scan(&resumedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return shared.ErrBreakpointHitNotFound
+			return false, shared.ErrBreakpointHitNotFound
 		}
-		return fmt.Errorf("sqlite.breakpointHits.resume.probe: %w", err)
+		return false, fmt.Errorf("sqlite.breakpointHits.resume.probe: %w", err)
 	}
-	return nil
+	return false, nil
 }
 
 func (b *breakpointHitsImpl) AutoResumeStale(ctx context.Context, now time.Time, tx persistence.Tx) (int, error) {

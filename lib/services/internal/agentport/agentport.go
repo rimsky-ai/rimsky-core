@@ -5,38 +5,51 @@
 package agentport
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 )
 
 const EnvVar = "RIMSKY_AGENT_PORT"
 
-func Resolve(fallbackEnvVar string, def int) int {
-	return Override(intEnvOr(fallbackEnvVar, def))
-}
-
-func Override(fallback int) int {
-	if v, ok := intEnv(EnvVar); ok {
-		return v
+func Resolve(fallbackEnvVar string, def int) (int, error) {
+	base, err := intEnvOr(fallbackEnvVar, def)
+	if err != nil {
+		return 0, err
 	}
-	return fallback
+	return Override(base)
 }
 
-func intEnvOr(name string, def int) int {
-	if v, ok := intEnv(name); ok {
-		return v
+func Override(fallback int) (int, error) {
+	v, ok, err := intEnv(EnvVar)
+	if err != nil {
+		return 0, err
 	}
-	return def
+	if ok {
+		return v, nil
+	}
+	return fallback, nil
 }
 
-func intEnv(name string) (int, bool) {
+func intEnvOr(name string, def int) (int, error) {
+	v, ok, err := intEnv(name)
+	if err != nil {
+		return 0, err
+	}
+	if ok {
+		return v, nil
+	}
+	return def, nil
+}
+
+func intEnv(name string) (int, bool, error) {
 	raw := os.Getenv(name)
 	if raw == "" {
-		return 0, false
+		return 0, false, nil
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
-		return 0, false
+		return 0, false, fmt.Errorf("%s=%q is not a valid integer port", name, raw)
 	}
-	return n, true
+	return n, true, nil
 }

@@ -109,7 +109,8 @@ func listHitsForBreakpoint(t *testing.T, ctx context.Context, tables persistence
 func resumeHit(t *testing.T, ctx context.Context, tables persistence.Tables, hitID shared.UUID, overlay map[string]any) {
 	t.Helper()
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return tables.BreakpointHits().Resume(ctx, hitID, "test-resumer", overlay, tx)
+		_, err := tables.BreakpointHits().Resume(ctx, hitID, "test-resumer", overlay, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("resume hit: %v", err)
 	}

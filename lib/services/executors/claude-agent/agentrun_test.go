@@ -347,6 +347,59 @@ func TestRunAgentSignoffGateRejectsThenAccepts(t *testing.T) {
 	}
 }
 
+func TestRunAgentSignoffGateMisconfiguredKeyFailsImmediatelyAsAttributeInvalid(t *testing.T) {
+	runner := &fakeRunner{spawnHandles: []*fakeHandle{newFakeHandle(true)}}
+	opts := baseRunOpts(runner)
+	opts.CliConfig = &CliConfig{
+		RequiredSignoffs: []RequiredSignoff{{PublicKey: "not a real PEM at all", Path: "endpoints"}},
+	}
+	done := make(chan AgentOutcome, 1)
+	go func() { done <- RunAgent(opts) }()
+
+	req := runner.waitForSpawn(t)
+	client, token := mcpClientFor(t, req)
+
+	result, _ := client.callTool("report_complete",
+		fmt.Sprintf(`{"token":%q,"attributes_delta":{"endpoints":[{"url":"x"}]},"changed":true,"signoffs":["AA=="]}`, token))
+	if client.firstText(result) != `{"status":"accepted"}` {
+		t.Fatalf("a misconfigured signoff key can never be satisfied by any signature; "+
+			"the FIRST report_complete must be accepted as terminal (no retry prompt), got %q", client.firstText(result))
+	}
+
+	outcome := <-done
+	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/attribute_invalid" {
+		t.Fatalf("outcome = %+v, want OutcomeErrored/agent/attribute_invalid "+
+			"(a node-config error, not agent/signoff_unobtained which implies the agent could have fixed it by re-signing)", outcome)
+	}
+}
+
+func TestRunAgentReportErrorRejectsUndeclaredErrorClass(t *testing.T) {
+	runner := &fakeRunner{spawnHandles: []*fakeHandle{newFakeHandle(true)}}
+	opts := baseRunOpts(runner)
+	done := make(chan AgentOutcome, 1)
+	go func() { done <- RunAgent(opts) }()
+	req := runner.waitForSpawn(t)
+	client, token := mcpClientFor(t, req)
+
+	_, rpcErr := client.callTool("report_error",
+		fmt.Sprintf(`{"token":%q,"error_class":"not_a_declared_class"}`, token))
+	if rpcErr == nil {
+		t.Fatal("expected a JSON-RPC error rejecting the undeclared error_class, got nil")
+	}
+	if !strings.Contains(rpcErr.Message, "not_a_declared_class") {
+		t.Fatalf("expected rejection message to name the undeclared class, got %q", rpcErr.Message)
+	}
+
+	if _, rpcErr := client.callTool("report_error",
+		fmt.Sprintf(`{"token":%q,"error_class":"agent/subprocess_exit/before_complete"}`, token)); rpcErr != nil {
+		t.Fatalf("rpc error: %+v", rpcErr)
+	}
+	outcome := <-done
+	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/subprocess_exit/before_complete" {
+		t.Fatalf("outcome = %+v, want a declared wildcard-matched error_class to be accepted", outcome)
+	}
+}
+
 func TestRunAgentBlockedAndParkViaMcp(t *testing.T) {
 	runner := &fakeRunner{spawnHandles: []*fakeHandle{newFakeHandle(true), newFakeHandle(true)}}
 	opts := baseRunOpts(runner)

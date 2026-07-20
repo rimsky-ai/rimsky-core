@@ -65,12 +65,12 @@ func RunValidationPipeline(
 		if !ok || !clientAdvertisesRole(client, "publisher") {
 			continue
 		}
-		errs, warns, err := client.ValidatePublisher(ctx, ValidatePublisherInput{
+		res, err := client.ValidatePublisher(ctx, ValidatePublisherInput{
 			PublisherName:  publisher.Name,
 			Kind:           publisher.Kind,
 			ResolvedConfig: publisher.Config,
 		})
-		appendFindings(&out, client.Name(), "publisher", "", errs, warns, err, policy)
+		appendFindings(&out, client.Name(), "publisher", "", res.Errors, res.Warnings, err, policy)
 	}
 
 	runLifecycleSubscriberRoleChecks(ctx, reg, policy, templateID, &out)
@@ -86,11 +86,11 @@ func runLifecycleSubscriberRoleChecks(
 		if !clientAdvertisesRole(client, "lifecycle_subscriber") {
 			continue
 		}
-		errs, warns, err := client.ValidateLifecycleSubscriber(ctx, ValidateLifecycleSubscriberInput{
+		res, err := client.ValidateLifecycleSubscriber(ctx, ValidateLifecycleSubscriberInput{
 			SubscriberName: client.Name(),
 			TemplateID:     templateID,
 		})
-		appendFindings(out, client.Name(), "lifecycle_subscriber", "", errs, warns, err, policy)
+		appendFindings(out, client.Name(), "lifecycle_subscriber", "", res.Errors, res.Warnings, err, policy)
 	}
 }
 
@@ -138,12 +138,12 @@ func runExecutorRoleCheck(
 	for alias := range n.Holds {
 		aliases = append(aliases, alias)
 	}
-	errs, warns, err := client.ValidateExecutor(ctx, ValidateExecutorInput{
+	res, err := client.ValidateExecutor(ctx, ValidateExecutorInput{
 		NodeAlias:        n.Type,
 		AttributesSchema: attrsBytes,
 		ClaimAliases:     aliases,
 	})
-	appendFindings(out, client.Name(), "executor", n.Type, errs, warns, err, policy)
+	appendFindings(out, client.Name(), "executor", n.Type, res.Errors, res.Warnings, err, policy)
 	return nil
 }
 
@@ -174,11 +174,11 @@ func runClaimProducerRoleChecks(
 				Data:       s.Data,
 			})
 		}
-		errs, warns, err := client.ValidateClaimProducer(ctx, ValidateClaimProducerInput{
+		res, err := client.ValidateClaimProducer(ctx, ValidateClaimProducerInput{
 			ProducerName: producer,
 			Claims:       bindings,
 		})
-		appendFindings(out, client.Name(), "claim_producer", n.Type, errs, warns, err, policy)
+		appendFindings(out, client.Name(), "claim_producer", n.Type, res.Errors, res.Warnings, err, policy)
 	}
 	return nil
 }

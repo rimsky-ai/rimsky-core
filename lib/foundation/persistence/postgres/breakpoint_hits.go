@@ -129,13 +129,13 @@ func (b *breakpointHitsImpl) ListSinceForBreakpoint(ctx context.Context, bpID sh
 	return scanBreakpointHits(rows)
 }
 
-func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey string, overlay map[string]any, tx persistence.Tx) error {
+func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey string, overlay map[string]any, tx persistence.Tx) (bool, error) {
 	ex := b.q(tx)
 	var overlayBytes []byte
 	if overlay != nil {
 		bb, err := json.Marshal(overlay)
 		if err != nil {
-			return fmt.Errorf("breakpointHits.resume: marshal overlay: %w", err)
+			return false, fmt.Errorf("breakpointHits.resume: marshal overlay: %w", err)
 		}
 		overlayBytes = bb
 	}
@@ -149,22 +149,21 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 		  WHERE id = $1 AND resumed_at IS NULL`,
 		id, byKey, overlayArg)
 	if err != nil {
-		return fmt.Errorf("breakpointHits.resume: %w", err)
+		return false, fmt.Errorf("breakpointHits.resume: %w", err)
 	}
 	if tag.RowsAffected() == 1 {
-		return nil
+		return true, nil
 	}
 	var resumedAt *time.Time
 	err = ex.QueryRow(ctx,
 		`SELECT resumed_at FROM rimsky_breakpoint_hits WHERE id = $1`, id).Scan(&resumedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return shared.ErrBreakpointHitNotFound
+			return false, shared.ErrBreakpointHitNotFound
 		}
-		return fmt.Errorf("breakpointHits.resume.probe: %w", err)
+		return false, fmt.Errorf("breakpointHits.resume.probe: %w", err)
 	}
-	_ = resumedAt
-	return nil
+	return false, nil
 }
 
 func (b *breakpointHitsImpl) AutoResumeStale(ctx context.Context, now time.Time, tx persistence.Tx) (int, error) {

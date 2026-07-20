@@ -58,7 +58,14 @@ func declaredMessageTypesForTemplate(
 		return nil
 	}
 	row, err := args.Persist.Templates().GetByHash(ctx, templateHash, tx)
-	if err != nil || row == nil {
+	if err != nil {
+		if args.Logger != nil {
+			args.Logger.Warn("declaredMessageTypesForTemplate: template lookup failed; messages-registry check disabled for this call",
+				"template_hash", templateHash, "error", err.Error())
+		}
+		return nil
+	}
+	if row == nil {
 		return nil
 	}
 	set := make(map[string]struct{}, len(row.Spec.Messages)+1)

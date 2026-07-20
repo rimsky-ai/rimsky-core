@@ -44,7 +44,7 @@ func TestOrphanedClaim(t *testing.T) {
 		}, tx)
 	}))
 
-	waitForClaimHandleReaped(h, lockHolderID)
+	waitForClaimHandleReaped(t, h, lockHolderID)
 
 	nid := n.ID
 	var evs persistence.EventListResult
@@ -97,14 +97,17 @@ func TestOrphanedClaimActiveRowsAlwaysHaveHolder(t *testing.T) {
 			"dead code as long as this constraint holds — an active row can never lack a holder")
 }
 
-func waitForClaimHandleReaped(h *scenario.Harness, id uuid.UUID) {
+func waitForClaimHandleReaped(t *testing.T, h *scenario.Harness, id uuid.UUID) {
+	t.Helper()
 	for {
 		var got *persistence.ClaimHandleRow
-		_ = h.InTx(func(tx persistence.Tx) error {
+		if err := h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.ClaimHandles().Get(h.Ctx, id, tx)
 			got = r
 			return err
-		})
+		}); err != nil {
+			t.Fatalf("waitForClaimHandleReaped: probe failed: %v", err)
+		}
 		if got == nil {
 			return
 		}

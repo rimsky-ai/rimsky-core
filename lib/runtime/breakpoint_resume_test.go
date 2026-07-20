@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -189,6 +190,59 @@ func TestValidateAndPersistResume_IdempotentReplay(t *testing.T) {
 	}
 	if res.FirstResume {
 		t.Errorf("FirstResume on replay: got true want false")
+	}
+}
+
+func TestValidateAndPersistResume_ConcurrentFirstResumeExactlyOneWins(t *testing.T) {
+	const racers = 8
+
+	ctx := context.Background()
+	tables := openInMemoryTables(t)
+	instanceID, bpID := seedBreakpointResumeFixture(t, ctx, tables)
+	hitID := createHitWithSnapshot(t, ctx, tables, bpID, instanceID, map[string]any{
+		"dispatch_context": map[string]any{
+			"merged_attributes": map[string]any{},
+		},
+	})
+
+	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
+
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	firstResume := make([]bool, racers)
+	errs := make(chan error, racers)
+	ready.Add(racers)
+	done.Add(racers)
+	for i := 0; i < racers; i++ {
+		go func(idx int) {
+			defer done.Done()
+			ready.Done()
+			<-start
+			overlay := map[string]any{"racer": idx}
+			res, err := runtime.ValidateAndPersistResume(ctx, args, hitID, overlay, "racer")
+			if err != nil {
+				errs <- err
+				return
+			}
+			firstResume[idx] = res.FirstResume
+		}(i)
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent resume: %v", err)
+	}
+
+	winners := 0
+	for _, r := range firstResume {
+		if r {
+			winners++
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("concurrent first-resume: got %d winners want exactly 1 (firstResume=%v)", winners, firstResume)
 	}
 }
 

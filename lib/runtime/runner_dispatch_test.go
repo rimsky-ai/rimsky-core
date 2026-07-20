@@ -21,6 +21,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 )
 
@@ -34,7 +35,7 @@ func TestSubstituteAttributesSchema_StaticDefaults(t *testing.T) {
 			},
 		},
 	}
-	out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
+	out, err := substituteAttributesSchemaWith(schema, attributes.ResolveContext{}, nil, false)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -54,7 +55,7 @@ func TestSubstituteAttributesSchema_EmbeddedSource(t *testing.T) {
 		},
 	}
 	ctx := attributes.ResolveContext{Params: json.RawMessage(`{"name": "world"}`)}
-	out, err := substituteAttributesSchema(schema, ctx, nil)
+	out, err := substituteAttributesSchemaWith(schema, ctx, nil, false)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestSubstituteAttributesSchema_LenientEmptyRecovery(t *testing.T) {
 			},
 		},
 	}
-	out, err := substituteAttributesSchema(schema, attributes.ResolveContext{Deps: map[string]json.RawMessage{}}, nil)
+	out, err := substituteAttributesSchemaWith(schema, attributes.ResolveContext{Deps: map[string]json.RawMessage{}}, nil, false)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestSubstituteAttributesSchema_LenientEmptyRecoveryTyped(t *testing.T) {
 				"type":       "object",
 				"properties": map[string]any{"v": prop},
 			}
-			out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
+			out, err := substituteAttributesSchemaWith(schema, attributes.ResolveContext{}, nil, false)
 			if err != nil {
 				t.Fatalf("lenient miss (%s): want nil error, got %v", tc.name, err)
 			}
@@ -132,7 +133,7 @@ func TestSubstituteAttributesSchema_ExecutorWrittenOmitted(t *testing.T) {
 			},
 		},
 	}
-	out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
+	out, err := substituteAttributesSchemaWith(schema, attributes.ResolveContext{}, nil, false)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -152,7 +153,7 @@ func TestSubstituteAttributesSchema_StrictMissingFailsDispatch(t *testing.T) {
 				},
 			},
 		}
-		_, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
+		_, err := substituteAttributesSchemaWith(schema, attributes.ResolveContext{}, nil, false)
 		if err == nil {
 			t.Fatalf("expected ErrMissingSource for strict-missing non-required property; got nil")
 		}
@@ -172,7 +173,7 @@ func TestSubstituteAttributesSchema_StrictMissingFailsDispatch(t *testing.T) {
 			},
 			"required": []any{"prompt"},
 		}
-		_, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
+		_, err := substituteAttributesSchemaWith(schema, attributes.ResolveContext{}, nil, false)
 		if err == nil {
 			t.Fatalf("expected ErrMissingSource for strict-missing required property; got nil")
 		}
@@ -191,7 +192,7 @@ func TestSubstituteAttributesSchema_StrictMissingFailsDispatch(t *testing.T) {
 				},
 			},
 		}
-		out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
+		out, err := substituteAttributesSchemaWith(schema, attributes.ResolveContext{}, nil, false)
 		if err != nil {
 			t.Fatalf("lenient miss: want nil error, got %v", err)
 		}
@@ -220,7 +221,7 @@ func TestSubstituteAttributesSchema_MixedShapes(t *testing.T) {
 		},
 	}
 	ctx := attributes.ResolveContext{Params: json.RawMessage(`{"what": "config"}`)}
-	out, err := substituteAttributesSchema(schema, ctx, nil)
+	out, err := substituteAttributesSchemaWith(schema, ctx, nil, false)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -231,114 +232,6 @@ func TestSubstituteAttributesSchema_MixedShapes(t *testing.T) {
 	if !reflect.DeepEqual(out, want) {
 		t.Fatalf("mixed shapes: want %#v, got %#v", want, out)
 	}
-}
-
-func TestRelaxRequiredToSourceDriven(t *testing.T) {
-	t.Run("static-default property stays in required", func(t *testing.T) {
-		schema := map[string]any{
-			"type":     "object",
-			"required": []any{"model"},
-			"properties": map[string]any{
-				"model": map[string]any{
-					"type":    "string",
-					"default": "X",
-				},
-			},
-		}
-		out := relaxRequiredToSourceDriven(schema)
-		req, _ := out["required"].([]any)
-		if len(req) != 1 || req[0] != "model" {
-			t.Fatalf("static-default in required: want [model], got %#v", req)
-		}
-	})
-
-	t.Run("executor-written (readOnly, no source/default) property dropped from required", func(t *testing.T) {
-		schema := map[string]any{
-			"type":     "object",
-			"required": []any{"response"},
-			"properties": map[string]any{
-				"response": map[string]any{
-					"type":     "string",
-					"readOnly": true,
-				},
-			},
-		}
-		out := relaxRequiredToSourceDriven(schema)
-		req, _ := out["required"].([]any)
-		if len(req) != 0 {
-			t.Fatalf("executor-written in required: want [], got %#v", req)
-		}
-	})
-
-	t.Run("source-bound property stays in required", func(t *testing.T) {
-		schema := map[string]any{
-			"type":     "object",
-			"required": []any{"prompt"},
-			"properties": map[string]any{
-				"prompt": map[string]any{
-					"type":   "string",
-					"source": "{{params.what}}",
-				},
-			},
-		}
-		out := relaxRequiredToSourceDriven(schema)
-		req, _ := out["required"].([]any)
-		if len(req) != 1 || req[0] != "prompt" {
-			t.Fatalf("source-bound in required: want [prompt], got %#v", req)
-		}
-	})
-
-	t.Run("mixed: keep source-bound + static-default, drop executor-written", func(t *testing.T) {
-		schema := map[string]any{
-			"type":     "object",
-			"required": []any{"prompt", "model", "response"},
-			"properties": map[string]any{
-				"prompt": map[string]any{
-					"type":   "string",
-					"source": "{{params.what}}",
-				},
-				"model": map[string]any{
-					"type":    "string",
-					"default": "X",
-				},
-				"response": map[string]any{
-					"type":     "string",
-					"readOnly": true,
-				},
-			},
-		}
-		out := relaxRequiredToSourceDriven(schema)
-		req, _ := out["required"].([]any)
-		got := map[string]bool{}
-		for _, item := range req {
-			if name, ok := item.(string); ok {
-				got[name] = true
-			}
-		}
-		want := map[string]bool{"prompt": true, "model": true}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("mixed required: want %#v, got %#v", want, got)
-		}
-	})
-
-	t.Run("schema with no required list is returned unchanged", func(t *testing.T) {
-		schema := map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"x": map[string]any{"type": "string"},
-			},
-		}
-		out := relaxRequiredToSourceDriven(schema)
-		if _, exists := out["required"]; exists {
-			t.Fatalf("expected no required key, got: %#v", out["required"])
-		}
-	})
-
-	t.Run("nil schema returns nil", func(t *testing.T) {
-		if out := relaxRequiredToSourceDriven(nil); out != nil {
-			t.Fatalf("nil schema: want nil, got %#v", out)
-		}
-	})
 }
 
 func TestResolveAttributes_ExecutorSchemaUnavailable(t *testing.T) {
@@ -679,7 +572,7 @@ func TestSubstituteAttributesSchema_CarryForward_SourceBoundOverwrites(t *testin
 	}
 	rctx := attributes.ResolveContext{Params: json.RawMessage(`{"what": "config"}`)}
 	carryForward := map[string]any{"prompt": "stale carried value"}
-	out, err := substituteAttributesSchema(schema, rctx, carryForward)
+	out, err := substituteAttributesSchemaWith(schema, rctx, carryForward, false)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -702,7 +595,7 @@ func TestSubstituteAttributesSchema_CarryForward_DefaultIsFloor(t *testing.T) {
 	}
 
 	t.Run("first dispatch in scope sees default", func(t *testing.T) {
-		out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
+		out, err := substituteAttributesSchemaWith(schema, attributes.ResolveContext{}, nil, false)
 		if err != nil {
 			t.Fatalf("substituteAttributesSchema: %v", err)
 		}
@@ -713,7 +606,7 @@ func TestSubstituteAttributesSchema_CarryForward_DefaultIsFloor(t *testing.T) {
 
 	t.Run("carry-forward beats default on later dispatches", func(t *testing.T) {
 		carryForward := map[string]any{"model": "claude-opus-4-7"}
-		out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, carryForward)
+		out, err := substituteAttributesSchemaWith(schema, attributes.ResolveContext{}, carryForward, false)
 		if err != nil {
 			t.Fatalf("substituteAttributesSchema: %v", err)
 		}
@@ -733,7 +626,7 @@ func TestSubstituteAttributesSchema_CarryForward_DefaultIsFloor(t *testing.T) {
 			},
 		}
 		carryForward := map[string]any{"count": float64(2)}
-		out, err := substituteAttributesSchema(schemaRO, attributes.ResolveContext{}, carryForward)
+		out, err := substituteAttributesSchemaWith(schemaRO, attributes.ResolveContext{}, carryForward, false)
 		if err != nil {
 			t.Fatalf("substituteAttributesSchema: %v", err)
 		}
@@ -1150,6 +1043,60 @@ func TestDispatch_ResolverLookupError_IsRetryableInfraNotTerminalUnresolved(t *t
 	}
 	if ev.Payload["error"] != wantErr.Error() {
 		t.Fatalf("Payload[error] = %v, want %q", ev.Payload["error"], wantErr.Error())
+	}
+}
+
+type ctxCheckingHandler struct{}
+
+func (ctxCheckingHandler) Execute(ctx context.Context, _ *genv1.ExecuteRequest, _ executor.HandlerContext) (*genv1.Outcome, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return &genv1.Outcome{}, nil
+}
+
+func TestDispatch_ExecuteContextCanceled_IsInfraDispatchCancelledNotDialFailed(t *testing.T) {
+	const execName = "cancel-test-executor"
+	reg := executor.NewInProcessRegistry()
+	if err := reg.Register("inproc://cancel-test", ctxCheckingHandler{}); err != nil {
+		t.Fatalf("register handler: %v", err)
+	}
+	pool := executor.NewClientPoolWithInProcess(reg, nil)
+	resolver := executor.NewStaticResolver(map[string]executor.Endpoint{
+		execName: {Transport: "inproc", URL: "inproc://cancel-test"},
+	})
+
+	dctx := dispatchContext{
+		Args: RunArgs{
+			Resolver: resolver,
+			Pool:     pool,
+			Clock:    shared.SystemClock{},
+			Logger:   shared.SilentLogger{},
+		},
+		Acquired: &acquisition{
+			NodeID:     newUUID(),
+			NodeRunID:  newUUID(),
+			InstanceID: newUUID(),
+			Executor:   execName,
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ev, result, err := dispatch(ctx, dctx)
+	if err != nil {
+		t.Fatalf("dispatch returned error: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected no RunnerResult for a caller-cancelled dispatch, got %+v", result)
+	}
+	if ev.Kind != terminalKindInfra {
+		t.Fatalf("Kind = %v, want terminalKindInfra", ev.Kind)
+	}
+	if ev.ErrorClass != "executor_dispatch_cancelled" {
+		t.Fatalf("ErrorClass = %q, want executor_dispatch_cancelled — a caller-context cancellation "+
+			"(e.g. supervisor shutdown) must not be misreported as a dial failure", ev.ErrorClass)
 	}
 }
 

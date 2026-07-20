@@ -134,7 +134,7 @@ func (s *Store) StreamTrace(req *genv1.StreamTraceRequest, stream genv1.Executor
 			}
 			return stream.Send(TraceCompleteEvent())
 		case <-idleC:
-			return stream.Send(TraceCompleteEvent())
+			return stream.Send(TraceIdleTimeoutEvent())
 		case <-sub.wake:
 		}
 	}
@@ -247,6 +247,15 @@ func TraceCompleteEvent() *genv1.TraceEvent {
 	}
 }
 
+func TraceIdleTimeoutEvent() *genv1.TraceEvent {
+	return &genv1.TraceEvent{
+		EventId:   "trace_idle_timeout",
+		Timestamp: timestamppb.Now(),
+		Severity:  genv1.Severity_INFO,
+		Category:  "trace_idle_timeout",
+	}
+}
+
 func MakeEvent(eventID, parentID, category, message string, sev genv1.Severity, attrs map[string]any) *genv1.TraceEvent {
 	var pb *structpb.Struct
 	if attrs != nil {
@@ -346,7 +355,7 @@ func HandleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, store *Store,
 			_ = send(TraceCompleteEvent())
 			return
 		case <-idleC:
-			_ = send(TraceCompleteEvent())
+			_ = send(TraceIdleTimeoutEvent())
 			return
 		case <-sub.wake:
 		}

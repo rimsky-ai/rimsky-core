@@ -371,7 +371,8 @@ func TestSQLiteBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
 		}
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.BreakpointHits().Resume(ctx, hitIDs[1], "operator", nil, tx)
+		_, err := store.BreakpointHits().Resume(ctx, hitIDs[1], "operator", nil, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -435,10 +436,16 @@ func TestSQLiteBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 	}
 
 	overlay := map[string]any{"attr_overrides": map[string]any{"v": 1}}
+	var firstResumed bool
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.BreakpointHits().Resume(ctx, hitID, "operator", overlay, tx)
+		var err error
+		firstResumed, err = store.BreakpointHits().Resume(ctx, hitID, "operator", overlay, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("Resume: %v", err)
+	}
+	if !firstResumed {
+		t.Errorf("Resume: got resumed=false want true on first resume")
 	}
 
 	var got *persistence.BreakpointHitRow
@@ -460,10 +467,16 @@ func TestSQLiteBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 	}
 	firstResumeAt := *got.ResumedAt
 
+	var replayResumed bool
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.BreakpointHits().Resume(ctx, hitID, "different-operator", nil, tx)
+		var err error
+		replayResumed, err = store.BreakpointHits().Resume(ctx, hitID, "different-operator", nil, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("Resume replay: %v", err)
+	}
+	if replayResumed {
+		t.Errorf("Resume replay: got resumed=true want false")
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -480,7 +493,8 @@ func TestSQLiteBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.BreakpointHits().Resume(ctx, uuid.New(), "operator", nil, tx)
+		_, err := store.BreakpointHits().Resume(ctx, uuid.New(), "operator", nil, tx)
+		return err
 	}); !errors.Is(err, shared.ErrBreakpointHitNotFound) {
 		t.Errorf("Resume(missing): expected ErrBreakpointHitNotFound, got %v", err)
 	}
@@ -637,7 +651,8 @@ func TestSQLiteBreakpointHits_UnresumedCount(t *testing.T) {
 	}
 	for _, idx := range []int{0, 2} {
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return store.BreakpointHits().Resume(ctx, ids[idx], "op", nil, tx)
+			_, err := store.BreakpointHits().Resume(ctx, ids[idx], "op", nil, tx)
+			return err
 		}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
@@ -689,7 +704,8 @@ func TestSQLiteBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
 			return err
 		}
 		autoHitID = ah
-		return store.BreakpointHits().Resume(ctx, blockResumedID, "op", nil, tx)
+		_, err = store.BreakpointHits().Resume(ctx, blockResumedID, "op", nil, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("seed hits: %v", err)
 	}

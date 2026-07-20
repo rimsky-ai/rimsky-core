@@ -452,14 +452,14 @@ func (h *realCliHandle) pump(r io.Reader, cbs *[]func(string), hist *[]string, p
 		if n > 0 {
 			chunk := string(buf[:n])
 			h.mu.Lock()
-			registered := append([]func(string){}, *cbs...)
-			if len(registered) == 0 {
+			if len(*cbs) == 0 {
 				*hist = append(*hist, chunk)
+			} else {
+				for _, cb := range *cbs {
+					cb(chunk)
+				}
 			}
 			h.mu.Unlock()
-			for _, cb := range registered {
-				cb(chunk)
-			}
 		}
 		if err != nil {
 			return
@@ -484,13 +484,12 @@ func (h *realCliHandle) OnStderr(cb func(string)) {
 
 func (h *realCliHandle) registerStream(cbs *[]func(string), hist *[]string, cb func(string)) {
 	h.mu.Lock()
-	replay := append([]string{}, *hist...)
-	*hist = nil
-	*cbs = append(*cbs, cb)
-	h.mu.Unlock()
-	for _, chunk := range replay {
+	defer h.mu.Unlock()
+	for _, chunk := range *hist {
 		cb(chunk)
 	}
+	*hist = nil
+	*cbs = append(*cbs, cb)
 }
 
 func (h *realCliHandle) OnExit(cb func(ExitResult)) {

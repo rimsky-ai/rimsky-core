@@ -27,20 +27,20 @@ func (h *Handler) Execute(ctx context.Context, req *genv1.ExecuteRequest, _ exec
 	}
 	maxRaw, ok := attrs["max"]
 	if !ok {
-		return errorOutcome(AttributesSchemaInvalidClass, "max is required"), nil
+		return errorOutcome(AttributesSchemaFailedClass, "max is required"), nil
 	}
 	maxN, err := asInt(maxRaw)
 	if err != nil {
-		return errorOutcome(AttributesSchemaInvalidClass, fmt.Sprintf("max: %v", err)), nil
+		return errorOutcome(AttributesSchemaFailedClass, fmt.Sprintf("max: %v", err)), nil
 	}
 	if maxN < 1 {
-		return errorOutcome(AttributesSchemaInvalidClass, "max must be >= 1"), nil
+		return errorOutcome(AttributesSchemaFailedClass, "max must be >= 1"), nil
 	}
 	var count int
 	if v, ok := attrs["count"]; ok {
 		n, err := asInt(v)
 		if err != nil {
-			return errorOutcome(AttributesSchemaInvalidClass, fmt.Sprintf("count: %v", err)), nil
+			return errorOutcome(AttributesSchemaFailedClass, fmt.Sprintf("count: %v", err)), nil
 		}
 		count = n
 	}

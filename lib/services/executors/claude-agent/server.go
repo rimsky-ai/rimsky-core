@@ -156,8 +156,6 @@ func (s *ExecutorServer) runAndCallback(
 	callbackURLFor func(base string) string,
 	decorateBody func(body map[string]any),
 ) {
-	time.Sleep(100 * time.Millisecond)
-
 	cliConfig, err := ParseCliConfig(inputs.Attributes["cli"])
 	if err != nil {
 		s.postFailure(inputs, ackID, traceID, err, logger, callbackURLFor, decorateBody)

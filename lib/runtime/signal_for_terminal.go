@@ -11,11 +11,14 @@ import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 )
 
-func signalForTerminal(args RunArgs, t terminalEvent) signalpkg.Signal {
+func signalForTerminal(args RunArgs, acq *acquisition, t terminalEvent) signalpkg.Signal {
 	switch t.Kind {
 	case terminalKindComplete:
 		return signalpkg.BuildTerminalSuccessSignal(t.Changed, t.AttributesDel, t.ChangeSummary, t.Tags)
-	case terminalKindErrored:
+	case terminalKindErrored, terminalKindInfra:
+		if acq != nil && acq.RetryDecision != nil {
+			return acq.RetryDecision.Signal
+		}
 		var errorPayload map[string]any
 		if t.Payload != nil {
 			if raw, ok := t.Payload["payload"].(map[string]any); ok {
@@ -25,8 +28,6 @@ func signalForTerminal(args RunArgs, t terminalEvent) signalpkg.Signal {
 		return signalpkg.BuildTerminalErrorSignal(t.ErrorClass, errorPayload, 0, 0, t.AttributesDel, t.Tags)
 	case terminalKindPark:
 		return parkTerminalSignal(args, t)
-	case terminalKindInfra:
-		return signalpkg.Signal{}
 	}
 	return signalpkg.Signal{}
 }

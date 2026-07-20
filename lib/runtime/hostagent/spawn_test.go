@@ -6,6 +6,7 @@ package hostagent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -297,6 +298,58 @@ func TestSpawnReadyTimeout(t *testing.T) {
 	})
 	if ack.GetStatus() != genv1.SpawnAck_SPAWN_STATUS_FAILED {
 		t.Fatalf("status = %v, want FAILED", ack.GetStatus())
+	}
+	if msg := ack.GetError().GetMessage(); !strings.Contains(msg, "did not bind port") || !strings.Contains(msg, "within") {
+		t.Fatalf("error message = %q, want a genuine-timeout message mentioning it did not bind within the deadline", msg)
+	}
+}
+
+func TestSpawnServiceChildExitedBeforeBindingIsDistinguishedFromTimeout(t *testing.T) {
+	bin := buildStubChild(t)
+	t.Setenv("STUBCHILD_EXIT_IMMEDIATELY", "1")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	_, err := SpawnService(ctx, SpawnServiceParams{
+		BinaryPath:   bin,
+		Env:          os.Environ(),
+		ReadyTimeout: 10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("SpawnService: expected an error, got nil")
+	}
+	if !errors.Is(err, errChildDidNotBind) {
+		t.Fatalf("SpawnService error = %v, want it to wrap errChildDidNotBind", err)
+	}
+	if !strings.Contains(err.Error(), "exited before binding port") {
+		t.Fatalf("SpawnService error = %q, want a message distinguishing an early exit from a readiness timeout", err.Error())
+	}
+	if strings.Contains(err.Error(), "did not bind port") && strings.Contains(err.Error(), "within") {
+		t.Fatalf("SpawnService error = %q, must not reuse the timeout wording for a child that exited immediately", err.Error())
+	}
+}
+
+func TestSpawnServiceCtxCancelDuringPortWaitIsNotClassifiedAsBindFailure(t *testing.T) {
+	bin := buildStubChild(t)
+	t.Setenv("STUBCHILD_NO_BIND", "1")
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer waitCancel()
+
+	_, err := SpawnService(waitCtx, SpawnServiceParams{
+		BinaryPath:   bin,
+		Env:          os.Environ(),
+		ReadyTimeout: 10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("SpawnService: expected an error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("SpawnService error = %v, want context.DeadlineExceeded (the caller context, not a readiness timeout)", err)
+	}
+	if errors.Is(err, errChildDidNotBind) {
+		t.Fatalf("SpawnService error = %v, must not be classified as errChildDidNotBind (would trigger a pointless retry after the caller already gave up)", err)
 	}
 }
 

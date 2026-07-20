@@ -139,7 +139,7 @@ func TestDialValidation_InstallsServiceNameInterceptor(t *testing.T) {
 	t.Cleanup(client.Close)
 
 	ctx := WithServiceName(context.Background(), "core-service")
-	_, _, _ = client.ValidateExecutor(ctx, clientiface.ValidateExecutorInput{})
+	_, _ = client.ValidateExecutor(ctx, clientiface.ValidateExecutorInput{})
 
 	if got := captured.get("/rimsky.v1.Validation/Validate"); got != "core-service" {
 		t.Fatalf("x-rimsky-service-name header on DialValidation's client = %q, want %q", got, "core-service")

@@ -155,7 +155,8 @@ func getJSONMap(t *testing.T, url string) map[string]any {
 	resp, err := http.Get(url)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoErrorf(t, err, "GET %s: read body", url)
 	require.Equalf(t, http.StatusOK, resp.StatusCode, "GET %s: body=%s", url, string(raw))
 	var out map[string]any
 	require.NoErrorf(t, json.Unmarshal(raw, &out), "GET %s: body=%s", url, string(raw))

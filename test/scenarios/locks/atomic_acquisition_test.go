@@ -226,7 +226,7 @@ func TestAtomicAcquisitionMultiSpec_SortedOrderAndAllOrNothingRollback(t *testin
 			"the worker-request claim and ALL claim-handle inserts must commit together or not at all")
 }
 
-func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
+func TestClaimHandleRowReleasedAfterTerminal(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{

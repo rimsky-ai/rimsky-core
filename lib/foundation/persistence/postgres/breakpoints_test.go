@@ -420,7 +420,8 @@ func TestPGBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
 		}
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.BreakpointHits().Resume(ctx, hitIDs[1], "operator", nil, tx)
+		_, err := store.BreakpointHits().Resume(ctx, hitIDs[1], "operator", nil, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -485,10 +486,16 @@ func TestPGBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 	}
 
 	overlay := map[string]any{"attr_overrides": map[string]any{"v": 1}}
+	var firstResumed bool
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.BreakpointHits().Resume(ctx, hitID, "operator", overlay, tx)
+		var err error
+		firstResumed, err = store.BreakpointHits().Resume(ctx, hitID, "operator", overlay, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("Resume: %v", err)
+	}
+	if !firstResumed {
+		t.Errorf("Resume: got resumed=false want true on first resume")
 	}
 
 	var got *persistence.BreakpointHitRow
@@ -510,10 +517,16 @@ func TestPGBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 	}
 	firstResumeAt := *got.ResumedAt
 
+	var replayResumed bool
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.BreakpointHits().Resume(ctx, hitID, "different-operator", nil, tx)
+		var err error
+		replayResumed, err = store.BreakpointHits().Resume(ctx, hitID, "different-operator", nil, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("Resume replay: %v", err)
+	}
+	if replayResumed {
+		t.Errorf("Resume replay: got resumed=true want false")
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -530,7 +543,8 @@ func TestPGBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.BreakpointHits().Resume(ctx, uuid.New(), "operator", nil, tx)
+		_, err := store.BreakpointHits().Resume(ctx, uuid.New(), "operator", nil, tx)
+		return err
 	}); !errors.Is(err, shared.ErrBreakpointHitNotFound) {
 		t.Errorf("Resume(missing): expected ErrBreakpointHitNotFound, got %v", err)
 	}
@@ -687,7 +701,8 @@ func TestPGBreakpointHits_UnresumedCount(t *testing.T) {
 	}
 	for _, idx := range []int{0, 2} {
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return store.BreakpointHits().Resume(ctx, ids[idx], "op", nil, tx)
+			_, err := store.BreakpointHits().Resume(ctx, ids[idx], "op", nil, tx)
+			return err
 		}); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
@@ -790,6 +805,77 @@ func TestPGBreakpointHits_ConcurrentCappedInsertsHoldCap(t *testing.T) {
 	}
 }
 
+func TestPGBreakpointHits_ConcurrentResumeExactlyOneWins(t *testing.T) {
+	t.Parallel()
+	const racers = 8
+
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	store := d.Tables()
+	instanceID := seedBreakpointFixture(t, ctx, d)
+	bpID := createBreakpoint(t, ctx, store, newBreakpoint(instanceID, nil))
+
+	var hitID shared.UUID
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		id, _, err := store.BreakpointHits().Create(ctx, makeHit(bpID, instanceID, nil), tx)
+		hitID = id
+		return err
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	resumed := make([]bool, racers)
+	errs := make(chan error, racers)
+	ready.Add(racers)
+	done.Add(racers)
+	for i := 0; i < racers; i++ {
+		go func(idx int) {
+			defer done.Done()
+			ready.Done()
+			<-start
+			overlay := map[string]any{"racer": idx}
+			if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				var err error
+				resumed[idx], err = store.BreakpointHits().Resume(ctx, hitID, "racer", overlay, tx)
+				return err
+			}); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent resume: %v", err)
+	}
+
+	winners := 0
+	for _, r := range resumed {
+		if r {
+			winners++
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("concurrent resume: got %d winners want exactly 1 (resumed=%v)", winners, resumed)
+	}
+
+	var got *persistence.BreakpointHitRow
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		got, err = store.BreakpointHits().Get(ctx, hitID, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ResumedAt == nil {
+		t.Fatalf("hit must be resumed after racing resumes")
+	}
+}
+
 func TestPGBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -824,7 +910,8 @@ func TestPGBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
 			return err
 		}
 		autoHitID = ah
-		return store.BreakpointHits().Resume(ctx, blockResumedID, "op", nil, tx)
+		_, err = store.BreakpointHits().Resume(ctx, blockResumedID, "op", nil, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("seed hits: %v", err)
 	}

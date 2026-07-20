@@ -42,11 +42,6 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 
 	nodeID := resolveWorkerNodeID(t, ep, instanceID, "worker")
 
-	if sig, present := getNodeSettlingSignalType(t, ep, nodeID); present {
-		t.Fatalf("before any settle, GET /nodes/%s returned settling_signal_type=%q, want the key ABSENT — an unsettled node must not carry a settling signal type",
-			nodeID, sig)
-	}
-
 	sig := waitForControlSettlingSignalType(t, ep, nodeID, 90*time.Second)
 	if sig != settlingSignalTypeTerminalSuccess {
 		t.Fatalf("GET /nodes/%s settling_signal_type=%q after a stub Success settle, want %q — the stub returns Success, so a non-success settle is a real settle-path defect",

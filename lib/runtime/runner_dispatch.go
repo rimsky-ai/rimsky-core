@@ -188,6 +188,10 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 				},
 			}, nil, nil
 		}
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			return terminalEvent{Kind: terminalKindInfra, ErrorClass: "executor_dispatch_cancelled",
+				Payload: map[string]any{"error": err.Error()}}, nil, nil
+		}
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "executor_dial_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
@@ -564,13 +568,6 @@ func extractReadOnlyPropsLocal(schema map[string]any) map[string]bool {
 }
 
 // @concept: attribute
-func substituteAttributesSchema(
-	schema map[string]any, rctx attributes.ResolveContext, carryForward map[string]any,
-) (map[string]any, error) {
-	return substituteAttributesSchemaWith(schema, rctx, carryForward, false)
-}
-
-// @concept: attribute
 func substituteAttributesSchemaWith(
 	schema map[string]any, rctx attributes.ResolveContext, carryForward map[string]any,
 	deferClaimRefs bool,
@@ -729,43 +726,6 @@ func emptyValueForSchemaType(typeName string) any {
 	default:
 		return ""
 	}
-}
-
-func relaxRequiredToSourceDriven(schema map[string]any) map[string]any {
-	if schema == nil {
-		return nil
-	}
-	props, _ := schema["properties"].(map[string]any)
-	required, _ := schema["required"].([]any)
-	if len(props) == 0 || len(required) == 0 {
-		return schema
-	}
-	keep := make([]any, 0, len(required))
-	dropped := false
-	for _, item := range required {
-		name, ok := item.(string)
-		if !ok {
-			keep = append(keep, item)
-			continue
-		}
-		prop, _ := props[name].(map[string]any)
-		src, _ := prop["source"].(string)
-		_, hasDefault := prop["default"]
-		if src == "" && !hasDefault {
-			dropped = true
-			continue
-		}
-		keep = append(keep, item)
-	}
-	if !dropped {
-		return schema
-	}
-	out := make(map[string]any, len(schema))
-	for k, v := range schema {
-		out[k] = v
-	}
-	out["required"] = keep
-	return out
 }
 
 func relaxRequiredForExecutorWritten(schema map[string]any) map[string]any {

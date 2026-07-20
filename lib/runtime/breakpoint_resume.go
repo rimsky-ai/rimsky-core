@@ -62,10 +62,11 @@ func ValidateAndPersistResume(
 					"reason", "effective_schema absent from snapshot; deferring to supervisor-side defense-in-depth")
 			}
 		}
-		if err := args.Persist.BreakpointHits().Resume(ctx, hitID, byKey, overlay, tx); err != nil {
+		resumed, err := args.Persist.BreakpointHits().Resume(ctx, hitID, byKey, overlay, tx)
+		if err != nil {
 			return err
 		}
-		result.FirstResume = true
+		result.FirstResume = resumed
 		return nil
 	})
 	if err != nil {

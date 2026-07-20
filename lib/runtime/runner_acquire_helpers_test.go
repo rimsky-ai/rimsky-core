@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -217,6 +218,22 @@ func TestSubstituteFanOutPartitionRequest_StrictDirectiveRefusesWithoutMessage(t
 	}
 	if !attributes.IsMissingSource(err) {
 		t.Fatalf("expected ErrMissingSource, got %v", err)
+	}
+}
+
+func TestSubstituteFanOutPartitionRequest_UnmarshalableInstanceParamsErrors(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	frameID := shared.UUID(uuid.New())
+	out := &acquisition{
+		InstanceID:     shared.UUID(uuid.New()),
+		InstanceParams: map[string]any{"bad": math.Inf(1)},
+	}
+	args := RunArgs{Logger: shared.SilentLogger{}, Persist: &messagesPersist{msgs: newFakeMessages()}}
+
+	_, err := substituteFanOutPartitionRequest(ctx, args, nil, frameID, out, nil, "all")
+	if err == nil {
+		t.Fatal("substituteFanOutPartitionRequest: expected an error for unmarshalable InstanceParams, got nil")
 	}
 }
 

@@ -102,9 +102,13 @@ func LoadOptsFromEnv() (Opts, error) {
 	if host == "" {
 		host = "0.0.0.0"
 	}
-	ws := claimproducer.WriteSemantics(cfg.WriteSemantics)
-	if ws == "" {
-		ws = claimproducer.WriteSemanticsStagedAsync
+	ws := claimproducer.WriteSemanticsStagedAsync
+	if cfg.WriteSemantics != "" {
+		parsed, ok := claimproducer.ParseWriteSemantics(cfg.WriteSemantics)
+		if !ok {
+			return Opts{}, fmt.Errorf("write_semantics %q is not a recognized value (sync | staged_async | blocking_async | read_only)", cfg.WriteSemantics)
+		}
+		ws = parsed
 	}
 	policies := make(map[string]*pgsstore.PickPolicy, len(cfg.PickPolicies))
 	for selector, pp := range cfg.PickPolicies {
@@ -146,6 +150,11 @@ func LoadOptsFromEnv() (Opts, error) {
 		sweep = 30 * time.Second
 	}
 
+	grpcPort, err := agentport.Override(cfg.GRPCPort)
+	if err != nil {
+		return Opts{}, err
+	}
+
 	return Opts{
 		Configured:        true,
 		Connection:        cfg.Connection,
@@ -158,7 +167,7 @@ func LoadOptsFromEnv() (Opts, error) {
 		EnableExecutor:    cfg.EnableExecutor,
 		LedgerMaxRecords:  cfg.LedgerMaxRecords,
 		Host:              host,
-		GRPCPort:          agentport.Override(cfg.GRPCPort),
+		GRPCPort:          grpcPort,
 		HTTPPort:          cfg.HTTPPort,
 		AdminPort:         cfg.AdminPort,
 	}, nil

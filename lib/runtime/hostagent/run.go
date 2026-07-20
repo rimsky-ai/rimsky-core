@@ -373,7 +373,7 @@ func (a *agent) routeServerFrame(ctx context.Context, frame *genv1.ServerFrame) 
 	case *genv1.ServerFrame_Reap:
 		go a.runReap(body.Reap)
 	case *genv1.ServerFrame_DispatchFrame:
-		go a.handleDispatchFrame(ctx, body.DispatchFrame)
+		a.handleDispatchFrame(ctx, body.DispatchFrame)
 	case *genv1.ServerFrame_HttpResponse:
 		a.deliverHTTPResponse(body.HttpResponse)
 	default:

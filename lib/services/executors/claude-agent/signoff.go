@@ -29,9 +29,24 @@ type UnmetSignoff struct {
 	Reason string `json:"reason"`
 }
 
+const (
+	UnmetSignoffReasonMissing     = "missing"
+	UnmetSignoffReasonInvalid     = "invalid"
+	UnmetSignoffReasonConfigError = "config_error"
+)
+
 type SignoffResult struct {
 	OK    bool
 	Unmet []UnmetSignoff
+}
+
+func (r SignoffResult) HasConfigError() bool {
+	for _, u := range r.Unmet {
+		if u.Reason == UnmetSignoffReasonConfigError {
+			return true
+		}
+	}
+	return false
 }
 
 func BuildSignoffMessage(nodeRunID string, value any) ([]byte, error) {
@@ -97,7 +112,7 @@ func VerifyRequiredSignoffs(
 			reportPath = "$"
 		}
 		if len(sigBufs) == 0 {
-			unmet = append(unmet, UnmetSignoff{Path: reportPath, Reason: "missing"})
+			unmet = append(unmet, UnmetSignoff{Path: reportPath, Reason: UnmetSignoffReasonMissing})
 			continue
 		}
 
@@ -107,13 +122,13 @@ func VerifyRequiredSignoffs(
 		}
 		message, err := BuildSignoffMessage(nodeRunID, value)
 		if err != nil {
-			unmet = append(unmet, UnmetSignoff{Path: reportPath, Reason: "invalid"})
+			unmet = append(unmet, UnmetSignoff{Path: reportPath, Reason: UnmetSignoffReasonInvalid})
 			continue
 		}
 
 		key, err := parseEd25519PublicKeyPEM(req.PublicKey)
 		if err != nil {
-			unmet = append(unmet, UnmetSignoff{Path: reportPath, Reason: "invalid"})
+			unmet = append(unmet, UnmetSignoff{Path: reportPath, Reason: UnmetSignoffReasonConfigError})
 			continue
 		}
 
@@ -125,7 +140,7 @@ func VerifyRequiredSignoffs(
 			}
 		}
 		if !satisfied {
-			unmet = append(unmet, UnmetSignoff{Path: reportPath, Reason: "invalid"})
+			unmet = append(unmet, UnmetSignoff{Path: reportPath, Reason: UnmetSignoffReasonInvalid})
 		}
 	}
 

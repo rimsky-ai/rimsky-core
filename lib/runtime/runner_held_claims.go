@@ -81,14 +81,14 @@ func findInheritedAliasesForRun(
 	for _, r := range rows {
 		lh, err := args.ClaimHandles.Get(ctx, r.ClaimHandleID, tx)
 		if err != nil {
-			return nil, fmt.Errorf("findInheritedAliasesForNode: ClaimHandles.Get: %w", err)
+			return nil, fmt.Errorf("findInheritedAliasesForRun: ClaimHandles.Get: %w", err)
 		}
 		if lh == nil {
 			continue
 		}
 		acquirerNode, err := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, tx)
 		if err != nil {
-			return nil, fmt.Errorf("findInheritedAliasesForNode: Nodes.Get acquirer: %w", err)
+			return nil, fmt.Errorf("findInheritedAliasesForRun: Nodes.Get acquirer: %w", err)
 		}
 		if acquirerNode == nil {
 			continue

@@ -83,6 +83,30 @@ func TestWriteLeafRunLineage_PayloadRoundtrip(t *testing.T) {
 	}
 }
 
+func TestWriteLeafRunLineage_RejectsEmptySettlingSignalType(t *testing.T) {
+	lt := &fakeLineageTable{}
+	ctx := context.Background()
+	inst := shared.UUID(uuid.New())
+	frame := shared.UUID(uuid.New())
+	now := time.Now().UTC()
+	rec := LeafRunRecord{
+		NodeRunID: shared.UUID(uuid.New()),
+		NodeID:    shared.UUID(uuid.New()),
+		FrameID:   frame,
+		State:     "fresh",
+	}
+	err := WriteLeafRunLineage(ctx, nil, lt, inst, frame, now, rec)
+	if err == nil {
+		t.Fatal("WriteLeafRunLineage: expected an error for empty SettlingSignalType, got nil")
+	}
+	if !strings.Contains(err.Error(), "settling_signal_type") {
+		t.Fatalf("WriteLeafRunLineage error = %q, want it to name settling_signal_type", err.Error())
+	}
+	if len(lt.rows) != 0 {
+		t.Fatalf("expected no row written on validation failure, got %d", len(lt.rows))
+	}
+}
+
 func TestWriteClaimTerminalLineage_VersionIDPersisted(t *testing.T) {
 	lt := &fakeLineageTable{}
 	ctx := context.Background()
@@ -419,6 +443,59 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 		if rec.ParentNodeRunID != parent.String() {
 			t.Fatalf("child run: ParentNodeRunID got %q want %q",
 				rec.ParentNodeRunID, parent.String())
+		}
+	})
+}
+
+func TestEmitLeafRunLineage_TemplateNodeAliasDistinctFromNodeAlias(t *testing.T) {
+	ctx := context.Background()
+	inst := shared.UUID(uuid.New())
+	frame := shared.UUID(uuid.New())
+
+	t.Run("explicit_template_alias_preserved", func(t *testing.T) {
+		lt := &fakeLineageTable{}
+		args := RunArgs{Persist: &emitFakePersist{lt: lt}, Clock: shared.SystemClock{}}
+		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			InstanceID:         inst,
+			FrameID:            frame,
+			NodeRunID:          shared.UUID(uuid.New()),
+			NodeID:             shared.UUID(uuid.New()),
+			State:              string(cascade.NodeStateFresh),
+			SettlingSignalType: "terminal/success",
+			NodeAlias:          "runtime-alias",
+			TemplateNodeAlias:  "template-alias",
+		})
+		var rec LeafRunRecord
+		if err := json.Unmarshal(lt.rows[0].Record, &rec); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if rec.NodeAlias != "runtime-alias" {
+			t.Fatalf("NodeAlias got %q want %q", rec.NodeAlias, "runtime-alias")
+		}
+		if rec.TemplateNodeAlias != "template-alias" {
+			t.Fatalf("TemplateNodeAlias got %q want %q — distinct from NodeAlias, not collapsed into it",
+				rec.TemplateNodeAlias, "template-alias")
+		}
+	})
+
+	t.Run("unset_template_alias_falls_back_to_node_alias", func(t *testing.T) {
+		lt := &fakeLineageTable{}
+		args := RunArgs{Persist: &emitFakePersist{lt: lt}, Clock: shared.SystemClock{}}
+		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			InstanceID:         inst,
+			FrameID:            frame,
+			NodeRunID:          shared.UUID(uuid.New()),
+			NodeID:             shared.UUID(uuid.New()),
+			State:              string(cascade.NodeStateFresh),
+			SettlingSignalType: "terminal/success",
+			NodeAlias:          "only-alias",
+		})
+		var rec LeafRunRecord
+		if err := json.Unmarshal(lt.rows[0].Record, &rec); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if rec.TemplateNodeAlias != "only-alias" {
+			t.Fatalf("TemplateNodeAlias got %q want fallback %q", rec.TemplateNodeAlias, "only-alias")
 		}
 	})
 }

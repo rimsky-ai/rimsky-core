@@ -99,6 +99,7 @@ func acquireClaim(
 	if err := producerVerbOutboxBarrier(ctx, args, tx, s, spec.ProducerName, scopeInitial); err != nil {
 		var pcErr *peer.ProducerCallError
 		if errors.As(err, &pcErr) {
+			recordClaimAcquisitionErrored(args, spec.ProducerName, acquireStart)
 			return AcquiredLock{}, openResultErrored, pcErr
 		}
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: %w", err)
@@ -109,6 +110,7 @@ func acquireClaim(
 	if err != nil {
 		var pcErr *peer.ProducerCallError
 		if errors.As(err, &pcErr) {
+			recordClaimAcquisitionErrored(args, spec.ProducerName, acquireStart)
 			return AcquiredLock{}, openResultErrored, pcErr
 		}
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: Open(%s): %w", spec.ProducerName, err)
@@ -155,6 +157,11 @@ func acquireClaim(
 		Alias:         spec.Alias,
 		IsHeld:        isHeld,
 	}, openResultAcquired, nil
+}
+
+func recordClaimAcquisitionErrored(args RunArgs, producerName string, acquireStart time.Time) {
+	metricsOf(args).IncClaimAcquisition(producerName, "errored")
+	metricsOf(args).ObserveClaimAcquisitionLatency(producerName, args.Clock.Now().Sub(acquireStart).Seconds())
 }
 
 // @story: claim-handoff-durable

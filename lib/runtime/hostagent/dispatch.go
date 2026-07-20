@@ -38,7 +38,7 @@ func (a *agent) handleDispatchFrame(ctx context.Context, df *genv1.DispatchFrame
 	case protocolExecutor:
 		a.dispatchExecutor(ctx, child, df)
 	case protocolClaimProducer:
-		a.dispatchClaimProducer(ctx, child, df)
+		go a.dispatchClaimProducer(ctx, child, df)
 	default:
 		slog.Warn("hostagent: dispatch for unknown protocol", "protocol", df.GetProtocol(), "spawn_id", df.GetSpawnId())
 		a.sendDispatchCancel(df)
@@ -48,24 +48,29 @@ func (a *agent) handleDispatchFrame(ctx context.Context, df *genv1.DispatchFrame
 func (a *agent) dispatchExecutor(ctx context.Context, child *liveChild, df *genv1.DispatchFrame) {
 	var req genv1.ExecuteRequest
 	if err := proto.Unmarshal(df.GetPayload(), &req); err != nil {
+		slog.Warn("hostagent: executor dispatch unmarshal failed", "spawn_id", df.GetSpawnId(), "error", err)
 		a.sendDispatchCancel(df)
 		return
 	}
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	a.registerDispatchCancel(df.GetStreamId(), cancel)
-	defer a.clearDispatchCancel(df.GetStreamId())
 
-	outcome, err := genv1.NewExecutorClient(child.conn).Execute(dispatchCtx, &req)
-	if err != nil {
-		a.sendDispatchCancel(df)
-		return
-	}
-	payload, marshalErr := proto.Marshal(outcome)
-	if marshalErr != nil {
-		a.sendDispatchCancel(df)
-		return
-	}
-	a.sendDispatchData(df, payload)
+	go func() {
+		defer a.clearDispatchCancel(df.GetStreamId())
+		outcome, err := genv1.NewExecutorClient(child.conn).Execute(dispatchCtx, &req)
+		if err != nil {
+			slog.Warn("hostagent: executor dispatch RPC failed", "spawn_id", df.GetSpawnId(), "error", err)
+			a.sendDispatchCancel(df)
+			return
+		}
+		payload, marshalErr := proto.Marshal(outcome)
+		if marshalErr != nil {
+			slog.Warn("hostagent: executor dispatch outcome marshal failed", "spawn_id", df.GetSpawnId(), "error", marshalErr)
+			a.sendDispatchCancel(df)
+			return
+		}
+		a.sendDispatchData(df, payload)
+	}()
 }
 
 func (a *agent) dispatchClaimProducer(ctx context.Context, child *liveChild, df *genv1.DispatchFrame) {

@@ -23,6 +23,8 @@ const ClaimUnavailableClass = "pg/claim_unavailable"
 
 const NotReplaceableClass = "pg/not_atomically_replaceable"
 
+const PartitionPolicyInvalidRequestClass = "pg/partition_policy_invalid_request"
+
 type rowQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }

@@ -117,10 +117,7 @@ func (a *agent) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = r.Body.Close()
 
-	headers := map[string]string{}
-	for k := range r.Header {
-		headers[k] = r.Header.Get(k)
-	}
+	headers := JoinHeaderValues(r.Header)
 
 	forwardID := uuid.NewString()
 	respCh := a.registerForward(forwardID)
@@ -144,9 +141,7 @@ func (a *agent) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "host-agent: forward cancelled", http.StatusServiceUnavailable)
 			return
 		}
-		for k, v := range resp.GetHeaders() {
-			w.Header().Set(k, v)
-		}
+		ApplyJoinedHeaders(w.Header(), resp.GetHeaders())
 		status := int(resp.GetStatus())
 		if status == 0 {
 			status = http.StatusOK

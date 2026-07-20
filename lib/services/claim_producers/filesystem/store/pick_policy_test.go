@@ -365,7 +365,7 @@ func TestCommit_StaleReclaimedClaimantDoesNotClobberSuccessor(t *testing.T) {
 	}
 
 	ageInProgressEntry(t, root, "@r")
-	must(t, st.sweepOnce())
+	st.sweepOnce()
 
 	fresh, _ := st.Open(context.Background(), "fresh", "@r")
 	if !fresh.Available {
@@ -509,7 +509,7 @@ func TestSweep_ReclaimsExpired(t *testing.T) {
 		t.Fatal("pick should be Available")
 	}
 	ageInProgressEntry(t, root, "@r")
-	must(t, st.sweepOnce())
+	st.sweepOnce()
 	availDir := filepath.Join(root, ".fs-store", "r", "available")
 	entries, _ := os.ReadDir(availDir)
 	found := false
@@ -542,7 +542,7 @@ func TestSweep_OrphanExpiredSentinelIsUnlinkedNotRequeued(t *testing.T) {
 
 	must(t, os.RemoveAll(filepath.Join(root, sub, "alpha")))
 	ageInProgressEntry(t, root, "@r")
-	must(t, st.sweepOnce())
+	st.sweepOnce()
 
 	state := PolicyStateDir(root, "@r")
 	inProgEntries, _ := os.ReadDir(filepath.Join(state, "in_progress"))

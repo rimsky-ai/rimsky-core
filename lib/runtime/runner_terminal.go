@@ -253,22 +253,23 @@ func applyTerminalComplete(
 			fanoutRecalculate(ctx, args, acq)
 			scope := resolveAcqScope(ctx, args, acq)
 			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-				InstanceID:       acq.InstanceID,
-				FrameID:          acq.FrameID,
-				NodeRunID:        nodeRunID,
-				NodeID:           acq.NodeID,
-				State:            string(cascade.NodeStateHeld),
-				Changed:          t.Changed,
-				TerminalKind:     "complete",
-				NodeAlias:        acq.NodeType,
-				ExecutorName:     acq.Executor,
-				TemplateHash:     acq.TemplateHash,
-				Params:           acq.InstanceParams,
-				AttributesMerged: acq.MergedAttributes,
-				HeldClaims:       HeldClaimsForLineage(acq),
-				ParentNodeRunID:  scope.ParentNodeRunID,
-				ChildKey:         scope.PartitionKey,
-				SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+				InstanceID:         acq.InstanceID,
+				FrameID:            acq.FrameID,
+				NodeRunID:          nodeRunID,
+				NodeID:             acq.NodeID,
+				State:              string(cascade.NodeStateHeld),
+				SettlingSignalType: *settlingSignalType,
+				Changed:            t.Changed,
+				TerminalKind:       "complete",
+				NodeAlias:          acq.NodeType,
+				ExecutorName:       acq.Executor,
+				TemplateHash:       acq.TemplateHash,
+				Params:             acq.InstanceParams,
+				AttributesMerged:   acq.MergedAttributes,
+				HeldClaims:         HeldClaimsForLineage(acq),
+				ParentNodeRunID:    scope.ParentNodeRunID,
+				ChildKey:           scope.PartitionKey,
+				SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 			})
 		}
 		return chainPostCommit(subgraphExitPC, chainPostCommit(chainPostCommit(releasePC, transitionPC), post)), nil
@@ -500,7 +501,17 @@ func cascadeSubscribersStaleInTxWithVisited(
 	}
 	for _, edge := range candidateEdges {
 		if edge.WhenExpr != nil {
-			ok, _ := edge.WhenExpr.Eval(sig)
+			ok, evalErr := edge.WhenExpr.Eval(sig)
+			if evalErr != nil {
+				if args.Logger != nil {
+					args.Logger.Warn("cascadeSubscribersStaleInTx: when-filter evaluation failed; subscription edge suppressed",
+						"sender_node_type", senderNodeType,
+						"receiver_node_type", edge.ReceiverNodeType,
+						"signal_type", string(sig.Type),
+						"error", evalErr.Error())
+				}
+				continue
+			}
 			if !ok {
 				continue
 			}
@@ -772,18 +783,29 @@ func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
 		}
 		return nil
 	}); err != nil {
+		if args.Logger != nil {
+			args.Logger.Warn("fanoutRecalculate: receiver lookup failed; downstream fan-out receivers not recalculated",
+				"node_id", acq.NodeID.String(),
+				"instance_id", acq.InstanceID.String(),
+				"error", err.Error())
+		}
 		return
 	}
 	src := acq.NodeID
 	for _, r := range receivers {
-		_ = RecalculateNode(ctx, RecalculateArgs{
+		if err := RecalculateNode(ctx, RecalculateArgs{
 			Persist:      args.Persist,
 			Queue:        args.Queue,
 			Clock:        args.Clock,
 			Logger:       args.Logger,
 			SourceNodeID: &src,
 			TargetNodeID: r.ID,
-		})
+		}); err != nil && args.Logger != nil {
+			args.Logger.Warn("fanoutRecalculate: RecalculateNode failed; receiver not recalculated",
+				"source_node_id", src.String(),
+				"target_node_id", r.ID.String(),
+				"error", err.Error())
+		}
 	}
 }
 

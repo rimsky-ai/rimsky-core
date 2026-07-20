@@ -437,6 +437,18 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 						}
 						detail += u.Path + ":" + u.Reason
 					}
+					if res.HasConfigError() {
+						logger.Warn("report_complete: sign-off gate misconfigured; committing errored without retry",
+							"run_id", opts.SessionID, "detail", detail)
+						scheduleTeardown(func() error {
+							teardownCli()
+							state.safeResolve(erroredOutcome("agent/attribute_invalid", map[string]any{
+								"error": "sign-off gate misconfigured: " + detail,
+							}))
+							return nil
+						})
+						return CompleteResult{Accepted: true}, nil
+					}
 					return rejectSignoff("unmet sign-offs: "+detail, scheduleTeardown), nil
 				}
 				state.mu.Lock()

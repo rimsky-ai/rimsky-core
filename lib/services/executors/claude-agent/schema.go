@@ -10,6 +10,18 @@ import (
 	"strings"
 )
 
+func errorClassDeclared(class string) bool {
+	for _, declared := range DeclaredErrorClasses() {
+		if declared == class {
+			return true
+		}
+		if prefix, ok := strings.CutSuffix(declared, "*"); ok && strings.HasPrefix(class, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // @concept: attribute
 // @story: claude-agent-session-resume
 // @decision: node-config-schema-format-go

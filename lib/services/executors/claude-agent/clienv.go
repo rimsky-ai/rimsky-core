@@ -31,6 +31,12 @@ func BuildCliEnv(config CliAuthConfig) (CliEnvResult, error) {
 		if err != nil {
 			return CliEnvResult{}, err
 		}
+		succeeded := false
+		defer func() {
+			if !succeeded {
+				_ = os.RemoveAll(tmpDir)
+			}
+		}()
 		keyFilePath := filepath.Join(tmpDir, "api-key")
 		if err := os.WriteFile(keyFilePath, []byte(config.AnthropicAPIKey), 0o600); err != nil {
 			return CliEnvResult{}, err
@@ -51,6 +57,7 @@ func BuildCliEnv(config CliAuthConfig) (CliEnvResult, error) {
 		if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), settings, 0o644); err != nil {
 			return CliEnvResult{}, err
 		}
+		succeeded = true
 		return CliEnvResult{
 			Env: map[string]string{"HOME": tmpDir, "PATH": basePath},
 			Cleanup: func() {

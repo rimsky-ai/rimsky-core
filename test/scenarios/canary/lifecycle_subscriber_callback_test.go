@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -153,6 +154,64 @@ func TestCanary_NeverRanInstanceTerminationDoesNotFireOnRunScopeTerminal(t *test
 			"(got %d deliveries)", instanceID, fake.countFor("OnRunScopeTerminal"))
 }
 
+// @concept: run-scope
+// @concept: lifecycle-subscriber
+func TestCanary_RanInstanceTerminationFiresOnRunScopeTerminal(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeLifecycleServer(t)
+	t.Cleanup(fake.stop)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		ClaimProducers: config.RemoteClaimProducersConfig{
+			ClaimProducers: map[string]config.ClaimProducerEntry{
+				"canary-run-scope-terminal": {
+					Endpoint:     "grpc://" + fake.addr,
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+					Protocols:    []string{config.ProtocolClaimProducer, claimproducer.ProtocolLifecycleSubscriber},
+				},
+			},
+		},
+	})
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "canary-run-scope-terminal")
+
+	ctx := context.Background()
+
+	spec := node.TemplateSpec{
+		Name:    "canary-run-scope-terminal",
+		Version: "v1",
+		Nodes: []node.TemplateNodeDef{{
+			Type:     "worker",
+			Executor: "stub",
+			ClaimProducers: []node.NodeClaimProducerRef{{
+				Name:     "canary-run-scope-terminal",
+				Selector: "x",
+				Intent:   "r",
+			}},
+		}},
+	}
+
+	templateHash := h.DeployTemplate(spec)
+	require.NotEmpty(t, templateHash, "DeployTemplate must return a non-empty template_hash")
+	fake.waitFor("OnTemplateDeployed", templateHash, "")
+
+	instanceID := h.CreateInstance(templateHash, "canary-run-scope-terminal-ck", nil)
+	worker := h.FindNode(instanceID, "worker")
+	require.NotNil(t, worker, "worker missing")
+	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
+
+	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.Persist.Instances().MarkTerminated(ctx, instanceID, tx)
+	}))
+	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID.String())
+
+	fake.waitFor("OnRunScopeTerminal", "", instanceID.String())
+
+	require.GreaterOrEqualf(t, fake.countFor("OnRunScopeTerminal"), 1,
+		"terminating an instance that genuinely ran a dispatch (and so owns a real frame-root run scope) "+
+			"must fire OnRunScopeTerminal, unlike the never-ran case above")
+}
+
 type fakeLifecycleServer struct {
 	genv1.UnimplementedLifecycleSubscriberServer
 	genv1.UnimplementedClaimProducerServer
@@ -279,6 +338,30 @@ func (f *fakeLifecycleServer) Capabilities(_ context.Context, _ *genv1.Capabilit
 		WriteSemanticsAllowed: []genv1.WriteSemantics{genv1.WriteSemantics_WRITE_SEMANTICS_SYNC},
 		Protocols:             []string{"claim_producer", "lifecycle_subscriber"},
 	}, nil
+}
+
+func (f *fakeLifecycleServer) Open(_ context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
+	addr, _ := json.Marshal(req.GetClaimId())
+	return &genv1.OpenResponse{
+		Result: &genv1.OpenResponse_Acquired{
+			Acquired: &genv1.Acquired{
+				Address:                addr,
+				RealizedWriteSemantics: genv1.WriteSemantics_WRITE_SEMANTICS_SYNC,
+			},
+		},
+	}, nil
+}
+
+func (f *fakeLifecycleServer) Commit(_ context.Context, _ *genv1.CommitRequest) (*genv1.CommitResponse, error) {
+	return &genv1.CommitResponse{}, nil
+}
+
+func (f *fakeLifecycleServer) Abandon(_ context.Context, _ *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
+	return &genv1.AbandonResponse{}, nil
+}
+
+func (f *fakeLifecycleServer) Release(_ context.Context, _ *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
+	return &genv1.ReleaseResponse{}, nil
 }
 
 func postAndExpectOK(t *testing.T, h *scenario.Harness, path string) {

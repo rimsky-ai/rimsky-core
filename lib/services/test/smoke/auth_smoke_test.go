@@ -123,10 +123,15 @@ func doAndDecode(t *testing.T, req *http.Request) map[string]any {
 		t.Fatalf("%s %s: %v", req.Method, req.URL, err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("%s %s: read body: %v", req.Method, req.URL.Path, err)
+	}
 	out := map[string]any{}
 	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &out)
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("%s %s: decode body: %v: %s", req.Method, req.URL.Path, err, string(raw))
+		}
 	}
 	if resp.StatusCode >= 400 {
 		t.Fatalf("%s %s: %d %s", req.Method, req.URL.Path, resp.StatusCode, string(raw))

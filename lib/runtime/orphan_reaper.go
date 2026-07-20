@@ -61,7 +61,11 @@ func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persisten
 			return nil
 		}
 		nodeID := lh.HolderNodeID
-		nd, _ := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, tx)
+		nd, nerr := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, tx)
+		if nerr != nil {
+			log.Warn("tick: node lookup failed; lock_orphan_reaped event will omit instance attribution",
+				"claim_handle_id", lh.ID.String(), "node_id", nodeID.String(), "error", nerr.Error())
+		}
 		var instanceID *shared.UUID
 		if nd != nil {
 			id := nd.InstanceID

@@ -68,6 +68,7 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
+	reactorBaseline := workStartedCount(t, ep, instanceID, reactorNodeAlias)
 
 	// @story: sensor-http
 	bodyMu.Lock()
@@ -75,7 +76,7 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	bodyMu.Unlock()
 
 	// @story: cascade-signal-blind
-	requireReactorReran(t, ep, instanceID, reactorNodeAlias, 120*time.Second)
+	requireReactorReran(t, ep, instanceID, reactorNodeAlias, reactorBaseline, 120*time.Second)
 
 	// @story: publisher-protocol
 	requirePublisherMessagePersisted(t, ep, instanceID, "watcher")
@@ -318,9 +319,8 @@ func waitForSensorNodeState(t *testing.T, ep harness.RimskyEndpoint, instanceID,
 	}
 }
 
-func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
+func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, baseline int, deadline time.Duration) {
 	t.Helper()
-	baseline := workStartedCount(t, ep, instanceID, nodeType)
 	end := time.Now().Add(deadline)
 	for time.Now().Before(end) {
 		if workStartedCount(t, ep, instanceID, nodeType) > baseline {
@@ -336,9 +336,11 @@ func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, no
 
 func workStartedCount(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) int {
 	t.Helper()
-	status, obs, _ := ep.GetNodeObservability(t, instanceID, nodeType)
+	status, obs, raw := ep.GetNodeObservability(t, instanceID, nodeType)
 	if status != http.StatusOK {
-		return 0
+		t.Fatalf("harness: GET node observability %s/%s: status %d, want 200 — a broken observability "+
+			"endpoint must fail loudly, not read as a silent 0 that would let a did-not-re-run "+
+			"assertion pass vacuously: %s", instanceID, nodeType, status, string(raw))
 	}
 	n := 0
 	for _, e := range obs.Events {

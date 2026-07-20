@@ -136,3 +136,42 @@ func TestLoopCounterCapE2E(t *testing.T) {
 		"done_sink invocations: got %d, want 1", doneSink.Count())
 	_ = loopSink
 }
+
+// @concept: error-policy
+func TestLoopCounterDispatch_InvalidMaxAttributeFailsCleanly(t *testing.T) {
+	t.Parallel()
+
+	h := scenario.Start(t, scenario.HarnessOpts{})
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "loop-counter-invalid-max-errors", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "counter", Executor: loop_counter.ExecutorAlias},
+				scenario.WithAttributes(map[string]any{
+					"type":     "object",
+					"required": []any{"max"},
+					"properties": map[string]any{
+						"max": map[string]any{"type": "integer", "minimum": 1, "source": "{{params.max}}"},
+					},
+				}),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-loop-counter-invalid-max", map[string]any{"max": 0})
+
+	counter := h.FindNode(iid, "counter")
+	require.NotNil(t, counter, "counter missing")
+	h.WaitForNodeState(counter.ID, cascade.NodeStateFailed)
+
+	var errorClass string
+	h.QueryRowSQL(`
+		SELECT payload->>'error_class' FROM rimsky_events
+		 WHERE node_id = $1 AND kind LIKE 'terminal/error/%'
+		 ORDER BY id DESC LIMIT 1`,
+		[]any{counter.ID}, &errorClass)
+
+	require.NotEmpty(t, errorClass,
+		"a loop_counter dispatch with an attribute bag violating its own schema (max=0, minimum=1) "+
+			"must terminate with a populated error_class, not silently succeed")
+}

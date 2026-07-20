@@ -36,29 +36,29 @@ type fakeValidator struct {
 func (f *fakeValidator) Name() string             { return f.name }
 func (f *fakeValidator) SupportedRoles() []string { return f.supportedRoles }
 
-func (f *fakeValidator) ValidateExecutor(_ context.Context, _ runtime.ValidateExecutorInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+func (f *fakeValidator) ValidateExecutor(_ context.Context, _ runtime.ValidateExecutorInput) (runtime.ValidationOutcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.executor++
-	return f.errs, f.warns, f.rpcErr
+	return runtime.ValidationOutcome{Errors: f.errs, Warnings: f.warns}, f.rpcErr
 }
-func (f *fakeValidator) ValidateClaimProducer(_ context.Context, _ runtime.ValidateClaimProducerInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+func (f *fakeValidator) ValidateClaimProducer(_ context.Context, _ runtime.ValidateClaimProducerInput) (runtime.ValidationOutcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.producer++
-	return f.errs, f.warns, f.rpcErr
+	return runtime.ValidationOutcome{Errors: f.errs, Warnings: f.warns}, f.rpcErr
 }
-func (f *fakeValidator) ValidatePublisher(_ context.Context, _ runtime.ValidatePublisherInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+func (f *fakeValidator) ValidatePublisher(_ context.Context, _ runtime.ValidatePublisherInput) (runtime.ValidationOutcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.publisher++
-	return f.errs, f.warns, f.rpcErr
+	return runtime.ValidationOutcome{Errors: f.errs, Warnings: f.warns}, f.rpcErr
 }
-func (f *fakeValidator) ValidateLifecycleSubscriber(_ context.Context, _ runtime.ValidateLifecycleSubscriberInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+func (f *fakeValidator) ValidateLifecycleSubscriber(_ context.Context, _ runtime.ValidateLifecycleSubscriberInput) (runtime.ValidationOutcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lifecycle++
-	return f.errs, f.warns, f.rpcErr
+	return runtime.ValidationOutcome{Errors: f.errs, Warnings: f.warns}, f.rpcErr
 }
 
 func (f *fakeValidator) ExecutorCalls() int {

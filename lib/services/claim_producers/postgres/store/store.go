@@ -583,13 +583,15 @@ func (s *Store) RunPartitionPolicy(ctx context.Context, pp *PartitionPolicy, par
 	}
 	order := pp.ParamOrder
 	if len(order) == 0 && len(params) > 0 {
-		return nil, fmt.Errorf("postgres store: RunPartitionPolicy: policy supplies %d params but params_schema (ParamOrder) is empty; declare params_schema to bind $N placeholders deterministically (alphabetical fallback would silently scramble bindings)", len(params))
+		return nil, &ClassedError{Class: PartitionPolicyInvalidRequestClass, Err: fmt.Errorf(
+			"postgres store: RunPartitionPolicy: policy supplies %d params but params_schema (ParamOrder) is empty; declare params_schema to bind $N placeholders deterministically (alphabetical fallback would silently scramble bindings)", len(params))}
 	}
 	args := make([]any, 0, len(order))
 	for _, k := range order {
 		v, ok := params[k]
 		if !ok {
-			return nil, fmt.Errorf("postgres store: RunPartitionPolicy: param %q declared in params_schema but missing from request", k)
+			return nil, &ClassedError{Class: PartitionPolicyInvalidRequestClass, Err: fmt.Errorf(
+				"postgres store: RunPartitionPolicy: param %q declared in params_schema but missing from request", k)}
 		}
 		args = append(args, v)
 	}

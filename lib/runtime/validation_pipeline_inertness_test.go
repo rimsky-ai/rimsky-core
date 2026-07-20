@@ -24,28 +24,28 @@ func (v *capturingValidator) Name() string { return v.name }
 func (v *capturingValidator) SupportedRoles() []string {
 	return []string{"claim_producer", "publisher"}
 }
-func (v *capturingValidator) ValidateExecutor(context.Context, ValidateExecutorInput) ([]ValidationFinding, []ValidationFinding, error) {
-	return nil, nil, nil
+func (v *capturingValidator) ValidateExecutor(context.Context, ValidateExecutorInput) (ValidationOutcome, error) {
+	return ValidationOutcome{}, nil
 }
 
 func (v *capturingValidator) ValidateClaimProducer(
 	_ context.Context, in ValidateClaimProducerInput,
-) ([]ValidationFinding, []ValidationFinding, error) {
+) (ValidationOutcome, error) {
 	v.claimProducerIn = in
 	v.sawClaimProducer = true
-	return nil, nil, nil
+	return ValidationOutcome{}, nil
 }
 
 func (v *capturingValidator) ValidatePublisher(
 	_ context.Context, in ValidatePublisherInput,
-) ([]ValidationFinding, []ValidationFinding, error) {
+) (ValidationOutcome, error) {
 	v.publisherIn = in
 	v.sawPublisher = true
-	return nil, nil, nil
+	return ValidationOutcome{}, nil
 }
 
-func (v *capturingValidator) ValidateLifecycleSubscriber(context.Context, ValidateLifecycleSubscriberInput) ([]ValidationFinding, []ValidationFinding, error) {
-	return nil, nil, nil
+func (v *capturingValidator) ValidateLifecycleSubscriber(context.Context, ValidateLifecycleSubscriberInput) (ValidationOutcome, error) {
+	return ValidationOutcome{}, nil
 }
 
 type singleValidatorRegistry struct {

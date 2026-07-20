@@ -28,7 +28,7 @@ func (c *ValidationClient) Name() string { return c.name }
 
 func (c *ValidationClient) SupportedRoles() []string { return c.supportedRoles }
 
-func (c *ValidationClient) ValidateExecutor(ctx context.Context, in clientiface.ValidateExecutorInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
+func (c *ValidationClient) ValidateExecutor(ctx context.Context, in clientiface.ValidateExecutorInput) (clientiface.ValidationOutcome, error) {
 	resp, err := c.rpc.Validate(ctx, &genv1.ValidateRequest{
 		Role: "executor",
 		Context: &genv1.ValidateRequest_Executor{
@@ -40,14 +40,15 @@ func (c *ValidationClient) ValidateExecutor(ctx context.Context, in clientiface.
 		},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("remote validation %q: Validate(executor): %w", c.name, err)
+		return clientiface.ValidationOutcome{}, fmt.Errorf("remote validation %q: Validate(executor): %w", c.name, err)
 	}
-	return projectFindings(c.name, "executor", in.NodeAlias, resp.GetErrors()),
-		projectFindings(c.name, "executor", in.NodeAlias, resp.GetWarnings()),
-		nil
+	return clientiface.ValidationOutcome{
+		Errors:   projectFindings(c.name, "executor", in.NodeAlias, resp.GetErrors()),
+		Warnings: projectFindings(c.name, "executor", in.NodeAlias, resp.GetWarnings()),
+	}, nil
 }
 
-func (c *ValidationClient) ValidateClaimProducer(ctx context.Context, in clientiface.ValidateClaimProducerInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
+func (c *ValidationClient) ValidateClaimProducer(ctx context.Context, in clientiface.ValidateClaimProducerInput) (clientiface.ValidationOutcome, error) {
 	claims := make([]*genv1.ClaimBinding, 0, len(in.Claims))
 	for _, b := range in.Claims {
 		claims = append(claims, &genv1.ClaimBinding{
@@ -70,14 +71,15 @@ func (c *ValidationClient) ValidateClaimProducer(ctx context.Context, in clienti
 		},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("remote validation %q: Validate(claim_producer): %w", c.name, err)
+		return clientiface.ValidationOutcome{}, fmt.Errorf("remote validation %q: Validate(claim_producer): %w", c.name, err)
 	}
-	return projectFindings(c.name, "claim_producer", "", resp.GetErrors()),
-		projectFindings(c.name, "claim_producer", "", resp.GetWarnings()),
-		nil
+	return clientiface.ValidationOutcome{
+		Errors:   projectFindings(c.name, "claim_producer", "", resp.GetErrors()),
+		Warnings: projectFindings(c.name, "claim_producer", "", resp.GetWarnings()),
+	}, nil
 }
 
-func (c *ValidationClient) ValidatePublisher(ctx context.Context, in clientiface.ValidatePublisherInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
+func (c *ValidationClient) ValidatePublisher(ctx context.Context, in clientiface.ValidatePublisherInput) (clientiface.ValidationOutcome, error) {
 	resp, err := c.rpc.Validate(ctx, &genv1.ValidateRequest{
 		Role: "publisher",
 		Context: &genv1.ValidateRequest_Publisher{
@@ -89,14 +91,15 @@ func (c *ValidationClient) ValidatePublisher(ctx context.Context, in clientiface
 		},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("remote validation %q: Validate(publisher): %w", c.name, err)
+		return clientiface.ValidationOutcome{}, fmt.Errorf("remote validation %q: Validate(publisher): %w", c.name, err)
 	}
-	return projectFindings(c.name, "publisher", "", resp.GetErrors()),
-		projectFindings(c.name, "publisher", "", resp.GetWarnings()),
-		nil
+	return clientiface.ValidationOutcome{
+		Errors:   projectFindings(c.name, "publisher", "", resp.GetErrors()),
+		Warnings: projectFindings(c.name, "publisher", "", resp.GetWarnings()),
+	}, nil
 }
 
-func (c *ValidationClient) ValidateLifecycleSubscriber(ctx context.Context, in clientiface.ValidateLifecycleSubscriberInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
+func (c *ValidationClient) ValidateLifecycleSubscriber(ctx context.Context, in clientiface.ValidateLifecycleSubscriberInput) (clientiface.ValidationOutcome, error) {
 	resp, err := c.rpc.Validate(ctx, &genv1.ValidateRequest{
 		Role: "lifecycle_subscriber",
 		Context: &genv1.ValidateRequest_LifecycleSubscriber{
@@ -107,11 +110,12 @@ func (c *ValidationClient) ValidateLifecycleSubscriber(ctx context.Context, in c
 		},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("remote validation %q: Validate(lifecycle_subscriber): %w", c.name, err)
+		return clientiface.ValidationOutcome{}, fmt.Errorf("remote validation %q: Validate(lifecycle_subscriber): %w", c.name, err)
 	}
-	return projectFindings(c.name, "lifecycle_subscriber", "", resp.GetErrors()),
-		projectFindings(c.name, "lifecycle_subscriber", "", resp.GetWarnings()),
-		nil
+	return clientiface.ValidationOutcome{
+		Errors:   projectFindings(c.name, "lifecycle_subscriber", "", resp.GetErrors()),
+		Warnings: projectFindings(c.name, "lifecycle_subscriber", "", resp.GetWarnings()),
+	}, nil
 }
 
 func (c *ValidationClient) Close() {

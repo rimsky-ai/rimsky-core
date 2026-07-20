@@ -27,7 +27,11 @@ func (a slogAdapter) Error(msg string, args ...any) { a.l.Error(msg, args...) }
 
 func main() {
 	host := envOr("RIMSKY_SENSOR_OBJECT_STORE_HOST", "0.0.0.0")
-	port := agentport.Resolve("RIMSKY_SENSOR_OBJECT_STORE_PORT", 9083)
+	port, err := agentport.Resolve("RIMSKY_SENSOR_OBJECT_STORE_PORT", 9083)
+	if err != nil {
+		slog.Error("sensor-object-store port", "error", err.Error())
+		os.Exit(1)
+	}
 	rimskyEndpoint := envOr("RIMSKY_ENDPOINT", "http://localhost:8080")
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))

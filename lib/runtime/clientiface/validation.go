@@ -25,13 +25,13 @@ type ValidationClient interface {
 
 	SupportedRoles() []string
 
-	ValidateExecutor(ctx context.Context, in ValidateExecutorInput) ([]ValidationFinding, []ValidationFinding, error)
+	ValidateExecutor(ctx context.Context, in ValidateExecutorInput) (ValidationOutcome, error)
 
-	ValidateClaimProducer(ctx context.Context, in ValidateClaimProducerInput) ([]ValidationFinding, []ValidationFinding, error)
+	ValidateClaimProducer(ctx context.Context, in ValidateClaimProducerInput) (ValidationOutcome, error)
 
-	ValidatePublisher(ctx context.Context, in ValidatePublisherInput) ([]ValidationFinding, []ValidationFinding, error)
+	ValidatePublisher(ctx context.Context, in ValidatePublisherInput) (ValidationOutcome, error)
 
-	ValidateLifecycleSubscriber(ctx context.Context, in ValidateLifecycleSubscriberInput) ([]ValidationFinding, []ValidationFinding, error)
+	ValidateLifecycleSubscriber(ctx context.Context, in ValidateLifecycleSubscriberInput) (ValidationOutcome, error)
 }
 
 type ValidateExecutorInput struct {

@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -69,7 +70,10 @@ func (p *overlapProducer) ScopesConflict(_ context.Context, req *genv1.ClaimScop
 }
 
 func (p *overlapProducer) SplitScope(_ context.Context, req *genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error) {
-	keys := decodePartitionKeys(req.GetPartitionRequest())
+	keys, err := decodePartitionKeys(req.GetPartitionRequest())
+	if err != nil {
+		return nil, fmt.Errorf("overlapproducer: SplitScope: malformed partition_request: %w", err)
+	}
 	subs := make([]*genv1.SubScopeDescriptor, 0, len(keys))
 	for _, k := range keys {
 		selector := "tenant/" + k
@@ -97,14 +101,14 @@ func decodeSelector(raw []byte) string {
 	return string(raw)
 }
 
-func decodePartitionKeys(raw []byte) []string {
+func decodePartitionKeys(raw []byte) ([]string, error) {
 	var req struct {
 		PartitionKeys []string `json:"partition_keys"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
-		return nil
+		return nil, err
 	}
-	return req.PartitionKeys
+	return req.PartitionKeys, nil
 }
 
 func main() {

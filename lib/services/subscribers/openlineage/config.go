@@ -43,8 +43,8 @@ func LoadConfig() (Config, error) {
 	poll := 5 * time.Second
 	if v := os.Getenv("RIMSKY_OPENLINEAGE_POLL_INTERVAL"); v != "" {
 		p, err := time.ParseDuration(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("RIMSKY_OPENLINEAGE_POLL_INTERVAL: %w", err)
+		if err != nil || p <= 0 {
+			return Config{}, fmt.Errorf("RIMSKY_OPENLINEAGE_POLL_INTERVAL: must be a positive duration")
 		}
 		poll = p
 	}

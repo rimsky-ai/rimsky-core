@@ -4,7 +4,10 @@
 
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestLoadConfig_RequiresBackendURL(t *testing.T) {
 	t.Setenv("RIMSKY_OPENLINEAGE_RIMSKY_DSN", "postgres://example/db")
@@ -24,5 +27,37 @@ func TestLoadConfig_AcceptsConfiguredBackendURL(t *testing.T) {
 	}
 	if cfg.BackendURL != "http://marquez.example/api" {
 		t.Errorf("BackendURL = %q", cfg.BackendURL)
+	}
+}
+
+func TestLoadConfig_RejectsZeroPollInterval(t *testing.T) {
+	t.Setenv("RIMSKY_OPENLINEAGE_RIMSKY_DSN", "postgres://example/db")
+	t.Setenv("RIMSKY_OPENLINEAGE_BACKEND_URL", "http://marquez.example/api")
+	t.Setenv("RIMSKY_OPENLINEAGE_POLL_INTERVAL", "0s")
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("LoadConfig: expected an error for a zero poll interval, got nil " +
+			"(time.NewTicker panics on a non-positive duration at Run instead of failing config)")
+	}
+}
+
+func TestLoadConfig_RejectsNegativePollInterval(t *testing.T) {
+	t.Setenv("RIMSKY_OPENLINEAGE_RIMSKY_DSN", "postgres://example/db")
+	t.Setenv("RIMSKY_OPENLINEAGE_BACKEND_URL", "http://marquez.example/api")
+	t.Setenv("RIMSKY_OPENLINEAGE_POLL_INTERVAL", "-5s")
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("LoadConfig: expected an error for a negative poll interval, got nil")
+	}
+}
+
+func TestLoadConfig_AcceptsPositivePollInterval(t *testing.T) {
+	t.Setenv("RIMSKY_OPENLINEAGE_RIMSKY_DSN", "postgres://example/db")
+	t.Setenv("RIMSKY_OPENLINEAGE_BACKEND_URL", "http://marquez.example/api")
+	t.Setenv("RIMSKY_OPENLINEAGE_POLL_INTERVAL", "10s")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.PollInterval != 10*time.Second {
+		t.Fatalf("PollInterval = %v, want 10s", cfg.PollInterval)
 	}
 }
