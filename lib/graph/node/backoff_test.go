@@ -10,14 +10,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/graph/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func TestBackoffLinearGrowth(t *testing.T) {
 	cfg := BackoffConfig{
-		Kind:        shared.BackoffLinear,
+		Kind:        spec.BackoffLinear,
 		BaseDelayMs: 100,
-		Jitter:      shared.JitterNone,
+		Jitter:      spec.JitterNone,
 	}
 	require.Equal(t, 100, ComputeDelay(cfg, 0, nil))
 	require.Equal(t, 200, ComputeDelay(cfg, 1, nil))
@@ -27,9 +27,9 @@ func TestBackoffLinearGrowth(t *testing.T) {
 
 func TestBackoffExponentialGrowth(t *testing.T) {
 	cfg := BackoffConfig{
-		Kind:        shared.BackoffExponential,
+		Kind:        spec.BackoffExponential,
 		BaseDelayMs: 100,
-		Jitter:      shared.JitterNone,
+		Jitter:      spec.JitterNone,
 	}
 	require.Equal(t, 100, ComputeDelay(cfg, 0, nil))
 	require.Equal(t, 200, ComputeDelay(cfg, 1, nil))
@@ -39,9 +39,9 @@ func TestBackoffExponentialGrowth(t *testing.T) {
 
 func TestBackoffJitterPlusMinusStaysInRange(t *testing.T) {
 	cfg := BackoffConfig{
-		Kind:        shared.BackoffLinear,
+		Kind:        spec.BackoffLinear,
 		BaseDelayMs: 1000,
-		Jitter:      shared.JitterPlusMinus,
+		Jitter:      spec.JitterPlusMinus,
 	}
 	base := 1000.0
 	var i int
@@ -60,9 +60,9 @@ func TestBackoffJitterPlusMinusStaysInRange(t *testing.T) {
 
 func TestBackoffMaxClamp(t *testing.T) {
 	cfg := BackoffConfig{
-		Kind:        shared.BackoffLinear,
+		Kind:        spec.BackoffLinear,
 		BaseDelayMs: 1000,
-		Jitter:      shared.JitterNone,
+		Jitter:      spec.JitterNone,
 		MaxDelayMs:  5000,
 	}
 	require.Equal(t, 5000, ComputeDelay(cfg, 10, nil))
@@ -70,9 +70,9 @@ func TestBackoffMaxClamp(t *testing.T) {
 
 func TestBackoffZeroMaxUsesUnbounded(t *testing.T) {
 	cfg := BackoffConfig{
-		Kind:        shared.BackoffExponential,
+		Kind:        spec.BackoffExponential,
 		BaseDelayMs: 100,
-		Jitter:      shared.JitterNone,
+		Jitter:      spec.JitterNone,
 		MaxDelayMs:  0,
 	}
 	require.Equal(t, math.MaxInt32, ComputeDelay(cfg, 100, nil))
@@ -81,17 +81,17 @@ func TestBackoffZeroMaxUsesUnbounded(t *testing.T) {
 
 func TestBackoffNegativeAttemptIsTreatedAsZero(t *testing.T) {
 	cfg := BackoffConfig{
-		Kind:        shared.BackoffLinear,
+		Kind:        spec.BackoffLinear,
 		BaseDelayMs: 100,
-		Jitter:      shared.JitterNone,
+		Jitter:      spec.JitterNone,
 	}
 	require.Equal(t, 100, ComputeDelay(cfg, -1, nil))
 	require.Equal(t, 100, ComputeDelay(cfg, -100, nil))
 
 	expCfg := BackoffConfig{
-		Kind:        shared.BackoffExponential,
+		Kind:        spec.BackoffExponential,
 		BaseDelayMs: 100,
-		Jitter:      shared.JitterNone,
+		Jitter:      spec.JitterNone,
 	}
 	require.Equal(t, 100, ComputeDelay(expCfg, -5, nil))
 }

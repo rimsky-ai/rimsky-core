@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	persistence "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
@@ -23,6 +24,8 @@ import (
 type carryFixture struct {
 	tables          persistence.Tables
 	instanceID      shared.UUID
+	frameID         shared.UUID
+	mainScopeID     shared.UUID
 	parentNodeRunID shared.UUID
 	exitNodeRunID   shared.UUID
 	exitScopeID     shared.UUID
@@ -59,6 +62,7 @@ func makeFixture(t *testing.T) carryFixture {
 	parentNodeRunID := shared.UUID(uuid.New())
 	exitScopeID := shared.UUID(uuid.New())
 	exitNodeRunID := shared.UUID(uuid.New())
+	var frameID shared.UUID
 
 	tmpl := tmplspec.TemplateSpec{
 		Name:    "exit-carry-fixture",
@@ -113,10 +117,11 @@ func makeFixture(t *testing.T) carryFixture {
 		}); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
+		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}
+		frameID = fid
 		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
 			NodeRunID: parentNodeRunID, NodeID: callerNodeID, FrameID: frameID,
 			RunScopeID: mainScopeID,
@@ -144,6 +149,8 @@ func makeFixture(t *testing.T) carryFixture {
 	return carryFixture{
 		tables:          tables,
 		instanceID:      instanceID,
+		frameID:         frameID,
+		mainScopeID:     mainScopeID,
 		parentNodeRunID: parentNodeRunID,
 		exitNodeRunID:   exitNodeRunID,
 		exitScopeID:     exitScopeID,
@@ -275,5 +282,64 @@ func TestSettleFromDelegate_CarryVerbatim_EmptyWritebackSkipsOnlyAttributeCarry(
 	}
 	if scope == nil || scope.ClosedAt == nil {
 		t.Errorf("sub-graph RunScope must close on the empty-writeback carry")
+	}
+}
+
+func TestSettleFromDelegate_DrainsWaitSetAndClearsReceiverGate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fx := makeFixture(t)
+
+	receiverNodeID := shared.UUID(uuid.New())
+	var receiverRunID shared.UUID
+	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if _, err := fx.tables.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: receiverNodeID, InstanceID: fx.instanceID,
+			NodeType: "receiver",
+		}, tx); err != nil {
+			return err
+		}
+		runID, err := fx.tables.Nodes().CreateCascadePending(ctx, tx, receiverNodeID, fx.mainScopeID, fx.frameID)
+		if err != nil {
+			return err
+		}
+		receiverRunID = runID
+		return fx.tables.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID:           fx.frameID,
+			ReceiverNodeRunID: receiverRunID,
+			SenderNodeRunID:   fx.parentNodeRunID,
+			TopicKind:         "state",
+		}, tx)
+	}); err != nil {
+		t.Fatalf("seed gated receiver: %v", err)
+	}
+
+	readReceiverState := func() cascade.NodeState {
+		t.Helper()
+		var run *persistence.NodeRunTreeRow
+		if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			var err error
+			run, err = fx.tables.NodeRunTree().GetByID(ctx, tx, receiverRunID)
+			return err
+		}); err != nil {
+			t.Fatalf("load receiver run: %v", err)
+		}
+		if run == nil {
+			t.Fatalf("receiver run %s vanished", receiverRunID)
+		}
+		return run.State
+	}
+
+	if got := readReceiverState(); got != cascade.NodeStatePending {
+		t.Fatalf("receiver run state before settle = %s, want pending", got)
+	}
+
+	if err := settleCarry(fx, fx.exitNodeRunID, json.RawMessage(`{"a":1}`)); err != nil {
+		t.Fatalf("SettleFromDelegate: %v", err)
+	}
+
+	if got := readReceiverState(); got != cascade.NodeStateStale {
+		t.Fatalf("receiver run state after settle = %s, want stale "+
+			"(SettleFromDelegate must re-evaluate gates on drain, not just mark the wait-set row drained)", got)
 	}
 }

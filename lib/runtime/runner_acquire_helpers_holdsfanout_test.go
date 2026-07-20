@@ -139,7 +139,7 @@ func TestAcquireFanOutIfDeclared_HoldsBoundClaimReachesSplitScope(t *testing.T) 
 	reg := locks.NewRegistry()
 	reg.Add(storeName, store)
 
-	consumerDef := lookupNodeDef(tmplSpec, "fan-out-consumer")
+	consumerDef := LookupNodeDef(tmplSpec, "fan-out-consumer")
 	require.NotNil(t, consumerDef)
 
 	out := &acquisition{InstanceID: instID, RunScopeID: mainScopeID}

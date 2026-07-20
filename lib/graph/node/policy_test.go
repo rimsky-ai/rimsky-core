@@ -10,11 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/shared"
 )
 
 func linearBackoff(baseMs int) BackoffConfig {
-	return BackoffConfig{Kind: shared.BackoffLinear, BaseDelayMs: baseMs, Jitter: shared.JitterNone}
+	return BackoffConfig{Kind: spec.BackoffLinear, BaseDelayMs: baseMs, Jitter: spec.JitterNone}
 }
 
 func TestEvaluate_UnknownErrorClassGivesUp(t *testing.T) {
@@ -91,7 +90,7 @@ func TestEvaluate_UnknownActionFallsToGiveUp(t *testing.T) {
 
 func TestEvaluate_BackoffJitterConsumesRng(t *testing.T) {
 	policy := &ErrorTypePolicy{Action: spec.ActionRetry}
-	backoff := BackoffConfig{Kind: shared.BackoffLinear, BaseDelayMs: 100, Jitter: shared.JitterPlusMinus}
+	backoff := BackoffConfig{Kind: spec.BackoffLinear, BaseDelayMs: 100, Jitter: spec.JitterPlusMinus}
 	calls := 0
 	rng := func() float64 {
 		calls++

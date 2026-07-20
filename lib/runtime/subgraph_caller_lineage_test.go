@@ -146,7 +146,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 			cascade.NodeStateRunning, nil, false)
 	}))
 
-	nodeDef := lookupNodeDef(&tmplSpec, "outer-caller")
+	nodeDef := LookupNodeDef(&tmplSpec, "outer-caller")
 	require.NotNil(t, nodeDef, "outer-caller node def must exist in main graph")
 	require.Equal(t, "staging", nodeDef.Delegate, "node def must carry the delegate target")
 

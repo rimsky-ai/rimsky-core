@@ -132,7 +132,7 @@ func (s *templatesImpl) List(
 
 	var out []persistence.TemplateRow
 	for rows.Next() {
-		r, err := scanTemplateRows(rows)
+		r, err := scanTemplate(rows)
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.TemplateRow]{}, err
 		}
@@ -209,8 +209,4 @@ func scanTemplate(sc scannable) (persistence.TemplateRow, error) {
 		RegisteredAt: registeredAt,
 		Source:       source,
 	}, nil
-}
-
-func scanTemplateRows(rows pgx.Rows) (persistence.TemplateRow, error) {
-	return scanTemplate(rows)
 }

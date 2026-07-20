@@ -32,10 +32,6 @@ type WaitSetTable interface {
 
 	ListForFrame(ctx context.Context, frameID shared.UUID, tx Tx) ([]WaitSetRow, error)
 
-	ListDrainedAttributeRowsForReceiver(
-		ctx context.Context, frameID, receiverNodeRunID shared.UUID, tx Tx,
-	) ([]WaitSetRow, error)
-
 	// @concept: cascade
 	// @decision: walker-rule-per-sender-node
 	ListSenderNodesForReceiver(ctx context.Context, frameID, receiverNodeRunID shared.UUID, tx Tx) ([]shared.UUID, error)

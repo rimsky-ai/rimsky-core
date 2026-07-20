@@ -79,27 +79,6 @@ func (b *runScopesImpl) Close(ctx context.Context, tx persistence.Tx, id shared.
 	return nil
 }
 
-func (b *runScopesImpl) ListChildScopes(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.RunScopeRow, error) {
-	rows, err := b.q(tx).Query(ctx,
-		`SELECT `+runScopeCols+` FROM rimsky_run_scopes WHERE parent_run_id = $1 ORDER BY created_at`, parentNodeRunID)
-	if err != nil {
-		return nil, fmt.Errorf("runScopes.ListChildScopes: %w", err)
-	}
-	defer rows.Close()
-	var out []persistence.RunScopeRow
-	for rows.Next() {
-		r, err := scanRunScopeRow(rows)
-		if err != nil {
-			return nil, fmt.Errorf("runScopes.ListChildScopes scan: %w", err)
-		}
-		out = append(out, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("runScopes.ListChildScopes iter: %w", err)
-	}
-	return out, nil
-}
-
 func (b *runScopesImpl) ListParentChain(ctx context.Context, tx persistence.Tx, id shared.UUID) ([]persistence.RunScopeRow, error) {
 	rows, err := b.q(tx).Query(ctx,
 		`WITH RECURSIVE chain AS (
@@ -161,11 +140,7 @@ func (b *runScopesImpl) ListTreeDeepestFirst(ctx context.Context, tx persistence
 	return out, nil
 }
 
-type runScopeScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanRunScopeRow(s runScopeScanner) (persistence.RunScopeRow, error) {
+func scanRunScopeRow(s scannable) (persistence.RunScopeRow, error) {
 	var r persistence.RunScopeRow
 	err := s.Scan(&r.ID, &r.ParentRunScopeID, &r.ParentNodeRunID, &r.GraphName,
 		&r.PartitionKey, &r.InstanceID, &r.CreatedAt, &r.ClosedAt)

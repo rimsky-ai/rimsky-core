@@ -54,7 +54,7 @@ type PendingMessagePick struct {
 	MessageID  shared.UUID
 }
 
-type MessagesTable interface {
+type MessageTable interface {
 	Insert(ctx context.Context, tx Tx, req EnqueueMessageRequest) error
 
 	MarkDelivered(ctx context.Context, tx Tx, id shared.UUID, frame shared.UUID, deliveredAt time.Time) (bool, error)

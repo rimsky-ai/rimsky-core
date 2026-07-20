@@ -229,34 +229,6 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	var drainedAttrs []persistence.WaitSetRow
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		rows, err := store.WaitSet().ListDrainedAttributeRowsForReceiver(ctx, fix.FrameID, receiverNodeRunID, tx)
-		drainedAttrs = rows
-		return err
-	}); err != nil {
-		t.Fatalf("ListDrainedAttributeRowsForReceiver: %v", err)
-	}
-	if len(drainedAttrs) != 1 {
-		t.Fatalf("ListDrainedAttributeRowsForReceiver: got %d rows want 1 (only the attribute-topic row should match)", len(drainedAttrs))
-	}
-	if drainedAttrs[0].SenderNodeRunID != senderBRunID {
-		t.Fatalf("drained-attr row sender=%v want %v", drainedAttrs[0].SenderNodeRunID, senderBRunID)
-	}
-	if drainedAttrs[0].TopicKind != "attribute" {
-		t.Fatalf("drained-attr row topic=%q want attribute", drainedAttrs[0].TopicKind)
-	}
-	var gotFilter, wantFilter map[string]string
-	if err := json.Unmarshal(drainedAttrs[0].TopicFilter, &gotFilter); err != nil {
-		t.Fatalf("drained-attr row topic_filter unmarshal: %v (raw=%s)", err, drainedAttrs[0].TopicFilter)
-	}
-	if err := json.Unmarshal(attrFilter, &wantFilter); err != nil {
-		t.Fatalf("attrFilter unmarshal: %v", err)
-	}
-	if len(gotFilter) != len(wantFilter) || gotFilter["name"] != wantFilter["name"] {
-		t.Fatalf("drained-attr row topic_filter=%v want %v (topic_filter must round-trip through write/read)",
-			gotFilter, wantFilter)
-	}
 }
 
 func testWaitSetFrameIsolation(t *testing.T, d persistence.Database) {
@@ -353,18 +325,6 @@ func testWaitSetFrameIsolation(t *testing.T, d persistence.Database) {
 	}
 	if len(afterCrossDrain) != 1 || afterCrossDrain[0].DrainedAt != nil {
 		t.Fatalf("MarkDrainedBySender(frameB, senderB) must not affect frameA's rows, got %+v", afterCrossDrain)
-	}
-
-	var drainedAttrsA []persistence.WaitSetRow
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		var err error
-		drainedAttrsA, err = store.WaitSet().ListDrainedAttributeRowsForReceiver(ctx, fixA.FrameID, receiverA, tx)
-		return err
-	}); err != nil {
-		t.Fatalf("ListDrainedAttributeRowsForReceiver: %v", err)
-	}
-	if len(drainedAttrsA) != 0 {
-		t.Fatalf("ListDrainedAttributeRowsForReceiver(frameA, receiverA) = %+v, want empty — frameB drain must not leak in", drainedAttrsA)
 	}
 }
 

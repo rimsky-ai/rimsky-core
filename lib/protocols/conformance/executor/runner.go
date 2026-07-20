@@ -54,7 +54,7 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	defer func() { _ = receiver.Close() }()
 	env := Env{Client: client, Callbacks: receiver}
 
-	stubOK, err := probeStubMode(ctx, env, opts.Timeout)
+	stubOK, err := ProbeStubMode(ctx, env, opts.Timeout)
 	if opts.RequireStubMode {
 		if err != nil {
 			return nil, fmt.Errorf("stub-mode probe failed: %w", err)
@@ -92,7 +92,7 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	return results, nil
 }
 
-func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, error) {
+func ProbeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, error) {
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})

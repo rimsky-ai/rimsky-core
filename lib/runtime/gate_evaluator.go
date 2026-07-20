@@ -132,7 +132,7 @@ func routeSubstitutionFailureAtGate(
 	}
 	var nodeDef *node.TemplateNodeDef
 	if tmplSpec != nil {
-		nodeDef = lookupNodeDef(tmplSpec, receiverNode.NodeType)
+		nodeDef = LookupNodeDef(tmplSpec, receiverNode.NodeType)
 	}
 	class, eventKind := classifyAttributeFailure(subErr)
 	directive := extractDirective(subErr)
@@ -188,7 +188,7 @@ func buildResolvedBagAtGateEvalCarry(
 	if tmplSpec == nil {
 		return carryForward, nil
 	}
-	nodeDef := lookupNodeDef(tmplSpec, receiverNode.NodeType)
+	nodeDef := LookupNodeDef(tmplSpec, receiverNode.NodeType)
 	templateDefaults := templateAttributeDefaultsFor(tmplSpec, receiverNode.Executor)
 	schema := schemaForGateEval(args, receiverNode.Executor, templateDefaults, nodeDef)
 	if schema == nil {

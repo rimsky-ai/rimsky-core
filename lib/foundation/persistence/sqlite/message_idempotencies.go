@@ -43,7 +43,7 @@ func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, tx persis
 	}
 	res, err := b.q(tx).ExecContext(ctx, sqliteInsertMessageIdempotencySQL,
 		row.InstanceID.String(), row.SenderKind, row.Sender, row.SenderSubject, row.IdempotencyKey,
-		row.MessageID.String(), row.CreatedAt.UTC().Format(timeLayoutFixedNanos))
+		row.MessageID.String(), formatTime(row.CreatedAt))
 	if err != nil {
 		return persistence.MessageIdempotencyRow{}, false, fmt.Errorf("sqlite.MessageIdempotencies.Insert: %w", err)
 	}
@@ -88,7 +88,7 @@ DELETE FROM rimsky_message_idempotencies WHERE created_at < ?`
 
 func (b *messageIdempotenciesImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	res, err := (*tablesImpl)(b).db.ExecContext(ctx, sqliteDeleteMessageIdempotenciesOlderThanSQL,
-		cutoff.UTC().Format(timeLayoutFixedNanos))
+		formatTime(cutoff))
 	if err != nil {
 		return 0, fmt.Errorf("sqlite.MessageIdempotencies.DeleteOlderThan: %w", err)
 	}

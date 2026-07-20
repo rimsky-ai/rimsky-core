@@ -40,17 +40,7 @@ func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec c
 	if err != nil {
 		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: %w", c.name, err)
 	}
-	if !out.Available {
-		return out, nil
-	}
-	rws := out.Result.RealizedWriteSemantics
-	if rws == claimproducer.WriteSemanticsUnknown {
-		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: realized_write_semantics is UNKNOWN (producer must declare a concrete value)", c.name)
-	}
-	if !c.caps.Contains(rws) {
-		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: realized_write_semantics %q not in advertised envelope %v", c.name, rws, c.caps.WriteSemanticsAllowed)
-	}
-	return out, nil
+	return c.caps.EnforceOpenWriteSemantics("remote producer", c.name, out)
 }
 
 func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) (claimproducer.CommitResult, error) {

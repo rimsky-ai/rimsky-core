@@ -151,7 +151,7 @@ func expectedInheritorsMissing(
 	if tmpl == nil {
 		return false, nil
 	}
-	acqDef := lookupNodeDef(&tmpl.Spec, acquirer.NodeType)
+	acqDef := LookupNodeDef(&tmpl.Spec, acquirer.NodeType)
 	if acqDef == nil {
 		return false, nil
 	}
@@ -170,16 +170,11 @@ func expectedInheritorsMissing(
 		return false, nil
 	}
 	subgraphs := node.HoldingSubgraphsForTemplate(&tmpl.Spec)
-	var members []string
-	for _, sg := range subgraphs {
-		if sg.AcquirerType == acquirer.NodeType && sg.Alias == alias {
-			members = sg.Members
-			break
-		}
-	}
-	if len(members) <= 1 {
+	sg, ok := findHoldingSubgraph(subgraphs, acquirer.NodeType, alias)
+	if !ok || len(sg.Members) <= 1 {
 		return false, nil
 	}
+	members := sg.Members
 	holderTypes := make(map[string]struct{}, len(holders))
 	for _, h := range holders {
 		nodeID, _, err := args.Queue.GetDispatchNode(ctx, h.HolderNodeRunID)

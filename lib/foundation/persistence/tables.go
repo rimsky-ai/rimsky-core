@@ -21,11 +21,11 @@ type Tables interface {
 	BlobOrphans() BlobOrphanTable
 	WaitSet() WaitSetTable
 
-	Messages() MessagesTable
+	Messages() MessageTable
 	MessageIdempotencies() MessageIdempotencyTable
 	Lineage() LineageTable
-	PublisherSubscriptions() PublisherSubscriptionsTable
-	NodeRunTree() RunTreeTable
+	PublisherSubscriptions() PublisherSubscriptionTable
+	NodeRunTree() NodeRunTreeTable
 
 	// @concept: run-scope
 	RunScopes() RunScopeTable

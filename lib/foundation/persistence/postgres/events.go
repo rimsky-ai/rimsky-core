@@ -6,7 +6,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -54,7 +53,7 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 	var cursorOccurred *time.Time
 	var cursorID *int64
 	if pag.Cursor != "" {
-		oc, id, err := decodeEventCursor(pag.Cursor)
+		oc, id, err := persistence.DecodeEventCursor(pag.Cursor)
 		if err != nil {
 			return persistence.EventListResult{}, fmt.Errorf("events.list: bad cursor: %w", err)
 		}
@@ -146,7 +145,7 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
 		last := out[len(out)-1]
-		nextCursor = encodeEventCursor(last.OccurredAt, last.ID)
+		nextCursor = persistence.EncodeEventCursor(last.OccurredAt, last.ID)
 	}
 	return persistence.EventListResult{Events: out, NextCursor: nextCursor}, nil
 }
@@ -246,29 +245,6 @@ func (s *eventsImpl) CountAttributeOverrideMatchesByIndex(
 		out[idx] = cnt
 	}
 	return out, rows.Err()
-}
-
-type eventCursor struct {
-	O time.Time `json:"o"`
-	I int64     `json:"i"`
-}
-
-func encodeEventCursor(occurred time.Time, id int64) string {
-	c := eventCursor{O: occurred, I: id}
-	b, _ := json.Marshal(c)
-	return base64.StdEncoding.EncodeToString(b)
-}
-
-func decodeEventCursor(s string) (time.Time, int64, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return time.Time{}, 0, err
-	}
-	var c eventCursor
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return time.Time{}, 0, err
-	}
-	return c.O, c.I, nil
 }
 
 func instanceIDArg(p *shared.UUID) any {

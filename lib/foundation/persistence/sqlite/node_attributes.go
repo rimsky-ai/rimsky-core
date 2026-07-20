@@ -40,7 +40,7 @@ func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.
 	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetLatestByNode")
 }
 
-func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row rowScanner, op string) (*persistence.NodeAttributesRow, error) {
+func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row scannable, op string) (*persistence.NodeAttributesRow, error) {
 	var (
 		runIDStr     string
 		nodeIDStr    string

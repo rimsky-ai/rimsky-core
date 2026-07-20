@@ -60,7 +60,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if stores == nil {
 		stores = []string{}
 	}
-	executor := nullableText(req.ExecutorName)
+	executor := nullableString(req.ExecutorName)
 	if req.FrameID == (shared.UUID{}) {
 		return fmt.Errorf("postgres.Enqueue: frame_id required for node %s", req.NodeID)
 	}
@@ -74,7 +74,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if req.PriorNodeRunID != nil {
 		priorRunPtr = *req.PriorNodeRunID
 	}
-	priorDisposition := nullableText(req.PriorDispatchDisposition)
+	priorDisposition := nullableString(req.PriorDispatchDisposition)
 	creationReason := req.CreationReason
 	if creationReason == "" {
 		creationReason = cascade.CreationReasonCascade
@@ -93,7 +93,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID, req.RunScopeID,
 		string(creationReason),
 		priorRunPtr, priorDisposition,
-		nilIfEmpty(req.InitialScratchInline), nilIfEmptyStr(req.InitialScratchHandle), nilIfEmptyStr(req.InitialScratchHandleBackend),
+		nilIfEmpty(req.InitialScratchInline), nullableString(req.InitialScratchHandle), nullableString(req.InitialScratchHandleBackend),
 	).Scan(&newRunID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var closedAt *time.Time
@@ -280,7 +280,10 @@ func (q *queueImpl) Complete(ctx context.Context, nodeRunID shared.UUID, expecte
 		    AND claimed_by = $2`,
 		nodeRunID, expectedClaimedBy,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("postgres.Complete: %w", err)
+	}
+	return nil
 }
 
 func (q *queueImpl) ForceComplete(ctx context.Context, nodeRunID shared.UUID) error {
@@ -291,7 +294,10 @@ func (q *queueImpl) ForceComplete(ctx context.Context, nodeRunID shared.UUID) er
 		  WHERE id = $1`,
 		nodeRunID,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("postgres.ForceComplete: %w", err)
+	}
+	return nil
 }
 
 // @concept: fan-out
@@ -305,7 +311,10 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 		    AND claimed_by = $3`,
 		nodeID, runScopeID, expectedClaimedBy,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("postgres.RemoveForNodeInTx: %w", err)
+	}
+	return nil
 }
 
 func (q *queueImpl) ForceRemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) error {
@@ -322,7 +331,10 @@ func (q *queueImpl) ForceRemoveForNodeInTx(ctx context.Context, nodeID shared.UU
 		    AND claimed_by IS NOT NULL`,
 		nodeID, runScopeID,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("postgres.ForceRemoveForNodeInTx: %w", err)
+	}
+	return nil
 }
 
 func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.DispatchRow, error) {
@@ -337,7 +349,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 		    AND async_ack_id IS NOT NULL`,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("postgres.ListOrphanedClaims: %w", err)
 	}
 	defer rows.Close()
 
@@ -351,7 +363,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 			&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
 			&r.AsyncAckPrincipal,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("postgres.ListOrphanedClaims: scan: %w", err)
 		}
 		if r.RequiredClaimProducers == nil {
 			r.RequiredClaimProducers = []string{}
@@ -359,7 +371,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("postgres.ListOrphanedClaims: rows: %w", err)
 	}
 	return out, nil
 }
@@ -371,7 +383,10 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, nodeRunID shared.UUID, exp
 		  WHERE id = $1 AND claimed_by = $2 AND state NOT IN ('fresh', 'failed')`,
 		nodeRunID, expectedClaimedBy,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("postgres.ReleaseClaim: %w", err)
+	}
+	return nil
 }
 
 func (q *queueImpl) ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID) error {
@@ -381,7 +396,10 @@ func (q *queueImpl) ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID
 		  WHERE id = $1`,
 		nodeRunID,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("postgres.ForceReleaseClaim: %w", err)
+	}
+	return nil
 }
 
 // @concept: node-run
@@ -542,20 +560,6 @@ func nilIfEmpty(b []byte) any {
 	return b
 }
 
-func nilIfEmptyStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullableText(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
 func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.DispatchRow], error) {
 	limit := pag.Limit
 	if limit <= 0 {
@@ -578,7 +582,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	case "claimed":
 		stateClaimed = true
 	}
-	executor := nullableText(filter.ExecutorName)
+	executor := nullableString(filter.ExecutorName)
 	var instanceID any
 	if filter.InstanceID != nil {
 		instanceID = *filter.InstanceID
@@ -644,7 +648,7 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 	case "claimed":
 		stateClaimed = true
 	}
-	executor := nullableText(filter.ExecutorName)
+	executor := nullableString(filter.ExecutorName)
 	var instanceID any
 	if filter.InstanceID != nil {
 		instanceID = *filter.InstanceID

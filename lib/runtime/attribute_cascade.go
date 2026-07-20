@@ -76,7 +76,7 @@ func firstRunAttributeBaseline(
 	if err != nil {
 		return nil, fmt.Errorf("firstRunAttributeBaseline: load template: %w", err)
 	}
-	nodeDef := lookupNodeDef(tmpl, nodeType)
+	nodeDef := LookupNodeDef(tmpl, nodeType)
 	if nodeDef == nil {
 		return map[string]any{}, nil
 	}

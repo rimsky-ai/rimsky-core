@@ -317,6 +317,243 @@ func testMessagesListBySender(t *testing.T, d persistence.Database) {
 	}
 }
 
+func testMessagesScanNullPayload(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+	messages := store.Messages()
+	msgID := shared.UUID(uuid.New())
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: fix.InstanceID,
+			Type:       "invalidate",
+			Sender:     "operator",
+			SenderKind: "operator",
+		})
+	}); err != nil {
+		t.Fatalf("Messages.Insert: %v", err)
+	}
+
+	row, err := messages.Get(ctx, msgID)
+	if err != nil {
+		t.Fatalf("Messages.Get: %v (NULL payload must scan without error)", err)
+	}
+	if row == nil {
+		t.Fatalf("Messages.Get returned nil for an inserted row")
+	}
+	if len(row.Payload) != 0 {
+		t.Fatalf("payload bytes = %q; want zero-length (NULL column → nil/empty json.RawMessage)", string(row.Payload))
+	}
+
+	page, err := messages.List(ctx, persistence.MessageListFilter{InstanceID: &fix.InstanceID}, persistence.ListPagination{Limit: 50})
+	if err != nil {
+		t.Fatalf("Messages.List: %v (NULL payload must scan in List path)", err)
+	}
+	var listRow *persistence.MessageRow
+	for i := range page.Rows {
+		if page.Rows[i].ID == msgID {
+			listRow = &page.Rows[i]
+		}
+	}
+	if listRow == nil {
+		t.Fatalf("List did not return the inserted message %s among %v", msgID, page.Rows)
+	}
+	if len(listRow.Payload) != 0 {
+		t.Fatalf("List row payload bytes = %q; want zero-length", string(listRow.Payload))
+	}
+
+	var pending []persistence.MessageRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := messages.ListPendingForInstance(ctx, tx, fix.InstanceID)
+		pending = r
+		return err
+	}); err != nil {
+		t.Fatalf("Messages.ListPendingForInstance: %v (NULL payload must scan)", err)
+	}
+	var pendingRow *persistence.MessageRow
+	for i := range pending {
+		if pending[i].ID == msgID {
+			pendingRow = &pending[i]
+		}
+	}
+	if pendingRow == nil {
+		t.Fatalf("ListPendingForInstance did not return the inserted message %s among %v", msgID, pending)
+	}
+	if len(pendingRow.Payload) != 0 {
+		t.Fatalf("pending row payload bytes = %q; want zero-length", string(pendingRow.Payload))
+	}
+}
+
+func testMessagesScanNonNullPayload(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+	messages := store.Messages()
+	msgID := shared.UUID(uuid.New())
+
+	payload := json.RawMessage(`{"hello":"world"}`)
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: fix.InstanceID,
+			Type:       "invalidate",
+			Sender:     "operator",
+			SenderKind: "operator",
+			Payload:    payload,
+		})
+	}); err != nil {
+		t.Fatalf("Messages.Insert: %v", err)
+	}
+	row, err := messages.Get(ctx, msgID)
+	if err != nil {
+		t.Fatalf("Messages.Get: %v", err)
+	}
+	if row == nil {
+		t.Fatalf("Messages.Get returned nil")
+	}
+	if string(row.Payload) != string(payload) {
+		t.Fatalf("payload round-trip: got %q, want %q", string(row.Payload), string(payload))
+	}
+}
+
+func testMessagesListDeliveredAfterBefore(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+	messages := store.Messages()
+
+	t1 := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 6, 14, 11, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	ids := make([]shared.UUID, 3)
+	for i, tt := range []time.Time{t1, t2, t3} {
+		ids[i] = shared.UUID(uuid.New())
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			if err := messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+				ID:         ids[i],
+				InstanceID: fix.InstanceID,
+				Type:       "ping/recheck",
+				Sender:     "operator",
+				SenderKind: "operator",
+				ReceivedAt: tt.Add(-time.Hour),
+			}); err != nil {
+				return err
+			}
+			ok, err := messages.MarkDelivered(ctx, tx, ids[i], fix.FrameID, tt)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				t.Fatalf("MarkDelivered: expected one row updated for %s", ids[i])
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("Messages.Insert/MarkDelivered[%d]: %v", i, err)
+		}
+	}
+
+	after := t1
+	page, err := messages.List(ctx, persistence.MessageListFilter{
+		InstanceID:     &fix.InstanceID,
+		DeliveredAfter: &after,
+	}, persistence.ListPagination{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(delivered_after=t1): %v", err)
+	}
+	if len(page.Rows) != 2 {
+		t.Fatalf("delivered_after: got %d rows, want 2 (t2, t3)", len(page.Rows))
+	}
+
+	before := t3
+	page, err = messages.List(ctx, persistence.MessageListFilter{
+		InstanceID:      &fix.InstanceID,
+		DeliveredBefore: &before,
+	}, persistence.ListPagination{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(delivered_before=t3): %v", err)
+	}
+	if len(page.Rows) != 2 {
+		t.Fatalf("delivered_before: got %d rows, want 2 (t1, t2)", len(page.Rows))
+	}
+
+	page, err = messages.List(ctx, persistence.MessageListFilter{
+		InstanceID:      &fix.InstanceID,
+		DeliveredAfter:  &after,
+		DeliveredBefore: &before,
+	}, persistence.ListPagination{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(delivered_after+before): %v", err)
+	}
+	if len(page.Rows) != 1 || page.Rows[0].ID != ids[1] {
+		t.Fatalf("delivered_after+before window: got %+v, want exactly t2 row %s",
+			page.Rows, ids[1])
+	}
+}
+
+func testMessagesListCursorPagination(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+	messages := store.Messages()
+
+	const total = 7
+	ids := make([]shared.UUID, total)
+	base := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
+	for i := 0; i < total; i++ {
+		ids[i] = shared.UUID(uuid.New())
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+				ID:         ids[i],
+				InstanceID: fix.InstanceID,
+				Type:       "ping/recheck",
+				Sender:     "operator",
+				SenderKind: "operator",
+				ReceivedAt: base.Add(time.Duration(i) * time.Minute),
+			})
+		}); err != nil {
+			t.Fatalf("Messages.Insert[%d]: %v", i, err)
+		}
+	}
+
+	var seen []shared.UUID
+	pag := persistence.ListPagination{Limit: 3}
+	for pages := 0; pages < total*2; pages++ {
+		page, err := messages.List(ctx, persistence.MessageListFilter{InstanceID: &fix.InstanceID}, pag)
+		if err != nil {
+			t.Fatalf("List page %d: %v", pages, err)
+		}
+		for _, r := range page.Rows {
+			if r.ID == fix.MessageID {
+				continue
+			}
+			seen = append(seen, r.ID)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		pag.Cursor = page.NextCursor
+	}
+
+	if len(seen) != total {
+		t.Fatalf("cursor pagination collected %d messages across pages, want %d "+
+			"(next_cursor must actually page past the first window instead of re-serving it or stopping short)", len(seen), total)
+	}
+	seenSet := make(map[shared.UUID]bool, len(seen))
+	for _, id := range seen {
+		if seenSet[id] {
+			t.Fatalf("message %s returned more than once across pages; cursor pagination must not duplicate rows", id)
+		}
+		seenSet[id] = true
+	}
+	for _, id := range ids {
+		if !seenSet[id] {
+			t.Fatalf("message %s never appeared across any page; cursor pagination must not drop rows", id)
+		}
+	}
+}
+
 func testMessagesListPendingForInstanceReturnsAllPending(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)

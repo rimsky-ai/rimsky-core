@@ -16,9 +16,9 @@ import (
 
 type publisherSubscriptionsImpl tablesImpl
 
-var _ persistence.PublisherSubscriptionsTable = (*publisherSubscriptionsImpl)(nil)
+var _ persistence.PublisherSubscriptionTable = (*publisherSubscriptionsImpl)(nil)
 
-func (s *tablesImpl) PublisherSubscriptions() persistence.PublisherSubscriptionsTable {
+func (s *tablesImpl) PublisherSubscriptions() persistence.PublisherSubscriptionTable {
 	return (*publisherSubscriptionsImpl)(s)
 }
 

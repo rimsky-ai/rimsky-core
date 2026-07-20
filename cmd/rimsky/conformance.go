@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -525,41 +524,15 @@ func runConformanceProbe(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
-	req := &genv1.ExecuteRequest{
-		NodeId:      "conformance-probe",
-		InstanceId:  "conformance-probe",
-		NodeType:    "conformance-probe",
-		Attributes:  ud,
-		CallbackUrl: receiver.URL(),
-	}
-	outcome, err := client.Execute(ctx, req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "execute: %v\n", err)
-		return 1
-	}
-
-	settled, err := conformance.AwaitTerminal(ctx, outcome, env)
+	ok, err := conformance.ProbeStubMode(ctx, env, *timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "conformance: %v\n", err)
 		return 1
 	}
-	switch oc := settled.GetOutcome().(type) {
-	case *genv1.Outcome_Success:
-		m := oc.Success.GetAttributesDelta().AsMap()
-		if v, ok := m["stub"].(bool); !ok || !v {
-			fmt.Fprintf(os.Stderr, "conformance: stub-mode probe did not return {stub:true}, got %+v\n", m)
-			return 1
-		}
-		fmt.Println("conformance: stub-mode probe OK")
-		return 0
-	case *genv1.Outcome_Error:
-		fmt.Fprintf(os.Stderr, "conformance: got Error %s (%v)\n", oc.Error.ErrorClass, oc.Error.GetPayload().AsMap())
-		return 1
-	case *genv1.Outcome_AwaitAsync:
-		fmt.Fprintln(os.Stderr, "conformance: stub-mode probe ended at AwaitAsyncCallback but no callback arrived")
+	if !ok {
+		fmt.Fprintln(os.Stderr, "conformance: stub-mode probe did not return {stub:true}")
 		return 1
 	}
-	fmt.Fprintf(os.Stderr, "conformance: unexpected Outcome variant %T\n", settled.GetOutcome())
-	return 1
+	fmt.Println("conformance: stub-mode probe OK")
+	return 0
 }

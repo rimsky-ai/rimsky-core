@@ -118,9 +118,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	go srv.RunSweep(ctx, cfg.SweepInterval)
 
 	<-ctx.Done()
-	stopTimer := time.AfterFunc(gracefulStopBudget, grpcSrv.Stop)
-	grpcSrv.GracefulStop()
-	stopTimer.Stop()
+	bridge.GracefulStop(grpcSrv, gracefulStopBudget)
 	_ = httpSrv.Close()
 	if adminSrv != nil {
 		_ = adminSrv.Close()

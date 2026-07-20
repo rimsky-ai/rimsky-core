@@ -6,7 +6,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -539,7 +538,7 @@ func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter pers
 	var cursorClaimed *time.Time
 	var cursorID *shared.UUID
 	if pag.Cursor != "" {
-		c, id, err := decodeLockHolderCursor(pag.Cursor)
+		c, id, err := persistence.DecodeLockHolderCursor(pag.Cursor)
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("claimhandles.list: bad cursor: %w", err)
 		}
@@ -587,31 +586,9 @@ func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter pers
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
 		last := out[len(out)-1]
-		nextCursor = encodeLockHolderCursor(last.ClaimedAt, last.ID)
+		nextCursor = persistence.EncodeLockHolderCursor(last.ClaimedAt, last.ID)
 	}
 	return persistence.PaginatedListResult[persistence.ClaimHandleRow]{Rows: out, NextCursor: nextCursor}, nil
-}
-
-type lockHolderCursor struct {
-	C time.Time   `json:"c"`
-	I shared.UUID `json:"i"`
-}
-
-func encodeLockHolderCursor(claimed time.Time, id shared.UUID) string {
-	b, _ := json.Marshal(lockHolderCursor{C: claimed, I: id})
-	return base64.StdEncoding.EncodeToString(b)
-}
-
-func decodeLockHolderCursor(s string) (time.Time, shared.UUID, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return time.Time{}, shared.UUID{}, err
-	}
-	var c lockHolderCursor
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return time.Time{}, shared.UUID{}, err
-	}
-	return c.C, c.I, nil
 }
 
 func (s *claimHandlesImpl) SetAggregationPolicy(

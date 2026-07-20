@@ -69,23 +69,10 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(inheritor.ID, cascade.NodeStateFresh)
 
-	var commitCount, abandonCount int
-	for commitCount == 0 {
-		commitCount, abandonCount = 0, 0
-		for _, c := range sub.Calls() {
-			switch c.Verb {
-			case "commit":
-				commitCount++
-			case "abandon":
-				abandonCount++
-			}
-		}
-		if commitCount == 0 {
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
-	require.Equal(t, 1, commitCount,
-		"auto-terminal must fire exactly one commit for the held claim (aggregate-completed)")
+	commitCount, abandonCount := waitForAtLeastOneProducerVerbDelivery(sub, "commit")
+	require.GreaterOrEqual(t, commitCount, 1,
+		"auto-terminal must fire at least one commit for the held claim (aggregate-completed); "+
+			"the terminal-verb outbox delivers at-least-once, so >1 is a legitimate retry, not a bug")
 	require.Equal(t, 0, abandonCount,
 		"aggregate-completed must NOT route to Abandon")
 
@@ -106,6 +93,28 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 		"exactly one claim_handle row (the single shared 'held' claim acquired by the acquirer and "+
 			"inherited by the inheritor) must be state=committed after auto-terminal commit — an "+
 			"over-commit or duplicate-row regression would show up here")
+}
+
+func waitForAtLeastOneProducerVerbDelivery(sub *stubstore.Store, wantVerb string) (commitCount, abandonCount int) {
+	for {
+		commitCount, abandonCount = 0, 0
+		seenWant := false
+		for _, c := range sub.Calls() {
+			switch c.Verb {
+			case "commit":
+				commitCount++
+			case "abandon":
+				abandonCount++
+			}
+			if c.Verb == wantVerb {
+				seenWant = true
+			}
+		}
+		if seenWant {
+			return commitCount, abandonCount
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func TestAutoTerminalAggregateFailedFiresGiveUp(t *testing.T) {
@@ -161,23 +170,10 @@ func TestAutoTerminalAggregateFailedFiresGiveUp(t *testing.T) {
 	h.WaitForNodeState(inheritor.ID, cascade.NodeStateFailed)
 	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFailed)
 
-	var commitCount, abandonCount int
-	for abandonCount == 0 {
-		commitCount, abandonCount = 0, 0
-		for _, c := range sub.Calls() {
-			switch c.Verb {
-			case "commit":
-				commitCount++
-			case "abandon":
-				abandonCount++
-			}
-		}
-		if abandonCount == 0 {
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
-	require.Equal(t, 1, abandonCount,
-		"aggregate-failed must fire exactly one Abandon call to the producer (auto-terminal give_up routing)")
+	commitCount, abandonCount := waitForAtLeastOneProducerVerbDelivery(sub, "abandon")
+	require.GreaterOrEqual(t, abandonCount, 1,
+		"aggregate-failed must fire at least one Abandon call to the producer (auto-terminal give_up routing); "+
+			"the terminal-verb outbox delivers at-least-once, so >1 is a legitimate retry, not a bug")
 	require.Equal(t, 0, commitCount,
 		"aggregate-failed must NOT route to Commit")
 

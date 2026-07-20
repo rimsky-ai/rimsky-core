@@ -24,7 +24,7 @@ import (
 type EnqueueMessageDeps interface {
 	Instances() persistence.InstanceTable
 	Templates() persistence.TemplateTable
-	Messages() persistence.MessagesTable
+	Messages() persistence.MessageTable
 }
 
 // @concept: message-schema
@@ -237,7 +237,7 @@ func messagePayloadAsMap(payload []byte) map[string]any {
 }
 
 func DeliverPendingMessages(
-	ctx context.Context, tx persistence.Tx, m persistence.MessagesTable,
+	ctx context.Context, tx persistence.Tx, m persistence.MessageTable,
 	instanceID shared.UUID, frameID shared.UUID, triggeringMessageID shared.UUID, now time.Time,
 ) (DeliveredMessages, error) {
 	msg, err := m.GetInTx(ctx, tx, triggeringMessageID)

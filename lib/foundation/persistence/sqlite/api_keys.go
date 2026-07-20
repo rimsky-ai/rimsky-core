@@ -9,19 +9,15 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	sqlite3 "modernc.org/sqlite"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
-
-const sqliteConstraintUnique = 2067
 
 type apiKeysImpl tablesImpl
 
@@ -56,12 +52,7 @@ func (b *apiKeysImpl) Insert(ctx context.Context, k persistence.APIKey, tx persi
 		timePtrStr(k.RevokedAt),
 	)
 	if err != nil {
-		var sErr *sqlite3.Error
-		isUnique := errors.As(err, &sErr) && sErr.Code() == sqliteConstraintUnique
-		if !isUnique {
-			isUnique = strings.Contains(err.Error(), "UNIQUE")
-		}
-		if isUnique {
+		if isUniqueViolation(err) {
 			if strings.Contains(err.Error(), "rimsky_api_keys.key_hash") {
 				return persistence.ErrAPIKeyHashCollision
 			}

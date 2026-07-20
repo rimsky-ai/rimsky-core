@@ -14,13 +14,18 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-func isAliasHeld(subgraphs []node.HoldingSubgraph, acquirerType, alias string) bool {
+func findHoldingSubgraph(subgraphs []node.HoldingSubgraph, acquirerType, alias string) (node.HoldingSubgraph, bool) {
 	for _, sg := range subgraphs {
 		if sg.AcquirerType == acquirerType && sg.Alias == alias {
-			return sg.IsHeld()
+			return sg, true
 		}
 	}
-	return false
+	return node.HoldingSubgraph{}, false
+}
+
+func isAliasHeld(subgraphs []node.HoldingSubgraph, acquirerType, alias string) bool {
+	sg, ok := findHoldingSubgraph(subgraphs, acquirerType, alias)
+	return ok && sg.IsHeld()
 }
 
 func markClaimHolderForRun(
@@ -120,7 +125,7 @@ func pickAliasForClaimHandle(
 	if err != nil || tmpl == nil {
 		return picks[0].alias
 	}
-	def := lookupNodeDef(&tmpl.Spec, acquirerType)
+	def := LookupNodeDef(&tmpl.Spec, acquirerType)
 	if def == nil {
 		return picks[0].alias
 	}

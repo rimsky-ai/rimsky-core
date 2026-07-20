@@ -7,7 +7,6 @@ package claimproducer
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	protocol "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -35,17 +34,7 @@ func (c *Client) Open(ctx context.Context, claimID protocol.ClaimID, spec protoc
 	if err != nil {
 		return protocol.OpenOutcome{}, callError(c.name, "Open", err)
 	}
-	if !out.Available {
-		return out, nil
-	}
-	rws := out.Result.RealizedWriteSemantics
-	if rws == protocol.WriteSemanticsUnknown {
-		return protocol.OpenOutcome{}, fmt.Errorf("in-process producer %q: Open: realized_write_semantics is UNKNOWN (producer must declare a concrete value)", c.name)
-	}
-	if !c.caps.Contains(rws) {
-		return protocol.OpenOutcome{}, fmt.Errorf("in-process producer %q: Open: realized_write_semantics %q not in advertised envelope %v", c.name, rws, c.caps.WriteSemanticsAllowed)
-	}
-	return out, nil
+	return c.caps.EnforceOpenWriteSemantics("in-process producer", c.name, out)
 }
 
 func (c *Client) Commit(ctx context.Context, claimID protocol.ClaimID, scope, address []byte, leaseToken string) (protocol.CommitResult, error) {

@@ -94,28 +94,6 @@ func (b *runScopesImpl) Close(ctx context.Context, tx persistence.Tx, id shared.
 	return nil
 }
 
-func (b *runScopesImpl) ListChildScopes(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.RunScopeRow, error) {
-	rows, err := b.q(tx).QueryContext(ctx,
-		`SELECT `+sqliteRunScopeCols+` FROM rimsky_run_scopes WHERE parent_run_id = ? ORDER BY created_at`,
-		parentNodeRunID.String())
-	if err != nil {
-		return nil, fmt.Errorf("sqlite.runScopes.ListChildScopes: %w", err)
-	}
-	defer rows.Close()
-	var out []persistence.RunScopeRow
-	for rows.Next() {
-		r, err := scanSqliteRunScopeRow(rows)
-		if err != nil {
-			return nil, fmt.Errorf("sqlite.runScopes.ListChildScopes scan: %w", err)
-		}
-		out = append(out, *r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite.runScopes.ListChildScopes iter: %w", err)
-	}
-	return out, nil
-}
-
 func (b *runScopesImpl) ListParentChain(ctx context.Context, tx persistence.Tx, id shared.UUID) ([]persistence.RunScopeRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
 		`WITH RECURSIVE chain AS (

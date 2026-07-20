@@ -38,7 +38,7 @@ func TestMigrateAgainstTestcontainers(t *testing.T) {
 	}
 }
 
-func TestMigration002Tags(t *testing.T) {
+func TestMigrationTagsColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	dsn := pgtest.StartUnmigratedPostgresDSN(ctx, t)

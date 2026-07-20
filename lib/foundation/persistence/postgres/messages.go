@@ -20,9 +20,9 @@ import (
 
 type messagesImpl tablesImpl
 
-var _ persistence.MessagesTable = (*messagesImpl)(nil)
+var _ persistence.MessageTable = (*messagesImpl)(nil)
 
-func (s *tablesImpl) Messages() persistence.MessagesTable { return (*messagesImpl)(s) }
+func (s *tablesImpl) Messages() persistence.MessageTable { return (*messagesImpl)(s) }
 
 func (b *messagesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 

@@ -389,7 +389,7 @@ func (c *CallbackServer) reconstructAcquisition(
 		return err
 	}
 	tmpl := lookupTemplate(ctx, args, tx, inst)
-	acq.NodeDef = lookupNodeDef(tmpl, nd.NodeType)
+	acq.NodeDef = LookupNodeDef(tmpl, nd.NodeType)
 	acq.TemplateAttributeDefaults = templateAttributeDefaultsFor(tmpl, nd.Executor)
 	acq.GraphName = spec.MainGraphName
 	if tmpl != nil {

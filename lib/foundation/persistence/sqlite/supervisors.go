@@ -13,7 +13,7 @@ import (
 )
 
 const supervisorCols = `
-  id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port,
+  id, accepted_executors, accepted_claim_producers, concurrency, callback_host, callback_port,
   registered_at
 `
 
@@ -29,14 +29,14 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 	now := nowUTC()
 	_, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_supervisors
-		   (id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port, registered_at)
+		   (id, accepted_executors, accepted_claim_producers, concurrency, callback_host, callback_port, registered_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE
-		   SET accepted_executors = excluded.accepted_executors,
-		       accepted_stores    = excluded.accepted_stores,
-		       concurrency        = excluded.concurrency,
-		       callback_host      = excluded.callback_host,
-		       callback_port      = excluded.callback_port`,
+		   SET accepted_executors      = excluded.accepted_executors,
+		       accepted_claim_producers = excluded.accepted_claim_producers,
+		       concurrency              = excluded.concurrency,
+		       callback_host            = excluded.callback_host,
+		       callback_port            = excluded.callback_port`,
 		in.ID, marshalStringArray(accepts), marshalStringArray(stores), in.Concurrency,
 		nullableString(in.CallbackHost), nullableInt(in.CallbackPort), now,
 	)

@@ -34,7 +34,7 @@ func parentSettlementSignal(state cascade.NodeState, sigType signalpkg.TypePath,
 }
 
 type PropagationArgs struct {
-	NodeRunTree persistence.RunTreeTable
+	NodeRunTree persistence.NodeRunTreeTable
 	RunScopes   persistence.RunScopeTable
 }
 
@@ -291,7 +291,7 @@ func PropagateIfChildAfterTerminal(
 
 // @concept: cancel-siblings
 func executeCancelActions(
-	ctx context.Context, args RunArgs, tx persistence.Tx, rt persistence.RunTreeTable,
+	ctx context.Context, args RunArgs, tx persistence.Tx, rt persistence.NodeRunTreeTable,
 	actions []CancelAction,
 ) (postCommitFn, error) {
 	var post postCommitFn
@@ -313,7 +313,7 @@ func executeCancelActions(
 
 // @concept: cancel-siblings
 func cancelInFlightRunTreeSubtree(
-	ctx context.Context, args RunArgs, tx persistence.Tx, rt persistence.RunTreeTable, runID shared.UUID,
+	ctx context.Context, args RunArgs, tx persistence.Tx, rt persistence.NodeRunTreeTable, runID shared.UUID,
 ) (postCommitFn, error) {
 	current, err := args.Persist.Nodes().GetRunForGate(ctx, tx, runID)
 	if err != nil {
@@ -414,7 +414,7 @@ func resolveSettledDelegateCallerClaimsInTx(
 	if tmplSpec == nil {
 		return nil, nil
 	}
-	def := lookupNodeDef(tmplSpec, parentNode.NodeType)
+	def := LookupNodeDef(tmplSpec, parentNode.NodeType)
 	if def == nil || def.Delegate == "" {
 		return nil, nil
 	}

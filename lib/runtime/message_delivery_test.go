@@ -125,12 +125,12 @@ func (f *fakeMessagesTable) List(_ context.Context, filter persistence.MessageLi
 type enqueueDepsStub struct {
 	inst persistence.InstanceTable
 	tpls persistence.TemplateTable
-	msgs persistence.MessagesTable
+	msgs persistence.MessageTable
 }
 
 func (d *enqueueDepsStub) Instances() persistence.InstanceTable { return d.inst }
 func (d *enqueueDepsStub) Templates() persistence.TemplateTable { return d.tpls }
-func (d *enqueueDepsStub) Messages() persistence.MessagesTable  { return d.msgs }
+func (d *enqueueDepsStub) Messages() persistence.MessageTable   { return d.msgs }
 
 type nilTemplatesTable struct{}
 

@@ -345,7 +345,7 @@ func tryAcquire(
 		return acquisition{}, false, fmt.Errorf("tryAcquire: instances.Get: %w", err)
 	}
 	tmpl := lookupTemplate(ctx, args, tx, inst)
-	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
+	nodeDef := LookupNodeDef(tmpl, nd.NodeType)
 	templateAttributeDefaults := templateAttributeDefaultsFor(tmpl, nd.Executor)
 	// @concept: attribute
 	graphName := spec.MainGraphName

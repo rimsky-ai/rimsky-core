@@ -142,6 +142,7 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, nod
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL,
 		        claimed_at = NULL,
+		        parked_at = NULL,
 		        resume_at = NULL
 		  WHERE id = $1
 		    AND state = 'parked'`,
@@ -267,7 +268,7 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nod
 		        scratch_handle         = $3,
 		        scratch_handle_backend = $4
 		  WHERE id = $1`,
-		nodeRunID, nilIfEmpty(inline), nilIfEmptyStr(handle), nilIfEmptyStr(handleBackend),
+		nodeRunID, nilIfEmpty(inline), nullableString(handle), nullableString(handleBackend),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.WriteScratchInTx: %w", err)

@@ -69,20 +69,6 @@ func nullableUUID(p *shared.UUID) any {
 	return p.String()
 }
 
-func instanceIDArg(p *shared.UUID) any {
-	if p == nil {
-		return nil
-	}
-	return p.String()
-}
-
-func nodeIDArg(p *shared.UUID) any {
-	if p == nil {
-		return nil
-	}
-	return p.String()
-}
-
 func marshalStringArray(s []string) string {
 	if len(s) == 0 {
 		return "[]"

@@ -124,6 +124,10 @@ func Suite(
 	t.Run("MessagesListPendingForInstanceReturnsAllPending", func(t *testing.T) { testMessagesListPendingForInstanceReturnsAllPending(t, factory(t)) })
 	t.Run("MessagesListBySender", func(t *testing.T) { testMessagesListBySender(t, factory(t)) })
 	t.Run("MessagesMarkDeliveredExcludesCancelled", func(t *testing.T) { testMessagesMarkDeliveredExcludesCancelled(t, factory(t)) })
+	t.Run("MessagesScanNullPayload", func(t *testing.T) { testMessagesScanNullPayload(t, factory(t)) })
+	t.Run("MessagesScanNonNullPayload", func(t *testing.T) { testMessagesScanNonNullPayload(t, factory(t)) })
+	t.Run("MessagesListDeliveredAfterBefore", func(t *testing.T) { testMessagesListDeliveredAfterBefore(t, factory(t)) })
+	t.Run("MessagesListCursorPagination", func(t *testing.T) { testMessagesListCursorPagination(t, factory(t)) })
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
 	t.Run("WaitSetTopicKindDistinctness", func(t *testing.T) { testWaitSetTopicKindDistinctness(t, factory(t)) })
 	t.Run("WaitSetGateEvaluatorMethods", func(t *testing.T) { testWaitSetGateEvaluatorMethods(t, factory(t)) })
@@ -156,6 +160,7 @@ func Suite(
 	t.Run("ParkResume", func(t *testing.T) {
 		t.Run("SweepSelection", func(t *testing.T) { testParkResumeSweepSelection(t, factory(t)) })
 		t.Run("MetadataRoundTrip", func(t *testing.T) { testParkResumeMetadataRoundTrip(t, factory(t)) })
+		t.Run("ClearsParkedAt", func(t *testing.T) { testParkResumeClearsParkedAt(t, factory(t), rawQuery) })
 		t.Run("ParkedDiagnostic", func(t *testing.T) { testParkResumeParkedDiagnostic(t, factory(t)) })
 		t.Run("HeldFrameCount", func(t *testing.T) { testParkResumeHeldFrameCount(t, factory(t)) })
 		t.Run("RegisterAsyncAckRoundTrip", func(t *testing.T) { testRegisterAsyncAckRoundTrip(t, factory(t)) })

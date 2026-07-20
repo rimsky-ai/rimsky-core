@@ -14,13 +14,11 @@ import (
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/check"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-type CheckResult struct {
-	Name string
-	Err  error
-}
+type CheckResult = check.Result
 
 type RunOpts struct {
 	Kind            string
@@ -104,14 +102,18 @@ func checkCapabilities(ctx context.Context, c genv1.PublisherClient, kind string
 	return CheckResult{Name: "Capabilities"}
 }
 
-func checkSubscribe(ctx context.Context, c genv1.PublisherClient, opts RunOpts) CheckResult {
-	if _, err := c.Subscribe(ctx, &genv1.SubscribeRequest{
+func subscribeRequestFromOpts(opts RunOpts) *genv1.SubscribeRequest {
+	return &genv1.SubscribeRequest{
 		PublisherSubscriptionId: opts.SubscriptionID,
 		InstanceId:              opts.InstanceID,
 		Kind:                    opts.Kind,
 		ResolvedConfig:          opts.ResolvedConfig,
 		MessageType:             opts.MessageType,
-	}); err != nil {
+	}
+}
+
+func checkSubscribe(ctx context.Context, c genv1.PublisherClient, opts RunOpts) CheckResult {
+	if _, err := c.Subscribe(ctx, subscribeRequestFromOpts(opts)); err != nil {
 		return CheckResult{Name: "Subscribe", Err: err}
 	}
 	return CheckResult{Name: "Subscribe"}
@@ -165,13 +167,7 @@ func checkListSubscriptions(ctx context.Context, c genv1.PublisherClient, opts R
 }
 
 func checkSubscribeIdempotent(ctx context.Context, c genv1.PublisherClient, opts RunOpts) CheckResult {
-	if _, err := c.Subscribe(ctx, &genv1.SubscribeRequest{
-		PublisherSubscriptionId: opts.SubscriptionID,
-		InstanceId:              opts.InstanceID,
-		Kind:                    opts.Kind,
-		ResolvedConfig:          opts.ResolvedConfig,
-		MessageType:             opts.MessageType,
-	}); err != nil {
+	if _, err := c.Subscribe(ctx, subscribeRequestFromOpts(opts)); err != nil {
 		return CheckResult{Name: "SubscribeIdempotent", Err: err}
 	}
 	return CheckResult{Name: "SubscribeIdempotent"}

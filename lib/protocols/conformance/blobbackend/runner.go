@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/check"
 )
 
 type Backend interface {
@@ -23,10 +25,7 @@ type Handle string
 
 var ErrBlobNotFound = errors.New("blobbackend: handle not found")
 
-type CheckResult struct {
-	Name string
-	Err  error
-}
+type CheckResult = check.Result
 
 func Run(ctx context.Context, be Backend) []CheckResult {
 	checks := []struct {

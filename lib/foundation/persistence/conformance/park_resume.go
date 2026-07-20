@@ -385,6 +385,52 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	}
 }
 
+func testParkResumeClearsParkedAt(
+	t *testing.T, d persistence.Database,
+	rawQuery func(t *testing.T, d persistence.Database, sql string, args ...any) []RawQueryRow,
+) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	now := time.Now()
+
+	runID := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, parkResumeSup)
+	parkRun(ctx, t, d, persistence.ParkActiveInput{
+		NodeRunID:         runID,
+		ExpectedClaimedBy: parkResumeSup,
+		ParkedAt:          now.Add(-30 * time.Minute),
+		ResumeAt:          now.Add(-1 * time.Minute),
+	})
+
+	parkedAtDuringPark := rawQuery(t, d,
+		`SELECT parked_at FROM rimsky_node_runs WHERE id = ?`, runID.String())
+	if len(parkedAtDuringPark) != 1 || parkedAtDuringPark[0]["parked_at"] == nil {
+		t.Fatalf("parked_at must be set while parked, got %v", parkedAtDuringPark)
+	}
+
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		resumed, err := resumeRunInTx(ctx, d, tx, runID)
+		if err != nil {
+			return err
+		}
+		if !resumed {
+			t.Fatalf("ResumeParkedInTx did not resume the parked row")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("ResumeParkedInTx: %v", err)
+	}
+
+	parkedAtAfterResume := rawQuery(t, d,
+		`SELECT parked_at FROM rimsky_node_runs WHERE id = ?`, runID.String())
+	if len(parkedAtAfterResume) != 1 {
+		t.Fatalf("row %s vanished after resume", runID)
+	}
+	if parkedAtAfterResume[0]["parked_at"] != nil {
+		t.Fatalf("parked_at must be cleared on resume, still carries %v "+
+			"(stale park diagnostics must not survive a resume)", parkedAtAfterResume[0]["parked_at"])
+	}
+}
+
 func testRegisterAsyncAckRoundTrip(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)

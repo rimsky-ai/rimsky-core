@@ -29,25 +29,25 @@ func (noopStore) Instances() persistence.InstanceTable       { return nil }
 func (noopStore) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
 	return nil
 }
-func (noopStore) Nodes() persistence.NodeTable                                    { return noopNodes{} }
-func (noopStore) ClaimHandles() persistence.ClaimHandleTable                      { return nil }
-func (noopStore) NodeAttributes() persistence.NodeAttributeTable                  { return nil }
-func (noopStore) ClaimHolders() persistence.ClaimHolderTable                      { return nil }
-func (noopStore) Events() persistence.EventTable                                  { return fakeEvents{} }
-func (noopStore) Supervisors() persistence.SupervisorTable                        { return nil }
-func (noopStore) Frames() persistence.FrameTable                                  { return nil }
-func (noopStore) BlobOrphans() persistence.BlobOrphanTable                        { return nil }
-func (noopStore) WaitSet() persistence.WaitSetTable                               { return nil }
-func (noopStore) Messages() persistence.MessagesTable                             { return nil }
-func (noopStore) MessageIdempotencies() persistence.MessageIdempotencyTable       { return nil }
-func (noopStore) Lineage() persistence.LineageTable                               { return nil }
-func (noopStore) PublisherSubscriptions() persistence.PublisherSubscriptionsTable { return nil }
-func (noopStore) NodeRunTree() persistence.RunTreeTable                           { return nil }
-func (noopStore) RunScopes() persistence.RunScopeTable                            { return nil }
-func (noopStore) APIKeys() persistence.APIKeyTable                                { return fakeAPIKeys{} }
-func (noopStore) DeploymentCA() persistence.DeploymentCATable                     { return nil }
-func (noopStore) Breakpoints() persistence.BreakpointTable                        { return nil }
-func (noopStore) BreakpointHits() persistence.BreakpointHitTable                  { return nil }
+func (noopStore) Nodes() persistence.NodeTable                                   { return noopNodes{} }
+func (noopStore) ClaimHandles() persistence.ClaimHandleTable                     { return nil }
+func (noopStore) NodeAttributes() persistence.NodeAttributeTable                 { return nil }
+func (noopStore) ClaimHolders() persistence.ClaimHolderTable                     { return nil }
+func (noopStore) Events() persistence.EventTable                                 { return fakeEvents{} }
+func (noopStore) Supervisors() persistence.SupervisorTable                       { return nil }
+func (noopStore) Frames() persistence.FrameTable                                 { return nil }
+func (noopStore) BlobOrphans() persistence.BlobOrphanTable                       { return nil }
+func (noopStore) WaitSet() persistence.WaitSetTable                              { return nil }
+func (noopStore) Messages() persistence.MessageTable                             { return nil }
+func (noopStore) MessageIdempotencies() persistence.MessageIdempotencyTable      { return nil }
+func (noopStore) Lineage() persistence.LineageTable                              { return nil }
+func (noopStore) PublisherSubscriptions() persistence.PublisherSubscriptionTable { return nil }
+func (noopStore) NodeRunTree() persistence.NodeRunTreeTable                      { return nil }
+func (noopStore) RunScopes() persistence.RunScopeTable                           { return nil }
+func (noopStore) APIKeys() persistence.APIKeyTable                               { return fakeAPIKeys{} }
+func (noopStore) DeploymentCA() persistence.DeploymentCATable                    { return nil }
+func (noopStore) Breakpoints() persistence.BreakpointTable                       { return nil }
+func (noopStore) BreakpointHits() persistence.BreakpointHitTable                 { return nil }
 
 func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return fn(ctx, &noopTx{})

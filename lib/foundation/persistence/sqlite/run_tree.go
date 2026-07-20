@@ -21,9 +21,9 @@ import (
 
 type runTreeImpl tablesImpl
 
-var _ persistence.RunTreeTable = (*runTreeImpl)(nil)
+var _ persistence.NodeRunTreeTable = (*runTreeImpl)(nil)
 
-func (s *tablesImpl) NodeRunTree() persistence.RunTreeTable { return (*runTreeImpl)(s) }
+func (s *tablesImpl) NodeRunTree() persistence.NodeRunTreeTable { return (*runTreeImpl)(s) }
 
 func (b *runTreeImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
@@ -51,6 +51,10 @@ func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, 
 	if len(policy) > 0 {
 		policyArg = string(policy)
 	}
+	enqueuedAt := in.EnqueuedAt
+	if enqueuedAt.IsZero() {
+		enqueuedAt = time.Now().UTC()
+	}
 	res, err := b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, frame_id,
@@ -60,7 +64,7 @@ func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, 
 		   ?)
 		 ON CONFLICT(id) DO NOTHING`,
 		in.NodeRunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
-		formatTime(time.Now().UTC()), in.FrameID.String(), in.RunScopeID.String(),
+		formatTime(enqueuedAt), in.FrameID.String(), in.RunScopeID.String(),
 		in.NodeID.String(), in.RunScopeID.String(),
 		policyArg,
 	)
@@ -95,6 +99,10 @@ func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx,
 	if len(policy) > 0 {
 		policyArg = string(policy)
 	}
+	enqueuedAt := in.EnqueuedAt
+	if enqueuedAt.IsZero() {
+		enqueuedAt = time.Now().UTC()
+	}
 	res, err := b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, frame_id,
@@ -109,7 +117,7 @@ func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx,
 		       AND state IN ('running','held','parked')
 		  )`,
 		in.NodeRunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
-		formatTime(time.Now().UTC()), in.FrameID.String(), in.RunScopeID.String(),
+		formatTime(enqueuedAt), in.FrameID.String(), in.RunScopeID.String(),
 		in.NodeID.String(), in.RunScopeID.String(),
 		policyArg,
 		in.NodeID.String(), in.RunScopeID.String(),

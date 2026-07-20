@@ -33,7 +33,7 @@ type PublisherSubscriptionRow struct {
 	FailureReason  string
 }
 
-type PublisherSubscriptionsTable interface {
+type PublisherSubscriptionTable interface {
 	Insert(ctx context.Context, tx Tx, row PublisherSubscriptionRow) error
 
 	Delete(ctx context.Context, tx Tx, id shared.UUID) error

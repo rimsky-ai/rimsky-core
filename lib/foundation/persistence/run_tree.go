@@ -10,6 +10,7 @@ package persistence
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -35,6 +36,7 @@ type CreateRootNodeRunInput struct {
 	AggregationPolicy      spec.AggregationPolicy
 	ExecutorName           string
 	RequiredClaimProducers []string
+	EnqueuedAt             time.Time
 }
 
 type CreateChildNodeRunInput struct {
@@ -45,9 +47,10 @@ type CreateChildNodeRunInput struct {
 	ExecutorName           string
 	RequiredClaimProducers []string
 	AggregationPolicy      spec.AggregationPolicy
+	EnqueuedAt             time.Time
 }
 
-type RunTreeTable interface {
+type NodeRunTreeTable interface {
 	CreateRootNodeRun(ctx context.Context, tx Tx, in CreateRootNodeRunInput) error
 
 	CreateChildNodeRun(ctx context.Context, tx Tx, in CreateChildNodeRunInput) error
@@ -64,7 +67,7 @@ type RunTreeTable interface {
 }
 
 func MarshalAggregationPolicy(p spec.AggregationPolicy) ([]byte, error) {
-	if p.Kind == "" && p.MaxFailures == 0 {
+	if p == (spec.AggregationPolicy{}) {
 		return nil, nil
 	}
 	return json.Marshal(p)

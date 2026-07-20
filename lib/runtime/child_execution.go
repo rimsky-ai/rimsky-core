@@ -107,7 +107,7 @@ func DispatchChildren(
 		}
 		for _, c := range in.Children {
 			runID, err := CreateChildNodeRun(
-				ctx, tx, args.Persist.NodeRunTree(), args.Queue,
+				ctx, tx, args.Persist.NodeRunTree(), args.Queue, args.Clock,
 				c.NodeID, in.FrameID, childScopeID,
 				c.Executor, c.RequiredClaimProducers, in.AggregationPolicy)
 			if err != nil {
@@ -272,7 +272,7 @@ func SettleFromDelegate(
 			nil, nil); err != nil {
 			return nil, fmt.Errorf("SettleFromDelegate: emit parent attribute changes: %w", err)
 		}
-		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, parentFrameID, parent.NodeRunID, tx); err != nil {
+		if err := drainWaitSetOnSettled(ctx, args, tx, parentFrameID, parent.NodeRunID); err != nil {
 			return nil, fmt.Errorf("SettleFromDelegate: drain wait-set for calling node: %w", err)
 		}
 	}

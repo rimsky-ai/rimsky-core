@@ -20,9 +20,9 @@ import (
 
 type runTreeImpl tablesImpl
 
-var _ persistence.RunTreeTable = (*runTreeImpl)(nil)
+var _ persistence.NodeRunTreeTable = (*runTreeImpl)(nil)
 
-func (s *tablesImpl) NodeRunTree() persistence.RunTreeTable { return (*runTreeImpl)(s) }
+func (s *tablesImpl) NodeRunTree() persistence.NodeRunTreeTable { return (*runTreeImpl)(s) }
 
 func (b *runTreeImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
@@ -43,7 +43,11 @@ func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, 
 	if stores == nil {
 		stores = []string{}
 	}
-	executor := nullableText(in.ExecutorName)
+	executor := nullableString(in.ExecutorName)
+	enqueuedAt := in.EnqueuedAt
+	if enqueuedAt.IsZero() {
+		enqueuedAt = time.Now().UTC()
+	}
 	tag, err := b.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, frame_id,
@@ -55,7 +59,7 @@ func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, 
 		   $8
 		 )
 		 ON CONFLICT (id) DO NOTHING`,
-		in.NodeRunID, in.NodeID, executor, stores, time.Now().UTC(), in.FrameID, in.RunScopeID, nullableBytes(policy),
+		in.NodeRunID, in.NodeID, executor, stores, enqueuedAt, in.FrameID, in.RunScopeID, nullableBytes(policy),
 	)
 	if err != nil {
 		return fmt.Errorf("run_tree.CreateRootNodeRun: %w", err)
@@ -80,7 +84,11 @@ func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx,
 	if stores == nil {
 		stores = []string{}
 	}
-	executor := nullableText(in.ExecutorName)
+	executor := nullableString(in.ExecutorName)
+	enqueuedAt := in.EnqueuedAt
+	if enqueuedAt.IsZero() {
+		enqueuedAt = time.Now().UTC()
+	}
 	tag, err := b.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, frame_id,
@@ -94,7 +102,7 @@ func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx,
 		     WHERE node_id = $2 AND run_scope_id = $7
 		       AND state IN ('running','held','parked')
 		  )`,
-		in.NodeRunID, in.NodeID, executor, stores, time.Now().UTC(), in.FrameID, in.RunScopeID, nullableBytes(policy),
+		in.NodeRunID, in.NodeID, executor, stores, enqueuedAt, in.FrameID, in.RunScopeID, nullableBytes(policy),
 	)
 	if err != nil {
 		return fmt.Errorf("run_tree.CreateChildNodeRun: %w", err)
@@ -152,7 +160,7 @@ func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, paren
 	defer rows.Close()
 	var out []persistence.NodeRunTreeRow
 	for rows.Next() {
-		row, err := scanRunTreeRowFromRows(rows)
+		row, err := scanRunTreeRow(rows)
 		if err != nil {
 			return nil, fmt.Errorf("run_tree.ListChildren: scan: %w", err)
 		}
@@ -202,7 +210,7 @@ func (b *runTreeImpl) UpdateAggregationPolicy(
 	return nil
 }
 
-func scanRunTreeRow(row pgx.Row) (*persistence.NodeRunTreeRow, error) {
+func scanRunTreeRow(row scannable) (*persistence.NodeRunTreeRow, error) {
 	var (
 		out            persistence.NodeRunTreeRow
 		state          string
@@ -210,29 +218,6 @@ func scanRunTreeRow(row pgx.Row) (*persistence.NodeRunTreeRow, error) {
 		policyBytes    []byte
 	)
 	if err := row.Scan(
-		&out.NodeRunID, &out.NodeID, &out.FrameID, &out.RunScopeID,
-		&state, &settlingSignal, &policyBytes, &out.Changed,
-	); err != nil {
-		return nil, err
-	}
-	out.State = cascade.NodeState(state)
-	out.SettlingSignalType = settlingSignal
-	policy, err := persistence.UnmarshalAggregationPolicy(policyBytes)
-	if err != nil {
-		return nil, err
-	}
-	out.AggregationPolicy = policy
-	return &out, nil
-}
-
-func scanRunTreeRowFromRows(rows pgx.Rows) (*persistence.NodeRunTreeRow, error) {
-	var (
-		out            persistence.NodeRunTreeRow
-		state          string
-		settlingSignal *string
-		policyBytes    []byte
-	)
-	if err := rows.Scan(
 		&out.NodeRunID, &out.NodeID, &out.FrameID, &out.RunScopeID,
 		&state, &settlingSignal, &policyBytes, &out.Changed,
 	); err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 )
 
 type SubscriptionEdge struct {
@@ -459,10 +460,6 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 			if body == "" {
 				continue
 			}
-			if idx := strings.Index(body, "|"); idx >= 0 {
-				body = strings.TrimSpace(body[:idx])
-			}
-			body = strings.TrimSpace(strings.TrimSuffix(body, "?"))
 			ref, ok := parseSubstitutionDirective(body)
 			if !ok {
 				continue
@@ -498,11 +495,11 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 // @concept: message-schema
 // @concept: node-subscription
 func parseSubstitutionDirective(body string) (substitutionRef, bool) {
-	body = strings.TrimSpace(body)
-	if idx := strings.Index(body, "|"); idx >= 0 {
-		body = strings.TrimSpace(body[:idx])
+	shape := attributes.ParseDirectiveShape(strings.TrimSpace(body))
+	if shape.MultiPipe {
+		return substitutionRef{}, false
 	}
-	body = strings.TrimSpace(strings.TrimSuffix(body, "?"))
+	body = shape.Body
 	parts := strings.Split(body, ".")
 	if len(parts) < 2 {
 		return substitutionRef{}, false

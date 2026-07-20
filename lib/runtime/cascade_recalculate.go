@@ -85,7 +85,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		if tmpl == nil {
 			return nil
 		}
-		if def := lookupNodeDef(&tmpl.Spec, target.NodeType); def != nil {
+		if def := LookupNodeDef(&tmpl.Spec, target.NodeType); def != nil {
 			requiredClaimProducers = node.RequiredClaimProducers(*def)
 		}
 		return nil

@@ -48,10 +48,6 @@ func (f *fakeWaitSetTable) ListForFrame(_ context.Context, frameID shared.UUID, 
 	return f.byFrame, nil
 }
 
-func (f *fakeWaitSetTable) ListDrainedAttributeRowsForReceiver(context.Context, shared.UUID, shared.UUID, persistence.Tx) ([]persistence.WaitSetRow, error) {
-	return nil, nil
-}
-
 func (f *fakeWaitSetTable) ListSenderNodesForReceiver(context.Context, shared.UUID, shared.UUID, persistence.Tx) ([]shared.UUID, error) {
 	return nil, nil
 }

@@ -499,63 +499,16 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 	var out []persistence.FrameRow
 	var lastStarted time.Time
 	for rows.Next() {
-		var (
-			r              persistence.FrameRow
-			frameID        string
-			instanceID     string
-			state          string
-			triggeringMsg  string
-			rootScope      string
-			startedAt      sql.NullString
-			endedAt        sql.NullString
-			lastProgressAt sql.NullString
-		)
-		if err := rows.Scan(&frameID, &instanceID, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt); err != nil {
-			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
-		}
-		fid, err := uuid.Parse(frameID)
+		cols, err := scanFrameObservabilityCols(rows)
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
 		}
-		iid, err := uuid.Parse(instanceID)
+		r, err := cols.toFrameRow("frames.ListForObservability")
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
 		}
-		mid, err := uuid.Parse(triggeringMsg)
-		if err != nil {
-			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
-		}
-		r.FrameID = fid
-		r.InstanceID = iid
-		r.State = state
-		r.TriggeringMessageID = mid
-		if rootScope != "" {
-			rsid, err := uuid.Parse(rootScope)
-			if err != nil {
-				return persistence.PaginatedListResult[persistence.FrameRow]{}, fmt.Errorf("frames.ListForObservability: root_run_scope_id: %w", err)
-			}
-			r.RootRunScopeID = rsid
-		}
-		if startedAt.Valid {
-			t, err := parseTime(startedAt.String)
-			if err == nil {
-				r.StartedAt = &t
-			}
-		}
-		if endedAt.Valid {
-			t, err := parseTime(endedAt.String)
-			if err == nil {
-				r.EndedAt = &t
-			}
-		}
-		if lastProgressAt.Valid {
-			t, err := parseTime(lastProgressAt.String)
-			if err == nil {
-				r.LastProgressAt = &t
-			}
-		}
-		if startedAt.Valid {
-			if t, err := parseTime(startedAt.String); err == nil {
+		if cols.startedAt.Valid {
+			if t, err := parseTime(cols.startedAt.String); err == nil {
 				lastStarted = t
 			}
 		}
@@ -607,91 +560,92 @@ func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (in
 	return n, nil
 }
 
+type frameObservabilityCols struct {
+	fidStr         string
+	iidStr         string
+	state          string
+	triggeringMsg  string
+	rootScope      string
+	startedAt      sql.NullString
+	endedAt        sql.NullString
+	lastProgressAt sql.NullString
+}
+
+func scanFrameObservabilityCols(sc scannable, extra ...any) (frameObservabilityCols, error) {
+	var c frameObservabilityCols
+	dest := append([]any{&c.fidStr, &c.iidStr, &c.state, &c.triggeringMsg, &c.rootScope, &c.startedAt, &c.endedAt, &c.lastProgressAt}, extra...)
+	err := sc.Scan(dest...)
+	return c, err
+}
+
+func (c frameObservabilityCols) toFrameRow(caller string) (persistence.FrameRow, error) {
+	var r persistence.FrameRow
+	fid, err := uuid.Parse(c.fidStr)
+	if err != nil {
+		return persistence.FrameRow{}, err
+	}
+	iid, err := uuid.Parse(c.iidStr)
+	if err != nil {
+		return persistence.FrameRow{}, err
+	}
+	mid, err := uuid.Parse(c.triggeringMsg)
+	if err != nil {
+		return persistence.FrameRow{}, err
+	}
+	r.FrameID = fid
+	r.InstanceID = iid
+	r.State = c.state
+	r.TriggeringMessageID = mid
+	if c.rootScope != "" {
+		rsid, err := uuid.Parse(c.rootScope)
+		if err != nil {
+			return persistence.FrameRow{}, fmt.Errorf("%s: root_run_scope_id: %w", caller, err)
+		}
+		r.RootRunScopeID = rsid
+	}
+	if c.startedAt.Valid {
+		if t, err := parseTime(c.startedAt.String); err == nil {
+			r.StartedAt = &t
+		}
+	}
+	if c.endedAt.Valid {
+		if t, err := parseTime(c.endedAt.String); err == nil {
+			r.EndedAt = &t
+		}
+	}
+	if c.lastProgressAt.Valid {
+		if t, err := parseTime(c.lastProgressAt.String); err == nil {
+			r.LastProgressAt = &t
+		}
+	}
+	return r, nil
+}
+
 func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUID, tx persistence.Tx) (*persistence.FrameRow, error) {
-	var (
-		r              persistence.FrameRow
-		fidStr         string
-		iidStr         string
-		triggeringMsg  string
-		rootScope      string
-		startedAt      sql.NullString
-		endedAt        sql.NullString
-		lastProgressAt sql.NullString
-	)
-	var state string
-	err := s.q(tx).QueryRowContext(ctx,
+	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT f.frame_id, f.instance_id,
 		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at, f.last_progress_at
 		   FROM rimsky_frames f WHERE f.frame_id = ?`,
 		frameID.String(),
-	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt)
+	)
+	cols, err := scanFrameObservabilityCols(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	fid, err := uuid.Parse(fidStr)
+	r, err := cols.toFrameRow("frames.GetForObservability")
 	if err != nil {
 		return nil, err
-	}
-	iid, err := uuid.Parse(iidStr)
-	if err != nil {
-		return nil, err
-	}
-	mid, err := uuid.Parse(triggeringMsg)
-	if err != nil {
-		return nil, err
-	}
-	r.FrameID = fid
-	r.InstanceID = iid
-	r.State = state
-	r.TriggeringMessageID = mid
-	if rootScope != "" {
-		rsid, err := uuid.Parse(rootScope)
-		if err != nil {
-			return nil, fmt.Errorf("frames.GetForObservability: root_run_scope_id: %w", err)
-		}
-		r.RootRunScopeID = rsid
-	}
-	if startedAt.Valid {
-		t, err := parseTime(startedAt.String)
-		if err == nil {
-			r.StartedAt = &t
-		}
-	}
-	if endedAt.Valid {
-		t, err := parseTime(endedAt.String)
-		if err == nil {
-			r.EndedAt = &t
-		}
-	}
-	if lastProgressAt.Valid {
-		t, err := parseTime(lastProgressAt.String)
-		if err == nil {
-			r.LastProgressAt = &t
-		}
 	}
 	return &r, nil
 }
 
 func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID shared.UUID, tx persistence.Tx) (*persistence.FrameRowWithMessage, error) {
-	var (
-		r              persistence.FrameRowWithMessage
-		fidStr         string
-		iidStr         string
-		triggeringMsg  string
-		rootScope      string
-		startedAt      sql.NullString
-		endedAt        sql.NullString
-		lastProgressAt sql.NullString
-		mType          sql.NullString
-		mSender        sql.NullString
-		mKind          sql.NullString
-	)
-	var state string
-	err := s.q(tx).QueryRowContext(ctx,
+	var mType, mSender, mKind sql.NullString
+	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT f.frame_id, f.instance_id,
 		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
@@ -701,55 +655,19 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
 		  WHERE f.frame_id = ?`,
 		frameID.String(),
-	).Scan(&fidStr, &iidStr, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt,
-		&mType, &mSender, &mKind)
+	)
+	cols, err := scanFrameObservabilityCols(row, &mType, &mSender, &mKind)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	fid, err := uuid.Parse(fidStr)
+	base, err := cols.toFrameRow("frames.GetForObservabilityWithMessage")
 	if err != nil {
 		return nil, err
 	}
-	iid, err := uuid.Parse(iidStr)
-	if err != nil {
-		return nil, err
-	}
-	mid, err := uuid.Parse(triggeringMsg)
-	if err != nil {
-		return nil, err
-	}
-	r.FrameID = fid
-	r.InstanceID = iid
-	r.State = state
-	r.TriggeringMessageID = mid
-	if rootScope != "" {
-		rsid, err := uuid.Parse(rootScope)
-		if err != nil {
-			return nil, fmt.Errorf("frames.GetForObservabilityWithMessage: root_run_scope_id: %w", err)
-		}
-		r.RootRunScopeID = rsid
-	}
-	if startedAt.Valid {
-		t, err := parseTime(startedAt.String)
-		if err == nil {
-			r.StartedAt = &t
-		}
-	}
-	if endedAt.Valid {
-		t, err := parseTime(endedAt.String)
-		if err == nil {
-			r.EndedAt = &t
-		}
-	}
-	if lastProgressAt.Valid {
-		t, err := parseTime(lastProgressAt.String)
-		if err == nil {
-			r.LastProgressAt = &t
-		}
-	}
+	r := persistence.FrameRowWithMessage{FrameRow: base}
 	if mType.Valid {
 		r.MessageType = mType.String
 	}
@@ -818,65 +736,16 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 	var out []persistence.FrameRowWithMessage
 	var lastStarted time.Time
 	for rows.Next() {
-		var (
-			r              persistence.FrameRowWithMessage
-			frameID        string
-			instanceID     string
-			state          string
-			triggeringMsg  string
-			rootScope      string
-			startedAt      sql.NullString
-			endedAt        sql.NullString
-			lastProgressAt sql.NullString
-			mType          sql.NullString
-			mSender        sql.NullString
-			mKind          sql.NullString
-		)
-		if err := rows.Scan(&frameID, &instanceID, &state, &triggeringMsg, &rootScope, &startedAt, &endedAt, &lastProgressAt,
-			&mType, &mSender, &mKind); err != nil {
-			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
-		}
-		fid, err := uuid.Parse(frameID)
+		var mType, mSender, mKind sql.NullString
+		cols, err := scanFrameObservabilityCols(rows, &mType, &mSender, &mKind)
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
 		}
-		iid, err := uuid.Parse(instanceID)
+		base, err := cols.toFrameRow("frames.ListForObservabilityWithMessage")
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
 		}
-		mid, err := uuid.Parse(triggeringMsg)
-		if err != nil {
-			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
-		}
-		r.FrameID = fid
-		r.InstanceID = iid
-		r.State = state
-		r.TriggeringMessageID = mid
-		if rootScope != "" {
-			rsid, err := uuid.Parse(rootScope)
-			if err != nil {
-				return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, fmt.Errorf("frames.ListForObservabilityWithMessage: root_run_scope_id: %w", err)
-			}
-			r.RootRunScopeID = rsid
-		}
-		if startedAt.Valid {
-			t, err := parseTime(startedAt.String)
-			if err == nil {
-				r.StartedAt = &t
-			}
-		}
-		if endedAt.Valid {
-			t, err := parseTime(endedAt.String)
-			if err == nil {
-				r.EndedAt = &t
-			}
-		}
-		if lastProgressAt.Valid {
-			t, err := parseTime(lastProgressAt.String)
-			if err == nil {
-				r.LastProgressAt = &t
-			}
-		}
+		r := persistence.FrameRowWithMessage{FrameRow: base}
 		if mType.Valid {
 			r.MessageType = mType.String
 		}
@@ -886,8 +755,8 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		if mKind.Valid {
 			r.MessageSenderKind = mKind.String
 		}
-		if startedAt.Valid {
-			if t, err := parseTime(startedAt.String); err == nil {
+		if cols.startedAt.Valid {
+			if t, err := parseTime(cols.startedAt.String); err == nil {
 				lastStarted = t
 			}
 		}

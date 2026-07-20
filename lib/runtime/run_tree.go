@@ -231,7 +231,8 @@ func aggregateChanged(children []ChildState) bool {
 }
 
 func CreateRootNodeRun(
-	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable,
+	ctx context.Context, tx persistence.Tx, rt persistence.NodeRunTreeTable,
+	clock shared.Clock,
 	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
 	executor string, requiredClaimProducers []string,
 	policy spec.AggregationPolicy,
@@ -248,6 +249,7 @@ func CreateRootNodeRun(
 		ExecutorName:           executor,
 		RequiredClaimProducers: requiredClaimProducers,
 		AggregationPolicy:      policy,
+		EnqueuedAt:             clock.Now(),
 	}); err != nil {
 		return shared.UUID{}, fmt.Errorf("CreateRootNodeRun: %w", err)
 	}
@@ -255,7 +257,8 @@ func CreateRootNodeRun(
 }
 
 func CreateChildNodeRun(
-	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable, queue persistence.Queue,
+	ctx context.Context, tx persistence.Tx, rt persistence.NodeRunTreeTable, queue persistence.Queue,
+	clock shared.Clock,
 	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
 	executor string, requiredClaimProducers []string, policy spec.AggregationPolicy,
 ) (shared.UUID, error) {
@@ -280,6 +283,7 @@ func CreateChildNodeRun(
 		ExecutorName:           executor,
 		RequiredClaimProducers: requiredClaimProducers,
 		AggregationPolicy:      policy,
+		EnqueuedAt:             clock.Now(),
 	}); err != nil {
 		return shared.UUID{}, fmt.Errorf("CreateChildNodeRun: %w", err)
 	}
@@ -287,7 +291,7 @@ func CreateChildNodeRun(
 }
 
 func GetRunTree(
-	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable,
+	ctx context.Context, tx persistence.Tx, rt persistence.NodeRunTreeTable,
 	runID shared.UUID,
 ) ([]persistence.NodeRunTreeRow, error) {
 	root, err := rt.GetByID(ctx, tx, runID)

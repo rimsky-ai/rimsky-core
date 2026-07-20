@@ -9,13 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/check"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-type CheckResult struct {
-	Name string
-	Err  error
-}
+type CheckResult = check.Result
 
 func Run(ctx context.Context, c genv1.ValidationClient, role string) []CheckResult {
 	results := make([]CheckResult, 0, 4)

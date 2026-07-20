@@ -76,16 +76,6 @@ func (f *fakeRunScopeTable) Close(_ context.Context, _ persistence.Tx, id shared
 	return nil
 }
 
-func (f *fakeRunScopeTable) ListChildScopes(_ context.Context, _ persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.RunScopeRow, error) {
-	var out []persistence.RunScopeRow
-	for _, r := range f.rows {
-		if r.ParentNodeRunID != nil && *r.ParentNodeRunID == parentNodeRunID {
-			out = append(out, *r)
-		}
-	}
-	return out, nil
-}
-
 func (f *fakeRunScopeTable) ListTreeDeepestFirst(_ context.Context, _ persistence.Tx, rootRunScopeID shared.UUID) ([]persistence.RunScopeRow, error) {
 	depthOf := func(id shared.UUID) int {
 		d := 0

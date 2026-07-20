@@ -1,6 +1,8 @@
 -- Copyright © 2026 Fall Guy Consulting.
 -- Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 -- license. See LICENSE.agpl and COPYRIGHT at the repo root.
+-- @concept: message
+-- @decision: message-queue-mode-per-instance
 
 -- 017-message-queue-coalesce.sql
 --
@@ -20,9 +22,9 @@
 -- NULL and delivered_at is NULL for queued-frame triggers), so they
 -- reappear as pending in the new pickup path.
 --
--- The state CHECK constraint on rimsky_frames still permits 'queued' as
--- a legal token. No Go code writes 'queued' after this migration; a
--- future tightening migration can excise the token when warranted.
+-- The state CHECK constraint on rimsky_frames still permitted 'queued' as
+-- a legal token after this migration; the whole state column (and its
+-- CHECK) was later dropped by 021-retire-frame-state-column.sql.
 
 DELETE FROM rimsky_frames WHERE state = 'queued';
 

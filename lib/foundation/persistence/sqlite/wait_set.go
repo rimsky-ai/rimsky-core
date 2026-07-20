@@ -83,24 +83,6 @@ func (b *waitSetImpl) ListForFrame(ctx context.Context, frameID shared.UUID, tx 
 	return collectWaitSetRows(rows)
 }
 
-func (b *waitSetImpl) ListDrainedAttributeRowsForReceiver(
-	ctx context.Context, frameID, receiverNodeRunID shared.UUID, tx persistence.Tx,
-) ([]persistence.WaitSetRow, error) {
-	rows, err := b.q(tx).QueryContext(ctx,
-		`SELECT frame_id, receiver_run_id, sender_run_id, topic_kind, topic_filter, drained_at
-		   FROM rimsky_wait_set
-		  WHERE frame_id = ? AND receiver_run_id = ?
-		    AND drained_at IS NOT NULL
-		    AND topic_kind = 'attribute'
-		  ORDER BY drained_at ASC, sender_run_id ASC`,
-		frameID, receiverNodeRunID)
-	if err != nil {
-		return nil, fmt.Errorf("rimsky_wait_set list drained attribute rows: %w", err)
-	}
-	defer rows.Close()
-	return collectWaitSetRows(rows)
-}
-
 // @concept: cascade
 // @decision: walker-rule-per-sender-node
 func (b *waitSetImpl) ListSenderNodesForReceiver(

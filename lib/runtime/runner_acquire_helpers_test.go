@@ -43,13 +43,13 @@ func (p *scopeOnlyPersist) Supervisors() persistence.SupervisorTable            
 func (p *scopeOnlyPersist) Frames() persistence.FrameTable                            { return nil }
 func (p *scopeOnlyPersist) BlobOrphans() persistence.BlobOrphanTable                  { return nil }
 func (p *scopeOnlyPersist) WaitSet() persistence.WaitSetTable                         { return nil }
-func (p *scopeOnlyPersist) Messages() persistence.MessagesTable                       { return nil }
+func (p *scopeOnlyPersist) Messages() persistence.MessageTable                        { return nil }
 func (p *scopeOnlyPersist) MessageIdempotencies() persistence.MessageIdempotencyTable { return nil }
 func (p *scopeOnlyPersist) Lineage() persistence.LineageTable                         { return nil }
-func (p *scopeOnlyPersist) PublisherSubscriptions() persistence.PublisherSubscriptionsTable {
+func (p *scopeOnlyPersist) PublisherSubscriptions() persistence.PublisherSubscriptionTable {
 	return nil
 }
-func (p *scopeOnlyPersist) NodeRunTree() persistence.RunTreeTable       { return nil }
+func (p *scopeOnlyPersist) NodeRunTree() persistence.NodeRunTreeTable   { return nil }
 func (p *scopeOnlyPersist) RunScopes() persistence.RunScopeTable        { return p.scopes }
 func (p *scopeOnlyPersist) APIKeys() persistence.APIKeyTable            { return nil }
 func (p *scopeOnlyPersist) DeploymentCA() persistence.DeploymentCATable { return nil }
@@ -64,10 +64,10 @@ func (p *scopeOnlyPersist) Transaction(ctx context.Context, fn func(ctx context.
 
 type messagesPersist struct {
 	scopeOnlyPersist
-	msgs persistence.MessagesTable
+	msgs persistence.MessageTable
 }
 
-func (p *messagesPersist) Messages() persistence.MessagesTable { return p.msgs }
+func (p *messagesPersist) Messages() persistence.MessageTable { return p.msgs }
 
 // @concept: fan-out
 // @story: typed-message-substitution
@@ -99,7 +99,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage(t *testing.T)
 		}
 	}
 
-	newArgs := func(msgs persistence.MessagesTable) RunArgs {
+	newArgs := func(msgs persistence.MessageTable) RunArgs {
 		return RunArgs{
 			Logger:  shared.SilentLogger{},
 			Persist: &messagesPersist{msgs: msgs},
@@ -169,7 +169,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage_NonZeroReceiv
 		t.Fatalf("MarkDelivered: ok=%v err=%v", ok, err)
 	}
 
-	wait := &fakeWaitSet{drained: map[shared.UUID][]persistence.WaitSetRow{}}
+	wait := &fakeWaitSet{}
 	runTree := &fakeRunTreeDeps{rows: map[shared.UUID]*persistence.NodeRunTreeRow{}}
 	nodes := &fakeNodesDeps{rows: map[shared.UUID]*persistence.NodeRow{}}
 	attrs := &fakeNodeAttrs{rows: map[shared.UUID]*persistence.NodeAttributesRow{}}
@@ -245,9 +245,6 @@ func (s *staticScopeTable) GetFanoutPartition(_ context.Context, _ persistence.T
 }
 func (s *staticScopeTable) Close(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
 	return nil
-}
-func (s *staticScopeTable) ListChildScopes(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.RunScopeRow, error) {
-	return nil, nil
 }
 func (s *staticScopeTable) ListParentChain(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.RunScopeRow, error) {
 	return nil, nil
@@ -641,7 +638,7 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 
 	persist := &depsCapablePersist{
 		messagesPersist: messagesPersist{msgs: newFakeMessages()},
-		waitSet:         &fakeWaitSet{drained: map[shared.UUID][]persistence.WaitSetRow{}},
+		waitSet:         &fakeWaitSet{},
 		runTree:         &fakeRunTreeDeps{rows: map[shared.UUID]*persistence.NodeRunTreeRow{}},
 		nodes:           nodes,
 		nodeAttrs:       attrs,
@@ -671,9 +668,7 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 	}
 }
 
-type fakeWaitSet struct {
-	drained map[shared.UUID][]persistence.WaitSetRow
-}
+type fakeWaitSet struct{}
 
 func (f *fakeWaitSet) Insert(_ context.Context, _ persistence.WaitSetRow, _ persistence.Tx) error {
 	return nil
@@ -686,9 +681,6 @@ func (f *fakeWaitSet) ListForReceiver(_ context.Context, _, _ shared.UUID, _ per
 }
 func (f *fakeWaitSet) ListForFrame(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]persistence.WaitSetRow, error) {
 	return nil, nil
-}
-func (f *fakeWaitSet) ListDrainedAttributeRowsForReceiver(_ context.Context, _, receiverNodeRunID shared.UUID, _ persistence.Tx) ([]persistence.WaitSetRow, error) {
-	return f.drained[receiverNodeRunID], nil
 }
 func (f *fakeWaitSet) ListSenderNodesForReceiver(_ context.Context, _, _ shared.UUID, _ persistence.Tx) ([]shared.UUID, error) {
 	return nil, nil
@@ -923,7 +915,7 @@ func (f *fakeNodeAttrs) GetPriorRunData(_ context.Context, _ persistence.Tx, _ s
 type depsCapablePersist struct {
 	messagesPersist
 	waitSet   persistence.WaitSetTable
-	runTree   persistence.RunTreeTable
+	runTree   persistence.NodeRunTreeTable
 	nodes     persistence.NodeTable
 	nodeAttrs persistence.NodeAttributeTable
 	instances persistence.InstanceTable
@@ -931,7 +923,7 @@ type depsCapablePersist struct {
 }
 
 func (p *depsCapablePersist) WaitSet() persistence.WaitSetTable              { return p.waitSet }
-func (p *depsCapablePersist) NodeRunTree() persistence.RunTreeTable          { return p.runTree }
+func (p *depsCapablePersist) NodeRunTree() persistence.NodeRunTreeTable      { return p.runTree }
 func (p *depsCapablePersist) Nodes() persistence.NodeTable                   { return p.nodes }
 func (p *depsCapablePersist) NodeAttributes() persistence.NodeAttributeTable { return p.nodeAttrs }
 func (p *depsCapablePersist) Instances() persistence.InstanceTable           { return p.instances }

@@ -74,6 +74,17 @@ func hardDepSendersOf(n TemplateNodeDef) []string {
 }
 
 func detectHardDepCycle(edges HardDepEdgeMap) error {
+	cycles := findAllCycles(edges)
+	if len(cycles) == 0 {
+		return nil
+	}
+	if len(cycles) == 1 {
+		return fmt.Errorf("hard-dep cycle detected: %v", cycles[0])
+	}
+	return fmt.Errorf("hard-dep cycles detected (%d): %v", len(cycles), cycles)
+}
+
+func findAllCycles(adj map[string][]string) [][]string {
 	const (
 		white = 0
 		gray  = 1
@@ -91,7 +102,7 @@ func detectHardDepCycle(edges HardDepEdgeMap) error {
 		defer func() {
 			path = path[:len(path)-1]
 		}()
-		for _, next := range edges[node] {
+		for _, next := range adj[node] {
 			switch color[next] {
 			case gray:
 				cyclePath := append([]string(nil), path...)
@@ -108,18 +119,12 @@ func detectHardDepCycle(edges HardDepEdgeMap) error {
 		color[node] = black
 	}
 
-	for receiver := range edges {
-		if color[receiver] == white {
-			dfs(receiver)
+	for node := range adj {
+		if color[node] == white {
+			dfs(node)
 		}
 	}
-	if len(cycles) == 0 {
-		return nil
-	}
-	if len(cycles) == 1 {
-		return fmt.Errorf("hard-dep cycle detected: %v", cycles[0])
-	}
-	return fmt.Errorf("hard-dep cycles detected (%d): %v", len(cycles), cycles)
+	return cycles
 }
 
 func canonicalCycleKey(path []string) string {

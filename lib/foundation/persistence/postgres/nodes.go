@@ -46,11 +46,11 @@ func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, 
 		nullableString(in.Executor),
 		tags, string(cascadeMode),
 	); err != nil {
-		return persistence.NodeRow{}, err
+		return persistence.NodeRow{}, fmt.Errorf("nodes.Create: %w", err)
 	}
 	out, err := s.Get(ctx, in.ID, tx)
 	if err != nil {
-		return persistence.NodeRow{}, err
+		return persistence.NodeRow{}, fmt.Errorf("nodes.Create: %w", err)
 	}
 	if out == nil {
 		return persistence.NodeRow{}, fmt.Errorf("nodes.Create: row vanished after insert: %s", in.ID)
@@ -67,7 +67,7 @@ func (s *nodesImpl) Get(ctx context.Context, id foundationshared.UUID, tx persis
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("nodes.Get: %w", err)
 	}
 	return &out, nil
 }
@@ -79,10 +79,14 @@ func (s *nodesImpl) ListByInstance(ctx context.Context, instanceID foundationsha
 		 WHERE n.instance_id = $1
 		 ORDER BY n.created_at ASC`, instanceID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("nodes.ListByInstance: %w", err)
 	}
 	defer rows.Close()
-	return collectNodes(rows)
+	out, err := collectNodes(rows)
+	if err != nil {
+		return nil, fmt.Errorf("nodes.ListByInstance: %w", err)
+	}
+	return out, nil
 }
 
 func (s *nodesImpl) ListByInstancePagedFiltered(
@@ -121,12 +125,12 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 		instanceID, cursor, limit, filter.Tag,
 	)
 	if err != nil {
-		return persistence.PaginatedListResult[persistence.NodeRow]{}, err
+		return persistence.PaginatedListResult[persistence.NodeRow]{}, fmt.Errorf("nodes.listByInstancePaged: %w", err)
 	}
 	defer rows.Close()
 	out, err := collectNodes(rows)
 	if err != nil {
-		return persistence.PaginatedListResult[persistence.NodeRow]{}, err
+		return persistence.PaginatedListResult[persistence.NodeRow]{}, fmt.Errorf("nodes.listByInstancePaged: %w", err)
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
@@ -152,10 +156,14 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 		  ORDER BY n.created_at ASC`,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("nodes.ListReadyForDispatch: %w", err)
 	}
 	defer rows.Close()
-	return collectNodes(rows)
+	out, err := collectNodes(rows)
+	if err != nil {
+		return nil, fmt.Errorf("nodes.ListReadyForDispatch: %w", err)
+	}
+	return out, nil
 }
 
 // @concept: wait-set
@@ -178,18 +186,21 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 		  ORDER BY n.created_at ASC`,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("nodes.ListPureCascadeReady: %w", err)
 	}
 	defer rows.Close()
 	var out []persistence.PureCascadeReadyRow
 	for rows.Next() {
 		var r persistence.PureCascadeReadyRow
 		if err := rows.Scan(&r.NodeID, &r.InstanceID, &r.NodeType, &r.NodeRunID, &r.RunScopeID, &r.FrameID); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("nodes.ListPureCascadeReady: scan: %w", err)
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("nodes.ListPureCascadeReady: rows: %w", err)
+	}
+	return out, nil
 }
 
 // @concept: supervisor
@@ -235,7 +246,7 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[ca
 		   FROM rimsky_node_runs
 		  GROUP BY state`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("nodes.CountByState: %w", err)
 	}
 	defer rows.Close()
 	out := map[cascade.NodeState]int{
@@ -251,12 +262,12 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[ca
 		var state string
 		var count int
 		if err := rows.Scan(&state, &count); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("nodes.CountByState: scan: %w", err)
 		}
 		out[cascade.NodeState(state)] = count
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("nodes.CountByState: rows: %w", err)
 	}
 	return out, nil
 }
@@ -298,7 +309,7 @@ func (s *nodesImpl) enforceAndUpdate(
 	current := cascade.NodeState(stateScan)
 	expected, err := cascade.NextState(current, reason)
 	if err != nil {
-		return err
+		return fmt.Errorf("nodes.updateState: %w", err)
 	}
 	if expected != state {
 		return foundationshared.Wrap(cascade.ErrIllegalTransition,
@@ -340,7 +351,10 @@ func (s *nodesImpl) UpdateRunEvaluatorState(ctx context.Context, runID foundatio
 		 WHERE id = $1`,
 		runID, es.RetryCounter,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("nodes.UpdateRunEvaluatorState: %w", err)
+	}
+	return nil
 }
 
 // @concept: error-policy
@@ -354,7 +368,7 @@ func (s *nodesImpl) GetRunEvaluatorState(ctx context.Context, runID foundationsh
 		if errors.Is(err, pgx.ErrNoRows) {
 			return spec.EvaluatorState{}, nil
 		}
-		return spec.EvaluatorState{}, err
+		return spec.EvaluatorState{}, fmt.Errorf("nodes.GetRunEvaluatorState: %w", err)
 	}
 	return es, nil
 }
@@ -1134,9 +1148,9 @@ func (s *nodesImpl) CreateNonCascadeStale(
 		   FROM rimsky_run_scopes rs
 		  WHERE rs.id = $7 AND rs.closed_at IS NULL
 		 RETURNING id`,
-		in.NodeID, nullableText(in.ExecutorName), stores, in.EnqueuedAt, string(in.CreationReason),
-		in.FrameID, in.RunScopeID, priorRunPtr, nullableText(in.PriorDispatchDisposition),
-		nilIfEmpty(in.InitialScratchInline), nilIfEmptyStr(in.InitialScratchHandle), nilIfEmptyStr(in.InitialScratchHandleBackend),
+		in.NodeID, nullableString(in.ExecutorName), stores, in.EnqueuedAt, string(in.CreationReason),
+		in.FrameID, in.RunScopeID, priorRunPtr, nullableString(in.PriorDispatchDisposition),
+		nilIfEmpty(in.InitialScratchInline), nullableString(in.InitialScratchHandle), nullableString(in.InitialScratchHandleBackend),
 	).Scan(&newID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var closedAt *time.Time

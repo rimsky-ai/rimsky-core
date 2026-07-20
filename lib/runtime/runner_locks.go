@@ -143,7 +143,7 @@ func loadInheritedClaimsForNode(
 	if tmpl == nil {
 		return nil, nil
 	}
-	nodeDef := lookupNodeDef(&tmpl.Spec, nd.NodeType)
+	nodeDef := LookupNodeDef(&tmpl.Spec, nd.NodeType)
 	if nodeDef == nil {
 		return nil, nil
 	}
@@ -223,7 +223,7 @@ func lookupClaimHandleForAlias(
 	upstreamNodeID shared.UUID, tmplSpec *node.TemplateSpec,
 	upstreamType string, alias string, frameID shared.UUID,
 ) (*persistence.ClaimHandleRow, error) {
-	upstreamDef := lookupNodeDef(tmplSpec, upstreamType)
+	upstreamDef := LookupNodeDef(tmplSpec, upstreamType)
 	if upstreamDef == nil {
 		return nil, nil
 	}
@@ -297,7 +297,7 @@ func templateAttributeDefaultsFor(tmpl *node.TemplateSpec, executor string) map[
 	return frag
 }
 
-func lookupNodeDef(tmpl *node.TemplateSpec, nodeType string) *node.TemplateNodeDef {
+func LookupNodeDef(tmpl *node.TemplateSpec, nodeType string) *node.TemplateNodeDef {
 	if tmpl == nil {
 		return nil
 	}

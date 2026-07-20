@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/check"
 )
 
 func identSafeSelector(prefix string) string {
@@ -21,10 +22,7 @@ func identSafeSelector(prefix string) string {
 	return prefix + hex.EncodeToString(u[:8])
 }
 
-type CheckResult struct {
-	Name string
-	Err  error
-}
+type CheckResult = check.Result
 
 func Run(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 	results := make([]CheckResult, 0, 10)

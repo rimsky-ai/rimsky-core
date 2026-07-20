@@ -7,6 +7,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 
@@ -14,7 +15,7 @@ import (
 )
 
 const supervisorCols = `
-  id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port,
+  id, accepted_executors, accepted_claim_producers, concurrency, callback_host, callback_port,
   registered_at
 `
 
@@ -30,18 +31,21 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 	}
 	_, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_supervisors
-		   (id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port)
+		   (id, accepted_executors, accepted_claim_producers, concurrency, callback_host, callback_port)
 		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (id) DO UPDATE
-		   SET accepted_executors = EXCLUDED.accepted_executors,
-		       accepted_stores    = EXCLUDED.accepted_stores,
-		       concurrency        = EXCLUDED.concurrency,
-		       callback_host      = EXCLUDED.callback_host,
-		       callback_port      = EXCLUDED.callback_port`,
+		   SET accepted_executors      = EXCLUDED.accepted_executors,
+		       accepted_claim_producers = EXCLUDED.accepted_claim_producers,
+		       concurrency              = EXCLUDED.concurrency,
+		       callback_host            = EXCLUDED.callback_host,
+		       callback_port            = EXCLUDED.callback_port`,
 		in.ID, accepts, stores, in.Concurrency,
 		nullableString(in.CallbackHost), nullableInt(in.CallbackPort),
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("postgres.Supervisors.Register: %w", err)
+	}
+	return nil
 }
 
 func (s *supervisorsImpl) Get(ctx context.Context, id string, tx persistence.Tx) (*persistence.SupervisorRow, error) {
@@ -53,7 +57,7 @@ func (s *supervisorsImpl) Get(ctx context.Context, id string, tx persistence.Tx)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("postgres.Supervisors.Get: %w", err)
 	}
 	return &r, nil
 }
@@ -64,16 +68,22 @@ func (s *supervisorsImpl) List(ctx context.Context, tx persistence.Tx) ([]persis
 		`SELECT `+supervisorCols+` FROM rimsky_supervisors
 		 ORDER BY registered_at ASC`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("postgres.Supervisors.List: %w", err)
 	}
 	defer rows.Close()
-	return collectSupervisors(rows)
+	out, err := collectSupervisors(rows)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.Supervisors.List: %w", err)
+	}
+	return out, nil
 }
 
 func (s *supervisorsImpl) Unregister(ctx context.Context, id string, tx persistence.Tx) error {
 	ex := s.q(tx)
-	_, err := ex.Exec(ctx, `DELETE FROM rimsky_supervisors WHERE id = $1`, id)
-	return err
+	if _, err := ex.Exec(ctx, `DELETE FROM rimsky_supervisors WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("postgres.Supervisors.Unregister: %w", err)
+	}
+	return nil
 }
 
 func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {

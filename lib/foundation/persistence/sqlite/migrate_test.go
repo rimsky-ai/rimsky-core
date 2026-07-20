@@ -100,7 +100,7 @@ func TestSQLiteMigration024RebuildPreservesChildRows(t *testing.T) {
 	}
 }
 
-func TestSQLiteMigration002Tags(t *testing.T) {
+func TestSQLiteMigrationTagsColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()

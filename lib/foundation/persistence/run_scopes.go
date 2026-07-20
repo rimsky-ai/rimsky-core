@@ -34,8 +34,6 @@ type RunScopeTable interface {
 
 	Close(ctx context.Context, tx Tx, id shared.UUID) error
 
-	ListChildScopes(ctx context.Context, tx Tx, parentNodeRunID shared.UUID) ([]RunScopeRow, error)
-
 	ListParentChain(ctx context.Context, tx Tx, id shared.UUID) ([]RunScopeRow, error)
 
 	ListTreeDeepestFirst(ctx context.Context, tx Tx, rootRunScopeID shared.UUID) ([]RunScopeRow, error)

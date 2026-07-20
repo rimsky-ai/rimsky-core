@@ -166,7 +166,7 @@ func TestInsertCoHolderClaimHoldersAtAcquire_HappyPathInsertsRow(t *testing.T) {
 	claimID := insertActiveClaimForProducer(ctx, t, backend, producerNode.ID, frameID)
 
 	tmplSpec := coHolderTemplateSpec("ck-happy")
-	coHolderDef := lookupNodeDef(tmplSpec, "co-holder")
+	coHolderDef := LookupNodeDef(tmplSpec, "co-holder")
 	require.NotNil(t, coHolderDef)
 
 	coHolderRunID := shared.UUID(uuid.New())
@@ -213,7 +213,7 @@ func TestInsertCoHolderClaimHoldersAtAcquire_UpstreamNodeMissingFailsLoud(t *tes
 	frameID := seedCoHolderFrame(ctx, t, backend, inst.ID, mainScopeID)
 
 	tmplSpec := coHolderTemplateSpec("ck-missing-upstream")
-	coHolderDef := lookupNodeDef(tmplSpec, "co-holder")
+	coHolderDef := LookupNodeDef(tmplSpec, "co-holder")
 	require.NotNil(t, coHolderDef)
 	broken := *coHolderDef
 	broken.Holds = map[string]spec.HoldsBinding{"store-x": {From: "nonexistent-producer-type"}}
@@ -253,7 +253,7 @@ func TestInsertCoHolderClaimHoldersAtAcquire_NoActiveClaimInCurrentFrameFailsLou
 	priorClaimID := insertActiveClaimForProducer(ctx, t, backend, producerNode.ID, priorFrameID)
 
 	tmplSpec := coHolderTemplateSpec("ck-wrong-frame")
-	coHolderDef := lookupNodeDef(tmplSpec, "co-holder")
+	coHolderDef := LookupNodeDef(tmplSpec, "co-holder")
 	require.NotNil(t, coHolderDef)
 
 	args := RunArgs{Persist: backend, ClaimHandles: backend.ClaimHandles(), Logger: shared.SilentLogger{}, SupervisorID: "sup-coholder-test"}

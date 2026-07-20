@@ -47,27 +47,12 @@ func (q *queueImpl) q(tx persistence.Tx) querier {
 }
 
 func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest) error {
-	return q.inTx(ctx, func(tx persistence.Tx) error {
+	if q.tables == nil {
+		return fmt.Errorf("sqlite.Enqueue: queue not wired with tables")
+	}
+	return q.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.EnqueueInTx(ctx, req, tx)
 	})
-}
-
-func (q *queueImpl) inTx(ctx context.Context, fn func(tx persistence.Tx) error) error {
-	sTx, err := q.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("sqlite.queue.inTx: begin: %w", err)
-	}
-	defer func() {
-		if p := recover(); p != nil {
-			_ = sTx.Rollback()
-			panic(p)
-		}
-	}()
-	if err := fn(&sqliteTx{tx: sTx}); err != nil {
-		_ = sTx.Rollback()
-		return err
-	}
-	return sTx.Commit()
 }
 
 // @concept: run-scope
@@ -857,11 +842,7 @@ func buildLiveDispatchFilters(filter persistence.DispatchListFilter) (stateClaus
 	return stateClause, executor, instanceID
 }
 
-type scanner interface {
-	Scan(dest ...any) error
-}
-
-func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
+func scanDispatchRow(row scannable) (persistence.DispatchRow, error) {
 	var (
 		idStr                     string
 		nodeIDStr                 string

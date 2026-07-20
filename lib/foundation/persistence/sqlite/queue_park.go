@@ -166,6 +166,7 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, nod
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL,
 		        claimed_at = NULL,
+		        parked_at = NULL,
 		        resume_at = NULL
 		  WHERE id = ?
 		    AND state = 'parked'`,
@@ -299,11 +300,7 @@ func scanSqliteParkedRows(rows *sql.Rows) ([]persistence.ParkedRow, error) {
 	return out, nil
 }
 
-type rowScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
+func scanOneSqliteParkedRow(row scannable) (*persistence.ParkedRow, error) {
 	var (
 		idStr, nodeIDStr   string
 		executor           sql.NullString

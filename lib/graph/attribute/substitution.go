@@ -133,34 +133,56 @@ func resolveDirective(directive string, ctx ResolveContext) (string, error) {
 }
 
 func resolveDirectiveValue(directive string, ctx ResolveContext) (any, error) {
-	if idx := strings.Index(directive, "|"); idx >= 0 {
-		leftRaw := strings.TrimSpace(directive[:idx])
-		rightRaw := strings.TrimSpace(directive[idx+1:])
-		if strings.Contains(rightRaw, "|") {
-			return nil, &ErrFallbackChain{Directive: directive}
-		}
-		leftRaw = strings.TrimSpace(strings.TrimSuffix(leftRaw, "?"))
-		val, err := resolveDirectiveValueRaw(leftRaw, ctx)
-		if err == nil {
-			return val, nil
-		}
-		if !IsMissingSource(err) {
-			return nil, err
-		}
-		return parseFallbackLiteral(rightRaw)
+	shape := ParseDirectiveShape(directive)
+	if shape.MultiPipe {
+		return nil, &ErrFallbackChain{Directive: directive}
 	}
-	lenient, stripped := parseLenientMarker(directive)
-	val, err := resolveDirectiveValueRaw(stripped, ctx)
+	val, err := resolveDirectiveValueRaw(shape.Body, ctx)
 	if err == nil {
 		return val, nil
 	}
-	if lenient && IsMissingSource(err) {
+	if !IsMissingSource(err) {
+		return nil, err
+	}
+	if shape.HasFallback {
+		return parseFallbackLiteral(shape.FallbackLiteral)
+	}
+	if shape.Lenient {
 		return nil, nil
 	}
 	return nil, err
 }
 
-func parseLenientMarker(body string) (lenient bool, stripped string) {
+// DirectiveShape is the parsed pipe/lenient-marker grammar shared by every
+// directive consumer (runtime resolution, template validation, subscription
+// edge extraction): a `<body>[?] | <fallback-literal>` split with at most
+// one pipe, and an optional trailing `?` lenient marker on the body.
+type DirectiveShape struct {
+	Body            string
+	Lenient         bool
+	HasFallback     bool
+	FallbackLiteral string
+	MultiPipe       bool
+}
+
+// ParseDirectiveShape parses the directive's fallback-pipe and lenient-marker
+// grammar without resolving or validating the body itself. MultiPipe is set
+// (with a zero-value Body) when more than one top-level `|` is present.
+func ParseDirectiveShape(directive string) DirectiveShape {
+	if idx := strings.Index(directive, "|"); idx >= 0 {
+		left := strings.TrimSpace(directive[:idx])
+		right := strings.TrimSpace(directive[idx+1:])
+		if strings.Contains(right, "|") {
+			return DirectiveShape{MultiPipe: true}
+		}
+		lenient, stripped := ParseLenientMarker(left)
+		return DirectiveShape{Body: stripped, Lenient: lenient, HasFallback: true, FallbackLiteral: right}
+	}
+	lenient, stripped := ParseLenientMarker(directive)
+	return DirectiveShape{Body: stripped, Lenient: lenient}
+}
+
+func ParseLenientMarker(body string) (lenient bool, stripped string) {
 	trimmed := strings.TrimSpace(body)
 	if strings.HasSuffix(trimmed, "?") {
 		return true, strings.TrimSpace(strings.TrimSuffix(trimmed, "?"))

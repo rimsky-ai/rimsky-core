@@ -134,12 +134,7 @@ func lookupTemplateNodeDefByType(ctx context.Context, sb persistence.Tables, ins
 	if inst == nil || tmpl == nil {
 		return nil, nil
 	}
-	for i := range tmpl.Spec.Nodes {
-		if tmpl.Spec.Nodes[i].Type == nodeType {
-			return &tmpl.Spec.Nodes[i], nil
-		}
-	}
-	return nil, nil
+	return runtime.LookupNodeDef(&tmpl.Spec, nodeType), nil
 }
 
 func acquiresClaims(def *nodepkg.TemplateNodeDef) bool {

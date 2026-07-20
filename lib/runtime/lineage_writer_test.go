@@ -335,13 +335,13 @@ func (f *emitFakePersist) Supervisors() persistence.SupervisorTable             
 func (f *emitFakePersist) Frames() persistence.FrameTable                            { return f.frames }
 func (f *emitFakePersist) BlobOrphans() persistence.BlobOrphanTable                  { return nil }
 func (f *emitFakePersist) WaitSet() persistence.WaitSetTable                         { return nil }
-func (f *emitFakePersist) Messages() persistence.MessagesTable                       { return nil }
+func (f *emitFakePersist) Messages() persistence.MessageTable                        { return nil }
 func (f *emitFakePersist) MessageIdempotencies() persistence.MessageIdempotencyTable { return nil }
 func (f *emitFakePersist) Lineage() persistence.LineageTable                         { return f.lt }
-func (f *emitFakePersist) PublisherSubscriptions() persistence.PublisherSubscriptionsTable {
+func (f *emitFakePersist) PublisherSubscriptions() persistence.PublisherSubscriptionTable {
 	return nil
 }
-func (f *emitFakePersist) NodeRunTree() persistence.RunTreeTable       { return nil }
+func (f *emitFakePersist) NodeRunTree() persistence.NodeRunTreeTable   { return nil }
 func (f *emitFakePersist) RunScopes() persistence.RunScopeTable        { return nil }
 func (f *emitFakePersist) APIKeys() persistence.APIKeyTable            { return nil }
 func (f *emitFakePersist) DeploymentCA() persistence.DeploymentCATable { return nil }
