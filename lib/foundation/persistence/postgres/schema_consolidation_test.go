@@ -63,6 +63,11 @@ var expectedRunScopeColumns = []string{
 	"partition_key", "instance_id", "created_at", "closed_at",
 }
 
+// @concept: inertness
+var executorNamedPersistenceSurfaces = []string{
+	"rimsky_pending_timer",
+}
+
 func TestSchemaConsolidation_FreshDBSchemaShape(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -90,6 +95,7 @@ func TestSchemaConsolidation_FreshDBSchemaShape(t *testing.T) {
 	assertColumnsPresent(t, ctx, pool, "rimsky_instance_breakpoints", expectedBreakpointColumns)
 	assertColumnsPresent(t, ctx, pool, "rimsky_breakpoint_hits", expectedHitColumns)
 	assertColumnsPresent(t, ctx, pool, "rimsky_instances", []string{"paused"})
+	assertTablesAbsent(t, ctx, pool, executorNamedPersistenceSurfaces)
 }
 
 // @concept: run-scope
@@ -206,6 +212,33 @@ func assertTablesPresent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 	for _, name := range want {
 		if !have[name] {
 			t.Errorf("expected table %q missing from schema", name)
+		}
+	}
+}
+
+func assertTablesAbsent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, forbidden []string) {
+	t.Helper()
+	have := map[string]bool{}
+	rows, err := pool.Query(ctx, `
+		SELECT table_name FROM information_schema.tables
+		 WHERE table_schema = current_schema()
+		   AND table_type = 'BASE TABLE'
+	`)
+	if err != nil {
+		t.Fatalf("query tables: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		have[name] = true
+	}
+	for _, name := range forbidden {
+		if have[name] {
+			t.Errorf("table %q must not exist — the persistence layer must not know executor "+
+				"specifics; any executor state surface is generic and exposed through the protocol", name)
 		}
 	}
 }

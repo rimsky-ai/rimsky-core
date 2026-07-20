@@ -70,6 +70,11 @@ message SubscribeRequest {
   // Substituted by rimsky from the template `publishers:` block before
   // dispatch.
   bytes  resolved_config           = 4;
+  // Reserved (was: string target_node = 5). Receiver-node-alias routing
+  // retired; delivery routes purely by message_type against
+  // node-subscription edges (2026-06-19).
+  reserved 5;
+  reserved "target_node";
   // message_type is the wire-level message type-path declared in the
   // target instance's template `messages:` registry. The publisher
   // copies this onto each message envelope as `type`. No default —
@@ -94,6 +99,8 @@ message PublisherSubscriptionDescriptor {
   string instance_id               = 2;
   string kind                      = 3;
   bytes  resolved_config           = 4;
+  reserved 5;
+  reserved "target_node";
   string message_type              = 6;
   google.protobuf.Timestamp started_at = 7;
 }

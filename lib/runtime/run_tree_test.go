@@ -35,6 +35,32 @@ func parked() ChildState {
 	return ChildState{State: cascade.NodeStateParked}
 }
 
+func TestChildState_IsSuccess_NilSettlingSignalTypeIsSuccess(t *testing.T) {
+	c := ChildState{State: cascade.NodeStateFresh, SettlingSignalType: nil}
+	if !c.IsSuccess() {
+		t.Fatal("a Fresh child with a nil SettlingSignalType must count as success — " +
+			"nil means no signal was recorded, not that the child failed")
+	}
+}
+
+func TestAggregate_FirstWinner_NilSettlingSignalTypeDefaultsToTerminalSuccess(t *testing.T) {
+	children := []ChildState{
+		{State: cascade.NodeStateFresh, SettlingSignalType: nil, Changed: true},
+		running(),
+	}
+	res := Aggregate(children, spec.AggregationPolicy{Kind: "first"})
+	if !res.IsSettled || res.Action != AggregateActionCancelNonWinners {
+		t.Fatalf("expected a nil-signal Fresh child to win under first policy; got %+v", res)
+	}
+	if res.ParentSettlingSignalType != signalpkg.TypePath("terminal/success") {
+		t.Fatalf("a winning child with nil SettlingSignalType must fall back to terminal/success; got %q",
+			res.ParentSettlingSignalType)
+	}
+	if !res.ParentChanged {
+		t.Fatalf("expected the winner's Changed flag to propagate; got %+v", res)
+	}
+}
+
 func TestChildState_IsSettled_ParkedIsNotSettled(t *testing.T) {
 	if parked().IsSettled() {
 		t.Fatal("parked must not count as settled — it is an in-flight state per concept:node-run's " +

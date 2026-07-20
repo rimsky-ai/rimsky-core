@@ -358,6 +358,30 @@ func TestCreateMessage_MissingIdempotencyKeyRejected(t *testing.T) {
 	require.Empty(t, msgs, "a rejected keyless emit must persist no invalidate envelope")
 }
 
+func TestCreateMessage_RejectsRetiredPayloadTemplateField(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "payload-template")
+
+	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
+		"type":             "system/invalidate",
+		"payload":          map[string]any{"reason": "manual"},
+		"payload_template": "{{trigger.message.payload.reason}}",
+	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
+	require.Equal(t, http.StatusBadRequest, resp.status, resp.body)
+	errMsg, _ := resp.body["error"].(string)
+	require.Contains(t, strings.ToLower(errMsg), "payload_template",
+		"server-side payload_template pre-shaping was dropped 2026-05-17 — publishers send raw bytes "+
+			"and receivers substitute at dispatch; the field must still fail the generic unknown-field gate: %s", resp.body)
+
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages?type=system/invalidate", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Empty(t, msgs, "a rejected payload_template body must persist no message envelope")
+}
+
 func TestCreateMessage_IdempotencyKeyDuplicateReturnsExisting(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

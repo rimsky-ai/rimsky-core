@@ -510,20 +510,20 @@ const file_publisher_proto_rawDesc = "" +
 	"\x1avalidation_supported_roles\x18\x03 \x03(\tR\x18validationSupportedRoles\"R\n" +
 	"\x17PublisherKindCapability\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12#\n" +
-	"\rconfig_schema\x18\x02 \x01(\fR\fconfigSchema\"\xcf\x01\n" +
+	"\rconfig_schema\x18\x02 \x01(\fR\fconfigSchema\"\xe2\x01\n" +
 	"\x10SubscribeRequest\x12:\n" +
 	"\x19publisher_subscription_id\x18\x01 \x01(\tR\x17publisherSubscriptionId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
 	"instanceId\x12\x12\n" +
 	"\x04kind\x18\x03 \x01(\tR\x04kind\x12'\n" +
 	"\x0fresolved_config\x18\x04 \x01(\fR\x0eresolvedConfig\x12!\n" +
-	"\fmessage_type\x18\x06 \x01(\tR\vmessageType\"\x13\n" +
+	"\fmessage_type\x18\x06 \x01(\tR\vmessageTypeJ\x04\b\x05\x10\x06R\vtarget_node\"\x13\n" +
 	"\x11SubscribeResponse\"P\n" +
 	"\x12UnsubscribeRequest\x12:\n" +
 	"\x19publisher_subscription_id\x18\x01 \x01(\tR\x17publisherSubscriptionId\"\x15\n" +
 	"\x13UnsubscribeResponse\"m\n" +
 	"\x19ListSubscriptionsResponse\x12P\n" +
-	"\rsubscriptions\x18\x01 \x03(\v2*.rimsky.v1.PublisherSubscriptionDescriptorR\rsubscriptions\"\x99\x02\n" +
+	"\rsubscriptions\x18\x01 \x03(\v2*.rimsky.v1.PublisherSubscriptionDescriptorR\rsubscriptions\"\xac\x02\n" +
 	"\x1fPublisherSubscriptionDescriptor\x12:\n" +
 	"\x19publisher_subscription_id\x18\x01 \x01(\tR\x17publisherSubscriptionId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
@@ -532,7 +532,7 @@ const file_publisher_proto_rawDesc = "" +
 	"\x0fresolved_config\x18\x04 \x01(\fR\x0eresolvedConfig\x12!\n" +
 	"\fmessage_type\x18\x06 \x01(\tR\vmessageType\x129\n" +
 	"\n" +
-	"started_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt2\xbe\x02\n" +
+	"started_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAtJ\x04\b\x05\x10\x06R\vtarget_node2\xbe\x02\n" +
 	"\tPublisher\x12H\n" +
 	"\fCapabilities\x12\x16.google.protobuf.Empty\x1a .rimsky.v1.PublisherCapabilities\x12F\n" +
 	"\tSubscribe\x12\x1b.rimsky.v1.SubscribeRequest\x1a\x1c.rimsky.v1.SubscribeResponse\x12L\n" +

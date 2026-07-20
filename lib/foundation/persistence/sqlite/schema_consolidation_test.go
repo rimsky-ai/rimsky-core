@@ -56,6 +56,11 @@ var expectedSqliteHitColumns = []string{
 	"resume_overlay",
 }
 
+// @concept: inertness
+var sqliteExecutorNamedPersistenceSurfaces = []string{
+	"rimsky_pending_timer",
+}
+
 func TestSqliteSchemaConsolidation_FreshDB(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -77,6 +82,7 @@ func TestSqliteSchemaConsolidation_FreshDB(t *testing.T) {
 	assertSqliteColumnsPresent(t, ctx, db, "rimsky_instance_breakpoints", expectedSqliteBreakpointColumns)
 	assertSqliteColumnsPresent(t, ctx, db, "rimsky_breakpoint_hits", expectedSqliteHitColumns)
 	assertSqliteColumnsPresent(t, ctx, db, "rimsky_instances", []string{"paused"})
+	assertSqliteTablesAbsent(t, ctx, db, sqliteExecutorNamedPersistenceSurfaces)
 }
 
 func TestSqliteSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
@@ -158,6 +164,30 @@ func assertSqliteTablesPresent(t *testing.T, ctx context.Context, db *sql.DB, wa
 	for _, name := range want {
 		if !have[name] {
 			t.Errorf("expected table %q missing from schema", name)
+		}
+	}
+}
+
+func assertSqliteTablesAbsent(t *testing.T, ctx context.Context, db *sql.DB, forbidden []string) {
+	t.Helper()
+	have := map[string]bool{}
+	rows, err := db.QueryContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		t.Fatalf("query sqlite_master: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		have[name] = true
+	}
+	for _, name := range forbidden {
+		if have[name] {
+			t.Errorf("table %q must not exist — the persistence layer must not know executor "+
+				"specifics; any executor state surface is generic and exposed through the protocol", name)
 		}
 	}
 }
