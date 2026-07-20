@@ -116,11 +116,11 @@ func (*nopObsProber) ProbeExecutor(context.Context, string, string, string) (*ob
 	return nil, errObsProbeUnreachable
 }
 
-func (*nopObsProber) ProbeStore(context.Context, string, string, string) (*observability.ObservabilityCapabilities, error) {
+func (*nopObsProber) ProbeClaimProducer(context.Context, string, string, string) (*observability.ObservabilityCapabilities, error) {
 	return nil, errObsProbeUnreachable
 }
 
-func (*nopObsProber) ProbeStoreDeclaredErrorClasses(context.Context, string, string, string) ([]string, error) {
+func (*nopObsProber) ProbeClaimProducerDeclaredErrorClasses(context.Context, string, string, string) ([]string, error) {
 	return nil, errObsProbeUnreachable
 }
 

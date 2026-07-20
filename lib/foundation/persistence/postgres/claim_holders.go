@@ -75,20 +75,6 @@ func (s *claimHoldersImpl) ListByHolderRun(ctx context.Context, holderNodeRunID 
 	return collectClaimHolders(rows)
 }
 
-func (s *claimHoldersImpl) ListActiveByClaimHandleID(ctx context.Context, claimHandleID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
-	ex := s.q(tx)
-	rows, err := ex.Query(ctx,
-		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
-		 WHERE claim_handle_id = $1 AND state = 'active'
-		 ORDER BY id ASC`, claimHandleID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectClaimHolders(rows)
-}
-
 func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,

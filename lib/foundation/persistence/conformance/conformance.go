@@ -33,7 +33,7 @@ func Suite(
 	t.Run("CoHolderInsertIdempotent", func(t *testing.T) { testCoHolderInsertIdempotent(t, factory(t)) })
 	t.Run("TxAtomicity", func(t *testing.T) { testTxAtomicity(t, factory(t)) })
 	t.Run("AcquisitionTxAtomicity", func(t *testing.T) { testAcquisitionTxAtomicity(t, factory(t)) })
-	t.Run("HeldClaimAutoTerminalSerialization", func(t *testing.T) { testHeldClaimAutoTerminalSerialization(t, factory(t)) })
+	t.Run("ClaimHandleLockForUpdateSerializesConcurrentTx", func(t *testing.T) { testClaimHandleLockForUpdateSerializesConcurrentTx(t, factory(t)) })
 	t.Run("SortOrderCoordination", func(t *testing.T) { testSortOrderCoordination(t, factory(t)) })
 	t.Run("PublisherSubscriptionLifecycle", func(t *testing.T) { testPublisherSubscriptionLifecycle(t, factory(t)) })
 	t.Run("QueueInTxAndDispatchNode", func(t *testing.T) { testQueueInTxAndDispatchNode(t, factory(t)) })
@@ -198,7 +198,7 @@ func Suite(
 	})
 	t.Run("LineageQueryByParentRunID", func(t *testing.T) { testLineageQueryByParentRunID(t, factory(t)) })
 	t.Run("LineageCountOlderThanMatchesDelete", func(t *testing.T) { testLineageCountOlderThanMatchesDelete(t, factory(t)) })
-	t.Run("APIKeys", func(t *testing.T) { TestAPIKeys(t, factory(t)) })
+	t.Run("APIKeys", func(t *testing.T) { testAPIKeys(t, factory(t)) })
 	t.Run("DeploymentCA", func(t *testing.T) { TestDeploymentCA(t, factory(t)) })
 	t.Run("TemplatesInsertIdempotent", func(t *testing.T) { testTemplatesInsertIdempotent(t, factory(t)) })
 }

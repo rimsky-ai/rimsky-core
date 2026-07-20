@@ -89,8 +89,7 @@ func seedSecondRunPG(
 ) uuid.UUID {
 	t.Helper()
 	var frame uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT frame_id FROM rimsky_node_runs WHERE id = $1`, []any{priorRunID}, &frame)
+	pgtest.QueryRowForTest(ctx, t, d, `SELECT frame_id FROM rimsky_node_runs WHERE id = $1`, []any{&frame}, priorRunID)
 	run := uuid.New()
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_node_runs
@@ -104,8 +103,7 @@ func seedSecondRunPG(
 func spillHandlePG(t *testing.T, ctx context.Context, d persistence.Database, runID uuid.UUID) string {
 	t.Helper()
 	var handle *string
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT value_handle FROM rimsky_node_attributes WHERE node_run_id = $1`, []any{runID}, &handle)
+	pgtest.QueryRowForTest(ctx, t, d, `SELECT value_handle FROM rimsky_node_attributes WHERE node_run_id = $1`, []any{&handle}, runID)
 	if handle == nil {
 		return ""
 	}

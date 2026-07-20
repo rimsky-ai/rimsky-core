@@ -42,7 +42,7 @@ func DefaultBlobConfig() BlobConfig {
 		SpillThresholdBytes: 65536,
 		Retention: BlobRetentionConfig{
 			OrphanSweepInterval:        time.Hour,
-			RetentionAfterUnreferenced: 24 * time.Hour,
+			RetentionAfterUnreferenced: DefaultOrphanRetention,
 		},
 	}
 }

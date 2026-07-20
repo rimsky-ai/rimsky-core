@@ -21,7 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-func TestAPIKeys(t *testing.T, d persistence.Database) {
+func testAPIKeys(t *testing.T, d persistence.Database) {
 	t.Helper()
 	ctx := context.Background()
 	tables := d.Tables()

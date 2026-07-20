@@ -57,7 +57,7 @@ func (f *fakeProber) ProbeExecutor(_ context.Context, _, _, tlsMode string) (*Ob
 	return f.executorCaps, nil
 }
 
-func (f *fakeProber) ProbeStore(_ context.Context, _, _, tlsMode string) (*ObservabilityCapabilities, error) {
+func (f *fakeProber) ProbeClaimProducer(_ context.Context, _, _, tlsMode string) (*ObservabilityCapabilities, error) {
 	f.probeAttempts.Add(1)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -68,7 +68,7 @@ func (f *fakeProber) ProbeStore(_ context.Context, _, _, tlsMode string) (*Obser
 	return f.storeCaps, nil
 }
 
-func (f *fakeProber) ProbeStoreDeclaredErrorClasses(_ context.Context, _, _, tlsMode string) ([]string, error) {
+func (f *fakeProber) ProbeClaimProducerDeclaredErrorClasses(_ context.Context, _, _, tlsMode string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.storeClassTLSModes = append(f.storeClassTLSModes, tlsMode)
@@ -105,7 +105,7 @@ func TestRunHandshake_StoreDeclaredErrorClasses(t *testing.T) {
 		[]PeerSpec{{Name: "items-store", Endpoint: "items-store:9090"}},
 		slog.Default(),
 	)
-	got, ok := disc.GetStore("items-store")
+	got, ok := disc.GetClaimProducer("items-store")
 	if !ok {
 		t.Fatalf("store not in discovery")
 	}
@@ -129,7 +129,7 @@ func TestRunHandshake_StoreDeclaredErrorClasses_ObsUnreachable(t *testing.T) {
 		[]PeerSpec{{Name: "items-store", Endpoint: "items-store:9090"}},
 		slog.Default(),
 	)
-	got, _ := disc.GetStore("items-store")
+	got, _ := disc.GetClaimProducer("items-store")
 	if got.Reachability != ReachabilityUnreachable {
 		t.Fatalf("reachability = %s, want unreachable", got.Reachability)
 	}
@@ -210,7 +210,7 @@ func TestRefreshLoop_SkipsStaticEntries(t *testing.T) {
 	if !ok || gotExec.Reachability != ReachabilityUnreachable || !gotExec.LastProbedAt.IsZero() {
 		t.Fatalf("static executor entry changed by refreshAll: %+v", gotExec)
 	}
-	gotStore, ok := disc.GetStore("static-store")
+	gotStore, ok := disc.GetClaimProducer("static-store")
 	if !ok || gotStore.Reachability != ReachabilityUnreachable || !gotStore.LastProbedAt.IsZero() {
 		t.Fatalf("static store entry changed by refreshAll: %+v", gotStore)
 	}

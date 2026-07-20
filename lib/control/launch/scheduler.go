@@ -29,8 +29,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
-
 type StopFunc func(ctx context.Context) error
 
 type failureReporter struct {
@@ -89,12 +87,12 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 		}
 	}
 
-	supervisorID := os.Getenv("RIMSKY_SCHEDULER_ID")
-	if supervisorID == "" {
+	schedulerID := os.Getenv("RIMSKY_SCHEDULER_ID")
+	if schedulerID == "" {
 		if hostname, err := os.Hostname(); err == nil && hostname != "" {
-			supervisorID = "scheduler-" + hostname
+			schedulerID = "scheduler-" + hostname
 		} else {
-			supervisorID = "scheduler-default"
+			schedulerID = "scheduler-default"
 		}
 	}
 
@@ -117,7 +115,7 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 		Executors:               rimskyCfg.Executors,
 		Publishers:              rimskyCfg.Publishers,
 		NamedLocks:              rimskyCfg.NamedLocks,
-		SupervisorID:            supervisorID,
+		SupervisorID:            schedulerID,
 		Blob:                    blobBackend,
 		OrphanBlobSweepInterval: rimskyCfg.Blob.Retention.OrphanSweepInterval,
 		Metrics:                 observability.MetricsHookOf(mreg),

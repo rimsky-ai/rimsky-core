@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 )
 
@@ -17,21 +19,14 @@ func TestKeyRevokedReasonEnumClosed(t *testing.T) {
 		RevokeReasonManual:        `"manual"`,
 		RevokeReasonRotationGrace: `"rotation_grace"`,
 	}
-	if len(closedSet) != 2 {
-		t.Fatalf("expected exactly two key_revoked reasons, got %d", len(closedSet))
-	}
+	require.Len(t, closedSet, 2, "expected exactly two key_revoked reasons")
 	for reason, wantJSON := range closedSet {
 		data, err := json.Marshal(reason)
-		if err != nil {
-			t.Fatalf("marshal %q: %v", reason, err)
-		}
-		if string(data) != wantJSON {
-			t.Fatalf("reason %q marshaled to %s, want %s", reason, data, wantJSON)
-		}
+		require.NoError(t, err, "marshal %q", reason)
+		require.Equal(t, wantJSON, string(data), "reason %q", reason)
 	}
-	if _, expiredStillDefined := closedSet[KeyRevokedReason("expired")]; expiredStillDefined {
-		t.Fatalf("'expired' must not be a member of the key_revoked reason enum")
-	}
+	_, expiredStillDefined := closedSet[KeyRevokedReason("expired")]
+	require.False(t, expiredStillDefined, "'expired' must not be a member of the key_revoked reason enum")
 }
 
 func TestAuditEventKindsMatchTypedOperationalKinds(t *testing.T) {
@@ -47,15 +42,10 @@ func TestAuditEventKindsMatchTypedOperationalKinds(t *testing.T) {
 		{EventKeyRotated, events.KindAuthKeyRotated()},
 	}
 	for _, c := range cases {
-		if c.auditConst != c.typed.String() {
-			t.Fatalf("audit event constant %q does not match its typed events.Kind wire form %q — the two must never drift apart", c.auditConst, c.typed.String())
-		}
+		require.Equal(t, c.typed.String(), c.auditConst,
+			"audit event constant must match its typed events.Kind wire form — the two must never drift apart")
 		parsed, err := events.ParseKindString(c.auditConst)
-		if err != nil {
-			t.Fatalf("events.ParseKindString(%q): %v", c.auditConst, err)
-		}
-		if parsed != c.typed {
-			t.Fatalf("events.ParseKindString(%q) = %+v, want %+v (round-trip must recover the same typed kind)", c.auditConst, parsed, c.typed)
-		}
+		require.NoError(t, err, "events.ParseKindString(%q)", c.auditConst)
+		require.Equal(t, c.typed, parsed, "round-trip must recover the same typed kind for %q", c.auditConst)
 	}
 }

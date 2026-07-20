@@ -129,20 +129,6 @@ func (b *breakpointHitsImpl) ListSinceForBreakpoint(ctx context.Context, bpID sh
 	return scanBreakpointHits(rows)
 }
 
-func (b *breakpointHitsImpl) ListUnresumedForBreakpoint(ctx context.Context, bpID shared.UUID, tx persistence.Tx) ([]persistence.BreakpointHitRow, error) {
-	ex := b.q(tx)
-	rows, err := ex.Query(ctx,
-		`SELECT `+breakpointHitCols+`
-		   FROM rimsky_breakpoint_hits
-		  WHERE breakpoint_id = $1 AND resumed_at IS NULL
-		  ORDER BY hit_at ASC`,
-		bpID)
-	if err != nil {
-		return nil, fmt.Errorf("breakpointHits.listUnresumedForBreakpoint: %w", err)
-	}
-	return scanBreakpointHits(rows)
-}
-
 func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey string, overlay map[string]any, tx persistence.Tx) error {
 	ex := b.q(tx)
 	var overlayBytes []byte

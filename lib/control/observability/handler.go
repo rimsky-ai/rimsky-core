@@ -118,7 +118,7 @@ func handleListClaimProducers(deps Deps) http.HandlerFunc {
 		entries := []PeerEntry{}
 		seen := map[string]bool{}
 		for _, e := range deps.ClaimProducers {
-			cached, ok := deps.Discovery.GetStore(e.Name)
+			cached, ok := deps.Discovery.GetClaimProducer(e.Name)
 			if !ok {
 				cached = unreachablePeerEntry(e)
 			}
@@ -138,11 +138,11 @@ func handleListClaimProducers(deps Deps) http.HandlerFunc {
 func handleGetClaimProducer(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
-		cached, ok := deps.Discovery.GetStore(name)
+		cached, ok := deps.Discovery.GetClaimProducer(name)
 		if !ok {
 			spec, declared := findPeerSpec(deps.ClaimProducers, name)
 			if !declared {
-				notFound(w, "unknown store")
+				notFound(w, "unknown claim producer")
 				return
 			}
 			cached = unreachablePeerEntry(spec)
@@ -537,18 +537,18 @@ func handleListNodeRuns(deps Deps) http.HandlerFunc {
 		out := make([]map[string]any, 0, len(res.Rows))
 		for _, row := range res.Rows {
 			out = append(out, map[string]any{
-				"id":               row.ID,
-				"node_id":          row.NodeID,
-				"executor_name":    row.ExecutorName,
-				"state":            row.State,
-				"claimed_by":       row.ClaimedBy,
-				"enqueued_at":      row.EnqueuedAt,
-				"claimed_at":       row.ClaimedAt,
-				"last_progress_at": row.LastProgressAt,
-				"frame_id":         row.FrameID,
-				"required_stores":  row.RequiredClaimProducers,
-				"async_ack_id":     row.AsyncAckID,
-				"tags":             row.Tags,
+				"id":                       row.ID,
+				"node_id":                  row.NodeID,
+				"executor_name":            row.ExecutorName,
+				"state":                    row.State,
+				"claimed_by":               row.ClaimedBy,
+				"enqueued_at":              row.EnqueuedAt,
+				"claimed_at":               row.ClaimedAt,
+				"last_progress_at":         row.LastProgressAt,
+				"frame_id":                 row.FrameID,
+				"required_claim_producers": row.RequiredClaimProducers,
+				"async_ack_id":             row.AsyncAckID,
+				"tags":                     row.Tags,
 			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -601,20 +601,21 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id":               match.ID,
-			"node_id":          match.NodeID,
-			"instance_id":      instanceID,
-			"node_type":        nodeType,
-			"executor_name":    match.ExecutorName,
-			"state":            match.State,
-			"claimed_by":       match.ClaimedBy,
-			"claimed_at":       match.ClaimedAt,
-			"last_progress_at": match.LastProgressAt,
-			"enqueued_at":      match.EnqueuedAt,
-			"frame_id":         match.FrameID,
-			"claim_id":         claimID,
-			"async_ack_id":     match.AsyncAckID,
-			"tags":             match.Tags,
+			"id":                       match.ID,
+			"node_id":                  match.NodeID,
+			"instance_id":              instanceID,
+			"node_type":                nodeType,
+			"executor_name":            match.ExecutorName,
+			"state":                    match.State,
+			"claimed_by":               match.ClaimedBy,
+			"claimed_at":               match.ClaimedAt,
+			"last_progress_at":         match.LastProgressAt,
+			"enqueued_at":              match.EnqueuedAt,
+			"frame_id":                 match.FrameID,
+			"required_claim_producers": match.RequiredClaimProducers,
+			"claim_id":                 claimID,
+			"async_ack_id":             match.AsyncAckID,
+			"tags":                     match.Tags,
 		})
 	}
 }
@@ -626,7 +627,7 @@ func handleListLockHolders(deps Deps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		filter := persistence.LockHolderListFilter{
+		filter := persistence.ClaimHandleListFilter{
 			ProducerName:     r.URL.Query().Get("producer_name"),
 			HolderSupervisor: r.URL.Query().Get("holder_supervisor_id"),
 			NodeType:         r.URL.Query().Get("node_type"),

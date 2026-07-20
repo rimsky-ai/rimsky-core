@@ -39,7 +39,6 @@ type ClaimHolderTable interface {
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHolderRow, error)
 	ListByClaimHandleID(ctx context.Context, claimHandleID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
 	ListByHolderRun(ctx context.Context, holderNodeRunID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
-	ListActiveByClaimHandleID(ctx context.Context, claimHandleID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
 	Complete(ctx context.Context, id shared.UUID, state ClaimHolderState, tx Tx) error
 	CompleteByClaimHandleAndRun(ctx context.Context, claimHandleID, holderNodeRunID shared.UUID, state ClaimHolderState, tx Tx) error
 	FailAllActiveByClaimHandle(ctx context.Context, claimHandleID shared.UUID, supervisorID string, tx Tx) error

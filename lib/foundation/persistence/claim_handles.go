@@ -21,7 +21,7 @@ const (
 )
 
 type ClaimHandleRow struct {
-	ID             shared.UUID     `json:"claim_id"`
+	ID             shared.UUID     `json:"id"`
 	LockKind       LockKind        `json:"lock_kind"`
 	LockName       *string         `json:"lock_name,omitempty"`
 	ProducerName   *string         `json:"producer_name,omitempty"`
@@ -108,7 +108,7 @@ type ClaimHandleTable interface {
 
 	UpdateRealizedWriteSemantics(ctx context.Context, id shared.UUID, supervisorID string, ws string, tx Tx) error
 
-	ListForObservability(ctx context.Context, filter LockHolderListFilter, pag ListPagination, tx Tx) (PaginatedListResult[ClaimHandleRow], error)
+	ListForObservability(ctx context.Context, filter ClaimHandleListFilter, pag ListPagination, tx Tx) (PaginatedListResult[ClaimHandleRow], error)
 
 	GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx Tx) (*ClaimHandleRow, error)
 
@@ -139,7 +139,7 @@ type ClaimHandleTable interface {
 	BumpChildOutcomeCount(ctx context.Context, id shared.UUID, supervisorID string, outcome string, delta int, tx Tx) error
 }
 
-type LockHolderListFilter struct {
+type ClaimHandleListFilter struct {
 	ProducerName     string
 	HolderNodeID     *shared.UUID
 	HolderSupervisor string

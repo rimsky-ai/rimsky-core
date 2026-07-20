@@ -251,7 +251,6 @@ func testClaimHandleListByInstanceAndState(t *testing.T, d persistence.Database)
 	activeDurableA := guardScopeHandleInput(fixA, claimQuerySup, time.Now().Add(1*time.Hour))
 	activeDurableA.Lifetime = spec.ClaimLifetimeDurable
 	durableB := guardScopeHandleInput(fixB, claimQuerySup, time.Now().Add(1*time.Hour))
-	durableB.HolderNodeID = fixB.NodeID
 	durableB.Lifetime = spec.ClaimLifetimeDurable
 	for _, in := range []persistence.ClaimHandleInsertInput{durableA, subgraphA, activeDurableA, durableB} {
 		seedGuardClaimHandle(ctx, t, d, in)

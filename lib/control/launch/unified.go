@@ -23,10 +23,8 @@ type RoleFailure struct {
 }
 
 type UnifiedStack struct {
-	stops    []StopFunc
-	names    []string
-	failCh   chan RoleFailure
-	failBufN int
+	stops  []StopFunc
+	failCh chan RoleFailure
 }
 
 func (s *UnifiedStack) FailCh() <-chan RoleFailure { return s.failCh }
@@ -68,8 +66,7 @@ func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persiste
 	}
 
 	stack := &UnifiedStack{
-		failCh:   make(chan RoleFailure, len(runners)),
-		failBufN: len(runners),
+		failCh: make(chan RoleFailure, len(runners)),
 	}
 
 	for _, r := range runners {
@@ -79,7 +76,6 @@ func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persiste
 			return nil, fmt.Errorf("start %s: %w", r.name, err)
 		}
 		stack.stops = append(stack.stops, stop)
-		stack.names = append(stack.names, r.name)
 		go func(name string, ch <-chan error) {
 			err, ok := <-ch
 			if !ok || err == nil {

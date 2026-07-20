@@ -82,7 +82,7 @@ func TestFanOutTemplateEvent_DedupAndSortedOrder(t *testing.T) {
 	require.Len(t, f.alpha.Calls(), 1)
 	require.Len(t, f.beta.Calls(), 1)
 	require.Equal(t, "on_template_registered", f.alpha.Calls()[0].Verb)
-	require.Equal(t, hash, f.alpha.Calls()[0].TemplateID)
+	require.Equal(t, hash, f.alpha.Calls()[0].TemplateHash)
 }
 
 func TestFanOutTemplateEvent_SkipsAlreadyTargetState(t *testing.T) {

@@ -307,6 +307,9 @@ func testClaimantGuardHandleCounterBumps(t *testing.T, d persistence.Database) {
 		t.Fatalf("owner bumps: %v", err)
 	}
 	after := getGuardClaimHandle(ctx, t, d, in.ID)
+	if after == nil {
+		t.Fatalf("handle missing after owner bumps")
+	}
 	if after.ExpectedChildrenCount != 3 || after.CommittedChildrenCount != 2 || after.AbandonedChildrenCount != 1 {
 		t.Fatalf("owner bumps did not land: expected=%d committed=%d abandoned=%d",
 			after.ExpectedChildrenCount, after.CommittedChildrenCount, after.AbandonedChildrenCount)
@@ -336,6 +339,9 @@ func testClaimantGuardHandlePromote(t *testing.T, d persistence.Database) {
 		t.Fatalf("owner Promote: %v", err)
 	}
 	after := getGuardClaimHandle(ctx, t, d, in.ID)
+	if after == nil {
+		t.Fatalf("handle missing after owner Promote")
+	}
 	if after.State != spec.ClaimHandleStateCommitted {
 		t.Fatalf("owner Promote did not land: state=%q", after.State)
 	}
@@ -422,6 +428,9 @@ func testClaimantGuardHandleReassignHolder(t *testing.T, d persistence.Database)
 		t.Fatalf("owner ReassignHolderSupervisor: %v", err)
 	}
 	after := getGuardClaimHandle(ctx, t, d, in.ID)
+	if after == nil {
+		t.Fatalf("handle missing after owner ReassignHolderSupervisor")
+	}
 	if after.HolderSupervisorID == nil || *after.HolderSupervisorID != guardSupB {
 		t.Fatalf("ReassignHolderSupervisor did not move the holder: got %v, want %q", after.HolderSupervisorID, guardSupB)
 	}

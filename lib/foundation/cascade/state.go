@@ -75,71 +75,71 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 	switch current {
 	case NodeStatePending:
 		switch reason.Kind {
-		case "gate_cleared":
+		case ReasonGateCleared.Kind:
 			return NodeStateStale, nil
-		case "instance_killed":
+		case ReasonInstanceKilled.Kind:
 			return NodeStateFailed, nil
-		case "sibling_cancelled":
+		case ReasonSiblingCancelled.Kind:
 			return NodeStateFailed, nil
 		}
 	case NodeStateStale:
 		switch reason.Kind {
-		case "dispatch_claimed":
+		case ReasonDispatchClaimed.Kind:
 			return NodeStateRunning, nil
-		case "pure_cascade":
+		case ReasonPureCascade.Kind:
 			return NodeStateFresh, nil
-		case "dispatch_impossible":
+		case ReasonDispatchImpossible.Kind:
 			return NodeStateFailed, nil
-		case "acquire_pass":
+		case ReasonAcquirePass.Kind:
 			return NodeStateFresh, nil
-		case "policy_give_up":
+		case ReasonPolicyGiveUp.Kind:
 			return NodeStateFailed, nil
-		case "instance_killed":
+		case ReasonInstanceKilled.Kind:
 			return NodeStateFailed, nil
-		case "sibling_cancelled":
+		case ReasonSiblingCancelled.Kind:
 			return NodeStateFailed, nil
 		}
 	case NodeStateRunning:
 		switch reason.Kind {
-		case "handler_complete":
+		case ReasonHandlerComplete.Kind:
 			return NodeStateFresh, nil
-		case "handler_held":
+		case ReasonHandlerHeld.Kind:
 			return NodeStateHeld, nil
-		case "fanout_dispatched":
+		case ReasonFanoutDispatched.Kind:
 			return NodeStateHeld, nil
-		case "handler_pass":
+		case ReasonHandlerPass.Kind:
 			return NodeStateFresh, nil
-		case "handler_park":
+		case ReasonHandlerPark.Kind:
 			return NodeStateParked, nil
-		case "policy_give_up":
+		case ReasonPolicyGiveUp.Kind:
 			return NodeStateFailed, nil
-		case "auto_terminal_abandon":
+		case ReasonAutoTerminalAbandon.Kind:
 			return NodeStateFailed, nil
-		case "instance_killed":
+		case ReasonInstanceKilled.Kind:
 			return NodeStateFailed, nil
-		case "sibling_cancelled":
+		case ReasonSiblingCancelled.Kind:
 			return NodeStateFailed, nil
 		}
 	case NodeStateHeld:
 		switch reason.Kind {
-		case "auto_terminal_commit":
+		case ReasonAutoTerminalCommit.Kind:
 			return NodeStateFresh, nil
-		case "auto_terminal_abandon":
+		case ReasonAutoTerminalAbandon.Kind:
 			return NodeStateFailed, nil
-		case "instance_killed":
+		case ReasonInstanceKilled.Kind:
 			return NodeStateFailed, nil
-		case "sibling_cancelled":
+		case ReasonSiblingCancelled.Kind:
 			return NodeStateFailed, nil
 		}
 	case NodeStateParked:
 		switch reason.Kind {
-		case "deadline_resume":
+		case ReasonDeadlineResume.Kind:
 			return NodeStateStale, nil
-		case "cascade_resume":
+		case ReasonCascadeResume.Kind:
 			return NodeStateStale, nil
-		case "instance_killed":
+		case ReasonInstanceKilled.Kind:
 			return NodeStateFailed, nil
-		case "sibling_cancelled":
+		case ReasonSiblingCancelled.Kind:
 			return NodeStateFailed, nil
 		}
 	}
@@ -149,9 +149,9 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 // @concept: node-run
 func NextStateParent(current NodeState, reason TransitionReason) (NodeState, error) {
 	switch reason.Kind {
-	case "child_transitioned":
+	case ReasonChildTransitioned.Kind:
 		return "", &parentAggregateOK{From: current}
-	case "subgraph_internal_cascade_fired":
+	case ReasonSubGraphInternalCascadeFired.Kind:
 		if current == NodeStateRunning {
 			return NodeStateRunning, nil
 		}
@@ -195,15 +195,6 @@ func IsInFlight(s NodeState) bool {
 // @concept: node-run
 func IsTerminal(s NodeState) bool {
 	return s == NodeStateFresh || s == NodeStateFailed
-}
-
-// @concept: node-run
-func IsSerializationGated(s NodeState) bool {
-	switch s {
-	case NodeStateRunning, NodeStateHeld, NodeStateParked:
-		return true
-	}
-	return false
 }
 
 // @concept: node-run

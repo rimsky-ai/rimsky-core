@@ -71,8 +71,8 @@ func TestHandler_ListLockHolders_FiltersByProducerName(t *testing.T) {
 	if len(body.LockHolders) != 1 {
 		t.Fatalf("producer_name filter returned %d holders, want 1: %+v", len(body.LockHolders), body.LockHolders)
 	}
-	if body.LockHolders[0]["claim_id"] != wantID.String() {
-		t.Fatalf("claim_id = %v, want %s", body.LockHolders[0]["claim_id"], wantID.String())
+	if body.LockHolders[0]["id"] != wantID.String() {
+		t.Fatalf("id = %v, want %s", body.LockHolders[0]["id"], wantID.String())
 	}
 }
 
@@ -105,8 +105,8 @@ func TestHandler_ListLockHolders_FiltersByInstanceID(t *testing.T) {
 	if len(body.LockHolders) != 1 {
 		t.Fatalf("instance_id filter returned %d holders, want 1: %+v", len(body.LockHolders), body.LockHolders)
 	}
-	if body.LockHolders[0]["claim_id"] != wantID.String() {
-		t.Fatalf("claim_id = %v, want %s", body.LockHolders[0]["claim_id"], wantID.String())
+	if body.LockHolders[0]["id"] != wantID.String() {
+		t.Fatalf("id = %v, want %s", body.LockHolders[0]["id"], wantID.String())
 	}
 }
 
@@ -140,9 +140,9 @@ func TestHandler_GetClaimHandle_ForensicAnswerFromRowAlone(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if body.LockHolder["claim_id"] != claimID.String() {
-		t.Fatalf("existence answer: claim_id = %v, want %s (the row must answer 'did this claim exist' from itself)",
-			body.LockHolder["claim_id"], claimID.String())
+	if body.LockHolder["id"] != claimID.String() {
+		t.Fatalf("existence answer: id = %v, want %s (the row must answer 'did this claim exist' from itself)",
+			body.LockHolder["id"], claimID.String())
 	}
 	if body.LockHolder["state"] != "committed" {
 		t.Fatalf("resolution answer: state = %v, want %q (the row must answer 'how did this claim resolve' from itself, no lineage join)",

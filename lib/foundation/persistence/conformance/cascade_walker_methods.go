@@ -15,8 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -319,7 +317,7 @@ func testCreateNonCascadeStaleCarriesForward(t *testing.T, d persistence.Databas
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	priorRunID := uuid.New()
+	var priorRunID shared.UUID
 	priorData := map[string]any{"marker": "from-prior-run"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if _, err := store.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{

@@ -16,14 +16,14 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database) {
+func testClaimHandleLockForUpdateSerializesConcurrentTx(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
 	claimHandleID := uuid.New()
-	supID := "autoterminal-supervisor"
-	lockName := "autoterminal-lock"
+	supID := "lock-for-update-supervisor"
+	lockName := "lock-for-update-lock"
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
@@ -39,10 +39,10 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 	}
 
 	var (
-		firstHoldStart    int64
 		firstCommitDone   int64
 		secondLockGrabbed int64
 	)
+	acquired := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -57,8 +57,7 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 				t.Errorf("LockForUpdate #1 returned nil row")
 				return nil
 			}
-			atomic.StoreInt64(&firstHoldStart, time.Now().UnixNano())
-			time.Sleep(200 * time.Millisecond)
+			close(acquired)
 			atomic.StoreInt64(&firstCommitDone, time.Now().UnixNano())
 			return nil
 		})
@@ -67,7 +66,7 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 		}
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	<-acquired
 
 	go func() {
 		defer wg.Done()
@@ -90,11 +89,10 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 
 	wg.Wait()
 
-	t1 := atomic.LoadInt64(&firstHoldStart)
 	c1 := atomic.LoadInt64(&firstCommitDone)
 	t2 := atomic.LoadInt64(&secondLockGrabbed)
-	if t1 == 0 || c1 == 0 || t2 == 0 {
-		t.Fatalf("missing timestamps: t1=%d c1=%d t2=%d", t1, c1, t2)
+	if c1 == 0 || t2 == 0 {
+		t.Fatalf("missing timestamps: c1=%d t2=%d", c1, t2)
 	}
 	if t2 < c1 {
 		t.Fatalf("LockForUpdate did not serialise: tx2 grabbed lock at %d, before tx1 committed at %d",

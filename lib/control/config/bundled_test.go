@@ -156,10 +156,10 @@ func TestAdvertiseInto_SkipsNamesOverriddenByConfiguredEndpoint(t *testing.T) {
 	if _, ok := disc.GetExecutor("exec-only-bundled"); !ok {
 		t.Fatalf("exec-only-bundled: expected a discovery entry for the un-overridden bundled executor")
 	}
-	if _, ok := disc.GetStore("store-overridden"); ok {
+	if _, ok := disc.GetClaimProducer("store-overridden"); ok {
 		t.Fatalf("store-overridden: bundled advert clobbered the configured claim producer's discovery entry")
 	}
-	if _, ok := disc.GetStore("store-only-bundled"); !ok {
+	if _, ok := disc.GetClaimProducer("store-only-bundled"); !ok {
 		t.Fatalf("store-only-bundled: expected a discovery entry for the un-overridden bundled claim producer")
 	}
 }

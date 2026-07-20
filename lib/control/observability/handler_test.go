@@ -363,10 +363,10 @@ type nopProber struct{}
 func (*nopProber) ProbeExecutor(_ context.Context, _, _, _ string) (*observability.ObservabilityCapabilities, error) {
 	return nil, errProbeUnreachable
 }
-func (*nopProber) ProbeStore(_ context.Context, _, _, _ string) (*observability.ObservabilityCapabilities, error) {
+func (*nopProber) ProbeClaimProducer(_ context.Context, _, _, _ string) (*observability.ObservabilityCapabilities, error) {
 	return nil, errProbeUnreachable
 }
-func (*nopProber) ProbeStoreDeclaredErrorClasses(_ context.Context, _, _, _ string) ([]string, error) {
+func (*nopProber) ProbeClaimProducerDeclaredErrorClasses(_ context.Context, _, _, _ string) ([]string, error) {
 	return nil, errProbeUnreachable
 }
 

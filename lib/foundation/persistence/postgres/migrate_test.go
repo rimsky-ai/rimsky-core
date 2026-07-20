@@ -19,8 +19,7 @@ import (
 func TestMigrateAgainstTestcontainers(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	dsn, terminate := pgtest.StartUnmigratedPostgresDSN(ctx, t)
-	t.Cleanup(terminate)
+	dsn := pgtest.StartUnmigratedPostgresDSN(ctx, t)
 
 	d, err := persistence.Open(ctx, persistence.Config{
 		Driver:   "postgres",
@@ -42,8 +41,7 @@ func TestMigrateAgainstTestcontainers(t *testing.T) {
 func TestMigration002Tags(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	dsn, terminate := pgtest.StartUnmigratedPostgresDSN(ctx, t)
-	t.Cleanup(terminate)
+	dsn := pgtest.StartUnmigratedPostgresDSN(ctx, t)
 
 	d, err := persistence.Open(ctx, persistence.Config{
 		Driver:   "postgres",

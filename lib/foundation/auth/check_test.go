@@ -4,34 +4,27 @@
 
 package auth
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestCheckGrantEmpty(t *testing.T) {
 	res := CheckGrant(Grant{}, "node:read", nil)
-	if res.Allowed {
-		t.Fatalf("empty grant must deny")
-	}
-	if res.MatchedIdx != -1 {
-		t.Fatalf("MatchedIdx %d != -1", res.MatchedIdx)
-	}
+	require.False(t, res.Allowed, "empty grant must deny")
 }
 
 func TestCheckGrantWildcardStar(t *testing.T) {
 	g := Grant{{Action: "*"}}
 	res := CheckGrant(g, "instance:create", nil)
-	if !res.Allowed {
-		t.Fatalf("star grant should allow: %+v", res)
-	}
+	require.True(t, res.Allowed, "star grant should allow: %+v", res)
 }
 
 func TestCheckGrantVerbSuffix(t *testing.T) {
 	g := Grant{{Action: "*:read"}}
-	if !CheckGrant(g, "node:read", nil).Allowed {
-		t.Fatalf("*:read should allow node:read")
-	}
-	if CheckGrant(g, "node:write", nil).Allowed {
-		t.Fatalf("*:read should not allow node:write")
-	}
+	require.True(t, CheckGrant(g, "node:read", nil).Allowed, "*:read should allow node:read")
+	require.False(t, CheckGrant(g, "node:write", nil).Allowed, "*:read should not allow node:write")
 }
 
 func TestCheckGrantSetMembership_AnyMatchAllows(t *testing.T) {
@@ -39,41 +32,24 @@ func TestCheckGrantSetMembership_AnyMatchAllows(t *testing.T) {
 		{Action: "instance:create"},
 		{Action: "*:read"},
 	}
-	if !CheckGrant(g, "instance:create", nil).Allowed {
-		t.Fatalf("specific entry should allow instance:create")
-	}
-	if !CheckGrant(g, "node:read", nil).Allowed {
-		t.Fatalf("wildcard entry should allow node:read")
-	}
-	if CheckGrant(g, "node:reset", nil).Allowed {
-		t.Fatalf("no entry matches node:reset; must deny")
-	}
+	require.True(t, CheckGrant(g, "instance:create", nil).Allowed, "specific entry should allow instance:create")
+	require.True(t, CheckGrant(g, "node:read", nil).Allowed, "wildcard entry should allow node:read")
+	require.False(t, CheckGrant(g, "node:reset", nil).Allowed, "no entry matches node:reset; must deny")
 }
 
 func TestCheckGrantSetMembership_OrderIrrelevant(t *testing.T) {
 	specificFirst := Grant{{Action: "instance:create"}, {Action: "*"}}
 	wildcardFirst := Grant{{Action: "*"}, {Action: "instance:create"}}
 	for _, action := range []string{"instance:create", "node:read"} {
-		if CheckGrant(specificFirst, action, nil).Allowed != CheckGrant(wildcardFirst, action, nil).Allowed {
-			t.Fatalf("order changed the decision for %q", action)
-		}
-		if !CheckGrant(specificFirst, action, nil).Allowed {
-			t.Fatalf("wildcard grant should allow %q", action)
-		}
+		require.Equal(t, CheckGrant(wildcardFirst, action, nil).Allowed, CheckGrant(specificFirst, action, nil).Allowed,
+			"order changed the decision for %q", action)
+		require.True(t, CheckGrant(specificFirst, action, nil).Allowed, "wildcard grant should allow %q", action)
 	}
 }
 
 func TestValidateGrant(t *testing.T) {
-	if err := ValidateGrant(nil); err == nil {
-		t.Fatalf("nil grant should error")
-	}
-	if err := ValidateGrant(Grant{}); err == nil {
-		t.Fatalf("empty grant should error")
-	}
-	if err := ValidateGrant(Grant{{Action: "instance:create"}}); err != nil {
-		t.Fatalf("valid grant: %v", err)
-	}
-	if err := ValidateGrant(Grant{{Action: "instance:*"}, {Action: "nocolon"}}); err == nil {
-		t.Fatalf("bad-action grant should error")
-	}
+	require.Error(t, ValidateGrant(nil), "nil grant should error")
+	require.Error(t, ValidateGrant(Grant{}), "empty grant should error")
+	require.NoError(t, ValidateGrant(Grant{{Action: "instance:create"}}), "valid grant")
+	require.Error(t, ValidateGrant(Grant{{Action: "instance:*"}, {Action: "nocolon"}}), "bad-action grant should error")
 }

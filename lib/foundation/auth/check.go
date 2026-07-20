@@ -7,10 +7,8 @@ package auth
 import "fmt"
 
 type CheckResult struct {
-	Allowed    bool
-	MatchedIdx int
-
-	Mode Mode
+	Allowed bool
+	Mode    Mode
 }
 
 func CheckGrant(grant Grant, requestAction string, target map[string]string) CheckResult {
@@ -38,9 +36,9 @@ func CheckGrant(grant Grant, requestAction string, target map[string]string) Che
 		}
 	}
 	if bestIdx == -1 {
-		return CheckResult{Allowed: false, MatchedIdx: -1}
+		return CheckResult{Allowed: false}
 	}
-	return CheckResult{Allowed: true, MatchedIdx: bestIdx, Mode: bestMode}
+	return CheckResult{Allowed: true, Mode: bestMode}
 }
 
 func HasAnyGrant(grant Grant, requestAction string) bool {

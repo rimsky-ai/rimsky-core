@@ -6,6 +6,7 @@ package observability
 
 import (
 	"context"
+	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -21,8 +22,8 @@ type CascadeNode struct {
 }
 
 type terminalEventView struct {
-	Kind       string `json:"kind"`
-	OccurredAt string `json:"occurred_at"`
+	Kind       string    `json:"kind"`
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 func computeCascadeGraph(ctx context.Context, deps Deps, tx persistence.Tx, nodes []persistence.NodeRow, template *persistence.TemplateRow) ([]CascadeNode, error) {
@@ -36,21 +37,13 @@ func computeCascadeGraph(ctx context.Context, deps Deps, tx persistence.Tx, node
 	if err != nil {
 		return nil, err
 	}
-	summaries := make(map[shared.UUID]persistence.NodeRunSummary, len(nodeIDs))
-	for _, id := range nodeIDs {
-		s, err := deps.Tables.Nodes().GetRunSummary(ctx, id, tx)
-		if err != nil {
-			return nil, err
-		}
-		summaries[id] = s
+	summaries, err := deps.Tables.Nodes().GetRunSummaryForNodes(ctx, nodeIDs, tx)
+	if err != nil {
+		return nil, err
 	}
 	summaryFor := func(id shared.UUID) *persistence.NodeRunSummary {
-		s, ok := summaries[id]
-		if !ok {
-			return nil
-		}
-		sc := s
-		return &sc
+		s := summaries[id]
+		return &s
 	}
 	terminalView := func(id shared.UUID) *terminalEventView {
 		ev, ok := terminals[id]
@@ -59,7 +52,7 @@ func computeCascadeGraph(ctx context.Context, deps Deps, tx persistence.Tx, node
 		}
 		return &terminalEventView{
 			Kind:       ev.KindRaw,
-			OccurredAt: ev.OccurredAt.Format("2006-01-02T15:04:05Z07:00"),
+			OccurredAt: ev.OccurredAt,
 		}
 	}
 	edgesIn := map[string][]string{}

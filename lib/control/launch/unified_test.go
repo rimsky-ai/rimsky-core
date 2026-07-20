@@ -37,9 +37,7 @@ func TestUnifiedStack_DrainReversesStartOrder(t *testing.T) {
 			makeStop("supervisor"),
 			makeStop("control-api"),
 		},
-		names:    []string{"scheduler", "supervisor", "control-api"},
-		failCh:   make(chan RoleFailure, 3),
-		failBufN: 3,
+		failCh: make(chan RoleFailure, 3),
 	}
 
 	stack.Drain(context.Background(), time.Second)
@@ -57,8 +55,7 @@ func TestUnifiedStack_DrainReversesStartOrder(t *testing.T) {
 
 func TestUnifiedStack_DrainEmptyIsNoOp(t *testing.T) {
 	stack := &UnifiedStack{
-		failCh:   make(chan RoleFailure, 3),
-		failBufN: 3,
+		failCh: make(chan RoleFailure, 3),
 	}
 	stack.Drain(context.Background(), time.Second)
 }
@@ -188,8 +185,7 @@ func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 func TestUnifiedStack_FailChDeliversFailure(t *testing.T) {
 	stack := &UnifiedStack{
-		failCh:   make(chan RoleFailure, 3),
-		failBufN: 3,
+		failCh: make(chan RoleFailure, 3),
 	}
 	want := RoleFailure{Role: "supervisor", Err: errors.New("serve loop died")}
 	stack.failCh <- want

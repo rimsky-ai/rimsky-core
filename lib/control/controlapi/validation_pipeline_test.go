@@ -61,6 +61,30 @@ func (f *fakeValidator) ValidateLifecycleSubscriber(_ context.Context, _ runtime
 	return f.errs, f.warns, f.rpcErr
 }
 
+func (f *fakeValidator) ExecutorCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.executor
+}
+
+func (f *fakeValidator) ProducerCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.producer
+}
+
+func (f *fakeValidator) PublisherCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.publisher
+}
+
+func (f *fakeValidator) LifecycleCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lifecycle
+}
+
 type fakeValidatorRegistry struct {
 	byName map[string]runtime.ValidationClient
 }
@@ -86,18 +110,12 @@ func (r *fakeValidatorRegistry) All() []runtime.ValidationClient {
 	return out
 }
 
-type validatorHarness struct {
-	*harness
-	validator *fakeValidator
-}
-
-func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, vfake *fakeValidator, policy runtime.UnreachableValidatorPolicy) (*validatorHarness, func()) {
+func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, policy runtime.UnreachableValidatorPolicy) (*harness, func()) {
 	t.Helper()
-	h, teardown := newAppHarness(t, func(deps *AppDeps) {
+	return newAppHarness(t, func(deps *AppDeps) {
 		deps.Validators = vr
 		deps.UnreachableValidatorPolicy = policy
 	})
-	return &validatorHarness{harness: h, validator: vfake}, teardown
 }
 
 func TestValidationPipeline_RejectsOnError(t *testing.T) {
@@ -112,7 +130,7 @@ func TestValidationPipeline_RejectsOnError(t *testing.T) {
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	_, listBefore := vh.httpJSON(t, "GET", "/v1/templates", nil)
@@ -124,7 +142,7 @@ func TestValidationPipeline_RejectsOnError(t *testing.T) {
 	require.Contains(t, out["error"], "validation pipeline")
 	errs, _ := out["validation_errors"].([]any)
 	require.NotEmpty(t, errs)
-	require.GreaterOrEqual(t, vfake.executor, 1)
+	require.GreaterOrEqual(t, vfake.ExecutorCalls(), 1)
 
 	found := false
 	for _, raw := range errs {
@@ -156,7 +174,7 @@ func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-warn-" + uuid.NewString())
@@ -180,6 +198,32 @@ func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
 		"a warnings-only pipeline outcome must still surface the warning in the response, got: %v", warns)
 }
 
+func TestValidationPipeline_ClaimProducerRoleHonoredAtRegistration(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "topics-ring",
+		supportedRoles: []string{"claim_producer"},
+		errs: []runtime.ValidationFinding{{
+			Class:   "claim_producer_config_invalid",
+			Message: "bad claim producer config",
+			Path:    "/claim_producers/topics-ring",
+		}},
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorPermissiveWarn)
+	t.Cleanup(teardown)
+
+	body := templateWithClaimProducersAndLocks("vp-producer-" + uuid.NewString())
+	status, out := vh.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusBadRequest, status, out)
+	require.Contains(t, out["error"], "validation pipeline")
+	errs, _ := out["validation_errors"].([]any)
+	require.NotEmpty(t, errs)
+	require.GreaterOrEqual(t, vfake.ProducerCalls(), 1,
+		"registering a template with a claim_producer whose validator advertises the claim_producer role must invoke ValidateClaimProducer")
+	require.Equal(t, 0, vfake.ExecutorCalls())
+}
+
 func TestValidationPipeline_PublisherRoleHonoredAtRegistration(t *testing.T) {
 	t.Parallel()
 	vfake := &fakeValidator{
@@ -192,7 +236,7 @@ func TestValidationPipeline_PublisherRoleHonoredAtRegistration(t *testing.T) {
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-pub-" + uuid.NewString())
@@ -210,9 +254,9 @@ func TestValidationPipeline_PublisherRoleHonoredAtRegistration(t *testing.T) {
 	require.Contains(t, out["error"], "validation pipeline")
 	errs, _ := out["validation_errors"].([]any)
 	require.NotEmpty(t, errs)
-	require.GreaterOrEqual(t, vfake.publisher, 1,
+	require.GreaterOrEqual(t, vfake.PublisherCalls(), 1,
 		"registering a template with a publisher whose validator advertises the publisher role must invoke ValidatePublisher")
-	require.Equal(t, 0, vfake.executor)
+	require.Equal(t, 0, vfake.ExecutorCalls())
 }
 
 func TestValidationPipeline_LifecycleSubscriberRoleHonoredAtRegistration(t *testing.T) {
@@ -226,7 +270,7 @@ func TestValidationPipeline_LifecycleSubscriberRoleHonoredAtRegistration(t *test
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-lifecycle-" + uuid.NewString())
@@ -235,9 +279,9 @@ func TestValidationPipeline_LifecycleSubscriberRoleHonoredAtRegistration(t *test
 	require.Contains(t, out["error"], "validation pipeline")
 	errs, _ := out["validation_errors"].([]any)
 	require.NotEmpty(t, errs)
-	require.GreaterOrEqual(t, vfake.lifecycle, 1,
+	require.GreaterOrEqual(t, vfake.LifecycleCalls(), 1,
 		"registering any template must invoke ValidateLifecycleSubscriber template-wide on every validator advertising the lifecycle_subscriber role")
-	require.Equal(t, 0, vfake.executor)
+	require.Equal(t, 0, vfake.ExecutorCalls())
 }
 
 func TestValidationPipeline_WarningsAsErrorsRejects(t *testing.T) {
@@ -250,7 +294,7 @@ func TestValidationPipeline_WarningsAsErrorsRejects(t *testing.T) {
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	_, listBefore := vh.httpJSON(t, "GET", "/v1/templates", nil)
@@ -292,7 +336,7 @@ func TestValidationPipeline_ValidateEndpointMergesPipelineErrors(t *testing.T) {
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-validate-err-" + uuid.NewString())
@@ -312,7 +356,7 @@ func TestValidationPipeline_ValidateEndpointMergesPipelineErrors(t *testing.T) {
 		}
 	}
 	require.True(t, found, "pipeline error must merge into /validate's validation_errors, got: %v", errs)
-	require.GreaterOrEqual(t, vfake.executor, 1)
+	require.GreaterOrEqual(t, vfake.ExecutorCalls(), 1)
 }
 
 func TestValidationPipeline_ValidateEndpointMergesPipelineWarnings(t *testing.T) {
@@ -327,7 +371,7 @@ func TestValidationPipeline_ValidateEndpointMergesPipelineWarnings(t *testing.T)
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-validate-warn-" + uuid.NewString())
@@ -359,7 +403,7 @@ func TestValidationPipeline_UnreachableValidatorPermissiveWarn_SucceedsWithWarni
 		rpcErr:         errors.New("connection refused"),
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-unreachable-permissive-" + uuid.NewString())
@@ -388,7 +432,7 @@ func TestValidationPipeline_UnreachableValidatorStrict_RejectsRegistration(t *te
 		rpcErr:         errors.New("connection refused"),
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorStrict)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorStrict)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-unreachable-strict-" + uuid.NewString())

@@ -7,38 +7,11 @@ package locks
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 )
 
-type NamedLockConfig struct {
-	Limit int `yaml:"limit"`
-}
-
-type NamedLocksConfig struct {
-	Locks map[string]NamedLockConfig
-}
-
-func (c NamedLocksConfig) Get(name string) (NamedLockConfig, bool) {
-	if c.Locks == nil {
-		return NamedLockConfig{}, false
-	}
-	cfg, ok := c.Locks[name]
-	return cfg, ok
-}
-
-// @concept: named-lock
-func (c NamedLocksConfig) Validate() error {
-	for name, cfg := range c.Locks {
-		if cfg.Limit < 1 {
-			return fmt.Errorf("named_locks[%q]: limit must be >= 1, got %d", name, cfg.Limit)
-		}
-	}
-	return nil
-}
-
 type Registry struct {
-	producers              map[string]ClaimProducer
+	reg                    namedRegistry[ClaimProducer]
 	lookupInstanceBindings func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error)
 	lateBindServiceProxies map[string]string
 }
@@ -54,7 +27,7 @@ func WithLateBindServiceProxies(m map[string]string) Option {
 }
 
 func NewRegistry(opts ...Option) *Registry {
-	r := &Registry{producers: make(map[string]ClaimProducer)}
+	r := &Registry{reg: newNamedRegistry[ClaimProducer]()}
 	for _, opt := range opts {
 		opt(r)
 	}
@@ -70,12 +43,11 @@ func (r *Registry) Add(name string, p ClaimProducer) {
 				"hint", "registration name and producer-internal name should agree; check the wiring path that constructed this producer")
 		}
 	}
-	r.producers[name] = p
+	r.reg.add(name, p)
 }
 
 func (r *Registry) Get(name string) (ClaimProducer, bool) {
-	p, ok := r.producers[name]
-	return p, ok
+	return r.reg.get(name)
 }
 
 func (r *Registry) GetWithContext(ctx context.Context, name string, instanceID string) (ClaimProducer, bool) {
@@ -106,19 +78,11 @@ func (r *Registry) GetWithContext(ctx context.Context, name string, instanceID s
 }
 
 func (r *Registry) Producers() map[string]ClaimProducer {
-	out := make(map[string]ClaimProducer, len(r.producers))
-	for name, p := range r.producers {
-		out[name] = p
-	}
-	return out
+	return r.reg.copyMap()
 }
 
 func (r *Registry) Names() []string {
-	out := make([]string, 0, len(r.producers))
-	for name := range r.producers {
-		out = append(out, name)
-	}
-	return out
+	return r.reg.names()
 }
 
 type closer interface {
@@ -126,9 +90,5 @@ type closer interface {
 }
 
 func (r *Registry) Close() {
-	for _, p := range r.producers {
-		if c, ok := p.(closer); ok {
-			c.Close()
-		}
-	}
+	r.reg.closeAll()
 }

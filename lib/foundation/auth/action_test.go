@@ -4,7 +4,11 @@
 
 package auth
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestActionMatches(t *testing.T) {
 	cases := []struct {
@@ -28,9 +32,7 @@ func TestActionMatches(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := ActionMatches(c.entry, c.req)
-		if got != c.want {
-			t.Errorf("ActionMatches(%q, %q): got %v want %v", c.entry, c.req, got, c.want)
-		}
+		require.Equal(t, c.want, got, "ActionMatches(%q, %q)", c.entry, c.req)
 	}
 }
 
@@ -43,9 +45,7 @@ func TestValidateActionString(t *testing.T) {
 		"complex-noun:complex-verb",
 	}
 	for _, s := range good {
-		if err := ValidateActionString(s); err != nil {
-			t.Errorf("ValidateActionString(%q): unexpected err %v", s, err)
-		}
+		require.NoError(t, ValidateActionString(s), "ValidateActionString(%q)", s)
 	}
 	bad := []string{
 		"",
@@ -53,12 +53,8 @@ func TestValidateActionString(t *testing.T) {
 		"instance:*:thing",
 		"ins*ance:read",
 		"foo:bar:*",
-		"*",
 	}
-	bad = bad[:len(bad)-1]
 	for _, s := range bad {
-		if err := ValidateActionString(s); err == nil {
-			t.Errorf("ValidateActionString(%q): expected error, got nil", s)
-		}
+		require.Error(t, ValidateActionString(s), "ValidateActionString(%q)", s)
 	}
 }

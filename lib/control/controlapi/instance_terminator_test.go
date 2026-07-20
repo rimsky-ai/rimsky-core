@@ -143,7 +143,7 @@ func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 	require.NotNil(t, runScopeCall, "OnRunScopeTerminal must fire for the main run-scope")
 	require.NotEmpty(t, runScopeCall.RunScopeID)
 	require.NotNil(t, terminatedCall, "OnInstanceTerminated must fire")
-	require.Equal(t, hash, terminatedCall.TemplateID)
+	require.Equal(t, hash, terminatedCall.TemplateHash)
 	require.Equal(t, inst.String(), terminatedCall.InstanceID)
 	require.Less(t, runScopeCall.Sequence, terminatedCall.Sequence,
 		"OnRunScopeTerminal must fire before OnInstanceTerminated")

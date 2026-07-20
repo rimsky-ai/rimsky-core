@@ -5,46 +5,31 @@
 package auth
 
 import (
-	"errors"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestMintDistinct(t *testing.T) {
 	a, _, err := Mint()
-	if err != nil {
-		t.Fatalf("mint a: %v", err)
-	}
+	require.NoError(t, err, "mint a")
 	b, _, err := Mint()
-	if err != nil {
-		t.Fatalf("mint b: %v", err)
-	}
-	if a == b {
-		t.Fatalf("Mint() produced duplicate plaintexts")
-	}
-	if !strings.HasPrefix(a, Prefix) {
-		t.Fatalf("plaintext missing prefix: %q", a)
-	}
+	require.NoError(t, err, "mint b")
+	require.NotEqual(t, a, b, "Mint() produced duplicate plaintexts")
+	require.True(t, strings.HasPrefix(a, Prefix), "plaintext missing prefix: %q", a)
 }
 
 func TestMintPlaintextValidates(t *testing.T) {
 	p, _, err := Mint()
-	if err != nil {
-		t.Fatalf("mint: %v", err)
-	}
-	if err := ValidatePlaintext(p); err != nil {
-		t.Fatalf("freshly-minted plaintext %q failed validate: %v", p, err)
-	}
+	require.NoError(t, err, "mint")
+	require.NoError(t, ValidatePlaintext(p), "freshly-minted plaintext %q failed validate", p)
 }
 
 func TestMintHashMatches(t *testing.T) {
 	p, h, err := Mint()
-	if err != nil {
-		t.Fatalf("mint: %v", err)
-	}
-	if got := Hash(p); got != h {
-		t.Fatalf("Hash(plaintext) != hash from Mint")
-	}
+	require.NoError(t, err, "mint")
+	require.Equal(t, h, Hash(p), "Hash(plaintext) != hash from Mint")
 }
 
 func TestValidatePlaintextRejects(t *testing.T) {
@@ -56,8 +41,6 @@ func TestValidatePlaintextRejects(t *testing.T) {
 		"rk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 	}
 	for _, c := range cases {
-		if err := ValidatePlaintext(c); !errors.Is(err, ErrInvalidPlaintext) {
-			t.Errorf("ValidatePlaintext(%q): expected ErrInvalidPlaintext, got %v", c, err)
-		}
+		require.ErrorIs(t, ValidatePlaintext(c), ErrInvalidPlaintext, "ValidatePlaintext(%q)", c)
 	}
 }

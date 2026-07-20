@@ -214,8 +214,8 @@ func TestFakeOnInstanceCreatedRecordsFullRequest(t *testing.T) {
 	if got.InstanceID != "inst-1" {
 		t.Errorf("InstanceID = %q, want %q", got.InstanceID, "inst-1")
 	}
-	if got.TemplateID != "tmpl-1" {
-		t.Errorf("TemplateID = %q, want %q", got.TemplateID, "tmpl-1")
+	if got.TemplateHash != "tmpl-1" {
+		t.Errorf("TemplateHash = %q, want %q", got.TemplateHash, "tmpl-1")
 	}
 	if got.InstanceKey != "inst-key-1" {
 		t.Errorf("InstanceKey = %q, want %q", got.InstanceKey, "inst-key-1")
@@ -251,8 +251,8 @@ func TestFakeOnInstanceTerminatedRecordsFullRequest(t *testing.T) {
 	if got.InstanceID != "inst-2" {
 		t.Errorf("InstanceID = %q, want %q", got.InstanceID, "inst-2")
 	}
-	if got.TemplateID != "tmpl-2" {
-		t.Errorf("TemplateID = %q, want %q", got.TemplateID, "tmpl-2")
+	if got.TemplateHash != "tmpl-2" {
+		t.Errorf("TemplateHash = %q, want %q", got.TemplateHash, "tmpl-2")
 	}
 	if got.TerminatedAtUnixMs != 1234567890 {
 		t.Errorf("TerminatedAtUnixMs = %d, want %d", got.TerminatedAtUnixMs, 1234567890)

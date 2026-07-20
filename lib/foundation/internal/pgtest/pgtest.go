@@ -25,24 +25,24 @@ var sharedPool = pgpool.New(pgpool.Config{
 	InitTemplate: migrateTemplate,
 })
 
-func StartPostgres(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
+func StartPostgres(ctx context.Context, t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	d := OpenDriver(ctx, t)
 	pool, ok := pgpersist.PoolFromDatabaseForTest(d)
 	if !ok {
 		t.Fatalf("pgtest: PoolFromDatabaseForTest returned !ok")
 	}
-	return pool, func() {}
+	return pool
 }
 
-func StartFreshPostgresDSN(ctx context.Context, t *testing.T) (string, func()) {
+func StartFreshPostgresDSN(ctx context.Context, t *testing.T) string {
 	t.Helper()
-	return sharedPool.Acquire(ctx, t), func() {}
+	return sharedPool.Acquire(ctx, t)
 }
 
-func StartUnmigratedPostgresDSN(ctx context.Context, t *testing.T) (string, func()) {
+func StartUnmigratedPostgresDSN(ctx context.Context, t *testing.T) string {
 	t.Helper()
-	return sharedPool.AcquireFresh(ctx, t), func() {}
+	return sharedPool.AcquireFresh(ctx, t)
 }
 
 func ExecForTest(ctx context.Context, t *testing.T, d persistence.Database, sql string, args ...any) {
@@ -66,7 +66,7 @@ func TryExecForTest(ctx context.Context, t *testing.T, d persistence.Database, s
 	return err
 }
 
-func QueryRowForTest(ctx context.Context, t *testing.T, d persistence.Database, sql string, args []any, dest ...any) {
+func QueryRowForTest(ctx context.Context, t *testing.T, d persistence.Database, sql string, dest []any, args ...any) {
 	t.Helper()
 	pool, ok := pgpersist.PoolFromDatabaseForTest(d)
 	if !ok {
@@ -74,28 +74,6 @@ func QueryRowForTest(ctx context.Context, t *testing.T, d persistence.Database, 
 	}
 	if err := pool.QueryRow(ctx, sql, args...).Scan(dest...); err != nil {
 		t.Fatalf("pgtest.QueryRowForTest: %v\nsql: %s", err, sql)
-	}
-}
-
-func QueryForTest(ctx context.Context, t *testing.T, d persistence.Database,
-	sql string, args []any, scan func(scan func(...any) error) error) {
-	t.Helper()
-	pool, ok := pgpersist.PoolFromDatabaseForTest(d)
-	if !ok {
-		t.Fatalf("pgtest.QueryForTest: not a postgres driver")
-	}
-	rows, err := pool.Query(ctx, sql, args...)
-	if err != nil {
-		t.Fatalf("pgtest.QueryForTest: %v\nsql: %s", err, sql)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		if err := scan(rows.Scan); err != nil {
-			t.Fatalf("pgtest.QueryForTest: scan: %v\nsql: %s", err, sql)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("pgtest.QueryForTest: rows: %v\nsql: %s", err, sql)
 	}
 }
 
@@ -162,8 +140,7 @@ func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Database,
 
 func OpenDriver(ctx context.Context, t *testing.T) persistence.Database {
 	t.Helper()
-	dsn, teardown := StartFreshPostgresDSN(ctx, t)
-	t.Cleanup(teardown)
+	dsn := StartFreshPostgresDSN(ctx, t)
 
 	d, err := persistence.Open(ctx, persistence.Config{
 		Driver:   "postgres",

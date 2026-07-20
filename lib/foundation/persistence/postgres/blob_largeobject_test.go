@@ -25,7 +25,7 @@ func TestPgLargeObjectBackend(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	pool, _ := pgtest.StartPostgres(ctx, t)
+	pool := pgtest.StartPostgres(ctx, t)
 	be := pgpersist.NewPgLargeObjectBackend(pool)
 	if be.Name() != "pg-largeobject" {
 		t.Fatalf("Name: got %q, want pg-largeobject", be.Name())
@@ -71,7 +71,7 @@ func TestPgLargeObjectBackendReadRangeOutOfBounds(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	pool, _ := pgtest.StartPostgres(ctx, t)
+	pool := pgtest.StartPostgres(ctx, t)
 	be := pgpersist.NewPgLargeObjectBackend(pool)
 	h, err := be.Write(ctx, persistence.BlobKey{}, []byte("short"))
 	if err != nil {
@@ -86,7 +86,7 @@ func TestPgLargeObjectBackendReadRangeNotFound(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	pool, _ := pgtest.StartPostgres(ctx, t)
+	pool := pgtest.StartPostgres(ctx, t)
 	be := pgpersist.NewPgLargeObjectBackend(pool)
 	if _, err := be.ReadRange(ctx, persistence.Handle("pglo:999999999"), 0, 1); !errors.Is(err, persistence.ErrBlobNotFound) {
 		t.Fatalf("ReadRange on missing handle: want ErrBlobNotFound, got %v", err)
@@ -97,7 +97,7 @@ func TestPgLargeObjectBackendWriteInTxRollsBackWithCallerTx(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	pool, _ := pgtest.StartPostgres(ctx, t)
+	pool := pgtest.StartPostgres(ctx, t)
 	be := pgpersist.NewPgLargeObjectBackend(pool)
 
 	callerTx, err := pool.BeginTx(ctx, pgx.TxOptions{})
@@ -121,7 +121,7 @@ func TestPgLargeObjectBackendWriteInTxCommitsWithCallerTx(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	pool, _ := pgtest.StartPostgres(ctx, t)
+	pool := pgtest.StartPostgres(ctx, t)
 	be := pgpersist.NewPgLargeObjectBackend(pool)
 
 	callerTx, err := pool.BeginTx(ctx, pgx.TxOptions{})
@@ -158,7 +158,7 @@ func TestPgLargeObjectBackendWriteInTxDoesNotAcquireSecondConnection(t *testing.
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	dsn, _ := pgtest.StartFreshPostgresDSN(ctx, t)
+	dsn := pgtest.StartFreshPostgresDSN(ctx, t)
 	pcfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("parse dsn: %v", err)
@@ -195,7 +195,7 @@ func TestPgLargeObjectBackendRejectsBadHandle(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	pool, _ := pgtest.StartPostgres(ctx, t)
+	pool := pgtest.StartPostgres(ctx, t)
 	be := pgpersist.NewPgLargeObjectBackend(pool)
 	if _, err := be.Read(ctx, persistence.Handle("fs:/etc/passwd")); err == nil {
 		t.Fatalf("expected error on non-pglo handle, got nil")

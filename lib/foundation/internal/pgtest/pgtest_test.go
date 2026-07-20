@@ -14,8 +14,7 @@ import (
 func TestHarnessStartsPostgres(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	pool, teardown := StartPostgres(ctx, t)
-	t.Cleanup(teardown)
+	pool := StartPostgres(ctx, t)
 
 	var count int
 	err := pool.QueryRow(ctx, "SELECT count(*) FROM rimsky_migrations").Scan(&count)

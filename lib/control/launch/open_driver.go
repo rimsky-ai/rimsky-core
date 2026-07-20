@@ -14,6 +14,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
+const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
+
 func OpenDriverFromEnv(ctx context.Context, logger *slog.Logger) (persistence.Database, *config.RimskyConfig, error) {
 	configPath := os.Getenv("RIMSKY_CONFIG")
 	if configPath == "" {

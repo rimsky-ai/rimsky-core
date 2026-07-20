@@ -18,11 +18,12 @@ var ErrInvalid = errors.New("matcher invalid")
 type Matcher map[string]any
 
 type Context struct {
-	Executor     string
-	NodeType     string
-	Graph        string
-	ChildKey     string
-	AttributeBag map[string]any // @concept: attribute
+	Executor string
+	NodeType string
+	Graph    string
+	ChildKey string
+	// @concept: attribute
+	AttributeBag map[string]any
 }
 
 var allowedKeys = map[string]struct{}{

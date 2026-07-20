@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
-	"sync"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
@@ -48,8 +47,8 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 
 	if preOpenedBlob == nil {
-		if _, err := config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology); err != nil {
-			log.Error("config.OpenBlobBackend", "error", err.Error())
+		if err := config.WireBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology); err != nil {
+			log.Error("config.WireBlobBackend", "error", err.Error())
 			return nil, nil, err
 		}
 	}
@@ -90,15 +89,9 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 	reporter := newFailureReporter(2)
 	metricsSrv := startMetricsServer(metricsHostFromEnv(), "control-api", metricsPort, mreg, log, reporter)
 
-	stopped := make(chan struct{})
-	var stoppedOnce sync.Once
 	go func() {
-		select {
-		case err, ok := <-h.ServeErr():
-			if ok && err != nil {
-				reporter.Report(fmt.Errorf("control-api serve: %w", err))
-			}
-		case <-stopped:
+		if err, ok := <-h.ServeErr(); ok && err != nil {
+			reporter.Report(fmt.Errorf("control-api serve: %w", err))
 		}
 	}()
 
@@ -114,7 +107,6 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 			}
 		}
 		cancelGauges()
-		stoppedOnce.Do(func() { close(stopped) })
 		reporter.Close()
 		return firstErr
 	}

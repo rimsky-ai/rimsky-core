@@ -80,7 +80,7 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 		aggPolicy,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.Insert: %w", err)
+		return fmt.Errorf("claimhandles.Insert: %w", err)
 	}
 	return nil
 }
@@ -100,7 +100,7 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 		v, id.String(), supervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.UpdateRealizedWriteSemantics: %w", err)
+		return fmt.Errorf("claimhandles.UpdateRealizedWriteSemantics: %w", err)
 	}
 	return nil
 }
@@ -115,7 +115,7 @@ func (s *claimHandlesImpl) UpdateAddress(
 		nullableJSONB(address), id.String(), supervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.UpdateAddress: %w", err)
+		return fmt.Errorf("claimhandles.UpdateAddress: %w", err)
 	}
 	return nil
 }
@@ -130,7 +130,7 @@ func (s *claimHandlesImpl) UpdatePayload(
 		nullableJSONB(payload), id.String(), supervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.UpdatePayload: %w", err)
+		return fmt.Errorf("claimhandles.UpdatePayload: %w", err)
 	}
 	return nil
 }
@@ -145,7 +145,7 @@ func (s *claimHandlesImpl) UpdateClaimScope(
 		nullableJSONB(scope), id.String(), supervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.UpdateClaimScope: %w", err)
+		return fmt.Errorf("claimhandles.UpdateClaimScope: %w", err)
 	}
 	return nil
 }
@@ -162,11 +162,11 @@ func (s *claimHandlesImpl) UpdateNodeRunID(
 		nodeRunID.String(), id.String(), supervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.UpdateNodeRunID: %w", err)
+		return fmt.Errorf("claimhandles.UpdateNodeRunID: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("lockholders.UpdateNodeRunID: rows-affected: %w", err)
+		return fmt.Errorf("claimhandles.UpdateNodeRunID: rows-affected: %w", err)
 	}
 	if n == 0 {
 		return spec.ErrIllegalClaimHandleTransition
@@ -178,7 +178,7 @@ func (s *claimHandlesImpl) ReassignHolderSupervisor(
 	ctx context.Context, id shared.UUID, fromSupervisorID, toSupervisorID string, tx persistence.Tx,
 ) error {
 	if toSupervisorID == "" {
-		return fmt.Errorf("lockholders.ReassignHolderSupervisor: empty toSupervisorID")
+		return fmt.Errorf("claimhandles.ReassignHolderSupervisor: empty toSupervisorID")
 	}
 	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
@@ -189,11 +189,11 @@ func (s *claimHandlesImpl) ReassignHolderSupervisor(
 		toSupervisorID, id.String(), fromSupervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.ReassignHolderSupervisor: %w", err)
+		return fmt.Errorf("claimhandles.ReassignHolderSupervisor: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("lockholders.ReassignHolderSupervisor: rows-affected: %w", err)
+		return fmt.Errorf("claimhandles.ReassignHolderSupervisor: rows-affected: %w", err)
 	}
 	if n == 0 {
 		return spec.ErrIllegalClaimHandleTransition
@@ -224,7 +224,7 @@ func (s *claimHandlesImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("lockholders.LockForUpdate: %w", err)
+		return nil, fmt.Errorf("claimhandles.LockForUpdate: %w", err)
 	}
 	return &out, nil
 }
@@ -236,7 +236,7 @@ func (s *claimHandlesImpl) ListByHolderNode(ctx context.Context, holderNodeID sh
 		 ORDER BY claimed_at ASC`, holderNodeID.String(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListByHolderNode: %w", err)
+		return nil, fmt.Errorf("claimhandles.ListByHolderNode: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)
@@ -249,7 +249,7 @@ func (s *claimHandlesImpl) ListByNodeRun(ctx context.Context, nodeRunID shared.U
 		 ORDER BY claimed_at ASC`, nodeRunID.String(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListByNodeRun: %w", err)
+		return nil, fmt.Errorf("claimhandles.ListByNodeRun: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)
@@ -267,7 +267,7 @@ func (s *claimHandlesImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("lockholders.GetByFrameAndNode: %w", err)
+		return nil, fmt.Errorf("claimhandles.GetByFrameAndNode: %w", err)
 	}
 	return &out, nil
 }
@@ -278,7 +278,7 @@ func (s *claimHandlesImpl) ListChildClaimHandles(ctx context.Context, parentID s
 		 WHERE parent_claim_handle_id = ?`,
 		parentID.String())
 	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListChildClaimHandles: %w", err)
+		return nil, fmt.Errorf("claimhandles.ListChildClaimHandles: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)
@@ -316,11 +316,11 @@ func (s *claimHandlesImpl) DeleteResolved(
 		    AND state IN ('committed', 'abandoned')
 		    AND holder_supervisor_id IS NULL`, id.String())
 	if err != nil {
-		return fmt.Errorf("lockholders.DeleteResolved: %w", err)
+		return fmt.Errorf("claimhandles.DeleteResolved: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("lockholders.DeleteResolved: rows-affected: %w", err)
+		return fmt.Errorf("claimhandles.DeleteResolved: rows-affected: %w", err)
 	}
 	if n == 0 {
 		return spec.ErrIllegalClaimHandleTransition
@@ -344,11 +344,11 @@ func (s *claimHandlesImpl) DeleteResolvedIfNoActiveHolders(
 		         AND rimsky_claim_holders.state = 'active'
 		    )`, id.String())
 	if err != nil {
-		return false, fmt.Errorf("lockholders.DeleteResolvedIfNoActiveHolders: %w", err)
+		return false, fmt.Errorf("claimhandles.DeleteResolvedIfNoActiveHolders: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("lockholders.DeleteResolvedIfNoActiveHolders: rows-affected: %w", err)
+		return false, fmt.Errorf("claimhandles.DeleteResolvedIfNoActiveHolders: rows-affected: %w", err)
 	}
 	return n > 0, nil
 }
@@ -368,11 +368,11 @@ func (s *claimHandlesImpl) Promote(
 		    AND `+claimantGuardClause,
 		string(newState), formatTime(time.Now()), id.String(), supervisorID)
 	if err != nil {
-		return fmt.Errorf("lockholders.Promote: %w", err)
+		return fmt.Errorf("claimhandles.Promote: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("lockholders.Promote: rows-affected: %w", err)
+		return fmt.Errorf("claimhandles.Promote: rows-affected: %w", err)
 	}
 	if n == 0 {
 		return spec.ErrIllegalClaimHandleTransition
@@ -388,7 +388,7 @@ func (s *claimHandlesImpl) ListByState(
 		 WHERE state = ?
 		 ORDER BY claimed_at ASC`, string(state))
 	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListByState: %w", err)
+		return nil, fmt.Errorf("claimhandles.ListByState: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)
@@ -407,7 +407,7 @@ func (s *claimHandlesImpl) ListByInstanceAndState(
 		    AND ch.lifetime = ?`,
 		instanceID.String(), string(state), string(lifetime))
 	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListByInstanceAndState: %w", err)
+		return nil, fmt.Errorf("claimhandles.ListByInstanceAndState: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)
@@ -426,7 +426,7 @@ func (s *claimHandlesImpl) SetVersionID(
 		    OR (holder_supervisor_id IS NULL AND state <> 'active'))`,
 		v, id.String(), supervisorID)
 	if err != nil {
-		return fmt.Errorf("lockholders.SetVersionID: %w", err)
+		return fmt.Errorf("claimhandles.SetVersionID: %w", err)
 	}
 	return nil
 }
@@ -445,7 +445,7 @@ func (s *claimHandlesImpl) SetAggregationPolicy(
 		v, id.String(), supervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.SetAggregationPolicy: %w", err)
+		return fmt.Errorf("claimhandles.SetAggregationPolicy: %w", err)
 	}
 	return nil
 }
@@ -460,7 +460,7 @@ func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 		delta, id.String(), supervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.BumpExpectedChildrenCount: %w", err)
+		return fmt.Errorf("claimhandles.BumpExpectedChildrenCount: %w", err)
 	}
 	return nil
 }
@@ -475,7 +475,7 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	case "abandon":
 		column = "abandoned_children_count"
 	default:
-		return fmt.Errorf("lockholders.BumpChildOutcomeCount: unknown outcome %q (want commit|abandon)", outcome)
+		return fmt.Errorf("claimhandles.BumpChildOutcomeCount: unknown outcome %q (want commit|abandon)", outcome)
 	}
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
@@ -484,7 +484,7 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 		delta, id.String(), supervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.BumpChildOutcomeCount: %w", err)
+		return fmt.Errorf("claimhandles.BumpChildOutcomeCount: %w", err)
 	}
 	return nil
 }
@@ -518,7 +518,7 @@ func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) (
 		 ORDER BY expires_at ASC`, nowUTC(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListExpired: %w", err)
+		return nil, fmt.Errorf("claimhandles.ListExpired: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)
@@ -533,7 +533,7 @@ func (s *claimHandlesImpl) RenewExpiryForHolderRun(ctx context.Context, nodeRunI
 		formatTime(newExpiry), nodeRunID.String(),
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.RenewExpiryForHolderRun: %w", err)
+		return fmt.Errorf("claimhandles.RenewExpiryForHolderRun: %w", err)
 	}
 	return nil
 }
@@ -545,7 +545,7 @@ func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedS
 		id.String(), expectedSupervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.Delete: %w", err)
+		return fmt.Errorf("claimhandles.Delete: %w", err)
 	}
 	return nil
 }
@@ -559,7 +559,7 @@ func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string
 		lockName,
 	).Scan(&n)
 	if err != nil {
-		return 0, fmt.Errorf("lockholders.CountByNamedLock: %w", err)
+		return 0, fmt.Errorf("claimhandles.CountByNamedLock: %w", err)
 	}
 	return n, nil
 }
@@ -573,7 +573,7 @@ func (s *claimHandlesImpl) ListByProducerClaimScope(ctx context.Context, produce
 		producerName,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListByProducerClaimScope: %w", err)
+		return nil, fmt.Errorf("claimhandles.ListByProducerClaimScope: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)
@@ -593,16 +593,16 @@ func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, 
 		id.String(), supervisorID, nowUTC(),
 	)
 	if err != nil {
-		return false, fmt.Errorf("lockholders.DeleteIfExpired: %w", err)
+		return false, fmt.Errorf("claimhandles.DeleteIfExpired: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("lockholders.DeleteIfExpired: rows-affected: %w", err)
+		return false, fmt.Errorf("claimhandles.DeleteIfExpired: rows-affected: %w", err)
 	}
 	return n > 0, nil
 }
 
-func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter persistence.LockHolderListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.ClaimHandleRow], error) {
+func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter persistence.ClaimHandleListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.ClaimHandleRow], error) {
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 50
@@ -627,7 +627,7 @@ func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter pers
 	if pag.Cursor != "" {
 		c, id, err := decodeLockHolderCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("lockholders.list: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("claimhandles.list: bad cursor: %w", err)
 		}
 		cursorClaimed = formatTime(c)
 		cursorID = id.String()
@@ -658,7 +658,7 @@ func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter pers
 		cursorClaimed, cursorClaimed, cursorID, limit,
 	)
 	if err != nil {
-		return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("lockholders.list: %w", err)
+		return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("claimhandles.list: %w", err)
 	}
 	defer rows.Close()
 	out, err := collectClaimHandles(rows)

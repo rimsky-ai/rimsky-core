@@ -71,8 +71,7 @@ var executorNamedPersistenceSurfaces = []string{
 func TestSchemaConsolidation_FreshDBSchemaShape(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	dsn, terminate := pgtest.StartUnmigratedPostgresDSN(ctx, t)
-	t.Cleanup(terminate)
+	dsn := pgtest.StartUnmigratedPostgresDSN(ctx, t)
 
 	d, err := persistence.Open(ctx, persistence.Config{
 		Driver:   "postgres",
@@ -102,8 +101,7 @@ func TestSchemaConsolidation_FreshDBSchemaShape(t *testing.T) {
 func TestRunScopesColumnSet_HasNoStoredKindColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	dsn, terminate := pgtest.StartUnmigratedPostgresDSN(ctx, t)
-	t.Cleanup(terminate)
+	dsn := pgtest.StartUnmigratedPostgresDSN(ctx, t)
 
 	d, err := persistence.Open(ctx, persistence.Config{
 		Driver:   "postgres",
@@ -128,8 +126,7 @@ func TestRunScopesColumnSet_HasNoStoredKindColumn(t *testing.T) {
 func TestSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	dsn, terminate := pgtest.StartUnmigratedPostgresDSN(ctx, t)
-	t.Cleanup(terminate)
+	dsn := pgtest.StartUnmigratedPostgresDSN(ctx, t)
 
 	d, err := persistence.Open(ctx, persistence.Config{
 		Driver:   "postgres",

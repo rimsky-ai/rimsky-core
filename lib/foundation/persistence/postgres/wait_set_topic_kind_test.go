@@ -103,11 +103,8 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	}
 
 	var count int
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT count(*) FROM rimsky_wait_set
-		 WHERE frame_id = $1 AND topic_kind IN ('transient','terminal')`,
-		[]any{uuid.UUID(frameID)}, &count,
-	)
+	pgtest.QueryRowForTest(ctx, t, d, `SELECT count(*) FROM rimsky_wait_set
+		 WHERE frame_id = $1 AND topic_kind IN ('transient','terminal')`, []any{&count}, uuid.UUID(frameID))
 	if count != 2 {
 		t.Fatalf("expected 2 wait-set rows with broadened topic_kind values, got %d; "+
 			"the topic_kind CHECK must admit ('transient','terminal')", count)

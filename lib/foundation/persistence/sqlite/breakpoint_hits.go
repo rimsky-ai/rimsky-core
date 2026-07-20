@@ -131,20 +131,6 @@ func (b *breakpointHitsImpl) ListSinceForBreakpoint(ctx context.Context, bpID sh
 	return scanSqliteBreakpointHits(rows)
 }
 
-func (b *breakpointHitsImpl) ListUnresumedForBreakpoint(ctx context.Context, bpID shared.UUID, tx persistence.Tx) ([]persistence.BreakpointHitRow, error) {
-	ex := b.q(tx)
-	rows, err := ex.QueryContext(ctx,
-		`SELECT `+sqliteBreakpointHitCols+`
-		   FROM rimsky_breakpoint_hits
-		  WHERE breakpoint_id = ? AND resumed_at IS NULL
-		  ORDER BY hit_at ASC`,
-		bpID.String())
-	if err != nil {
-		return nil, fmt.Errorf("sqlite.breakpointHits.listUnresumedForBreakpoint: %w", err)
-	}
-	return scanSqliteBreakpointHits(rows)
-}
-
 func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey string, overlay map[string]any, tx persistence.Tx) error {
 	ex := b.q(tx)
 	var overlayArg any

@@ -25,42 +25,29 @@ type OnRunScopeTerminalRequest = lifecycle.OnRunScopeTerminalRequest
 type LifecycleSubscriber = lifecycle.LifecycleSubscriber
 
 type LifecycleRegistry struct {
-	subs map[string]LifecycleSubscriber
+	reg namedRegistry[LifecycleSubscriber]
 }
 
 func NewLifecycleRegistry() *LifecycleRegistry {
-	return &LifecycleRegistry{subs: make(map[string]LifecycleSubscriber)}
+	return &LifecycleRegistry{reg: newNamedRegistry[LifecycleSubscriber]()}
 }
 
 func (r *LifecycleRegistry) Add(name string, s LifecycleSubscriber) {
-	r.subs[name] = s
+	r.reg.add(name, s)
 }
 
 func (r *LifecycleRegistry) Get(name string) (LifecycleSubscriber, bool) {
-	s, ok := r.subs[name]
-	return s, ok
+	return r.reg.get(name)
 }
 
 func (r *LifecycleRegistry) Subscribers() map[string]LifecycleSubscriber {
-	out := make(map[string]LifecycleSubscriber, len(r.subs))
-	for name, s := range r.subs {
-		out[name] = s
-	}
-	return out
+	return r.reg.copyMap()
 }
 
 func (r *LifecycleRegistry) Names() []string {
-	out := make([]string, 0, len(r.subs))
-	for name := range r.subs {
-		out = append(out, name)
-	}
-	return out
+	return r.reg.names()
 }
 
 func (r *LifecycleRegistry) Close() {
-	for _, s := range r.subs {
-		if c, ok := s.(closer); ok {
-			c.Close()
-		}
-	}
+	r.reg.closeAll()
 }

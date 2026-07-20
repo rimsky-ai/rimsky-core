@@ -27,6 +27,13 @@ func templateBodyWithTag(name, tag string) map[string]any {
 	return body
 }
 
+func templateListCount(t *testing.T, body map[string]any) int {
+	t.Helper()
+	l, ok := body["templates"].([]any)
+	require.True(t, ok, "response must carry a templates array, got: %v", body)
+	return len(l)
+}
+
 func TestTemplateRegister_ExecutorAccepted(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -141,7 +148,7 @@ func TestTemplateValidate_RejectsButDoesNotPersist(t *testing.T) {
 	spec["nodes"] = nodes
 
 	_, listBefore := h.httpJSON(t, "GET", "/v1/templates", nil)
-	beforeCount := len(listBefore["templates"].([]any))
+	beforeCount := templateListCount(t, listBefore)
 
 	status, out := h.httpJSON(t, "POST", "/v1/templates/validate", body)
 	require.Equal(t, http.StatusOK, status,
@@ -152,7 +159,7 @@ func TestTemplateValidate_RejectsButDoesNotPersist(t *testing.T) {
 	require.NotEmpty(t, errs, "validation_errors must be non-empty for an invalid spec")
 
 	_, listAfter := h.httpJSON(t, "GET", "/v1/templates", nil)
-	require.Equal(t, beforeCount, len(listAfter["templates"].([]any)),
+	require.Equal(t, beforeCount, templateListCount(t, listAfter),
 		"validate must not persist a template row")
 }
 
@@ -164,7 +171,7 @@ func TestTemplateValidate_CleanSpecOk(t *testing.T) {
 	body := validTemplateBody("validate-ok-" + uuid.NewString())
 
 	_, listBefore := h.httpJSON(t, "GET", "/v1/templates", nil)
-	beforeCount := len(listBefore["templates"].([]any))
+	beforeCount := templateListCount(t, listBefore)
 
 	status, out := h.httpJSON(t, "POST", "/v1/templates/validate", body)
 	require.Equal(t, http.StatusOK, status, out)
@@ -172,7 +179,7 @@ func TestTemplateValidate_CleanSpecOk(t *testing.T) {
 	require.Empty(t, out["validation_errors"], "valid spec must have no errors")
 
 	_, listAfter := h.httpJSON(t, "GET", "/v1/templates", nil)
-	require.Equal(t, beforeCount, len(listAfter["templates"].([]any)),
+	require.Equal(t, beforeCount, templateListCount(t, listAfter),
 		"validate must not persist even for a clean spec")
 }
 
@@ -733,10 +740,7 @@ func TestTemplateRegister_StaticWarningAsErrorsRejects(t *testing.T) {
 	t.Cleanup(teardown)
 
 	_, listBefore := h.httpJSON(t, "GET", "/v1/templates", nil)
-	beforeCount := 0
-	if l, ok := listBefore["templates"].([]any); ok {
-		beforeCount = len(l)
-	}
+	beforeCount := templateListCount(t, listBefore)
 
 	body := storesTemplateWithoutAcquirePolicy("static-warn-rej-" + uuid.NewString())
 	status, out := h.httpJSON(t, "POST", "/v1/templates?warnings_as_errors=true", body)
@@ -746,10 +750,7 @@ func TestTemplateRegister_StaticWarningAsErrorsRejects(t *testing.T) {
 		"rejection body must carry the static advisory in validation_warnings; got: %v", out)
 
 	_, listAfter := h.httpJSON(t, "GET", "/v1/templates", nil)
-	afterCount := 0
-	if l, ok := listAfter["templates"].([]any); ok {
-		afterCount = len(l)
-	}
+	afterCount := templateListCount(t, listAfter)
 	require.Equal(t, beforeCount, afterCount,
 		"warnings_as_errors rejection must not persist a template row")
 }

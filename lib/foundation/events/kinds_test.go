@@ -65,7 +65,6 @@ func TestOperationalKindRoundTrip(t *testing.T) {
 		{"parked_resume_started", genv1.OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED, "parked_resume_started"},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			k := events.OperationalKindFromProto(c.op)
 			if got := k.String(); got != c.wire {
@@ -98,7 +97,6 @@ func TestSignalKindRoundTrip(t *testing.T) {
 		"attribute/budget_cents/changed",
 	}
 	for _, path := range cases {
-		path := path
 		t.Run(path, func(t *testing.T) {
 			k := events.SignalKind(path)
 			if k.Family() != events.FamilySignal {
@@ -136,7 +134,6 @@ func TestParseKindStringErrors(t *testing.T) {
 		{"unknown_operational_close_typo", "auth.access_attemped"},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			_, err := events.ParseKindString(c.in)
 			if err == nil {

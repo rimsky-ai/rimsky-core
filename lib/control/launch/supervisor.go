@@ -54,8 +54,11 @@ type supervisorResolvedConfig struct {
 func resolveSupervisorConfig(cfg supervisorYAMLConfig) (supervisorResolvedConfig, error) {
 	supID := cfg.SupervisorID
 	if supID == "" {
-		hostname, _ := os.Hostname()
-		supID = fmt.Sprintf("%s-%d", hostname, os.Getpid())
+		if hostname, err := os.Hostname(); err == nil && hostname != "" {
+			supID = fmt.Sprintf("%s-%d", hostname, os.Getpid())
+		} else {
+			supID = fmt.Sprintf("supervisor-default-%d", os.Getpid())
+		}
 	}
 
 	concurrency := cfg.Concurrency
@@ -112,13 +115,14 @@ func resolveSupervisorConfig(cfg supervisorYAMLConfig) (supervisorResolvedConfig
 }
 
 func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations, preOpenedBlob persistence.BlobBackend) (StopFunc, <-chan error, error) {
+	log := shared.NewSlogLogger(logger)
+
 	cfgPath := os.Getenv("RIMSKY_SUPERVISOR_CONFIG")
 	if cfgPath == "" {
 		err := fmt.Errorf("missing RIMSKY_SUPERVISOR_CONFIG (path to YAML)")
-		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
+		log.Error("supervisor config path resolution", "error", err.Error())
 		return nil, nil, err
 	}
-	log := shared.NewSlogLogger(logger)
 
 	metricsPort, err := metricsPortFor("supervisor", rimskyCfg.Topology)
 	if err != nil {
@@ -128,12 +132,12 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 
 	cfg, err := loadSupervisorYAML(cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
+		log.Error("loadSupervisorYAML", "error", err.Error())
 		return nil, nil, err
 	}
 
 	if err := rimskyCfg.Executors.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
+		log.Error("executors config validation", "error", err.Error())
 		return nil, nil, err
 	}
 	storesCfg := rimskyCfg.ClaimProducers
@@ -141,7 +145,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 
 	resolved, err := resolveSupervisorConfig(cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
+		log.Error("resolveSupervisorConfig", "error", err.Error())
 		return nil, nil, err
 	}
 	supID := resolved.SupervisorID

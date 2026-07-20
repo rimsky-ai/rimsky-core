@@ -512,9 +512,11 @@ func (s *nodesImpl) GetRunSummaryForNodes(ctx context.Context, nodeIDs []foundat
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var nodeID foundationshared.UUID
-		var state string
-		var count int
+		var (
+			nodeID foundationshared.UUID
+			state  string
+			count  int
+		)
 		if err := rows.Scan(&nodeID, &state, &count); err != nil {
 			return nil, fmt.Errorf("GetRunSummaryForNodes: scan: %w", err)
 		}

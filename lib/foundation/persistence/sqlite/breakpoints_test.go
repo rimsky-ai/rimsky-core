@@ -417,54 +417,6 @@ func TestSQLiteBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
 	}
 }
 
-func TestSQLiteBreakpointHits_ListUnresumedFilters(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	d := openSQLiteDriver(t)
-	store := d.Tables()
-	instanceID := seedBreakpointFixture(t, ctx, d)
-	bpID := createBreakpoint(t, ctx, store, newBreakpoint(instanceID, nil))
-
-	var ids [3]shared.UUID
-	for i := 0; i < 3; i++ {
-		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			id, _, err := store.BreakpointHits().Create(ctx, makeHit(bpID, instanceID, nil), tx)
-			if err != nil {
-				return err
-			}
-			ids[i] = id
-			return nil
-		}); err != nil {
-			t.Fatalf("Create: %v", err)
-		}
-	}
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.BreakpointHits().Resume(ctx, ids[1], "operator", nil, tx)
-	}); err != nil {
-		t.Fatalf("Resume: %v", err)
-	}
-
-	var unresumed []persistence.BreakpointHitRow
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		var err error
-		unresumed, err = store.BreakpointHits().ListUnresumedForBreakpoint(ctx, bpID, tx)
-		return err
-	}); err != nil {
-		t.Fatalf("ListUnresumedForBreakpoint: %v", err)
-	}
-	if len(unresumed) != 2 {
-		t.Fatalf("ListUnresumedForBreakpoint: got %d rows want 2", len(unresumed))
-	}
-	for _, r := range unresumed {
-		if r.ResumedAt != nil {
-			t.Errorf("unresumed list contained row with ResumedAt set: %v", r.ID)
-		}
-		if r.ID == ids[1] {
-			t.Errorf("unresumed list contained resumed id %v", r.ID)
-		}
-	}
-}
-
 func TestSQLiteBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

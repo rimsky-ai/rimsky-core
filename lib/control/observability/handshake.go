@@ -20,8 +20,8 @@ const handshakeTimeout = 30 * time.Second
 
 type Prober interface {
 	ProbeExecutor(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error)
-	ProbeStore(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error)
-	ProbeStoreDeclaredErrorClasses(ctx context.Context, peerName, endpoint, tlsMode string) ([]string, error)
+	ProbeClaimProducer(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error)
+	ProbeClaimProducerDeclaredErrorClasses(ctx context.Context, peerName, endpoint, tlsMode string) ([]string, error)
 }
 
 type gRPCProber struct{}
@@ -29,7 +29,7 @@ type gRPCProber struct{}
 func NewGRPCProber() Prober { return gRPCProber{} }
 
 func (gRPCProber) ProbeExecutor(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error) {
-	conn, err := dial(ctx, peerName, endpoint, tlsMode)
+	conn, err := dial(peerName, endpoint, tlsMode)
 	if err != nil {
 		return nil, err
 	}
@@ -42,8 +42,8 @@ func (gRPCProber) ProbeExecutor(ctx context.Context, peerName, endpoint, tlsMode
 	return executorCapsFromProto(resp), nil
 }
 
-func (gRPCProber) ProbeStore(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error) {
-	conn, err := dial(ctx, peerName, endpoint, tlsMode)
+func (gRPCProber) ProbeClaimProducer(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error) {
+	conn, err := dial(peerName, endpoint, tlsMode)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +56,8 @@ func (gRPCProber) ProbeStore(ctx context.Context, peerName, endpoint, tlsMode st
 	return storeCapsFromProto(resp), nil
 }
 
-func (gRPCProber) ProbeStoreDeclaredErrorClasses(ctx context.Context, peerName, endpoint, tlsMode string) ([]string, error) {
-	conn, err := dial(ctx, peerName, endpoint, tlsMode)
+func (gRPCProber) ProbeClaimProducerDeclaredErrorClasses(ctx context.Context, peerName, endpoint, tlsMode string) ([]string, error) {
+	conn, err := dial(peerName, endpoint, tlsMode)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func customUIFromProto(r *genv1.CustomUI) *CustomUI {
 	}
 }
 
-func dial(_ context.Context, peerName, endpoint, tlsMode string) (*grpc.ClientConn, error) {
+func dial(peerName, endpoint, tlsMode string) (*grpc.ClientConn, error) {
 	target := stripScheme(endpoint)
 	label := peerName
 	if label == "" {
@@ -163,7 +163,7 @@ type PeerSpec struct {
 	TLS                   string
 }
 
-func RunHandshake(ctx context.Context, prober Prober, executors, stores []PeerSpec, log *slog.Logger) *Discovery {
+func RunHandshake(ctx context.Context, prober Prober, executors, claimProducers []PeerSpec, log *slog.Logger) *Discovery {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -176,7 +176,7 @@ func RunHandshake(ctx context.Context, prober Prober, executors, stores []PeerSp
 			d.SetExecutor(probeExecutorEntry(ctx, prober, e, log))
 		}(e)
 	}
-	for _, s := range stores {
+	for _, s := range claimProducers {
 		wg.Add(1)
 		go func(s PeerSpec) {
 			defer wg.Done()
@@ -226,13 +226,13 @@ func probeClaimProducerEntry(ctx context.Context, prober Prober, s PeerSpec, log
 		LastProbedAt:          time.Now(),
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-	caps, err := prober.ProbeStore(probeCtx, s.Name, probe, s.TLS)
+	caps, err := prober.ProbeClaimProducer(probeCtx, s.Name, probe, s.TLS)
 	cancel()
 	classCtx, classCancel := context.WithTimeout(ctx, handshakeTimeout)
-	declaredClasses, classErr := prober.ProbeStoreDeclaredErrorClasses(classCtx, s.Name, s.Endpoint, s.TLS)
+	declaredClasses, classErr := prober.ProbeClaimProducerDeclaredErrorClasses(classCtx, s.Name, s.Endpoint, s.TLS)
 	classCancel()
 	if classErr != nil {
-		log.Info("observability.handshake.store.declared_error_classes.unavailable",
+		log.Info("observability.handshake.claim_producer.declared_error_classes.unavailable",
 			slog.String("name", s.Name),
 			slog.String("endpoint", s.Endpoint),
 			slog.String("error", classErr.Error()))
@@ -240,7 +240,7 @@ func probeClaimProducerEntry(ctx context.Context, prober Prober, s PeerSpec, log
 	if err != nil {
 		entry.Reachability = ReachabilityUnreachable
 		entry.LastError = err.Error()
-		log.Info("observability.handshake.store.unreachable",
+		log.Info("observability.handshake.claim_producer.unreachable",
 			slog.String("name", s.Name),
 			slog.String("endpoint", probe),
 			slog.String("error", err.Error()))
@@ -284,7 +284,7 @@ func (d *Discovery) RefreshLoop(ctx context.Context, interval time.Duration, log
 
 func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 	executors := d.ListExecutors()
-	stores := d.ListClaimProducers()
+	claimProducers := d.ListClaimProducers()
 	var wg sync.WaitGroup
 	for _, e := range executors {
 		if e.Static {
@@ -314,7 +314,7 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 			d.SetExecutor(updated)
 		}(e)
 	}
-	for _, e := range stores {
+	for _, e := range claimProducers {
 		if e.Static {
 			continue
 		}
@@ -332,7 +332,7 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 	wg.Wait()
 	log.Debug("observability.handshake.refresh",
 		slog.Int("executors", len(executors)),
-		slog.Int("claim_producers", len(stores)))
+		slog.Int("claim_producers", len(claimProducers)))
 }
 
 func chooseObsEndpoint(observability, fallback string) string {

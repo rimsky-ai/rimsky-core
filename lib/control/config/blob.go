@@ -55,3 +55,9 @@ func OpenBlobBackend(cfg persistence.BlobConfig, db persistence.Database, topolo
 		return nil, fmt.Errorf("config: unknown blob backend %q", cfg.Backend)
 	}
 }
+
+// @concept: blob-backend
+func WireBlobBackend(cfg persistence.BlobConfig, db persistence.Database, topology persistence.Topology) error {
+	_, err := OpenBlobBackend(cfg, db, topology)
+	return err
+}

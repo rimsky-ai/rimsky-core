@@ -16,7 +16,7 @@ type DispatchRow struct {
 	NodeID                         shared.UUID       `json:"node_id"`
 	State                          cascade.NodeState `json:"state"`
 	ExecutorName                   *string           `json:"executor_name,omitempty"`
-	RequiredClaimProducers         []string          `json:"required_stores,omitempty"`
+	RequiredClaimProducers         []string          `json:"required_claim_producers,omitempty"`
 	EnqueuedAt                     time.Time         `json:"enqueued_at"`
 	ClaimedBy                      *string           `json:"claimed_by,omitempty"`
 	ClaimedAt                      *time.Time        `json:"claimed_at,omitempty"`

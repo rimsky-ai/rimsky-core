@@ -239,7 +239,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 				true
 		},
 		StoreDeclaredErrorClasses: func(storeName string) ([]string, bool) {
-			peer, ok := disc.GetStore(storeName)
+			peer, ok := disc.GetClaimProducer(storeName)
 			if !ok || peer.Capabilities == nil {
 				return nil, false
 			}
@@ -292,6 +292,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}
 	h.goWG(func() { disc.RefreshLoop(discoveryCtx, cfg.ObservabilityRefreshInterval, obsLogger) })
 	h.goWG(func() {
+		defer close(h.serveErr)
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			if cfg.Logger != nil {
 				cfg.Logger.Error("controlapi serve", "error", err.Error())

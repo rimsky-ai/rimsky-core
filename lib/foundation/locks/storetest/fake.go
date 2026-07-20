@@ -25,7 +25,6 @@ type Fake struct {
 	caps claimproducer.Capabilities
 
 	mu    sync.Mutex
-	state map[claimproducer.ClaimID]fakeState
 	calls []FakeCall
 
 	OpenFunc func(claimID claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error)
@@ -39,11 +38,6 @@ type Fake struct {
 	CommitResult claimproducer.CommitResult
 }
 
-type fakeState struct {
-	scope   []byte
-	address []byte
-}
-
 type FakeCall struct {
 	Verb               string
 	ClaimID            claimproducer.ClaimID
@@ -54,6 +48,7 @@ type FakeCall struct {
 	Scope              []byte
 	Address            []byte
 	TemplateID         string
+	TemplateHash       string
 	InstanceID         string
 	InstanceKey        string
 	Params             []byte
@@ -68,9 +63,8 @@ type FakeCall struct {
 
 func NewFake(name string, caps claimproducer.Capabilities) *Fake {
 	return &Fake{
-		name:  name,
-		caps:  caps,
-		state: make(map[claimproducer.ClaimID]fakeState),
+		name: name,
+		caps: caps,
 	}
 }
 
@@ -126,9 +120,6 @@ func (f *Fake) Open(_ context.Context, claimID claimproducer.ClaimID, spec claim
 			RealizedWriteSemantics: rws,
 		},
 	}
-	f.mu.Lock()
-	f.state[claimID] = fakeState{scope: scope, address: addr}
-	f.mu.Unlock()
 	return outcome, nil
 }
 
@@ -149,9 +140,6 @@ func (f *Fake) Commit(_ context.Context, claimID claimproducer.ClaimID, scope, a
 			return claimproducer.CommitResult{}, err
 		}
 	}
-	f.mu.Lock()
-	delete(f.state, claimID)
-	f.mu.Unlock()
 	return res, nil
 }
 
@@ -171,9 +159,6 @@ func (f *Fake) Abandon(_ context.Context, claimID claimproducer.ClaimID, scope, 
 			return err
 		}
 	}
-	f.mu.Lock()
-	delete(f.state, claimID)
-	f.mu.Unlock()
 	return nil
 }
 
@@ -193,9 +178,6 @@ func (f *Fake) Release(_ context.Context, claimID claimproducer.ClaimID, scope, 
 			return err
 		}
 	}
-	f.mu.Lock()
-	delete(f.state, claimID)
-	f.mu.Unlock()
 	return nil
 }
 
@@ -211,7 +193,6 @@ func (f *Fake) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = nil
-	f.state = make(map[claimproducer.ClaimID]fakeState)
 }
 
 func (f *Fake) OnTemplateRegistered(_ context.Context, req locks.OnTemplateRegisteredRequest) error {
@@ -233,7 +214,7 @@ func (f *Fake) OnTemplateDeregistered(_ context.Context, req locks.OnTemplateDer
 func (f *Fake) OnInstanceCreated(_ context.Context, req locks.OnInstanceCreatedRequest) error {
 	return f.recordLifecycleCall(FakeCall{
 		Verb:            "on_instance_created",
-		TemplateID:      req.TemplateHash,
+		TemplateHash:    req.TemplateHash,
 		InstanceID:      req.InstanceID,
 		InstanceKey:     req.InstanceKey,
 		Params:          cloneBytes(req.Params),
@@ -245,7 +226,7 @@ func (f *Fake) OnInstanceCreated(_ context.Context, req locks.OnInstanceCreatedR
 func (f *Fake) OnInstanceTerminated(_ context.Context, req locks.OnInstanceTerminatedRequest) error {
 	return f.recordLifecycleCall(FakeCall{
 		Verb:               "on_instance_terminated",
-		TemplateID:         req.TemplateHash,
+		TemplateHash:       req.TemplateHash,
 		InstanceID:         req.InstanceID,
 		TerminatedAtUnixMs: req.TerminatedAtUnixMs,
 	})
@@ -292,11 +273,11 @@ func (f *Fake) ScopesConflict(_ context.Context, a, b []byte) (bool, error) {
 	return locks.ClaimScopesByteEqual(a, b), nil
 }
 
-func (f *Fake) recordLifecycle(verb, templateID, instanceID string) error {
+func (f *Fake) recordLifecycle(verb, templateHash, instanceID string) error {
 	return f.recordLifecycleCall(FakeCall{
-		Verb:       verb,
-		TemplateID: templateID,
-		InstanceID: instanceID,
+		Verb:         verb,
+		TemplateHash: templateHash,
+		InstanceID:   instanceID,
 	})
 }
 

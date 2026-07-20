@@ -5,14 +5,46 @@
 package persistence_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/blobbackend"
 )
+
+type blobBackendAdapter struct {
+	be persistence.BlobBackend
+}
+
+func (a *blobBackendAdapter) Write(ctx context.Context, hint string, bytes []byte) (blobbackend.Handle, error) {
+	h, err := a.be.Write(ctx, persistence.BlobKey{Hint: hint}, bytes)
+	if err != nil {
+		return "", err
+	}
+	return blobbackend.Handle(h), nil
+}
+
+func (a *blobBackendAdapter) Read(ctx context.Context, handle blobbackend.Handle) ([]byte, error) {
+	b, err := a.be.Read(ctx, persistence.Handle(handle))
+	if errors.Is(err, persistence.ErrBlobNotFound) {
+		return nil, blobbackend.ErrBlobNotFound
+	}
+	return b, err
+}
+
+func (a *blobBackendAdapter) ReadRange(ctx context.Context, handle blobbackend.Handle, offset, length int64) ([]byte, error) {
+	b, err := a.be.ReadRange(ctx, persistence.Handle(handle), offset, length)
+	if errors.Is(err, persistence.ErrBlobNotFound) {
+		return nil, blobbackend.ErrBlobNotFound
+	}
+	return b, err
+}
+
+func (a *blobBackendAdapter) Delete(ctx context.Context, handle blobbackend.Handle) error {
+	return a.be.Delete(ctx, persistence.Handle(handle))
+}
 
 func TestBlobRoundtripBackends(t *testing.T) {
 	t.Parallel()
@@ -48,59 +80,20 @@ func TestBlobRoundtripBackends(t *testing.T) {
 			bb := tc.make(t)
 			ctx := context.Background()
 
-			small := bytes.Repeat([]byte("0123456789abcdef"), 64)
-			hSmall, err := bb.Write(ctx, persistence.BlobKey{NodeID: "n1", AttributeName: "small"}, small)
-			if err != nil {
-				t.Fatalf("Write small: %v", err)
-			}
-			gotSmall, err := bb.Read(ctx, hSmall)
-			if err != nil {
-				t.Fatalf("Read small: %v", err)
-			}
-			if !bytes.Equal(gotSmall, small) {
-				t.Fatalf("Read small: bytes mismatch (got %d bytes, want %d)", len(gotSmall), len(small))
+			results := blobbackend.Run(ctx, &blobBackendAdapter{be: bb})
+			for _, r := range results {
+				if r.Err != nil {
+					t.Errorf("%s: %v", r.Name, r.Err)
+				}
 			}
 
-			large := bytes.Repeat([]byte("abcdefghij"), 100*1024)
-			if len(large) != 1000*1024 {
-				t.Fatalf("test fixture wrong: got %d bytes", len(large))
-			}
-			hLarge, err := bb.Write(ctx, persistence.BlobKey{NodeID: "n1", AttributeName: "large"}, large)
+			probe, err := bb.Write(ctx, persistence.BlobKey{NodeID: "n1", AttributeName: "handle-prefix-probe"}, []byte("x"))
 			if err != nil {
-				t.Fatalf("Write large: %v", err)
+				t.Fatalf("Write probe: %v", err)
 			}
-			gotLarge, err := bb.Read(ctx, hLarge)
-			if err != nil {
-				t.Fatalf("Read large: %v", err)
-			}
-			if !bytes.Equal(gotLarge, large) {
-				t.Fatalf("Read large: bytes mismatch (got %d, want %d)", len(gotLarge), len(large))
-			}
-
-			rangeBytes, err := bb.ReadRange(ctx, hLarge, 12345, 100)
-			if err != nil {
-				t.Fatalf("ReadRange large: %v", err)
-			}
-			if !bytes.Equal(rangeBytes, large[12345:12345+100]) {
-				t.Fatalf("ReadRange large: bytes mismatch")
-			}
-
-			if err := bb.Delete(ctx, hSmall); err != nil {
-				t.Fatalf("Delete small: %v", err)
-			}
-			if err := bb.Delete(ctx, hSmall); err != nil {
-				t.Fatalf("Delete small (idempotent): %v", err)
-			}
-			if _, err := bb.Read(ctx, hSmall); !errors.Is(err, persistence.ErrBlobNotFound) {
-				t.Fatalf("Read after delete: want ErrBlobNotFound, got %v", err)
-			}
-
-			if err := bb.Delete(ctx, hLarge); err != nil {
-				t.Fatalf("Delete large: %v", err)
-			}
-
-			if !strings.HasPrefix(string(hSmall), tc.handlePrefix) || !strings.HasPrefix(string(hLarge), tc.handlePrefix) {
-				t.Fatalf("handles missing %q prefix: small=%q large=%q", tc.handlePrefix, hSmall, hLarge)
+			t.Cleanup(func() { _ = bb.Delete(ctx, probe) })
+			if !strings.HasPrefix(string(probe), tc.handlePrefix) {
+				t.Fatalf("handle missing %q prefix: got %q", tc.handlePrefix, probe)
 			}
 		})
 	}

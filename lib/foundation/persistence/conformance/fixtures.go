@@ -52,7 +52,7 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 	templateHash := "sha256-" + uuid.NewString()
 	instanceID := uuid.New()
 	nodeID := uuid.New()
-	frameID := uuid.New()
+	var frameID shared.UUID
 	mainRunScopeID := uuid.New()
 
 	tmplSpec := spec.TemplateSpec{

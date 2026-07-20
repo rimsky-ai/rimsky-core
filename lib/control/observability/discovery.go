@@ -52,7 +52,7 @@ type ObservabilityCapabilities struct {
 
 	DeclaredTags []string `json:"declared_tags,omitempty"`
 
-	//	@concept: signal
+	// @concept: signal
 	DeclaredErrorClasses []string `json:"declared_error_classes,omitempty"`
 }
 
@@ -71,17 +71,17 @@ type PeerEntry struct {
 
 // @concept: discovery-cache
 type Discovery struct {
-	mu        sync.RWMutex
-	executors map[string]PeerEntry
-	stores    map[string]PeerEntry
-	prober    Prober
+	mu             sync.RWMutex
+	executors      map[string]PeerEntry
+	claimProducers map[string]PeerEntry
+	prober         Prober
 }
 
 func NewDiscovery(prober Prober) *Discovery {
 	return &Discovery{
-		executors: map[string]PeerEntry{},
-		stores:    map[string]PeerEntry{},
-		prober:    prober,
+		executors:      map[string]PeerEntry{},
+		claimProducers: map[string]PeerEntry{},
+		prober:         prober,
 	}
 }
 
@@ -94,7 +94,7 @@ func (d *Discovery) SetExecutor(entry PeerEntry) {
 func (d *Discovery) SetClaimProducer(entry PeerEntry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.stores[entry.Name] = entry
+	d.claimProducers[entry.Name] = entry
 }
 
 func (d *Discovery) GetExecutor(name string) (PeerEntry, bool) {
@@ -104,10 +104,10 @@ func (d *Discovery) GetExecutor(name string) (PeerEntry, bool) {
 	return e, ok
 }
 
-func (d *Discovery) GetStore(name string) (PeerEntry, bool) {
+func (d *Discovery) GetClaimProducer(name string) (PeerEntry, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	e, ok := d.stores[name]
+	e, ok := d.claimProducers[name]
 	return e, ok
 }
 
@@ -124,8 +124,8 @@ func (d *Discovery) ListExecutors() []PeerEntry {
 func (d *Discovery) ListClaimProducers() []PeerEntry {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	out := make([]PeerEntry, 0, len(d.stores))
-	for _, e := range d.stores {
+	out := make([]PeerEntry, 0, len(d.claimProducers))
+	for _, e := range d.claimProducers {
 		out = append(out, e)
 	}
 	return out

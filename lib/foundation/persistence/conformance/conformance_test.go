@@ -101,8 +101,14 @@ func sqliteRawQuery(t *testing.T, d persistence.Database, sql string, args ...an
 func translatePlaceholders(sql string) string {
 	var b strings.Builder
 	n := 0
+	inString := false
 	for _, r := range sql {
-		if r == '?' {
+		if r == '\'' {
+			inString = !inString
+			b.WriteRune(r)
+			continue
+		}
+		if r == '?' && !inString {
 			n++
 			b.WriteString(fmt.Sprintf("$%d", n))
 			continue
