@@ -99,7 +99,7 @@ func TestSweepRotationGrace(t *testing.T) {
 
 	var auditFound int
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rl, err := tables.Events().List(ctx, persistence.EventListFilter{Kind: auth.EventKeyRevoked}, persistence.ListPagination{}, tx)
+		rl, err := tables.Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventKeyRevoked}}, persistence.ListPagination{}, tx)
 		if err != nil {
 			return err
 		}

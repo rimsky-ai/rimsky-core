@@ -764,16 +764,10 @@ func (f *fakeNodesDeps) ListByInstance(_ context.Context, instanceID shared.UUID
 	}
 	return nil, nil
 }
-func (f *fakeNodesDeps) ListByInstancePaged(_ context.Context, _ shared.UUID, _ persistence.ListPagination, _ persistence.Tx) (persistence.PaginatedListResult[persistence.NodeRow], error) {
-	return persistence.PaginatedListResult[persistence.NodeRow]{}, nil
-}
 func (f *fakeNodesDeps) ListByInstancePagedFiltered(_ context.Context, _ shared.UUID, _ persistence.ListPagination, _ persistence.NodeListFilter, _ persistence.Tx) (persistence.PaginatedListResult[persistence.NodeRow], error) {
 	return persistence.PaginatedListResult[persistence.NodeRow]{}, nil
 }
 func (f *fakeNodesDeps) ListReadyForDispatch(_ context.Context, _ persistence.Tx) ([]persistence.NodeRow, error) {
-	return nil, nil
-}
-func (f *fakeNodesDeps) ListRunning(_ context.Context, _ persistence.Tx) ([]persistence.NodeRow, error) {
 	return nil, nil
 }
 func (f *fakeNodesDeps) CountRunningForSupervisor(_ context.Context, _ string, _ persistence.Tx) (int, error) {
@@ -802,9 +796,6 @@ func (f *fakeNodesDeps) ResetFailedTerminalSettlingSignalType(_ context.Context,
 }
 func (f *fakeNodesDeps) GetFailedTerminalRunScopeID(_ context.Context, _ shared.UUID, _ persistence.Tx) (*shared.UUID, error) {
 	return nil, nil
-}
-func (f *fakeNodesDeps) DeleteByInstance(_ context.Context, _ shared.UUID, _ persistence.Tx) error {
-	return nil
 }
 func (f *fakeNodesDeps) HasRunForNodeInFrame(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) (bool, error) {
 	return false, nil

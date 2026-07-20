@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,18 +20,20 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-const lockHolderCols = `
-  id, lock_kind, lock_name, producer_name, claim_scope_data, address, payload, intent,
-  realized_write_semantics,
-  holder_supervisor_id, holder_node_id,
-  claimed_at, expires_at, frame_id,
-  node_run_id, is_held,
-  parent_claim_handle_id, lifetime, version_id,
-  producer_candidate_handle, producer_lease_token,
-  aggregation_policy, expected_children_count,
-  committed_children_count, abandoned_children_count,
-  state, resolved_at
-`
+var lockHolderColNames = []string{
+	"id", "lock_kind", "lock_name", "producer_name", "claim_scope_data", "address", "payload", "intent",
+	"realized_write_semantics",
+	"holder_supervisor_id", "holder_node_id",
+	"claimed_at", "expires_at", "frame_id",
+	"node_run_id", "is_held",
+	"parent_claim_handle_id", "lifetime", "version_id",
+	"producer_candidate_handle", "producer_lease_token",
+	"aggregation_policy", "expected_children_count",
+	"committed_children_count", "abandoned_children_count",
+	"state", "resolved_at",
+}
+
+var lockHolderCols = strings.Join(lockHolderColNames, ", ")
 
 func claimantGuard(alias string, n int) string {
 	col := "holder_supervisor_id"
@@ -408,22 +411,13 @@ func (s *claimHandlesImpl) SetVersionID(
 }
 
 func qualifiedLockHolderCols(alias string) string {
-	return alias + `.id, ` + alias + `.lock_kind, ` + alias + `.lock_name, ` +
-		alias + `.producer_name, ` + alias + `.claim_scope_data, ` + alias + `.address, ` +
-		alias + `.payload, ` +
-		alias + `.intent, ` + alias + `.realized_write_semantics, ` +
-		alias + `.holder_supervisor_id, ` + alias + `.holder_node_id, ` +
-		alias + `.claimed_at, ` + alias + `.expires_at, ` +
-		alias + `.frame_id, ` + alias + `.node_run_id, ` + alias + `.is_held, ` +
-		alias + `.parent_claim_handle_id, ` + alias + `.lifetime, ` +
-		alias + `.version_id, ` +
-		alias + `.producer_candidate_handle, ` + alias + `.producer_lease_token, ` +
-		alias + `.aggregation_policy, ` + alias + `.expected_children_count, ` +
-		alias + `.committed_children_count, ` + alias + `.abandoned_children_count, ` +
-		alias + `.state, ` + alias + `.resolved_at`
+	qualified := make([]string, len(lockHolderColNames))
+	for i, c := range lockHolderColNames {
+		qualified[i] = alias + "." + c
+	}
+	return strings.Join(qualified, ", ")
 }
 
-// @concept: orphan-reaper
 // @concept: orphan-reaper
 // @concept: parked-state
 func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {

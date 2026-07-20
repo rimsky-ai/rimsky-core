@@ -6,6 +6,7 @@ package conformance
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -244,8 +245,10 @@ func forceRunStateToFresh(
 		return err
 	}
 	switch row.State {
-	case cascade.NodeStateFresh, cascade.NodeStateFailed:
+	case cascade.NodeStateFresh:
 		return nil
+	case cascade.NodeStateFailed:
+		return fmt.Errorf("forceRunStateToFresh: run %s is NodeStateFailed, not forceable to fresh", runID)
 	case cascade.NodeStateStale:
 		if err := store.Nodes().UpdateState(ctx, runID,
 			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx); err != nil {

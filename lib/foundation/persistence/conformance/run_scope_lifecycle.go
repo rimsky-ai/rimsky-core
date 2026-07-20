@@ -3,8 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: run-scope
-
-// @concept: run-scope
 package conformance
 
 import (
@@ -19,7 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-func testRunScopeCreate_MainAndChild(t *testing.T, d persistence.Database) {
+func testRunScopeCreateMainAndChild(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
@@ -121,7 +119,7 @@ func testRunScopeCreate_MainAndChild(t *testing.T, d persistence.Database) {
 	}
 }
 
-func testRunScopeClose_StampsClosedAt(t *testing.T, d persistence.Database) {
+func testRunScopeCloseStampsClosedAt(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
@@ -176,7 +174,7 @@ func testRunScopeClose_StampsClosedAt(t *testing.T, d persistence.Database) {
 	}
 }
 
-func testRunScopeAffirmAfterClose_ErrRunScopeClosed(t *testing.T, d persistence.Database) {
+func testRunScopeAffirmAfterCloseErrRunScopeClosed(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()

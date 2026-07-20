@@ -67,37 +67,36 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		kindInArg = filter.KindIn
 	}
 	var respStatusArg any
-	if filter.ResponseStatus != nil {
-		respStatusArg = strconv.Itoa(*filter.ResponseStatus)
+	if filter.AuditPayload.ResponseStatus != nil {
+		respStatusArg = strconv.Itoa(*filter.AuditPayload.ResponseStatus)
 	}
 	rows, err := ex.Query(ctx,
 		`SELECT id, instance_id, node_id, kind, payload, occurred_at
 		 FROM rimsky_events
 		 WHERE ($1::uuid IS NULL OR node_id = $1)
 		   AND ($2::uuid IS NULL OR instance_id = $2)
-		   AND ($3::text IS NULL OR kind = $3)
-		   AND ($4::text[] IS NULL OR kind = ANY($4::text[]))
-		   AND ($5::timestamptz IS NULL OR occurred_at >= $5)
-		   AND ($6::timestamptz IS NULL OR occurred_at <= $6)
-		   AND ($7::timestamptz IS NULL OR (occurred_at, id) < ($7, $8))
-		   AND ($10::text IS NULL OR payload->>'key_id' = $10)
-		   AND ($11::text IS NULL OR payload->>'key_name' = $11)
-		   AND ($12::text IS NULL OR payload->>'action' = $12)
-		   AND ($13::text IS NULL OR payload->>'action' LIKE $13 || '%')
-		   AND ($14::text IS NULL OR payload->>'response_status' = $14)
-		   AND ($15::text IS NULL OR payload->>'mode' = $15)
-		   AND ($16::text IS NULL OR payload->>'request_path' = $16)
+		   AND ($3::text[] IS NULL OR kind = ANY($3::text[]))
+		   AND ($4::timestamptz IS NULL OR occurred_at >= $4)
+		   AND ($5::timestamptz IS NULL OR occurred_at <= $5)
+		   AND ($6::timestamptz IS NULL OR (occurred_at, id) < ($6, $7))
+		   AND ($9::text IS NULL OR payload->>'key_id' = $9)
+		   AND ($10::text IS NULL OR payload->>'key_name' = $10)
+		   AND ($11::text IS NULL OR payload->>'action' = $11)
+		   AND ($12::text IS NULL OR payload->>'action' LIKE $12 || '%')
+		   AND ($13::text IS NULL OR payload->>'response_status' = $13)
+		   AND ($14::text IS NULL OR payload->>'mode' = $14)
+		   AND ($15::text IS NULL OR payload->>'request_path' = $15)
 		 ORDER BY occurred_at DESC, id DESC
-		 LIMIT $9`,
+		 LIMIT $8`,
 		nodeIDArg(filter.NodeID), instanceIDArg(filter.InstanceID),
-		nullableString(filter.Kind), kindInArg,
+		kindInArg,
 		nullableTime(filter.Since), nullableTime(filter.Until),
 		nullableTime(cursorOccurred), nullableInt64(cursorID),
 		limit,
-		nullableStringPtr(filter.KeyID), nullableStringPtr(filter.KeyName),
-		nullableStringPtr(filter.ActionExact), nullableStringPtr(filter.ActionPrefix),
-		respStatusArg, nullableStringPtr(filter.Mode),
-		nullableStringPtr(filter.RequestPath),
+		nullableStringPtr(filter.AuditPayload.KeyID), nullableStringPtr(filter.AuditPayload.KeyName),
+		nullableStringPtr(filter.AuditPayload.ActionExact), nullableStringPtr(filter.AuditPayload.ActionPrefix),
+		respStatusArg, nullableStringPtr(filter.AuditPayload.Mode),
+		nullableStringPtr(filter.AuditPayload.RequestPath),
 	)
 	if err != nil {
 		return persistence.EventListResult{}, err
@@ -163,9 +162,9 @@ func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.U
 		        id, instance_id, node_id, kind, payload, occurred_at
 		   FROM rimsky_events
 		  WHERE node_id = ANY($1)
-		    AND kind IN ('work_completed', 'error')
+		    AND kind = ANY($2::text[])
 		  ORDER BY node_id, occurred_at DESC, id DESC`,
-		nodeIDs,
+		nodeIDs, []string{events.KindWorkCompleted().String(), events.KindError().String()},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("events.lastTerminalByNodes: %w", err)
@@ -231,9 +230,9 @@ func (s *eventsImpl) CountAttributeOverrideMatchesByIndex(
 		`SELECT (payload->>'override_index')::bigint AS idx, count(*)
 		   FROM rimsky_events
 		  WHERE instance_id = $1
-		    AND kind = 'attribute_override_matched'
+		    AND kind = $2
 		  GROUP BY idx`,
-		instanceID)
+		instanceID, events.KindAttributeOverrideMatched().String())
 	if err != nil {
 		return nil, fmt.Errorf("postgres.Events.CountAttributeOverrideMatchesByIndex: %w", err)
 	}

@@ -33,11 +33,14 @@ type EventAppendInput struct {
 type EventListFilter struct {
 	InstanceID *shared.UUID
 	NodeID     *shared.UUID
-	Kind       string
 	KindIn     []string
 	Since      *time.Time
 	Until      *time.Time
 
+	AuditPayload EventAuditPayloadFilter
+}
+
+type EventAuditPayloadFilter struct {
 	KeyID          *string
 	KeyName        *string
 	ActionExact    *string

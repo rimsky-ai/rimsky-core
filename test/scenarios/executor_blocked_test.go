@@ -45,7 +45,7 @@ func TestExecutorBlocked(t *testing.T) {
 	nid := n.ID
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "terminal/error/stub/executor_blocked"},
+		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, KindIn: []string{"terminal/error/stub/executor_blocked"}},
 			persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err

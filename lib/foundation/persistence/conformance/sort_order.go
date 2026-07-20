@@ -17,7 +17,7 @@ func testAdvisoryLockConcurrentAcquisitionSmoke(t *testing.T, d persistence.Data
 	store := d.Tables()
 	coord := d.AdvisoryLocker()
 	if coord == nil {
-		t.Fatalf("driver.Coordinator() returned nil")
+		t.Fatalf("driver.AdvisoryLocker() returned nil")
 	}
 
 	names := []string{"lock-a", "lock-b", "lock-c"}
@@ -46,7 +46,7 @@ func testAdvisoryLockConcurrentAcquisitionSmoke(t *testing.T, d persistence.Data
 	go run("B")
 	wg.Wait()
 
-	storeName := "scope-sort-store"
+	claimProducerName := "scope-sort-store"
 	scopes := [][]byte{
 		[]byte(`{"r":1}`),
 		[]byte(`{"r":2}`),
@@ -58,7 +58,7 @@ func testAdvisoryLockConcurrentAcquisitionSmoke(t *testing.T, d persistence.Data
 		for i := 0; i < iterations; i++ {
 			err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				for _, r := range scopes {
-					if err := coord.TakeClaimScopeLockInTx(ctx, tx, storeName, r); err != nil {
+					if err := coord.TakeClaimScopeLockInTx(ctx, tx, claimProducerName, r); err != nil {
 						return err
 					}
 				}

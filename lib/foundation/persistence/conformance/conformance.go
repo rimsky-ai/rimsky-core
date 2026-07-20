@@ -48,9 +48,9 @@ func Suite(
 	t.Run("ClaimHandlesUpdateClaimScope", func(t *testing.T) { testClaimHandlesUpdateClaimScope(t, factory(t)) })
 
 	t.Run("RunScopeLifecycle", func(t *testing.T) {
-		t.Run("CreateMainAndChild", func(t *testing.T) { testRunScopeCreate_MainAndChild(t, factory(t)) })
-		t.Run("CloseStampsClosedAt", func(t *testing.T) { testRunScopeClose_StampsClosedAt(t, factory(t)) })
-		t.Run("AffirmAfterCloseErrors", func(t *testing.T) { testRunScopeAffirmAfterClose_ErrRunScopeClosed(t, factory(t)) })
+		t.Run("CreateMainAndChild", func(t *testing.T) { testRunScopeCreateMainAndChild(t, factory(t)) })
+		t.Run("CloseStampsClosedAt", func(t *testing.T) { testRunScopeCloseStampsClosedAt(t, factory(t)) })
+		t.Run("AffirmAfterCloseErrors", func(t *testing.T) { testRunScopeAffirmAfterCloseErrRunScopeClosed(t, factory(t)) })
 		t.Run("FanoutPartitionUniqueness", func(t *testing.T) { testRunScopeFanoutPartitionUniqueness(t, factory(t)) })
 		t.Run("ListParentChain", func(t *testing.T) { testRunScopeListParentChain(t, factory(t)) })
 		t.Run("KindDerivableFromStructuralFields", func(t *testing.T) { testRunScopeKindDerivableFromStructuralFields(t, factory(t)) })
@@ -60,11 +60,11 @@ func Suite(
 	t.Run("FrameDerivedStateGenuineFailureStaysFailed", func(t *testing.T) { testFrameDerivedStateGenuineFailureStaysFailed(t, factory(t)) })
 	t.Run("RunScopeListTreeDeepestFirst", func(t *testing.T) { testRunScopeListTreeDeepestFirst(t, factory(t)) })
 	t.Run("RunInFlightLookup", func(t *testing.T) {
-		t.Run("SingleRowPerScopePerNode", func(t *testing.T) { testInFlightLookup_SingleRowPerScopePerNode(t, factory(t)) })
-		t.Run("NoFalsePositiveAcrossScopes", func(t *testing.T) { testInFlightLookup_NoFalsePositiveAcrossScopes(t, factory(t)) })
-		t.Run("ReturnsNoneWhenAbsent", func(t *testing.T) { testInFlightLookup_ReturnsNoneWhenAbsent(t, factory(t)) })
+		t.Run("SingleRowPerScopePerNode", func(t *testing.T) { testInFlightLookupSingleRowPerScopePerNode(t, factory(t)) })
+		t.Run("NoFalsePositiveAcrossScopes", func(t *testing.T) { testInFlightLookupNoFalsePositiveAcrossScopes(t, factory(t)) })
+		t.Run("ReturnsNoneWhenAbsent", func(t *testing.T) { testInFlightLookupReturnsNoneWhenAbsent(t, factory(t)) })
 		t.Run("DeterministicWithMultipleCoexistingPendings", func(t *testing.T) {
-			testInFlightLookup_DeterministicWithMultipleCoexistingPendings(t, factory(t))
+			testInFlightLookupDeterministicWithMultipleCoexistingPendings(t, factory(t))
 		})
 	})
 	t.Run("ListInFlightRunStates", func(t *testing.T) {
@@ -86,7 +86,6 @@ func Suite(
 		t.Run("ResetFailedTerminalSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t, factory(t)) })
 		t.Run("RemoveForNodeInTx", func(t *testing.T) { testRunStateWritesIsolated_RemoveForNodeInTx(t, factory(t)) })
 		t.Run("GetParkedByNode", func(t *testing.T) { testRunStateWritesIsolated_GetParkedByNode(t, factory(t)) })
-		t.Run("SetRetryNoProgressForRunInTx", func(t *testing.T) { testRunStateWritesIsolated_SetRetryNoProgressForRunInTx(t, factory(t)) })
 		t.Run("NodeAttributesGetLatestByNode", func(t *testing.T) { testRunStateWritesIsolated_NodeAttributesGetLatestByNode(t, factory(t)) })
 	})
 	t.Run("ScopeKeyedRunStateOpsIsolated", func(t *testing.T) {
@@ -117,11 +116,12 @@ func Suite(
 	t.Run("InstancesDeleteCascadeRunScopeTree", func(t *testing.T) {
 		testInstancesDeleteCascadeRunScopeTree(t, factory(t), rawQuery)
 	})
-	t.Run("StoreLifecycleListByStore", func(t *testing.T) { testStoreLifecycleListByStore(t, factory(t)) })
+	t.Run("LifecycleIdempotencyListByClaimProducer", func(t *testing.T) { testLifecycleIdempotencyListByClaimProducer(t, factory(t)) })
 	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
 	t.Run("EventsListAuthPayloadFilters", func(t *testing.T) { testEventsListAuthPayloadFilters(t, factory(t)) })
 	t.Run("EventsListPagination", func(t *testing.T) { testEventsListPagination(t, factory(t)) })
 	t.Run("MessagesListByFrameID", func(t *testing.T) { testMessagesListByFrameID(t, factory(t)) })
+	t.Run("MessagesListPendingForInstanceReturnsAllPending", func(t *testing.T) { testMessagesListPendingForInstanceReturnsAllPending(t, factory(t)) })
 	t.Run("MessagesListBySender", func(t *testing.T) { testMessagesListBySender(t, factory(t)) })
 	t.Run("MessagesMarkDeliveredExcludesCancelled", func(t *testing.T) { testMessagesMarkDeliveredExcludesCancelled(t, factory(t)) })
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })

@@ -28,7 +28,7 @@ func testOrphanCutoffTime(t *testing.T, d persistence.Database) {
 	resolvedPastID := uuid.New()
 	lockNameResolvedPast := "orphan-resolved-past"
 
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 pastID,
 			LockKind:           persistence.LockKindNamed,

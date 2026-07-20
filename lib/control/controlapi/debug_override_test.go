@@ -139,7 +139,7 @@ func hasDebugOverrideAuditEvent(t *testing.T, h *harness, instanceID shared.UUID
 	require.NoError(t, h.persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		out, err := h.persist.Events().List(ctx, persistence.EventListFilter{
 			InstanceID: &instanceID,
-			Kind:       "debug.override.applied",
+			KindIn:     []string{"debug.override.applied"},
 		}, persistence.ListPagination{Limit: 10}, tx)
 		if err != nil {
 			return err

@@ -3,8 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: run-scope
-
-// @concept: run-scope
 package conformance
 
 import (
@@ -223,10 +221,8 @@ func testRunStateWritesIsolated_BumpLastProgressAt(t *testing.T, d persistence.D
 		t.Fatalf("BumpLastProgressAt(A) did not land: A.LastProgressAt=%v, want %v", afterA.LastProgressAt, bumpedTo)
 	}
 	after := snapshotRun(ctx, t, d, f.runB)
-	if (before.LastProgressAt == nil) != (after.LastProgressAt == nil) ||
-		(before.LastProgressAt != nil && !before.LastProgressAt.Equal(*after.LastProgressAt)) {
-		t.Fatalf("BumpLastProgressAt leaked across scope: B before=%v after=%v",
-			before.LastProgressAt, after.LastProgressAt)
+	if !snapshotsEqual(before, after) {
+		t.Fatalf("BumpLastProgressAt leaked across scope: B snapshot before=%+v, after=%+v", before, after)
 	}
 }
 
@@ -366,35 +362,6 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 	}
 	if parkedB == nil {
 		t.Fatalf("GetParkedByNode(B): nil; want parked row")
-	}
-}
-
-func testRunStateWritesIsolated_SetRetryNoProgressForRunInTx(t *testing.T, d persistence.Database) {
-	ctx := context.Background()
-	f := seedTwoScopeRuns(ctx, t, d)
-	store := d.Tables()
-	q := d.Queue()
-
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return q.SetRetryNoProgressForRunInTx(ctx, tx, f.runA, 5)
-	}); err != nil {
-		t.Fatalf("SetRetryNoProgress(A): %v", err)
-	}
-
-	countA, _, err := q.GetRetryNoProgress(ctx, f.runA)
-	if err != nil {
-		t.Fatalf("GetRetryNoProgress(A): %v", err)
-	}
-	if countA != 5 {
-		t.Fatalf("SetRetryNoProgress(A) did not persist: A counter=%d, want 5", countA)
-	}
-
-	countB, _, err := q.GetRetryNoProgress(ctx, f.runB)
-	if err != nil {
-		t.Fatalf("GetRetryNoProgress(B): %v", err)
-	}
-	if countB != 0 {
-		t.Fatalf("SetRetryNoProgress leaked across scope: B counter=%d, want 0", countB)
 	}
 }
 

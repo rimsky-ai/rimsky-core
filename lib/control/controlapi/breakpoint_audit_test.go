@@ -154,7 +154,7 @@ func (h *breakpointAuditHarness) lastAttemptedRow(t *testing.T) map[string]any {
 	err := h.db.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		var lerr error
 		res, lerr = h.db.Tables().Events().List(ctx, persistence.EventListFilter{
-			Kind: auth.EventAccessAttempted,
+			KindIn: []string{auth.EventAccessAttempted},
 		}, persistence.ListPagination{Limit: 1}, tx)
 		return lerr
 	})

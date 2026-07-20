@@ -56,7 +56,6 @@ func testTxAtomicity(t *testing.T, d persistence.Database) {
 		t.Fatalf("commit tx: %v", err)
 	}
 	for _, tag := range []string{tagB, tagC} {
-		tag := tag
 		var row *persistence.TemplateTagRow
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
 			r, err := store.TemplateTags().Get(ctx, tag, tx)

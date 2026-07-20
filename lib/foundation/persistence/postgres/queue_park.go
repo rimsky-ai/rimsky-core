@@ -153,46 +153,6 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, nod
 	return cmd.RowsAffected() == 1, nil
 }
 
-func (q *queueImpl) GetRetryNoProgress(ctx context.Context, nodeRunID shared.UUID) (int, *int, error) {
-	var (
-		count    int
-		override sql.NullInt32
-	)
-	err := q.pool.QueryRow(ctx,
-		`SELECT consecutive_retries_no_progress, max_retries_without_progress
-		   FROM rimsky_node_runs
-		  WHERE id = $1`,
-		nodeRunID,
-	).Scan(&count, &override)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, nil, nil
-		}
-		return 0, nil, fmt.Errorf("postgres.GetRetryNoProgress: %w", err)
-	}
-	if override.Valid {
-		v := int(override.Int32)
-		return count, &v, nil
-	}
-	return count, nil, nil
-}
-
-func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, count int) error {
-	if tx == nil {
-		return errors.New("postgres.SetRetryNoProgressForRunInTx: tx required")
-	}
-	_, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_node_runs
-		    SET consecutive_retries_no_progress = $2
-		  WHERE id = $1`,
-		nodeRunID, count,
-	)
-	if err != nil {
-		return fmt.Errorf("postgres.SetRetryNoProgressForRunInTx: %w", err)
-	}
-	return nil
-}
-
 func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, maxRetriesWithoutProgress *int) error {
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs

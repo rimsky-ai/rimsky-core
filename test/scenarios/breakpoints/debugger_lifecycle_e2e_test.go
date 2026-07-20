@@ -103,7 +103,7 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 		ledgerCount = len(ledgerHits)
 		eventRes, err := h.Persist.Events().List(ctx, persistence.EventListFilter{
 			InstanceID: &iid,
-			Kind:       "breakpoint.hit",
+			KindIn:     []string{"breakpoint.hit"},
 		}, persistence.ListPagination{Limit: 1000}, tx)
 		if err != nil {
 			return err

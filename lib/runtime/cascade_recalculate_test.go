@@ -61,13 +61,6 @@ func (f *invTestQueue) PromoteClaimedToRunning(_ context.Context, _ persistence.
 func (f *invTestQueue) Complete(_ context.Context, _ shared.UUID, _ string) error { return nil }
 func (f *invTestQueue) ForceComplete(_ context.Context, _ shared.UUID) error      { return nil }
 
-func (f *invTestQueue) RemoveForNode(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.removedNodes = append(f.removedNodes, nodeID)
-	return nil
-}
-
 func (f *invTestQueue) RemoveForNodeInTx(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ string, _ persistence.Tx) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -148,12 +141,6 @@ func (f *invTestQueue) GetParkedByNode(_ context.Context, _ persistence.Tx, _ sh
 }
 func (f *invTestQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (bool, error) {
 	return false, nil
-}
-func (f *invTestQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
-	return 0, nil, nil
-}
-func (f *invTestQueue) SetRetryNoProgressForRunInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ int) error {
-	return nil
 }
 func (f *invTestQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int) error {
 	return nil

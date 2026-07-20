@@ -3,8 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: run-scope
-
-// @concept: run-scope
 package conformance
 
 import (

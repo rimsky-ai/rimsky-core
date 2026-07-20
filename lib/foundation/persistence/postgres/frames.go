@@ -59,10 +59,6 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
 func (s *framesImpl) HasFailedNode(ctx context.Context, instanceID, frameID shared.UUID, tx persistence.Tx) (bool, error) {
 	var anyFailed bool
 	err := s.q(tx).QueryRow(ctx, `
-        -- failure-detection: not an unresolved-work predicate. Reads the
-        -- failed flavor to pick the frame's terminal state; parked is
-        -- irrelevant here (a parked run is neither failed nor a reason to
-        -- fail the frame).
         SELECT EXISTS (
             SELECT 1 FROM rimsky_node_runs r
             JOIN rimsky_nodes n ON n.id = r.node_id
@@ -343,17 +339,6 @@ func decodeFrameCursor(s string) (time.Time, shared.UUID, error) {
 		return time.Time{}, shared.UUID{}, err
 	}
 	return c.StartedAt, c.F, nil
-}
-
-func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, tx persistence.Tx) error {
-	_, err := s.q(tx).Exec(ctx,
-		`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`,
-		frameID,
-	)
-	if err != nil {
-		return fmt.Errorf("frames.RefreshProgress: %w", err)
-	}
-	return nil
 }
 
 const prunedFrameIDsSQL = `

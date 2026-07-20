@@ -115,10 +115,10 @@ func FanOutRunScopeEvent(
 		if err := withOptionalFanOutTx(ctx, persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
 			return persist.LifecycleIdempotency().Upsert(ctx,
 				persistence.LifecycleIdempotencyRow{
-					StoreRegistrationName: name,
-					ScopeKind:             persistence.LifecycleIdempotencyScopeRunScope,
-					ScopeID:               scopeID,
-					State:                 persistence.LifecycleIdempotencyStateRunScopeTerminal,
+					ClaimProducerName: name,
+					ScopeKind:         persistence.LifecycleIdempotencyScopeRunScope,
+					ScopeID:           scopeID,
+					State:             persistence.LifecycleIdempotencyStateRunScopeTerminal,
 				}, useTx,
 			)
 		}); err != nil {

@@ -104,10 +104,10 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 			return err
 		}
 		return f.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			StoreRegistrationName: storeName,
-			ScopeKind:             persistence.LifecycleIdempotencyScopeInstance,
-			ScopeID:               instanceID.String(),
-			State:                 persistence.LifecycleIdempotencyStateCreated,
+			ClaimProducerName: storeName,
+			ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
+			ScopeID:           instanceID.String(),
+			State:             persistence.LifecycleIdempotencyStateCreated,
 		}, tx)
 	}))
 
@@ -342,10 +342,10 @@ func TestInstanceTerminator_MultiStorePartialFailureInSameTick(t *testing.T) {
 		}
 		for _, name := range []string{"alpha", "beta"} {
 			if err := f.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-				StoreRegistrationName: name,
-				ScopeKind:             persistence.LifecycleIdempotencyScopeInstance,
-				ScopeID:               instanceID.String(),
-				State:                 persistence.LifecycleIdempotencyStateCreated,
+				ClaimProducerName: name,
+				ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
+				ScopeID:           instanceID.String(),
+				State:             persistence.LifecycleIdempotencyStateCreated,
 			}, tx); err != nil {
 				return err
 			}

@@ -28,18 +28,18 @@ const (
 )
 
 type LifecycleIdempotencyRow struct {
-	StoreRegistrationName string                        `json:"store_registration_name"`
-	ScopeKind             LifecycleIdempotencyScopeKind `json:"scope_kind"`
-	ScopeID               string                        `json:"scope_id"`
-	State                 LifecycleIdempotencyState     `json:"state"`
-	LastEventAt           time.Time                     `json:"last_event_at"`
+	ClaimProducerName string                        `json:"claim_producer_name"`
+	ScopeKind         LifecycleIdempotencyScopeKind `json:"scope_kind"`
+	ScopeID           string                        `json:"scope_id"`
+	State             LifecycleIdempotencyState     `json:"state"`
+	LastEventAt       time.Time                     `json:"last_event_at"`
 }
 
 type LifecycleIdempotencyTable interface {
-	Get(ctx context.Context, storeName string, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) (*LifecycleIdempotencyRow, error)
+	Get(ctx context.Context, claimProducerName string, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) (*LifecycleIdempotencyRow, error)
 	Upsert(ctx context.Context, row LifecycleIdempotencyRow, tx Tx) error
-	Delete(ctx context.Context, storeName string, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) error
+	Delete(ctx context.Context, claimProducerName string, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) error
 	DeleteByScope(ctx context.Context, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) error
 	ListByScope(ctx context.Context, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) ([]LifecycleIdempotencyRow, error)
-	ListByStore(ctx context.Context, storeName string, tx Tx) ([]LifecycleIdempotencyRow, error)
+	ListByClaimProducer(ctx context.Context, claimProducerName string, tx Tx) ([]LifecycleIdempotencyRow, error)
 }

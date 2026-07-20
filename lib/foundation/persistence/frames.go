@@ -102,8 +102,6 @@ type FrameTable interface {
 
 	GetForObservability(ctx context.Context, frameID shared.UUID, tx Tx) (*FrameRow, error)
 
-	RefreshProgress(ctx context.Context, frameID shared.UUID, tx Tx) error
-
 	CountHeldFrames(ctx context.Context, tx Tx) (int, error)
 
 	// @concept: frame

@@ -82,7 +82,7 @@ func TestNoOpCommit(t *testing.T) {
 	var allCommitted persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Events().List(h.Ctx,
-			persistence.EventListFilter{NodeID: &pid, Kind: "terminal/success"},
+			persistence.EventListFilter{NodeID: &pid, KindIn: []string{"terminal/success"}},
 			persistence.ListPagination{Limit: 200}, tx)
 		allCommitted = r
 		return err

@@ -63,15 +63,12 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		cursorID = id
 	}
 
-	var nodeArg, instArg, kindArg, sinceArg, untilArg any
+	var nodeArg, instArg, sinceArg, untilArg any
 	if filter.NodeID != nil {
 		nodeArg = filter.NodeID.String()
 	}
 	if filter.InstanceID != nil {
 		instArg = filter.InstanceID.String()
-	}
-	if filter.Kind != "" {
-		kindArg = filter.Kind
 	}
 	if filter.Since != nil {
 		sinceArg = formatTime(*filter.Since)
@@ -81,31 +78,31 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 	}
 
 	var keyIDArg, keyNameArg, actionExactArg, actionPrefixArg, respStatusArg, modeArg, requestPathArg any
-	if filter.KeyID != nil {
-		keyIDArg = *filter.KeyID
+	if filter.AuditPayload.KeyID != nil {
+		keyIDArg = *filter.AuditPayload.KeyID
 	}
-	if filter.KeyName != nil {
-		keyNameArg = *filter.KeyName
+	if filter.AuditPayload.KeyName != nil {
+		keyNameArg = *filter.AuditPayload.KeyName
 	}
-	if filter.ActionExact != nil {
-		actionExactArg = *filter.ActionExact
+	if filter.AuditPayload.ActionExact != nil {
+		actionExactArg = *filter.AuditPayload.ActionExact
 	}
-	if filter.ActionPrefix != nil {
-		actionPrefixArg = *filter.ActionPrefix + "%"
+	if filter.AuditPayload.ActionPrefix != nil {
+		actionPrefixArg = *filter.AuditPayload.ActionPrefix + "%"
 	}
-	if filter.ResponseStatus != nil {
-		respStatusArg = *filter.ResponseStatus
+	if filter.AuditPayload.ResponseStatus != nil {
+		respStatusArg = *filter.AuditPayload.ResponseStatus
 	}
-	if filter.Mode != nil {
-		modeArg = *filter.Mode
+	if filter.AuditPayload.Mode != nil {
+		modeArg = *filter.AuditPayload.Mode
 	}
-	if filter.RequestPath != nil {
-		requestPathArg = *filter.RequestPath
+	if filter.AuditPayload.RequestPath != nil {
+		requestPathArg = *filter.AuditPayload.RequestPath
 	}
 
 	kindInClause := ""
 	args := []any{
-		nodeArg, nodeArg, instArg, instArg, kindArg, kindArg,
+		nodeArg, nodeArg, instArg, instArg,
 		sinceArg, sinceArg, untilArg, untilArg,
 		cursorOccurred, cursorOccurred, cursorID,
 	}
@@ -136,7 +133,6 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		 FROM rimsky_events
 		 WHERE (? IS NULL OR node_id = ?)
 		   AND (? IS NULL OR instance_id = ?)
-		   AND (? IS NULL OR kind = ?)
 		   AND (? IS NULL OR occurred_at >= ?)
 		   AND (? IS NULL OR occurred_at <= ?)
 		   AND (? IS NULL OR (occurred_at, id) < (?, ?))`+kindInClause+
@@ -226,7 +222,7 @@ func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.U
 		return out, nil
 	}
 	placeholders := ""
-	args := make([]any, 0, len(nodeIDs))
+	args := make([]any, 0, len(nodeIDs)+4)
 	for i, id := range nodeIDs {
 		if i > 0 {
 			placeholders += ","
@@ -234,14 +230,16 @@ func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.U
 		placeholders += "?"
 		args = append(args, id.String())
 	}
+	terminalKind1, terminalKind2 := events.KindWorkCompleted().String(), events.KindError().String()
+	args = append(args, terminalKind1, terminalKind2, terminalKind1, terminalKind2)
 	q := `SELECT e.id, e.instance_id, e.node_id, e.kind, e.payload, e.occurred_at
 		FROM rimsky_events e
 		WHERE e.node_id IN (` + placeholders + `)
-		  AND e.kind IN ('work_completed', 'error')
+		  AND e.kind IN (?, ?)
 		  AND e.id = (
 		    SELECT e2.id FROM rimsky_events e2
 		    WHERE e2.node_id = e.node_id
-		      AND e2.kind IN ('work_completed', 'error')
+		      AND e2.kind IN (?, ?)
 		    ORDER BY e2.occurred_at DESC, e2.id DESC
 		    LIMIT 1
 		  )`
@@ -332,9 +330,9 @@ func (s *eventsImpl) CountAttributeOverrideMatchesByIndex(
 		`SELECT CAST(json_extract(payload, '$.override_index') AS INTEGER) AS idx, count(*)
 		   FROM rimsky_events
 		  WHERE instance_id = ?
-		    AND kind = 'attribute_override_matched'
+		    AND kind = ?
 		  GROUP BY idx`,
-		instanceID.String())
+		instanceID.String(), events.KindAttributeOverrideMatched().String())
 	if err != nil {
 		return nil, fmt.Errorf("sqlite.Events.CountAttributeOverrideMatchesByIndex: %w", err)
 	}

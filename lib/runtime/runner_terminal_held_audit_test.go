@@ -23,7 +23,7 @@ func countSignalAudits(t *testing.T, tables persistence.Tables, nodeID shared.UU
 	ctx := context.Background()
 	var n int
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := tables.Events().List(ctx, persistence.EventListFilter{NodeID: &nodeID, Kind: kind},
+		rows, err := tables.Events().List(ctx, persistence.EventListFilter{NodeID: &nodeID, KindIn: []string{kind}},
 			persistence.ListPagination{Limit: 100}, tx)
 		if err != nil {
 			return err

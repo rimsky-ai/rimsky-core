@@ -140,10 +140,10 @@ func FanOutTemplateEvent(
 		}
 		if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
 			return deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-				StoreRegistrationName: name,
-				ScopeKind:             scopeKind,
-				ScopeID:               templateHash,
-				State:                 target,
+				ClaimProducerName: name,
+				ScopeKind:         scopeKind,
+				ScopeID:           templateHash,
+				State:             target,
 			}, useTx)
 		}); err != nil {
 			perPeerErr[name] = err
@@ -249,10 +249,10 @@ func fanOutInstancePeer(
 	}
 	if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
 		return deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			StoreRegistrationName: name,
-			ScopeKind:             scopeKind,
-			ScopeID:               instanceID,
-			State:                 target,
+			ClaimProducerName: name,
+			ScopeKind:         scopeKind,
+			ScopeID:           instanceID,
+			State:             target,
 		}, useTx)
 	}); err != nil {
 		perPeerErr[name] = err
@@ -328,10 +328,10 @@ func fanOutRunScopePeer(
 	}
 	if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
 		return deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			StoreRegistrationName: name,
-			ScopeKind:             scopeKind,
-			ScopeID:               scopeID,
-			State:                 persistence.LifecycleIdempotencyStateRunScopeTerminal,
+			ClaimProducerName: name,
+			ScopeKind:         scopeKind,
+			ScopeID:           scopeID,
+			State:             persistence.LifecycleIdempotencyStateRunScopeTerminal,
 		}, useTx)
 	}); err != nil {
 		perPeerErr[name] = err
@@ -498,7 +498,7 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 
 	peers := make([]string, 0, len(rows))
 	for _, r := range rows {
-		peers = append(peers, r.StoreRegistrationName)
+		peers = append(peers, r.ClaimProducerName)
 	}
 	if err := closeAndFanOutRunScopesForInstanceWithPeers(ctx, deps, peers, inst.ID, terminalReason); err != nil {
 		return err
@@ -509,7 +509,7 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 		terminatedAtMs = inst.TerminatedAt.UnixMilli()
 	}
 	for _, r := range rows {
-		if err := dispatchInstanceTerminatedForPeer(ctx, deps, inst.ID.String(), inst.TemplateHash, terminatedAtMs, r.StoreRegistrationName); err != nil {
+		if err := dispatchInstanceTerminatedForPeer(ctx, deps, inst.ID.String(), inst.TemplateHash, terminatedAtMs, r.ClaimProducerName); err != nil {
 			return err
 		}
 	}

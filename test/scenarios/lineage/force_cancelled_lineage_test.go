@@ -98,7 +98,7 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		p, err := backend.Events().List(ctx, persistence.EventListFilter{
 			InstanceID: &inst,
-			Kind:       "claim_resolution.abandon",
+			KindIn:     []string{"claim_resolution.abandon"},
 		}, persistence.ListPagination{Limit: 50}, tx)
 		page = p
 		return err

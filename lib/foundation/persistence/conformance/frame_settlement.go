@@ -145,6 +145,17 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("HasFailedNode = true with only a claimed running run")
 	}
 
+	parkedNodeID := seedExtraNode(ctx, t, d, fix, "frame-settlement-parked-node")
+	parkedRunID := seedClaimedRunForNode(ctx, t, d, fix, parkedNodeID, frameSettlementSup)
+	now := time.Now().UTC()
+	parkRun(ctx, t, d, persistence.ParkActiveInput{
+		NodeRunID: parkedRunID, ExpectedClaimedBy: frameSettlementSup,
+		ParkedAt: now, ResumeAt: now.Add(time.Hour),
+	})
+	if hasFailed(fix.FrameID) {
+		t.Fatalf("HasFailedNode = true with a parked run present: parked is neither failed nor a reason to fail the frame")
+	}
+
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().UpdateState(ctx, runToFail,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx)

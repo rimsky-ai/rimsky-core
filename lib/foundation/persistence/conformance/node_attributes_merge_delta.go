@@ -114,7 +114,7 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 			len(priorData), len(got2.Data))
 	}
 	for k, v := range priorData {
-		if !equalAny(got2.Data[k], v) {
+		if !jsonValueEqual(got2.Data[k], v) {
 			t.Fatalf("nil-delta touch: data[%q] mutated (was %v, is %v)", k, v, got2.Data[k])
 		}
 	}
@@ -126,5 +126,3 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		t.Fatalf("MergeDelta nil-delta on missing row: expected silent no-op, got %v", err)
 	}
 }
-
-func equalAny(a, b any) bool { return jsonValueEqual(a, b) }

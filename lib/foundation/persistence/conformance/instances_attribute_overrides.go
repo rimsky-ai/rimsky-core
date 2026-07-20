@@ -12,17 +12,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func testInstancesAttributeOverridesRoundTrip(t *testing.T, d persistence.Database) {
-	t.Helper()
-	defer d.Close()
 	ctx := context.Background()
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	store := d.Tables()
 
 	tmpl := "sha256-" + uuid.NewString()
@@ -84,12 +78,7 @@ func testInstancesAttributeOverridesRoundTrip(t *testing.T, d persistence.Databa
 }
 
 func testInstancesAttributeOverridesDefaultsEmpty(t *testing.T, d persistence.Database) {
-	t.Helper()
-	defer d.Close()
 	ctx := context.Background()
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	store := d.Tables()
 
 	tmpl := "sha256-" + uuid.NewString()

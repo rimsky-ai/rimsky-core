@@ -3,14 +3,11 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: run-scope
-
-// @concept: run-scope
 package conformance
 
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -19,17 +16,15 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-func testInFlightLookup_SingleRowPerScopePerNode(t *testing.T, d persistence.Database) {
+func testInFlightLookupSingleRowPerScopePerNode(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 	q := d.Queue()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return func() error {
-			_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
-			return err
-		}()
+		_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		return err
 	}); err != nil {
 		t.Fatalf("Affirm: %v", err)
 	}
@@ -52,7 +47,7 @@ func testInFlightLookup_SingleRowPerScopePerNode(t *testing.T, d persistence.Dat
 	}
 }
 
-func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.Database) {
+func testInFlightLookupNoFalsePositiveAcrossScopes(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
@@ -118,7 +113,7 @@ func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.
 }
 
 // @concept: wait-set
-func testInFlightLookup_DeterministicWithMultipleCoexistingPendings(t *testing.T, d persistence.Database) {
+func testInFlightLookupDeterministicWithMultipleCoexistingPendings(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
@@ -158,7 +153,7 @@ func testInFlightLookup_DeterministicWithMultipleCoexistingPendings(t *testing.T
 	}
 }
 
-func testInFlightLookup_ReturnsNoneWhenAbsent(t *testing.T, d persistence.Database) {
+func testInFlightLookupReturnsNoneWhenAbsent(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
@@ -181,6 +176,4 @@ func testInFlightLookup_ReturnsNoneWhenAbsent(t *testing.T, d persistence.Databa
 	if id != (shared.UUID{}) {
 		t.Fatalf("GetInFlightRunForNode (missing): id=%v, want zero", id)
 	}
-
-	_ = time.Time{}
 }

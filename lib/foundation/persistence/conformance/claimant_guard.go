@@ -891,15 +891,17 @@ func testClaimantGuardRunRemoveForNode(t *testing.T, d persistence.Database) {
 	}
 	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "RemoveForNodeInTx")
 
-	if err := q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, guardSupA); err != nil {
-		t.Fatalf("owner RemoveForNode: %v", err)
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, guardSupA, tx)
+	}); err != nil {
+		t.Fatalf("owner RemoveForNodeInTx: %v", err)
 	}
 	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy after owner remove: %v", err)
 	}
 	if owner.Kind != "unclaimed" {
-		t.Fatalf("owner RemoveForNode did not release claim: %s/%s", owner.Kind, owner.SupervisorID)
+		t.Fatalf("owner RemoveForNodeInTx did not release claim: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 }
 

@@ -51,9 +51,6 @@ func (f *fakeQueue) PromoteClaimedToRunning(_ context.Context, _ persistence.Tx,
 }
 func (f *fakeQueue) Complete(_ context.Context, _ shared.UUID, _ string) error { return nil }
 func (f *fakeQueue) ForceComplete(_ context.Context, _ shared.UUID) error      { return nil }
-func (f *fakeQueue) RemoveForNode(_ context.Context, _ shared.UUID, _ shared.UUID, _ string) error {
-	return nil
-}
 func (f *fakeQueue) RemoveForNodeInTx(_ context.Context, _ shared.UUID, _ shared.UUID, _ string, _ persistence.Tx) error {
 	return nil
 }
@@ -112,12 +109,6 @@ func (f *fakeQueue) GetParkedByNode(_ context.Context, _ persistence.Tx, _ share
 }
 func (f *fakeQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (bool, error) {
 	return false, nil
-}
-func (f *fakeQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
-	return 0, nil, nil
-}
-func (f *fakeQueue) SetRetryNoProgressForRunInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ int) error {
-	return nil
 }
 func (f *fakeQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int) error {
 	return nil
@@ -349,7 +340,7 @@ func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testi
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-			NodeID: &pure.ID, Kind: "terminal/success",
+			NodeID: &pure.ID, KindIn: []string{"terminal/success"},
 		}, persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err
@@ -389,7 +380,7 @@ func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-			NodeID: &execNode.ID, Kind: "terminal/success",
+			NodeID: &execNode.ID, KindIn: []string{"terminal/success"},
 		}, persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err
@@ -462,7 +453,7 @@ func TestProcessPureCascade_NativeClaimOnly_ReusesStaleRunAcrossTicks(t *testing
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-			NodeID: &claimNode.ID, Kind: "terminal/success",
+			NodeID: &claimNode.ID, KindIn: []string{"terminal/success"},
 		}, persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err
@@ -507,7 +498,7 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-			Kind: "terminal/success",
+			KindIn: []string{"terminal/success"},
 		}, persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err
@@ -585,7 +576,7 @@ func TestProcessPureCascade_TemplateLookupTransactionErrorDoesNotSettleClaimNode
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-			NodeID: &claimNode.ID, Kind: "terminal/success",
+			NodeID: &claimNode.ID, KindIn: []string{"terminal/success"},
 		}, persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err

@@ -15,12 +15,12 @@ import (
 
 const storeLifecycleCols = `store_registration_name, scope_kind, scope_id, state, last_event_at`
 
-func (s *lifecycleIdempotencyImpl) Get(ctx context.Context, storeName string, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) (*persistence.LifecycleIdempotencyRow, error) {
+func (s *lifecycleIdempotencyImpl) Get(ctx context.Context, claimProducerName string, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) (*persistence.LifecycleIdempotencyRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT `+storeLifecycleCols+`
 		 FROM rimsky_lifecycle_idempotencies
 		 WHERE store_registration_name = ? AND scope_kind = ? AND scope_id = ?`,
-		storeName, string(scopeKind), scopeID,
+		claimProducerName, string(scopeKind), scopeID,
 	)
 	r, err := scanLifecycleIdempotency(row)
 	if err != nil {
@@ -38,7 +38,7 @@ func (s *lifecycleIdempotencyImpl) Upsert(ctx context.Context, in persistence.Li
 		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(store_registration_name, scope_kind, scope_id)
 		 DO UPDATE SET state = excluded.state, last_event_at = excluded.last_event_at`,
-		in.StoreRegistrationName, string(in.ScopeKind), in.ScopeID, string(in.State), nowUTC(),
+		in.ClaimProducerName, string(in.ScopeKind), in.ScopeID, string(in.State), nowUTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("store_lifecycle.upsert: %w", err)
@@ -46,11 +46,11 @@ func (s *lifecycleIdempotencyImpl) Upsert(ctx context.Context, in persistence.Li
 	return nil
 }
 
-func (s *lifecycleIdempotencyImpl) Delete(ctx context.Context, storeName string, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) error {
+func (s *lifecycleIdempotencyImpl) Delete(ctx context.Context, claimProducerName string, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`DELETE FROM rimsky_lifecycle_idempotencies
 		 WHERE store_registration_name = ? AND scope_kind = ? AND scope_id = ?`,
-		storeName, string(scopeKind), scopeID,
+		claimProducerName, string(scopeKind), scopeID,
 	)
 	if err != nil {
 		return fmt.Errorf("store_lifecycle.delete: %w", err)
@@ -94,16 +94,16 @@ func (s *lifecycleIdempotencyImpl) ListByScope(ctx context.Context, scopeKind pe
 	return out, rows.Err()
 }
 
-func (s *lifecycleIdempotencyImpl) ListByStore(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.LifecycleIdempotencyRow, error) {
+func (s *lifecycleIdempotencyImpl) ListByClaimProducer(ctx context.Context, claimProducerName string, tx persistence.Tx) ([]persistence.LifecycleIdempotencyRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+storeLifecycleCols+`
 		 FROM rimsky_lifecycle_idempotencies
 		 WHERE store_registration_name = ?
 		 ORDER BY scope_kind ASC, scope_id ASC`,
-		storeName,
+		claimProducerName,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("store_lifecycle.listByStore: %w", err)
+		return nil, fmt.Errorf("store_lifecycle.listByClaimProducer: %w", err)
 	}
 	defer rows.Close()
 
@@ -120,13 +120,13 @@ func (s *lifecycleIdempotencyImpl) ListByStore(ctx context.Context, storeName st
 
 func scanLifecycleIdempotency(sc scannable) (persistence.LifecycleIdempotencyRow, error) {
 	var (
-		storeName      string
-		scopeKindStr   string
-		scopeID        string
-		stateStr       string
-		lastEventAtStr string
+		claimProducerName string
+		scopeKindStr      string
+		scopeID           string
+		stateStr          string
+		lastEventAtStr    string
 	)
-	if err := sc.Scan(&storeName, &scopeKindStr, &scopeID, &stateStr, &lastEventAtStr); err != nil {
+	if err := sc.Scan(&claimProducerName, &scopeKindStr, &scopeID, &stateStr, &lastEventAtStr); err != nil {
 		return persistence.LifecycleIdempotencyRow{}, err
 	}
 	lastEventAt, err := parseTime(lastEventAtStr)
@@ -134,10 +134,10 @@ func scanLifecycleIdempotency(sc scannable) (persistence.LifecycleIdempotencyRow
 		return persistence.LifecycleIdempotencyRow{}, err
 	}
 	return persistence.LifecycleIdempotencyRow{
-		StoreRegistrationName: storeName,
-		ScopeKind:             persistence.LifecycleIdempotencyScopeKind(scopeKindStr),
-		ScopeID:               scopeID,
-		State:                 persistence.LifecycleIdempotencyState(stateStr),
-		LastEventAt:           lastEventAt,
+		ClaimProducerName: claimProducerName,
+		ScopeKind:         persistence.LifecycleIdempotencyScopeKind(scopeKindStr),
+		ScopeID:           scopeID,
+		State:             persistence.LifecycleIdempotencyState(stateStr),
+		LastEventAt:       lastEventAt,
 	}, nil
 }

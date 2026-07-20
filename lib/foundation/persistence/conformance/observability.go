@@ -13,17 +13,11 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
-	t.Helper()
-	defer d.Close()
 	ctx := context.Background()
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	store := d.Tables()
 
 	var row *persistence.InstanceRow
@@ -77,92 +71,60 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
 	}
 }
 
-func testStoreLifecycleListByStore(t *testing.T, d persistence.Database) {
-	t.Helper()
-	defer d.Close()
+func testLifecycleIdempotencyListByClaimProducer(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	store := d.Tables()
 
 	var rows []persistence.LifecycleIdempotencyRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.LifecycleIdempotency().ListByStore(ctx, "no-store", tx)
+		r, err := store.LifecycleIdempotency().ListByClaimProducer(ctx, "no-claim-producer", tx)
 		rows = r
 		return err
 	}); err != nil {
-		t.Fatalf("ListByStore empty: %v", err)
+		t.Fatalf("ListByClaimProducer empty: %v", err)
 	}
 	if len(rows) != 0 {
-		t.Fatalf("ListByStore empty returned %d rows", len(rows))
+		t.Fatalf("ListByClaimProducer empty returned %d rows", len(rows))
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			StoreRegistrationName: "store-a",
-			ScopeKind:             persistence.LifecycleIdempotencyScopeTemplate,
-			ScopeID:               "tpl-1",
-			State:                 persistence.LifecycleIdempotencyStateRegistered,
+			ClaimProducerName: "claim-producer-a",
+			ScopeKind:         persistence.LifecycleIdempotencyScopeTemplate,
+			ScopeID:           "tpl-1",
+			State:             persistence.LifecycleIdempotencyStateRegistered,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("upsert tpl: %v", err)
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			StoreRegistrationName: "store-a",
-			ScopeKind:             persistence.LifecycleIdempotencyScopeInstance,
-			ScopeID:               uuid.New().String(),
-			State:                 persistence.LifecycleIdempotencyStateCreated,
+			ClaimProducerName: "claim-producer-a",
+			ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
+			ScopeID:           uuid.New().String(),
+			State:             persistence.LifecycleIdempotencyStateCreated,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("upsert inst: %v", err)
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.LifecycleIdempotency().ListByStore(ctx, "store-a", tx)
+		r, err := store.LifecycleIdempotency().ListByClaimProducer(ctx, "claim-producer-a", tx)
 		rows = r
 		return err
 	}); err != nil {
-		t.Fatalf("ListByStore: %v", err)
+		t.Fatalf("ListByClaimProducer: %v", err)
 	}
 	if len(rows) != 2 {
-		t.Fatalf("ListByStore = %d rows, want 2", len(rows))
+		t.Fatalf("ListByClaimProducer = %d rows, want 2", len(rows))
 	}
 }
 
 func testEventsListDescending(t *testing.T, d persistence.Database) {
-	t.Helper()
-	defer d.Close()
 	ctx := context.Background()
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	store := d.Tables()
+	fix := seedFixtureSet(ctx, t, d)
+	id := fix.InstanceID
 
-	tmpl := "sha256-" + uuid.NewString()
-	id := uuid.New()
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
-			ID: tmpl,
-			Spec: spec.TemplateSpec{
-				Name: "events-desc", Version: "1",
-				Nodes: []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
-			},
-			State:  persistence.TemplateStateRegistered,
-			Source: "direct",
-		}, tx); err != nil {
-			return err
-		}
-		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
-		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:           id,
-			TemplateHash: tmpl,
-			Params:       map[string]any{},
-		}, tx)
-		return err
-	}); err != nil {
-		t.Fatalf("template/instance insert: %v", err)
-	}
 	// @decision: event-log-kind-enum
 	cases := []struct {
 		kind events.Kind
@@ -173,7 +135,6 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 		{events.KindWorkCompleted(), "work_completed"},
 	}
 	for _, c := range cases {
-		c := c
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
 			return store.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &id,
@@ -202,12 +163,7 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 }
 
 func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
-	t.Helper()
-	defer d.Close()
 	ctx := context.Background()
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	store := d.Tables()
 
 	keyA := uuid.NewString()
@@ -220,7 +176,6 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 		{"key_id": keyB, "key_name": "beta", "action": "auth:revoke", "response_status": 403, "mode": "execute", "request_path": "/auth/keys/xyz"},
 	}
 	for _, p := range rows {
-		p := p
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
 			return store.Events().Append(ctx, persistence.EventAppendInput{
 				Kind:    events.KindAuthAccessAttempted(),
@@ -253,15 +208,15 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 		t.Fatalf("no-filter = %d rows, want 4", len(got))
 	}
 
-	if got := list(persistence.EventListFilter{KindIn: kindIn, KeyID: sp(keyA)}); len(got) != 2 {
+	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{KeyID: sp(keyA)}}); len(got) != 2 {
 		t.Fatalf("KeyID = %d rows, want 2", len(got))
 	}
 
-	if got := list(persistence.EventListFilter{KindIn: kindIn, KeyName: sp("beta")}); len(got) != 2 {
+	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{KeyName: sp("beta")}}); len(got) != 2 {
 		t.Fatalf("KeyName = %d rows, want 2", len(got))
 	}
 
-	got := list(persistence.EventListFilter{KindIn: kindIn, ActionExact: sp("instance:create")})
+	got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{ActionExact: sp("instance:create")}})
 	if len(got) != 1 {
 		t.Fatalf("ActionExact = %d rows, want 1", len(got))
 	}
@@ -269,42 +224,42 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 		t.Fatalf("ActionExact row action = %q, want instance:create", a)
 	}
 
-	if got := list(persistence.EventListFilter{KindIn: kindIn, ActionPrefix: sp("instance:")}); len(got) != 2 {
+	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{ActionPrefix: sp("instance:")}}); len(got) != 2 {
 		t.Fatalf("ActionPrefix instance: = %d rows, want 2", len(got))
 	}
-	if got := list(persistence.EventListFilter{KindIn: kindIn, ActionPrefix: sp("auth:")}); len(got) != 2 {
+	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{ActionPrefix: sp("auth:")}}); len(got) != 2 {
 		t.Fatalf("ActionPrefix auth: = %d rows, want 2", len(got))
 	}
 
-	if got := list(persistence.EventListFilter{KindIn: kindIn, ResponseStatus: ip(200)}); len(got) != 2 {
+	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{ResponseStatus: ip(200)}}); len(got) != 2 {
 		t.Fatalf("ResponseStatus 200 = %d rows, want 2", len(got))
 	}
-	if got := list(persistence.EventListFilter{KindIn: kindIn, ResponseStatus: ip(403)}); len(got) != 1 {
+	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{ResponseStatus: ip(403)}}); len(got) != 1 {
 		t.Fatalf("ResponseStatus 403 = %d rows, want 1", len(got))
 	}
 
-	if got := list(persistence.EventListFilter{KindIn: kindIn, Mode: sp("dry_run")}); len(got) != 1 {
+	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{Mode: sp("dry_run")}}); len(got) != 1 {
 		t.Fatalf("Mode dry_run = %d rows, want 1", len(got))
 	}
-	if got := list(persistence.EventListFilter{KindIn: kindIn, Mode: sp("execute")}); len(got) != 3 {
+	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{Mode: sp("execute")}}); len(got) != 3 {
 		t.Fatalf("Mode execute = %d rows, want 3", len(got))
 	}
 
-	got = list(persistence.EventListFilter{KindIn: kindIn, RequestPath: sp("/instances")})
+	got = list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{RequestPath: sp("/instances")}})
 	if len(got) != 1 {
 		t.Fatalf("RequestPath /instances = %d rows, want 1", len(got))
 	}
 	if a, _ := got[0].Payload["action"].(string); a != "instance:create" {
 		t.Fatalf("RequestPath row action = %q, want instance:create", a)
 	}
-	if got := list(persistence.EventListFilter{KindIn: kindIn, RequestPath: sp("/auth/keys/xyz")}); len(got) != 1 {
+	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{RequestPath: sp("/auth/keys/xyz")}}); len(got) != 1 {
 		t.Fatalf("RequestPath /auth/keys/xyz = %d rows, want 1", len(got))
 	}
-	if got := list(persistence.EventListFilter{KindIn: kindIn, RequestPath: sp("/nonexistent")}); len(got) != 0 {
+	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{RequestPath: sp("/nonexistent")}}); len(got) != 0 {
 		t.Fatalf("RequestPath /nonexistent = %d rows, want 0", len(got))
 	}
 
-	got = list(persistence.EventListFilter{KindIn: kindIn, KeyID: sp(keyB), ResponseStatus: ip(200)})
+	got = list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{KeyID: sp(keyB), ResponseStatus: ip(200)}})
 	if len(got) != 1 {
 		t.Fatalf("KeyID(B)+Status(200) = %d rows, want 1", len(got))
 	}
@@ -314,12 +269,7 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 }
 
 func testEventsListPagination(t *testing.T, d persistence.Database) {
-	t.Helper()
-	defer d.Close()
 	ctx := context.Background()
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	store := d.Tables()
 
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

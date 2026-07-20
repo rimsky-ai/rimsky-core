@@ -115,7 +115,7 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cp, err := backend.Events().List(ctx, persistence.EventListFilter{
 			InstanceID: &inst,
-			Kind:       "claim_resolution.commit",
+			KindIn:     []string{"claim_resolution.commit"},
 		}, persistence.ListPagination{Limit: 50}, tx)
 		if err != nil {
 			return err
@@ -123,7 +123,7 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 		commitPage = cp
 		ap, err := backend.Events().List(ctx, persistence.EventListFilter{
 			InstanceID: &inst,
-			Kind:       "claim_resolution.abandon",
+			KindIn:     []string{"claim_resolution.abandon"},
 		}, persistence.ListPagination{Limit: 50}, tx)
 		if err != nil {
 			return err

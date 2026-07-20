@@ -181,46 +181,6 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, nod
 	return rowsAffected == 1, nil
 }
 
-func (q *queueImpl) GetRetryNoProgress(ctx context.Context, nodeRunID shared.UUID) (int, *int, error) {
-	var (
-		count    int
-		override sql.NullInt64
-	)
-	err := q.db.QueryRowContext(ctx,
-		`SELECT consecutive_retries_no_progress, max_retries_without_progress
-		   FROM rimsky_node_runs
-		  WHERE id = ?`,
-		nodeRunID.String(),
-	).Scan(&count, &override)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, nil, nil
-		}
-		return 0, nil, fmt.Errorf("sqlite.GetRetryNoProgress: %w", err)
-	}
-	if override.Valid {
-		v := int(override.Int64)
-		return count, &v, nil
-	}
-	return count, nil, nil
-}
-
-func (q *queueImpl) SetRetryNoProgressForRunInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, count int) error {
-	if tx == nil {
-		return errors.New("sqlite.SetRetryNoProgressForRunInTx: tx required")
-	}
-	_, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		    SET consecutive_retries_no_progress = ?
-		  WHERE id = ?`,
-		count, nodeRunID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("sqlite.SetRetryNoProgressForRunInTx: %w", err)
-	}
-	return nil
-}
-
 func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, maxRetriesWithoutProgress *int) error {
 	var retries any
 	if maxRetriesWithoutProgress != nil {

@@ -327,10 +327,10 @@ func TestFanOutRunScopeEvent_SkipsAlreadyTerminalPeer(t *testing.T) {
 	scopeID := shared.UUID(uuid.New())
 	require.NoError(t, f.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return f.deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			StoreRegistrationName: "alpha",
-			ScopeKind:             persistence.LifecycleIdempotencyScopeRunScope,
-			ScopeID:               scopeID.String(),
-			State:                 persistence.LifecycleIdempotencyStateRunScopeTerminal,
+			ClaimProducerName: "alpha",
+			ScopeKind:         persistence.LifecycleIdempotencyScopeRunScope,
+			ScopeID:           scopeID.String(),
+			State:             persistence.LifecycleIdempotencyStateRunScopeTerminal,
 		}, tx)
 	}))
 

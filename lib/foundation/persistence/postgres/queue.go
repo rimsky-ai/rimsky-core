@@ -146,7 +146,7 @@ func (q *queueImpl) SelectCandidates(
 
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
-		        d.prior_dispatch_id, d.prior_dispatch_disposition, d.state
+		        d.prior_dispatch_id, d.prior_dispatch_disposition
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		   JOIN rimsky_instances i ON i.id = n.instance_id
@@ -202,12 +202,11 @@ func (q *queueImpl) SelectCandidates(
 			executorName     *string
 			priorRunPtr      *shared.UUID
 			priorDisposition *string
-			preClaimState    *string
 		)
 		if err := rows.Scan(
 			&c.NodeRunID, &c.NodeID, &c.NodeType,
 			&executorName, &c.RequiredClaimProducers, &c.EnqueuedAt, &c.FrameID,
-			&priorRunPtr, &priorDisposition, &preClaimState,
+			&priorRunPtr, &priorDisposition,
 		); err != nil {
 			return nil, fmt.Errorf("postgres.SelectCandidates: scan: %w", err)
 		}
@@ -220,9 +219,6 @@ func (q *queueImpl) SelectCandidates(
 		c.PriorNodeRunID = priorRunPtr
 		if priorDisposition != nil {
 			c.PriorDispatchDisposition = *priorDisposition
-		}
-		if preClaimState != nil {
-			c.PreClaimState = *preClaimState
 		}
 		out = append(out, c)
 	}
@@ -296,10 +292,6 @@ func (q *queueImpl) ForceComplete(ctx context.Context, nodeRunID shared.UUID) er
 		nodeRunID,
 	)
 	return err
-}
-
-func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string) error {
-	return q.RemoveForNodeInTx(ctx, nodeID, runScopeID, expectedClaimedBy, nil)
 }
 
 // @concept: fan-out

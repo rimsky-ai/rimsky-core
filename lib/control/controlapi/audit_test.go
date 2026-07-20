@@ -32,7 +32,7 @@ func eventsByKind(t *testing.T, h *harness, kind string) []persistence.EventRow 
 	t.Helper()
 	var res persistence.EventListResult
 	require.NoError(t, h.persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		r, err := h.persist.Events().List(ctx, persistence.EventListFilter{Kind: kind}, persistence.ListPagination{Limit: 100}, tx)
+		r, err := h.persist.Events().List(ctx, persistence.EventListFilter{KindIn: []string{kind}}, persistence.ListPagination{Limit: 100}, tx)
 		res = r
 		return err
 	}))

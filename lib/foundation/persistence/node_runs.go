@@ -70,9 +70,6 @@ type Candidate struct {
 	PriorNodeRunID *shared.UUID
 	// @concept: run-scope
 	PriorDispatchDisposition string
-
-	// @concept: parked-state
-	PreClaimState string
 }
 
 type ClaimOwnership struct {
@@ -104,9 +101,6 @@ type Queue interface {
 	Complete(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error
 
 	ForceComplete(ctx context.Context, nodeRunID shared.UUID) error
-
-	// @concept: run-scope
-	RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string) error
 
 	RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx Tx) error
 
@@ -161,10 +155,6 @@ type Queue interface {
 	GetParkedByNode(ctx context.Context, tx Tx, nodeID shared.UUID, runScopeID shared.UUID) (*ParkedRow, error)
 
 	ResumeParkedInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID) (resumed bool, err error)
-
-	GetRetryNoProgress(ctx context.Context, nodeRunID shared.UUID) (count int, override *int, err error)
-
-	SetRetryNoProgressForRunInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, count int) error
 
 	UpdateDispatchTuningInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, maxRetriesWithoutProgress *int) error
 

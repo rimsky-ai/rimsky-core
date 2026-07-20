@@ -147,7 +147,7 @@ func handleGetClaimProducer(deps Deps) http.HandlerFunc {
 		}
 		var lifecycle []persistence.LifecycleIdempotencyRow
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
-			rows, err := deps.Tables.LifecycleIdempotency().ListByStore(ctx, name, tx)
+			rows, err := deps.Tables.LifecycleIdempotency().ListByClaimProducer(ctx, name, tx)
 			lifecycle = rows
 			return err
 		}); err != nil {
@@ -712,8 +712,9 @@ func handleListEvents(deps Deps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		filter := persistence.EventListFilter{
-			Kind: r.URL.Query().Get("kind"),
+		filter := persistence.EventListFilter{}
+		if kind := r.URL.Query().Get("kind"); kind != "" {
+			filter.KindIn = []string{kind}
 		}
 		if v := r.URL.Query().Get("kind_in"); v != "" {
 			parts := strings.Split(v, ",")

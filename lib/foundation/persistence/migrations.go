@@ -6,10 +6,8 @@ package persistence
 
 import (
 	"context"
-	"embed"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"sort"
 	"strings"
 
@@ -17,7 +15,7 @@ import (
 )
 
 type Migrator struct {
-	FS        embed.FS
+	FS        fs.FS
 	QueryHas  func(ctx context.Context, filename string) (bool, error)
 	Bootstrap func(ctx context.Context) error
 	ApplyOne  func(ctx context.Context, sql string, filename string) error
@@ -29,8 +27,8 @@ func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Lo
 		return fmt.Errorf("persistence.Migrator: acquire lock: %w", err)
 	}
 	defer func() {
-		if err := release(); err != nil {
-			slog.Default().Warn("persistence.Migrator: release migration lock", "err", err)
+		if err := release(); err != nil && log != nil {
+			log.Warn("persistence.Migrator: release migration lock", "err", err)
 		}
 	}()
 

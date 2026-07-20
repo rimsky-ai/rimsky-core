@@ -577,18 +577,18 @@ func TestDeleteInstance_MissingTemplateFallsBackToLifecycleRows(t *testing.T) {
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := h.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			StoreRegistrationName: "content",
-			ScopeKind:             persistence.LifecycleIdempotencyScopeInstance,
-			ScopeID:               inst.ID.String(),
-			State:                 persistence.LifecycleIdempotencyStateCreated,
+			ClaimProducerName: "content",
+			ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
+			ScopeID:           inst.ID.String(),
+			State:             persistence.LifecycleIdempotencyStateCreated,
 		}, tx); err != nil {
 			return err
 		}
 		return h.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			StoreRegistrationName: "ghost-store",
-			ScopeKind:             persistence.LifecycleIdempotencyScopeInstance,
-			ScopeID:               inst.ID.String(),
-			State:                 persistence.LifecycleIdempotencyStateCreated,
+			ClaimProducerName: "ghost-store",
+			ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
+			ScopeID:           inst.ID.String(),
+			State:             persistence.LifecycleIdempotencyStateCreated,
 		}, tx)
 	}))
 
@@ -628,10 +628,10 @@ func TestDeleteInstance_MissingTemplateLifecycleFailureReturns500(t *testing.T) 
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			StoreRegistrationName: "content",
-			ScopeKind:             persistence.LifecycleIdempotencyScopeInstance,
-			ScopeID:               inst.ID.String(),
-			State:                 persistence.LifecycleIdempotencyStateCreated,
+			ClaimProducerName: "content",
+			ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
+			ScopeID:           inst.ID.String(),
+			State:             persistence.LifecycleIdempotencyStateCreated,
 		}, tx)
 	}))
 

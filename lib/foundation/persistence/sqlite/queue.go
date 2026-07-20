@@ -181,7 +181,7 @@ func (q *queueImpl) SelectCandidates(
 
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
-		        d.prior_dispatch_id, d.prior_dispatch_disposition, d.state, i.service_bindings
+		        d.prior_dispatch_id, d.prior_dispatch_disposition, i.service_bindings
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		   JOIN rimsky_instances i ON i.id = n.instance_id
@@ -252,12 +252,11 @@ func (q *queueImpl) SelectCandidates(
 			frameIDStr                string
 			priorDispatchIDStr        sql.NullString
 			priorDispositionStr       sql.NullString
-			preClaimStateStr          sql.NullString
 			serviceBindingsStr        sql.NullString
 		)
 		if err := rows.Scan(&dispatchIDStr, &nodeIDStr, &nodeType, &executorName,
 			&requiredClaimProducersStr, &enqueuedAtStr, &frameIDStr,
-			&priorDispatchIDStr, &priorDispositionStr, &preClaimStateStr, &serviceBindingsStr); err != nil {
+			&priorDispatchIDStr, &priorDispositionStr, &serviceBindingsStr); err != nil {
 			return nil, fmt.Errorf("sqlite.SelectCandidates: scan: %w", err)
 		}
 		serviceBindings := map[string]json.RawMessage{}
@@ -279,9 +278,6 @@ func (q *queueImpl) SelectCandidates(
 		}
 		if priorDispositionStr.Valid {
 			c.PriorDispatchDisposition = priorDispositionStr.String
-		}
-		if preClaimStateStr.Valid {
-			c.PreClaimState = preClaimStateStr.String
 		}
 		stores, err := unmarshalStringArray(requiredClaimProducersStr)
 		if err != nil {
@@ -399,10 +395,6 @@ func (q *queueImpl) ForceComplete(ctx context.Context, nodeRunID shared.UUID) er
 		now, nodeRunID.String(),
 	)
 	return err
-}
-
-func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string) error {
-	return q.RemoveForNodeInTx(ctx, nodeID, runScopeID, expectedClaimedBy, nil)
 }
 
 // @concept: run-scope

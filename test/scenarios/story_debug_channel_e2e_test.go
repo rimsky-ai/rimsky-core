@@ -367,7 +367,7 @@ func countDebugOverrideAuditRows(t *testing.T, h *scenario.Harness, instanceID s
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := h.Persist.Events().List(ctx, persistence.EventListFilter{
 			InstanceID: &instanceID,
-			Kind:       "debug.override.applied",
+			KindIn:     []string{"debug.override.applied"},
 		}, persistence.ListPagination{Limit: 100}, tx)
 		if err != nil {
 			return err
@@ -384,7 +384,7 @@ func readLatestDebugOverrideAudit(t *testing.T, h *scenario.Harness, instanceID 
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := h.Persist.Events().List(ctx, persistence.EventListFilter{
 			InstanceID: &instanceID,
-			Kind:       "debug.override.applied",
+			KindIn:     []string{"debug.override.applied"},
 		}, persistence.ListPagination{Limit: 100}, tx)
 		if err != nil {
 			return err

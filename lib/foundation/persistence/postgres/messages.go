@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -63,8 +62,7 @@ SELECT id, instance_id, type, sender, sender_kind, payload,
        received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE
- ORDER BY received_at ASC, id ASC
- LIMIT 1`
+ ORDER BY received_at ASC, id ASC`
 
 func (b *messagesImpl) ListPendingForInstance(ctx context.Context, tx persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
 	rows, err := b.q(tx).Query(ctx, listPendingForInstanceSQL, instanceID)
@@ -302,5 +300,3 @@ func collectMessages(rows pgx.Rows) ([]persistence.MessageRow, error) {
 	}
 	return out, nil
 }
-
-var ErrMessagesNotWired = errors.New("messages: runtime path not wired")

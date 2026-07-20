@@ -50,7 +50,7 @@ func TestOrphanedClaim(t *testing.T) {
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Events().List(h.Ctx,
-			persistence.EventListFilter{NodeID: &nid, Kind: "lock_orphan_reaped"},
+			persistence.EventListFilter{NodeID: &nid, KindIn: []string{"lock_orphan_reaped"}},
 			persistence.ListPagination{Limit: 10}, tx)
 		evs = r
 		return err

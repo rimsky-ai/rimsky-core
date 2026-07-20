@@ -64,8 +64,7 @@ SELECT id, instance_id, type, sender, sender_kind, payload,
        received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE instance_id = ? AND delivered_at IS NULL AND cancelled = 0
- ORDER BY received_at ASC, id ASC
- LIMIT 1`
+ ORDER BY received_at ASC, id ASC`
 
 func (b *messagesImpl) ListPendingForInstance(ctx context.Context, tx persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx, sqliteListPendingMessagesSQL, instanceID.String())

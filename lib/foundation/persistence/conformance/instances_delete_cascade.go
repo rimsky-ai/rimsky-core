@@ -4,9 +4,6 @@
 
 // @concept: instance
 // @concept: run-scope
-
-// @concept: instance
-// @concept: run-scope
 package conformance
 
 import (

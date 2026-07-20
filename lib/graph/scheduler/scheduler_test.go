@@ -260,7 +260,7 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	var events persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		e, err := f.persist.Events().List(ctx,
-			persistence.EventListFilter{NodeID: &n.ID, Kind: "orphaned_claim_released"},
+			persistence.EventListFilter{NodeID: &n.ID, KindIn: []string{"orphaned_claim_released"}},
 			persistence.ListPagination{Limit: 10}, tx,
 		)
 		events = e

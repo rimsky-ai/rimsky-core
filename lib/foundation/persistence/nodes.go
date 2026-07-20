@@ -54,7 +54,7 @@ type NodeCreateInput struct {
 	Tags       []string
 	// @concept: cascade
 	// @decision: mode-default-most-recent
-	CascadeMode string
+	CascadeMode cascade.CascadeMode
 }
 
 type NodeListFilter struct {
@@ -65,10 +65,8 @@ type NodeTable interface {
 	Create(ctx context.Context, in NodeCreateInput, tx Tx) (NodeRow, error)
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*NodeRow, error)
 	ListByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) ([]NodeRow, error)
-	ListByInstancePaged(ctx context.Context, instanceID shared.UUID, pag ListPagination, tx Tx) (PaginatedListResult[NodeRow], error)
 	ListByInstancePagedFiltered(ctx context.Context, instanceID shared.UUID, pag ListPagination, filter NodeListFilter, tx Tx) (PaginatedListResult[NodeRow], error)
 	ListReadyForDispatch(ctx context.Context, tx Tx) ([]NodeRow, error)
-	ListRunning(ctx context.Context, tx Tx) ([]NodeRow, error)
 	// @concept: supervisor
 	CountRunningForSupervisor(ctx context.Context, supervisorID string, tx Tx) (int, error)
 	// @concept: node
@@ -87,7 +85,6 @@ type NodeTable interface {
 	// @concept: run-scope
 	GetFailedTerminalRunScopeID(ctx context.Context, id shared.UUID, tx Tx) (*shared.UUID, error)
 
-	DeleteByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) error
 	// @concept: signal
 	HasRunForNodeInFrame(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx Tx) (bool, error)
 
@@ -107,7 +104,7 @@ type NodeTable interface {
 	// @decision: mode-default-most-recent
 	HasLaterCascadePending(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, afterSeq int64) (bool, error)
 
-	GetRunByDispatchIDForUpdate(ctx context.Context, nodeRunID shared.UUID, tx Tx) (*NodeRunForCallback, error)
+	GetRunByDispatchIDForUpdate(ctx context.Context, dispatchNodeRunID shared.UUID, tx Tx) (*NodeRunForCallback, error)
 
 	// @concept: cascade
 	// @decision: mode-default-most-recent

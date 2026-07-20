@@ -116,16 +116,10 @@ func (noopNodes) Get(_ context.Context, id shared.UUID, _ persistence.Tx) (*pers
 func (noopNodes) ListByInstance(context.Context, shared.UUID, persistence.Tx) ([]persistence.NodeRow, error) {
 	return nil, nil
 }
-func (noopNodes) ListByInstancePaged(context.Context, shared.UUID, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.NodeRow], error) {
-	return persistence.PaginatedListResult[persistence.NodeRow]{}, nil
-}
 func (noopNodes) ListByInstancePagedFiltered(context.Context, shared.UUID, persistence.ListPagination, persistence.NodeListFilter, persistence.Tx) (persistence.PaginatedListResult[persistence.NodeRow], error) {
 	return persistence.PaginatedListResult[persistence.NodeRow]{}, nil
 }
 func (noopNodes) ListReadyForDispatch(context.Context, persistence.Tx) ([]persistence.NodeRow, error) {
-	return nil, nil
-}
-func (noopNodes) ListRunning(context.Context, persistence.Tx) ([]persistence.NodeRow, error) {
 	return nil, nil
 }
 func (noopNodes) CountRunningForSupervisor(context.Context, string, persistence.Tx) (int, error) {
@@ -158,7 +152,6 @@ func (noopNodes) ResetFailedTerminalSettlingSignalType(context.Context, shared.U
 func (noopNodes) GetFailedTerminalRunScopeID(context.Context, shared.UUID, persistence.Tx) (*shared.UUID, error) {
 	return nil, nil
 }
-func (noopNodes) DeleteByInstance(context.Context, shared.UUID, persistence.Tx) error { return nil }
 func (noopNodes) HasRunForNodeInFrame(context.Context, shared.UUID, shared.UUID, persistence.Tx) (bool, error) {
 	return false, nil
 }
@@ -267,9 +260,6 @@ func (f *fakeDiagnosticQueue) Complete(context.Context, shared.UUID, string) err
 func (f *fakeDiagnosticQueue) ForceComplete(context.Context, shared.UUID) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) RemoveForNode(context.Context, shared.UUID, shared.UUID, string) error {
-	return nil
-}
 func (f *fakeDiagnosticQueue) RemoveForNodeInTx(context.Context, shared.UUID, shared.UUID, string, persistence.Tx) error {
 	return nil
 }
@@ -333,12 +323,6 @@ func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, persistence.Tx, s
 }
 func (f *fakeDiagnosticQueue) ResumeParkedInTx(context.Context, persistence.Tx, shared.UUID) (bool, error) {
 	return false, nil
-}
-func (f *fakeDiagnosticQueue) GetRetryNoProgress(context.Context, shared.UUID) (int, *int, error) {
-	return 0, nil, nil
-}
-func (f *fakeDiagnosticQueue) SetRetryNoProgressForRunInTx(context.Context, persistence.Tx, shared.UUID, int) error {
-	return nil
 }
 func (f *fakeDiagnosticQueue) UpdateDispatchTuningInTx(context.Context, persistence.Tx, shared.UUID, *int) error {
 	return nil

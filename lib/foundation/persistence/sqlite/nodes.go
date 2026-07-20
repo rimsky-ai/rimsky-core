@@ -36,7 +36,7 @@ func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, 
 	}
 	cascadeMode := in.CascadeMode
 	if cascadeMode == "" {
-		cascadeMode = string(cascade.CascadeModeMostRecent)
+		cascadeMode = cascade.CascadeModeMostRecent
 	}
 	if _, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (
@@ -44,7 +44,7 @@ func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, 
 		 ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		in.ID.String(), in.InstanceID.String(), in.NodeType,
 		nullableString(in.Executor),
-		tagsJSON, cascadeMode,
+		tagsJSON, string(cascadeMode),
 		now,
 	); err != nil {
 		return persistence.NodeRow{}, err
@@ -82,15 +82,6 @@ func (s *nodesImpl) ListByInstance(ctx context.Context, instanceID foundationsha
 	}
 	defer rows.Close()
 	return collectNodes(rows)
-}
-
-func (s *nodesImpl) ListByInstancePaged(
-	ctx context.Context,
-	instanceID foundationshared.UUID,
-	pag persistence.ListPagination,
-	tx persistence.Tx,
-) (persistence.PaginatedListResult[persistence.NodeRow], error) {
-	return s.ListByInstancePagedFiltered(ctx, instanceID, pag, persistence.NodeListFilter{}, tx)
 }
 
 func (s *nodesImpl) ListByInstancePagedFiltered(
@@ -222,20 +213,6 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
-	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT DISTINCT `+nodeCols+`
-		   FROM rimsky_nodes n
-		   JOIN rimsky_node_runs nr ON nr.node_id = n.id
-		  WHERE nr.state = 'running'
-		  ORDER BY n.created_at ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectNodes(rows)
 }
 
 // @concept: supervisor
@@ -445,11 +422,6 @@ func (s *nodesImpl) GetFailedTerminalRunScopeID(ctx context.Context, id foundati
 	}
 	scopeUUID := foundationshared.UUID(scope)
 	return &scopeUUID, nil
-}
-
-func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundationshared.UUID, tx persistence.Tx) error {
-	_, err := s.q(tx).ExecContext(ctx, `DELETE FROM rimsky_nodes WHERE instance_id = ?`, instanceID.String())
-	return err
 }
 
 // @concept: cascade
@@ -694,7 +666,7 @@ func (s *nodesImpl) ListPendingRunsInScopeForNodes(
 	return out, rows.Err()
 }
 
-func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, nodeRunID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
+func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchNodeRunID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	var (
 		r          persistence.NodeRunForCallback
 		idStr      string
@@ -705,7 +677,7 @@ func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, nodeRunID f
 	)
 	err := s.q(tx).QueryRowContext(ctx,
 		`SELECT id, node_id, run_scope_id, frame_id, state
-		   FROM rimsky_node_runs WHERE id = ?`, nodeRunID.String(),
+		   FROM rimsky_node_runs WHERE id = ?`, dispatchNodeRunID.String(),
 	).Scan(&idStr, &nodeIDStr, &scopeIDStr, &frameIDStr, &stateStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

@@ -606,7 +606,7 @@ func TestOperatorReset_AppendsOperatorOverrideAuditEvent(t *testing.T) {
 		var err error
 		res, err = h.persist.Events().List(ctx, persistence.EventListFilter{
 			InstanceID: &instID,
-			Kind:       events.KindOperatorOverride().String(),
+			KindIn:     []string{events.KindOperatorOverride().String()},
 		}, persistence.ListPagination{Limit: 10}, tx)
 		return err
 	}))

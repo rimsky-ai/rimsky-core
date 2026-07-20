@@ -95,7 +95,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 			return err
 		}
 		if !ok {
-			t.Errorf("ClaimDispatchRow returned !ok on unclaimed row")
+			t.Fatalf("ClaimDispatchRow returned !ok on unclaimed row")
 		}
 		_, err = q.PromoteClaimedToRunning(ctx, tx, nodeRunID, supID)
 		return err

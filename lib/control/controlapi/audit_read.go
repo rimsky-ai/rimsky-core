@@ -55,21 +55,21 @@ func handleListAudit(deps AppDeps) http.HandlerFunc {
 					strings.Join(auditKinds, ", ")+")")
 				return
 			}
-			filter.Kind = wire
+			filter.KindIn = []string{wire}
 		}
 		if s := q.Get("key_id"); s != "" {
-			filter.KeyID = &s
+			filter.AuditPayload.KeyID = &s
 		}
 		if s := q.Get("key_name"); s != "" {
-			filter.KeyName = &s
+			filter.AuditPayload.KeyName = &s
 		}
 		if s := q.Get("action"); s != "" {
-			filter.ActionExact = &s
+			filter.AuditPayload.ActionExact = &s
 		} else if s := q.Get("action_prefix"); s != "" {
-			filter.ActionPrefix = &s
+			filter.AuditPayload.ActionPrefix = &s
 		}
 		if s := q.Get("target"); s != "" {
-			filter.RequestPath = &s
+			filter.AuditPayload.RequestPath = &s
 		}
 		if s := q.Get("status"); s != "" {
 			n, err := strconv.Atoi(s)
@@ -77,10 +77,10 @@ func handleListAudit(deps AppDeps) http.HandlerFunc {
 				badRequest(w, "invalid status (integer required)")
 				return
 			}
-			filter.ResponseStatus = &n
+			filter.AuditPayload.ResponseStatus = &n
 		}
 		if s := q.Get("mode"); s != "" {
-			filter.Mode = &s
+			filter.AuditPayload.Mode = &s
 		}
 		if s := q.Get("since"); s != "" {
 			t, err := time.Parse(time.RFC3339, s)

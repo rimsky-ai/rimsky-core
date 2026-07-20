@@ -50,8 +50,9 @@ func handleListEvents(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
-		filter := persistence.EventListFilter{
-			Kind: kindParam,
+		filter := persistence.EventListFilter{}
+		if kindParam != "" {
+			filter.KindIn = []string{kindParam}
 		}
 		if s := q.Get("instance_id"); s != "" {
 			id, err := uuid.Parse(s)

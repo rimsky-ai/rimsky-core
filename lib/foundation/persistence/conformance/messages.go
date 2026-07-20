@@ -3,8 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: message
-
-// @concept: message
 package conformance
 
 import (
@@ -20,8 +18,6 @@ import (
 )
 
 func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
-	t.Helper()
-	defer d.Close()
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
@@ -318,5 +314,50 @@ func testMessagesListBySender(t *testing.T, d persistence.Database) {
 	gotKindOnly := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, SenderKind: "publisher"})
 	if len(gotKindOnly) != 2 {
 		t.Fatalf("SenderKind(publisher) = %d rows, want 2 (both publisher-a and publisher-b)", len(gotKindOnly))
+	}
+}
+
+func testMessagesListPendingForInstanceReturnsAllPending(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	msgIDs := make([]shared.UUID, 3)
+	for i := range msgIDs {
+		msgIDs[i] = shared.UUID(uuid.New())
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+				ID:         msgIDs[i],
+				InstanceID: fix.InstanceID,
+				Type:       "fixture/message",
+				Sender:     "operator",
+				SenderKind: "operator",
+				ReceivedAt: time.Now().UTC().Add(time.Duration(i) * time.Millisecond),
+			})
+		}); err != nil {
+			t.Fatalf("Messages.Insert(%d): %v", i, err)
+		}
+	}
+
+	var pending []persistence.MessageRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.Messages().ListPendingForInstance(ctx, tx, fix.InstanceID)
+		pending = r
+		return err
+	}); err != nil {
+		t.Fatalf("ListPendingForInstance: %v", err)
+	}
+	if len(pending) < len(msgIDs) {
+		t.Fatalf("ListPendingForInstance returned %d rows, want at least %d (a List method must not silently truncate)",
+			len(pending), len(msgIDs))
+	}
+	got := map[shared.UUID]bool{}
+	for _, r := range pending {
+		got[r.ID] = true
+	}
+	for _, id := range msgIDs {
+		if !got[id] {
+			t.Fatalf("ListPendingForInstance missing seeded message %s: got %v", id, pending)
+		}
 	}
 }

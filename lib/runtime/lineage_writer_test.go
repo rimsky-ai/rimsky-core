@@ -469,9 +469,6 @@ func (f *fakeFrameTableWithMessage) ListForObservability(context.Context, persis
 func (f *fakeFrameTableWithMessage) GetForObservability(context.Context, shared.UUID, persistence.Tx) (*persistence.FrameRow, error) {
 	return nil, nil
 }
-func (f *fakeFrameTableWithMessage) RefreshProgress(context.Context, shared.UUID, persistence.Tx) error {
-	return nil
-}
 func (f *fakeFrameTableWithMessage) CountHeldFrames(context.Context, persistence.Tx) (int, error) {
 	return 0, nil
 }

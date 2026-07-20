@@ -483,7 +483,7 @@ func allAuditPayloads(t *testing.T, f *authFixture) []map[string]any {
 	var out []map[string]any
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		for _, k := range kinds {
-			rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{Kind: k}, persistence.ListPagination{Limit: 500}, tx)
+			rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{k}}, persistence.ListPagination{Limit: 500}, tx)
 			if err != nil {
 				return err
 			}

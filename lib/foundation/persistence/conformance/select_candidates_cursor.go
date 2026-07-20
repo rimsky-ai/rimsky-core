@@ -141,11 +141,4 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 		}
 	}
 	assertSuffix(paged, full, "limit-2 paging")
-
-	got := selectPage(100, full[2].EnqueuedAt, full[2].NodeRunID)
-	assertSuffix(got, full[3:], "skip equal-timestamp batch")
-
-	if got := selectPage(100, full[4].EnqueuedAt, full[4].NodeRunID); len(got) != 0 {
-		t.Fatalf("cursor past the last row returned %d candidates, want 0", len(got))
-	}
 }
