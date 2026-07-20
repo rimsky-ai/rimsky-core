@@ -270,3 +270,93 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 		t.Errorf("last_fire_at: %v", w.LastFireAt)
 	}
 }
+
+func TestTick_FailedEmissionDoesNotAdvanceState_NextTickRetriesSameObservation(t *testing.T) {
+	var (
+		mu         sync.Mutex
+		rimskyFail = true
+		observed   int
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		fail := rimskyFail
+		mu.Unlock()
+		if fail {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		mu.Lock()
+		observed++
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	cfg := map[string]any{"cron": "*/5 * * * *"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
+		MessageType: "system/invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.clock = func() time.Time { return pin.Add(6 * time.Minute) }
+	s.Tick(context.Background())
+	mu.Lock()
+	if observed != 0 {
+		t.Fatalf("observed after failing tick: %d (want 0)", observed)
+	}
+	mu.Unlock()
+
+	s.mu.Lock()
+	nextFireAfterFailure := s.watches["w1"].NextFireAt
+	lastFireAfterFailure := s.watches["w1"].LastFireAt
+	s.mu.Unlock()
+	wantNextFireAt := time.Date(2026, 1, 1, 0, 5, 0, 0, time.UTC)
+	if !nextFireAfterFailure.Equal(wantNextFireAt) {
+		t.Fatalf("next_fire_at advanced to %s despite the emission failing — "+
+			"a failed POST must not move the fire-window cursor, or the next tick "+
+			"will treat this fire window as already-observed and never retry",
+			nextFireAfterFailure)
+	}
+	if lastFireAfterFailure != nil {
+		t.Fatalf("last_fire_at set to %v despite the emission failing", lastFireAfterFailure)
+	}
+
+	mu.Lock()
+	rimskyFail = false
+	mu.Unlock()
+
+	s.clock = func() time.Time { return pin.Add(7 * time.Minute) }
+	s.Tick(context.Background())
+	mu.Lock()
+	if observed != 1 {
+		t.Fatalf("observed after retry tick (rimsky now healthy): %d (want 1) — "+
+			"the same fire window must be retried, not silently skipped, because the prior "+
+			"tick never advanced next_fire_at", observed)
+	}
+	mu.Unlock()
+
+	s.mu.Lock()
+	w := s.watches["w1"]
+	s.mu.Unlock()
+	wantNextFireAfterSuccess := time.Date(2026, 1, 1, 0, 10, 0, 0, time.UTC)
+	if !w.NextFireAt.Equal(wantNextFireAfterSuccess) {
+		t.Fatalf("next_fire_at after successful retry: %s want %s", w.NextFireAt, wantNextFireAfterSuccess)
+	}
+	if w.LastFireAt == nil || !w.LastFireAt.Equal(pin.Add(7*time.Minute)) {
+		t.Fatalf("last_fire_at after successful retry: %v", w.LastFireAt)
+	}
+
+	s.clock = func() time.Time { return pin.Add(8 * time.Minute) }
+	s.Tick(context.Background())
+	mu.Lock()
+	if observed != 1 {
+		t.Fatalf("observed after a tick before the next fire window: %d (want still 1)", observed)
+	}
+	mu.Unlock()
+}

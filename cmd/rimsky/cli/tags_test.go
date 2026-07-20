@@ -79,8 +79,18 @@ func TestRunTagMv_OK(t *testing.T) {
 	srv := setupClitest(t)
 	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	hash2, _ := srv.State.RegisterTemplate(map[string]any{"name": "y", "version": "1.0", "nodes": []any{}}, "", "")
-	if got := cli.RunTagMv(context.Background(), []string{"--template", hash2, "v1"}); got != 0 {
+	var got int
+	out := captureStdout(t, func() {
+		got = cli.RunTagMv(context.Background(), []string{"--template", hash2, "v1"})
+	})
+	if got != 0 {
 		t.Errorf("exit %d", got)
+	}
+	if !strings.Contains(out, "v1") || !strings.Contains(out, hash2) {
+		t.Errorf("tag mv: stdout must display both the moved tag and the target ref, got %q", out)
+	}
+	if !strings.Contains(out, "→") {
+		t.Errorf("tag mv: stdout must display the tag-to-ref arrow, got %q", out)
 	}
 	_ = hash
 }
@@ -88,8 +98,15 @@ func TestRunTagMv_OK(t *testing.T) {
 func TestRunTagRm_OK(t *testing.T) {
 	srv := setupClitest(t)
 	srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
-	if got := cli.RunTagRm(context.Background(), []string{"v1"}); got != 0 {
+	var got int
+	out := captureStdout(t, func() {
+		got = cli.RunTagRm(context.Background(), []string{"v1"})
+	})
+	if got != 0 {
 		t.Errorf("exit %d", got)
+	}
+	if !strings.Contains(out, "v1 removed") {
+		t.Errorf("tag rm: stdout must confirm the removed tag, got %q", out)
 	}
 }
 

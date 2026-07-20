@@ -6,6 +6,7 @@ package scenarios
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -13,8 +14,10 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	rimskyruntime "github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -100,4 +103,29 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 		return ok && v == "subgraph-done"
 	}, 30*time.Second, 100*time.Millisecond,
 		"caller's node-attributes must carry exit's writeback (result=subgraph-done) per the carry-rule")
+
+	var exitRunID shared.UUID
+	h.QueryRowSQL(`
+		SELECT id FROM rimsky_node_runs
+		 WHERE node_id = $1 AND state = 'fresh'
+		 ORDER BY sequence DESC LIMIT 1
+	`, []any{exitNode.ID}, &exitRunID)
+	require.NotEmpty(t, exitRunID, "inner-exit must have a terminal node_run row")
+
+	rows, err := h.Persist.Lineage().GetByRunID(context.Background(), exitRunID)
+	require.NoError(t, err)
+	var exitLeafRun *rimskyruntime.LeafRunRecord
+	for _, row := range rows {
+		if row.RecordKind != persistence.LineageRecordKindLeafRun {
+			continue
+		}
+		var rec rimskyruntime.LeafRunRecord
+		require.NoError(t, json.Unmarshal(row.Record, &rec))
+		exitLeafRun = &rec
+	}
+	require.NotNil(t, exitLeafRun, "exit node must emit a leaf_run lineage row like any normal executor-bearing node")
+	require.Equal(t, "complete", exitLeafRun.TerminalKind,
+		"exit node is a normal executor-bearing node — its leaf_run must carry terminal_kind=complete, not a pass-through kind")
+	require.Equal(t, "stub", exitLeafRun.ExecutorName,
+		"exit node's leaf_run must carry the real executor name, unlike the caller's pass-through subgraph_call row")
 }

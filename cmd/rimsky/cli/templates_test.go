@@ -229,6 +229,21 @@ func TestRunTemplateDeploy_AlreadyDeployed(t *testing.T) {
 	}
 }
 
+func TestRunTemplateRm_OK(t *testing.T) {
+	srv := setupClitest(t)
+	srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
+	var got int
+	out := captureStdout(t, func() {
+		got = cli.RunTemplateRm(context.Background(), []string{"v1"})
+	})
+	if got != 0 {
+		t.Errorf("exit %d", got)
+	}
+	if !strings.Contains(out, "v1 removed") {
+		t.Errorf("template rm: stdout must confirm the removed ref, got %q", out)
+	}
+}
+
 func TestRunTemplateRm_Conflict(t *testing.T) {
 	srv := setupClitest(t)
 	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")

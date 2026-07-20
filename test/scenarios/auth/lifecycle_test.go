@@ -1172,12 +1172,24 @@ func TestRoleTemplates_DebugOperatorGrantsBreakpointVerbsAgentSupervisorDoesNot(
 		t.Fatalf("create instance: missing instance_id: %+v", instBody)
 	}
 
+	bpID := seedBreakpoint(t, f, adminKey, instID)
+	hitID := seedBreakpointHit(t, f, mustUUID(t, instID), mustUUID(t, bpID))
+
 	debugVerbs := []roleEnforceCase{
 		{action: "instance:pause", method: "POST", path: "/v1/instances/" + instID + "/pause"},
 		{action: "instance:resume", method: "POST", path: "/v1/instances/" + instID + "/resume"},
 		{
 			action: "breakpoint:create", method: "POST", path: "/v1/instances/" + instID + "/breakpoints",
 			body: map[string]any{"checkpoint": "before_dispatch"},
+		},
+		{
+			action: "breakpoint:resume", method: "POST",
+			path: "/v1/instances/" + instID + "/breakpoints/" + bpID + "/resume",
+			body: map[string]any{"hit_id": hitID},
+		},
+		{
+			action: "breakpoint:delete", method: "DELETE",
+			path: "/v1/instances/" + instID + "/breakpoints/" + bpID,
 		},
 	}
 
@@ -1198,7 +1210,7 @@ func TestRoleTemplates_DebugOperatorGrantsBreakpointVerbsAgentSupervisorDoesNot(
 		return key
 	}
 
-	t.Run("debug-operator grant covers pause/resume/breakpoint:create", func(t *testing.T) {
+	t.Run("debug-operator grant covers pause/resume/breakpoint:create/resume/delete", func(t *testing.T) {
 		key := mintRoleKey(t, "debug-operator")
 		for _, c := range debugVerbs {
 			code, body := f.request(t, c.method, c.path, key, c.body)
@@ -1209,7 +1221,7 @@ func TestRoleTemplates_DebugOperatorGrantsBreakpointVerbsAgentSupervisorDoesNot(
 		}
 	})
 
-	t.Run("agent-supervisor grant excludes pause/resume/breakpoint:create", func(t *testing.T) {
+	t.Run("agent-supervisor grant excludes pause/resume/breakpoint:create/resume/delete", func(t *testing.T) {
 		key := mintRoleKey(t, "agent-supervisor")
 		for _, c := range debugVerbs {
 			code, body := f.request(t, c.method, c.path, key, c.body)
