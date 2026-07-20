@@ -12,13 +12,9 @@ type SubscriptionEntry struct {
 
 	When string `yaml:"when,omitempty" json:"when,omitempty"`
 
-	//	@concept: cascade
-	//	@concept: node-subscription
+	// @concept: cascade
+	// @concept: node-subscription
 	ForceUpstreamRefresh *bool `yaml:"force_upstream_refresh" json:"force_upstream_refresh"`
 
 	ResolvesViaCallingNode bool `yaml:"resolves_via_calling_node,omitempty" json:"resolves_via_calling_node,omitempty"`
 }
-
-func BoolPtr(v bool) *bool { return &v }
-
-func IntPtr(v int) *int { return &v }

@@ -359,6 +359,42 @@ func TestOpenBridge_RunScopeIDThreaded(t *testing.T) {
 	}
 }
 
+func TestOpenBridge_LifetimeThreaded(t *testing.T) {
+	var gotLifetime string
+	srv := &fakeServer{
+		OpenFunc: func(req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
+			gotLifetime = req.GetLifetime()
+			return &genv1.OpenResponse{
+				Result: &genv1.OpenResponse_Unavailable{Unavailable: &genv1.Unavailable{}},
+			}, nil
+		},
+	}
+	ts := mountFake(t, srv)
+
+	body, err := json.Marshal(map[string]any{
+		"claim_id":      "00000000-0000-0000-0000-000000000002",
+		"producer_name": "fake",
+		"selector":      "items/x",
+		"intent":        "rw",
+		"lifetime":      "durable",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/v1/open", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /v1/open: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, raw)
+	}
+	if gotLifetime != "durable" {
+		t.Fatalf("lifetime mismatch: got %q, want \"durable\" (claim_producer.proto field 9 must survive the HTTP bridge)", gotLifetime)
+	}
+}
+
 func TestLifecycleBridge_InstanceCreatedCarriesServiceBindingsAndOwnerAPIKeyID(t *testing.T) {
 	var gotBindings []byte
 	var gotOwnerKeyID string

@@ -87,7 +87,7 @@ func (c *ControllableClock) cancelPending(target *pendingSleep) {
 }
 
 func (c *ControllableClock) Advance(d time.Duration) {
-	c.advanceTo(c.nowLocked().Add(d))
+	c.advanceTo(c.Now().Add(d))
 }
 
 func (c *ControllableClock) SetNow(t time.Time) {
@@ -98,12 +98,6 @@ func (c *ControllableClock) Tick() {
 	for i := 0; i < 8; i++ {
 		runtime.Gosched()
 	}
-}
-
-func (c *ControllableClock) nowLocked() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.t
 }
 
 func (c *ControllableClock) advanceTo(target time.Time) {

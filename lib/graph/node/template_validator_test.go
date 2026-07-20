@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	foundationspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 var knownClaimProducers = map[string]string{
@@ -29,11 +31,47 @@ func storeDeclaredLookup(known map[string]string) func(string) bool {
 func hasErrorAt(t *testing.T, res ValidationResult, prefix string) {
 	t.Helper()
 	for _, e := range res.Errors {
-		if len(prefix) <= len(e.Path) && e.Path[:len(prefix)] == prefix {
+		if strings.HasPrefix(e.Path, prefix) {
 			return
 		}
 	}
 	t.Fatalf("expected error with path prefix %q, got %+v", prefix, res.Errors)
+}
+
+func TestValidateTemplate_FlattensGraphsIntoNodes_DocumentedSideEffect(t *testing.T) {
+	newSpec := func() *TemplateSpec {
+		return &TemplateSpec{
+			Name:    "tmpl",
+			Version: "1",
+			Graphs: []GraphSpec{
+				{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "alpha", Delegate: "sub"}}},
+				{
+					Name:  "sub",
+					Entry: "b",
+					Exit:  "c",
+					Nodes: []TemplateNodeDef{
+						{Type: "b"},
+						{Type: "c", Subscribes: []SubscriptionEntry{{Node: "b", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)}}},
+					},
+				},
+			},
+		}
+	}
+
+	specA := newSpec()
+	resA := ValidateTemplate(specA, RegistryHooks{})
+	require.True(t, resA.Ok(), "errors: %+v", resA.Errors)
+	require.NotEmpty(t, specA.Nodes,
+		"ValidateTemplate's canonicalizeGraphs step flattens graphs: into spec.Nodes as a documented, tested side effect — "+
+			"callers that hash the spec (e.g. controlapi template registration) do so AFTER this call and rely on the flattened form")
+
+	specB := newSpec()
+	resB := ValidateTemplate(specB, RegistryHooks{})
+	require.True(t, resB.Ok(), "errors: %+v", resB.Errors)
+
+	require.Equal(t, specA.Nodes, specB.Nodes,
+		"flattening must be deterministic for structurally identical graphs: input, since content hashing downstream of "+
+			"ValidateTemplate depends on the flattened spec being stable across equivalent inputs")
 }
 
 func TestValidateTemplate_Ok_MinimalExecutorNode(t *testing.T) {
@@ -118,6 +156,59 @@ func TestValidateSubscribes_Ok_MessageVirtualNodeWhenBodyField(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateSubscribes_Error_MessageVirtualNodeUnreachableType(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{{
+			Type: "ping/recheck",
+		}},
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "handler.a",
+			Subscribes: []SubscriptionEntry{
+				{Node: "ping/recheck", Type: "attribute/x/changed", ForceUpstreamRefresh: BoolPtr(false)},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if e.Path == "nodes[0].subscribes[0].type" && strings.Contains(e.Msg, "subscription_message_type_unreachable") {
+			found = true
+		}
+	}
+	require.True(t, found, "expected an unreachable-type rejection for a message-type subscription; errors: %+v", res.Errors)
+}
+
+func TestValidateSubscribes_Ok_MessageVirtualNodeReachableTypes(t *testing.T) {
+	for _, typ := range []string{"terminal/success", "terminal/*"} {
+		t.Run(typ, func(t *testing.T) {
+			spec := &TemplateSpec{
+				Name:    "demo",
+				Version: "1.0.0",
+				Messages: []MessageSchema{{
+					Type: "ping/recheck",
+				}},
+				Nodes: []TemplateNodeDef{{
+					Type:     "a",
+					Executor: "handler.a",
+					Subscribes: []SubscriptionEntry{
+						{Node: "ping/recheck", Type: typ, ForceUpstreamRefresh: BoolPtr(false)},
+					},
+				}},
+			}
+			res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+			for _, e := range res.Errors {
+				if e.Path == "nodes[0].subscribes[0].type" {
+					t.Fatalf("unexpected type rejection for reachable message-type subscription %q: %+v", typ, e)
+				}
+			}
+		})
+	}
 }
 
 func TestValidateSubscribes_Error_MessageVirtualNodeWhenUnknownBodyField(t *testing.T) {
@@ -238,48 +329,6 @@ func TestValidateClaimProducers_Error_UnknownStoreKind(t *testing.T) {
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].claim_producers[0].name")
-}
-
-func TestHoldingSubgraphsForTemplate_HeldChain(t *testing.T) {
-	spec := &TemplateSpec{
-		Nodes: []TemplateNodeDef{
-			{
-				Type: "pick",
-				ClaimProducers: []NodeClaimProducerRef{
-					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
-				},
-			},
-			{
-				Type:       "process",
-				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)}},
-				Holds: map[string]HoldsBinding{
-					"queue": {From: "pick"},
-				},
-			},
-		},
-	}
-	subs := HoldingSubgraphsForTemplate(spec)
-	require.Len(t, subs, 1)
-	require.Equal(t, "pick", subs[0].AcquirerType)
-	require.Equal(t, "queue", subs[0].Alias)
-	require.Equal(t, []string{"pick", "process"}, subs[0].Members)
-	require.True(t, subs[0].IsHeld())
-}
-
-func TestHoldingSubgraphsForTemplate_NotHeld(t *testing.T) {
-	spec := &TemplateSpec{
-		Nodes: []TemplateNodeDef{
-			{
-				Type: "loner",
-				ClaimProducers: []NodeClaimProducerRef{
-					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
-				},
-			},
-		},
-	}
-	subs := HoldingSubgraphsForTemplate(spec)
-	require.Len(t, subs, 1)
-	require.False(t, subs[0].IsHeld())
 }
 
 func TestValidateTemplate_ExecutorDeclared_OK(t *testing.T) {
@@ -553,6 +602,23 @@ func TestValidateErrorTypes_AcceptsRuntimeSynthesizedExecutorSyncTimeout(t *test
 		if strings.HasPrefix(w.Path, "nodes[1].error_types") {
 			t.Fatalf("executor_sync_timeout is runtime-synthesized (runner_dispatch.go) and must not warn as undeclared: %+v", w)
 		}
+	}
+}
+
+func TestIsRuntimeSynthesizedErrorClass_MatchesSharedList(t *testing.T) {
+	for _, c := range foundationspec.RuntimeSynthesizedErrorClasses {
+		if !isRuntimeSynthesizedErrorClass(c) {
+			t.Errorf("expected %q (from spec.RuntimeSynthesizedErrorClasses) to be recognized as runtime-synthesized", c)
+		}
+	}
+	if !isRuntimeSynthesizedErrorClass("acquire/unavailable") {
+		t.Error("expected acquire/* prefix family to be recognized as runtime-synthesized")
+	}
+	if isRuntimeSynthesizedErrorClass("http/timeout") {
+		t.Error("expected an ordinary executor-declared class to NOT be recognized as runtime-synthesized")
+	}
+	if isRuntimeSynthesizedErrorClass("retry_loop_no_progress") {
+		t.Error("retry_loop_no_progress was retired and must not be treated as runtime-synthesized")
 	}
 }
 
@@ -958,6 +1024,176 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 	})
 }
 
+func TestValidateParamsSchema_Error_MalformedSchema(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:         "demo",
+		Version:      "1.0.0",
+		ParamsSchema: map[string]any{"type": "not-a-real-json-schema-type"},
+		Nodes:        []TemplateNodeDef{{Type: "a", Executor: "h"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "params_schema")
+}
+
+func TestValidateParamsSchema_Ok_ValidSchema(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		ParamsSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"domain": map[string]any{"type": "string"}},
+		},
+		Nodes: []TemplateNodeDef{{Type: "a", Executor: "h"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestCheckAttributeSource_Error_UndeclaredParamsKeyWhenSchemaPresent(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		ParamsSchema: map[string]any{
+			"properties": map[string]any{"domain": map[string]any{"type": "string"}},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"prompt": map[string]any{"type": "string", "source": "{{params.unknown}}"},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "undeclared params key") {
+			found = true
+		}
+	}
+	require.True(t, found, "errors: %+v", res.Errors)
+}
+
+func TestCheckAttributeSource_Ok_UndeclaredParamsKeyExemptWithFallback(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		ParamsSchema: map[string]any{
+			"properties": map[string]any{"domain": map[string]any{"type": "string"}},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"prompt": map[string]any{"type": "string", "source": `{{params.notes | "none"}}`},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	assert.True(t, res.Ok(), "a fallback literal covers the missing-key case; schema declaration must not be required; errors: %+v", res.Errors)
+}
+
+func TestCheckAttributeSource_Ok_UndeclaredParamsKeyExemptWithLenientMarker(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		ParamsSchema: map[string]any{
+			"properties": map[string]any{"domain": map[string]any{"type": "string"}},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"prompt": map[string]any{"type": "string", "source": "{{params.notes?}}"},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	assert.True(t, res.Ok(), "the `?` lenient marker covers the missing-key case; schema declaration must not be required; errors: %+v", res.Errors)
+}
+
+func TestCheckAttributeSource_Ok_ParamsKeyUncheckedWhenNoSchemaDeclared(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"prompt": map[string]any{"type": "string", "source": "{{params.anything}}"},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	assert.True(t, res.Ok(), "no params_schema declared: source params.* refs must not be checked; errors: %+v", res.Errors)
+}
+
+func TestValidateClaimProducers_Error_UndeclaredParamsKeyInSelectorWhenSchemaPresent(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		ParamsSchema: map[string]any{
+			"properties": map[string]any{"tenant": map[string]any{"type": "string"}},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			ClaimProducers: []NodeClaimProducerRef{
+				{Name: "content", Selector: "{{params.unknown}}", Intent: "r"},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "undeclared params key") {
+			found = true
+		}
+	}
+	require.True(t, found, "errors: %+v", res.Errors)
+}
+
+func TestValidateLocks_Error_UndeclaredParamsKeyInLockNameWhenSchemaPresent(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		ParamsSchema: map[string]any{
+			"properties": map[string]any{"tenant": map[string]any{"type": "string"}},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Locks: []NodeLockRef{
+				{Name: "{{params.unknown}}"},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "undeclared params key") {
+			found = true
+		}
+	}
+	require.True(t, found, "errors: %+v", res.Errors)
+}
+
 func TestTemplateValidator_Tags(t *testing.T) {
 	t.Run("valid params reference accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
@@ -1073,6 +1309,78 @@ func TestTemplateValidator_Tags(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestValidateSubscribes_ErrorClassVocabularyWarning_ResolvesKindAlias(t *testing.T) {
+	aliases := NewKindAliasMap()
+	if err := aliases.Register("worker", "worker.alias"); err != nil {
+		t.Fatalf("seed alias: %v", err)
+	}
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Kind: "worker"},
+			{Type: "b", Executor: "handler.b", Subscribes: []SubscriptionEntry{
+				{Node: "a", Type: "terminal/error/unexpected_class", ForceUpstreamRefresh: BoolPtr(false)},
+			}},
+		},
+	}
+	hooks := RegistryHooks{
+		KindAliases: aliases,
+		ExecutorDeclaredErrorClasses: func(name string) ([]string, bool) {
+			if name == "worker.alias" {
+				return []string{"known_class"}, true
+			}
+			return nil, false
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	found := false
+	for _, w := range res.Warnings {
+		if w.Path == "nodes[1].subscribes[0].type" && strings.Contains(w.Msg, "unexpected_class") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected vocabulary warning for a sender declared via kind: (resolved through effectiveExecutor); warnings: %+v", res.Warnings)
+	}
+}
+
+func TestValidateSubscriptionDeclaredTags_ResolvesKindAlias(t *testing.T) {
+	aliases := NewKindAliasMap()
+	if err := aliases.Register("worker", "worker.alias"); err != nil {
+		t.Fatalf("seed alias: %v", err)
+	}
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Kind: "worker"},
+			{Type: "b", Executor: "handler.b", Subscribes: []SubscriptionEntry{
+				{Node: "a", Type: "terminal/success", When: `"undeclared_tag" in payload.tags`, ForceUpstreamRefresh: BoolPtr(false)},
+			}},
+		},
+	}
+	hooks := RegistryHooks{
+		KindAliases: aliases,
+		ExecutorDeclaredTags: func(name string) ([]string, bool) {
+			if name == "worker.alias" {
+				return []string{"declared_tag"}, true
+			}
+			return nil, false
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	found := false
+	for _, e := range res.Errors {
+		if e.Path == "nodes[1].subscribes[0].when" && strings.Contains(e.Msg, "undeclared_tag") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected undeclared payload.tags rejection for a sender declared via kind: (resolved through effectiveExecutor); errors: %+v", res.Errors)
+	}
 }
 
 func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
@@ -1201,6 +1509,93 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 		if !found {
 			t.Fatalf("expected diagnostic naming the empty trailing segment, got errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 		}
+	})
+}
+
+func TestCheckAttributeSource_RejectsDeepEmptySegments(t *testing.T) {
+	specFor := func(source string, extra func(*TemplateSpec)) *TemplateSpec {
+		s := &TemplateSpec{
+			Name:    "demo",
+			Version: "1.0.0",
+			Nodes: []TemplateNodeDef{
+				{
+					Type:     "a",
+					Executor: "h",
+					ClaimProducers: []NodeClaimProducerRef{
+						{Name: "content", Selector: "@x", Intent: "r", Alias: "queue"},
+					},
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"bad": map[string]any{"type": "string", "source": source},
+						},
+					}},
+				},
+			},
+		}
+		if extra != nil {
+			extra(s)
+		}
+		return s
+	}
+
+	t.Run("claim payload deep trailing segment rejected", func(t *testing.T) {
+		spec := specFor("{{claim.queue.payload.x.}}", nil)
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, "nodes[0].attributes.schema.properties.bad")
+		found := false
+		for _, e := range res.Errors {
+			if strings.Contains(e.Msg, "empty trailing segment") {
+				found = true
+			}
+		}
+		require.True(t, found, "errors: %+v", res.Errors)
+	})
+
+	t.Run("nodes attribute deep trailing segment rejected", func(t *testing.T) {
+		spec := specFor("{{nodes.other.attribute.x.}}", func(s *TemplateSpec) {
+			s.Nodes = append(s.Nodes, TemplateNodeDef{Type: "other", Executor: "h"})
+		})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+		require.False(t, res.Ok())
+		found := false
+		for _, e := range res.Errors {
+			if strings.Contains(e.Msg, "empty trailing segment") {
+				found = true
+			}
+		}
+		require.True(t, found, "errors: %+v", res.Errors)
+	})
+
+	t.Run("messages deep trailing segment rejected", func(t *testing.T) {
+		spec := specFor("{{messages.t/type.f.g.}}", func(s *TemplateSpec) {
+			s.Messages = []MessageSchema{
+				{Type: "t/type", BodySchema: []byte(`{"type":"object","properties":{"f":{"type":"object"}}}`)},
+			}
+		})
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+		require.False(t, res.Ok())
+		found := false
+		for _, e := range res.Errors {
+			if strings.Contains(e.Msg, "empty trailing segment") {
+				found = true
+			}
+		}
+		require.True(t, found, "errors: %+v", res.Errors)
+	})
+
+	t.Run("params nested empty segment rejected", func(t *testing.T) {
+		spec := specFor("{{params.key.}}", nil)
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+		require.False(t, res.Ok())
+		found := false
+		for _, e := range res.Errors {
+			if strings.Contains(e.Msg, "empty trailing segment") {
+				found = true
+			}
+		}
+		require.True(t, found, "errors: %+v", res.Errors)
 	})
 }
 
@@ -2329,6 +2724,44 @@ func TestValidateMessageSubstitutionRef_Ok(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	assert.True(t, res.Ok(), "errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
+}
+
+func TestValidateMessageSubstitutionRef_Ok_MessageTypeWhitespacePadded(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{
+				Type: "  ping/recheck  ",
+				BodySchema: []byte(`{
+					"type": "object",
+					"properties": {"reason": {"type": "string"}}
+				}`),
+			},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "receiver",
+			Executor: "handler.a",
+			Subscribes: []SubscriptionEntry{
+				{
+					Node:                 "ping/recheck",
+					Type:                 "terminal/success",
+					ForceUpstreamRefresh: BoolPtr(false),
+				},
+			},
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"reason": map[string]any{
+						"type":   "string",
+						"source": "{{messages.ping/recheck.reason}}",
+					},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	assert.True(t, res.Ok(), "surrounding whitespace in messages[].type must not break body_schema field lookups; errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 }
 
 func TestValidateMessageSubstitutionRef_Error_UnknownType(t *testing.T) {

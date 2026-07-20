@@ -156,6 +156,10 @@ message OpenRequest {
   // host-agent-proxy to key per-run-scope spawn isolation on the
   // claim-producer path. Opaque to rimsky.
   string run_scope_id = 8;
+  // lifetime: "subgraph" | "durable". Mirrors ClaimBinding.lifetime in
+  // validation.proto so a producer sees the same value at Open that it
+  // was validated against.
+  string lifetime = 9;
 }
 
 // OpenResponse signals acquisition outcome. Producers that always

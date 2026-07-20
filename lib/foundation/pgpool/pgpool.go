@@ -138,7 +138,13 @@ func runPostgresWithRetry(ctx context.Context, cfg Config) (*pgmodule.PostgresCo
 		}
 		lastErr = err
 		if attempt < bootMaxAttempts {
-			time.Sleep(time.Duration(attempt) * bootRetryBackoff)
+			timer := time.NewTimer(time.Duration(attempt) * bootRetryBackoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, fmt.Errorf("after %d attempts (cancelled during backoff): %w", attempt, ctx.Err())
+			case <-timer.C:
+			}
 		}
 	}
 	return nil, fmt.Errorf("after %d attempts: %w", bootMaxAttempts, lastErr)
@@ -146,12 +152,13 @@ func runPostgresWithRetry(ctx context.Context, cfg Config) (*pgmodule.PostgresCo
 
 func (p *Pool) boot(ctx context.Context) error {
 	p.bootOnce.Do(func() {
-		container, err := runPostgresWithRetry(ctx, p.cfg)
+		bootCtx := context.WithoutCancel(ctx)
+		container, err := runPostgresWithRetry(bootCtx, p.cfg)
 		if err != nil {
 			p.bootErr = fmt.Errorf("start postgres: %w", err)
 			return
 		}
-		baseDSN, err := resolveConnectionString(ctx, container)
+		baseDSN, err := resolveConnectionString(bootCtx, container)
 		if err != nil {
 			p.bootErr = fmt.Errorf("connection string: %w", err)
 			return
@@ -163,7 +170,7 @@ func (p *Pool) boot(ctx context.Context) error {
 			p.bootErr = fmt.Errorf("admin dsn: %w", err)
 			return
 		}
-		adminPool, err := pgxpool.New(ctx, adminDSN)
+		adminPool, err := pgxpool.New(bootCtx, adminDSN)
 		if err != nil {
 			p.bootErr = fmt.Errorf("admin pool: %w", err)
 			return
@@ -172,7 +179,7 @@ func (p *Pool) boot(ctx context.Context) error {
 
 		if p.cfg.InitTemplate != nil {
 			templateName := p.cfg.Database + "_tmpl"
-			if _, err := adminPool.Exec(ctx, fmt.Sprintf(`CREATE DATABASE %s`, quoteIdent(templateName))); err != nil {
+			if _, err := adminPool.Exec(bootCtx, fmt.Sprintf(`CREATE DATABASE %s`, quoteIdent(templateName))); err != nil {
 				p.bootErr = fmt.Errorf("create template db: %w", err)
 				return
 			}
@@ -181,7 +188,7 @@ func (p *Pool) boot(ctx context.Context) error {
 				p.bootErr = fmt.Errorf("template dsn: %w", err)
 				return
 			}
-			if err := p.cfg.InitTemplate(ctx, templateDSN); err != nil {
+			if err := p.cfg.InitTemplate(bootCtx, templateDSN); err != nil {
 				p.bootErr = fmt.Errorf("init template: %w", err)
 				return
 			}

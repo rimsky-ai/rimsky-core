@@ -28,7 +28,7 @@ func TestOrphanDispatchReaper_ReleasesTerminalFrameClaim(t *testing.T) {
 	nodeRunID := seedTerminalFrameAndDispatch(t, h, "stale-sup")
 
 	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(),
-		slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+		slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil))
 
 	var claimedBy *string
 	h.QueryRowSQL(

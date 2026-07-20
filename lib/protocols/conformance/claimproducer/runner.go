@@ -51,7 +51,8 @@ func Run(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 		Intent:       claimproducer.IntentRead,
 		Alias:        "conformance",
 	}
-	out1, err := c.Open(ctx, claimproducer.ClaimID(uuid.New().String()), spec)
+	claimID1 := claimproducer.ClaimID(uuid.New().String())
+	out1, err := c.Open(ctx, claimID1, spec)
 	if err != nil {
 		results = append(results, CheckResult{Name: "OpenFirst", Err: err})
 		results = append(results, runOptionalChecks(ctx, c, caps)...)
@@ -65,6 +66,9 @@ func Run(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
+	defer func() {
+		_ = c.Release(ctx, claimID1, out1.Result.ClaimScope, out1.Result.Address, "")
+	}()
 	if out1.Result.RealizedWriteSemantics == claimproducer.WriteSemanticsUnknown {
 		results = append(results, CheckResult{
 			Name: "OpenFirst",
@@ -84,7 +88,8 @@ func Run(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 	}
 	results = append(results, CheckResult{Name: "OpenFirst"})
 
-	out2, err := c.Open(ctx, claimproducer.ClaimID(uuid.New().String()), spec)
+	claimID2 := claimproducer.ClaimID(uuid.New().String())
+	out2, err := c.Open(ctx, claimID2, spec)
 	if err != nil {
 		results = append(results, CheckResult{Name: "OpenSecond", Err: err})
 		results = append(results, runOptionalChecks(ctx, c, caps)...)
@@ -95,6 +100,9 @@ func Run(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
+	defer func() {
+		_ = c.Release(ctx, claimID2, out2.Result.ClaimScope, out2.Result.Address, "")
+	}()
 	results = append(results, CheckResult{Name: "OpenSecond"})
 
 	if !bytes.Equal(out1.Result.ClaimScope, out2.Result.ClaimScope) {

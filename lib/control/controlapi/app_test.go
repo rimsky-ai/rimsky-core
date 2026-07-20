@@ -94,7 +94,7 @@ func newHarness(t *testing.T) (*harness, func()) {
 
 func (h *harness) tickFrameEngine(t *testing.T) {
 	t.Helper()
-	if err := frame.RunTick(context.Background(), h.persist, h.driver.Queue(), silentFrameLogger{}, nil); err != nil {
+	if err := frame.RunTick(context.Background(), h.persist, h.driver.Queue(), silentFrameLogger{}, nil, nil); err != nil {
 		t.Fatalf("frame.RunTick: %v", err)
 	}
 }

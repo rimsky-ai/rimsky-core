@@ -139,6 +139,63 @@ type nonDeletingBackend struct {
 
 func (n *nonDeletingBackend) Delete(context.Context, Handle) error { return nil }
 
+func TestRun_MissingDeleteFailsDeleteThenReadRangeCheck(t *testing.T) {
+	be := &nonDeletingBackend{memoryBackend: newMemoryBackend()}
+	results := Run(context.Background(), be)
+	r := findBlobRow(t, results, "delete then range-read returns ErrBlobNotFound")
+	if r.Err == nil {
+		t.Fatal("delete-then-range-read check must fail when Delete does not actually remove the blob")
+	}
+}
+
+type noBoundsCheckBackend struct {
+	*memoryBackend
+}
+
+func (n *noBoundsCheckBackend) ReadRange(ctx context.Context, h Handle, offset, length int64) ([]byte, error) {
+	data, err := n.memoryBackend.Read(ctx, h)
+	if err != nil {
+		return nil, err
+	}
+	end := offset + length
+	if end > int64(len(data)) {
+		end = int64(len(data))
+	}
+	if offset > end {
+		offset = end
+	}
+	return data[offset:end], nil
+}
+
+func TestRun_NoBoundsCheckFailsOutOfRangeCheck(t *testing.T) {
+	be := &noBoundsCheckBackend{memoryBackend: newMemoryBackend()}
+	results := Run(context.Background(), be)
+	r := findBlobRow(t, results, "range read out of bounds returns io.ErrUnexpectedEOF")
+	if r.Err == nil {
+		t.Fatal("out-of-range check must fail when ReadRange silently truncates instead of erroring")
+	}
+}
+
+type emptyHandleBackend struct {
+	*memoryBackend
+}
+
+func (e *emptyHandleBackend) Write(ctx context.Context, hint string, data []byte) (Handle, error) {
+	if _, err := e.memoryBackend.Write(ctx, hint, data); err != nil {
+		return "", err
+	}
+	return "", nil
+}
+
+func TestRun_EmptyHandleFailsSelfDescribingCheck(t *testing.T) {
+	be := &emptyHandleBackend{memoryBackend: newMemoryBackend()}
+	results := Run(context.Background(), be)
+	r := findBlobRow(t, results, "handle is a non-empty self-describing string")
+	if r.Err == nil {
+		t.Fatal("self-describing-handle check must fail when Write returns an empty handle")
+	}
+}
+
 func findBlobRow(t *testing.T, results []CheckResult, name string) CheckResult {
 	t.Helper()
 	for _, r := range results {

@@ -28,7 +28,7 @@ func isValidFallbackLiteral(s string) bool {
 }
 
 // @concept: attribute
-func checkAttributeSource(src, path string, declared map[string]int, directAliases, heldAliases map[string]struct{}, res *ValidationResult) {
+func checkAttributeSource(src, path string, declared map[string]int, directAliases, heldAliases map[string]struct{}, spec *TemplateSpec, res *ValidationResult) {
 	trimmed := strings.TrimSpace(src)
 	if trimmed == "" {
 		res.Errors = append(res.Errors, ValidationError{
@@ -46,11 +46,50 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 	}
 	for _, m := range matches {
 		body := strings.TrimSpace(trimmed[m[2]:m[3]])
-		checkAttributeDirectiveBody(body, path, declared, directAliases, heldAliases, res)
+		checkAttributeDirectiveBody(body, path, declared, directAliases, heldAliases, spec, res)
 	}
 }
 
-func checkAttributeDirectiveBody(rawBody, path string, declared map[string]int, directAliases, heldAliases map[string]struct{}, res *ValidationResult) {
+func rejectEmptySegments(parts []string, from int, kindLabel, body, path string, res *ValidationResult) bool {
+	if from >= len(parts) {
+		return false
+	}
+	for _, p := range parts[from:] {
+		if p == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("%s directive %q has an empty trailing segment", kindLabel, body),
+			})
+			return true
+		}
+	}
+	return false
+}
+
+func paramsTopKey(rest string) string {
+	if dot := strings.Index(rest, "."); dot >= 0 {
+		return rest[:dot]
+	}
+	return rest
+}
+
+func checkParamsKeyDeclared(rest, path, body string, spec *TemplateSpec, res *ValidationResult) {
+	if spec == nil || spec.ParamsSchema == nil {
+		return
+	}
+	topKey := paramsTopKey(rest)
+	props := paramsSchemaProperties(spec)
+	if _, ok := props[topKey]; ok {
+		return
+	}
+	res.Errors = append(res.Errors, ValidationError{
+		Path: path,
+		Msg: fmt.Sprintf("directive %q references undeclared params key %q (declare it under params_schema.properties)",
+			body, topKey),
+	})
+}
+
+func checkAttributeDirectiveBody(rawBody, path string, declared map[string]int, directAliases, heldAliases map[string]struct{}, spec *TemplateSpec, res *ValidationResult) {
 	rawBody = strings.TrimSpace(rawBody)
 	shape := attributes.ParseDirectiveShape(rawBody)
 	if shape.MultiPipe {
@@ -105,12 +144,7 @@ func checkAttributeDirectiveBody(rawBody, path string, declared map[string]int, 
 				})
 			}
 		case "payload":
-			if len(parts) > 2 && parts[2] == "" {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: path,
-					Msg:  fmt.Sprintf("claim directive %q has an empty trailing segment", body),
-				})
-			}
+			rejectEmptySegments(parts, 2, "claim", body, path, res)
 		default:
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
@@ -131,6 +165,13 @@ func checkAttributeDirectiveBody(rawBody, path string, declared map[string]int, 
 				Path: path,
 				Msg:  fmt.Sprintf("params directive %q must be params.<key>", body),
 			})
+			return
+		}
+		if rejectEmptySegments(parts, 1, "params", body, path, res) {
+			return
+		}
+		if !shape.HasFallback && !shape.Lenient {
+			checkParamsKeyDeclared(rest, path, body, spec, res)
 		}
 	case "nodes":
 		if len(parts) < 2 || parts[0] == "" {
@@ -142,11 +183,7 @@ func checkAttributeDirectiveBody(rawBody, path string, declared map[string]int, 
 		}
 		switch parts[1] {
 		case "attribute":
-			if len(parts) > 2 && parts[2] == "" {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: path,
-					Msg:  fmt.Sprintf("nodes directive %q has an empty trailing segment", body),
-				})
+			if rejectEmptySegments(parts, 2, "nodes", body, path, res) {
 				return
 			}
 			if _, ok := declared[parts[0]]; !ok {
@@ -176,12 +213,7 @@ func checkAttributeDirectiveBody(rawBody, path string, declared map[string]int, 
 			})
 			return
 		}
-		if len(parts) > 2 && parts[2] == "" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: path,
-				Msg:  fmt.Sprintf("messages directive %q has an empty trailing segment", body),
-			})
-		}
+		rejectEmptySegments(parts, 1, "messages", body, path, res)
 	case "env":
 		if len(parts) != 1 || !envVarNameRe.MatchString(parts[0]) {
 			res.Errors = append(res.Errors, ValidationError{
@@ -197,8 +229,8 @@ func checkAttributeDirectiveBody(rawBody, path string, declared map[string]int, 
 	}
 }
 
-func checkScopeDirectives(s, path string, res *ValidationResult) {
-	checkDispatchDirectives(s, path, res)
+func checkScopeDirectives(s, path string, spec *TemplateSpec, res *ValidationResult) {
+	checkDispatchDirectives(s, path, spec, res)
 	stripped := dispatchDirectiveRe.ReplaceAllString(s, "")
 	for _, m := range anyBraceRe.FindAllString(stripped, -1) {
 		if !instantiationPlaceholderRe.MatchString(m) {
@@ -210,11 +242,11 @@ func checkScopeDirectives(s, path string, res *ValidationResult) {
 	}
 }
 
-func checkLockNameDirectives(s, path string, res *ValidationResult) {
-	checkScopeDirectives(s, path, res)
+func checkLockNameDirectives(s, path string, spec *TemplateSpec, res *ValidationResult) {
+	checkScopeDirectives(s, path, spec, res)
 }
 
-func checkDispatchDirectives(s, path string, res *ValidationResult) {
+func checkDispatchDirectives(s, path string, spec *TemplateSpec, res *ValidationResult) {
 	for _, m := range dispatchDirectiveRe.FindAllStringSubmatch(s, -1) {
 		body := strings.TrimSpace(m[1])
 		if body == "" {
@@ -224,11 +256,16 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 			})
 			continue
 		}
-		if !directiveBodyRe.MatchString(body) {
+		bodyMatch := directiveBodyRe.FindStringSubmatch(body)
+		if bodyMatch == nil {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
 				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], messages.<type>[.<field>], child.partition_key, or env.<VAR_NAME>)", body),
 			})
+			continue
+		}
+		if bodyMatch[1] == "params" {
+			checkParamsKeyDeclared(bodyMatch[2], path, body, spec, res)
 		}
 	}
 }

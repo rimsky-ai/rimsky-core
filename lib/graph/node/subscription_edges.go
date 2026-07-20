@@ -243,7 +243,7 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 	for _, existing := range edges {
 		if existing.ReceiverNodeType == e.ReceiverNodeType &&
 			existing.TypePattern == e.TypePattern &&
-			existing.WhenExpr == e.WhenExpr &&
+			existing.WhenExpr.Source() == e.WhenExpr.Source() &&
 			existing.ForceUpstreamRefresh == e.ForceUpstreamRefresh &&
 			existing.ResolvesViaCallingNode == e.ResolvesViaCallingNode {
 			return true

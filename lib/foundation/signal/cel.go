@@ -25,6 +25,13 @@ func CompileWhen(typeSpec TypePath, when string) (*CompiledPredicate, error) {
 	return CompileWhenWithBodyFields(typeSpec, when, nil)
 }
 
+func (p *CompiledPredicate) Source() string {
+	if p == nil {
+		return ""
+	}
+	return p.whenSrc
+}
+
 // @concept: message-schema
 func CompileWhenWithBodyFields(typeSpec TypePath, when string, bodyFields map[string]struct{}) (*CompiledPredicate, error) {
 	if when == "" {

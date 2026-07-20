@@ -173,6 +173,46 @@ func TestBuildSubscriptionEdges_Dedup(t *testing.T) {
 	}
 }
 
+func TestBuildSubscriptionEdges_Dedup_SameWhenText(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		{Type: "sender", Executor: "stub"},
+		{Type: "receiver", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{
+				{Node: "sender", Type: "terminal/success", When: "payload.changed", ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "sender", Type: "terminal/success", When: "payload.changed", ForceUpstreamRefresh: spec.BoolPtr(false)},
+			},
+		},
+	}}
+	out, err := BuildSubscriptionEdges(tmpl, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	matched := out.Match("sender", signal.TypePath("terminal/success"))
+	if len(matched) != 1 {
+		t.Fatalf("two identical when: entries must dedup to 1 matched edge, got %d", len(matched))
+	}
+}
+
+func TestBuildSubscriptionEdges_NoDedup_DifferentWhenText(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		{Type: "sender", Executor: "stub"},
+		{Type: "receiver", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{
+				{Node: "sender", Type: "terminal/success", When: "payload.changed", ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "sender", Type: "terminal/success", When: "payload.changed == true", ForceUpstreamRefresh: spec.BoolPtr(false)},
+			},
+		},
+	}}
+	out, err := BuildSubscriptionEdges(tmpl, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	matched := out.Match("sender", signal.TypePath("terminal/success"))
+	if len(matched) != 2 {
+		t.Fatalf("two distinct when: entries must not dedup, got %d matched", len(matched))
+	}
+}
+
 func TestBuildSubscriptionEdges_FlagsDistinguishEdges(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "sender", Executor: "stub"},

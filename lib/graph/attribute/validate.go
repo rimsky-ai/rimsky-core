@@ -2,13 +2,17 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package attributes
+package attribute
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
@@ -38,6 +42,37 @@ const (
 	PhaseCommit   = "commit"
 )
 
+var compiledSchemaCache sync.Map
+
+var schemaCompileCount atomic.Int64
+
+func compiledSchema(schemaBytes []byte, phase string) (*jsonschema.Schema, error) {
+	sum := sha256.Sum256(schemaBytes)
+	key := hex.EncodeToString(sum[:])
+	if cached, ok := compiledSchemaCache.Load(key); ok {
+		return cached.(*jsonschema.Schema), nil
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("attributes-schema.json", bytes.NewReader(schemaBytes)); err != nil {
+		return nil, &ErrSchemaValidation{
+			Phase:   phase,
+			Message: "add schema resource",
+			Cause:   err,
+		}
+	}
+	compiled, err := compiler.Compile("attributes-schema.json")
+	if err != nil {
+		return nil, &ErrSchemaValidation{
+			Phase:   phase,
+			Message: "compile schema",
+			Cause:   err,
+		}
+	}
+	schemaCompileCount.Add(1)
+	actual, _ := compiledSchemaCache.LoadOrStore(key, compiled)
+	return actual.(*jsonschema.Schema), nil
+}
+
 func Validate(schema map[string]any, data map[string]any, phase string) error {
 	schemaBytes, err := json.Marshal(schema)
 	if err != nil {
@@ -47,21 +82,9 @@ func Validate(schema map[string]any, data map[string]any, phase string) error {
 			Cause:   err,
 		}
 	}
-	compiler := jsonschema.NewCompiler()
-	if err := compiler.AddResource("attributes-schema.json", bytes.NewReader(schemaBytes)); err != nil {
-		return &ErrSchemaValidation{
-			Phase:   phase,
-			Message: "add schema resource",
-			Cause:   err,
-		}
-	}
-	compiled, err := compiler.Compile("attributes-schema.json")
+	compiled, err := compiledSchema(schemaBytes, phase)
 	if err != nil {
-		return &ErrSchemaValidation{
-			Phase:   phase,
-			Message: "compile schema",
-			Cause:   err,
-		}
+		return err
 	}
 	dataBytes, err := json.Marshal(data)
 	if err != nil {

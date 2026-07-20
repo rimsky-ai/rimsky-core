@@ -163,7 +163,7 @@ func (q *queueImpl) SelectCandidates(
 		    )
 		    AND (
 		      d.executor_name = ANY($2::text[])
-		      OR d.executor_name IS NULL
+		      OR (d.executor_name IS NULL AND d.required_stores IS NOT NULL AND cardinality(d.required_stores) > 0)
 		      OR (
 		        $4 <> ''
 		        AND $4 = ANY($2::text[])
@@ -300,7 +300,7 @@ func (q *queueImpl) ForceComplete(ctx context.Context, nodeRunID shared.UUID) er
 	return nil
 }
 
-// @concept: fan-out
+// @concept: run-scope
 func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs

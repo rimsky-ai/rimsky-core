@@ -41,6 +41,13 @@ type FrameRow struct {
 	LastProgressAt      *time.Time  `json:"last_progress_at,omitempty"`
 }
 
+type FrameEndResult struct {
+	Transitioned bool
+	StartedAt    *time.Time
+	EndedAt      *time.Time
+	FinalState   string
+}
+
 type FrameRowWithMessage struct {
 	FrameRow
 	MessageType       string `json:"message_type"`
@@ -83,7 +90,7 @@ type FrameTable interface {
 	// @concept: frame
 	MarkOpenFramesEndedForInstance(ctx context.Context, instanceID shared.UUID, tx Tx) (int, error)
 
-	EndFrameIfSettled(ctx context.Context, frameID shared.UUID, tx Tx) (transitioned bool, err error)
+	EndFrameIfSettled(ctx context.Context, frameID shared.UUID, tx Tx) (FrameEndResult, error)
 
 	GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx Tx) (*shared.UUID, error)
 

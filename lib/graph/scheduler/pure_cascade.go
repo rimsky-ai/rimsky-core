@@ -10,6 +10,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
@@ -26,6 +27,9 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 	log := args.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
+	}
+	if args.Clock == nil {
+		args.Clock = shared.SystemClock{}
 	}
 
 	var ready []persistence.PureCascadeReadyRow
@@ -99,7 +103,41 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 		log.Warn("ProcessPureCascade: run-tree propagation failed",
 			"node_id", n.NodeID.String(), "error", err.Error())
 	}
+	evaluateAfterTerminalBreakpoint(ctx, runArgs, n, log)
 	return nil
+}
+
+// @concept: breakpoint
+func evaluateAfterTerminalBreakpoint(ctx context.Context, runArgs runtime.RunArgs, n persistence.PureCascadeReadyRow, log shared.Logger) {
+	var scope persistence.RunScopeRow
+	if err := runArgs.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rs, err := runArgs.Persist.RunScopes().GetByID(ctx, tx, n.RunScopeID)
+		if err != nil {
+			return err
+		}
+		if rs != nil {
+			scope = *rs
+		}
+		return nil
+	}); err != nil {
+		log.Warn("ProcessPureCascade: resolve run scope for breakpoint eval failed; continuing",
+			"node_id", n.NodeID.String(), "error", err.Error())
+	}
+	terminalSig := signalpkg.BuildTerminalSuccessSignal(false, nil, "", nil)
+	if _, err := runtime.EvaluateBreakpoints(ctx, runArgs, runtime.CheckpointContext{
+		InstanceID:     n.InstanceID,
+		NodeID:         n.NodeID,
+		NodeRunID:      n.NodeRunID,
+		FrameID:        n.FrameID,
+		NodeType:       n.NodeType,
+		Graph:          scope.GraphName,
+		ChildKey:       scope.PartitionKey,
+		Checkpoint:     persistence.CheckpointAfterTerminal,
+		TerminalSignal: &terminalSig,
+	}); err != nil {
+		log.Warn("ProcessPureCascade: breakpoint after_terminal eval failed; continuing",
+			"node_id", n.NodeID.String(), "error", err.Error())
+	}
 }
 
 func prepareNativeClaimRouting(ctx context.Context, args PureCascadeArgs, n persistence.PureCascadeReadyRow, def *nodepkg.TemplateNodeDef) (bool, error) {

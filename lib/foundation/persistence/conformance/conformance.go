@@ -38,6 +38,9 @@ func Suite(
 	t.Run("PublisherSubscriptionLifecycle", func(t *testing.T) { testPublisherSubscriptionLifecycle(t, factory(t)) })
 	t.Run("QueueInTxAndDispatchNode", func(t *testing.T) { testQueueInTxAndDispatchNode(t, factory(t)) })
 	t.Run("SelectCandidatesSkipsPausedInstances", func(t *testing.T) { testSelectCandidatesSkipsPausedInstances(t, factory(t)) })
+	t.Run("SelectCandidatesExcludesPureCascadeAdmitsClaimRouting", func(t *testing.T) {
+		testSelectCandidatesExcludesPureCascadeAdmitsClaimRouting(t, factory(t))
+	})
 	t.Run("SelectCandidatesSkipsTerminatedInstances", func(t *testing.T) { testSelectCandidatesSkipsTerminatedInstances(t, factory(t)) })
 	t.Run("SelectCandidatesKeysetCursor", func(t *testing.T) { testSelectCandidatesKeysetCursor(t, factory(t)) })
 	t.Run("SelectCandidatesLateBindMixedStores", func(t *testing.T) { testSelectCandidatesLateBindMixedStores(t, factory(t)) })
@@ -217,4 +220,7 @@ func Suite(
 	t.Run("DeploymentCA", func(t *testing.T) { TestDeploymentCA(t, factory(t)) })
 	t.Run("TemplatesInsertIdempotent", func(t *testing.T) { testTemplatesInsertIdempotent(t, factory(t)) })
 	t.Run("TemplatesListPaginationSurvivesCursorRowDeletion", func(t *testing.T) { testTemplatesListPaginationSurvivesCursorRowDeletion(t, factory(t)) })
+	t.Run("TemplatesListKeysetCursorTieBreak", func(t *testing.T) { testTemplatesListKeysetCursorTieBreak(t, factory(t), rawExec) })
+	t.Run("TemplateTagsListDeleteCountRoundTrip", func(t *testing.T) { testTemplateTagsListDeleteCountRoundTrip(t, factory(t)) })
+	t.Run("SupervisorsRegisterGetListUnregisterRoundTrip", func(t *testing.T) { testSupervisorsRegisterGetListUnregisterRoundTrip(t, factory(t)) })
 }

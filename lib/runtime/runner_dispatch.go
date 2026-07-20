@@ -19,6 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -48,8 +49,8 @@ type executorSchemaUnavailableError struct {
 
 func (e *executorSchemaUnavailableError) Error() string {
 	return fmt.Sprintf(
-		"executor_schema_unavailable: executor %q has no visible expected_attributes_schema at dispatch (handshake not completed or discovery cache empty)",
-		e.Executor,
+		"%s: executor %q has no visible expected_attributes_schema at dispatch (handshake not completed or discovery cache empty)",
+		spec.ErrorClassExecutorSchemaUnavailable, e.Executor,
 	)
 }
 
@@ -136,7 +137,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		}
 		return terminalEvent{
 			Kind:       terminalKindErrored,
-			ErrorClass: "unresolved_executor",
+			ErrorClass: spec.ErrorClassUnresolvedExecutor,
 			Payload:    map[string]any{"executor_name": acq.Executor},
 		}, nil, nil
 	}
@@ -181,7 +182,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return terminalEvent{
 				Kind:       terminalKindErrored,
-				ErrorClass: "executor_sync_timeout",
+				ErrorClass: spec.ErrorClassExecutorSyncTimeout,
 				Payload: map[string]any{
 					"deadline": deadline.String(),
 					"error":    err.Error(),

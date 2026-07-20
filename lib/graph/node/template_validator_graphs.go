@@ -26,11 +26,15 @@ func canonicalizeGraphs(spec *TemplateSpec, res *ValidationResult) {
 		return
 	}
 
+	for i := range spec.Graphs {
+		spec.Graphs[i].Name = strings.TrimSpace(spec.Graphs[i].Name)
+	}
+
 	graphByName := make(map[string]int, len(spec.Graphs))
 	mainCount := 0
 	for i, g := range spec.Graphs {
 		base := fmt.Sprintf("graphs[%d]", i)
-		name := strings.TrimSpace(g.Name)
+		name := g.Name
 		if name == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: base + ".name", Msg: "graph name is required",
@@ -435,8 +439,20 @@ func validateGraphReachability(g GraphSpec, res *ValidationResult) {
 }
 
 func validateInternalRefsLocal(spec *TemplateSpec, res *ValidationResult) {
+	allInternal := make(map[string]struct{})
 	for _, g := range spec.Graphs {
 		if g.Name == MainGraphName {
+			continue
+		}
+		for _, n := range g.Nodes {
+			if n.Type != "" {
+				allInternal[n.Type] = struct{}{}
+			}
+		}
+	}
+	for _, g := range spec.Graphs {
+		if g.Name == MainGraphName {
+			validateOuterRefsNotInternal(g, allInternal, res)
 			continue
 		}
 		local := make(map[string]struct{}, len(g.Nodes))
@@ -473,6 +489,43 @@ func validateInternalRefsLocal(spec *TemplateSpec, res *ValidationResult) {
 					})
 				}
 			}
+		}
+	}
+}
+
+// @concept: sub-graph
+func validateOuterRefsNotInternal(g GraphSpec, allInternal map[string]struct{}, res *ValidationResult) {
+	for _, n := range g.Nodes {
+		gbase := fmt.Sprintf("graphs[%q].nodes[%q]", g.Name, n.Type)
+		for si, s := range n.Subscribes {
+			if s.Node == "" {
+				continue
+			}
+			if _, ok := allInternal[s.Node]; !ok {
+				continue
+			}
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.subscribes[%d].node", gbase, si),
+				Msg: fmt.Sprintf(
+					"subgraph_outer_references_internal: main-graph node %q subscribes to %q which is internal to a sub-graph; "+
+						"sub-graph internals are only reachable via delegate: plus the entry/exit carry-rule, not direct subscription",
+					n.Type, s.Node),
+			})
+		}
+		for alias, hb := range n.Holds {
+			if hb.From == "" {
+				continue
+			}
+			if _, ok := allInternal[hb.From]; !ok {
+				continue
+			}
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.holds[%q].from", gbase, alias),
+				Msg: fmt.Sprintf(
+					"subgraph_outer_references_internal: main-graph node %q holds-from %q which is internal to a sub-graph; "+
+						"sub-graph internals are only reachable via delegate: plus the entry/exit carry-rule, not direct subscription",
+					n.Type, hb.From),
+			})
 		}
 	}
 }

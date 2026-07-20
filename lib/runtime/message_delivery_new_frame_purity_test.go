@@ -59,8 +59,8 @@ func TestSweepDeliverMessages_NewFrameReceiverRunNeverProbesPriorFrameParkedRow(
 
 	var endedWhileParked bool
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		transitioned, err := backend.Frames().EndFrameIfSettled(ctx, frame1ID, tx)
-		endedWhileParked = transitioned
+		result, err := backend.Frames().EndFrameIfSettled(ctx, frame1ID, tx)
+		endedWhileParked = result.Transitioned
 		return err
 	}))
 	require.False(t, endedWhileParked,
@@ -78,8 +78,8 @@ func TestSweepDeliverMessages_NewFrameReceiverRunNeverProbesPriorFrameParkedRow(
 
 	var endedAfterResolve bool
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		transitioned, err := backend.Frames().EndFrameIfSettled(ctx, frame1ID, tx)
-		endedAfterResolve = transitioned
+		result, err := backend.Frames().EndFrameIfSettled(ctx, frame1ID, tx)
+		endedAfterResolve = result.Transitioned
 		return err
 	}))
 	require.True(t, endedAfterResolve,

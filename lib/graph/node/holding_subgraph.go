@@ -6,6 +6,7 @@ package node
 
 import "sort"
 
+// @concept: claim-co-holdership
 type HoldingSubgraph struct {
 	AcquirerType string
 	Alias        string
@@ -14,6 +15,7 @@ type HoldingSubgraph struct {
 
 func (h HoldingSubgraph) IsHeld() bool { return len(h.Members) > 1 }
 
+// @concept: claim-co-holdership
 func HoldingSubgraphsForTemplate(spec *TemplateSpec) []HoldingSubgraph {
 	if spec == nil {
 		return nil

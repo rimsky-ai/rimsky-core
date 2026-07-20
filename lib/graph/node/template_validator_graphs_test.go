@@ -114,6 +114,40 @@ func TestCanonicalizeGraphs_HappyPathSingleMain(t *testing.T) {
 	}
 }
 
+func TestCanonicalizeGraphs_WhitespacePaddedMainNameTreatedAsMain(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl-1",
+		Version: "1",
+		Graphs: []GraphSpec{
+			{
+				Name: MainGraphName + " ",
+				Nodes: []TemplateNodeDef{
+					{Type: "alpha", Delegate: "sub"},
+				},
+			},
+			{
+				Name:  "sub",
+				Entry: "b",
+				Exit:  "c",
+				Nodes: []TemplateNodeDef{
+					{Type: "b"},
+					{Type: "c", Subscribes: []SubscriptionEntry{{Node: "b", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)}}},
+				},
+			},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	if hasErrorContaining(msgs, "subgraph_missing_main") {
+		t.Fatalf("whitespace-padded main graph name must still satisfy the missing-main gate; got: %v", msgs)
+	}
+	if hasErrorContaining(msgs, "subgraph_missing_entry") || hasErrorContaining(msgs, "subgraph_missing_exit") {
+		t.Fatalf("whitespace-padded main graph name must be treated as the main graph, not a phantom sub-graph; got: %v", msgs)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no errors; got: %v", msgs)
+	}
+}
+
 func TestCanonicalizeGraphs_RejectGraphsAndNodesBothSet(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "tmpl",
@@ -356,6 +390,62 @@ func TestCanonicalizeGraphs_RejectInternalReferencesOuter(t *testing.T) {
 	msgs := validateMultiGraph(t, spec)
 	if !hasErrorContaining(msgs, "subgraph_internal_references_outer") {
 		t.Fatalf("expected subgraph_internal_references_outer; got: %v", msgs)
+	}
+}
+
+func TestCanonicalizeGraphs_RejectOuterSubscribesToInternal(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Graphs: []GraphSpec{
+			{
+				Name: MainGraphName,
+				Nodes: []TemplateNodeDef{
+					{Type: "outer", Subscribes: []SubscriptionEntry{{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)}}},
+				},
+			},
+			{
+				Name:  "sub",
+				Entry: "a",
+				Exit:  "b",
+				Nodes: []TemplateNodeDef{
+					{Type: "a"},
+					{Type: "b", Subscribes: []SubscriptionEntry{{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)}}},
+				},
+			},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	if !hasErrorContaining(msgs, "subgraph_outer_references_internal") {
+		t.Fatalf("expected subgraph_outer_references_internal; got: %v", msgs)
+	}
+}
+
+func TestCanonicalizeGraphs_RejectOuterHoldsFromInternal(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Graphs: []GraphSpec{
+			{
+				Name: MainGraphName,
+				Nodes: []TemplateNodeDef{
+					{Type: "outer", Holds: map[string]HoldsBinding{"x": {From: "a"}}},
+				},
+			},
+			{
+				Name:  "sub",
+				Entry: "a",
+				Exit:  "b",
+				Nodes: []TemplateNodeDef{
+					{Type: "a"},
+					{Type: "b", Subscribes: []SubscriptionEntry{{Node: "a", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)}}},
+				},
+			},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	if !hasErrorContaining(msgs, "subgraph_outer_references_internal") {
+		t.Fatalf("expected subgraph_outer_references_internal; got: %v", msgs)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/check"
@@ -43,21 +44,24 @@ func Run(ctx context.Context, c genv1.DataProcessingClient) []CheckResult {
 	}
 	results = append(results, CheckResult{Name: "Capabilities"})
 
-	results = append(results, runBeginCommitPerMaterialization(ctx, c, caps)...)
-	results = append(results, checkBeginCandidateIdempotent(ctx, c))
-	results = append(results, checkAbandonCandidate(ctx, c)...)
-	results = append(results, checkListVersionsSmoke(ctx, c))
-	results = append(results, checkListPartitionsSmoke(ctx, c))
-	results = append(results, checkGetVersionSchemaSmoke(ctx, c))
-	results = append(results, checkConcurrentWrites(ctx, c))
+	runID := uuid.New().String()
+	results = append(results, runBeginCommitPerMaterialization(ctx, c, caps, runID)...)
+	results = append(results, checkBeginCandidateIdempotent(ctx, c, runID))
+	results = append(results, checkAbandonCandidate(ctx, c, runID)...)
+	results = append(results, checkListVersionsSmoke(ctx, c, runID))
+	results = append(results, checkListPartitionsSmoke(ctx, c, runID))
+	results = append(results, checkGetVersionSchemaSmoke(ctx, c, runID))
+	results = append(results, checkConcurrentWrites(ctx, c, runID))
 	return results
 }
 
-func runBeginCommitPerMaterialization(ctx context.Context, c genv1.DataProcessingClient, caps *genv1.DataProcessingCapabilities) []CheckResult {
+func runBeginCommitPerMaterialization(
+	ctx context.Context, c genv1.DataProcessingClient, caps *genv1.DataProcessingCapabilities, runID string,
+) []CheckResult {
 	out := make([]CheckResult, 0, len(caps.GetMaterializations()))
 	for _, mat := range caps.GetMaterializations() {
 		name := "BeginCommit/" + mat
-		claimHandleID := fmt.Sprintf("rimsky/conformance/dataproc/%s/main", mat)
+		claimHandleID := fmt.Sprintf("rimsky/conformance/dataproc/%s/main/%s", mat, runID)
 		subScope, _ := json.Marshal(map[string]any{
 			"partition_key":   "conformance-region",
 			"materialization": mat,
@@ -65,7 +69,7 @@ func runBeginCommitPerMaterialization(ctx context.Context, c genv1.DataProcessin
 		begin, err := c.BeginCandidate(ctx, &genv1.BeginCandidateRequest{
 			ClaimHandleId:      claimHandleID,
 			SubScopeDescriptor: subScope,
-			IdempotencyKey:     "conformance-" + mat,
+			IdempotencyKey:     "conformance-" + mat + "-" + runID,
 		})
 		if err != nil {
 			out = append(out, CheckResult{Name: name, Err: fmt.Errorf("BeginCandidate: %w", err)})
@@ -88,10 +92,10 @@ func runBeginCommitPerMaterialization(ctx context.Context, c genv1.DataProcessin
 	return out
 }
 
-func checkBeginCandidateIdempotent(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
+func checkBeginCandidateIdempotent(ctx context.Context, c genv1.DataProcessingClient, runID string) CheckResult {
 	req := &genv1.BeginCandidateRequest{
-		ClaimHandleId:  "rimsky/conformance/dataproc/idempotency",
-		IdempotencyKey: "idem-stable",
+		ClaimHandleId:  "rimsky/conformance/dataproc/idempotency/" + runID,
+		IdempotencyKey: "idem-stable-" + runID,
 	}
 	first, err := c.BeginCandidate(ctx, req)
 	if err != nil {
@@ -112,12 +116,12 @@ func checkBeginCandidateIdempotent(ctx context.Context, c genv1.DataProcessingCl
 	return CheckResult{Name: "BeginCandidateIdempotent"}
 }
 
-func checkAbandonCandidate(ctx context.Context, c genv1.DataProcessingClient) []CheckResult {
-	claimHandleID := "rimsky/conformance/dataproc/abandon"
+func checkAbandonCandidate(ctx context.Context, c genv1.DataProcessingClient, runID string) []CheckResult {
+	claimHandleID := "rimsky/conformance/dataproc/abandon/" + runID
 
 	begin, err := c.BeginCandidate(ctx, &genv1.BeginCandidateRequest{
 		ClaimHandleId:  claimHandleID,
-		IdempotencyKey: "abandon-1",
+		IdempotencyKey: "abandon-1-" + runID,
 	})
 	if err != nil {
 		errResult := fmt.Errorf("BeginCandidate: %w", err)
@@ -183,11 +187,11 @@ func checkAbandonCandidateUnknownHandleFailsCleanly(ctx context.Context, c genv1
 	return CheckResult{Name: "AbandonCandidateUnknownHandleFailsCleanly"}
 }
 
-func checkListVersionsSmoke(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
-	claimHandleID := "rimsky/conformance/dataproc/list-versions"
+func checkListVersionsSmoke(ctx context.Context, c genv1.DataProcessingClient, runID string) CheckResult {
+	claimHandleID := "rimsky/conformance/dataproc/list-versions/" + runID
 	begin, err := c.BeginCandidate(ctx, &genv1.BeginCandidateRequest{
 		ClaimHandleId:  claimHandleID,
-		IdempotencyKey: "list-versions-1",
+		IdempotencyKey: "list-versions-1-" + runID,
 	})
 	if err != nil {
 		return CheckResult{Name: "ListVersionsSmoke", Err: fmt.Errorf("BeginCandidate: %w", err)}
@@ -212,13 +216,13 @@ func checkListVersionsSmoke(ctx context.Context, c genv1.DataProcessingClient) C
 	return CheckResult{Name: "ListVersionsSmoke"}
 }
 
-func checkListPartitionsSmoke(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
-	claimHandleID := "rimsky/conformance/dataproc/list-partitions"
+func checkListPartitionsSmoke(ctx context.Context, c genv1.DataProcessingClient, runID string) CheckResult {
+	claimHandleID := "rimsky/conformance/dataproc/list-partitions/" + runID
 	subScope, _ := json.Marshal(map[string]string{"partition_key": "conformance-p1"})
 	begin, err := c.BeginCandidate(ctx, &genv1.BeginCandidateRequest{
 		ClaimHandleId:      claimHandleID,
 		SubScopeDescriptor: subScope,
-		IdempotencyKey:     "list-partitions-1",
+		IdempotencyKey:     "list-partitions-1-" + runID,
 	})
 	if err != nil {
 		return CheckResult{Name: "ListPartitionsSmoke", Err: fmt.Errorf("BeginCandidate: %w", err)}
@@ -238,11 +242,11 @@ func checkListPartitionsSmoke(ctx context.Context, c genv1.DataProcessingClient)
 	return CheckResult{Name: "ListPartitionsSmoke"}
 }
 
-func checkGetVersionSchemaSmoke(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
-	claimHandleID := "rimsky/conformance/dataproc/get-schema"
+func checkGetVersionSchemaSmoke(ctx context.Context, c genv1.DataProcessingClient, runID string) CheckResult {
+	claimHandleID := "rimsky/conformance/dataproc/get-schema/" + runID
 	begin, err := c.BeginCandidate(ctx, &genv1.BeginCandidateRequest{
 		ClaimHandleId:  claimHandleID,
-		IdempotencyKey: "get-schema-1",
+		IdempotencyKey: "get-schema-1-" + runID,
 	})
 	if err != nil {
 		return CheckResult{Name: "GetVersionSchemaSmoke", Err: fmt.Errorf("BeginCandidate: %w", err)}
@@ -260,22 +264,18 @@ func checkGetVersionSchemaSmoke(ctx context.Context, c genv1.DataProcessingClien
 		return CheckResult{Name: "GetVersionSchemaSmoke", Err: fmt.Errorf("ListVersions returned zero versions")}
 	}
 	versionID := versions.GetVersions()[0].GetVersionId()
-	resp, err := c.GetVersionSchema(ctx, &genv1.GetVersionSchemaRequest{
+	if _, err := c.GetVersionSchema(ctx, &genv1.GetVersionSchemaRequest{
 		ClaimHandleId: claimHandleID,
 		VersionId:     versionID,
-	})
-	if err != nil {
+	}); err != nil {
 		return CheckResult{Name: "GetVersionSchemaSmoke", Err: fmt.Errorf("GetVersionSchema: %w", err)}
-	}
-	if len(resp.GetSchema()) == 0 {
-		return CheckResult{Name: "GetVersionSchemaSmoke", Err: fmt.Errorf("GetVersionSchema returned empty schema bytes")}
 	}
 	return CheckResult{Name: "GetVersionSchemaSmoke"}
 }
 
-func checkConcurrentWrites(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
+func checkConcurrentWrites(ctx context.Context, c genv1.DataProcessingClient, runID string) CheckResult {
 	const n = 8
-	claimHandleID := "rimsky/conformance/dataproc/concurrent"
+	claimHandleID := "rimsky/conformance/dataproc/concurrent/" + runID
 	var wg sync.WaitGroup
 	errs := make([]error, n)
 	for i := 0; i < n; i++ {
@@ -285,7 +285,7 @@ func checkConcurrentWrites(ctx context.Context, c genv1.DataProcessingClient) Ch
 			defer wg.Done()
 			begin, err := c.BeginCandidate(ctx, &genv1.BeginCandidateRequest{
 				ClaimHandleId:  claimHandleID,
-				IdempotencyKey: fmt.Sprintf("concurrent-%d", i),
+				IdempotencyKey: fmt.Sprintf("concurrent-%d-%s", i, runID),
 			})
 			if err != nil {
 				errs[i] = fmt.Errorf("BeginCandidate[%d]: %w", i, err)

@@ -162,6 +162,7 @@ func TestServerBackedOpenConvertsAcquired(t *testing.T) {
 		TemplateID:   "t1",
 		InstanceID:   "i1",
 		RunScopeID:   "rs1",
+		Lifetime:     "durable",
 	})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -175,7 +176,7 @@ func TestServerBackedOpenConvertsAcquired(t *testing.T) {
 	req := srv.lastOpen
 	if req.GetClaimId() != "claim-1" || req.GetProducerName() != "items" || req.GetSelector() != "@sel" ||
 		req.GetIntent() != "rw" || req.GetAlias() != "a1" || req.GetTemplateId() != "t1" ||
-		req.GetInstanceId() != "i1" || req.GetRunScopeId() != "rs1" {
+		req.GetInstanceId() != "i1" || req.GetRunScopeId() != "rs1" || req.GetLifetime() != "durable" {
 		t.Fatalf("OpenRequest fields dropped: %+v", req)
 	}
 }

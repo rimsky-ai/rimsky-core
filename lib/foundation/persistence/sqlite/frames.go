@@ -122,10 +122,20 @@ func (s *framesImpl) MarkOpenFramesEndedForInstance(
 	return int(n), nil
 }
 
+const frameEndStateCaseSQL = `CASE
+    WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = ? AND r.state = 'failed'
+                 AND (r.settling_signal_type IS NULL OR r.settling_signal_type <> '` + cascade.SettlingSignalInstanceKilled + `')) THEN 'failed'
+    WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = ? AND r.state = 'failed'
+                 AND r.settling_signal_type = '` + cascade.SettlingSignalInstanceKilled + `') THEN 'terminated'
+    ELSE 'completed'
+END`
+
 func (s *framesImpl) EndFrameIfSettled(
 	ctx context.Context, frameID shared.UUID, tx persistence.Tx,
-) (bool, error) {
-	res, err := s.q(tx).ExecContext(ctx, `
+) (persistence.FrameEndResult, error) {
+	var startedAt, endedAt sql.NullString
+	var finalState string
+	err := s.q(tx).QueryRowContext(ctx, `
         UPDATE rimsky_frames
            SET ended_at = ?
          WHERE frame_id = ?
@@ -135,15 +145,22 @@ func (s *framesImpl) EndFrameIfSettled(
                 WHERE r.frame_id = ?
                   AND r.state IN (`+inFlightNodeRunStates+`)
            )
-    `, nowUTC(), frameID.String(), frameID.String())
+        RETURNING started_at, ended_at, `+frameEndStateCaseSQL+`
+    `, nowUTC(), frameID.String(), frameID.String(), frameID.String(), frameID.String()).Scan(&startedAt, &endedAt, &finalState)
 	if err != nil {
-		return false, fmt.Errorf("frames.EndFrameIfSettled: %w", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return persistence.FrameEndResult{}, nil
+		}
+		return persistence.FrameEndResult{}, fmt.Errorf("frames.EndFrameIfSettled: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
+	res := persistence.FrameEndResult{Transitioned: true, FinalState: finalState}
+	if res.StartedAt, err = parseNullableTime(startedAt); err != nil {
+		return persistence.FrameEndResult{}, fmt.Errorf("frames.EndFrameIfSettled: started_at: %w", err)
 	}
-	return n == 1, nil
+	if res.EndedAt, err = parseNullableTime(endedAt); err != nil {
+		return persistence.FrameEndResult{}, fmt.Errorf("frames.EndFrameIfSettled: ended_at: %w", err)
+	}
+	return res, nil
 }
 
 const prunedFrameIDsSQL = `

@@ -618,7 +618,7 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID) {
 func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	h.T.Helper()
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if err := frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil); err != nil {
+	if err := frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil, nil); err != nil {
 		h.T.Logf("driveFrameAndEnqueue: frame.RunTick (pre-sweep) failed; retrying next tick: %v", err)
 	}
 	// @decision: empty-message-as-root-trigger
@@ -632,7 +632,7 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	}); err != nil {
 		h.T.Logf("driveFrameAndEnqueue: ProcessPureCascade failed; retrying next tick: %v", err)
 	}
-	if err := frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil); err != nil {
+	if err := frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil, nil); err != nil {
 		h.T.Logf("driveFrameAndEnqueue: frame.RunTick (post-cascade) failed; retrying next tick: %v", err)
 	}
 	var (

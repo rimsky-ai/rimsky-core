@@ -67,11 +67,19 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 }
 
 func runTickAgainstDriver(ctx context.Context, d persistence.Database, log frame.Logger) error {
-	return frame.RunTick(ctx, d.Tables(), d.Queue(), log, nil)
+	return frame.RunTick(ctx, d.Tables(), d.Queue(), log, nil, nil)
 }
 
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+type fakeMetricsHook struct {
+	observed []float64
+}
+
+func (f *fakeMetricsHook) ObserveFrameDuration(seconds float64) {
+	f.observed = append(f.observed, seconds)
 }
 
 func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
@@ -211,6 +219,37 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 	require.Equal(t, "failed", state)
 }
 
+func TestRunTick_FrameEndDetection_ObservesDBStampedDuration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	d := pgtest.OpenDriver(ctx, t)
+
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
+	src := uuid.New()
+	startedAt := time.Now().Add(-5 * time.Second)
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &startedAt)
+	seedNode(t, ctx, d, instanceID, src, "fresh", &frameID)
+	markMessageDelivered(t, ctx, d, msgID)
+
+	metrics := &fakeMetricsHook{}
+	require.NoError(t, frame.RunTick(ctx, d.Tables(), d.Queue(), quietLogger(), nil, metrics))
+
+	require.Len(t, metrics.observed, 1, "exactly one frame-duration observation expected")
+
+	var dbStartedAt, dbEndedAt time.Time
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT started_at, ended_at FROM rimsky_frames WHERE frame_id = $1`, []any{frameID},
+		&dbStartedAt, &dbEndedAt)
+	require.False(t, dbEndedAt.IsZero(), "frame must have been ended")
+
+	wantSeconds := dbEndedAt.Sub(dbStartedAt).Seconds()
+	require.InDelta(t, wantSeconds, metrics.observed[0], 0.001,
+		"observed duration must equal the DB-stamped ended_at minus started_at, not an independently-read Go wall clock")
+	require.Greater(t, metrics.observed[0], 4.0,
+		"duration must reflect the ~5s gap between seeded started_at and the DB-stamped ended_at")
+}
+
 // @concept: run-scope
 func TestRunTick_FrameEndDetection_ClosesRootScopeTreeAtSettlement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -345,8 +384,8 @@ func TestEndFrameIfSettled_RefusesFrameWithInFlightRun(t *testing.T) {
 
 	var moved bool
 	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		var err error
-		moved, err = d.Tables().Frames().EndFrameIfSettled(ctx, frameID, tx)
+		result, err := d.Tables().Frames().EndFrameIfSettled(ctx, frameID, tx)
+		moved = result.Transitioned
 		return err
 	}))
 	require.False(t, moved, "a frame with a non-terminal run must not be ended")
@@ -393,8 +432,8 @@ func TestEndFrameIfSettled_ConcurrentRunInsertCannotEndFrame(t *testing.T) {
 			}
 			close(endObserved)
 			<-insertCommitted
-			moved, err := d.Tables().Frames().EndFrameIfSettled(ctx, frameID, tx)
-			out.moved = moved
+			result, err := d.Tables().Frames().EndFrameIfSettled(ctx, frameID, tx)
+			out.moved = result.Transitioned
 			return err
 		})
 		result <- out

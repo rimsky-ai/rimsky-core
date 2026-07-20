@@ -85,6 +85,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	rejectAuthorSetInternalFlags(spec, &res)
 	canonicalizeGraphs(spec, &res)
 	validateDelegateTargets(spec, &res)
+	validateParamsSchema(spec, &res)
 
 	if len(spec.Nodes) == 0 {
 		res.Errors = append(res.Errors, ValidationError{Path: "nodes", Msg: "template must declare at least one node"})
@@ -112,18 +113,18 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	}
 
 	declaredMessages := validateMessages(spec, declared, &res)
-	messageBodyFieldsForCEL := buildMessageBodyFieldSet(spec)
+	messageBodyFields := buildMessageBodyFieldSet(spec)
 
 	for i, n := range spec.Nodes {
 		base := fmt.Sprintf("nodes[%d]", i)
-		validateSubscribes(n, base, declared, declaredMessages, messageBodyFieldsForCEL, hooks, spec, &res)
+		validateSubscribes(n, base, declared, declaredMessages, messageBodyFields, hooks, spec, &res)
 		validateErrorTypes(n, base, hooks, &res)
 		validateExecutorCoherence(n, base, hooks, &res)
 		validateExecutorDeclared(n, base, hooks, &res)
 		validateKindDeclaration(n, base, hooks, &res)
 		validateSendsMessage(n, base, spec, declaredMessages, &res)
-		validateClaimProducers(n, base, hooks, &res)
-		validateLocks(n, base, hooks, &res)
+		validateClaimProducers(n, base, spec, hooks, &res)
+		validateLocks(n, base, spec, hooks, &res)
 		validateAttributesSchema(n, base, declared, spec, hooks, &res)
 		validateAcquireUnavailablePolicyAdvised(n, base, &res)
 		validateCascadeMode(n, base, &res)
@@ -138,7 +139,6 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 
 	// @concept: message-schema
 	messageRefs := ExtractMessageRefsFromTemplate(*spec)
-	messageBodyFields := buildMessageBodyFieldSet(spec)
 	for _, receiverType := range sortedMessageRefKeys(messageRefs) {
 		list := messageRefs[receiverType]
 		for _, ref := range list {
@@ -345,17 +345,13 @@ func validateErrorTypes(n TemplateNodeDef, base string, hooks RegistryHooks, res
 }
 
 func isRuntimeSynthesizedErrorClass(className string) bool {
-	if strings.HasPrefix(className, "acquire/") {
+	if strings.HasPrefix(className, spec.ErrorClassAcquirePrefix) {
 		return true
 	}
-	switch className {
-	case "template_resolution_failed",
-		"template_validation_failed",
-		"executor_schema_unavailable",
-		"attributes_schema_failed",
-		"unresolved_executor",
-		"executor_sync_timeout":
-		return true
+	for _, c := range spec.RuntimeSynthesizedErrorClasses {
+		if className == c {
+			return true
+		}
 	}
 	return false
 }
@@ -447,6 +443,19 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			})
 			continue
 		}
+		if isDeclaredMessage && !isDeclaredNode {
+			switch s.Type {
+			case "terminal/success", "terminal/*":
+			default:
+				res.Errors = append(res.Errors, ValidationError{
+					Path: sbase + ".type",
+					Msg: fmt.Sprintf(
+						"subscription_message_type_unreachable: node %q is a declared message type; message delivery only ever manifests as terminal/success, so type %q can never fire — use terminal/success or terminal/*",
+						s.Node, s.Type),
+				})
+				continue
+			}
+		}
 		if s.When != "" {
 			var compileErr error
 			if _, isMessageType := declaredMessages[s.Node]; isMessageType {
@@ -472,10 +481,11 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			sender := tmpl.Nodes[senderIdx]
 			leaf := strings.TrimPrefix(s.Type, "terminal/error/")
 			if !isRuntimeSynthesizedErrorClass(leaf) {
+				senderExecutor := effectiveExecutor(sender, hooks)
 				vocabularyKnown := false
 				matched := false
-				if sender.Executor != "" && hooks.ExecutorDeclaredErrorClasses != nil {
-					if classes, ok := hooks.ExecutorDeclaredErrorClasses(sender.Executor); ok {
+				if senderExecutor != "" && hooks.ExecutorDeclaredErrorClasses != nil {
+					if classes, ok := hooks.ExecutorDeclaredErrorClasses(senderExecutor); ok {
 						vocabularyKnown = true
 						matched = matched || errorClassMatchesDeclared(leaf, classes)
 					}
@@ -493,7 +503,7 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 						Path: sbase + ".type",
 						Msg: fmt.Sprintf("error class %q is not in any vocabulary declared by sender %q "+
 							"(executor %q or its claim_producers: producers); the subscription registers but will only "+
-							"fire if a peer emits this exact class", leaf, s.Node, sender.Executor),
+							"fire if a peer emits this exact class", leaf, s.Node, senderExecutor),
 					})
 				}
 			}
@@ -881,7 +891,7 @@ func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHook
 	})
 }
 
-func validateClaimProducers(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
+func validateClaimProducers(n TemplateNodeDef, base string, spec *TemplateSpec, hooks RegistryHooks, res *ValidationResult) {
 	seenAlias := make(map[string]int, len(n.ClaimProducers))
 	for j, s := range n.ClaimProducers {
 		sbase := fmt.Sprintf("%s.claim_producers[%d]", base, j)
@@ -918,7 +928,7 @@ func validateClaimProducers(n TemplateNodeDef, base string, hooks RegistryHooks,
 				Msg:  "selector is required",
 			})
 		} else {
-			checkScopeDirectives(s.Selector, sbase+".selector", res)
+			checkScopeDirectives(s.Selector, sbase+".selector", spec, res)
 		}
 		alias := s.AliasOf()
 		if prev, dup := seenAlias[alias]; dup {
@@ -948,7 +958,7 @@ const (
 	ClaimLifetimeDurable  = "durable"
 )
 
-func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
+func validateLocks(n TemplateNodeDef, base string, spec *TemplateSpec, hooks RegistryHooks, res *ValidationResult) {
 	seen := make(map[string]int, len(n.Locks))
 	for j, l := range n.Locks {
 		lbase := fmt.Sprintf("%s.locks[%d]", base, j)
@@ -959,7 +969,7 @@ func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *Val
 			})
 			continue
 		}
-		checkLockNameDirectives(name, lbase+".name", res)
+		checkLockNameDirectives(name, lbase+".name", spec, res)
 		if prev, dup := seen[name]; dup {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: lbase + ".name",
@@ -1015,7 +1025,7 @@ func validateDispatchDeadlines(n TemplateNodeDef, base string, res *ValidationRe
 		if kv.value == "" {
 			continue
 		}
-		d, err := parseDurationStrict(kv.value)
+		d, err := parseDuration(kv.value)
 		if err != nil {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: base + "." + kv.field,
@@ -1032,7 +1042,7 @@ func validateDispatchDeadlines(n TemplateNodeDef, base string, res *ValidationRe
 	}
 }
 
-func parseDurationStrict(s string) (time.Duration, error) {
+func parseDuration(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
@@ -1063,10 +1073,7 @@ func validateTagsAtRegistration(n TemplateNodeDef, base string, spec *TemplateSp
 				})
 				continue
 			}
-			topKey := rest
-			if dot := strings.Index(rest, "."); dot >= 0 {
-				topKey = rest[:dot]
-			}
+			topKey := paramsTopKey(rest)
 			if _, ok := props[topKey]; !ok {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,

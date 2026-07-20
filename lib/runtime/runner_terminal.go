@@ -14,6 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 )
 
@@ -171,7 +172,7 @@ func applyTerminalComplete(
 	if len(t.AttributesDel) > 0 {
 		if err := validateCommitWriteback(ctx, args, acq, schema, merged, tx); err != nil {
 			// @concept: executor
-			return applyErrorPolicyWithScratch(ctx, args, acq, "attributes_schema_failed", "",
+			return applyErrorPolicyWithScratch(ctx, args, acq, spec.ErrorClassAttributesSchemaFailed, "",
 				map[string]any{"error": err.Error()}, t.Tags, t.AttributesDel, t.Scratch, tx)
 		}
 	}

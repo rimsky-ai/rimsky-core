@@ -146,6 +146,53 @@ func TestParseCallbackBody_RejectsLegacyTypeDiscriminator(t *testing.T) {
 	}
 }
 
+func TestParseCallbackBody_RejectsNullOutcome(t *testing.T) {
+	if _, err := parseCallbackBody(map[string]any{"success": nil}); err == nil {
+		t.Fatal(`expected error for {"success": null}; a present-but-null outcome key must not count as a valid outcome`)
+	}
+}
+
+func TestParseCallbackBody_RejectsNullOutcomeMixedWithLegacyField(t *testing.T) {
+	body := map[string]any{"success": nil, "type": "complete"}
+	if _, err := parseCallbackBody(body); err == nil {
+		t.Fatal(`expected error for {"success": null, "type": "complete"}`)
+	}
+}
+
+func TestParseCallbackBody_RejectsUnknownTopLevelField(t *testing.T) {
+	body := map[string]any{
+		"success":          map[string]any{"changed": true},
+		"unexpected_field": "x",
+	}
+	if _, err := parseCallbackBody(body); err == nil {
+		t.Fatal("expected error for a body carrying an unrecognized top-level field alongside a valid outcome")
+	}
+}
+
+func TestParseCallbackBody_RejectsReservedEventsField(t *testing.T) {
+	body := map[string]any{
+		"success": map[string]any{"changed": true},
+		"events":  []any{},
+	}
+	if _, err := parseCallbackBody(body); err == nil {
+		t.Fatal("expected error for a body carrying the reserved events field (executor.proto reserves it; no longer accepted)")
+	}
+}
+
+func TestParseCallbackBody_ParkMissingResumeAtIsError(t *testing.T) {
+	body := map[string]any{"park": map[string]any{"tags": []any{"parked"}}}
+	if _, err := parseCallbackBody(body); err == nil {
+		t.Fatal("expected error for a park outcome missing resume_at (required per executor.proto::Park)")
+	}
+}
+
+func TestParseCallbackBody_ParkInvalidResumeAtIsError(t *testing.T) {
+	body := map[string]any{"park": map[string]any{"resume_at": "not-a-timestamp"}}
+	if _, err := parseCallbackBody(body); err == nil {
+		t.Fatal("expected error for a park outcome with an unparseable resume_at, got PASS (silently dropping it is not conformant)")
+	}
+}
+
 func TestReceiver_RegisterThenHandle(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -198,7 +245,7 @@ func TestReceiver_HandleThenRegister(t *testing.T) {
 	}
 }
 
-func TestReceiver_DuplicateCallback_Discarded(t *testing.T) {
+func TestReceiver_DuplicateCallback_RejectedNotDelivered(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
 		t.Fatalf("StartCallbackReceiver: %v", err)
@@ -211,22 +258,72 @@ func TestReceiver_DuplicateCallback_Discarded(t *testing.T) {
 	postCallback(t, r.URL(), ackID, map[string]any{
 		"success": map[string]any{"changed": true},
 	})
-	postCallback(t, r.URL(), ackID, map[string]any{
+
+	ackStatus := postDuplicateCallback(t, r.URL(), ackID, map[string]any{
 		"error": map[string]any{"error_class": "later"},
 	})
+	if ackStatus != "rejected_run_terminal" {
+		t.Fatalf("duplicate callback ack_status=%q, want %q (matching the real supervisor's "+
+			"rejected-ack_status shape for a re-delivered callback)", ackStatus, "rejected_run_terminal")
+	}
 
 	first := <-ch
 	if _, ok := first.GetOutcome().(*genv1.Outcome_Success); !ok {
 		t.Fatalf("expected first=Success, got %T", first.GetOutcome())
 	}
-
 	select {
-	case extra, ok := <-ch:
-		if ok && extra != nil {
-			t.Fatalf("unexpected duplicate delivered: %T", extra.GetOutcome())
-		}
-	case <-time.After(150 * time.Millisecond):
+	case extra := <-ch:
+		t.Fatalf("duplicate callback must not be delivered to the registered channel, got: %T", extra.GetOutcome())
+	default:
 	}
+}
+
+func TestReceiver_LateCallback_AfterConsumptionRejectedNotDelivered(t *testing.T) {
+	r, err := StartCallbackReceiver()
+	if err != nil {
+		t.Fatalf("StartCallbackReceiver: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	ackID := "ack-late"
+	ch := r.Register(ackID)
+	postCallback(t, r.URL(), ackID, map[string]any{
+		"success": map[string]any{"changed": true},
+	})
+	<-ch
+
+	ackStatus := postDuplicateCallback(t, r.URL(), ackID, map[string]any{
+		"success": map[string]any{"changed": true},
+	})
+	if ackStatus != "rejected_run_terminal" {
+		t.Fatalf("late callback ack_status=%q, want %q", ackStatus, "rejected_run_terminal")
+	}
+	select {
+	case extra := <-ch:
+		t.Fatalf("late callback must not be re-delivered to the registered channel, got: %T", extra.GetOutcome())
+	default:
+	}
+}
+
+func postDuplicateCallback(t *testing.T, baseURL, ackID string, body map[string]any) string {
+	t.Helper()
+	buf, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	resp, err := http.Post(baseURL+"/v1/callback/"+ackID, "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("duplicate/late callback status=%d, want 200", resp.StatusCode)
+	}
+	var ack map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&ack); err != nil {
+		t.Fatalf("decode ack body: %v", err)
+	}
+	return ack["ack_status"]
 }
 
 func TestReceiver_ConcurrentRegisterAndHandle(t *testing.T) {

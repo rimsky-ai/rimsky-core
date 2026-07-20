@@ -8,7 +8,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -205,6 +204,78 @@ func TestScheduler_Tick_SweepsPureCascadeReadyButSkipsExecutorNodes(t *testing.T
 	assert.Equal(t, "stale", execState,
 		"tick's pure-cascade sweep must not touch an executor node's dispatch row")
 	assert.False(t, claimedBy.Valid, "executor node run must remain unclaimed")
+}
+
+func TestScheduler_Tick_NilClockDoesNotPanicAndStillSweepsOrphanBlobs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newSchedFixture(t)
+
+	backend := persistence.NewMemoryBackend()
+	handle, err := backend.Write(ctx, persistence.BlobKey{}, []byte("orphaned"))
+	require.NoError(t, err)
+
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		return f.persist.BlobOrphans().Insert(ctx, persistence.BlobOrphanRow{
+			Handle:     string(handle),
+			Backend:    backend.Name(),
+			OrphanedAt: time.Now().Add(-time.Hour),
+			ReapAfter:  time.Now().Add(-time.Minute),
+		}, tx)
+	})
+
+	cfg := f.schedConfig()
+	cfg.Clock = nil
+	cfg.BlobBackend = backend
+	cfg.BlobOrphans = f.persist.BlobOrphans()
+
+	require.NotPanics(t, func() {
+		require.NoError(t, tick(ctx, cfg, nil))
+	}, "tick must not panic when Config.Clock is nil, including in the orphan-blob sweep section")
+
+	_, err = backend.Read(ctx, handle)
+	assert.ErrorIs(t, err, persistence.ErrBlobNotFound,
+		"orphan-blob sweep must actually run (not merely avoid panicking) when Clock is nil")
+}
+
+func TestScheduler_Start_DefaultsNilClock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newSchedFixture(t)
+
+	backend := persistence.NewMemoryBackend()
+	handle, err := backend.Write(ctx, persistence.BlobKey{}, []byte("orphaned"))
+	require.NoError(t, err)
+
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		return f.persist.BlobOrphans().Insert(ctx, persistence.BlobOrphanRow{
+			Handle:     string(handle),
+			Backend:    backend.Name(),
+			OrphanedAt: time.Now().Add(-time.Hour),
+			ReapAfter:  time.Now().Add(-time.Minute),
+		}, tx)
+	})
+
+	cfg := f.schedConfig()
+	cfg.Clock = nil
+	cfg.TickInterval = 10 * time.Millisecond
+	cfg.BlobBackend = backend
+	cfg.BlobOrphans = f.persist.BlobOrphans()
+	require.Nil(t, cfg.Clock, "test setup: Clock must start nil to prove Start() defaults it")
+
+	h := Start(cfg)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, h.Shutdown(shutdownCtx))
+	}()
+
+	for {
+		if _, err := backend.Read(ctx, handle); errors.Is(err, persistence.ErrBlobNotFound) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func TestScheduler_OrphanedClaim_Released(t *testing.T) {
@@ -529,5 +600,3 @@ func TestScheduler_OrphanedBreakpointHitReap_ExcludesNotifyOnlyAndLiveBlockedRun
 	require.NotNil(t, gotLiveBlocked, "a pause hit whose node run is still claimed (a live blocked runner) must not be force-resumed by the orphan reap")
 	require.Nil(t, gotOrphaned, "a pause hit whose node run is no longer claimed (truly orphaned) must still be reaped")
 }
-
-var _ = sync.Mutex{}

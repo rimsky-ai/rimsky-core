@@ -354,6 +354,57 @@ func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testi
 	assert.Empty(t, q.snapshot())
 }
 
+func TestProcessPureCascade_SingleReady_FiresAfterTerminalBreakpoint(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newPureCascadeFixture(t)
+
+	tpl := pcDeployTemplate(ctx, t, f.persist, "alpha")
+	inst := pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-bp")
+	pure := pcCreateNode(ctx, t, f, inst.ID, "")
+
+	var bpID shared.UUID
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		id, err := f.persist.Breakpoints().Create(ctx, persistence.BreakpointRow{
+			InstanceID:     inst.ID,
+			Matcher:        map[string]any{"node_type": "t"},
+			Checkpoint:     persistence.CheckpointAfterTerminal,
+			Mode:           persistence.BreakpointModeNotifyOnly,
+			OverflowPolicy: persistence.OverflowDropOldest,
+			HitTTLSeconds:  300,
+		}, tx)
+		bpID = id
+		return err
+	})
+
+	q := &fakeQueue{}
+	count, err := ProcessPureCascade(ctx, pcArgs(f.persist, q))
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	var hits []persistence.BreakpointHitRow
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.BreakpointHits().ListSinceForBreakpoint(ctx, bpID, 0, 100, tx)
+		hits = r
+		return err
+	})
+	require.Len(t, hits, 1,
+		"concept:breakpoint says executor-less dispatches are observed at the post-terminal checkpoint only; "+
+			"a pure-cascade transition settled natively by the scheduler must still fire after_terminal")
+	require.NotNil(t, hits[0].NodeRunID)
+	assert.Equal(t, persistence.CheckpointAfterTerminal, hits[0].Checkpoint)
+
+	var latest *persistence.NodeRunLatest
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Nodes().GetLatestRunForNode(ctx, tx, pure.ID)
+		latest = r
+		return err
+	})
+	require.NotNil(t, latest)
+	assert.Equal(t, latest.NodeRunID, *hits[0].NodeRunID,
+		"the hit must reference the pure-cascade node run that actually settled, not an unrelated dispatch")
+}
+
 func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

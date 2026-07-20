@@ -516,8 +516,8 @@ func (f *fakeFrameTableWithMessage) MarkFrameEnded(context.Context, shared.UUID,
 func (f *fakeFrameTableWithMessage) MarkOpenFramesEndedForInstance(context.Context, shared.UUID, persistence.Tx) (int, error) {
 	return 0, nil
 }
-func (f *fakeFrameTableWithMessage) EndFrameIfSettled(context.Context, shared.UUID, persistence.Tx) (bool, error) {
-	return false, nil
+func (f *fakeFrameTableWithMessage) EndFrameIfSettled(context.Context, shared.UUID, persistence.Tx) (persistence.FrameEndResult, error) {
+	return persistence.FrameEndResult{}, nil
 }
 func (f *fakeFrameTableWithMessage) GetRunningFrameID(context.Context, shared.UUID, persistence.Tx) (*shared.UUID, error) {
 	return nil, nil

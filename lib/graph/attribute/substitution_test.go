@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package attributes
+package attribute
 
 import (
 	"encoding/json"
@@ -540,9 +540,9 @@ func TestSubstitute_Env(t *testing.T) {
 	t.Parallel()
 
 	envMap := map[string]string{
-		"ZONEBASE_AGENT_MCP_TOKEN": "shhh-bearer",
-		"PUBLIC_API_URL":           "https://api.example.com",
-		"EMPTY_BUT_SET":            "",
+		"SERVICE_AGENT_MCP_TOKEN": "shhh-bearer",
+		"PUBLIC_API_URL":          "https://api.example.com",
+		"EMPTY_BUT_SET":           "",
 	}
 	ctxWithEnv := ResolveContext{
 		EnvLookup: func(name string) (string, bool) {
@@ -552,7 +552,7 @@ func TestSubstitute_Env(t *testing.T) {
 	}
 
 	t.Run("whole-directive resolves to env value", func(t *testing.T) {
-		got, err := Substitute("{{env.ZONEBASE_AGENT_MCP_TOKEN}}", ctxWithEnv)
+		got, err := Substitute("{{env.SERVICE_AGENT_MCP_TOKEN}}", ctxWithEnv)
 		if err != nil {
 			t.Fatalf("Substitute: %v", err)
 		}
@@ -562,7 +562,7 @@ func TestSubstitute_Env(t *testing.T) {
 	})
 
 	t.Run("embedded form concatenates", func(t *testing.T) {
-		got, err := Substitute("Bearer {{env.ZONEBASE_AGENT_MCP_TOKEN}}", ctxWithEnv)
+		got, err := Substitute("Bearer {{env.SERVICE_AGENT_MCP_TOKEN}}", ctxWithEnv)
 		if err != nil {
 			t.Fatalf("Substitute: %v", err)
 		}

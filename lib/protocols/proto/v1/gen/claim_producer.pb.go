@@ -277,7 +277,11 @@ type OpenRequest struct {
 	// run_scope_id is the RunScope this claim lives in; used by the
 	// host-agent-proxy to key per-run-scope spawn isolation on the
 	// claim-producer path. Opaque to rimsky.
-	RunScopeId    string `protobuf:"bytes,8,opt,name=run_scope_id,json=runScopeId,proto3" json:"run_scope_id,omitempty"`
+	RunScopeId string `protobuf:"bytes,8,opt,name=run_scope_id,json=runScopeId,proto3" json:"run_scope_id,omitempty"`
+	// lifetime: "subgraph" | "durable". Mirrors ClaimBinding.lifetime in
+	// validation.proto so a producer sees the same value at Open that it
+	// was validated against.
+	Lifetime      string `protobuf:"bytes,9,opt,name=lifetime,proto3" json:"lifetime,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -364,6 +368,13 @@ func (x *OpenRequest) GetInstanceId() string {
 func (x *OpenRequest) GetRunScopeId() string {
 	if x != nil {
 		return x.RunScopeId
+	}
+	return ""
+}
+
+func (x *OpenRequest) GetLifetime() string {
+	if x != nil {
+		return x.Lifetime
 	}
 	return ""
 }
@@ -1254,7 +1265,7 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\x18supports_scopes_conflict\x18\x03 \x01(\bR\x16supportsScopesConflict\x12\x1c\n" +
 	"\tprotocols\x18\x04 \x03(\tR\tprotocols\x12<\n" +
 	"\x1avalidation_supported_roles\x18\x05 \x03(\tR\x18validationSupportedRoles\x124\n" +
-	"\x16declared_error_classes\x18\x06 \x03(\tR\x14declaredErrorClasses\"\xfb\x01\n" +
+	"\x16declared_error_classes\x18\x06 \x03(\tR\x14declaredErrorClasses\"\x97\x02\n" +
 	"\vOpenRequest\x12\x19\n" +
 	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12#\n" +
 	"\rproducer_name\x18\x02 \x01(\tR\fproducerName\x12\x1a\n" +
@@ -1266,7 +1277,8 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\vinstance_id\x18\a \x01(\tR\n" +
 	"instanceId\x12 \n" +
 	"\frun_scope_id\x18\b \x01(\tR\n" +
-	"runScopeId\"\x87\x01\n" +
+	"runScopeId\x12\x1a\n" +
+	"\blifetime\x18\t \x01(\tR\blifetime\"\x87\x01\n" +
 	"\fOpenResponse\x121\n" +
 	"\bacquired\x18\x01 \x01(\v2\x13.rimsky.v1.AcquiredH\x00R\bacquired\x12:\n" +
 	"\vunavailable\x18\x02 \x01(\v2\x16.rimsky.v1.UnavailableH\x00R\vunavailableB\b\n" +

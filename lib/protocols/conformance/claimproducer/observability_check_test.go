@@ -7,6 +7,7 @@ package claimproducer
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -126,6 +127,48 @@ func TestRunRetentionProbe_NoRetentionAtAllFails(t *testing.T) {
 	err := runRetentionProbe(context.Background(), claimClient, obsClient, 1, func(string, ...any) {}, noWait)
 	if err == nil {
 		t.Fatalf("runRetentionProbe: expected non-nil error for a producer with no retention at all (GetClaim never returns UNKNOWN after the wait), got PASS")
+	}
+}
+
+type emptyRenderHintObservability struct {
+	genv1.UnimplementedClaimProducerObservabilityServer
+}
+
+func (emptyRenderHintObservability) Capabilities(context.Context, *genv1.GetClaimProducerCapabilitiesRequest) (*genv1.ClaimProducerObservabilityCapabilities, error) {
+	return &genv1.ClaimProducerObservabilityCapabilities{
+		AdminViews: []*genv1.AdminViewDecl{{Name: "summary"}},
+	}, nil
+}
+
+func (emptyRenderHintObservability) GetAdminView(context.Context, *genv1.GetAdminViewRequest) (*genv1.AdminView, error) {
+	return &genv1.AdminView{RenderHint: ""}, nil
+}
+
+func TestRunObservabilityCheck_EmptyRenderHintIsNotAHardFailure(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	grpcSrv := grpc.NewServer()
+	genv1.RegisterClaimProducerObservabilityServer(grpcSrv, emptyRenderHintObservability{})
+	go func() { _ = grpcSrv.Serve(lis) }()
+	t.Cleanup(grpcSrv.Stop)
+
+	var logged []string
+	err = RunObservabilityCheck(context.Background(), ObservabilityCheckOpts{Endpoint: lis.Addr().String()},
+		func(format string, args ...any) { logged = append(logged, format) })
+	if err != nil {
+		t.Fatalf("RunObservabilityCheck: an empty AdminView.render_hint must not be a hard failure "+
+			"(claim_producer_observability.proto imposes no non-empty requirement), got: %v", err)
+	}
+	found := false
+	for _, l := range logged {
+		if strings.Contains(l, "empty render_hint") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("RunObservabilityCheck: expected an informational log noting the empty render_hint")
 	}
 }
 

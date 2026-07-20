@@ -27,6 +27,7 @@ type CallbackReceiver struct {
 	advertiseURL   string
 	mu             sync.Mutex
 	wait           map[string]chan *genv1.Outcome
+	delivered      map[string]bool
 	restartSim     bool
 	restartSimHits chan string
 }
@@ -60,6 +61,7 @@ func StartCallbackReceiver(opts ...ReceiverOptions) (*CallbackReceiver, error) {
 		bindAddr:     ln.Addr().String(),
 		advertiseURL: fmt.Sprintf("http://%s:%d", advertise, tcpAddr.Port),
 		wait:         map[string]chan *genv1.Outcome{},
+		delivered:    map[string]bool{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/callback/", r.handle)
@@ -139,13 +141,24 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
 	r.mu.Lock()
+	alreadyDelivered := r.delivered[ackID]
+	r.delivered[ackID] = true
 	ch, ok := r.wait[ackID]
 	if !ok {
 		ch = make(chan *genv1.Outcome, 1)
 		r.wait[ackID] = ch
 	}
 	r.mu.Unlock()
+
+	if alreadyDelivered {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"ack_status": ackStatusRejectedRunTerminal})
+		return
+	}
+
 	select {
 	case ch <- outcome:
 	default:
@@ -153,27 +166,36 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+const ackStatusRejectedRunTerminal = "rejected_run_terminal"
+
 func parseCallbackBody(body map[string]any) (*genv1.Outcome, error) {
+	for k := range body {
+		switch k {
+		case "success", "error", "park":
+		default:
+			return nil, fmt.Errorf("unknown top-level field %q; AsyncCallbackBody carries exactly one of success | error | park (events is reserved and no longer accepted)", k)
+		}
+	}
 	outcomeCount := 0
-	if _, ok := body["success"]; ok {
+	if v, ok := body["success"]; ok && v != nil {
 		outcomeCount++
 	}
-	if _, ok := body["error"]; ok {
+	if v, ok := body["error"]; ok && v != nil {
 		outcomeCount++
 	}
-	if _, ok := body["park"]; ok {
+	if v, ok := body["park"]; ok && v != nil {
 		outcomeCount++
 	}
 	if outcomeCount != 1 {
-		return nil, fmt.Errorf("expected AsyncCallbackBody; outcome oneof must be set (success | error | park); got %d outcomes", outcomeCount)
+		return nil, fmt.Errorf("expected AsyncCallbackBody; outcome oneof must be set to a non-null value (success | error | park); got %d outcomes", outcomeCount)
 	}
-	if v, ok := body["success"]; ok {
+	if v, ok := body["success"]; ok && v != nil {
 		return mapSuccess(asMap(v)), nil
 	}
-	if v, ok := body["error"]; ok {
+	if v, ok := body["error"]; ok && v != nil {
 		return mapErrorOutcome(asMap(v)), nil
 	}
-	return mapPark(asMap(body["park"])), nil
+	return mapPark(asMap(body["park"]))
 }
 
 func mapSuccess(m map[string]any) *genv1.Outcome {
@@ -203,17 +225,21 @@ func mapErrorOutcome(m map[string]any) *genv1.Outcome {
 	}
 }
 
-func mapPark(m map[string]any) *genv1.Outcome {
+func mapPark(m map[string]any) (*genv1.Outcome, error) {
+	rawResume := asString(m["resume_at"])
+	if rawResume == "" {
+		return nil, fmt.Errorf("park.resume_at is required; a Park without resume_at is rejected as a protocol violation")
+	}
+	pt, err := time.Parse(time.RFC3339, rawResume)
+	if err != nil {
+		return nil, fmt.Errorf("park.resume_at: invalid RFC3339 timestamp %q: %w", rawResume, err)
+	}
 	p := &genv1.Park{
-		Tags:    asStringSlice(m["tags"]),
-		Scratch: asBytes(m["scratch"]),
+		ResumeAt: timestamppb.New(pt),
+		Tags:     asStringSlice(m["tags"]),
+		Scratch:  asBytes(m["scratch"]),
 	}
-	if rawResume := asString(m["resume_at"]); rawResume != "" {
-		if pt, err := time.Parse(time.RFC3339, rawResume); err == nil {
-			p.ResumeAt = timestamppb.New(pt)
-		}
-	}
-	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: p}}
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: p}}, nil
 }
 
 func asMap(v any) map[string]any {

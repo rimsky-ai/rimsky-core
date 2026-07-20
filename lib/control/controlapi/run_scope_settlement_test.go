@@ -53,7 +53,7 @@ func TestFrameSettlement_ClosesRootScopeAndFansOutExactlyOnce(t *testing.T) {
 		func(tplSpec node.TemplateSpec) []string { return LifecyclePeersForSpec(f.deps, tplSpec) })
 	require.NotNil(t, scopeFanout)
 
-	require.NoError(t, frame.RunTick(ctx, f.deps.Persist, f.driver.Queue(), silentFrameLogger{}, scopeFanout))
+	require.NoError(t, frame.RunTick(ctx, f.deps.Persist, f.driver.Queue(), silentFrameLogger{}, scopeFanout, nil))
 
 	require.NoError(t, f.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		row, err := f.deps.Persist.Frames().GetForObservability(ctx, frameID, tx)
@@ -88,7 +88,7 @@ func TestFrameSettlement_ClosesRootScopeAndFansOutExactlyOnce(t *testing.T) {
 	require.Equal(t, 1, countScopeTerminal(f.beta.Calls()),
 		"beta must hear exactly one OnRunScopeTerminal for the settled root scope")
 
-	require.NoError(t, frame.RunTick(ctx, f.deps.Persist, f.driver.Queue(), silentFrameLogger{}, scopeFanout))
+	require.NoError(t, frame.RunTick(ctx, f.deps.Persist, f.driver.Queue(), silentFrameLogger{}, scopeFanout, nil))
 	require.Equal(t, 1, countScopeTerminal(f.alpha.Calls()),
 		"a second tick must not re-fire the settled scope (exactly-once per scope)")
 	require.Equal(t, 1, countScopeTerminal(f.beta.Calls()),

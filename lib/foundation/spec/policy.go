@@ -9,8 +9,6 @@ type ErrorTypePolicy struct {
 	ReasonTemplate string `yaml:"reason_template,omitempty" json:"reason_template,omitempty"`
 }
 
-type PolicyAction = ErrorTypePolicy
-
 type RetryBackoffConfig struct {
 	Kind        BackoffKind `yaml:"kind,omitempty" json:"kind,omitempty"`
 	Jitter      JitterKind  `yaml:"jitter,omitempty" json:"jitter,omitempty"`

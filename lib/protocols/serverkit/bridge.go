@@ -110,6 +110,7 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 			TemplateId:   req.TemplateID,
 			InstanceId:   req.InstanceID,
 			RunScopeId:   req.RunScopeID,
+			Lifetime:     req.Lifetime,
 		})
 	case "commit":
 		var req actionBody
@@ -226,6 +227,7 @@ type openBody struct {
 	TemplateID   string `json:"template_id"`
 	InstanceID   string `json:"instance_id"`
 	RunScopeID   string `json:"run_scope_id,omitempty"`
+	Lifetime     string `json:"lifetime,omitempty"`
 }
 
 type actionBody struct {

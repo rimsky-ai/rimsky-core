@@ -13,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -342,17 +343,17 @@ func applyAttributeFailure(
 func classifyAttributeFailure(err error) (string, events.Kind) {
 	var miss *attributes.ErrMissingSource
 	if errors.As(err, &miss) {
-		return "template_resolution_failed", events.KindTemplateResolutionFailed()
+		return spec.ErrorClassTemplateResolutionFailed, events.KindTemplateResolutionFailed()
 	}
 	var schemaUnavail *executorSchemaUnavailableError
 	if errors.As(err, &schemaUnavail) {
-		return "executor_schema_unavailable", events.KindExecutorSchemaUnavailable()
+		return spec.ErrorClassExecutorSchemaUnavailable, events.KindExecutorSchemaUnavailable()
 	}
 	var validation *attributeValidationError
 	if errors.As(err, &validation) {
-		return "template_validation_failed", events.KindTemplateValidationFailed()
+		return spec.ErrorClassTemplateValidationFailed, events.KindTemplateValidationFailed()
 	}
-	return "template_resolution_failed", events.KindTemplateResolutionFailed()
+	return spec.ErrorClassTemplateResolutionFailed, events.KindTemplateResolutionFailed()
 }
 
 func extractDirective(err error) string {

@@ -58,8 +58,8 @@ type TemplateNodeDef struct {
 	Attributes     *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
 	ErrorTypes     map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
 
-	//	@concept: node-subscription
-	//	@concept: cascade
+	// @concept: node-subscription
+	// @concept: cascade
 	Subscribes []SubscriptionEntry `yaml:"subscribes,omitempty" json:"subscribes,omitempty"`
 
 	MaxRetries *int `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`

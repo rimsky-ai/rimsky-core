@@ -12,7 +12,6 @@ import (
 
 type (
 	ErrorTypePolicy    = spec.ErrorTypePolicy
-	PolicyAction       = spec.PolicyAction
 	EvaluatorState     = spec.EvaluatorState
 	ResolvedAction     = spec.ResolvedAction
 	RetryBackoffConfig = spec.RetryBackoffConfig

@@ -70,6 +70,13 @@ func resolveTickInterval(configured time.Duration) time.Duration {
 	return configured
 }
 
+func resolveNow(clock shared.Clock) time.Time {
+	if clock == nil {
+		return time.Now()
+	}
+	return clock.Now()
+}
+
 func Start(cfg Config) *Handle {
 	if cfg.Persist == nil {
 		panic("scheduler.Start: Config.Persist is required (frame engine and invalidate path dereference it)")
@@ -77,6 +84,9 @@ func Start(cfg Config) *Handle {
 	cfg.TickInterval = resolveTickInterval(cfg.TickInterval)
 	if cfg.Logger == nil {
 		cfg.Logger = shared.SilentLogger{}
+	}
+	if cfg.Clock == nil {
+		cfg.Clock = shared.SystemClock{}
 	}
 
 	if cfg.OrphanBlobSweepInterval == 0 {
@@ -170,40 +180,28 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	}
 
 	if cfg.ClaimHandles != nil && cfg.Retention.ClaimHandlesTrailing > 0 {
-		now := time.Now()
-		if cfg.Clock != nil {
-			now = cfg.Clock.Now()
-		}
+		now := resolveNow(cfg.Clock)
 		if _, err := runtime.SweepClaimHandleRetention(ctx, cfg.ClaimHandles, cfg.Retention, now, log); err != nil {
 			log.Warn("tick: SweepClaimHandleRetention failed", "error", err.Error())
 		}
 	}
 
 	if cfg.Persist != nil && cfg.Retention.MessageIdempotenciesTrailing > 0 {
-		now := time.Now()
-		if cfg.Clock != nil {
-			now = cfg.Clock.Now()
-		}
+		now := resolveNow(cfg.Clock)
 		if _, err := runtime.SweepMessageIdempotencies(ctx, cfg.Persist.MessageIdempotencies(), cfg.Retention, now, log); err != nil {
 			log.Warn("tick: SweepMessageIdempotencies failed", "error", err.Error())
 		}
 	}
 
 	if cfg.Persist != nil && cfg.Retention.LineageTrailing > 0 {
-		now := time.Now()
-		if cfg.Clock != nil {
-			now = cfg.Clock.Now()
-		}
+		now := resolveNow(cfg.Clock)
 		if _, err := runtime.SweepLineageRetention(ctx, cfg.Persist.Lineage(), cfg.Retention, now, log); err != nil {
 			log.Warn("tick: SweepLineageRetention failed", "error", err.Error())
 		}
 	}
 
 	if cfg.Persist != nil && (cfg.Retention.RecentFramesKept > 0 || cfg.Retention.TraceTrailing > 0) {
-		now := time.Now()
-		if cfg.Clock != nil {
-			now = cfg.Clock.Now()
-		}
+		now := resolveNow(cfg.Clock)
 		if _, err := runtime.SweepRunTreeRetention(ctx, cfg.Retention, cfg.Persist, now, log); err != nil {
 			log.Warn("tick: SweepRunTreeRetention failed", "error", err.Error())
 		}
@@ -223,7 +221,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	}
 
 	if cfg.BlobBackend != nil && cfg.BlobOrphans != nil {
-		now := cfg.Clock.Now()
+		now := resolveNow(cfg.Clock)
 		if h == nil || h.lastOrphanBlobSweep.IsZero() || now.Sub(h.lastOrphanBlobSweep) >= cfg.OrphanBlobSweepInterval {
 			if err := runtime.SweepOrphanedBlobs(ctx, runtime.OrphanBlobsArgs{
 				Persist:     cfg.Persist,
@@ -254,10 +252,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	}
 
 	if cfg.Persist != nil {
-		bpNow := time.Now()
-		if cfg.Clock != nil {
-			bpNow = cfg.Clock.Now()
-		}
+		bpNow := resolveNow(cfg.Clock)
 		orphanedHitCutoff := bpNow.Add(-5 * time.Minute)
 		if err := cfg.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			deleted, err := cfg.Persist.Breakpoints().SweepExpired(ctx, bpNow, tx)

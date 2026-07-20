@@ -7,14 +7,12 @@ package frame
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 type Logger interface {
-	Debug(msg string, args ...any)
 	Info(msg string, args ...any)
 	Warn(msg string, args ...any)
 }
@@ -28,12 +26,8 @@ type RunScopeTerminalFanout func(ctx context.Context, tx persistence.Tx, instanc
 
 const settledScopeTerminalReason = "frame_settled"
 
-func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger, scopeFanout RunScopeTerminalFanout, metrics ...MetricsHook) error {
-	var m MetricsHook
-	if len(metrics) > 0 {
-		m = metrics[0]
-	}
-	if err := runFrameEndDetection(ctx, store, logger, scopeFanout, m); err != nil {
+func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger, scopeFanout RunScopeTerminalFanout, metrics MetricsHook) error {
+	if err := runFrameEndDetection(ctx, store, logger, scopeFanout, metrics); err != nil {
 		return fmt.Errorf("frame.RunTick: frame-end: %w", err)
 	}
 	if err := runOpenNewFrames(ctx, store, logger); err != nil {
@@ -71,18 +65,8 @@ func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger 
 }
 
 func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, instanceID shared.UUID, logger Logger, scopeFanout RunScopeTerminalFanout, metrics MetricsHook) error {
-	var transitioned bool
-	var finalState string
-	var startedAt, endedAt *time.Time
+	var result persistence.FrameEndResult
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		anyFailed, err := store.Frames().HasFailedNode(ctx, instanceID, frameID, tx)
-		if err != nil {
-			return err
-		}
-		finalState = "completed"
-		if anyFailed {
-			finalState = "failed"
-		}
 		row, gerr := store.Frames().GetForObservability(ctx, frameID, tx)
 		if gerr != nil {
 			return gerr
@@ -96,17 +80,12 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 				return nil
 			}
 		}
-		moved, err := store.Frames().EndFrameIfSettled(ctx, frameID, tx)
+		res, err := store.Frames().EndFrameIfSettled(ctx, frameID, tx)
 		if err != nil {
 			return err
 		}
-		transitioned = moved
-		if moved && row != nil {
-			startedAt = row.StartedAt
-			now := time.Now()
-			endedAt = &now
-		}
-		if moved && row != nil && row.RootRunScopeID != (shared.UUID{}) {
+		result = res
+		if res.Transitioned && row != nil && row.RootRunScopeID != (shared.UUID{}) {
 			if err := closeSettledFrameScopeTree(ctx, store, tx, row.RootRunScopeID, frameID, instanceID, logger, scopeFanout); err != nil {
 				return err
 			}
@@ -115,13 +94,13 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 	}); err != nil {
 		return err
 	}
-	if transitioned {
+	if result.Transitioned {
 		logger.Info("frame.end",
 			"frame_id", frameID,
 			"instance_id", instanceID,
-			"final_state", finalState)
-		if metrics != nil && startedAt != nil && endedAt != nil {
-			metrics.ObserveFrameDuration(endedAt.Sub(*startedAt).Seconds())
+			"final_state", result.FinalState)
+		if metrics != nil && result.StartedAt != nil && result.EndedAt != nil {
+			metrics.ObserveFrameDuration(result.EndedAt.Sub(*result.StartedAt).Seconds())
 		}
 	}
 	return nil

@@ -12,6 +12,32 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 
+// @concept: template
+func validateParamsSchema(spec *TemplateSpec, res *ValidationResult) {
+	if spec == nil || spec.ParamsSchema == nil {
+		return
+	}
+	schemaBytes, err := json.Marshal(spec.ParamsSchema)
+	if err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: "params_schema", Msg: fmt.Sprintf("failed to marshal params_schema for parse: %v", err),
+		})
+		return
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("params-schema.json", bytes.NewReader(schemaBytes)); err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: "params_schema", Msg: fmt.Sprintf("params_schema is not valid JSON Schema: %v", err),
+		})
+		return
+	}
+	if _, err := compiler.Compile("params-schema.json"); err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: "params_schema", Msg: fmt.Sprintf("params_schema does not compile: %v", err),
+		})
+	}
+}
+
 // @concept: attribute
 func validateAttributesSchema(n TemplateNodeDef, base string, declared map[string]int, spec *TemplateSpec, hooks RegistryHooks, res *ValidationResult) {
 	if n.Attributes == nil || len(n.Attributes.Schema) == 0 {
@@ -57,7 +83,7 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 			})
 			return
 		}
-		checkAttributeSource(src, fmt.Sprintf("%s.%s", sbase, path), declared, directAliases, heldAliases, res)
+		checkAttributeSource(src, fmt.Sprintf("%s.%s", sbase, path), declared, directAliases, heldAliases, spec, res)
 	})
 
 	executorForSchema := effectiveExecutor(n, hooks)

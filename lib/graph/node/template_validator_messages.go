@@ -227,6 +227,7 @@ func validatePublishers(spec *TemplateSpec, declaredMessages map[string]struct{}
 func buildMessageBodyFieldSet(spec *TemplateSpec) map[string]map[string]struct{} {
 	out := map[string]map[string]struct{}{}
 	for _, m := range spec.Messages {
+		t := strings.TrimSpace(m.Type)
 		if len(m.BodySchema) == 0 {
 			continue
 		}
@@ -236,14 +237,14 @@ func buildMessageBodyFieldSet(spec *TemplateSpec) map[string]map[string]struct{}
 		}
 		props, ok := shape["properties"].(map[string]any)
 		if !ok {
-			out[m.Type] = map[string]struct{}{}
+			out[t] = map[string]struct{}{}
 			continue
 		}
 		fields := make(map[string]struct{}, len(props))
 		for k := range props {
 			fields[k] = struct{}{}
 		}
-		out[m.Type] = fields
+		out[t] = fields
 	}
 	return out
 }

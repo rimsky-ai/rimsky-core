@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package attributes
+package attribute
 
 import (
 	"errors"
@@ -103,6 +103,65 @@ func TestValidate_BadSchema(t *testing.T) {
 	}
 	if !IsSchemaValidation(err) {
 		t.Fatalf("expected ErrSchemaValidation, got %T", err)
+	}
+}
+
+func TestValidate_CompiledSchemaCache_HitsOnRepeatedCalls(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"count": map[string]any{"type": "integer"},
+		},
+	}
+	data := map[string]any{"count": float64(1)}
+
+	before := schemaCompileCount.Load()
+	if err := Validate(schema, data, PhaseDispatch); err != nil {
+		t.Fatalf("first call: unexpected error: %v", err)
+	}
+	afterFirst := schemaCompileCount.Load()
+	if afterFirst != before+1 {
+		t.Fatalf("first call: want exactly one compile, got delta %d", afterFirst-before)
+	}
+
+	for i := 0; i < 5; i++ {
+		if err := Validate(schema, data, PhaseCommit); err != nil {
+			t.Fatalf("repeat call %d: unexpected error: %v", i, err)
+		}
+	}
+	afterRepeats := schemaCompileCount.Load()
+	if afterRepeats != afterFirst {
+		t.Fatalf("repeated calls with the same schema recompiled: want %d compiles total, got %d", afterFirst-before, afterRepeats-before)
+	}
+}
+
+func TestValidate_CompiledSchemaCache_NoCrossContaminationBetweenSchemas(t *testing.T) {
+	schemaA := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"count": map[string]any{"type": "integer"},
+		},
+		"required": []any{"count"},
+	}
+	schemaB := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+		},
+		"required": []any{"name"},
+	}
+
+	if err := Validate(schemaA, map[string]any{"count": float64(1)}, PhaseDispatch); err != nil {
+		t.Fatalf("schemaA valid data: unexpected error: %v", err)
+	}
+	if err := Validate(schemaB, map[string]any{"name": "x"}, PhaseDispatch); err != nil {
+		t.Fatalf("schemaB valid data: unexpected error: %v", err)
+	}
+	if err := Validate(schemaA, map[string]any{"name": "x"}, PhaseDispatch); err == nil {
+		t.Fatalf("schemaA against schemaB-shaped data: expected failure (missing required 'count'), got nil")
+	}
+	if err := Validate(schemaB, map[string]any{"count": float64(1)}, PhaseDispatch); err == nil {
+		t.Fatalf("schemaB against schemaA-shaped data: expected failure (missing required 'name'), got nil")
 	}
 }
 

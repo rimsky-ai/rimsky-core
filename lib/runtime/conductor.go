@@ -29,7 +29,10 @@ func SweepExecutorDeadlines(ctx context.Context, args ConductorArgs) error {
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
-	now := args.Clock.Now()
+	now := time.Now()
+	if args.Clock != nil {
+		now = args.Clock.Now()
+	}
 	candidates, err := args.Queue.ListOrphanedClaims(ctx)
 	if err != nil {
 		return err

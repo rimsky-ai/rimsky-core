@@ -108,7 +108,7 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 			return fmt.Errorf("GetAdminView %q: %w", v.GetName(), err)
 		}
 		if view.GetRenderHint() == "" {
-			return fmt.Errorf("GetAdminView %q returned empty render_hint", v.GetName())
+			logf("observability: admin view %q returned an empty render_hint (proto imposes no non-empty requirement)\n", v.GetName())
 		}
 	}
 

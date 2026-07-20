@@ -7,6 +7,7 @@ package dataprocessing
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -77,8 +78,9 @@ func (f *abandonFakeClient) ListVersions(_ context.Context, req *genv1.ListVersi
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	count := 0
+	prefix := "cand:" + req.GetClaimHandleId() + ":abandon-1"
 	for handle, n := range f.versions {
-		if handle == "cand:"+req.GetClaimHandleId()+":abandon-1" {
+		if strings.HasPrefix(handle, prefix) {
 			count += n
 		}
 	}
@@ -102,7 +104,7 @@ func findAbandonRow(t *testing.T, results []CheckResult, name string) CheckResul
 
 func TestCheckAbandonCandidate_Honest_AllPass(t *testing.T) {
 	fake := newAbandonFakeClient(true)
-	results := checkAbandonCandidate(context.Background(), fake)
+	results := checkAbandonCandidate(context.Background(), fake, "abandon-fixture")
 	for _, name := range []string{
 		"AbandonCandidateExcludedFromListVersions",
 		"AbandonCandidateRejectsCommitAfterAbandon",
@@ -117,7 +119,7 @@ func TestCheckAbandonCandidate_Honest_AllPass(t *testing.T) {
 
 func TestCheckAbandonCandidate_BrokenNoOp_CommitAfterAbandonDetected(t *testing.T) {
 	fake := newAbandonFakeClient(false)
-	results := checkAbandonCandidate(context.Background(), fake)
+	results := checkAbandonCandidate(context.Background(), fake, "abandon-fixture")
 	row := findAbandonRow(t, results, "AbandonCandidateRejectsCommitAfterAbandon")
 	if row.Err == nil {
 		t.Fatalf("AbandonCandidateRejectsCommitAfterAbandon: expected non-nil Err when CommitCandidate silently succeeds after AbandonCandidate, got PASS")
@@ -126,7 +128,7 @@ func TestCheckAbandonCandidate_BrokenNoOp_CommitAfterAbandonDetected(t *testing.
 
 func TestCheckAbandonCandidate_BrokenNoOp_UnknownHandleDetected(t *testing.T) {
 	fake := newAbandonFakeClient(false)
-	results := checkAbandonCandidate(context.Background(), fake)
+	results := checkAbandonCandidate(context.Background(), fake, "abandon-fixture")
 	row := findAbandonRow(t, results, "AbandonCandidateUnknownHandleFailsCleanly")
 	if row.Err == nil {
 		t.Fatalf("AbandonCandidateUnknownHandleFailsCleanly: expected non-nil Err when AbandonCandidate silently succeeds on an unknown handle, got PASS")

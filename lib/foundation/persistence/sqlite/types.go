@@ -35,7 +35,7 @@ func formatTime(t time.Time) string {
 
 func parseTime(s string) (time.Time, error) {
 	if s == "" {
-		return time.Time{}, nil
+		return time.Time{}, errors.New("parseTime: empty timestamp string")
 	}
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return t, nil
@@ -122,7 +122,7 @@ func scanNullableUUID(ns sql.NullString) (*shared.UUID, error) {
 
 func parseUUID(s string) (shared.UUID, error) {
 	if s == "" {
-		return shared.UUID{}, nil
+		return shared.UUID{}, errors.New("parseUUID: empty uuid string")
 	}
 	return uuid.Parse(s)
 }

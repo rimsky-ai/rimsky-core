@@ -19,10 +19,11 @@ func validateSubscriptionDeclaredTags(
 	hooks RegistryHooks,
 	res *ValidationResult,
 ) {
-	if s.When == "" || hooks.ExecutorDeclaredTags == nil || sender.Executor == "" {
+	senderExecutor := effectiveExecutor(sender, hooks)
+	if s.When == "" || hooks.ExecutorDeclaredTags == nil || senderExecutor == "" {
 		return
 	}
-	declaredTags, ok := hooks.ExecutorDeclaredTags(sender.Executor)
+	declaredTags, ok := hooks.ExecutorDeclaredTags(senderExecutor)
 	if !ok {
 		return
 	}
@@ -37,7 +38,7 @@ func validateSubscriptionDeclaredTags(
 		res.Errors = append(res.Errors, ValidationError{
 			Path: sbase + ".when",
 			Msg: fmt.Sprintf("tag %q referenced in `payload.tags` filter is not declared by sender %q's executor %q",
-				tag, s.Node, sender.Executor),
+				tag, s.Node, senderExecutor),
 		})
 	}
 }

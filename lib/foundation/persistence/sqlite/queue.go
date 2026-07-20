@@ -202,9 +202,9 @@ func (q *queueImpl) SelectCandidates(
 		_, ok := serviceBindings[name]
 		return ok
 	}
-	executorAccepted := func(executor string, serviceBindings map[string]json.RawMessage) bool {
+	executorAccepted := func(executor string, requiredStores []string, serviceBindings map[string]json.RawMessage) bool {
 		if executor == "" {
-			return true
+			return len(requiredStores) > 0
 		}
 		if containsStr(acceptedExecutors, executor) {
 			return true
@@ -269,7 +269,7 @@ func (q *queueImpl) SelectCandidates(
 			return nil, err
 		}
 		c.RequiredClaimProducers = stores
-		if !executorAccepted(c.ExecutorName, serviceBindings) || !storeAccepted(c.RequiredClaimProducers, serviceBindings) {
+		if !executorAccepted(c.ExecutorName, c.RequiredClaimProducers, serviceBindings) || !storeAccepted(c.RequiredClaimProducers, serviceBindings) {
 			continue
 		}
 		if c.NodeRunID, err = uuid.Parse(dispatchIDStr); err != nil {

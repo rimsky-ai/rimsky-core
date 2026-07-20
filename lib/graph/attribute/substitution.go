@@ -27,7 +27,7 @@
 // dispatch time. Names must match `[A-Za-z_][A-Za-z0-9_]*`. Unlike the
 // graph-coupled kinds (nodes / messages) it induces no subscription
 // edge; like params/claim/child it resolves against non-graph context.
-package attributes
+package attribute
 
 import (
 	"bytes"
@@ -77,6 +77,14 @@ type ErrFallbackChain struct {
 
 func (e *ErrFallbackChain) Error() string {
 	return fmt.Sprintf("attributes: fallback chains are not admitted in {{%s}}", e.Directive)
+}
+
+type ErrLenientFallbackConflict struct {
+	Directive string
+}
+
+func (e *ErrLenientFallbackConflict) Error() string {
+	return fmt.Sprintf("attributes: %q marker and %q fallback are mutually exclusive in {{%s}}", "?", "| <literal>", e.Directive)
 }
 
 var directivePattern = regexp.MustCompile(`\{\{([^}]*)\}\}`)
@@ -141,6 +149,9 @@ func resolveDirectiveValue(directive string, ctx ResolveContext) (any, error) {
 	if shape.MultiPipe {
 		return nil, &ErrFallbackChain{Directive: directive}
 	}
+	if shape.Lenient && shape.HasFallback {
+		return nil, &ErrLenientFallbackConflict{Directive: directive}
+	}
 	val, err := resolveDirectiveValueRaw(shape.Body, ctx)
 	if err == nil {
 		return val, nil
@@ -171,19 +182,46 @@ type DirectiveShape struct {
 
 // ParseDirectiveShape parses the directive's fallback-pipe and lenient-marker
 // grammar without resolving or validating the body itself. MultiPipe is set
-// (with a zero-value Body) when more than one top-level `|` is present.
+// (with a zero-value Body) when more than one top-level `|` is present. A
+// `|` inside a quoted-string fallback literal is not top-level.
 func ParseDirectiveShape(directive string) DirectiveShape {
-	if idx := strings.Index(directive, "|"); idx >= 0 {
-		left := strings.TrimSpace(directive[:idx])
-		right := strings.TrimSpace(directive[idx+1:])
-		if strings.Contains(right, "|") {
-			return DirectiveShape{MultiPipe: true}
-		}
+	switch idxs := topLevelPipeIndices(directive); len(idxs) {
+	case 0:
+		lenient, stripped := ParseLenientMarker(directive)
+		return DirectiveShape{Body: stripped, Lenient: lenient}
+	case 1:
+		left := strings.TrimSpace(directive[:idxs[0]])
+		right := strings.TrimSpace(directive[idxs[0]+1:])
 		lenient, stripped := ParseLenientMarker(left)
 		return DirectiveShape{Body: stripped, Lenient: lenient, HasFallback: true, FallbackLiteral: right}
+	default:
+		return DirectiveShape{MultiPipe: true}
 	}
-	lenient, stripped := ParseLenientMarker(directive)
-	return DirectiveShape{Body: stripped, Lenient: lenient}
+}
+
+// topLevelPipeIndices returns the byte offsets of every `|` in s that falls
+// outside a double-quoted string literal, so a fallback literal like
+// `"a|b"` is not mistaken for a second pipe split.
+func topLevelPipeIndices(s string) []int {
+	var idxs []int
+	inQuotes := false
+	for i := 0; i < len(s); i++ {
+		switch {
+		case inQuotes:
+			if s[i] == '\\' {
+				i++
+				continue
+			}
+			if s[i] == '"' {
+				inQuotes = false
+			}
+		case s[i] == '"':
+			inQuotes = true
+		case s[i] == '|':
+			idxs = append(idxs, i)
+		}
+	}
+	return idxs
 }
 
 func ParseLenientMarker(body string) (lenient bool, stripped string) {
