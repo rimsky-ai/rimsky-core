@@ -19,7 +19,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-func runFusedServer(t *testing.T, dsn string, enableExecutor bool) genv1.ExecutorClient {
+func dialFusedServer(t *testing.T, dsn string, enableExecutor bool) *grpc.ClientConn {
 	t.Helper()
 	grpcLis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -50,7 +50,12 @@ func runFusedServer(t *testing.T, dsn string, enableExecutor bool) genv1.Executo
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return genv1.NewExecutorClient(conn)
+	return conn
+}
+
+func runFusedServer(t *testing.T, dsn string, enableExecutor bool) genv1.ExecutorClient {
+	t.Helper()
+	return genv1.NewExecutorClient(dialFusedServer(t, dsn, enableExecutor))
 }
 
 func TestRun_FusedExecutor_RegistersExecutorServiceOnSharedGRPCServer(t *testing.T) {

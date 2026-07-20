@@ -479,3 +479,105 @@ func TestAsyncCallbackSurvivesRestart_FailsWhenExecutorDoesNotRetry(t *testing.T
 			"delivery attempt is dropped by the simulated restart (no retry), got PASS")
 	}
 }
+
+type resumeAtHonoringParkExecutor struct {
+	genv1.UnimplementedExecutorServer
+}
+
+func (resumeAtHonoringParkExecutor) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+	attrs := req.GetAttributes().AsMap()
+	if attrs["stub_probe"] == true {
+		delta, _ := structpb.NewStruct(map[string]any{"stub": true})
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+			AttributesDelta: delta,
+			ChangeSummary:   "resumeAtHonoringParkExecutor: stub probe",
+		}}}, nil
+	}
+	if attrs["probe_park"] == true {
+		var resumeAt *timestamppb.Timestamp
+		if raw, _ := attrs["park_resume_at"].(string); raw != "" {
+			if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+				resumeAt = timestamppb.New(t)
+			}
+		}
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: &genv1.Park{
+			ResumeAt: resumeAt,
+		}}}, nil
+	}
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		ChangeSummary: "resumeAtHonoringParkExecutor: default",
+	}}}, nil
+}
+
+func TestParkEmission_PassesWhenExecutorEchoesRequestedResumeAt(t *testing.T) {
+	addr := startExecutor(t, resumeAtHonoringParkExecutor{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	results, err := conformance.Run(ctx, conformance.RunnerOpts{
+		Endpoint:        conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
+		RequireStubMode: true,
+		Only:            []string{"park_emission"},
+		Timeout:         5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("conformance.Run: %v", err)
+	}
+	row := findScenarioResult(t, results, "park_emission")
+	if row.Skipped {
+		t.Fatalf("park_emission: unexpectedly skipped: %s", row.Error)
+	}
+	if !row.Passed {
+		t.Fatalf("park_emission: expected PASS against an executor that echoes the requested "+
+			"park_resume_at attribute back as Park.resume_at, got: %s", row.Error)
+	}
+}
+
+type fixedResumeAtParkExecutor struct {
+	genv1.UnimplementedExecutorServer
+}
+
+func (fixedResumeAtParkExecutor) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+	attrs := req.GetAttributes().AsMap()
+	if attrs["stub_probe"] == true {
+		delta, _ := structpb.NewStruct(map[string]any{"stub": true})
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+			AttributesDelta: delta,
+			ChangeSummary:   "fixedResumeAtParkExecutor: stub probe",
+		}}}, nil
+	}
+	if attrs["probe_park"] == true {
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: &genv1.Park{
+			ResumeAt: timestamppb.New(time.Now().UTC().Add(24 * time.Hour)),
+		}}}, nil
+	}
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		ChangeSummary: "fixedResumeAtParkExecutor: default",
+	}}}, nil
+}
+
+func TestParkEmission_FailsWhenExecutorIgnoresRequestedResumeAt(t *testing.T) {
+	addr := startExecutor(t, fixedResumeAtParkExecutor{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	results, err := conformance.Run(ctx, conformance.RunnerOpts{
+		Endpoint:        conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
+		RequireStubMode: true,
+		Only:            []string{"park_emission"},
+		Timeout:         5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("conformance.Run: %v", err)
+	}
+	row := findScenarioResult(t, results, "park_emission")
+	if row.Skipped {
+		t.Fatalf("park_emission: unexpectedly skipped: %s", row.Error)
+	}
+	if row.Passed {
+		t.Fatalf("park_emission: expected FAIL against an executor that ignores the requested " +
+			"park_resume_at attribute and always parks 24h out, got PASS")
+	}
+}

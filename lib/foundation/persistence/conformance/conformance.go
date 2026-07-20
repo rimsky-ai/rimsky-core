@@ -199,6 +199,10 @@ func Suite(
 		t.Run("DeletePriorCascadeStalesBlobOrphans", func(t *testing.T) { testDeletePriorCascadeStalesEnrollsScratchBlobOrphan(t, factory(t)) })
 		t.Run("DropPendingRunBlobOrphans", func(t *testing.T) { testDropPendingRunEnrollsScratchBlobOrphan(t, factory(t)) })
 	})
+	t.Run("ScratchSpillRoundTrip", func(t *testing.T) {
+		t.Run("OverThresholdSpillsThroughRealBackend", func(t *testing.T) { testScratchOverThresholdSpillsThroughRealBackend(t, factory(t)) })
+		t.Run("AtOrBelowThresholdStaysInlineThroughRealBackend", func(t *testing.T) { testScratchAtOrBelowThresholdStaysInlineThroughRealBackend(t, factory(t)) })
+	})
 	t.Run("CascadeWalkerMethods", func(t *testing.T) {
 		t.Run("TwoLegClaimPromote", func(t *testing.T) { testTwoLegClaimPromoteContract(t, factory(t)) })
 		t.Run("CreateCascadePendingAndFindLatest", func(t *testing.T) { testCreateCascadePendingAndFindLatest(t, factory(t)) })
