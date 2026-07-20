@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -91,6 +92,12 @@ func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row scann
 		}
 		bytes, err := bb.Read(ctx, persistence.Handle(handle.String))
 		if err != nil {
+			if errors.Is(err, persistence.ErrBlobNotFound) {
+				slog.Error("node_attributes.spilled_value_missing",
+					"op", op, "node_run_id", runID.String(), "handle", handle.String, "backend", handleBkend.String)
+				out.Data = map[string]any{}
+				return &out, nil
+			}
 			return nil, fmt.Errorf("node_attributes.%s: blob.Read(%s): %w", op, handle.String, err)
 		}
 		m := map[string]any{}
@@ -135,7 +142,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 		dataToSave = string(raw)
 	)
 	if persistence.ShouldSpillBlob(si.blob, si.blobThreshold, len(raw)) {
-		h, werr := si.blob.Write(ctx, persistence.BlobKey{
+		h, werr := persistence.WriteBlobInTx(ctx, si.blob, tx, persistence.BlobKey{
 			NodeID:        nodeID.String(),
 			AttributeName: "data",
 		}, raw)

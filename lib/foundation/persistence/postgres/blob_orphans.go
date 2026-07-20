@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
@@ -41,12 +39,7 @@ func (b *blobOrphansImpl) DueBefore(ctx context.Context, cutoff time.Time, limit
 	if limit <= 0 {
 		limit = 100
 	}
-	tx, err := b.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return nil, fmt.Errorf("blob_orphans.DueBefore: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx,
+	rows, err := b.pool.Query(ctx,
 		`SELECT handle, backend, orphaned_at, reap_after
 		   FROM rimsky_blob_orphans
 		  WHERE reap_after <= $1

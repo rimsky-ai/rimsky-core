@@ -70,7 +70,8 @@ func TestSweepRotationGrace(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		return tables.APIKeys().SetRevokeAt(ctx, keyID, past, tx)
+		_, err := tables.APIKeys().SetRevokeAt(ctx, keyID, past, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -151,7 +152,8 @@ func TestSweepRotationGrace_AuditWriteFailureSurfacedAndAtomic(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		return tables.APIKeys().SetRevokeAt(ctx, keyID, past, tx)
+		_, err := tables.APIKeys().SetRevokeAt(ctx, keyID, past, tx)
+		return err
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

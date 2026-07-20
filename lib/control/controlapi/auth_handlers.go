@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -360,8 +361,12 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			ExpiresAt:      oldRow.ExpiresAt,
 		}
 		err = deps.AuthState.Tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := keys.SetRevokeAt(ctx, oldRow.ID, revokeAt, tx); err != nil {
+			found, err := keys.SetRevokeAt(ctx, oldRow.ID, revokeAt, tx)
+			if err != nil {
 				return err
+			}
+			if !found {
+				return fmt.Errorf("api key %s vanished mid-rotation", oldRow.ID)
 			}
 			return keys.Insert(ctx, newRow, tx)
 		})

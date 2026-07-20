@@ -173,6 +173,7 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 				HitTTLSeconds:  hitTTL,
 				TTLSeconds:     body.TTLSeconds,
 				CreatedByKey:   requestingKeyID(req.Context()),
+				CreatedAt:      deps.Clock.Now(),
 			}
 			id, err := deps.Persist.Breakpoints().Create(ctx, row, tx)
 			if err != nil {
@@ -222,7 +223,7 @@ func handleListBreakpoints(deps AppDeps) http.HandlerFunc {
 		var rows []persistence.BreakpointRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			var err error
-			rows, err = deps.Persist.Breakpoints().ListForInstance(ctx, inst.ID, false, tx)
+			rows, err = deps.Persist.Breakpoints().ListForInstance(ctx, inst.ID, false, deps.Clock.Now(), tx)
 			return err
 		}); err != nil {
 			writeError(w, err)

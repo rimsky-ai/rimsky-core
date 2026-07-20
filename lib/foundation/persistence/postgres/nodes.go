@@ -30,6 +30,8 @@ const nodeCols = `
 
 const nodeSelect = `FROM rimsky_nodes n`
 
+const inFlightNodeRunStates = `'pending','stale','running','held','parked'`
+
 func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, tx persistence.Tx) (persistence.NodeRow, error) {
 	ex := s.q(tx)
 	tags := in.Tags
@@ -842,7 +844,7 @@ func (s *nodesImpl) GetLatestRunForNode(
 		        settling_signal_type, COALESCE(claimed_by, '')
 		   FROM rimsky_node_runs
 		  WHERE node_id = $1
-		  ORDER BY CASE WHEN state IN ('pending','stale','running','held','parked') THEN 0 ELSE 1 END,
+		  ORDER BY CASE WHEN state IN (`+inFlightNodeRunStates+`) THEN 0 ELSE 1 END,
 		           enqueued_at DESC, sequence DESC, id DESC
 		  LIMIT 1`,
 		nodeID,

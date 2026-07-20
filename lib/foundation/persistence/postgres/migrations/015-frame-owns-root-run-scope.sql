@@ -7,6 +7,9 @@
 
 -- 015-frame-owns-root-run-scope.sql
 --
+-- This ordinal was previously assigned to a different, now-deleted migration
+-- (015-node-run-resuming-state.sql); see 014's header for the reuse caveat.
+--
 -- Frames now own their root RunScope. Each frame's start creates a fresh
 -- runscope row; cascade walks and message delivery read frame.root_run_scope_id
 -- instead of the now-retired instance.main_run_scope_id singleton.

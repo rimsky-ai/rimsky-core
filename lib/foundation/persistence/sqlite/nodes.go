@@ -29,6 +29,8 @@ const nodeCols = `
 
 const nodeSelect = `FROM rimsky_nodes n`
 
+const inFlightNodeRunStates = `'pending','stale','running','held','parked'`
+
 func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, tx persistence.Tx) (persistence.NodeRow, error) {
 	now := nowUTC()
 	tagsJSON, terr := encodeTagsJSON(in.Tags)
@@ -544,7 +546,6 @@ func nodeIDPlaceholders(nodeIDs []foundationshared.UUID) (string, []any) {
 	return strings.Join(placeholders, ","), args
 }
 
-// @concept: signal
 func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) (bool, error) {
 	var n int
 	err := s.q(tx).QueryRowContext(ctx,
@@ -862,6 +863,7 @@ func (s *nodesImpl) FindLatestCascadePending(
 
 // @concept: cascade
 // @decision: walker-rule-per-sender-node
+// @decision: sequence-scope-monotonic
 func (s *nodesImpl) CreateCascadePending(
 	ctx context.Context, tx persistence.Tx, nodeID, runScopeID, frameID foundationshared.UUID,
 ) (foundationshared.UUID, error) {
@@ -917,6 +919,7 @@ func (s *nodesImpl) GetRunForGate(ctx context.Context, tx persistence.Tx, runID 
 }
 
 // @concept: node-run
+// @decision: sequence-scope-monotonic
 func (s *nodesImpl) GetLatestRunForNode(
 	ctx context.Context, tx persistence.Tx, nodeID foundationshared.UUID,
 ) (*persistence.NodeRunLatest, error) {
@@ -925,7 +928,7 @@ func (s *nodesImpl) GetLatestRunForNode(
 		        settling_signal_type, COALESCE(claimed_by, '')
 		   FROM rimsky_node_runs
 		  WHERE node_id = ?
-		  ORDER BY CASE WHEN state IN ('pending','stale','running','held','parked') THEN 0 ELSE 1 END,
+		  ORDER BY CASE WHEN state IN (`+inFlightNodeRunStates+`) THEN 0 ELSE 1 END,
 		           enqueued_at DESC, sequence DESC, id DESC
 		  LIMIT 1`,
 		nodeID.String(),

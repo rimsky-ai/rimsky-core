@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -22,6 +21,9 @@ const (
 	RimskySchedulerTickLockKey int64 = 4853127298010834892
 
 	advisoryMigrationLockKey int64 = 5412893270184856212
+
+	namedLockKeyClass      int32 = 1
+	claimScopeLockKeyClass int32 = 2
 )
 
 type advisoryLockerImpl struct {
@@ -39,6 +41,7 @@ func (c *advisoryLockerImpl) TrySchedulerTick(ctx context.Context) (bool, func()
 	}
 	var got bool
 	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", RimskySchedulerTickLockKey).Scan(&got); err != nil {
+		_ = conn.Conn().Close(context.Background())
 		conn.Release()
 		return false, nil, fmt.Errorf("postgres.TrySchedulerTick: try lock: %w", err)
 	}
@@ -62,6 +65,7 @@ func (c *advisoryLockerImpl) AcquireMigrationLock(ctx context.Context) (func() e
 		return nil, fmt.Errorf("postgres.AcquireMigrationLock: acquire: %w", err)
 	}
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", advisoryMigrationLockKey); err != nil {
+		_ = conn.Conn().Close(context.Background())
 		conn.Release()
 		return nil, fmt.Errorf("postgres.AcquireMigrationLock: lock: %w", err)
 	}
@@ -82,8 +86,10 @@ func (c *advisoryLockerImpl) TakeNamedLockInTx(ctx context.Context, tx persisten
 	if err != nil {
 		return fmt.Errorf("postgres.TakeNamedLockInTx: %w", err)
 	}
-	_, err = pgT.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", "rimsky_lock:"+name)
-	return err
+	if _, err := pgT.Exec(ctx, "SELECT pg_advisory_xact_lock($1, hashtext($2))", namedLockKeyClass, name); err != nil {
+		return fmt.Errorf("postgres.TakeNamedLockInTx: name %q: %w", name, err)
+	}
+	return nil
 }
 
 func (c *advisoryLockerImpl) TakeClaimScopeLockInTx(ctx context.Context, tx persistence.Tx, claimProducerName string, claimScopeData []byte) error {
@@ -91,9 +97,9 @@ func (c *advisoryLockerImpl) TakeClaimScopeLockInTx(ctx context.Context, tx pers
 	if err != nil {
 		return fmt.Errorf("postgres.TakeClaimScopeLockInTx: %w", err)
 	}
-	key := "rimsky_scope:" + claimProducerName + ":" + hex.EncodeToString(claimScopeData)
-	_, err = pgT.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", key)
-	return err
+	key := claimProducerName + ":" + hex.EncodeToString(claimScopeData)
+	if _, err := pgT.Exec(ctx, "SELECT pg_advisory_xact_lock($1, hashtext($2))", claimScopeLockKeyClass, key); err != nil {
+		return fmt.Errorf("postgres.TakeClaimScopeLockInTx: claim producer %q: %w", claimProducerName, err)
+	}
+	return nil
 }
-
-var unwrapTx func(persistence.Tx) (pgx.Tx, error)

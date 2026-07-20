@@ -7,6 +7,9 @@
 
 -- 015-frame-owns-root-run-scope.sql
 --
+-- This ordinal was previously assigned to a different, now-deleted
+-- migration; see the postgres sibling's header for the reuse caveat.
+--
 -- Frames own their root RunScope. See the postgres sibling migration for
 -- rationale.
 

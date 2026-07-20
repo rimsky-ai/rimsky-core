@@ -82,6 +82,45 @@ func TestPgLargeObjectBackendReadRangeOutOfBounds(t *testing.T) {
 	}
 }
 
+func TestPgLargeObjectBackendReadRangeZeroLength(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	pool := pgtest.StartPostgres(ctx, t)
+	be := pgpersist.NewPgLargeObjectBackend(pool)
+	h, err := be.Write(ctx, persistence.BlobKey{}, []byte("payload"))
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := be.ReadRange(ctx, h, 0, 0)
+	if err != nil {
+		t.Fatalf("ReadRange zero-length: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("ReadRange zero-length: got %d bytes, want 0", len(got))
+	}
+}
+
+func TestPgLargeObjectBackendReadRangeExactEnd(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	pool := pgtest.StartPostgres(ctx, t)
+	be := pgpersist.NewPgLargeObjectBackend(pool)
+	payload := []byte("0123456789abcdef")
+	h, err := be.Write(ctx, persistence.BlobKey{}, payload)
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := be.ReadRange(ctx, h, int64(len(payload)-4), 4)
+	if err != nil {
+		t.Fatalf("ReadRange exact-end: %v", err)
+	}
+	if !bytes.Equal(got, payload[len(payload)-4:]) {
+		t.Fatalf("ReadRange exact-end: got %q, want %q", got, payload[len(payload)-4:])
+	}
+}
+
 func TestPgLargeObjectBackendReadRangeNotFound(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())

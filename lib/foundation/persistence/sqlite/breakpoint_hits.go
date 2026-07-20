@@ -47,7 +47,11 @@ func (b *breakpointHitsImpl) Create(ctx context.Context, hit persistence.Breakpo
 	if err != nil {
 		return shared.UUID{}, 0, fmt.Errorf("sqlite.breakpointHits.create: marshal snapshot: %w", err)
 	}
-	hitAt := time.Now().UTC().Format(timeLayoutFixedNanos)
+	hitAtTime := hit.HitAt
+	if hitAtTime.IsZero() {
+		hitAtTime = time.Now()
+	}
+	hitAt := hitAtTime.UTC().Format(timeLayoutFixedNanos)
 	var nodeRunArg, frameArg any
 	if hit.NodeRunID != nil {
 		nodeRunArg = hit.NodeRunID.String()
@@ -157,14 +161,14 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 	if n == 1 {
 		return true, nil
 	}
-	var resumedAt sql.NullString
+	var exists int
 	err = ex.QueryRowContext(ctx,
-		`SELECT resumed_at FROM rimsky_breakpoint_hits WHERE id = ?`, id.String()).Scan(&resumedAt)
+		`SELECT EXISTS(SELECT 1 FROM rimsky_breakpoint_hits WHERE id = ?)`, id.String()).Scan(&exists)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, shared.ErrBreakpointHitNotFound
-		}
 		return false, fmt.Errorf("sqlite.breakpointHits.resume.probe: %w", err)
+	}
+	if exists == 0 {
+		return false, shared.ErrBreakpointHitNotFound
 	}
 	return false, nil
 }
@@ -275,8 +279,7 @@ func (b *breakpointHitsImpl) HasUnresumedPauseHitForInstance(ctx context.Context
 		    WHERE h.instance_id = ?
 		      AND h.mode = ?
 		      AND h.resumed_at IS NULL
-		      AND h.node_run_id IS NOT NULL
-		      AND r.state IN ('pending','stale','running','held','parked')
+		      AND r.state IN (`+inFlightNodeRunStates+`)
 		 )`, instanceID.String(), string(persistence.BreakpointModePause)).Scan(&n); err != nil {
 		return false, fmt.Errorf("sqlite.breakpointHits.hasUnresumedPauseHitForInstance: %w", err)
 	}

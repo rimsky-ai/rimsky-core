@@ -46,7 +46,11 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	if err != nil {
 		return shared.UUID{}, fmt.Errorf("sqlite.breakpoints.create: marshal matcher: %w", err)
 	}
-	createdAt := time.Now().UTC().Format(timeLayoutFixedNanos)
+	createdAtTime := bp.CreatedAt
+	if createdAtTime.IsZero() {
+		createdAtTime = time.Now()
+	}
+	createdAt := createdAtTime.UTC().Format(timeLayoutFixedNanos)
 	var (
 		ttlArg     any
 		expiresArg any
@@ -54,7 +58,7 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	)
 	if bp.TTLSeconds != nil {
 		ttlArg = *bp.TTLSeconds
-		expiresArg = time.Now().UTC().
+		expiresArg = createdAtTime.UTC().
 			Add(time.Duration(*bp.TTLSeconds) * time.Second).
 			Format(timeLayoutFixedNanos)
 	}
@@ -93,14 +97,14 @@ func (b *breakpointsImpl) Get(ctx context.Context, id shared.UUID, tx persistenc
 	return &out, nil
 }
 
-func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared.UUID, includeExpired bool, tx persistence.Tx) ([]persistence.BreakpointRow, error) {
+func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared.UUID, includeExpired bool, now time.Time, tx persistence.Tx) ([]persistence.BreakpointRow, error) {
 	ex := b.q(tx)
 	sqlStr := `SELECT ` + sqliteBreakpointCols + `
 		   FROM rimsky_instance_breakpoints
 		  WHERE instance_id = ?`
 	args := []any{instanceID.String()}
 	if !includeExpired {
-		nowStr := time.Now().UTC().Format(timeLayoutFixedNanos)
+		nowStr := now.UTC().Format(timeLayoutFixedNanos)
 		sqlStr += ` AND (expires_at IS NULL OR expires_at > ?)`
 		args = append(args, nowStr)
 	}

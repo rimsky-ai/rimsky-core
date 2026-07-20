@@ -15,7 +15,7 @@ test:
 build:
 	go build ./...
 
-lint:
+lint: license-lint
 	golangci-lint run
 	cd lib/foundation && golangci-lint run
 	cd lib/protocols && golangci-lint run
@@ -393,8 +393,9 @@ push-images: check-clean buildx-builder
 # Full release chain — pre-push gates, build, scan, push.
 #
 # Order:
-#   lint           — golangci-lint across all four modules (cheap, host-side)
-#   license-lint   — go run ./tools/license-check (cheap, host-side)
+#   lint           — golangci-lint across all four modules, plus license-lint
+#                    (go run ./tools/license-check); both also run on every
+#                    `make lint` invocation, not just release
 #   core-images    — build the 4 core images locally
 #   service-images — build the 11 bundled-service images locally
 #   test-all       — full Go test suite, including testcontainer scenarios
@@ -417,7 +418,7 @@ push-images: check-clean buildx-builder
 # LATEST_TAG=dev so the floating tag pushed alongside :$(VERSION) is :dev
 # instead of :latest. If scan finds vulnerabilities, the chain stops before
 # push.
-release: lint license-lint core-images service-images test-all test-race scan push-images
+release: lint core-images service-images test-all test-race scan push-images
 
 # Mechanical pre-release / dev channel. Derives a SemVer-2.0 pre-release
 # version (v<next-minor>.0-dev.<YYYYMMDD>.g<sha>) from the latest stable

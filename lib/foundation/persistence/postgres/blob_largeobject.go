@@ -170,7 +170,7 @@ func (b *PgLargeObjectBackend) ReadRange(ctx context.Context, handle persistence
 	n, err := io.ReadFull(lo, out)
 	if err != nil {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, io.ErrUnexpectedEOF
+			return nil, fmt.Errorf("blob pglo: read range: handle=%s offset=%d length=%d: %w", handle, offset, length, io.ErrUnexpectedEOF)
 		}
 		return nil, fmt.Errorf("blob pglo: read range: %w", err)
 	}
@@ -230,7 +230,7 @@ func isMissingLOError(err error) bool {
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		if pgErr.Code == "42704" || pgErr.Code == "22023" {
+		if pgErr.Code == "42704" {
 			return true
 		}
 	}

@@ -1,9 +1,8 @@
 #!/bin/sh
-# Prune rimsky-built images (label org.rimsky.project=rimsky-core) older than
-# REAP_HOURS (default 72), keeping any image ID still pointed to by a :latest
-# or :$VERSION tag, then prune dangling rimsky-labeled layers. Content-
-# addressed :src-* tags accumulate one per source tree built; this is the
-# retention side of that scheme. Invoked by `make reap-images`.
+# Copyright © 2026 Fall Guy Consulting.
+# Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+# license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 set -eu
 hours="${REAP_HOURS:-72}"
 version="${VERSION:-}"

@@ -5,6 +5,15 @@
 
 -- 014-drop-supervisor-active-node-count.sql
 --
+-- This ordinal was previously assigned to a different, now-deleted migration
+-- (014-drop-publisher-target-node.sql, retired when 001-013 were collapsed
+-- into 001-initial.sql; git commit 12243806). The migration runner keys
+-- idempotency on filename (persistence/migrations.go), so reusing this
+-- ordinal is safe only for a pre-v1 dev database dropped and recreated
+-- against the current 001-initial.sql baseline, never for one that still
+-- carries the old 014's rimsky_migrations row. Post-v1, ordinals are never
+-- reused.
+--
 -- Drop the cached active_node_count column from rimsky_supervisors.
 --
 -- The column was a periodic cache populated by each supervisor's livenessTick

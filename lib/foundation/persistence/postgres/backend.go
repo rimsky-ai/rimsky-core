@@ -22,17 +22,15 @@ type pgTx struct {
 	tx pgx.Tx
 }
 
-func init() {
-	unwrapTx = func(tx persistence.Tx) (pgx.Tx, error) {
-		if tx == nil {
-			return nil, errors.New("nil persistence.Tx")
-		}
-		t, ok := tx.(*pgTx)
-		if !ok {
-			return nil, fmt.Errorf("persistence.Tx is not a postgres tx: %T", tx)
-		}
-		return t.tx, nil
+func unwrapTx(tx persistence.Tx) (pgx.Tx, error) {
+	if tx == nil {
+		return nil, errors.New("nil persistence.Tx")
 	}
+	t, ok := tx.(*pgTx)
+	if !ok {
+		return nil, fmt.Errorf("persistence.Tx is not a postgres tx: %T", tx)
+	}
+	return t.tx, nil
 }
 
 type tablesImpl struct {
@@ -71,7 +69,10 @@ func (s *tablesImpl) Transaction(ctx context.Context, fn func(ctx context.Contex
 		_ = pgT.Rollback(ctx)
 		return err
 	}
-	return pgT.Commit(ctx)
+	if err := pgT.Commit(ctx); err != nil {
+		return fmt.Errorf("postgres.Transaction: commit: %w", err)
+	}
+	return nil
 }
 
 type querier interface {

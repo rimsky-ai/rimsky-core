@@ -54,6 +54,10 @@ func (b *breakpointHitsImpl) Create(ctx context.Context, hit persistence.Breakpo
 	if hit.FrameID != nil {
 		frameArg = *hit.FrameID
 	}
+	hitAt := hit.HitAt
+	if hitAt.IsZero() {
+		hitAt = time.Now()
+	}
 	var (
 		id  shared.UUID
 		seq int64
@@ -65,11 +69,11 @@ func (b *breakpointHitsImpl) Create(ctx context.Context, hit persistence.Breakpo
 		 VALUES (
 		    COALESCE($1::uuid, gen_random_uuid()),
 		    $2, $3, $4, $5,
-		    $6, $7, $8, NOW()
+		    $6, $7, $8, $9
 		 )
 		 RETURNING id, seq`,
 		idArg, hit.BreakpointID, hit.InstanceID, nodeRunArg, frameArg,
-		string(hit.Checkpoint), string(hit.Mode), snapBytes,
+		string(hit.Checkpoint), string(hit.Mode), snapBytes, hitAt,
 	).Scan(&id, &seq)
 	if err != nil {
 		return shared.UUID{}, 0, fmt.Errorf("breakpointHits.create: %w", err)
@@ -154,14 +158,14 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 	if tag.RowsAffected() == 1 {
 		return true, nil
 	}
-	var resumedAt *time.Time
+	var exists bool
 	err = ex.QueryRow(ctx,
-		`SELECT resumed_at FROM rimsky_breakpoint_hits WHERE id = $1`, id).Scan(&resumedAt)
+		`SELECT EXISTS(SELECT 1 FROM rimsky_breakpoint_hits WHERE id = $1)`, id).Scan(&exists)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, shared.ErrBreakpointHitNotFound
-		}
 		return false, fmt.Errorf("breakpointHits.resume.probe: %w", err)
+	}
+	if !exists {
+		return false, shared.ErrBreakpointHitNotFound
 	}
 	return false, nil
 }
@@ -247,8 +251,7 @@ func (b *breakpointHitsImpl) HasUnresumedPauseHitForInstance(ctx context.Context
 		    WHERE h.instance_id = $1
 		      AND h.mode = $2
 		      AND h.resumed_at IS NULL
-		      AND h.node_run_id IS NOT NULL
-		      AND r.state IN ('pending','stale','running','held','parked')
+		      AND r.state IN (`+inFlightNodeRunStates+`)
 		 )`, instanceID, string(persistence.BreakpointModePause)).Scan(&exists); err != nil {
 		return false, fmt.Errorf("breakpointHits.hasUnresumedPauseHitForInstance: %w", err)
 	}

@@ -5,11 +5,73 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
 )
+
+type tallyCheckResult struct {
+	Name string
+	Err  error
+}
+
+func reportTally(results []tallyCheckResult) int {
+	return reportConformanceResults("rimsky conformance widget", results,
+		func(r tallyCheckResult) string { return r.Name },
+		func(r tallyCheckResult) error { return r.Err })
+}
+
+func TestReportConformanceResults_AllPassing(t *testing.T) {
+	results := []tallyCheckResult{
+		{Name: "check-a"},
+		{Name: "check-b"},
+	}
+	var code int
+	stderr := captureStderr(t, func() {
+		stdout := captureStdout(t, func() {
+			code = reportTally(results)
+		})
+		if !strings.Contains(stdout, "ok    check-a\n") || !strings.Contains(stdout, "ok    check-b\n") {
+			t.Fatalf("stdout missing expected ok lines: %q", stdout)
+		}
+	})
+	if code != 0 {
+		t.Fatalf("code = %d, want 0", code)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty (no summary line when nothing failed)", stderr)
+	}
+}
+
+func TestReportConformanceResults_SomeFailing(t *testing.T) {
+	boom := errors.New("boom")
+	results := []tallyCheckResult{
+		{Name: "check-a"},
+		{Name: "check-b", Err: boom},
+		{Name: "check-c", Err: boom},
+	}
+	var code int
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			code = reportTally(results)
+		})
+	})
+	if code != 1 {
+		t.Fatalf("code = %d, want 1", code)
+	}
+	if !strings.Contains(stdout, "ok    check-a\n") {
+		t.Fatalf("stdout missing passing check: %q", stdout)
+	}
+	if !strings.Contains(stdout, "FAIL  check-b: boom\n") || !strings.Contains(stdout, "FAIL  check-c: boom\n") {
+		t.Fatalf("stdout missing FAIL lines: %q", stdout)
+	}
+	if !strings.Contains(stderr, "rimsky conformance widget: 2/3 checks failed\n") {
+		t.Fatalf("stderr summary = %q, want the widget/2/3 tally line", stderr)
+	}
+}
 
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()

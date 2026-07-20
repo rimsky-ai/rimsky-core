@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -77,6 +78,12 @@ func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, tx persis
 		}
 		bytes, err := persistence.ReadBlobInTx(ctx, bb, tx, persistence.Handle(*handle))
 		if err != nil {
+			if errors.Is(err, persistence.ErrBlobNotFound) {
+				slog.Error("node_attributes.spilled_value_missing",
+					"op", op, "node_run_id", out.NodeRunID.String(), "handle", *handle, "backend", *handleBkend)
+				out.Data = map[string]any{}
+				return &out, nil
+			}
 			return nil, fmt.Errorf("node_attributes.%s: blob.Read(%s): %w", op, *handle, err)
 		}
 		m := map[string]any{}

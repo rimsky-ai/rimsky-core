@@ -53,6 +53,14 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	if bp.SignalType != nil {
 		sigArg = *bp.SignalType
 	}
+	createdAt := bp.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+	var expiresAtArg any
+	if bp.TTLSeconds != nil {
+		expiresAtArg = createdAt.Add(time.Duration(*bp.TTLSeconds) * time.Second)
+	}
 	var id shared.UUID
 	err = ex.QueryRow(ctx,
 		`INSERT INTO rimsky_instance_breakpoints
@@ -63,15 +71,12 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 		    COALESCE($1::uuid, gen_random_uuid()),
 		    $2, $3, $4, $5, $6,
 		    $7, $8, $9, $10,
-		    $11, NOW(),
-		    CASE WHEN $9::int IS NULL THEN NULL
-		         ELSE NOW() + ($9::int || ' seconds')::interval
-		    END
+		    $11, $12, $13
 		 )
 		 RETURNING id`,
 		idArg, bp.InstanceID, matcherBytes, string(bp.Checkpoint), sigArg, string(bp.Mode),
 		string(bp.OverflowPolicy), bp.HitTTLSeconds, ttlArg, bp.DroppedCount,
-		bp.CreatedByKey,
+		bp.CreatedByKey, createdAt, expiresAtArg,
 	).Scan(&id)
 	if err != nil {
 		return shared.UUID{}, fmt.Errorf("breakpoints.create: %w", err)
@@ -95,16 +100,18 @@ func (b *breakpointsImpl) Get(ctx context.Context, id shared.UUID, tx persistenc
 	return &out, nil
 }
 
-func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared.UUID, includeExpired bool, tx persistence.Tx) ([]persistence.BreakpointRow, error) {
+func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared.UUID, includeExpired bool, now time.Time, tx persistence.Tx) ([]persistence.BreakpointRow, error) {
 	ex := b.q(tx)
+	args := []any{instanceID}
 	sql := `SELECT ` + breakpointCols + `
 		    FROM rimsky_instance_breakpoints
 		   WHERE instance_id = $1`
 	if !includeExpired {
-		sql += ` AND (expires_at IS NULL OR expires_at > NOW())`
+		args = append(args, now)
+		sql += fmt.Sprintf(` AND (expires_at IS NULL OR expires_at > $%d)`, len(args))
 	}
 	sql += ` ORDER BY created_at ASC`
-	rows, err := ex.Query(ctx, sql, instanceID)
+	rows, err := ex.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("breakpoints.listForInstance: %w", err)
 	}

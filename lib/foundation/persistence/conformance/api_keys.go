@@ -253,8 +253,8 @@ func testAPIKeys(t *testing.T, d persistence.Database) {
 			Permissions: []byte(`[{"action":"*"}]`), CreatedAt: now,
 		})
 		past := now.Add(-1 * time.Minute)
-		if err := keys.SetRevokeAt(ctx, id, past, nil); err != nil {
-			t.Fatalf("SetRevokeAt: %v", err)
+		if setFound, err := keys.SetRevokeAt(ctx, id, past, nil); err != nil || !setFound {
+			t.Fatalf("SetRevokeAt: found=%v err=%v", setFound, err)
 		}
 		swept, err := keys.SweepRotationGrace(ctx, now, nil)
 		if err != nil {
@@ -284,6 +284,13 @@ func testAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 
+	t.Run("SetRevokeAt_MissingID", func(t *testing.T) {
+		setFound, err := keys.SetRevokeAt(ctx, uuid.New(), now, nil)
+		if err != nil || setFound {
+			t.Fatalf("SetRevokeAt on missing id: found=%v err=%v (want false,nil)", setFound, err)
+		}
+	})
+
 	t.Run("UniqueNameDuringRotation", func(t *testing.T) {
 		hash1 := sha256Of([]byte("rk_dup_a"))
 		hash2 := sha256Of([]byte("rk_dup_b"))
@@ -303,8 +310,12 @@ func testAPIKeys(t *testing.T, d persistence.Database) {
 		oldID := getActiveIDByName(t, ctx, keys, "dup")
 		future := now.Add(1 * time.Hour)
 		err = tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := keys.SetRevokeAt(ctx, oldID, future, tx); err != nil {
+			rotFound, err := keys.SetRevokeAt(ctx, oldID, future, tx)
+			if err != nil {
 				return err
+			}
+			if !rotFound {
+				t.Fatalf("SetRevokeAt during rotation: id %s not found", oldID)
 			}
 			return keys.Insert(ctx, persistence.APIKey{
 				ID: uuid.New(), KeyHash: hash2[:], Name: "dup",

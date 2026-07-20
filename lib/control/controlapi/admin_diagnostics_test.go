@@ -73,6 +73,8 @@ func (fakeEvents) DeleteOlderThan(context.Context, time.Time) (int, error) {
 
 type fakeAPIKeys struct{}
 
+func (fakeAPIKeys) TxOptional() bool { return true }
+
 func (fakeAPIKeys) Insert(context.Context, persistence.APIKey, persistence.Tx) error { return nil }
 func (fakeAPIKeys) GetByID(context.Context, shared.UUID, persistence.Tx) (persistence.APIKey, bool, error) {
 	return persistence.APIKey{}, false, nil
@@ -95,8 +97,8 @@ func (fakeAPIKeys) MarkRevoked(context.Context, shared.UUID, time.Time, persiste
 func (fakeAPIKeys) RevokeIfNotLast(context.Context, shared.UUID, time.Time, bool, persistence.Tx) (persistence.RevokeResult, error) {
 	return persistence.RevokeResultNotFound, nil
 }
-func (fakeAPIKeys) SetRevokeAt(context.Context, shared.UUID, time.Time, persistence.Tx) error {
-	return nil
+func (fakeAPIKeys) SetRevokeAt(context.Context, shared.UUID, time.Time, persistence.Tx) (bool, error) {
+	return false, nil
 }
 func (fakeAPIKeys) SweepRotationGrace(context.Context, time.Time, persistence.Tx) ([]persistence.APIKey, error) {
 	return nil, nil

@@ -38,7 +38,7 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
           AND NOT EXISTS (
               SELECT 1 FROM rimsky_node_runs r
               WHERE r.frame_id = f.frame_id
-                AND r.state IN ('pending','stale','running','held','parked')
+                AND r.state IN (`+inFlightNodeRunStates+`)
           )
     `)
 	if err != nil {
@@ -124,7 +124,7 @@ func (s *framesImpl) EndFrameIfSettled(
            AND NOT EXISTS (
                SELECT 1 FROM rimsky_node_runs r
                 WHERE r.frame_id = $1
-                  AND r.state IN ('pending','stale','running','held','parked')
+                  AND r.state IN (`+inFlightNodeRunStates+`)
            )
     `, frameID)
 	if err != nil {
@@ -149,6 +149,57 @@ func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UU
 		return nil, fmt.Errorf("frames.GetRunningFrameID: %w", err)
 	}
 	return &frameID, nil
+}
+
+func (s *framesImpl) MarkSourceNodeStale(
+	ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx persistence.Tx,
+) (bool, error) {
+	// @concept: run-scope
+	tag, err := s.q(tx).Exec(ctx, `
+        INSERT INTO rimsky_node_runs
+            (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+        SELECT gen_random_uuid(), n.id, n.executor,
+               COALESCE((
+                 SELECT array_agg(store->>'name')
+                   FROM rimsky_instances i
+                   JOIN rimsky_templates t ON t.id = i.template_hash
+                   CROSS JOIN LATERAL jsonb_array_elements(t.spec->'nodes') AS nd
+                   LEFT JOIN LATERAL jsonb_array_elements(nd->'claim_producers') AS store ON true
+                  WHERE i.id = n.instance_id
+                    AND nd->>'type' = n.node_type
+                    AND store IS NOT NULL
+               ), ARRAY[]::text[]) AS required_stores,
+               NOW(), 'stale', 'cascade',
+               COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = $2 AND run_scope_id = f.root_run_scope_id), 0) + 1,
+               $1, f.root_run_scope_id
+          FROM rimsky_nodes n
+          JOIN rimsky_frames f ON f.frame_id = $1
+         WHERE n.id = $2
+           AND n.instance_id = $3
+           AND NOT EXISTS (
+             SELECT 1 FROM rimsky_node_runs r
+              WHERE r.node_id = $2
+                AND r.state IN (`+inFlightNodeRunStates+`)
+           )
+    `, frameID, nodeID, instanceID)
+	if err != nil {
+		return false, fmt.Errorf("frames.MarkSourceNodeStale: insert run row: %w", err)
+	}
+	if tag.RowsAffected() == 1 {
+		return true, nil
+	}
+	var anyMatched bool
+	if err := s.q(tx).QueryRow(ctx, `
+        SELECT EXISTS (
+            SELECT 1 FROM rimsky_node_runs r
+             WHERE r.node_id = $1
+               AND r.state = 'stale'
+               AND r.frame_id = $2
+        )
+    `, nodeID, frameID).Scan(&anyMatched); err != nil {
+		return false, fmt.Errorf("frames.MarkSourceNodeStale: existence check: %w", err)
+	}
+	return anyMatched, nil
 }
 
 func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persistence.Tx) ([]persistence.OrphanFrameDispatch, error) {

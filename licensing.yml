@@ -55,6 +55,9 @@ exempt:
   - .dockerignore
   # Build artifacts and vendor trees. The walker only hard-skips VCS dirs
   # (.git, .svn, .hg); every other "skip me" directory must be listed here.
-  - bin/
+  # bin/ (make cli's -o target) is deliberately NOT listed: it is gitignored
+  # and absent in a fresh checkout, so a listed-but-missing entry would fail
+  # verifyEntriesExist's existence check; nothing the walker recognizes by
+  # extension (.go/.ts/.proto/.sql/.sh) lives there, so it needs no entry.
   - lib/protocols/proto/v1/gen/  # generated bindings — handled separately by protoc plugin
   - .claude/   # Claude Code session state, settings, and ephemeral worktrees; not source the project licenses

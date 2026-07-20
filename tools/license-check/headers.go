@@ -13,11 +13,12 @@ import (
 )
 
 const (
-	markerLicensedUnder = "Licensed under"
-	markerApache        = "Apache License"
-	markerDualAGPL      = "Dual-licensed under AGPL"
-	markerSPDXApache    = "SPDX-License-Identifier: Apache-2.0"
-	markerSPDXDualAGPL  = "SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial"
+	markerLicensedUnder   = "Licensed under"
+	markerApache          = "Apache License"
+	markerDualAGPL        = "Dual-licensed under AGPL"
+	markerAGPLFilePointer = "LICENSE.agpl"
+	markerSPDXApache      = "SPDX-License-Identifier: Apache-2.0"
+	markerSPDXDualAGPL    = "SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial"
 )
 
 const apacheHeaderGo = `// Copyright © 2026 Fall Guy Consulting.
@@ -108,6 +109,7 @@ func detectHeader(path string) (hasHeader, isApache, isAGPL bool, err error) {
 	}
 	defer fh.Close()
 	sc := bufio.NewScanner(fh)
+	var sawDualAGPLPhrase, sawAGPLFilePointer, sawSPDXAGPL bool
 	for i := 0; i < 10 && sc.Scan(); i++ {
 		line := sc.Text()
 		if strings.Contains(line, markerLicensedUnder) {
@@ -117,21 +119,25 @@ func detectHeader(path string) (hasHeader, isApache, isAGPL bool, err error) {
 			isApache = true
 		}
 		if strings.Contains(line, markerDualAGPL) {
-			isAGPL = true
+			sawDualAGPLPhrase = true
 			hasHeader = true
+		}
+		if strings.Contains(line, markerAGPLFilePointer) {
+			sawAGPLFilePointer = true
 		}
 		if strings.Contains(line, markerSPDXApache) {
 			isApache = true
 			hasHeader = true
 		}
 		if strings.Contains(line, markerSPDXDualAGPL) {
-			isAGPL = true
+			sawSPDXAGPL = true
 			hasHeader = true
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return false, false, false, err
 	}
+	isAGPL = sawSPDXAGPL || (sawDualAGPLPhrase && sawAGPLFilePointer)
 	return hasHeader, isApache, isAGPL, nil
 }
 

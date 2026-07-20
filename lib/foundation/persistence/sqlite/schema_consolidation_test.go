@@ -220,3 +220,61 @@ func assertSqliteColumnsPresent(t *testing.T, ctx context.Context, db *sql.DB, t
 		}
 	}
 }
+
+func assertSqliteColumnDeclaredType(t *testing.T, ctx context.Context, db *sql.DB, table, column, wantType string) {
+	t.Helper()
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		t.Fatalf("pragma table_info(%s): %v", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid     int
+			name    string
+			ctype   string
+			notnull int
+			dflt    *string
+			pk      int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan column for %s: %v", table, err)
+		}
+		if name == column {
+			if ctype != wantType {
+				t.Errorf("%s.%s declared type = %q, want %q", table, column, ctype, wantType)
+			}
+			return
+		}
+	}
+	t.Fatalf("column %s.%s not found", table, column)
+}
+
+func TestSqliteSchemaConsolidation_TimestampColumnsNormalizedToText(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	d, err := persistence.Open(ctx, persistence.Config{
+		Driver: "sqlite",
+		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(dir, "state.db")},
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	db := sqlitepersist.DBFromDatabase(d)
+	cases := []struct{ table, column string }{
+		{"rimsky_messages", "received_at"},
+		{"rimsky_messages", "delivered_at"},
+		{"rimsky_claim_handles", "resolved_at"},
+		{"rimsky_lineage", "observed_at"},
+		{"rimsky_publisher_subscriptions", "started_at"},
+	}
+	for _, tc := range cases {
+		assertSqliteColumnDeclaredType(t, ctx, db, tc.table, tc.column, "TEXT")
+	}
+}

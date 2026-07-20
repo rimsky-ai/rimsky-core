@@ -36,13 +36,17 @@ func (s *lifecycleIdempotencyImpl) Get(ctx context.Context, claimProducerName st
 }
 
 func (s *lifecycleIdempotencyImpl) Upsert(ctx context.Context, in persistence.LifecycleIdempotencyRow, tx persistence.Tx) error {
+	lastEventAt := in.LastEventAt
+	if lastEventAt.IsZero() {
+		lastEventAt = time.Now()
+	}
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_lifecycle_idempotencies (store_registration_name, scope_kind, scope_id, state, last_event_at)
-		 VALUES ($1, $2, $3, $4, now())
+		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (store_registration_name, scope_kind, scope_id)
-		 DO UPDATE SET state = EXCLUDED.state, last_event_at = now()`,
-		in.ClaimProducerName, string(in.ScopeKind), in.ScopeID, string(in.State),
+		 DO UPDATE SET state = EXCLUDED.state, last_event_at = EXCLUDED.last_event_at`,
+		in.ClaimProducerName, string(in.ScopeKind), in.ScopeID, string(in.State), lastEventAt,
 	)
 	if err != nil {
 		return fmt.Errorf("lifecycleidempotency.upsert: %w", err)

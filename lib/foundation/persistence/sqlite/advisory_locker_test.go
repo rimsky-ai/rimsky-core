@@ -7,8 +7,12 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 func TestTrySchedulerTick_ExcludesAcrossLockerInstances(t *testing.T) {
@@ -117,5 +121,91 @@ func TestAcquireMigrationLock_HonorsContextCancel(t *testing.T) {
 	defer cancel()
 	if _, err := lockerB.AcquireMigrationLock(ctx); err == nil {
 		t.Fatal("locker B AcquireMigrationLock returned nil error while locker A held the lock and ctx expired")
+	}
+}
+
+func TestTakeNamedLockInTx_MutualExclusionComesFromImmediateTxLock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	d, err := open(ctx, persistence.SQLiteConfig{Path: filepath.Join(dir, "lockrace.db")})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	db := DBFromDatabase(d)
+	if _, err := db.ExecContext(ctx, `CREATE TABLE lock_race_probe (n INTEGER NOT NULL)`); err != nil {
+		t.Fatalf("create scratch table: %v", err)
+	}
+
+	store := d.Tables()
+	locker := d.AdvisoryLocker()
+
+	const racers = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, racers)
+	wg.Add(racers)
+	for i := 0; i < racers; i++ {
+		go func() {
+			defer wg.Done()
+			errs <- store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				if err := locker.TakeNamedLockInTx(ctx, tx, "lock-race-probe"); err != nil {
+					return err
+				}
+				sTx, err := unwrapTx(tx)
+				if err != nil {
+					return err
+				}
+				var n int
+				row := sTx.QueryRowContext(ctx, `SELECT COUNT(*) FROM lock_race_probe`)
+				if err := row.Scan(&n); err != nil {
+					return err
+				}
+				_, err = sTx.ExecContext(ctx, `INSERT INTO lock_race_probe (n) VALUES (?)`, n)
+				return err
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("racer transaction: %v", err)
+		}
+	}
+
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM lock_race_probe`).Scan(&count); err != nil {
+		t.Fatalf("count probe rows: %v", err)
+	}
+	if count != racers {
+		t.Fatalf("lock_race_probe has %d rows, want %d — TakeNamedLockInTx is a no-op on sqlite, so this "+
+			"only serializes via the _txlock=immediate DSN pragma making every Transaction a write tx from "+
+			"BEGIN; a lost update here means that pragma stopped closing the read-then-write window", count, racers)
+	}
+
+	seen := map[int]bool{}
+	rows, err := db.QueryContext(ctx, `SELECT n FROM lock_race_probe ORDER BY n`)
+	if err != nil {
+		t.Fatalf("scan probe rows: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n int
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scan n: %v", err)
+		}
+		if seen[n] {
+			t.Fatalf("duplicate observed count %d — two racers read the same pre-insert COUNT(*), proving the "+
+				"check-then-insert window was not serialized", n)
+		}
+		seen[n] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows.Err: %v", err)
 	}
 }

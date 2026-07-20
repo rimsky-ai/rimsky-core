@@ -597,7 +597,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		        d.async_ack_principal
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-		  WHERE d.state IN ('pending','stale','running','held','parked')
+		  WHERE d.state IN (`+inFlightNodeRunStates+`)
 		    AND ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
 		    AND ($2::text IS NULL OR d.executor_name = $2)
 		    AND ($3::uuid IS NULL OR n.instance_id = $3)
@@ -661,7 +661,7 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 		`SELECT COUNT(*)
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-		  WHERE d.state IN ('pending','stale','running','held','parked')
+		  WHERE d.state IN (`+inFlightNodeRunStates+`)
 		    AND ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
 		    AND ($2::text IS NULL OR d.executor_name = $2)
 		    AND ($3::uuid IS NULL OR n.instance_id = $3)`,
@@ -694,7 +694,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		        d.async_ack_principal
 		   FROM rimsky_node_runs d
 		  WHERE d.id = $1
-		    AND d.state IN ('pending','stale','running','held','parked')`, id,
+		    AND d.state IN (`+inFlightNodeRunStates+`)`, id,
 	)
 	var r persistence.DispatchRow
 	var state string
@@ -725,7 +725,7 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 	err := ex.QueryRow(ctx,
 		`SELECT id FROM rimsky_node_runs
 		  WHERE node_id = $1 AND run_scope_id = $2
-		    AND state IN ('pending','stale','running','held','parked')
+		    AND state IN (`+inFlightNodeRunStates+`)
 		  ORDER BY sequence ASC
 		  LIMIT 1`,
 		nodeID, runScopeID).Scan(&id)
@@ -774,7 +774,7 @@ func (q *queueImpl) ListInFlightRunStates(
 		  WHERE node_id = ANY($1)
 		    AND frame_id = $2
 		    AND run_scope_id = $3
-		    AND state IN ('pending','stale','running','held','parked')`,
+		    AND state IN (`+inFlightNodeRunStates+`)`,
 		nodeIDs, frameID, runScopeID)
 	if err != nil {
 		return nil, fmt.Errorf("postgres.ListInFlightRunStates: %w", err)

@@ -13,7 +13,12 @@
 --   JSONB         → TEXT (caller marshals JSON)
 --   UUID          → TEXT (caller stringifies)
 --   gen_random_uuid() default → no default; app generates with uuid.New()
---   TIMESTAMPTZ + NOW() default → TEXT default (datetime('now')) (RFC3339)
+--   TIMESTAMPTZ + NOW() default → TEXT default (datetime('now')); datetime('now')
+--     emits 'YYYY-MM-DD HH:MM:SS' (space-separated, no T/Z), NOT RFC3339 — a column
+--     that both defaults via datetime('now') and is read back through formatTime()'s
+--     fixed-nanos 'T...Z' layout (see rimsky_frames.last_progress_at's
+--     strftime('%Y-%m-%dT%H:%M:%fZ', 'now') for the RFC3339-correct idiom) mis-sorts
+--     lexicographically against explicitly-stamped rows on the same calendar date
 --   BIGSERIAL     → INTEGER PRIMARY KEY AUTOINCREMENT
 --   UUID[] / TEXT[] → TEXT (JSON array)
 --   ON DELETE CASCADE / SET NULL preserved

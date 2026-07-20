@@ -107,6 +107,73 @@ func TestSQLiteMigration024RebuildPreservesChildRows(t *testing.T) {
 	}
 }
 
+func TestSQLiteMigration036RebuildPreservesEventsAndAutoincrement(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	d, err := persistence.Open(ctx, persistence.Config{
+		Driver: "sqlite",
+		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(dir, "state.db")},
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	db := sqlitepersist.DBFromDatabase(d)
+	seed := []string{
+		`INSERT INTO rimsky_templates (id, spec, state) VALUES ('tpl-036', '{}', 'deployed')`,
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key) VALUES ('inst-036', 'tpl-036', 'ck-036')`,
+		`INSERT INTO rimsky_events (id, instance_id, kind, payload, occurred_at)
+		 VALUES (500, 'inst-036', 'fixture.kind', '{}', '2026-01-01T00:00:00.000000000Z')`,
+	}
+	for _, stmt := range seed {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed: %v\n%s", err, stmt)
+		}
+	}
+
+	if _, err := db.ExecContext(ctx,
+		`DELETE FROM rimsky_migrations WHERE filename = '036-normalize-timestamp-column-dialect.sql'`); err != nil {
+		t.Fatalf("unmark 036: %v", err)
+	}
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("re-apply 036 against populated db: %v", err)
+	}
+
+	var count int
+	var occurredAt string
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*), occurred_at FROM rimsky_events WHERE id = 500 GROUP BY occurred_at`,
+	).Scan(&count, &occurredAt); err != nil {
+		t.Fatalf("read surviving event: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("036 table rebuild lost or duplicated the seeded event row: count=%d", count)
+	}
+	if occurredAt != "2026-01-01T00:00:00.000000000Z" {
+		t.Fatalf("036 table rebuild altered occurred_at: got %q", occurredAt)
+	}
+
+	res, err := db.ExecContext(ctx,
+		`INSERT INTO rimsky_events (instance_id, kind, payload, occurred_at)
+		 VALUES ('inst-036', 'fixture.kind2', '{}', '2026-01-01T00:00:01.000000000Z')`)
+	if err != nil {
+		t.Fatalf("insert post-rebuild event: %v", err)
+	}
+	newID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+	if newID <= 500 {
+		t.Fatalf("AUTOINCREMENT did not carry forward across the 036 rebuild: new id=%d, want >500 "+
+			"(a reset here would let a post-migration event collide with a pre-migration id)", newID)
+	}
+}
+
 func TestSQLiteMigrationTagsColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

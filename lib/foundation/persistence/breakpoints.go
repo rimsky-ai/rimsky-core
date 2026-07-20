@@ -54,7 +54,7 @@ type BreakpointRow struct {
 type BreakpointTable interface {
 	Create(ctx context.Context, bp BreakpointRow, tx Tx) (shared.UUID, error)
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*BreakpointRow, error)
-	ListForInstance(ctx context.Context, instanceID shared.UUID, includeExpired bool, tx Tx) ([]BreakpointRow, error)
+	ListForInstance(ctx context.Context, instanceID shared.UUID, includeExpired bool, now time.Time, tx Tx) ([]BreakpointRow, error)
 	Delete(ctx context.Context, id shared.UUID, tx Tx) error
 	IncrementDropped(ctx context.Context, id shared.UUID, tx Tx) error
 	SweepExpired(ctx context.Context, now time.Time, tx Tx) (int, error)

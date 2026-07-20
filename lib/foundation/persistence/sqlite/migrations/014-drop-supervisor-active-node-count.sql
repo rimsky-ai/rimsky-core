@@ -4,7 +4,11 @@
 
 -- 014-drop-supervisor-active-node-count.sql
 --
+-- This ordinal was previously assigned to a different, now-deleted migration
+-- (retired when the prior 001-013 sequence collapsed into 001-initial.sql).
+-- See the postgres sibling migration for the full rationale and the reuse
+-- caveat.
+--
 -- Drop the cached active_node_count column from rimsky_supervisors.
--- See the postgres sibling migration for rationale.
 
 ALTER TABLE rimsky_supervisors DROP COLUMN active_node_count;

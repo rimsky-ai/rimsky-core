@@ -653,7 +653,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	        d.async_ack_principal
 	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-	  WHERE d.state IN ('pending','stale','running','held','parked')` +
+	  WHERE d.state IN (` + inFlightNodeRunStates + `)` +
 		stateClause +
 		` AND (? IS NULL OR d.executor_name = ?)
 	    AND (? IS NULL OR n.instance_id = ?)` +
@@ -689,7 +689,7 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 	q1 := `SELECT COUNT(*)
 	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-	  WHERE d.state IN ('pending','stale','running','held','parked')` +
+	  WHERE d.state IN (` + inFlightNodeRunStates + `)` +
 		stateClause +
 		` AND (? IS NULL OR d.executor_name = ?)
 	    AND (? IS NULL OR n.instance_id = ?)`
@@ -722,7 +722,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 	        d.async_ack_principal
 		   FROM rimsky_node_runs d
 		  WHERE d.id = ?
-		    AND d.state IN ('pending','stale','running','held','parked')`, id.String(),
+		    AND d.state IN (`+inFlightNodeRunStates+`)`, id.String(),
 	)
 	r, err := scanDispatchRow(row)
 	if err != nil {
@@ -739,7 +739,7 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 	row := q.q(tx).QueryRowContext(ctx,
 		`SELECT id FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ?
-		    AND state IN ('pending','stale','running','held','parked')
+		    AND state IN (`+inFlightNodeRunStates+`)
 		  ORDER BY sequence ASC
 		  LIMIT 1`,
 		nodeID.String(), runScopeID.String())
@@ -803,7 +803,7 @@ func (q *queueImpl) ListInFlightRunStates(
 		  WHERE node_id IN (`+strings.Join(placeholders, ",")+`)
 		    AND frame_id = ?
 		    AND run_scope_id = ?
-		    AND state IN ('pending','stale','running','held','parked')`,
+		    AND state IN (`+inFlightNodeRunStates+`)`,
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite.ListInFlightRunStates: %w", err)

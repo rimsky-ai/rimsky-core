@@ -25,6 +25,8 @@ var _ persistence.APIKeyTable = (*apiKeysImpl)(nil)
 
 func (s *tablesImpl) APIKeys() persistence.APIKeyTable { return (*apiKeysImpl)(s) }
 
+func (b *apiKeysImpl) TxOptional() bool { return true }
+
 func (b *apiKeysImpl) run(tx persistence.Tx) querier {
 	if tx == nil {
 		return (*tablesImpl)(b).db
@@ -228,14 +230,18 @@ func (b *apiKeysImpl) revokeIfNotLastInTx(ctx context.Context, id shared.UUID, n
 	return persistence.RevokeResultAlreadyRevoked, nil
 }
 
-func (b *apiKeysImpl) SetRevokeAt(ctx context.Context, id shared.UUID, at time.Time, tx persistence.Tx) error {
-	_, err := b.run(tx).ExecContext(ctx,
+func (b *apiKeysImpl) SetRevokeAt(ctx context.Context, id shared.UUID, at time.Time, tx persistence.Tx) (bool, error) {
+	res, err := b.run(tx).ExecContext(ctx,
 		`UPDATE rimsky_api_keys SET revoke_at = ? WHERE id = ?`,
 		at.UTC().Format(timeLayoutFixedNanos), id.String())
 	if err != nil {
-		return fmt.Errorf("sqlite.APIKeys.SetRevokeAt: %w", err)
+		return false, fmt.Errorf("sqlite.APIKeys.SetRevokeAt: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("sqlite.APIKeys.SetRevokeAt.rowsAffected: %w", err)
+	}
+	return n == 1, nil
 }
 
 func (b *apiKeysImpl) SweepRotationGrace(ctx context.Context, now time.Time, tx persistence.Tx) ([]persistence.APIKey, error) {

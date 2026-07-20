@@ -1,12 +1,8 @@
 #!/bin/sh
-# Content-addressed image tag for the current working tree. Copies the real
-# git index to a temp file (keeping the stat cache), stages the full working
-# tree into that temp index, and hashes the resulting tree object — the real
-# index and the working tree are never modified. Same tree -> same tag; any
-# tracked or untracked (non-ignored) change -> different tag. Consumed by the
-# Makefile image targets and by the services test harness image resolver
-# (lib/services/test/harness/image_tag.go); both sides MUST derive tags from
-# this one script.
+# Copyright © 2026 Fall Guy Consulting.
+# Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+# license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 set -eu
 root=$(git rev-parse --show-toplevel)
 index=$(git rev-parse --git-path index)

@@ -314,6 +314,7 @@ func handleListInstances(deps Deps) http.HandlerFunc {
 	}
 }
 
+// @concept: cascade-graph
 func handleGetInstance(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")

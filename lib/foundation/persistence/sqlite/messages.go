@@ -55,7 +55,10 @@ func (b *messagesImpl) MarkDelivered(ctx context.Context, tx persistence.Tx, id 
 	if err != nil {
 		return false, fmt.Errorf("sqlite.Messages.MarkDelivered: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("sqlite.Messages.MarkDelivered.rowsAffected: %w", err)
+	}
 	return n == 1, nil
 }
 

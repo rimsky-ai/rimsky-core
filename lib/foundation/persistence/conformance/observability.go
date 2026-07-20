@@ -117,6 +117,33 @@ func testLifecycleIdempotencyListByClaimProducer(t *testing.T, d persistence.Dat
 	if len(rows) != 2 {
 		t.Fatalf("ListByClaimProducer = %d rows, want 2", len(rows))
 	}
+
+	explicitLastEventAt := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
+			ClaimProducerName: "store-b",
+			ScopeKind:         persistence.LifecycleIdempotencyScopeTemplate,
+			ScopeID:           "tpl-explicit-last-event",
+			State:             persistence.LifecycleIdempotencyStateRegistered,
+			LastEventAt:       explicitLastEventAt,
+		}, tx)
+	}); err != nil {
+		t.Fatalf("upsert with explicit LastEventAt: %v", err)
+	}
+	var got *persistence.LifecycleIdempotencyRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.LifecycleIdempotency().Get(ctx, "store-b", persistence.LifecycleIdempotencyScopeTemplate, "tpl-explicit-last-event", tx)
+		got = r
+		return err
+	}); err != nil {
+		t.Fatalf("get after explicit-LastEventAt upsert: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("get after explicit-LastEventAt upsert: row not found")
+	}
+	if !got.LastEventAt.Equal(explicitLastEventAt) {
+		t.Fatalf("Upsert did not honor caller-supplied LastEventAt: got %v, want %v", got.LastEventAt, explicitLastEventAt)
+	}
 }
 
 func testEventsListDescending(t *testing.T, d persistence.Database) {

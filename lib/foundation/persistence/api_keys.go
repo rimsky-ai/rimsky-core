@@ -48,8 +48,14 @@ const (
 	RevokeResultRevoked
 )
 
+type NilTxTolerant interface {
+	TxOptional() bool
+}
+
 // @concept: api-key
 type APIKeyTable interface {
+	NilTxTolerant
+
 	Insert(ctx context.Context, k APIKey, tx Tx) error
 
 	GetByID(ctx context.Context, id shared.UUID, tx Tx) (APIKey, bool, error)
@@ -66,7 +72,7 @@ type APIKeyTable interface {
 
 	RevokeIfNotLast(ctx context.Context, id shared.UUID, now time.Time, force bool, tx Tx) (RevokeResult, error)
 
-	SetRevokeAt(ctx context.Context, id shared.UUID, at time.Time, tx Tx) error
+	SetRevokeAt(ctx context.Context, id shared.UUID, at time.Time, tx Tx) (found bool, err error)
 
 	SweepRotationGrace(ctx context.Context, now time.Time, tx Tx) ([]APIKey, error)
 

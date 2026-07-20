@@ -55,6 +55,13 @@ type CheckpointContext struct {
 	OpenWaitSet      []map[string]any
 }
 
+func clockNow(args RunArgs) time.Time {
+	if args.Clock != nil {
+		return args.Clock.Now()
+	}
+	return time.Now()
+}
+
 // @concept: breakpoint
 func EvaluateBreakpoints(
 	ctx context.Context,
@@ -64,7 +71,7 @@ func EvaluateBreakpoints(
 	var bps []persistence.BreakpointRow
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		bps, err = args.Persist.Breakpoints().ListForInstance(ctx, cc.InstanceID, false, tx)
+		bps, err = args.Persist.Breakpoints().ListForInstance(ctx, cc.InstanceID, false, clockNow(args), tx)
 		return err
 	}); err != nil {
 		return cc.MergedAttributes, &BreakpointInfraError{Phase: "list_breakpoints", Cause: err}
@@ -173,6 +180,7 @@ func createHitWithinCap(ctx context.Context, args RunArgs, cc CheckpointContext,
 				Checkpoint:   cc.Checkpoint,
 				Mode:         bp.Mode,
 				Snapshot:     buildSnapshot(cc),
+				HitAt:        clockNow(args),
 			}, tx)
 			if err != nil {
 				return &BreakpointInfraError{Phase: "create_hit", Cause: err}

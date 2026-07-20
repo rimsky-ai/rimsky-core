@@ -346,6 +346,39 @@ func TestDetectHeaderRecognizesSPDXShortForm(t *testing.T) {
 	}
 }
 
+func TestDetectHeaderRejectsAGPLPhraseWithWrongFilePointer(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/wrong-pointer.sql"
+	body := "-- Copyright © 2026 Fall Guy Consulting.\n" +
+		"-- Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial\n" +
+		"-- license. See LICENSE.apache at the repo root.\n\nCREATE TABLE x();\n"
+	if err := writeTestFile(path, []byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	has, isApa, isAgp, err := detectHeader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has {
+		t.Errorf("dual-license phrase alone should still count as a header: has=%v", has)
+	}
+	if isAgp {
+		t.Errorf("AGPL phrase pointing at the wrong license file must not be reported as a valid AGPL header")
+	}
+	if isApa {
+		t.Errorf("a wrong pointer to LICENSE.apache must not be reported as an Apache header: isApa=%v", isApa)
+	}
+
+	f := fileEntry{relPath: "wrong-pointer.sql", absPath: path, kind: kindSQL, classification: classAGPL}
+	vs := verifyHeaders([]fileEntry{f})
+	if len(vs) != 1 {
+		t.Fatalf("expected exactly one violation for the wrong file pointer, got %d: %+v", len(vs), vs)
+	}
+	if !strings.Contains(vs[0].message, "expected AGPL") {
+		t.Errorf("violation message should call out the missing AGPL header, got %q", vs[0].message)
+	}
+}
+
 func TestStripLeadingHeaderTolerantOfBlankBetweenMarkerRuns(t *testing.T) {
 	body := []byte(agplHeaderGo +
 		"\n// SPDX-License-Identifier: Apache-2.0\n" +

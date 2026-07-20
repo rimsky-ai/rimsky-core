@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
@@ -33,12 +34,16 @@ func (s *lifecycleIdempotencyImpl) Get(ctx context.Context, claimProducerName st
 }
 
 func (s *lifecycleIdempotencyImpl) Upsert(ctx context.Context, in persistence.LifecycleIdempotencyRow, tx persistence.Tx) error {
+	lastEventAt := in.LastEventAt
+	if lastEventAt.IsZero() {
+		lastEventAt = time.Now()
+	}
 	_, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_lifecycle_idempotencies (store_registration_name, scope_kind, scope_id, state, last_event_at)
 		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(store_registration_name, scope_kind, scope_id)
 		 DO UPDATE SET state = excluded.state, last_event_at = excluded.last_event_at`,
-		in.ClaimProducerName, string(in.ScopeKind), in.ScopeID, string(in.State), nowUTC(),
+		in.ClaimProducerName, string(in.ScopeKind), in.ScopeID, string(in.State), formatTime(lastEventAt),
 	)
 	if err != nil {
 		return fmt.Errorf("lifecycleidempotency.upsert: %w", err)
