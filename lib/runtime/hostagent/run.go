@@ -217,30 +217,30 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 }
 
-type statusSnapshot struct {
+type StatusSnapshot struct {
 	Connected bool          `json:"connected"`
 	Proxy     string        `json:"proxy"`
 	Since     string        `json:"since"`
-	Children  []childStatus `json:"children"`
+	Children  []ChildStatus `json:"children"`
 }
 
 // @story: host-agent-control-plane
-type childStatus struct {
+type ChildStatus struct {
 	SpawnID    string `json:"spawn_id"`
 	RunScopeID string `json:"run_scope_id"`
 	Binding    string `json:"binding"`
 }
 
 // @story: host-agent-control-plane
-func (a *agent) snapshotChildren() []childStatus {
+func (a *agent) snapshotChildren() []ChildStatus {
 	a.childMu.Lock()
 	defer a.childMu.Unlock()
 	if len(a.children) == 0 {
 		return nil
 	}
-	out := make([]childStatus, 0, len(a.children))
+	out := make([]ChildStatus, 0, len(a.children))
 	for _, child := range a.children {
-		out = append(out, childStatus{
+		out = append(out, ChildStatus{
 			SpawnID:    child.spawnID,
 			RunScopeID: child.runScopeID,
 			Binding:    child.bindingPath,
@@ -252,7 +252,7 @@ func (a *agent) snapshotChildren() []childStatus {
 
 // @story: host-agent-control-plane
 func (a *agent) writeStatus() {
-	writeStatusFile(a.cfg.StatusFile, statusSnapshot{
+	writeStatusFile(a.cfg.StatusFile, StatusSnapshot{
 		Connected: true,
 		Proxy:     a.cfg.RimskyURL,
 		Since:     a.connectedAt,
@@ -260,7 +260,7 @@ func (a *agent) writeStatus() {
 	})
 }
 
-func writeStatusFile(path string, snap statusSnapshot) {
+func writeStatusFile(path string, snap StatusSnapshot) {
 	if path == "" {
 		return
 	}

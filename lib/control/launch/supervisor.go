@@ -255,7 +255,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		mhook.StartGaugeRefresher(gaugeCtx, driver.Tables(), driver.Queue(), 0, log)
 	}
 
-	go disc.RefreshLoop(gaugeCtx, config.ObservabilityRefreshInterval(), logger)
+	go disc.RefreshLoop(gaugeCtx, rimskyCfg.ObservabilityRefreshInterval, logger)
 
 	reporter := newFailureReporter(2)
 	metricsSrv := startMetricsServer(metricsHostFromEnv(), "supervisor", metricsPort, mreg, log, reporter)

@@ -191,6 +191,25 @@ type RimskyConfig struct {
 
 	// @concept: validation
 	UnreachableValidatorPolicy string
+
+	ObservabilityRefreshInterval time.Duration
+}
+
+const defaultObservabilityRefreshInterval = 60 * time.Second
+
+func parseObservabilityRefreshInterval() (time.Duration, error) {
+	v := os.Getenv("RIMSKY_OBSERVABILITY_REFRESH_INTERVAL")
+	if v == "" {
+		return defaultObservabilityRefreshInterval, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("RIMSKY_OBSERVABILITY_REFRESH_INTERVAL=%q: %w", v, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("RIMSKY_OBSERVABILITY_REFRESH_INTERVAL=%q: must be positive", v)
+	}
+	return d, nil
 }
 
 func ParsePeerAuth(raw string) (string, error) {
@@ -547,21 +566,27 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 	}
 
+	observabilityRefreshInterval, err := parseObservabilityRefreshInterval()
+	if err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+	}
+
 	return RimskyConfig{
-		Persistence:                pcfg,
-		Blob:                       bcfg,
-		ClaimProducers:             stores,
-		NamedLocks:                 locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
-		Executors:                  executors,
-		Publishers:                 publishersCfg,
-		Validators:                 validatorsCfg,
-		DataProcessors:             dataProcessorsCfg,
-		Retention:                  retentionCfg,
-		LateBindServiceProxies:     wrapper.LateBindServiceProxies,
-		PeerAuth:                   peerAuth,
-		Topology:                   topology,
-		Warnings:                   warnings,
-		UnreachableValidatorPolicy: unreachableValidatorPolicy,
+		Persistence:                  pcfg,
+		Blob:                         bcfg,
+		ClaimProducers:               stores,
+		NamedLocks:                   locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
+		Executors:                    executors,
+		Publishers:                   publishersCfg,
+		Validators:                   validatorsCfg,
+		DataProcessors:               dataProcessorsCfg,
+		Retention:                    retentionCfg,
+		LateBindServiceProxies:       wrapper.LateBindServiceProxies,
+		PeerAuth:                     peerAuth,
+		Topology:                     topology,
+		Warnings:                     warnings,
+		UnreachableValidatorPolicy:   unreachableValidatorPolicy,
+		ObservabilityRefreshInterval: observabilityRefreshInterval,
 	}, nil
 }
 

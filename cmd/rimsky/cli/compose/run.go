@@ -229,15 +229,11 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	}
 
 	instanceIDs, keyByID := extractInstanceIDs(created)
-	if len(instanceIDs) == 0 {
-		if err := UpdateLatestSymlink(root, runDir); err != nil {
-			logger.Warn("compose run: update latest symlink", "err", err.Error())
-		}
-		return coord.Drain(context.Background(), ReasonAllSuccess)
-	}
-
 	if err := UpdateLatestSymlink(root, runDir); err != nil {
 		logger.Warn("compose run: update latest symlink", "err", err.Error())
+	}
+	if len(instanceIDs) == 0 {
+		return coord.Drain(context.Background(), ReasonAllSuccess)
 	}
 
 	releaseBootSignalWatcher()

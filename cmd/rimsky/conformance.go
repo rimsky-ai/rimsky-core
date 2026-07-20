@@ -32,6 +32,23 @@ import (
 	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
+func reportConformanceResults[T any](prefix string, results []T, name func(T) string, errOf func(T) error) int {
+	failed := 0
+	for _, r := range results {
+		if err := errOf(r); err != nil {
+			failed++
+			fmt.Printf("FAIL  %s: %v\n", name(r), err)
+			continue
+		}
+		fmt.Printf("ok    %s\n", name(r))
+	}
+	if failed > 0 {
+		fmt.Fprintf(os.Stderr, "%s: %d/%d checks failed\n", prefix, failed, len(results))
+		return 1
+	}
+	return 0
+}
+
 func dispatchConformance(args []string) int {
 	if len(args) < 1 {
 		printConformanceUsage(os.Stderr)
@@ -180,18 +197,10 @@ func runConformanceClaimProducer(args []string) int {
 	defer client.Close()
 
 	results := claimproducer.Run(ctx, client)
-	failed := 0
-	for _, r := range results {
-		if r.Err != nil {
-			failed++
-			fmt.Printf("FAIL  %s: %v\n", r.Name, r.Err)
-			continue
-		}
-		fmt.Printf("ok    %s\n", r.Name)
-	}
-	if failed > 0 {
-		fmt.Fprintf(os.Stderr, "rimsky conformance claim-producer: %d/%d checks failed\n", failed, len(results))
-		return 1
+	if code := reportConformanceResults("rimsky conformance claim-producer", results,
+		func(r claimproducer.CheckResult) string { return r.Name },
+		func(r claimproducer.CheckResult) error { return r.Err }); code != 0 {
+		return code
 	}
 
 	if *checkObs {
@@ -271,20 +280,9 @@ func runConformancePublisher(args []string) int {
 	}
 
 	results := publisher.Run(ctx, client, opts)
-	failed := 0
-	for _, r := range results {
-		if r.Err != nil {
-			failed++
-			fmt.Printf("FAIL  %s: %v\n", r.Name, r.Err)
-			continue
-		}
-		fmt.Printf("ok    %s\n", r.Name)
-	}
-	if failed > 0 {
-		fmt.Fprintf(os.Stderr, "rimsky conformance publisher: %d/%d checks failed\n", failed, len(results))
-		return 1
-	}
-	return 0
+	return reportConformanceResults("rimsky conformance publisher", results,
+		func(r publisher.CheckResult) string { return r.Name },
+		func(r publisher.CheckResult) error { return r.Err })
 }
 
 func pollForConformancePublisherMessage(ctx context.Context, controlAPIURL, instanceID, messageType string, receiver *publisher.MessageReceiver) {
@@ -341,20 +339,9 @@ func runConformanceValidation(args []string) int {
 	defer cancel()
 
 	results := validation.Run(ctx, client, *role)
-	failed := 0
-	for _, r := range results {
-		if r.Err != nil {
-			failed++
-			fmt.Printf("FAIL  %s: %v\n", r.Name, r.Err)
-			continue
-		}
-		fmt.Printf("ok    %s\n", r.Name)
-	}
-	if failed > 0 {
-		fmt.Fprintf(os.Stderr, "rimsky conformance validation: %d/%d checks failed\n", failed, len(results))
-		return 1
-	}
-	return 0
+	return reportConformanceResults("rimsky conformance validation", results,
+		func(r validation.CheckResult) string { return r.Name },
+		func(r validation.CheckResult) error { return r.Err })
 }
 
 func runConformanceDataProcessing(args []string) int {
@@ -389,20 +376,9 @@ func runConformanceDataProcessing(args []string) int {
 	defer cancel()
 
 	results := dataprocessing.Run(ctx, client)
-	failed := 0
-	for _, r := range results {
-		if r.Err != nil {
-			failed++
-			fmt.Printf("FAIL  %s: %v\n", r.Name, r.Err)
-			continue
-		}
-		fmt.Printf("ok    %s\n", r.Name)
-	}
-	if failed > 0 {
-		fmt.Fprintf(os.Stderr, "rimsky conformance data-processing: %d/%d checks failed\n", failed, len(results))
-		return 1
-	}
-	return 0
+	return reportConformanceResults("rimsky conformance data-processing", results,
+		func(r dataprocessing.CheckResult) string { return r.Name },
+		func(r dataprocessing.CheckResult) error { return r.Err })
 }
 
 func runConformanceBlobBackend(args []string) int {
@@ -519,11 +495,11 @@ func runConformanceProbe(args []string) int {
 	callbackBind := fs.String("callback-bind", "127.0.0.1", "interface for the callback receiver (use 0.0.0.0 with containerized executors)")
 	callbackHost := fs.String("callback-host", "", "host the executor should reach the callback at (default: same as --callback-bind)")
 	if err := fs.Parse(args); err != nil {
-		return 1
+		return 2
 	}
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "rimsky conformance probe: --endpoint required")
-		return 1
+		return 2
 	}
 
 	ep := conformance.Endpoint{Transport: *transport, URL: *endpoint}

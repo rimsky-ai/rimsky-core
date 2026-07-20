@@ -106,7 +106,7 @@ func handleListAssets(deps AppDeps) http.HandlerFunc {
 			if r.ProducerName == nil || *r.ProducerName == "" {
 				continue
 			}
-			if !producerAdvertises(*r.ProducerName) {
+			if !producerAdvertises(req.Context(), *r.ProducerName) {
 				continue
 			}
 			node := nodeByID[r.HolderNodeID]
@@ -156,16 +156,16 @@ func toAssetItem(r persistence.ClaimHandleRow, node persistence.NodeRow, claimAl
 	return out
 }
 
-func buildDataProcessingPredicate(deps AppDeps) func(string) bool {
+func buildDataProcessingPredicate(deps AppDeps) func(context.Context, string) bool {
 	if deps.ClaimProducers == nil {
-		return func(string) bool { return false }
+		return func(context.Context, string) bool { return false }
 	}
-	return func(name string) bool {
+	return func(ctx context.Context, name string) bool {
 		p, ok := deps.ClaimProducers.Get(name)
 		if !ok {
 			return false
 		}
-		caps, err := p.Capabilities(context.Background())
+		caps, err := p.Capabilities(ctx)
 		if err != nil {
 			return false
 		}
@@ -216,7 +216,7 @@ func resolveAsset(
 	if producerName == "" {
 		return nil, node, nil
 	}
-	if !buildDataProcessingPredicate(deps)(producerName) {
+	if !buildDataProcessingPredicate(deps)(ctx, producerName) {
 		return nil, node, nil
 	}
 	for i := range rows {

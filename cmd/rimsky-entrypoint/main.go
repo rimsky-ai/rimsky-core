@@ -209,28 +209,20 @@ func runSingleRole(name string, sigCh <-chan os.Signal) {
 }
 
 func spawnRole(name string) (*exec.Cmd, chan childExit, error) {
-	c := exec.Command(binaryDir + "/" + name)
-	c.Env = append(envWithoutProcessRole(), "RIMSKY_LOG_BINARY="+nameOf(name))
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
-	if err := c.Start(); err != nil {
-		return nil, nil, fmt.Errorf("spawn %s: %w", name, err)
-	}
-	exitCh := make(chan childExit, 1)
-	go func() {
-		err := c.Wait()
-		exitCh <- childExit{name: name, err: err}
-	}()
-	return c, exitCh, nil
+	return spawn(name, envWithoutProcessRole())
 }
 
 func startOnce(binary string) (*exec.Cmd, chan childExit, error) {
+	return spawn(binary, os.Environ())
+}
+
+func spawn(binary string, baseEnv []string) (*exec.Cmd, chan childExit, error) {
 	c := exec.Command(binaryDir + "/" + binary)
-	c.Env = append(os.Environ(), "RIMSKY_LOG_BINARY="+nameOf(binary))
+	c.Env = append(baseEnv, "RIMSKY_LOG_BINARY="+nameOf(binary))
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	if err := c.Start(); err != nil {
-		return nil, nil, fmt.Errorf("start %s: %w", binary, err)
+		return nil, nil, fmt.Errorf("spawn %s: %w", binary, err)
 	}
 	exitCh := make(chan childExit, 1)
 	go func() {

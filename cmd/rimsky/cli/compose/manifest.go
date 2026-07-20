@@ -72,13 +72,15 @@ func LoadManifest(path string) (*Manifest, error) {
 	return &m, nil
 }
 
+var identifierRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+
 var (
-	projectRe     = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	instanceRe    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	projectRe     = identifierRe
+	instanceRe    = identifierRe
+	serviceNameRe = identifierRe
 	tagRe         = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._:@/-]{0,254}$`)
 	hashRe        = regexp.MustCompile(`^sha256-[0-9a-f]{64}$`)
 	contextRe     = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._-]{0,62}$`)
-	serviceNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 )
 
 var validExecutorTransport = map[string]bool{

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,86 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
+
+type callCounts struct {
+	Capabilities int
+	Open         int
+	Commit       int
+	Abandon      int
+	Release      int
+}
+
+type observedProducer struct {
+	*Producer
+
+	mu                sync.Mutex
+	capabilitiesCalls int
+	openCalls         int
+	commitCalls       int
+	abandonCalls      int
+	releaseCalls      int
+	releaseClaimIDs   []string
+}
+
+func newObservedProducer() *observedProducer {
+	return &observedProducer{Producer: newProducer()}
+}
+
+func (p *observedProducer) calls() callCounts {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return callCounts{
+		Capabilities: p.capabilitiesCalls,
+		Open:         p.openCalls,
+		Commit:       p.commitCalls,
+		Abandon:      p.abandonCalls,
+		Release:      p.releaseCalls,
+	}
+}
+
+func (p *observedProducer) releaseClaimIDsSeen() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, len(p.releaseClaimIDs))
+	copy(out, p.releaseClaimIDs)
+	return out
+}
+
+func (p *observedProducer) Capabilities(ctx context.Context, req *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
+	p.mu.Lock()
+	p.capabilitiesCalls++
+	p.mu.Unlock()
+	return p.Producer.Capabilities(ctx, req)
+}
+
+func (p *observedProducer) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
+	p.mu.Lock()
+	p.openCalls++
+	p.mu.Unlock()
+	return p.Producer.Open(ctx, req)
+}
+
+func (p *observedProducer) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
+	p.mu.Lock()
+	p.commitCalls++
+	p.mu.Unlock()
+	return p.Producer.Commit(ctx, req)
+}
+
+func (p *observedProducer) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
+	p.mu.Lock()
+	p.abandonCalls++
+	p.mu.Unlock()
+	return p.Producer.Abandon(ctx, req)
+}
+
+func (p *observedProducer) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
+	p.mu.Lock()
+	p.releaseCalls++
+	p.releaseClaimIDs = append(p.releaseClaimIDs, req.GetClaimId())
+	p.mu.Unlock()
+	return p.Producer.Release(ctx, req)
+}
 
 func TestE2E_ExampleClaimProducerAgainstRunningRimsky(t *testing.T) {
 	ctx := context.Background()
@@ -76,8 +157,8 @@ func exerciseOpenAbandonLeg(t *testing.T, ep harness.RimskyEndpoint) {
 		"the supervisor's terminal pipeline must have called the example producer's Abandon RPC and the RPC must have returned successfully (falsifier: Abandon called but the producer's effect is canned)")
 }
 
-func exerciseReleaseLeg(t *testing.T, prod *Producer, prodPort int) {
-	before := prod.Calls()
+func exerciseReleaseLeg(t *testing.T, prod *observedProducer, prodPort int) {
+	before := prod.calls()
 
 	dialCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -99,13 +180,13 @@ func exerciseReleaseLeg(t *testing.T, prod *Producer, prodPort int) {
 		t.Fatalf("Client.Release against the example producer: %v (the producer's Release handler must accept the verb and return without error — falsifier: rimsky drives Release but the producer is unreachable / canned)", rErr)
 	}
 
-	after := prod.Calls()
+	after := prod.calls()
 	if after.Release <= before.Release {
 		t.Fatalf("Release count did NOT grow on the in-process producer: before=%d after=%d — the peer client did not call the producer's Release handler (falsifier: the verb's effect was canned)",
 			before.Release, after.Release)
 	}
 
-	releaseIDs := prod.ReleaseClaimIDs()
+	releaseIDs := prod.releaseClaimIDsSeen()
 	if len(releaseIDs) == 0 {
 		t.Fatalf("Release landed but no claim_ids were recorded — internal counter inconsistency")
 	}
@@ -373,14 +454,14 @@ func freeHostPort(t *testing.T) int {
 	return port
 }
 
-func startExampleProducerInProcess(t *testing.T, port int) *Producer {
+func startExampleProducerInProcess(t *testing.T, port int) *observedProducer {
 	t.Helper()
 	lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		t.Fatalf("listen %d: %v", port, err)
 	}
 	srv := grpc.NewServer()
-	prod := newProducer()
+	prod := newObservedProducer()
 	genv1.RegisterClaimProducerServer(srv, prod)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)

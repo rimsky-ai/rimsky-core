@@ -8,6 +8,7 @@ package roles
 import (
 	"embed"
 	"sort"
+	"strings"
 )
 
 //go:embed *.json
@@ -29,8 +30,8 @@ func AllNames() []string {
 	out := []string{}
 	for _, e := range entries {
 		n := e.Name()
-		if len(n) > 5 && n[len(n)-5:] == ".json" {
-			out = append(out, n[:len(n)-5])
+		if strings.HasSuffix(n, ".json") {
+			out = append(out, strings.TrimSuffix(n, ".json"))
 		}
 	}
 	sort.Strings(out)

@@ -187,7 +187,6 @@ func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID s
 		 RETURNING frame_id`,
 		[]any{instID, msgID, mainScopeID}, &frameID,
 	)
-	_ = nodeID
 	var runID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_node_runs(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)

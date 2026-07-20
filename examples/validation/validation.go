@@ -7,6 +7,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -49,7 +51,7 @@ func validateClaimProducer(cp *genv1.ClaimProducerContext) *genv1.ValidateRespon
 	resp := &genv1.ValidateResponse{Valid: true}
 	for i, b := range cp.GetClaims() {
 		sel := b.GetSelector()
-		if containsToken(sel, SelectorTriggerError) {
+		if strings.Contains(sel, SelectorTriggerError) {
 			resp.Valid = false
 			resp.Errors = append(resp.Errors, &genv1.ValidationFinding{
 				Class:   "selector_rejected_by_example_validator",
@@ -58,7 +60,7 @@ func validateClaimProducer(cp *genv1.ClaimProducerContext) *genv1.ValidateRespon
 			})
 			continue
 		}
-		if containsToken(sel, SelectorTriggerWarning) {
+		if strings.Contains(sel, SelectorTriggerWarning) {
 			resp.Warnings = append(resp.Warnings, &genv1.ValidationFinding{
 				Class:   "selector_flagged_by_example_validator",
 				Message: "selector carries the example validator's warning-trigger sentinel",
@@ -69,33 +71,6 @@ func validateClaimProducer(cp *genv1.ClaimProducerContext) *genv1.ValidateRespon
 	return resp
 }
 
-func containsToken(s, substr string) bool {
-	if substr == "" || len(substr) > len(s) {
-		return false
-	}
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 func selectorPath(i int) string {
-	return "/claim_producer/claims/" + itoa(i) + "/selector"
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	const digits = "0123456789"
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = digits[n%10]
-		n /= 10
-	}
-	return string(buf[i:])
+	return "/claim_producer/claims/" + strconv.Itoa(i) + "/selector"
 }

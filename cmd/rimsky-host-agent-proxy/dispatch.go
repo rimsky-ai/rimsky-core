@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
 const (
@@ -32,8 +33,7 @@ const (
 
 const serviceNameHeader = "x-rimsky-service-name"
 
-// @concept: host-agent-proxy
-const anonymousRoutingIdentity = "anonymous"
+const anonymousRoutingIdentity = hostagent.AnonymousRoutingIdentity
 
 func resolveOwnerRoutingKey(ownerAPIKeyID string) string {
 	if ownerAPIKeyID == "" {
@@ -188,6 +188,20 @@ func spawnChild(
 	case <-agent.closed:
 		return "", nil, &resolveError{class: errClassHostAgentDisconnected, msg: "agent disconnected during spawn"}
 	}
+}
+
+func sendDispatchFrame(agent *agentConnection, spawnID, protocol, streamID string, payload []byte, verb *genv1.DispatchFrame_ClaimProducerVerb) bool {
+	frame := &genv1.DispatchFrame{
+		SpawnId:  spawnID,
+		Protocol: protocol,
+		Payload:  payload,
+		StreamId: streamID,
+		Kind:     genv1.DispatchFrame_DISPATCH_FRAME_KIND_DATA,
+	}
+	if verb != nil {
+		frame.ClaimProducerVerb = *verb
+	}
+	return agent.send(&genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: frame}})
 }
 
 func rewriteCallbackURL(original, agentBase string) string {

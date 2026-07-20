@@ -67,10 +67,11 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 		DataProcessors: rimskyCfg.DataProcessors,
 		Metrics:        observability.MetricsHookOf(mreg),
 
-		LateBindServiceProxies:     rimskyCfg.LateBindServiceProxies,
-		PeerAuth:                   rimskyCfg.PeerAuth,
-		UnreachableValidatorPolicy: rimskyCfg.UnreachableValidatorPolicy,
-		Bundled:                    bundledRegs,
+		LateBindServiceProxies:       rimskyCfg.LateBindServiceProxies,
+		PeerAuth:                     rimskyCfg.PeerAuth,
+		UnreachableValidatorPolicy:   rimskyCfg.UnreachableValidatorPolicy,
+		ObservabilityRefreshInterval: rimskyCfg.ObservabilityRefreshInterval,
+		Bundled:                      bundledRegs,
 	})
 	if err != nil {
 		log.Error("StartControlAPI", "error", err.Error())

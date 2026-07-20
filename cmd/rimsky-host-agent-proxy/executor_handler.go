@@ -66,13 +66,7 @@ func (h *executorHandler) Execute(ctx context.Context, req *genv1.ExecuteRequest
 	respCh := res.agent.registerStream(streamID)
 	defer res.agent.clearStream(streamID)
 
-	if !res.agent.send(&genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
-		SpawnId:  res.spawnID,
-		Protocol: protocolExecutor,
-		Payload:  payload,
-		StreamId: streamID,
-		Kind:     genv1.DispatchFrame_DISPATCH_FRAME_KIND_DATA,
-	}}}) {
+	if !sendDispatchFrame(res.agent, res.spawnID, protocolExecutor, streamID, payload, nil) {
 		return executorTerminalError(errClassHostAgentDisconnected, "agent disconnected before dispatch"), nil
 	}
 

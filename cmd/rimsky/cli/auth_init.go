@@ -26,7 +26,7 @@ func RunAuthInit(ctx context.Context, args []string) int {
 		return 2
 	}
 
-	if status, ok := fetchAuthStatus(ctx, endpoint, key); ok && status.Mode == "authenticated" {
+	if status, err := fetchAuthStatus(ctx, endpoint, key); err == nil && status.Mode == "authenticated" {
 		fmt.Fprintln(os.Stderr, "rimsky auth init: deployment is already authenticated (use 'rimsky auth create-key' instead)")
 		return 1
 	}

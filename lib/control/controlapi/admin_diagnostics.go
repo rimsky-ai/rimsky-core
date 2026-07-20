@@ -7,6 +7,7 @@ package controlapi
 import (
 	"context"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -93,6 +94,12 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 			for _, g := range groups {
 				out.Frames = append(out.Frames, *g)
 			}
+			sort.Slice(out.Frames, func(i, j int) bool {
+				if !out.Frames[i].HeldSince.Equal(out.Frames[j].HeldSince) {
+					return out.Frames[i].HeldSince.Before(out.Frames[j].HeldSince)
+				}
+				return out.Frames[i].FrameID < out.Frames[j].FrameID
+			})
 			return nil
 		})
 		if err != nil {

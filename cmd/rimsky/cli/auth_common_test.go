@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/roles"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
@@ -26,7 +27,7 @@ func TestLoadRole_Bundled(t *testing.T) {
 }
 
 func TestLoadRole_AllBundled(t *testing.T) {
-	for _, name := range bundledRoleNames() {
+	for _, name := range roles.AllNames() {
 		r, err := loadRole(name, "")
 		if err != nil {
 			t.Errorf("loadRole(%s): %v", name, err)

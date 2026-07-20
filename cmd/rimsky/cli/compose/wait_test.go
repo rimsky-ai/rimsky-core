@@ -19,6 +19,7 @@ type fakeInstanceClient struct {
 	mu     sync.Mutex
 	frames map[string][]fakeFrame
 	idx    map[string]int
+	served map[string]int
 }
 
 type fakeFrame struct {
@@ -30,6 +31,7 @@ func newFakeClient() *fakeInstanceClient {
 	return &fakeInstanceClient{
 		frames: map[string][]fakeFrame{},
 		idx:    map[string]int{},
+		served: map[string]int{},
 	}
 }
 
@@ -37,27 +39,6 @@ func (f *fakeInstanceClient) script(id string, frame fakeFrame) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.frames[id] = append(f.frames[id], frame)
-}
-
-func (f *fakeInstanceClient) GetInstance(ctx context.Context, id string) (*cli.Instance, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	frames, ok := f.frames[id]
-	if !ok || len(frames) == 0 {
-		return nil, errors.New("no frames scripted for id " + id)
-	}
-	i := f.idx[id]
-	if i >= len(frames) {
-		i = len(frames) - 1
-	}
-	frame := frames[i]
-	if i < len(frames)-1 {
-		f.idx[id] = i + 1
-	} else {
-		f.idx[id] = i
-	}
-	inst := frame.inst
-	return &inst, nil
 }
 
 func (f *fakeInstanceClient) ListInstanceNodes(ctx context.Context, id string) (*cli.ListInstanceNodesResponse, error) {
@@ -71,6 +52,10 @@ func (f *fakeInstanceClient) ListInstanceNodes(ctx context.Context, id string) (
 	if i >= len(frames) {
 		i = len(frames) - 1
 	}
+	f.served[id] = i
+	if i < len(frames)-1 {
+		f.idx[id] = i + 1
+	}
 	return &cli.ListInstanceNodesResponse{Nodes: append([]cli.Node(nil), frames[i].nodes...)}, nil
 }
 
@@ -81,7 +66,7 @@ func (f *fakeInstanceClient) ListInstanceFrames(ctx context.Context, id, state s
 	if !ok || len(frames) == 0 {
 		return &cli.ListFramesResponse{}, nil
 	}
-	i := f.idx[id]
+	i := f.served[id]
 	if i >= len(frames) {
 		i = len(frames) - 1
 	}
@@ -247,10 +232,6 @@ func TestWaitForInstancesTerminal_TransientNodesErrorPreservesOutcome(t *testing
 type zeroRunNodeClient struct {
 	mu   sync.Mutex
 	poll int
-}
-
-func (c *zeroRunNodeClient) GetInstance(_ context.Context, id string) (*cli.Instance, error) {
-	return &cli.Instance{ID: id}, nil
 }
 
 func (c *zeroRunNodeClient) ListInstanceNodes(_ context.Context, _ string) (*cli.ListInstanceNodesResponse, error) {

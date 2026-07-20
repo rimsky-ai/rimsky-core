@@ -51,7 +51,7 @@ func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 		return err
 	}
 	conn, prior, displaced := s.state.registerAgent(apiKeyID, reg.GetAgentLabel(), reg.GetLocalCallbackBaseUrl())
-	if displaced && prior != nil {
+	if displaced {
 		prior.close()
 		prior.closeAllStreams()
 		slog.Info("agent connection displaced prior", "api_key_id", redact(apiKeyID), "agent_label", reg.GetAgentLabel())

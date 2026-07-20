@@ -31,9 +31,6 @@ func handleAdminWaitSets(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		frameStr := req.URL.Query().Get("frame")
 		runStr := req.URL.Query().Get("receiver_run")
-		if runStr == "" {
-			runStr = req.URL.Query().Get("node")
-		}
 		if frameStr == "" {
 			badRequest(w, "missing required ?frame= query param")
 			return

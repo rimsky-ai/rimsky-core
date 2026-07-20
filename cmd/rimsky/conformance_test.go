@@ -93,7 +93,7 @@ var conformanceSubcommands = []struct {
 		run:     runConformanceProbe,
 		flags:   []string{"endpoint", "transport", "timeout", "callback-bind", "callback-host"},
 		reqMsg:  "--endpoint required",
-		reqExit: 1,
+		reqExit: 2,
 	},
 }
 

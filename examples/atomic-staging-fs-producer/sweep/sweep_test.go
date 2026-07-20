@@ -7,6 +7,7 @@ package sweep
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,58 +102,31 @@ func backdateOldLeak(t *testing.T, tmp string) {
 		t.Fatalf("read state: %v", err)
 	}
 	old := time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339Nano)
-	out := []byte(replaceAfterClaim(string(data), "old-leak", old))
+	out := []byte(naiveReplaceCreatedAt(string(data), "old-leak", old))
 	if err := os.WriteFile(statePath, out, 0o644); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
 }
 
-func replaceAfterClaim(s, claimID, newCreatedAt string) string {
-	return naiveReplaceCreatedAt(s, claimID, newCreatedAt)
-}
-
 func naiveReplaceCreatedAt(blob, id, v string) string {
-	out := ""
-	for _, line := range splitLines(blob) {
-		if !contains(line, `"claim_id":"`+id+`"`) {
-			out += line + "\n"
-			continue
+	if blob == "" {
+		return ""
+	}
+	needle := `"claim_id":"` + id + `"`
+	var b strings.Builder
+	for _, line := range strings.Split(strings.TrimSuffix(blob, "\n"), "\n") {
+		if strings.Contains(line, needle) {
+			line = rewriteCreatedAt(line, v)
 		}
-		out += rewriteCreatedAt(line, v) + "\n"
+		b.WriteString(line)
+		b.WriteString("\n")
 	}
-	return out
-}
-
-func splitLines(s string) []string {
-	var out []string
-	start := 0
-	for i, ch := range s {
-		if ch == '\n' {
-			out = append(out, s[start:i])
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		out = append(out, s[start:])
-	}
-	return out
-}
-
-func contains(haystack, needle string) bool {
-	if len(needle) > len(haystack) {
-		return false
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
+	return b.String()
 }
 
 func rewriteCreatedAt(line, v string) string {
 	key := `"created_at":"`
-	i := indexOf(line, key)
+	i := strings.Index(line, key)
 	if i < 0 {
 		return line
 	}
@@ -162,13 +136,4 @@ func rewriteCreatedAt(line, v string) string {
 		end++
 	}
 	return line[:start] + v + line[end:]
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }

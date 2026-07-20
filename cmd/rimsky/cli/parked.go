@@ -14,26 +14,16 @@ import (
 )
 
 func RunParkedList(ctx context.Context, args []string) int {
-	fs := flag.NewFlagSet("parked list", flag.ContinueOnError)
-	var common CommonFlags
-	RegisterCommonFlags(fs, &common)
-	olderThan := fs.Duration("older-than", 0, "filter to rows parked longer ago than this duration")
-	instance := fs.String("instance", "", "filter to a specific instance id")
-	if err := parseInterspersed(fs, args); err != nil {
-		return 2
+	var olderThan time.Duration
+	var instance string
+	fs, common, endpoint, code := runWithCommon("parked list", args, func(fs *flag.FlagSet) {
+		fs.DurationVar(&olderThan, "older-than", 0, "filter to rows parked longer ago than this duration")
+		fs.StringVar(&instance, "instance", "", "filter to a specific instance id")
+	})
+	if code != 0 {
+		return code
 	}
-	if err := common.ResolveFormat(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	SetActiveCommonFlags(&common)
-
-	cfgPath, _ := DefaultConfigPath()
-	endpoint, err := ResolveEndpoint(common.Endpoint, os.Getenv("RIMSKY_CONTROL_API"), cfgPath, "")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
+	_ = fs
 
 	path := "/v1/admin/diagnostics/parked-nodes"
 
@@ -45,8 +35,8 @@ func RunParkedList(ctx context.Context, args []string) int {
 	}
 
 	rows := resp.ParkedNodes
-	if *olderThan > 0 {
-		cutoff := time.Now().Add(-*olderThan)
+	if olderThan > 0 {
+		cutoff := time.Now().Add(-olderThan)
 		filtered := rows[:0]
 		for _, r := range rows {
 			if r.ParkedAt.Before(cutoff) {
@@ -55,10 +45,10 @@ func RunParkedList(ctx context.Context, args []string) int {
 		}
 		rows = filtered
 	}
-	if *instance != "" {
+	if instance != "" {
 		filtered := rows[:0]
 		for _, r := range rows {
-			if r.InstanceID == *instance {
+			if r.InstanceID == instance {
 				filtered = append(filtered, r)
 			}
 		}
@@ -69,13 +59,13 @@ func RunParkedList(ctx context.Context, args []string) int {
 		_ = EmitJSON(os.Stdout, rows)
 		return 0
 	}
-	fmt.Println("instance\tnode_id\tparked_at\tresume_at")
+	fmt.Fprintln(os.Stdout, "instance\tnode_id\tparked_at\tresume_at")
 	for _, r := range rows {
 		resumeAt := ""
 		if r.ResumeAt != nil {
 			resumeAt = r.ResumeAt.UTC().Format(time.RFC3339)
 		}
-		fmt.Printf("%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(os.Stdout, "%s\t%s\t%s\t%s\n",
 			r.InstanceID, r.NodeID,
 			r.ParkedAt.UTC().Format(time.RFC3339),
 			resumeAt)

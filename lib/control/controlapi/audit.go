@@ -19,7 +19,6 @@ import (
 )
 
 func (s *AuthState) emitAttempted(
-	ctx context.Context,
 	r *http.Request,
 	start time.Time,
 	ident auth.Identity,
@@ -50,11 +49,10 @@ func (s *AuthState) emitAttempted(
 		ClientIP:             clientIP(r),
 		UserAgent:            r.Header.Get("User-Agent"),
 	}
-	s.insertEvent(ctx, auth.EventAccessAttempted, p)
+	s.insertEvent(auth.EventAccessAttempted, p)
 }
 
 func (s *AuthState) emitDenied(
-	ctx context.Context,
 	r *http.Request,
 	start time.Time,
 	ident auth.Identity,
@@ -92,24 +90,24 @@ func (s *AuthState) emitDenied(
 		a := action
 		p.Action = &a
 	}
-	s.insertEvent(ctx, auth.EventAccessDenied, p)
+	s.insertEvent(auth.EventAccessDenied, p)
 }
 
 func (s *AuthState) EmitKeyCreated(ctx context.Context, p auth.KeyCreatedPayload) {
-	s.insertEvent(ctx, auth.EventKeyCreated, p)
+	s.insertEvent(auth.EventKeyCreated, p)
 }
 
 func (s *AuthState) EmitKeyRevoked(ctx context.Context, p auth.KeyRevokedPayload) {
-	s.insertEvent(ctx, auth.EventKeyRevoked, p)
+	s.insertEvent(auth.EventKeyRevoked, p)
 }
 
 func (s *AuthState) EmitKeyRotated(ctx context.Context, p auth.KeyRotatedPayload) {
-	s.insertEvent(ctx, auth.EventKeyRotated, p)
+	s.insertEvent(auth.EventKeyRotated, p)
 }
 
 const auditWriteTimeout = 2 * time.Second
 
-func (s *AuthState) insertEvent(_ context.Context, kind string, payload any) {
+func (s *AuthState) insertEvent(kind string, payload any) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		s.Logger.Error("audit.marshal", "kind", kind, "err", err.Error())

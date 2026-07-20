@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 
@@ -109,15 +108,11 @@ type authStatusResp struct {
 	AdminCount     int    `json:"admin_count"`
 }
 
-func fetchAuthStatus(ctx context.Context, endpoint, key string) (*authStatusResp, bool) {
+func fetchAuthStatus(ctx context.Context, endpoint, key string) (*authStatusResp, error) {
 	c := newAuthClient(endpoint, key)
 	var resp authStatusResp
 	if _, err := c.RawCall(ctx, "GET", "/v1/auth/status", nil, &resp); err != nil {
-		return nil, false
+		return nil, err
 	}
-	return &resp, true
+	return &resp, nil
 }
-
-func authQueryEscape(s string) string { return url.QueryEscape(s) }
-
-func bundledRoleNames() []string { return roles.AllNames() }

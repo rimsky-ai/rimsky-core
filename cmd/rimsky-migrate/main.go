@@ -18,10 +18,13 @@ import (
 )
 
 func main() {
-	logger := shared.NewSlogLogger(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: shared.ParseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))})
+	slogLogger := slog.New(handler)
 	if name := os.Getenv("RIMSKY_LOG_BINARY"); name != "" {
-		logger = shared.NewSlogLogger(slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("binary", name))
+		slogLogger = slogLogger.With("binary", name)
 	}
+	slog.SetDefault(slogLogger)
+	logger := shared.NewSlogLogger(slogLogger)
 
 	if err := run(logger); err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky-migrate: %v\n", err)

@@ -219,7 +219,7 @@ func runAgentStatus(args []string) int {
 }
 
 // @story: host-agent-control-plane
-func printAgentChildren(children []childSnapshot) {
+func printAgentChildren(children []hostagent.ChildStatus) {
 	if len(children) == 0 {
 		fmt.Fprintln(os.Stdout, "  spawned children: none")
 		return
@@ -316,31 +316,17 @@ func readAgentPIDFrom(dir string) (int, bool, error) {
 	return pid, true, nil
 }
 
-type statusSnapshot struct {
-	Connected bool            `json:"connected"`
-	Proxy     string          `json:"proxy"`
-	Since     string          `json:"since"`
-	Children  []childSnapshot `json:"children"`
-}
-
-// @story: host-agent-control-plane
-type childSnapshot struct {
-	SpawnID    string `json:"spawn_id"`
-	RunScopeID string `json:"run_scope_id"`
-	Binding    string `json:"binding"`
-}
-
-func readStatusFile(path string) (statusSnapshot, bool, error) {
+func readStatusFile(path string) (hostagent.StatusSnapshot, bool, error) {
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return statusSnapshot{}, false, nil
+		return hostagent.StatusSnapshot{}, false, nil
 	}
 	if err != nil {
-		return statusSnapshot{}, false, err
+		return hostagent.StatusSnapshot{}, false, err
 	}
-	var snap statusSnapshot
+	var snap hostagent.StatusSnapshot
 	if err := json.Unmarshal(raw, &snap); err != nil {
-		return statusSnapshot{}, false, fmt.Errorf("agent status file: %w", err)
+		return hostagent.StatusSnapshot{}, false, fmt.Errorf("agent status file: %w", err)
 	}
 	return snap, true, nil
 }

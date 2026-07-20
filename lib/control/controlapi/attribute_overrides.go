@@ -119,24 +119,24 @@ func validateMatchEntries(
 				return wrapInvalidf("attribute_overrides.by_match[%d]: unknown entry key (allowed: matcher, overlay); got %q", i, k)
 			}
 		}
-		var matcher map[string]any
+		var matcherMap map[string]any
 		if rawM, present := entry["matcher"]; present {
 			if rawM == nil {
-				matcher = map[string]any{}
+				matcherMap = map[string]any{}
 			} else {
 				m, isObj := rawM.(map[string]any)
 				if !isObj {
 					return wrapInvalidf("attribute_overrides.by_match[%d].matcher must be an object (or null / absent for a wildcard match)", i)
 				}
-				matcher = m
+				matcherMap = m
 			}
 		} else {
-			matcher = map[string]any{}
+			matcherMap = map[string]any{}
 		}
 		if _, isObj := entry["overlay"].(map[string]any); !isObj {
 			return wrapInvalidf("attribute_overrides.by_match[%d].overlay is required and must be an object", i)
 		}
-		if err := validateMatcherKeys(i, matcher, nodeNames, usedExecutors, executors, graphNames, legacyFlat); err != nil {
+		if err := validateMatcherKeys(i, matcherMap, nodeNames, usedExecutors, executors, graphNames, legacyFlat); err != nil {
 			return err
 		}
 	}

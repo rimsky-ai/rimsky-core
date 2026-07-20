@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -48,6 +47,8 @@ type ControlAPIConfig struct {
 
 	// @concept: validation
 	UnreachableValidatorPolicy string
+
+	ObservabilityRefreshInterval time.Duration
 
 	Bundled *BundledRegistrations
 }
@@ -289,7 +290,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		cancelDiscovery: cancelDiscovery,
 		peerClosers:     peerClosers,
 	}
-	h.goWG(func() { disc.RefreshLoop(discoveryCtx, ObservabilityRefreshInterval(), obsLogger) })
+	h.goWG(func() { disc.RefreshLoop(discoveryCtx, cfg.ObservabilityRefreshInterval, obsLogger) })
 	h.goWG(func() {
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			if cfg.Logger != nil {
@@ -382,12 +383,3 @@ func (h *sharedLoggerHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (h *sharedLoggerHandler) WithGroup(_ string) slog.Handler { return h }
-
-func ObservabilityRefreshInterval() time.Duration {
-	if v := os.Getenv("RIMSKY_OBSERVABILITY_REFRESH_INTERVAL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
-	}
-	return 60 * time.Second
-}

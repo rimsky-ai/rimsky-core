@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
 func captureStdout(t *testing.T, fn func()) string {
@@ -150,11 +152,11 @@ func TestAgentStatusPrintsSpawnedChildren(t *testing.T) {
 		t.Fatalf("write pid: %v", err)
 	}
 
-	snap := statusSnapshot{
+	snap := hostagent.StatusSnapshot{
 		Connected: true,
 		Proxy:     "proxy.example:9000",
 		Since:     "2026-07-19T00:00:00Z",
-		Children: []childSnapshot{
+		Children: []hostagent.ChildStatus{
 			{SpawnID: "spawn-1", RunScopeID: "run-scope-abc", Binding: "/usr/local/bin/codegen"},
 		},
 	}

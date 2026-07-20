@@ -164,14 +164,7 @@ func forwardUnary(ctx context.Context, agent *agentConnection, spawnID string, p
 	respCh := agent.registerStream(streamID)
 	defer agent.clearStream(streamID)
 
-	if !agent.send(&genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
-		SpawnId:           spawnID,
-		Protocol:          protocolClaimProducer,
-		Payload:           payload,
-		StreamId:          streamID,
-		Kind:              genv1.DispatchFrame_DISPATCH_FRAME_KIND_DATA,
-		ClaimProducerVerb: verb,
-	}}}) {
+	if !sendDispatchFrame(agent, spawnID, protocolClaimProducer, streamID, payload, &verb) {
 		return nil, &resolveError{class: errClassHostAgentDisconnected, msg: "agent disconnected before dispatch"}
 	}
 

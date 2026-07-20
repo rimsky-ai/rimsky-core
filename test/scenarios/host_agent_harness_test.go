@@ -28,7 +28,7 @@ const proxyExecutorName = "codegen-proxy"
 
 const lateBindServiceName = "codegen"
 
-const anonRoutingIdentity = "anonymous"
+const anonRoutingIdentity = hostagent.AnonymousRoutingIdentity
 
 type hostAgentFixture struct {
 	h           *scenario.Harness

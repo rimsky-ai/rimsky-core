@@ -9,26 +9,34 @@ import (
 	"time"
 )
 
-func TestObservabilityRefreshInterval_DefaultsTo60s(t *testing.T) {
+func TestParseObservabilityRefreshInterval_DefaultsTo60s(t *testing.T) {
 	t.Setenv("RIMSKY_OBSERVABILITY_REFRESH_INTERVAL", "")
-	if got := ObservabilityRefreshInterval(); got != 60*time.Second {
-		t.Fatalf("ObservabilityRefreshInterval() = %s, want 60s (production default)", got)
+	got, err := parseObservabilityRefreshInterval()
+	if err != nil {
+		t.Fatalf("parseObservabilityRefreshInterval() error = %v", err)
+	}
+	if got != 60*time.Second {
+		t.Fatalf("parseObservabilityRefreshInterval() = %s, want 60s (production default)", got)
 	}
 }
 
-func TestObservabilityRefreshInterval_EnvOverride(t *testing.T) {
+func TestParseObservabilityRefreshInterval_EnvOverride(t *testing.T) {
 	t.Setenv("RIMSKY_OBSERVABILITY_REFRESH_INTERVAL", "5s")
-	if got := ObservabilityRefreshInterval(); got != 5*time.Second {
-		t.Fatalf("ObservabilityRefreshInterval() = %s, want 5s override", got)
+	got, err := parseObservabilityRefreshInterval()
+	if err != nil {
+		t.Fatalf("parseObservabilityRefreshInterval() error = %v", err)
+	}
+	if got != 5*time.Second {
+		t.Fatalf("parseObservabilityRefreshInterval() = %s, want 5s override", got)
 	}
 }
 
-func TestObservabilityRefreshInterval_InvalidOrNonPositiveFallsBackToDefault(t *testing.T) {
+func TestParseObservabilityRefreshInterval_InvalidOrNonPositiveFailsLoud(t *testing.T) {
 	for _, v := range []string{"not-a-duration", "0s", "-1s"} {
 		t.Run(v, func(t *testing.T) {
 			t.Setenv("RIMSKY_OBSERVABILITY_REFRESH_INTERVAL", v)
-			if got := ObservabilityRefreshInterval(); got != 60*time.Second {
-				t.Fatalf("ObservabilityRefreshInterval() with env=%q = %s, want 60s fallback", v, got)
+			if _, err := parseObservabilityRefreshInterval(); err == nil {
+				t.Fatalf("parseObservabilityRefreshInterval() with env=%q: want error, got nil (malformed/non-positive values must not be silently dropped)", v)
 			}
 		})
 	}

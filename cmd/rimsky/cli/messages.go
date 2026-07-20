@@ -77,7 +77,7 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 			if m.DeliveredAt != nil {
 				delivered = m.DeliveredAt.UTC().Format(time.RFC3339)
 			}
-			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n",
+			fmt.Fprintf(os.Stdout, "%s\t%s\t%s\t%s\t%s\t%s\n",
 				m.ID, m.Type, m.SenderKind, m.Sender, m.ReceivedAt.UTC().Format(time.RFC3339), delivered)
 		}
 		if !follow {

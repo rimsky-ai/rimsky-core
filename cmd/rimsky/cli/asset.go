@@ -17,13 +17,12 @@ import (
 
 func RunAssetList(ctx context.Context, args []string) int {
 	var instance string
-	fs, common, endpoint, code := runWithCommon("asset list", args, func(fs *flag.FlagSet) {
+	_, common, endpoint, code := runWithCommon("asset list", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&instance, "instance", "", "instance UUID or instance_key (required)")
 	})
 	if code != 0 {
 		return code
 	}
-	_ = fs
 	if instance == "" {
 		fmt.Fprintln(os.Stderr, "usage: rimsky asset list --instance <id-or-key>")
 		return 2
@@ -136,9 +135,9 @@ func RunAssetVersions(ctx context.Context, args []string) int {
 	}
 	rows := make([][]string, 0, len(v.Versions))
 	for _, vv := range v.Versions {
-		id, _ := vv["version_id"].(string)
+		versionID, _ := vv["version_id"].(string)
 		ts, _ := vv["committed_at"].(string)
-		rows = append(rows, []string{id, ts})
+		rows = append(rows, []string{versionID, ts})
 	}
 	EmitTable(os.Stdout, []string{"VERSION_ID", "COMMITTED_AT"}, rows)
 	return 0

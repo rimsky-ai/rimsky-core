@@ -16,19 +16,19 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-func tryReadStatusChildren(path string) ([]childStatus, bool) {
+func tryReadStatusChildren(path string) ([]ChildStatus, bool) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false
 	}
-	var snap statusSnapshot
+	var snap StatusSnapshot
 	if err := json.Unmarshal(raw, &snap); err != nil {
 		return nil, false
 	}
 	return snap.Children, true
 }
 
-func waitForStatusChildren(t *testing.T, path string, want int) []childStatus {
+func waitForStatusChildren(t *testing.T, path string, want int) []ChildStatus {
 	t.Helper()
 	for {
 		children, ok := tryReadStatusChildren(path)

@@ -73,7 +73,6 @@ func RunWatch(ctx context.Context, args []string) int {
 				if e.ID > lastSeenID {
 					lastSeenID = e.ID
 				}
-				e := e
 				batch = append(batch, watchLine{
 					ts:     parseWatchTime(e.OccurredAt),
 					render: func() { printWatchEvent(common.Format, e) },

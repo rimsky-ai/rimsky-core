@@ -10,8 +10,10 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/roles"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
@@ -37,18 +39,15 @@ func RunAuthList(ctx context.Context, args []string) int {
 		return 2
 	}
 	path := "/v1/auth/keys"
-	q := ""
+	q := url.Values{}
 	if nameFilter != "" {
-		q += "name_filter=" + authQueryEscape(nameFilter)
+		q.Set("name_filter", nameFilter)
 	}
 	if includeRevoked {
-		if q != "" {
-			q += "&"
-		}
-		q += "include_revoked=true"
+		q.Set("include_revoked", "true")
 	}
-	if q != "" {
-		path += "?" + q
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
 	}
 	c := newAuthClient(endpoint, key)
 	var resp struct {
@@ -87,7 +86,7 @@ func RunAuthList(ctx context.Context, args []string) int {
 }
 
 func matchRole(g auth.Grant) string {
-	for _, name := range bundledRoleNames() {
+	for _, name := range roles.AllNames() {
 		r, err := loadRole(name, "")
 		if err != nil {
 			continue

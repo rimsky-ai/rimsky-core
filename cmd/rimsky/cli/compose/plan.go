@@ -384,7 +384,7 @@ func classifyRestart(ctx context.Context, c *cli.Client, inst cli.Instance, poli
 	return false, true, outcome, nil
 }
 
-// @concept: node
+// @concept: node-run
 func aggregateOutcome(ctx context.Context, c *cli.Client, instanceID string) (string, error) {
 	resp, err := c.ListInstanceNodes(ctx, instanceID)
 	if err != nil {

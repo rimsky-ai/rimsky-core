@@ -274,7 +274,7 @@ func TestAssetEndpoints_NilClaimProducersRegistryFailsClosed(t *testing.T) {
 	t.Parallel()
 	deps := AppDeps{ClaimProducers: nil}
 	predicate := buildDataProcessingPredicate(deps)
-	require.False(t, predicate("content"), "a nil ClaimProducers registry must fail closed, not list every claim as an asset")
+	require.False(t, predicate(context.Background(), "content"), "a nil ClaimProducers registry must fail closed, not list every claim as an asset")
 }
 
 func TestClaimHandles_DeleteResolvedIfNoActiveHolders_RefusesWithActiveHolder(t *testing.T) {

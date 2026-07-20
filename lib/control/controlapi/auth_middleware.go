@@ -91,7 +91,7 @@ func (s *AuthState) IdentityResolver() func(http.Handler) http.Handler {
 			}
 			if denial != "" {
 				skin := protocolSkinFromContext(r.Context())
-				s.emitDenied(r.Context(), r, start, ident, "", skin, nil, false, http.StatusUnauthorized, denial, nil)
+				s.emitDenied(r, start, ident, "", skin, nil, false, http.StatusUnauthorized, denial, nil)
 				writeJSON(w, http.StatusUnauthorized, map[string]any{
 					"error": "unauthorized", "denial_reason": string(denial),
 				})
@@ -205,7 +205,7 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 			requestedMode = auth.ModeDryRun
 		}
 		if !res.Allowed {
-			s.emitDenied(r.Context(), r, start, ident, action, skin, params, paramsInvalid, http.StatusForbidden, auth.DenialPermissionDenied, &requestedMode)
+			s.emitDenied(r, start, ident, action, skin, params, paramsInvalid, http.StatusForbidden, auth.DenialPermissionDenied, &requestedMode)
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "permission denied"})
 			return
 		}
@@ -221,7 +221,7 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 		ww := newCapturingWriter(w)
 		inner.ServeHTTP(ww, r.WithContext(ctx))
 
-		s.emitAttempted(r.Context(), r, start, ident, action, skin, params, paramsInvalid, ww.status(), mode, isWrite)
+		s.emitAttempted(r, start, ident, action, skin, params, paramsInvalid, ww.status(), mode, isWrite)
 
 		if ident.KeyID != nil {
 			id := *ident.KeyID

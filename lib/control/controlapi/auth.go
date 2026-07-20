@@ -19,14 +19,6 @@ type ctxKeyMode struct{}
 
 type ctxKeyProtocolSkin struct{}
 
-func IdentityFromContext(ctx context.Context) auth.Identity {
-	id, ok := IdentityFromContextOK(ctx)
-	if !ok {
-		panic("controlapi: no identity in context — auth middleware missing?")
-	}
-	return id
-}
-
 func IdentityFromContextOK(ctx context.Context) (auth.Identity, bool) {
 	v, ok := ctx.Value(ctxKeyIdentity{}).(auth.Identity)
 	return v, ok

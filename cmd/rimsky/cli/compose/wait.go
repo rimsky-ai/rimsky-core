@@ -30,7 +30,6 @@ const (
 )
 
 type instanceClient interface {
-	GetInstance(ctx context.Context, idOrKey string) (*cli.Instance, error)
 	ListInstanceNodes(ctx context.Context, idOrKey string) (*cli.ListInstanceNodesResponse, error)
 	ListInstanceFrames(ctx context.Context, idOrKey, state string) (*cli.ListFramesResponse, error)
 	ListInstanceMessages(ctx context.Context, idOrKey string, q cli.ListMessagesQuery) (*cli.ListMessagesResponse, error)
@@ -76,14 +75,6 @@ func WaitForInstancesTerminal(
 
 	for len(remaining) > 0 {
 		for id := range remaining {
-			inst, err := client.GetInstance(ctx, id)
-			if err != nil {
-				if ctx.Err() != nil {
-					return outcomes, ctx.Err()
-				}
-				continue
-			}
-
 			nodes, nerr := client.ListInstanceNodes(ctx, id)
 			if nerr == nil && nodes != nil {
 				name := keys[id]
@@ -126,7 +117,6 @@ func WaitForInstancesTerminal(
 			outcomes[id] = outcome
 			printer.InstanceTerminal(project, name, outcome, nodeCount)
 			delete(remaining, id)
-			_ = inst
 		}
 		if len(remaining) == 0 {
 			break
@@ -169,7 +159,7 @@ func instanceIsIdle(ctx context.Context, client instanceClient, id string) (bool
 	return len(messages.Messages) == 0, nil
 }
 
-// @concept: node
+// @concept: node-run
 func classifyInstanceOutcome(nodes []cli.Node) (string, int) {
 	for _, n := range nodes {
 		if n.RunSummary != nil && n.RunSummary.FailedCount > 0 {
@@ -179,7 +169,7 @@ func classifyInstanceOutcome(nodes []cli.Node) (string, int) {
 	return OutcomeSuccess, len(nodes)
 }
 
-// @concept: node
+// @concept: node-run
 func mapNodeSummaryToOutcome(n cli.Node) (string, string) {
 	if n.RunSummary != nil && n.RunSummary.FailedCount > 0 {
 		return OutcomeFailure, n.SettlingSignalType
@@ -187,7 +177,7 @@ func mapNodeSummaryToOutcome(n cli.Node) (string, string) {
 	return OutcomeSuccess, n.SettlingSignalType
 }
 
-// @concept: node
+// @concept: node-run
 func isNodeSettled(s *cli.NodeRunSummary) bool {
 	if s == nil {
 		return false
@@ -198,7 +188,7 @@ func isNodeSettled(s *cli.NodeRunSummary) bool {
 	return s.FreshCount > 0 || s.FailedCount > 0
 }
 
-// @concept: node
+// @concept: node-run
 func allNodesSettled(nodes []cli.Node) bool {
 	if len(nodes) == 0 {
 		return false

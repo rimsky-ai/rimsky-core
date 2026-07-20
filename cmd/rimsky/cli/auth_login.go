@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -66,18 +67,14 @@ func RunAuthLogin(ctx context.Context, args []string) int {
 		return 2
 	}
 
-	if _, reachable := fetchAuthStatus(ctx, url, key); !reachable {
-		c := newAuthClient(url, key)
-		var resp authStatusResp
-		if _, callErr := c.RawCall(ctx, http.MethodGet, "/v1/auth/status", nil, &resp); callErr != nil {
-			var apiErr *APIError
-			if errors.As(callErr, &apiErr) && apiErr.Status == http.StatusUnauthorized {
-				fmt.Fprintln(os.Stderr, "rimsky auth login: the api-key was rejected (401)")
-				return 1
-			}
-			fmt.Fprintf(os.Stderr, "rimsky auth login: could not reach %s: %v\n", url, callErr)
+	if _, statusErr := fetchAuthStatus(ctx, url, key); statusErr != nil {
+		var apiErr *APIError
+		if errors.As(statusErr, &apiErr) && apiErr.Status == http.StatusUnauthorized {
+			fmt.Fprintln(os.Stderr, "rimsky auth login: the api-key was rejected (401)")
 			return 1
 		}
+		fmt.Fprintf(os.Stderr, "rimsky auth login: could not reach %s: %v\n", url, statusErr)
+		return 1
 	}
 
 	if cfg.Contexts == nil {
@@ -104,7 +101,7 @@ func promptURL(reader *bufio.Reader, def string) (string, error) {
 		fmt.Fprint(os.Stdout, "Control-API URL: ")
 	}
 	line, err := reader.ReadString('\n')
-	if err != nil && err.Error() != "EOF" {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
 	line = strings.TrimSpace(line)
@@ -126,7 +123,7 @@ func promptAPIKey(reader *bufio.Reader) (string, error) {
 		return strings.TrimSpace(string(raw)), nil
 	}
 	line, err := reader.ReadString('\n')
-	if err != nil && err.Error() != "EOF" {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
 	return strings.TrimSpace(line), nil

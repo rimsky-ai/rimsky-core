@@ -5,6 +5,7 @@
 package controlapi
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -170,15 +171,11 @@ func jsonEncode(w http.ResponseWriter, v any) error {
 }
 
 func jsonMarshal(v any) []byte {
-	b, err := jsonMarshalStrict(v)
+	b, err := json.Marshal(v)
 	if err != nil {
 		return []byte(`{"error":"internal marshal error"}`)
 	}
 	return b
-}
-
-func jsonMarshalStrict(v any) ([]byte, error) {
-	return jsonMarshalImpl(v)
 }
 
 func writeError(w http.ResponseWriter, err error) {
@@ -189,20 +186,20 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 	status := http.StatusInternalServerError
 	switch {
-	case errorsIs(err, foundationshared.ErrTemplateNotFound),
-		errorsIs(err, foundationshared.ErrInstanceNotFound),
-		errorsIs(err, foundationshared.ErrNodeNotFound),
-		errorsIs(err, foundationshared.ErrBreakpointNotFound),
-		errorsIs(err, foundationshared.ErrBreakpointHitNotFound):
+	case errors.Is(err, foundationshared.ErrTemplateNotFound),
+		errors.Is(err, foundationshared.ErrInstanceNotFound),
+		errors.Is(err, foundationshared.ErrNodeNotFound),
+		errors.Is(err, foundationshared.ErrBreakpointNotFound),
+		errors.Is(err, foundationshared.ErrBreakpointHitNotFound):
 		status = http.StatusNotFound
-	case errorsIs(err, foundationshared.ErrInstanceKeyConflict),
-		errorsIs(err, foundationshared.ErrTemplateInUse),
-		errorsIs(err, foundationshared.ErrInstanceNotPaused),
-		errorsIs(err, foundationshared.ErrInstanceAlreadyPaused):
+	case errors.Is(err, foundationshared.ErrInstanceKeyConflict),
+		errors.Is(err, foundationshared.ErrTemplateInUse),
+		errors.Is(err, foundationshared.ErrInstanceNotPaused),
+		errors.Is(err, foundationshared.ErrInstanceAlreadyPaused):
 		status = http.StatusConflict
-	case errorsIs(err, foundationshared.ErrTemplateValidation),
-		errorsIs(err, foundationshared.ErrResumeOverlayInvalid),
-		errorsIs(err, matcher.ErrInvalid):
+	case errors.Is(err, foundationshared.ErrTemplateValidation),
+		errors.Is(err, foundationshared.ErrResumeOverlayInvalid),
+		errors.Is(err, matcher.ErrInvalid):
 		status = http.StatusBadRequest
 	}
 	writeJSON(w, status, map[string]any{"error": err.Error()})
