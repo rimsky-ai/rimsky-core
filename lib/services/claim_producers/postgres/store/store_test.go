@@ -65,3 +65,40 @@ func TestNewRejectsEmptyConnection(t *testing.T) {
 		t.Fatal("New with empty Connection should error; got nil")
 	}
 }
+
+func TestNew_LedgerMaxRecordsConfigured(t *testing.T) {
+	_, dsn := bootPostgresTestContainer(t)
+	st, err := New(t.Context(), Config{Connection: dsn, LedgerMaxRecords: 2})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(st.Close)
+
+	st.Ledger().RecordOpen("closed-1", "/x", nil, nil)
+	st.Ledger().RecordTerminal("closed-1", "claim_committed", nil)
+	st.Ledger().RecordOpen("open-2", "/x", nil, nil)
+	st.Ledger().RecordOpen("open-3", "/x", nil, nil)
+
+	if _, ok := st.Ledger().Get("closed-1"); ok {
+		t.Fatal("closed-1 should have been evicted once the configured cap (2) was exceeded")
+	}
+	if _, ok := st.Ledger().Get("open-2"); !ok {
+		t.Error("open-2 must survive eviction")
+	}
+	if _, ok := st.Ledger().Get("open-3"); !ok {
+		t.Error("open-3 must survive eviction")
+	}
+}
+
+func TestNew_LedgerMaxRecordsDefaultsTo1024(t *testing.T) {
+	_, dsn := bootPostgresTestContainer(t)
+	st, err := New(t.Context(), Config{Connection: dsn})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(st.Close)
+
+	if got := st.Ledger().max; got != defaultLedgerMaxRecords {
+		t.Fatalf("ledger.max = %d, want default %d", got, defaultLedgerMaxRecords)
+	}
+}

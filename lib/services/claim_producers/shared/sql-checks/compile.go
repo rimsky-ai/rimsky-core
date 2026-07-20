@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/checkspec"
 )
 
 var identRegex = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
@@ -53,7 +55,7 @@ func Compile(spec CheckSpec, schema, table string) (Compiled, error) {
 }
 
 func compileNoNulls(cfg map[string]any, schema, table string) (Compiled, error) {
-	fields, err := fieldList(cfg)
+	fields, err := checkspec.FieldList(cfg)
 	if err != nil {
 		return Compiled{}, err
 	}
@@ -62,7 +64,7 @@ func compileNoNulls(cfg map[string]any, schema, table string) (Compiled, error) 
 			return Compiled{}, fmt.Errorf("no_nulls: invalid column identifier %q", f)
 		}
 	}
-	threshold, _ := numericDefault(cfg["threshold"], 0)
+	threshold, _ := checkspec.NumericDefault(cfg["threshold"], 0)
 	terms := make([]string, len(fields))
 	for i, f := range fields {
 		terms[i] = fmt.Sprintf("count(*) FILTER (WHERE %s IS NULL)", f)
@@ -80,7 +82,7 @@ func compileNoNulls(cfg map[string]any, schema, table string) (Compiled, error) 
 			if len(scanned) == 0 {
 				return Result{Kind: "no_nulls", Message: "scan produced no values"}
 			}
-			n, ok := numeric(scanned[0])
+			n, ok := checkspec.Numeric(scanned[0])
 			if !ok {
 				return Result{Kind: "no_nulls", Message: fmt.Sprintf("scan produced non-numeric value %v", scanned[0])}
 			}
@@ -99,14 +101,14 @@ func compileNoNulls(cfg map[string]any, schema, table string) (Compiled, error) 
 }
 
 func compileRowCountAbsolute(cfg map[string]any, schema, table string) (Compiled, error) {
-	minVal, ok := numeric(cfg["min"])
+	minVal, ok := checkspec.Numeric(cfg["min"])
 	if !ok {
 		return Compiled{}, fmt.Errorf("row_count_absolute: config.min required (numeric)")
 	}
 	maxRaw, hasMax := cfg["max"]
 	var maxVal float64
 	if hasMax {
-		mv, ok := numeric(maxRaw)
+		mv, ok := checkspec.Numeric(maxRaw)
 		if !ok {
 			return Compiled{}, fmt.Errorf("row_count_absolute: config.max must be numeric when set")
 		}
@@ -120,7 +122,7 @@ func compileRowCountAbsolute(cfg map[string]any, schema, table string) (Compiled
 			if len(scanned) == 0 {
 				return Result{Kind: "row_count_absolute", Message: "scan produced no values"}
 			}
-			n, ok := numeric(scanned[0])
+			n, ok := checkspec.Numeric(scanned[0])
 			if !ok {
 				return Result{Kind: "row_count_absolute", Message: fmt.Sprintf("scan produced non-numeric value %v", scanned[0])}
 			}
@@ -150,12 +152,12 @@ func compileRowCountRatio(cfg map[string]any, schema, table string) (Compiled, e
 	if !hasBaseline {
 		return Compiled{}, fmt.Errorf("row_count_ratio: config.baseline required (numeric)")
 	}
-	baseline, ok := numeric(baselineRaw)
+	baseline, ok := checkspec.Numeric(baselineRaw)
 	if !ok || baseline <= 0 {
 		return Compiled{}, fmt.Errorf("row_count_ratio: config.baseline must be a positive number")
 	}
-	low, _ := numericDefault(cfg["low"], 0.5)
-	high, _ := numericDefault(cfg["high"], 2.0)
+	low, _ := checkspec.NumericDefault(cfg["low"], 0.5)
+	high, _ := checkspec.NumericDefault(cfg["high"], 2.0)
 	sql := fmt.Sprintf("SELECT count(*) FROM %s.%s", schema, table)
 	return Compiled{
 		Kind: "row_count_ratio",
@@ -164,7 +166,7 @@ func compileRowCountRatio(cfg map[string]any, schema, table string) (Compiled, e
 			if len(scanned) == 0 {
 				return Result{Kind: "row_count_ratio", Message: "scan produced no values"}
 			}
-			n, ok := numeric(scanned[0])
+			n, ok := checkspec.Numeric(scanned[0])
 			if !ok {
 				return Result{Kind: "row_count_ratio", Message: fmt.Sprintf("scan produced non-numeric value %v", scanned[0])}
 			}
@@ -191,7 +193,7 @@ func compileRowCountRatio(cfg map[string]any, schema, table string) (Compiled, e
 }
 
 func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error) {
-	fields, err := fieldList(cfg)
+	fields, err := checkspec.FieldList(cfg)
 	if err != nil {
 		return Compiled{}, err
 	}
@@ -230,62 +232,4 @@ func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error)
 			return res
 		},
 	}, nil
-}
-
-func fieldList(cfg map[string]any) ([]string, error) {
-	if v, ok := cfg["field"].(string); ok && v != "" {
-		return []string{v}, nil
-	}
-	if vs, ok := cfg["fields"].([]any); ok {
-		out := make([]string, 0, len(vs))
-		for _, v := range vs {
-			s, ok := v.(string)
-			if !ok || s == "" {
-				return nil, fmt.Errorf("fields entry must be non-empty strings")
-			}
-			out = append(out, s)
-		}
-		return out, nil
-	}
-	if vs, ok := cfg["fields"].([]string); ok {
-		return append([]string(nil), vs...), nil
-	}
-	return nil, fmt.Errorf("config: `field` (string) or `fields` ([]string) required")
-}
-
-func numeric(v any) (float64, bool) {
-	switch x := v.(type) {
-	case float64:
-		return x, true
-	case float32:
-		return float64(x), true
-	case int:
-		return float64(x), true
-	case int8:
-		return float64(x), true
-	case int16:
-		return float64(x), true
-	case int32:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	case uint:
-		return float64(x), true
-	case uint8:
-		return float64(x), true
-	case uint16:
-		return float64(x), true
-	case uint32:
-		return float64(x), true
-	case uint64:
-		return float64(x), true
-	}
-	return 0, false
-}
-
-func numericDefault(v any, def float64) (float64, bool) {
-	if x, ok := numeric(v); ok {
-		return x, true
-	}
-	return def, false
 }

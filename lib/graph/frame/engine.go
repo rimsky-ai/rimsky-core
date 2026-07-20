@@ -87,6 +87,15 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 		if gerr != nil {
 			return gerr
 		}
+		if row != nil {
+			triggeringMsg, merr := store.Messages().GetInTx(ctx, tx, row.TriggeringMessageID)
+			if merr != nil {
+				return merr
+			}
+			if triggeringMsg == nil || triggeringMsg.DeliveredAt == nil {
+				return nil
+			}
+		}
 		moved, err := store.Frames().EndFrameIfSettled(ctx, frameID, tx)
 		if err != nil {
 			return err

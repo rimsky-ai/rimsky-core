@@ -28,7 +28,7 @@ func (b *runTreeImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(t
 
 const runTreeCols = `
   id, node_id, frame_id, run_scope_id,
-  state, settling_signal_type, aggregation_policy
+  state, settling_signal_type, aggregation_policy, changed
 `
 
 func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, in persistence.CreateRootNodeRunInput) error {
@@ -140,7 +140,7 @@ func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, 
 func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.NodeRunTreeRow, error) {
 	rows, err := b.q(tx).Query(ctx,
 		`SELECT nr.id, nr.node_id, nr.frame_id, nr.run_scope_id,
-		        nr.state, nr.settling_signal_type, nr.aggregation_policy
+		        nr.state, nr.settling_signal_type, nr.aggregation_policy, nr.changed
 		   FROM rimsky_node_runs nr
 		   JOIN rimsky_run_scopes rs ON rs.id = nr.run_scope_id
 		  WHERE rs.parent_run_id = $1
@@ -166,20 +166,20 @@ func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, paren
 
 func (b *runTreeImpl) UpdateStateAndOutcome(
 	ctx context.Context, tx persistence.Tx, runID shared.UUID,
-	state cascade.NodeState, settlingSignalType *string,
+	state cascade.NodeState, settlingSignalType *string, changed bool,
 ) error {
 	if settlingSignalType == nil {
 		_, err := b.q(tx).Exec(ctx,
-			`UPDATE rimsky_node_runs SET state = $2 WHERE id = $1`,
-			runID, string(state))
+			`UPDATE rimsky_node_runs SET state = $2, changed = $3 WHERE id = $1`,
+			runID, string(state), changed)
 		if err != nil {
 			return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", err)
 		}
 		return nil
 	}
 	_, err := b.q(tx).Exec(ctx,
-		`UPDATE rimsky_node_runs SET state = $2, settling_signal_type = $3 WHERE id = $1`,
-		runID, string(state), *settlingSignalType)
+		`UPDATE rimsky_node_runs SET state = $2, settling_signal_type = $3, changed = $4 WHERE id = $1`,
+		runID, string(state), *settlingSignalType, changed)
 	if err != nil {
 		return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", err)
 	}
@@ -211,7 +211,7 @@ func scanRunTreeRow(row pgx.Row) (*persistence.NodeRunTreeRow, error) {
 	)
 	if err := row.Scan(
 		&out.NodeRunID, &out.NodeID, &out.FrameID, &out.RunScopeID,
-		&state, &settlingSignal, &policyBytes,
+		&state, &settlingSignal, &policyBytes, &out.Changed,
 	); err != nil {
 		return nil, err
 	}
@@ -234,7 +234,7 @@ func scanRunTreeRowFromRows(rows pgx.Rows) (*persistence.NodeRunTreeRow, error) 
 	)
 	if err := rows.Scan(
 		&out.NodeRunID, &out.NodeID, &out.FrameID, &out.RunScopeID,
-		&state, &settlingSignal, &policyBytes,
+		&state, &settlingSignal, &policyBytes, &out.Changed,
 	); err != nil {
 		return nil, err
 	}

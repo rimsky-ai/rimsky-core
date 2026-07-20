@@ -697,6 +697,23 @@ func (h *Harness) hasRunEvent(nodeID shared.UUID) bool {
 	return err == nil && count > 0
 }
 
+func (h *Harness) EventCount(nodeID shared.UUID, kind string) int {
+	h.T.Helper()
+	var count int
+	_ = h.Pool.QueryRow(h.Ctx, `
+        SELECT count(*) FROM rimsky_events
+        WHERE node_id = $1 AND kind = $2
+    `, nodeID, kind).Scan(&count)
+	return count
+}
+
+func (h *Harness) WaitForEventCount(nodeID shared.UUID, kind string, want int) {
+	h.T.Helper()
+	for h.EventCount(nodeID, kind) < want {
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func (h *Harness) HasEventKind(nodeID shared.UUID, kind string) bool {
 	h.T.Helper()
 	var count int

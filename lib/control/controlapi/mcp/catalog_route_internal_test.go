@@ -83,10 +83,11 @@ func TestPickCanonicalRoute_RealActionRouteSets(t *testing.T) {
 	}
 	lineageReadRoutes := []RegistryRoute{
 		{Method: "GET", Path: "/v1/lineage/runs/{run_id}"},
-		{Method: "GET", Path: "/v1/lineage/runs/{run_id}/ancestors"},
-		{Method: "GET", Path: "/v1/lineage/runs/{run_id}/descendants"},
+		{Method: "GET", Path: "/v1/lineage/runs/{run_id}/ancestors", Tool: "lineage_run_ancestors"},
+		{Method: "GET", Path: "/v1/lineage/runs/{run_id}/descendants", Tool: "lineage_run_descendants"},
 		{Method: "GET", Path: "/v1/lineage/claims/{claim_handle_id}"},
-		{Method: "GET", Path: "/v1/lineage/claims/{claim_handle_id}/ancestors"},
+		{Method: "GET", Path: "/v1/lineage/claims/{claim_handle_id}/ancestors", Tool: "lineage_claim_ancestors"},
+		{Method: "GET", Path: "/v1/lineage/claims/{claim_handle_id}/descendants", Tool: "lineage_claim_descendants"},
 		{Method: "GET", Path: "/v1/lineage/by-source/{source_type}/{source_id}"},
 		{Method: "GET", Path: "/v1/lineage/by-producer/{executor_name}"},
 	}
@@ -114,6 +115,10 @@ func TestPickCanonicalRoute_RealActionRouteSets(t *testing.T) {
 		{"lineage_get by claim_handle_id → plain claim lookup", "lineage_get", lineageReadRoutes, withArgs("claim_handle_id"), "/v1/lineage/claims/{claim_handle_id}"},
 		{"lineage_get by source_type+source_id → by-source reverse lookup", "lineage_get", lineageReadRoutes, withArgs("source_type", "source_id"), "/v1/lineage/by-source/{source_type}/{source_id}"},
 		{"lineage_get by executor_name → by-producer reverse lookup", "lineage_get", lineageReadRoutes, withArgs("executor_name"), "/v1/lineage/by-producer/{executor_name}"},
+		{"lineage_run_ancestors → ancestors sub-route, not the run item", "lineage_run_ancestors", lineageReadRoutes, withArgs("run_id"), "/v1/lineage/runs/{run_id}/ancestors"},
+		{"lineage_run_descendants → descendants sub-route, not the run item", "lineage_run_descendants", lineageReadRoutes, withArgs("run_id"), "/v1/lineage/runs/{run_id}/descendants"},
+		{"lineage_claim_ancestors → ancestors sub-route, not the claim item", "lineage_claim_ancestors", lineageReadRoutes, withArgs("claim_handle_id"), "/v1/lineage/claims/{claim_handle_id}/ancestors"},
+		{"lineage_claim_descendants → descendants sub-route, not the claim item", "lineage_claim_descendants", lineageReadRoutes, withArgs("claim_handle_id"), "/v1/lineage/claims/{claim_handle_id}/descendants"},
 
 		{"parked_node_list → the sole admin route", "parked_node_list", parkedNodeReadRoutes, withArgs(), "/v1/admin/diagnostics/parked-nodes"},
 	}

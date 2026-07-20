@@ -25,32 +25,25 @@ type terminalEventView struct {
 	OccurredAt string `json:"occurred_at"`
 }
 
-func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceRow, nodes []persistence.NodeRow, template *persistence.TemplateRow) []CascadeNode {
+func computeCascadeGraph(ctx context.Context, deps Deps, tx persistence.Tx, nodes []persistence.NodeRow, template *persistence.TemplateRow) ([]CascadeNode, error) {
 	byType := make(map[string]persistence.NodeRow, len(nodes))
 	nodeIDs := make([]shared.UUID, 0, len(nodes))
 	for _, n := range nodes {
 		byType[n.NodeType] = n
 		nodeIDs = append(nodeIDs, n.ID)
 	}
-	var (
-		terminals map[shared.UUID]persistence.EventRow
-		summaries = map[shared.UUID]persistence.NodeRunSummary{}
-	)
-	_ = deps.Tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		t, err := deps.Tables.Events().LastTerminalByNodes(ctx, nodeIDs, tx)
+	terminals, err := deps.Tables.Events().LastTerminalByNodes(ctx, nodeIDs, tx)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make(map[shared.UUID]persistence.NodeRunSummary, len(nodeIDs))
+	for _, id := range nodeIDs {
+		s, err := deps.Tables.Nodes().GetRunSummary(ctx, id, tx)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		terminals = t
-		for _, id := range nodeIDs {
-			s, err := deps.Tables.Nodes().GetRunSummary(ctx, id, tx)
-			if err != nil {
-				return err
-			}
-			summaries[id] = s
-		}
-		return nil
-	})
+		summaries[id] = s
+	}
 	summaryFor := func(id shared.UUID) *persistence.NodeRunSummary {
 		s, ok := summaries[id]
 		if !ok {
@@ -97,7 +90,7 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 			}
 			out = append(out, cn)
 		}
-		return out
+		return out, nil
 	}
 	for _, d := range template.Spec.Nodes {
 		row, ok := byType[d.Type]
@@ -121,5 +114,5 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 		}
 		out = append(out, cn)
 	}
-	return out
+	return out, nil
 }

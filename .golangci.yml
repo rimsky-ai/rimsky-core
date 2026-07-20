@@ -138,12 +138,14 @@ linters-settings:
             desc: "runtime/ may not import test/support/executors/ (test-support stubs)."
       # consumption-side-isolation: lib/services/ is the in-tree home of the
       # bundled consumption-side services (claim_producers, sensors, subscribers,
-      # executors) that rimsky ships as images. They implement against
-      # lib/protocols/ only — the lib/services module's go.mod requires only
-      # lib/protocols, so the module graph already prevents importing any
-      # rimsky-internal layer (foundation, graph, runtime, control, cmd).
-      # This depguard rule is retained as defense-in-depth at the package
-      # level, in case a future refactor would otherwise grow such an edge.
+      # executors) that rimsky ships as images. Their shipped packages implement
+      # against lib/protocols/ only — but the lib/services module's go.mod also
+      # requires the root module and lib/foundation (for its own out-of-tree
+      # test tree under lib/services/test/, which never ships), so the module
+      # graph does NOT by itself block a shipped package from importing a
+      # rimsky-internal layer (foundation, graph, runtime, control, cmd). This
+      # depguard rule is therefore the primary guard against that edge, not
+      # merely defense-in-depth.
       #
       # The root-anchored globs (claim_producers/**, sensors/**, subscribers/**,
       # executors/**) are intentionally distinct from the workspace-rooted

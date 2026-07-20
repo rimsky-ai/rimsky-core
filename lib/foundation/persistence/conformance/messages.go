@@ -178,6 +178,74 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 	}
 }
 
+// @concept: message
+func testMessagesMarkDeliveredExcludesCancelled(t *testing.T, d persistence.Database) {
+	t.Helper()
+	defer d.Close()
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	msgID := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: fix.InstanceID,
+			Type:       "fixture/message",
+			Sender:     "operator",
+			SenderKind: "operator",
+			ReceivedAt: time.Now().UTC(),
+		})
+	}); err != nil {
+		t.Fatalf("Messages.Insert: %v", err)
+	}
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		n, err := store.Messages().CancelPendingForInstance(ctx, tx, fix.InstanceID)
+		if err != nil {
+			return err
+		}
+		if n < 1 {
+			t.Fatalf("CancelPendingForInstance: cancelled %d rows, want at least 1", n)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Messages.CancelPendingForInstance: %v", err)
+	}
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		ok, err := store.Messages().MarkDelivered(ctx, tx, msgID, fix.FrameID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if ok {
+			t.Fatalf("MarkDelivered must not affect a cancelled message (coalesce-cancelled messages must never be delivered)")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Messages.MarkDelivered: %v", err)
+	}
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		row, err := store.Messages().GetInTx(ctx, tx, msgID)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			t.Fatalf("expected message row to still exist")
+		}
+		if row.DeliveredAt != nil {
+			t.Fatalf("a cancelled message's delivered_at must remain nil after a rejected MarkDelivered, got %v", row.DeliveredAt)
+		}
+		if !row.Cancelled {
+			t.Fatalf("message must still be marked cancelled")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Messages.GetInTx: %v", err)
+	}
+}
+
 // @concept: observability
 func testMessagesListBySender(t *testing.T, d persistence.Database) {
 	t.Helper()

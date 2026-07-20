@@ -16,6 +16,8 @@ func SchemaBytes() []byte {
 
 func DeclaredTags() []string { return nil }
 
+func DeclaredErrorClasses() []string { return nil }
+
 const ExecutorAlias = "rimsky.send_message"
 
 const KindName = spec.SendMessageKindName

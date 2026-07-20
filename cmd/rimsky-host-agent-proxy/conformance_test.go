@@ -5,12 +5,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
-	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -46,35 +43,7 @@ func (s *conformanceExecStub) Execute(ctx context.Context, req *genv1.ExecuteReq
 			ErrorClass: "conformance_stub/malformed_attributes",
 		}}}, nil
 	}
-	if probe, _ := attrs["probe_async"].(bool); probe {
-		ackID := "conformance-async-" + req.GetDispatchId() + req.GetNodeId()
-		go deliverConformanceAsyncSuccess(req.GetCallbackUrl(), ackID)
-		return &genv1.Outcome{Outcome: &genv1.Outcome_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
-			AsyncAckId: ackID,
-		}}}, nil
-	}
 	return s.Stub.Execute(ctx, req)
-}
-
-func deliverConformanceAsyncSuccess(callbackURL, ackID string) {
-	if callbackURL == "" {
-		return
-	}
-	body, err := json.Marshal(map[string]any{
-		"success": map[string]any{
-			"attributes_delta": map[string]any{"stub": true},
-			"changed":          false,
-			"change_summary":   "conformance stub async settle",
-		},
-	})
-	if err != nil {
-		return
-	}
-	resp, err := http.Post(callbackURL+"/v1/callback/"+ackID, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	_ = resp.Body.Close()
 }
 
 func startConformanceExecChild(t *testing.T) string {
@@ -466,21 +435,21 @@ func (c *proxyClaimProducerClient) Open(ctx context.Context, claimID claimproduc
 	return bridge.OpenOutcomeFromProto(resp)
 }
 
-func (c *proxyClaimProducerClient) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) (claimproducer.CommitResult, error) {
-	resp, err := c.rpc.Commit(ctx, bridge.CommitRequestFromArgs(claimID, scope, address))
+func (c *proxyClaimProducerClient) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) (claimproducer.CommitResult, error) {
+	resp, err := c.rpc.Commit(ctx, bridge.CommitRequestFromArgs(claimID, scope, address, leaseToken))
 	if err != nil {
 		return claimproducer.CommitResult{}, err
 	}
 	return bridge.CommitResultFromProto(resp), nil
 }
 
-func (c *proxyClaimProducerClient) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
-	_, err := c.rpc.Abandon(ctx, bridge.AbandonRequestFromArgs(claimID, scope, address))
+func (c *proxyClaimProducerClient) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
+	_, err := c.rpc.Abandon(ctx, bridge.AbandonRequestFromArgs(claimID, scope, address, leaseToken))
 	return err
 }
 
-func (c *proxyClaimProducerClient) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
-	_, err := c.rpc.Release(ctx, bridge.ReleaseRequestFromArgs(claimID, scope, address))
+func (c *proxyClaimProducerClient) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
+	_, err := c.rpc.Release(ctx, bridge.ReleaseRequestFromArgs(claimID, scope, address, leaseToken))
 	return err
 }
 

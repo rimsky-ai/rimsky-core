@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -157,16 +158,16 @@ func toAssetItem(r persistence.ClaimHandleRow, node persistence.NodeRow, claimAl
 
 func buildDataProcessingPredicate(deps AppDeps) func(string) bool {
 	if deps.ClaimProducers == nil {
-		return func(string) bool { return true }
+		return func(string) bool { return false }
 	}
 	return func(name string) bool {
 		p, ok := deps.ClaimProducers.Get(name)
 		if !ok {
-			return true
+			return false
 		}
 		caps, err := p.Capabilities(context.Background())
 		if err != nil {
-			return true
+			return false
 		}
 		return caps.AdvertisesProtocol("data_processing")
 	}
@@ -213,6 +214,9 @@ func resolveAsset(
 	}
 	producerName := lookupProducerForAlias(tpl.Spec, nodeType, claimAlias)
 	if producerName == "" {
+		return nil, node, nil
+	}
+	if !buildDataProcessingPredicate(deps)(producerName) {
 		return nil, node, nil
 	}
 	for i := range rows {
@@ -435,11 +439,12 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
-		var (
-			row    *persistence.ClaimHandleRow
-			active []persistence.ClaimHolderRow
-		)
+		if ModeFromContext(req.Context()) == authModeDryRun {
+			handleDeleteAssetDryRun(deps, w, req, instanceID, nodeType, claimAlias)
+			return
+		}
+
+		var row *persistence.ClaimHandleRow
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			inst, err := deps.Persist.Instances().Get(ctx, shared.UUID(instanceID), tx)
 			if err != nil {
@@ -456,67 +461,37 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 				return errAssetNotFound
 			}
 			row = r
+			if _, err := deps.Persist.ClaimHandles().LockForUpdate(ctx, r.ID, tx); err != nil {
+				return err
+			}
 			holders, err := deps.Persist.ClaimHolders().ListByClaimHandleID(ctx, r.ID, tx)
 			if err != nil {
 				return err
 			}
-			for _, h := range holders {
-				if h.State == persistence.ClaimHolderStateActive {
-					active = append(active, h)
-				}
+			if active := activeAssetHolders(holders); len(active) > 0 {
+				return &assetHasActiveHoldersError{count: len(active)}
 			}
-			if isDryRun {
-				return errDryRunOK
+			if row.ProducerName == nil || deps.ClaimProducers == nil {
+				return errAssetProducerUnresolvable
+			}
+			producer, ok := deps.ClaimProducers.Get(*row.ProducerName)
+			if !ok {
+				return errAssetProducerUnresolvable
+			}
+			if err := producer.Release(ctx, claimproducer.ClaimID(row.ID.String()), row.ClaimScopeData, row.Address, row.ProducerLeaseToken); err != nil {
+				return fmt.Errorf("asset delete: producer release: %w", err)
+			}
+			deleted, err := deps.Persist.ClaimHandles().DeleteResolvedIfNoActiveHolders(ctx, row.ID, tx)
+			if err != nil {
+				return err
+			}
+			if !deleted {
+				return &assetHasActiveHoldersError{count: -1}
 			}
 			return nil
 		})
-		if isDryRun && errors.Is(err, errDryRunOK) {
-			if len(active) > 0 {
-				writeJSON(w, http.StatusConflict, map[string]any{
-					"error":        "asset has in-flight holder runs; refuse delete",
-					"active_count": len(active),
-				})
-				return
-			}
-			WriteDryRunResponseForced(w, "would_have_deleted_asset", map[string]any{
-				"instance_id": instanceID.String(),
-				"alias":       chi.URLParam(req, "alias"),
-				"node_type":   nodeType,
-			})
-			return
-		}
 		if err != nil {
-			if errors.Is(err, shared.ErrInstanceNotFound) {
-				notFoundResp(w, shared.ErrInstanceNotFound.Error())
-				return
-			}
-			if errors.Is(err, errAssetNotFound) {
-				notFoundResp(w, "asset not found")
-				return
-			}
-			writeError(w, err)
-			return
-		}
-		if len(active) > 0 {
-			writeJSON(w, http.StatusConflict, map[string]any{
-				"error":        "asset has in-flight holder runs; refuse delete",
-				"active_count": len(active),
-			})
-			return
-		}
-		if deps.ClaimProducers != nil && row.ProducerName != nil {
-			if producer, ok := deps.ClaimProducers.Get(*row.ProducerName); ok {
-				if err := producer.Release(req.Context(), claimproducer.ClaimID(row.ID.String()), row.ClaimScopeData, row.Address); err != nil {
-					writeError(w, err)
-					return
-				}
-			}
-		}
-		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			return deps.Persist.ClaimHandles().DeleteResolved(ctx, row.ID, tx)
-		})
-		if err != nil {
-			writeError(w, err)
+			writeAssetDeleteError(w, err)
 			return
 		}
 		deps.Logger.Info("asset.deleted",
@@ -528,4 +503,94 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 	}
 }
 
+func handleDeleteAssetDryRun(
+	deps AppDeps, w http.ResponseWriter, req *http.Request,
+	instanceID uuid.UUID, nodeType, claimAlias string,
+) {
+	var active []persistence.ClaimHolderRow
+	err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+		inst, err := deps.Persist.Instances().Get(ctx, shared.UUID(instanceID), tx)
+		if err != nil {
+			return err
+		}
+		if inst == nil {
+			return shared.ErrInstanceNotFound
+		}
+		r, _, err := resolveAsset(ctx, deps, tx, *inst, nodeType, claimAlias)
+		if err != nil {
+			return err
+		}
+		if r == nil {
+			return errAssetNotFound
+		}
+		holders, err := deps.Persist.ClaimHolders().ListByClaimHandleID(ctx, r.ID, tx)
+		if err != nil {
+			return err
+		}
+		active = activeAssetHolders(holders)
+		return errDryRunOK
+	})
+	if errors.Is(err, errDryRunOK) {
+		if len(active) > 0 {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":        "asset has in-flight holder runs; refuse delete",
+				"active_count": len(active),
+			})
+			return
+		}
+		WriteDryRunResponseForced(w, "would_have_deleted_asset", map[string]any{
+			"instance_id": instanceID.String(),
+			"alias":       chi.URLParam(req, "alias"),
+			"node_type":   nodeType,
+		})
+		return
+	}
+	writeAssetDeleteError(w, err)
+}
+
+func activeAssetHolders(holders []persistence.ClaimHolderRow) []persistence.ClaimHolderRow {
+	var active []persistence.ClaimHolderRow
+	for _, h := range holders {
+		if h.State == persistence.ClaimHolderStateActive {
+			active = append(active, h)
+		}
+	}
+	return active
+}
+
+func writeAssetDeleteError(w http.ResponseWriter, err error) {
+	if errors.Is(err, shared.ErrInstanceNotFound) {
+		notFoundResp(w, shared.ErrInstanceNotFound.Error())
+		return
+	}
+	if errors.Is(err, errAssetNotFound) {
+		notFoundResp(w, "asset not found")
+		return
+	}
+	if errors.Is(err, errAssetProducerUnresolvable) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": errAssetProducerUnresolvable.Error()})
+		return
+	}
+	var activeErr *assetHasActiveHoldersError
+	if errors.As(err, &activeErr) {
+		body := map[string]any{"error": "asset has in-flight holder runs; refuse delete"}
+		if activeErr.count >= 0 {
+			body["active_count"] = activeErr.count
+		}
+		writeJSON(w, http.StatusConflict, body)
+		return
+	}
+	writeError(w, err)
+}
+
+type assetHasActiveHoldersError struct {
+	count int
+}
+
+func (e *assetHasActiveHoldersError) Error() string {
+	return "asset has in-flight holder runs; refuse delete"
+}
+
 var errAssetNotFound = errors.New("asset not found")
+
+var errAssetProducerUnresolvable = errors.New("asset producer not resolvable; refusing delete to avoid leaking producer-side state")

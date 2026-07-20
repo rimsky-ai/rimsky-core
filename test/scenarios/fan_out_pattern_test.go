@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -57,9 +58,41 @@ func TestFanOutPattern(t *testing.T) {
 	root := h.FindNode(iid, "root")
 	require.NotNil(t, root)
 
+	h.WaitForNodeState(root.ID, cascade.NodeStateFresh)
+	require.Equal(t, 1, h.EventCount(root.ID, "terminal/success"),
+		"root (pure-cascade) must terminate exactly once")
+
+	wantAttr := map[string]struct {
+		key  string
+		want float64
+	}{
+		"child_a": {"a", 1},
+		"child_b": {"b", 2},
+		"child_c": {"c", 3},
+	}
+
 	for _, typ := range []string{"child_a", "child_b", "child_c"} {
 		c := h.FindNode(iid, typ)
 		require.NotNil(t, c, "missing %s", typ)
 		h.WaitForNodeState(c.ID, cascade.NodeStateFresh)
+
+		dispatches := 0
+		for _, o := range h.Stub.Observed() {
+			if o.NodeType == typ {
+				dispatches++
+			}
+		}
+		require.Equal(t, 1, dispatches, "%s should dispatch exactly once", typ)
+
+		var row *persistence.NodeAttributesRow
+		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, c.ID, h.GetMainRunScopeID(iid), tx)
+			row = r
+			return err
+		}))
+		require.NotNil(t, row, "%s should have a node_attributes row after fresh", typ)
+		attrInfo := wantAttr[typ]
+		require.EqualValues(t, attrInfo.want, row.Data[attrInfo.key],
+			"%s.attributes.data[%q] mismatch", typ, attrInfo.key)
 	}
 }

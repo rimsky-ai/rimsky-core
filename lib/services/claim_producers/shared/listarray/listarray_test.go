@@ -41,6 +41,15 @@ func TestUnmarshal_RejectsMissingKey(t *testing.T) {
 	}
 }
 
+func TestUnmarshal_RejectsDuplicateKeys(t *testing.T) {
+	t.Parallel()
+	in := []byte(`{"list":[{"key":"a","payload":{"v":1}},{"key":"a","payload":{"v":2}}]}`)
+	_, err := listarray.Unmarshal(in)
+	if err == nil {
+		t.Fatalf("Unmarshal: expected error for duplicate key, got nil")
+	}
+}
+
 func TestUnmarshal_RejectsNotAnArray(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

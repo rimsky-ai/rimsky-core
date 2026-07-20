@@ -52,7 +52,7 @@ func QueryState(ctx context.Context, c *cli.Client, project string) (*ComposeSta
 		templates[h] = *tpl
 	}
 
-	insts, err := pagedListInstances(ctx, c)
+	insts, err := cli.PagedListInstances(ctx, c, cli.ListInstancesQuery{})
 	if err != nil {
 		return nil, err
 	}
@@ -83,23 +83,6 @@ func pagedListTags(ctx context.Context, c *cli.Client) ([]cli.Tag, error) {
 			return nil, err
 		}
 		all = append(all, page.Tags...)
-		if page.NextCursor == "" {
-			break
-		}
-		q.Cursor = page.NextCursor
-	}
-	return all, nil
-}
-
-func pagedListInstances(ctx context.Context, c *cli.Client) ([]cli.Instance, error) {
-	var all []cli.Instance
-	q := cli.ListInstancesQuery{}
-	for {
-		page, err := c.ListInstances(ctx, q)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, page.Instances...)
 		if page.NextCursor == "" {
 			break
 		}

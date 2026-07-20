@@ -94,6 +94,7 @@ func exerciseReleaseLeg(t *testing.T, prod *Producer, prodPort int) {
 		claimproducer.ClaimID(releaseClaimID),
 		[]byte("release-test-scope"),
 		[]byte("release-test-address"),
+		"",
 	); rErr != nil {
 		t.Fatalf("Client.Release against the example producer: %v (the producer's Release handler must accept the verb and return without error — falsifier: rimsky drives Release but the producer is unreachable / canned)", rErr)
 	}

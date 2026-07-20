@@ -72,6 +72,7 @@ type CliSpawnRequest struct {
 
 type CliResumeRequest struct {
 	SessionID       string
+	NewSessionID    string
 	Prompt          string
 	Tools           []CliToolConfig
 	Model           string
@@ -207,6 +208,9 @@ func BuildClaudeCliResumeArgs(req CliResumeRequest, paths CliArgPaths) ([]string
 		return nil, err
 	}
 	args := []string{"--resume", req.SessionID, "--print", "--output-format", "stream-json", "--verbose"}
+	if req.NewSessionID != "" {
+		args = append(args, "--session-id", req.NewSessionID)
+	}
 	args = append(args, block...)
 	args = append(args, "--mcp-config", paths.McpConfigPath)
 	return args, nil

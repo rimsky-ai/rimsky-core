@@ -42,7 +42,7 @@ func TestAdminSync_ExplicitReadmits(t *testing.T) {
 	if !o1.Available {
 		t.Fatal("Open #1: expected Available (seeded folder alpha), got Unavailable")
 	}
-	must(t, st.Commit(context.Background(), "c1", o1.Result.ClaimScope, o1.Result.Address))
+	must(t, st.Commit(context.Background(), "c1", o1.Result.ClaimScope, o1.Result.Address, ""))
 
 	o2, err := st.Open(context.Background(), "c2", "@r")
 	must(t, err)
@@ -82,7 +82,7 @@ func TestAdminSync_ExplicitReadmits(t *testing.T) {
 				t.Errorf("admin sync: bravo address %q does not correspond to the new folder %q", addr, wantAddr)
 			}
 		}
-		must(t, st.Commit(context.Background(), fmt.Sprintf("c-drain-%d", i), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("c-drain-%d", i), o.Result.ClaimScope, o.Result.Address, ""))
 	}
 	if !sawBravo {
 		t.Fatal("expected the newly-dropped folder bravo to become claimable after admin sync, but it never appeared")

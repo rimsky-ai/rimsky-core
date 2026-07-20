@@ -8,15 +8,16 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-const (
-	EventAccessAttempted = "auth.access_attempted"
-	EventAccessDenied    = "auth.access_denied"
-	EventKeyCreated      = "auth.key_created"
-	EventKeyRevoked      = "auth.key_revoked"
-	EventKeyRotated      = "auth.key_rotated"
+var (
+	EventAccessAttempted = events.KindAuthAccessAttempted().String()
+	EventAccessDenied    = events.KindAuthAccessDenied().String()
+	EventKeyCreated      = events.KindAuthKeyCreated().String()
+	EventKeyRevoked      = events.KindAuthKeyRevoked().String()
+	EventKeyRotated      = events.KindAuthKeyRotated().String()
 )
 
 type DenialReason string

@@ -586,10 +586,17 @@ func (x *Unavailable) GetErrorClass() string {
 }
 
 type CommitRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	ClaimScope    []byte                 `protobuf:"bytes,2,opt,name=claim_scope,json=claimScope,proto3" json:"claim_scope,omitempty"`
-	Address       []byte                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ClaimId    string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
+	ClaimScope []byte                 `protobuf:"bytes,2,opt,name=claim_scope,json=claimScope,proto3" json:"claim_scope,omitempty"`
+	Address    []byte                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	// lease_token echoes SubScopeDescriptor.lease_token for sub-claims minted
+	// by SplitScope. Optional-but-verified-when-present: producers that mint
+	// lease tokens MUST match a non-empty token against the live lease and
+	// treat a mismatch as "no lease held" (stale holder), never as the
+	// current lease. Empty means the caller carries no lease identity
+	// (non-batch claims; producers that do not mint tokens ignore it).
+	LeaseToken    string `protobuf:"bytes,4,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -643,6 +650,13 @@ func (x *CommitRequest) GetAddress() []byte {
 		return x.Address
 	}
 	return nil
+}
+
+func (x *CommitRequest) GetLeaseToken() string {
+	if x != nil {
+		return x.LeaseToken
+	}
+	return ""
 }
 
 type CommitResponse struct {
@@ -709,10 +723,12 @@ func (x *CommitResponse) GetProducerMetadata() []byte {
 }
 
 type AbandonRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	ClaimScope    []byte                 `protobuf:"bytes,2,opt,name=claim_scope,json=claimScope,proto3" json:"claim_scope,omitempty"`
-	Address       []byte                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"` // may be empty; producer identifies state by claim_id
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ClaimId    string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
+	ClaimScope []byte                 `protobuf:"bytes,2,opt,name=claim_scope,json=claimScope,proto3" json:"claim_scope,omitempty"`
+	Address    []byte                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"` // may be empty; producer identifies state by claim_id
+	// Same contract as CommitRequest.lease_token.
+	LeaseToken    string `protobuf:"bytes,4,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -768,6 +784,13 @@ func (x *AbandonRequest) GetAddress() []byte {
 	return nil
 }
 
+func (x *AbandonRequest) GetLeaseToken() string {
+	if x != nil {
+		return x.LeaseToken
+	}
+	return ""
+}
+
 type AbandonResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -805,10 +828,12 @@ func (*AbandonResponse) Descriptor() ([]byte, []int) {
 }
 
 type ReleaseRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	ClaimScope    []byte                 `protobuf:"bytes,2,opt,name=claim_scope,json=claimScope,proto3" json:"claim_scope,omitempty"`
-	Address       []byte                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ClaimId    string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
+	ClaimScope []byte                 `protobuf:"bytes,2,opt,name=claim_scope,json=claimScope,proto3" json:"claim_scope,omitempty"`
+	Address    []byte                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	// Same contract as CommitRequest.lease_token.
+	LeaseToken    string `protobuf:"bytes,4,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -862,6 +887,13 @@ func (x *ReleaseRequest) GetAddress() []byte {
 		return x.Address
 	}
 	return nil
+}
+
+func (x *ReleaseRequest) GetLeaseToken() string {
+	if x != nil {
+		return x.LeaseToken
+	}
+	return ""
 }
 
 type ReleaseResponse struct {
@@ -981,7 +1013,15 @@ type SubScopeDescriptor struct {
 	// substitution via {{claim.<alias>.payload[.<field>]}}. Inert in rimsky's
 	// runtime. Same JSON-validity contract as address — when non-empty, bytes
 	// must be JSON-valid.
-	Payload       []byte `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
+	Payload []byte `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
+	// Producer-minted identity of the lease backing this sub-claim-scope
+	// (e.g. a batch-pop lease). Opaque to rimsky; persisted on the sub-claim
+	// handle and echoed back verbatim on Commit / Abandon / Release so the
+	// producer can match terminal verbs by lease identity rather than scope
+	// equality — a stale holder's terminal verb must not resolve a
+	// successor's lease on a byte-equal scope. Empty when the producer keeps
+	// no per-lease state.
+	LeaseToken    string `protobuf:"bytes,6,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1049,6 +1089,13 @@ func (x *SubScopeDescriptor) GetPayload() []byte {
 		return x.Payload
 	}
 	return nil
+}
+
+func (x *SubScopeDescriptor) GetLeaseToken() string {
+	if x != nil {
+		return x.LeaseToken
+	}
+	return ""
 }
 
 type SplitScopeResponse struct {
@@ -1232,37 +1279,45 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\x18realized_write_semantics\x18\x04 \x01(\x0e2\x19.rimsky.v1.WriteSemanticsR\x16realizedWriteSemantics\".\n" +
 	"\vUnavailable\x12\x1f\n" +
 	"\verror_class\x18\x01 \x01(\tR\n" +
-	"errorClass\"e\n" +
+	"errorClass\"\x86\x01\n" +
 	"\rCommitRequest\x12\x19\n" +
 	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1f\n" +
 	"\vclaim_scope\x18\x02 \x01(\fR\n" +
 	"claimScope\x12\x18\n" +
-	"\aaddress\x18\x03 \x01(\fR\aaddress\"\\\n" +
+	"\aaddress\x18\x03 \x01(\fR\aaddress\x12\x1f\n" +
+	"\vlease_token\x18\x04 \x01(\tR\n" +
+	"leaseToken\"\\\n" +
 	"\x0eCommitResponse\x12\x1d\n" +
 	"\n" +
 	"version_id\x18\x01 \x01(\tR\tversionId\x12+\n" +
-	"\x11producer_metadata\x18\x02 \x01(\fR\x10producerMetadata\"f\n" +
+	"\x11producer_metadata\x18\x02 \x01(\fR\x10producerMetadata\"\x87\x01\n" +
 	"\x0eAbandonRequest\x12\x19\n" +
 	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1f\n" +
 	"\vclaim_scope\x18\x02 \x01(\fR\n" +
 	"claimScope\x12\x18\n" +
-	"\aaddress\x18\x03 \x01(\fR\aaddress\"\x11\n" +
-	"\x0fAbandonResponse\"f\n" +
+	"\aaddress\x18\x03 \x01(\fR\aaddress\x12\x1f\n" +
+	"\vlease_token\x18\x04 \x01(\tR\n" +
+	"leaseToken\"\x11\n" +
+	"\x0fAbandonResponse\"\x87\x01\n" +
 	"\x0eReleaseRequest\x12\x19\n" +
 	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1f\n" +
 	"\vclaim_scope\x18\x02 \x01(\fR\n" +
 	"claimScope\x12\x18\n" +
-	"\aaddress\x18\x03 \x01(\fR\aaddress\"\x11\n" +
+	"\aaddress\x18\x03 \x01(\fR\aaddress\x12\x1f\n" +
+	"\vlease_token\x18\x04 \x01(\tR\n" +
+	"leaseToken\"\x11\n" +
 	"\x0fReleaseResponse\"h\n" +
 	"\x11SplitScopeRequest\x12&\n" +
 	"\x0fclaim_handle_id\x18\x01 \x01(\tR\rclaimHandleId\x12+\n" +
-	"\x11partition_request\x18\x02 \x01(\fR\x10partitionRequest\"\xc4\x01\n" +
+	"\x11partition_request\x18\x02 \x01(\fR\x10partitionRequest\"\xe5\x01\n" +
 	"\x12SubScopeDescriptor\x12(\n" +
 	"\x10claim_scope_data\x18\x01 \x01(\fR\x0eclaimScopeData\x12#\n" +
 	"\rpartition_key\x18\x02 \x01(\tR\fpartitionKey\x12+\n" +
 	"\x11producer_metadata\x18\x03 \x01(\fR\x10producerMetadata\x12\x18\n" +
 	"\aaddress\x18\x04 \x01(\fR\aaddress\x12\x18\n" +
-	"\apayload\x18\x05 \x01(\fR\apayload\"R\n" +
+	"\apayload\x18\x05 \x01(\fR\apayload\x12\x1f\n" +
+	"\vlease_token\x18\x06 \x01(\tR\n" +
+	"leaseToken\"R\n" +
 	"\x12SplitScopeResponse\x12<\n" +
 	"\n" +
 	"sub_scopes\x18\x01 \x03(\v2\x1d.rimsky.v1.SubScopeDescriptorR\tsubScopes\"d\n" +

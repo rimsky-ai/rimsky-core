@@ -117,7 +117,7 @@ func (s *Server) CommitCandidate(_ context.Context, req *genv1.CommitCandidateRe
 	defer s.mu.Unlock()
 	row, ok := s.candidates[handle]
 	if !ok {
-		return &genv1.CommitCandidateResponse{}, nil
+		return nil, fmt.Errorf("stub.CommitCandidate: candidate_handle %q not found (never issued by BeginCandidate, already committed, or already abandoned)", handle)
 	}
 	delete(s.candidates, handle)
 	versions := s.versions[row.ClaimHandleID]
@@ -145,6 +145,9 @@ func (s *Server) AbandonCandidate(_ context.Context, req *genv1.AbandonCandidate
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.candidates[handle]; !ok {
+		return nil, fmt.Errorf("stub.AbandonCandidate: candidate_handle %q not found (never issued by BeginCandidate, already committed, or already abandoned)", handle)
+	}
 	delete(s.candidates, handle)
 	return &emptypb.Empty{}, nil
 }

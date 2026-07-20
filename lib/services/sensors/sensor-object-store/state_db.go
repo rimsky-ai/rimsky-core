@@ -59,8 +59,18 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx,
-		`ALTER TABLE sensor_object_store_state DROP COLUMN IF EXISTS target_node`)
+	if _, err := s.db.ExecContext(ctx,
+		`ALTER TABLE sensor_object_store_state DROP COLUMN IF EXISTS target_node`); err != nil {
+		return err
+	}
+	const seenNamesSchema = `
+		CREATE TABLE IF NOT EXISTS sensor_object_store_seen_names (
+		    publisher_subscription_id TEXT NOT NULL REFERENCES sensor_object_store_state (publisher_subscription_id) ON DELETE CASCADE,
+		    object_name               TEXT NOT NULL,
+		    PRIMARY KEY (publisher_subscription_id, object_name)
+		);
+	`
+	_, err := s.db.ExecContext(ctx, seenNamesSchema)
 	return err
 }
 
@@ -113,14 +123,64 @@ func (s *stateDB) UpdateWatermarkName(ctx context.Context, subscriptionID, name 
 	return err
 }
 
-func (s *stateDB) UpdateWatermarkTime(ctx context.Context, subscriptionID string, t time.Time) error {
+func (s *stateDB) AdvanceWatermarkTime(ctx context.Context, subscriptionID string, t time.Time, name string) error {
+	if s == nil {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE sensor_object_store_state SET watermark_time = $1, last_poll_at = now() WHERE publisher_subscription_id = $2`,
+		t.UTC(), subscriptionID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM sensor_object_store_seen_names WHERE publisher_subscription_id = $1`,
+		subscriptionID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO sensor_object_store_seen_names (publisher_subscription_id, object_name) VALUES ($1, $2)`,
+		subscriptionID, name); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *stateDB) AddSeenName(ctx context.Context, subscriptionID, name string) error {
 	if s == nil {
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE sensor_object_store_state SET watermark_time = $1, last_poll_at = now() WHERE publisher_subscription_id = $2`,
-		t.UTC(), subscriptionID)
+		`INSERT INTO sensor_object_store_seen_names (publisher_subscription_id, object_name)
+		 VALUES ($1, $2) ON CONFLICT (publisher_subscription_id, object_name) DO NOTHING`,
+		subscriptionID, name)
 	return err
+}
+
+func (s *stateDB) ListSeenNames(ctx context.Context, subscriptionID string) ([]string, error) {
+	if s == nil {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT object_name FROM sensor_object_store_seen_names WHERE publisher_subscription_id = $1`,
+		subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
 }
 
 type SubscriptionState struct {

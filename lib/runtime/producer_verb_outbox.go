@@ -78,6 +78,7 @@ func enqueueProducerVerb(
 		Verb:                verb,
 		ClaimScopeData:      td.Scope,
 		Address:             td.Address,
+		LeaseToken:          td.LeaseToken,
 		SupervisorID:        td.SupervisorID,
 		InstanceID:          instanceID,
 		ParentClaimHandleID: td.ParentClaimHandleID,
@@ -280,16 +281,16 @@ func deliverProducerVerb(
 	claimID := claimproducer.ClaimID(row.ClaimHandleID.String())
 	switch row.Verb {
 	case persistence.ProducerVerbCommit:
-		res, err := producer.Commit(ctx, claimID, row.ClaimScopeData, row.Address)
+		res, err := producer.Commit(ctx, claimID, row.ClaimScopeData, row.Address, row.LeaseToken)
 		if err != nil {
 			return err
 		}
 		applyDeferredCommitResult(ctx, args, tx, row, res)
 		return nil
 	case persistence.ProducerVerbAbandon:
-		return producer.Abandon(ctx, claimID, row.ClaimScopeData, row.Address)
+		return producer.Abandon(ctx, claimID, row.ClaimScopeData, row.Address, row.LeaseToken)
 	case persistence.ProducerVerbRelease:
-		return producer.Release(ctx, claimID, row.ClaimScopeData, row.Address)
+		return producer.Release(ctx, claimID, row.ClaimScopeData, row.Address, row.LeaseToken)
 	}
 	return fmt.Errorf("unknown producer verb %q (seq=%d)", string(row.Verb), row.Seq)
 }

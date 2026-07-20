@@ -42,7 +42,8 @@ type Config struct {
 	HTTPBridgeURL     string
 	EnableLifecycle   bool
 	// @concept: executor
-	EnableExecutor bool
+	EnableExecutor   bool
+	LedgerMaxRecords int
 }
 
 func New(ctx context.Context, cfg Config) (*Server, error) {
@@ -51,6 +52,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		WriteSemantics:    cfg.WriteSemantics,
 		PickPolicies:      cfg.PickPolicies,
 		PartitionPolicies: cfg.PartitionPolicies,
+		LedgerMaxRecords:  cfg.LedgerMaxRecords,
 	})
 	if err != nil {
 		return nil, err

@@ -66,6 +66,6 @@ func TestFSPickVsScopeConcurrency(t *testing.T) {
 	instanceID := createInstance(t, ep, templateID, "ck-fs-pick-vs-scope")
 
 	const deadline = 90 * time.Second
-	waitForNodeTerminal(t, ep, instanceID, "pick-worker", deadline)
-	waitForNodeTerminal(t, ep, instanceID, "scope-worker", deadline)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "pick-worker", deadline)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "scope-worker", deadline)
 }

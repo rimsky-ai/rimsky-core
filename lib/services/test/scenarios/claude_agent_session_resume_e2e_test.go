@@ -57,8 +57,15 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	postWorkerInvalidate(t, ep, iid, "session-resume-loop")
 
 	waitForWorkerDispatchCount(t, ctx, pgPool, workerNodeID, 3, 180*time.Second)
+	waitForNodeRunsQuiescent(t, ctx, pgPool, workerNodeID, 30*time.Second)
 
 	dumpWorkerDispatchProvenance(t, ctx, pgPool, workerNodeID)
+
+	if got := countNodeRuns(t, ctx, pgPool, workerNodeID); got != 3 {
+		t.Fatalf("worker node %s has %d total node_run rows after going dispatch-quiescent, want "+
+			"exactly 3 — a broken `when: payload.attributes_delta.fake_cli_turn < 3` subscription "+
+			"filter would enqueue a 4th dispatch even before it settles", workerNodeID, got)
+	}
 
 	dispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, workerNodeID)
 	if len(dispatches) != 3 {
@@ -345,6 +352,40 @@ func getWorkerDispatchesInOrder(t *testing.T, ctx context.Context, pool *pgxpool
 		t.Fatalf("iterate rimsky_node_runs: %v", err)
 	}
 	return out
+}
+
+func countNodeRuns(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nodeID string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1::uuid`, nodeID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count node_runs for %s: %v", nodeID, err)
+	}
+	return n
+}
+
+func waitForNodeRunsQuiescent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nodeID string, deadline time.Duration) {
+	t.Helper()
+	const stableWindow = 5 * time.Second
+	end := time.Now().Add(deadline)
+	last := countNodeRuns(t, ctx, pool, nodeID)
+	stableSince := time.Now()
+	for time.Now().Before(end) {
+		time.Sleep(500 * time.Millisecond)
+		cur := countNodeRuns(t, ctx, pool, nodeID)
+		if cur != last {
+			last = cur
+			stableSince = time.Now()
+			continue
+		}
+		if time.Since(stableSince) >= stableWindow {
+			return
+		}
+	}
+	dumpWorkerDispatchProvenance(t, ctx, pool, nodeID)
+	t.Fatalf("node %s never went dispatch-quiescent within %v (node_run row count kept changing, last=%d)",
+		nodeID, deadline, last)
 }
 
 func waitForWorkerDispatchCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nodeID string, wantN int, deadline time.Duration) {

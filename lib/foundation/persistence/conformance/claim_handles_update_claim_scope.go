@@ -20,7 +20,7 @@ func testClaimHandlesUpdateClaimScope(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	lockHolderID := uuid.New()
+	claimHandleID := uuid.New()
 	supID := "update-scope-supervisor"
 	producerName := "update-scope-store"
 	intent := "rw"
@@ -29,7 +29,7 @@ func testClaimHandlesUpdateClaimScope(t *testing.T, d persistence.Database) {
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
-			ID:                 lockHolderID,
+			ID:                 claimHandleID,
 			LockKind:           persistence.LockKindScope,
 			ProducerName:       &producerName,
 			ClaimScopeData:     scopeA,
@@ -43,13 +43,13 @@ func testClaimHandlesUpdateClaimScope(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.ClaimHandles().UpdateClaimScope(ctx, lockHolderID, supID, scopeB, tx)
+		return store.ClaimHandles().UpdateClaimScope(ctx, claimHandleID, supID, scopeB, tx)
 	}); err != nil {
 		t.Fatalf("UpdateClaimScope: %v", err)
 	}
 	var got *persistence.ClaimHandleRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.ClaimHandles().Get(ctx, lockHolderID, tx)
+		r, err := store.ClaimHandles().Get(ctx, claimHandleID, tx)
 		got = r
 		return err
 	}); err != nil {
@@ -65,12 +65,12 @@ func testClaimHandlesUpdateClaimScope(t *testing.T, d persistence.Database) {
 
 	otherSup := "different-supervisor"
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.ClaimHandles().UpdateClaimScope(ctx, lockHolderID, otherSup, scopeA, tx)
+		return store.ClaimHandles().UpdateClaimScope(ctx, claimHandleID, otherSup, scopeA, tx)
 	}); err != nil {
 		t.Fatalf("UpdateClaimScope (wrong sup): %v", err)
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.ClaimHandles().Get(ctx, lockHolderID, tx)
+		r, err := store.ClaimHandles().Get(ctx, claimHandleID, tx)
 		got = r
 		return err
 	}); err != nil {

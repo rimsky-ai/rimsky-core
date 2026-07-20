@@ -168,7 +168,7 @@ func (s *framesImpl) MarkSourceNodeStale(
                    FROM rimsky_instances i
                    JOIN rimsky_templates t ON t.id = i.template_hash
                    CROSS JOIN LATERAL jsonb_array_elements(t.spec->'nodes') AS nd
-                   LEFT JOIN LATERAL jsonb_array_elements(nd->'stores') AS store ON true
+                   LEFT JOIN LATERAL jsonb_array_elements(nd->'claim_producers') AS store ON true
                   WHERE i.id = n.instance_id
                     AND nd->>'type' = n.node_type
                     AND store IS NOT NULL
@@ -262,6 +262,10 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 	if filter.TriggeringMessageID != nil {
 		triggerArg = *filter.TriggeringMessageID
 	}
+	var terminalStateArg any
+	if filter.TerminalState != nil {
+		terminalStateArg = *filter.TerminalState
+	}
 	var cursorStarted *time.Time
 	var cursorFrameID *shared.UUID
 	if pag.Cursor != "" {
@@ -287,9 +291,10 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		    AND ($2::boolean IS NULL OR ($2 = TRUE AND f.ended_at IS NULL) OR ($2 = FALSE AND f.ended_at IS NOT NULL))
 		    AND ($3::timestamptz IS NULL OR (f.started_at, f.frame_id) < ($3, $4))
 		    AND ($6::uuid IS NULL OR f.triggering_message_id = $6)
+		    AND ($7::text IS NULL OR (`+frameStateCaseSQL+`) = $7)
 		  ORDER BY f.started_at DESC, f.frame_id DESC
 		  LIMIT $5`,
-		instArg, unresolvedArg, qArg, fArg, limit, triggerArg,
+		instArg, unresolvedArg, qArg, fArg, limit, triggerArg, terminalStateArg,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.FrameRow]{}, err
@@ -382,7 +387,7 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 	ti := (*tablesImpl)(s)
 	var affected int
 	err := ti.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		orphaned, err := ti.q(tx).Query(ctx, `
+		scratchHandles, err := queuePrunedBlobHandles(ctx, ti, tx, `
             SELECT scratch_handle, scratch_handle_backend
               FROM rimsky_node_runs
              WHERE scratch_handle IS NOT NULL
@@ -391,33 +396,42 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 		if err != nil {
 			return fmt.Errorf("select blob-backed scratch handles: %w", err)
 		}
-		type orphanHandle struct {
-			handle  string
-			backend string
-		}
-		var handles []orphanHandle
-		for orphaned.Next() {
-			var handle string
-			var backend *string
-			if scanErr := orphaned.Scan(&handle, &backend); scanErr != nil {
-				orphaned.Close()
-				return fmt.Errorf("scan blob-backed scratch handle: %w", scanErr)
-			}
-			b := ""
-			if backend != nil {
-				b = *backend
-			}
-			handles = append(handles, orphanHandle{handle: handle, backend: b})
-		}
-		orphaned.Close()
-		if err := orphaned.Err(); err != nil {
-			return fmt.Errorf("iterate blob-backed scratch handles: %w", err)
+		attrHandles, err := queuePrunedBlobHandles(ctx, ti, tx, `
+            SELECT a.value_handle, a.value_handle_backend
+              FROM rimsky_node_attributes a
+              JOIN rimsky_node_runs r ON r.id = a.node_run_id
+             WHERE a.value_handle IS NOT NULL
+               AND r.frame_id IN (`+prunedFrameIDsSQL+`)
+        `, countCap, cutoffArg)
+		if err != nil {
+			return fmt.Errorf("select blob-backed attribute handles: %w", err)
 		}
 		now := time.Now().UTC()
-		for _, h := range handles {
+		for _, h := range append(scratchHandles, attrHandles...) {
 			if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), tx, h.handle, h.backend, now, ti.BlobRetention()); err != nil {
 				return fmt.Errorf("queue blob orphan %q: %w", h.handle, err)
 			}
+		}
+		rootScopeRows, err := ti.q(tx).Query(ctx, `
+            SELECT root_run_scope_id
+              FROM rimsky_frames
+             WHERE frame_id IN (`+prunedFrameIDsSQL+`)
+        `, countCap, cutoffArg)
+		if err != nil {
+			return fmt.Errorf("select pruned frames' root run scopes: %w", err)
+		}
+		var rootScopeIDs []shared.UUID
+		for rootScopeRows.Next() {
+			var id shared.UUID
+			if scanErr := rootScopeRows.Scan(&id); scanErr != nil {
+				rootScopeRows.Close()
+				return fmt.Errorf("scan pruned frame's root run scope: %w", scanErr)
+			}
+			rootScopeIDs = append(rootScopeIDs, id)
+		}
+		rootScopeRows.Close()
+		if err := rootScopeRows.Err(); err != nil {
+			return fmt.Errorf("iterate pruned frames' root run scopes: %w", err)
 		}
 		tag, err := ti.q(tx).Exec(ctx, `
             DELETE FROM rimsky_frames
@@ -427,12 +441,54 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 			return fmt.Errorf("delete pruned frames: %w", err)
 		}
 		affected = int(tag.RowsAffected())
+		if len(rootScopeIDs) > 0 {
+			if _, err := ti.q(tx).Exec(ctx, `
+                DELETE FROM rimsky_run_scopes s
+                 WHERE s.id = ANY($1)
+                   AND NOT EXISTS (SELECT 1 FROM rimsky_frames f WHERE f.root_run_scope_id = s.id)
+                   AND NOT EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.run_scope_id = s.id)
+            `, rootScopeIDs); err != nil {
+				return fmt.Errorf("delete pruned frames' root run scopes: %w", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
 		return 0, fmt.Errorf("frames.PruneTraceForRetention: %w", err)
 	}
 	return affected, nil
+}
+
+type prunedBlobHandle struct {
+	handle  string
+	backend string
+}
+
+func queuePrunedBlobHandles(
+	ctx context.Context, ti *tablesImpl, tx persistence.Tx, sqlText string, args ...any,
+) ([]prunedBlobHandle, error) {
+	rows, err := ti.q(tx).Query(ctx, sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []prunedBlobHandle
+	for rows.Next() {
+		var handle string
+		var backend *string
+		if err := rows.Scan(&handle, &backend); err != nil {
+			return nil, fmt.Errorf("scan blob handle: %w", err)
+		}
+		b := ""
+		if backend != nil {
+			b = *backend
+		}
+		out = append(out, prunedBlobHandle{handle: handle, backend: b})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate blob handles: %w", err)
+	}
+	return out, nil
 }
 
 func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (int, error) {
@@ -522,6 +578,10 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 	if filter.TriggeringMessageID != nil {
 		triggerArg = *filter.TriggeringMessageID
 	}
+	var terminalStateArg any
+	if filter.TerminalState != nil {
+		terminalStateArg = *filter.TerminalState
+	}
 	var cursorStarted *time.Time
 	var cursorFrameID *shared.UUID
 	if pag.Cursor != "" {
@@ -549,9 +609,10 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		    AND ($2::boolean IS NULL OR ($2 = TRUE AND f.ended_at IS NULL) OR ($2 = FALSE AND f.ended_at IS NOT NULL))
 		    AND ($3::timestamptz IS NULL OR (f.started_at, f.frame_id) < ($3, $4))
 		    AND ($6::uuid IS NULL OR f.triggering_message_id = $6)
+		    AND ($7::text IS NULL OR (`+frameStateCaseSQL+`) = $7)
 		  ORDER BY f.started_at DESC, f.frame_id DESC
 		  LIMIT $5`,
-		instArg, unresolvedArg, qArg, fArg, limit, triggerArg,
+		instArg, unresolvedArg, qArg, fArg, limit, triggerArg, terminalStateArg,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err

@@ -18,7 +18,7 @@ import (
 type ProgressPrinter interface {
 	InstanceStarting(project, name string)
 	NodeRunTerminal(project, name, nodeID, outcome, reason string)
-	InstanceTerminal(project, name, outcome string, frames int)
+	InstanceTerminal(project, name, outcome string, nodeCount int)
 	FrameTick(project, name string, frameNo int)
 	Finalize()
 }
@@ -71,8 +71,8 @@ func (lp *linePrinter) NodeRunTerminal(project, name, nodeID, outcome, reason st
 	_ = lp.emit(fmt.Sprintf("instance %s/%s node %s: %s (%s)", project, name, nodeID, outcome, reason))
 }
 
-func (lp *linePrinter) InstanceTerminal(project, name, outcome string, frames int) {
-	_ = lp.emit(fmt.Sprintf("instance %s/%s: %s (frames=%d)", project, name, outcome, frames))
+func (lp *linePrinter) InstanceTerminal(project, name, outcome string, nodeCount int) {
+	_ = lp.emit(fmt.Sprintf("instance %s/%s: %s (nodes=%d)", project, name, outcome, nodeCount))
 }
 
 func (lp *linePrinter) FrameTick(project, name string, frameNo int) {}
@@ -101,7 +101,7 @@ func newQuietPrinter(w io.Writer) *quietPrinter {
 
 func (p *quietPrinter) InstanceStarting(project, name string)                         {}
 func (p *quietPrinter) NodeRunTerminal(project, name, nodeID, outcome, reason string) {}
-func (p *quietPrinter) InstanceTerminal(project, name, outcome string, frames int)    {}
+func (p *quietPrinter) InstanceTerminal(project, name, outcome string, nodeCount int) {}
 func (p *quietPrinter) FrameTick(project, name string, frameNo int)                   {}
 
 type verbosePrinter struct{ *linePrinter }
@@ -159,13 +159,13 @@ func (p *jsonPrinter) NodeRunTerminal(project, name, nodeID, outcome, reason str
 	p.writeRecord(rec)
 }
 
-func (p *jsonPrinter) InstanceTerminal(project, name, outcome string, frames int) {
+func (p *jsonPrinter) InstanceTerminal(project, name, outcome string, nodeCount int) {
 	p.writeRecord(map[string]any{
 		"event":    "instance_terminal",
 		"project":  project,
 		"instance": name,
 		"outcome":  outcome,
-		"frames":   frames,
+		"nodes":    nodeCount,
 	})
 }
 

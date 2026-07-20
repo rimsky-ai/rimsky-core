@@ -29,6 +29,7 @@ type SupervisorConfig struct {
 	ClaimPollInterval     time.Duration
 	Resolver              executor.Resolver
 	ClaimProducers        RemoteClaimProducersConfig
+	Publishers            RemotePublishersConfig
 	NamedLocks            locks.NamedLocksConfig
 	CallbackHost          string
 	CallbackPort          int
@@ -137,7 +138,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		}
 		cfg.ExtraInprocHandlers = merged
 	}
-	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors)
+	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
 	if err != nil {
 		stopIdentity()
 		registry.Close()

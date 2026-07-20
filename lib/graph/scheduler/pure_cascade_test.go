@@ -7,6 +7,7 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -517,4 +518,81 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	require.Len(t, evs.Events, 1)
 	require.NotNil(t, evs.Events[0].NodeID)
 	assert.Equal(t, pureA.ID, *evs.Events[0].NodeID)
+}
+
+type nthTransactionFailsTables struct {
+	persistence.Tables
+	callCount  int
+	failOnCall int
+	failErr    error
+}
+
+func (n *nthTransactionFailsTables) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
+	n.callCount++
+	if n.callCount == n.failOnCall {
+		return n.failErr
+	}
+	return n.Tables.Transaction(ctx, fn)
+}
+
+func TestProcessPureCascade_TemplateLookupTransactionErrorDoesNotSettleClaimNode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newPureCascadeFixture(t)
+
+	sum := insertDeployedTemplate(ctx, t, f.persist, nodepkg.TemplateSpec{
+		Name: "claim-only-lookup-error", Version: "v1", Description: "test",
+		Nodes: []nodepkg.TemplateNodeDef{{
+			Type:     "t",
+			Executor: "",
+			ClaimProducers: []nodepkg.NodeClaimProducerRef{
+				{Name: "alpha", Selector: "x", Intent: "rw"},
+			},
+		}},
+	})
+	inst := pcCreateInstance(ctx, t, f.persist, sum.ID, "ck-claim-lookup-error")
+	claimNode := pcCreateNode(ctx, t, f, inst.ID, "")
+	pcSeedFrame(ctx, t, f, inst.ID, claimNode.ID)
+
+	failingErr := fmt.Errorf("simulated transient DB error during template lookup")
+	flaky := &nthTransactionFailsTables{
+		Tables:     f.persist,
+		failOnCall: 2,
+		failErr:    failingErr,
+	}
+
+	q := &fakeQueue{}
+	count, err := ProcessPureCascade(ctx, PureCascadeArgs{
+		Persist: flaky, Queue: q, Clock: shared.SystemClock{}, Logger: shared.SilentLogger{},
+	})
+	require.NoError(t, err, "a per-row lookup failure must not abort the whole scheduler tick")
+	assert.Equal(t, 0, count, "a lookup failure must not count as a prepared/transitioned dispatch")
+
+	var required []string
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT required_stores FROM rimsky_node_runs WHERE node_id = $1`,
+		[]any{claimNode.ID}, &required)
+	assert.Empty(t, required,
+		"a claim-bearing node must not have its claim routing prepared when the template lookup failed")
+
+	var latest *persistence.NodeRunLatest
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Nodes().GetLatestRunForNode(ctx, tx, claimNode.ID)
+		latest = r
+		return err
+	})
+	require.NotNil(t, latest)
+	assert.Equal(t, cascade.NodeStateStale, latest.State,
+		"a claim-bearing node must not transition to fresh/settled when its claims could not be routed")
+
+	var evs persistence.EventListResult
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
+			NodeID: &claimNode.ID, Kind: "terminal/success",
+		}, persistence.ListPagination{Limit: 100}, tx)
+		evs = r
+		return err
+	})
+	assert.Empty(t, evs.Events,
+		"a transient template-lookup DB error must never settle a claim-bearing node terminal/success without acquiring its claims")
 }

@@ -65,9 +65,17 @@ func resolveLinkedSubClaimsInTx(
 		if row.ParentClaimHandleID == nil || released[row.ID] {
 			continue
 		}
-		if row.IsHeld || row.State != spec.ClaimHandleStateActive {
+		if row.IsHeld {
 			continue
 		}
+		locked, err := args.ClaimHandles.LockForUpdate(ctx, row.ID, tx)
+		if err != nil {
+			return nil, fmt.Errorf("resolveLinkedSubClaims: LockForUpdate %s: %w", row.ID, err)
+		}
+		if locked == nil || locked.State != spec.ClaimHandleStateActive {
+			continue
+		}
+		row = *locked
 		producerName := ""
 		if row.ProducerName != nil {
 			producerName = *row.ProducerName
@@ -96,6 +104,7 @@ func resolveLinkedSubClaimsInTx(
 			Producer:            producer,
 			Scope:               []byte(row.ClaimScopeData),
 			Address:             []byte(row.Address),
+			LeaseToken:          row.ProducerLeaseToken,
 			Lifetime:            row.Lifetime,
 			CandidateHandle:     row.ProducerCandidateHandle,
 			ProducerName:        producerName,
@@ -115,6 +124,7 @@ func releaseAcquiredLock(
 	acq *acquisition, lk AcquiredLock, success bool,
 ) (postCommitFn, error) {
 	switch sp := lk.Spec.(type) {
+	// @concept: named-lock
 	case locks.NamedLockSpec:
 		_ = sp
 		if err := args.ClaimHandles.Delete(ctx, lk.ClaimHandleID, args.SupervisorID, tx); err != nil {
@@ -150,9 +160,16 @@ func releaseClaim(
 		}
 		return pc, nil
 	}
-	row, err := args.ClaimHandles.Get(ctx, lk.ClaimHandleID, tx)
+	row, err := args.ClaimHandles.LockForUpdate(ctx, lk.ClaimHandleID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("releaseClaim: load scope/address: %w", err)
+	}
+	if row != nil && row.State != spec.ClaimHandleStateActive {
+		if args.Logger != nil {
+			args.Logger.Warn("releaseClaim: claim handle already resolved by a concurrent terminal path; skipping duplicate producer verb",
+				"claim_handle_id", lk.ClaimHandleID.String(), "state", string(row.State))
+		}
+		return nil, emitLockReleased(ctx, args, tx, acq, lk, releaseActionString(success))
 	}
 	var (
 		scope   []byte
@@ -199,6 +216,7 @@ func releaseClaim(
 		Producer:            lk.Producer,
 		Scope:               scope,
 		Address:             address,
+		LeaseToken:          lk.ProducerLeaseToken,
 		Lifetime:            lifetime,
 		CandidateHandle:     candidateHandle,
 		ProducerName:        producerName,

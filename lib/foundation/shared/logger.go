@@ -43,17 +43,19 @@ type Record struct {
 	Fields map[string]any
 }
 
-type CapturingLogger struct {
+type capturingSink struct {
 	mu      sync.Mutex
 	records []Record
-	base    map[string]any
 }
 
-func NewCapturingLogger() *CapturingLogger { return &CapturingLogger{} }
+type CapturingLogger struct {
+	sink *capturingSink
+	base map[string]any
+}
 
-func (c *CapturingLogger) capture(level, msg string, fields []any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func NewCapturingLogger() *CapturingLogger { return &CapturingLogger{sink: &capturingSink{}} }
+
+func (c *CapturingLogger) mergeFields(fields []any) map[string]any {
 	merged := map[string]any{}
 	for k, v := range c.base {
 		merged[k] = v
@@ -65,7 +67,14 @@ func (c *CapturingLogger) capture(level, msg string, fields []any) {
 		}
 		merged[key] = fields[i+1]
 	}
-	c.records = append(c.records, Record{Level: level, Msg: msg, Fields: merged})
+	return merged
+}
+
+func (c *CapturingLogger) capture(level, msg string, fields []any) {
+	rec := Record{Level: level, Msg: msg, Fields: c.mergeFields(fields)}
+	c.sink.mu.Lock()
+	defer c.sink.mu.Unlock()
+	c.sink.records = append(c.sink.records, rec)
 }
 
 func (c *CapturingLogger) Debug(msg string, fields ...any) { c.capture("debug", msg, fields) }
@@ -74,32 +83,19 @@ func (c *CapturingLogger) Warn(msg string, fields ...any)  { c.capture("warn", m
 func (c *CapturingLogger) Error(msg string, fields ...any) { c.capture("error", msg, fields) }
 
 func (c *CapturingLogger) With(fields ...any) Logger {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	merged := map[string]any{}
-	for k, v := range c.base {
-		merged[k] = v
-	}
-	for i := 0; i+1 < len(fields); i += 2 {
-		key, ok := fields[i].(string)
-		if !ok {
-			continue
-		}
-		merged[key] = fields[i+1]
-	}
-	return &CapturingLogger{base: merged, records: c.records}
+	return &CapturingLogger{sink: c.sink, base: c.mergeFields(fields)}
 }
 
 func (c *CapturingLogger) Records() []Record {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make([]Record, len(c.records))
-	copy(out, c.records)
+	c.sink.mu.Lock()
+	defer c.sink.mu.Unlock()
+	out := make([]Record, len(c.sink.records))
+	copy(out, c.sink.records)
 	return out
 }
 
 func (c *CapturingLogger) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.records = nil
+	c.sink.mu.Lock()
+	defer c.sink.mu.Unlock()
+	c.sink.records = nil
 }

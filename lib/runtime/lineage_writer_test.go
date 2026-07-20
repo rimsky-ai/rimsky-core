@@ -222,6 +222,26 @@ type queryableFakeLineageTable struct {
 	fakeLineageTable
 }
 
+func (f *queryableFakeLineageTable) Query(
+	_ context.Context, q persistence.LineageQuery, pag persistence.ListPagination,
+) (persistence.PaginatedListResult[persistence.LineageRow], error) {
+	var out []persistence.LineageRow
+	for i := len(f.rows) - 1; i >= 0; i-- {
+		r := f.rows[i]
+		if q.Kind != "" && r.RecordKind != q.Kind {
+			continue
+		}
+		if q.InstanceID != nil && r.InstanceID != *q.InstanceID {
+			continue
+		}
+		out = append(out, r)
+		if pag.Limit > 0 && len(out) >= pag.Limit {
+			break
+		}
+	}
+	return persistence.PaginatedListResult[persistence.LineageRow]{Rows: out}, nil
+}
+
 func (f *queryableFakeLineageTable) QueryByParentNodeRunID(_ context.Context, parentNodeRunID shared.UUID, limit int) ([]persistence.LineageRow, error) {
 	var out []persistence.LineageRow
 	for _, r := range f.rows {
@@ -240,6 +260,59 @@ func (f *queryableFakeLineageTable) QueryByParentNodeRunID(_ context.Context, pa
 		}
 	}
 	return out, nil
+}
+
+func seedLeafRunForMostRecentLookup(
+	t *testing.T, lt *queryableFakeLineageTable, instanceID, nodeID, nodeRunID shared.UUID,
+) {
+	t.Helper()
+	rec := LeafRunRecord{
+		NodeRunID:          nodeRunID,
+		NodeID:             nodeID,
+		FrameID:            shared.UUID(uuid.New()),
+		State:              "fresh",
+		SettlingSignalType: "terminal/success",
+	}
+	if err := WriteLeafRunLineage(context.Background(), nil, lt, instanceID, rec.FrameID, time.Now().UTC(), rec); err != nil {
+		t.Fatalf("seedLeafRunForMostRecentLookup: %v", err)
+	}
+}
+
+func TestMostRecentRunIDForNode_ReturnsNewestNotOldest(t *testing.T) {
+	lt := &queryableFakeLineageTable{}
+	ctx := context.Background()
+	inst := shared.UUID(uuid.New())
+	upstreamNode := shared.UUID(uuid.New())
+
+	oldRun := shared.UUID(uuid.New())
+	newRun := shared.UUID(uuid.New())
+	seedLeafRunForMostRecentLookup(t, lt, inst, upstreamNode, oldRun)
+	seedLeafRunForMostRecentLookup(t, lt, inst, upstreamNode, newRun)
+
+	got := mostRecentRunIDForNode(ctx, lt, inst, upstreamNode)
+	if got != newRun {
+		t.Fatalf("mostRecentRunIDForNode = %s, want the most recently observed run %s (got the oldest, %s, instead)",
+			got, newRun, oldRun)
+	}
+}
+
+func TestMostRecentRunIDForNode_ScopesByInstance(t *testing.T) {
+	lt := &queryableFakeLineageTable{}
+	ctx := context.Background()
+	instA := shared.UUID(uuid.New())
+	instB := shared.UUID(uuid.New())
+	upstreamNode := shared.UUID(uuid.New())
+
+	runA := shared.UUID(uuid.New())
+	runB := shared.UUID(uuid.New())
+	seedLeafRunForMostRecentLookup(t, lt, instA, upstreamNode, runA)
+	seedLeafRunForMostRecentLookup(t, lt, instB, upstreamNode, runB)
+
+	got := mostRecentRunIDForNode(ctx, lt, instA, upstreamNode)
+	if got != runA {
+		t.Fatalf("mostRecentRunIDForNode(instA) = %s, want %s — a sibling instance's leaf run must not leak across instances",
+			got, runA)
+	}
 }
 
 type emitFakePersist struct {

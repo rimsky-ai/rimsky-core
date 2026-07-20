@@ -54,6 +54,7 @@ func TestOperationalKindRoundTrip(t *testing.T) {
 		{"debug.override.applied", genv1.OperationalKind_OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED, "debug.override.applied"},
 		{"message_sent", genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT, "message_sent"},
 		{"message_received", genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED, "message_received"},
+		{"message.dead_lettered", genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_DEAD_LETTERED, "message.dead_lettered"},
 		{"fan_out_dispatched", genv1.OperationalKind_OPERATIONAL_KIND_FAN_OUT_DISPATCHED, "fan_out_dispatched"},
 		{"fanout.children_created", genv1.OperationalKind_OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED, "fanout.children_created"},
 		{"subclaim.begin_candidate", genv1.OperationalKind_OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE, "subclaim.begin_candidate"},
@@ -172,6 +173,27 @@ func TestZeroKindIsZero(t *testing.T) {
 	sig := events.SignalKind("terminal/success")
 	if sig.IsZero() {
 		t.Fatal("sig.IsZero() = true on signal kind")
+	}
+}
+
+func TestOperationalKindWireFormExhaustiveOverProtoEnum(t *testing.T) {
+	for value, name := range genv1.OperationalKind_name {
+		if value == int32(genv1.OperationalKind_OPERATIONAL_KIND_UNSPECIFIED) {
+			continue
+		}
+		op := genv1.OperationalKind(value)
+		k := events.OperationalKindFromProto(op)
+		wire := k.String()
+		if wire == "" {
+			t.Fatalf("proto enum value %s (%d) has no wire form in operationalKindWireForm — it silently String()s to \"\" and can never be read back by ParseKindString", name, value)
+		}
+		back, err := events.ParseKindString(wire)
+		if err != nil {
+			t.Fatalf("proto enum value %s: ParseKindString(%q): %v", name, wire, err)
+		}
+		if back.OperationalKind() != op {
+			t.Fatalf("proto enum value %s: round-trip OperationalKind() = %v, want %v", name, back.OperationalKind(), op)
+		}
 	}
 }
 

@@ -149,3 +149,52 @@ func TestApplyTerminalInfraError_NodeMaxRetriesOverridesDefaultCap(t *testing.T)
 			nodeCap, wantDefaultInfraRetryCap, nodeCap, runRow.State)
 	}
 }
+
+// @concept: sub-graph
+func TestApplyTerminalInfraError_SubgraphExitNodeStillRetriesAndGivesUp(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const nodeCap = 2
+	nodeDef := &node.TemplateNodeDef{
+		Type: "holder", Executor: "test-executor",
+		MaxRetries:     node.IntPtr(nodeCap),
+		IsSubgraphExit: true,
+	}
+	args, acq, tables := seedHeldErrorFixture(t, cascade.NodeStateRunning, nodeDef)
+
+	for attempt := 1; attempt <= nodeCap; attempt++ {
+		driveInfraErrorOnce(t, tables, args, acq)
+		var runRow *persistence.NodeRunForGate
+		if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+			runRow = r
+			return err
+		}); err != nil {
+			t.Fatalf("load run: %v", err)
+		}
+		if runRow.State != cascade.NodeStateRunning {
+			t.Fatalf("attempt %d: subgraph-exit run state = %v, want %v (infra retry must still run "+
+				"for subgraph-exit nodes)", attempt, runRow.State, cascade.NodeStateRunning)
+		}
+	}
+
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, err := applyTerminalInfraError(ctx, args, acq, "dial_boom", nil, nil, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("applyTerminalInfraError (give-up attempt): %v", err)
+	}
+	var runRow *persistence.NodeRunForGate
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+		runRow = r
+		return err
+	}); err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if runRow.State != cascade.NodeStateFailed {
+		t.Fatalf("a subgraph-exit run whose infra retries are exhausted must give up to failed like any "+
+			"other node, not strand in running until the orphan reaper; got state=%v", runRow.State)
+	}
+}

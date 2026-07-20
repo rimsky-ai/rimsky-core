@@ -153,26 +153,6 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, nod
 	return cmd.RowsAffected() == 1, nil
 }
 
-func (q *queueImpl) RebindRunFrameInTx(
-	ctx context.Context, tx persistence.Tx,
-	nodeRunID, newFrameID shared.UUID,
-) error {
-	if tx == nil {
-		return errors.New("postgres.RebindRunFrameInTx: tx required")
-	}
-	tag, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_node_runs SET frame_id = $1 WHERE id = $2`,
-		newFrameID, nodeRunID,
-	)
-	if err != nil {
-		return fmt.Errorf("postgres.RebindRunFrameInTx: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("postgres.RebindRunFrameInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
-	}
-	return nil
-}
-
 func (q *queueImpl) GetRetryNoProgress(ctx context.Context, nodeRunID shared.UUID) (int, *int, error) {
 	var (
 		count    int
@@ -299,6 +279,7 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, node
 	return inline, hStr, bStr, nil
 }
 
+// @concept: blob-backend
 func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, inline []byte, handle, handleBackend string) error {
 	if tx == nil {
 		return errors.New("postgres.WriteScratchInTx: tx required")
@@ -306,6 +287,20 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nod
 	if len(inline) > 0 && handle != "" {
 		return errors.New("postgres.WriteScratchInTx: inline and handle are mutually exclusive")
 	}
+	if q.tables == nil {
+		return errors.New("postgres.WriteScratchInTx: queue not wired with tables")
+	}
+	var priorHandle, priorBackend sql.NullString
+	if err := q.q(tx).QueryRow(ctx,
+		`SELECT scratch_handle, scratch_handle_backend FROM rimsky_node_runs WHERE id = $1`,
+		nodeRunID,
+	).Scan(&priorHandle, &priorBackend); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("postgres.WriteScratchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
+		}
+		return fmt.Errorf("postgres.WriteScratchInTx: read prior handle: %w", err)
+	}
+
 	tag, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET scratch_inline         = $2,
@@ -319,6 +314,12 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nod
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("postgres.WriteScratchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
+	}
+	if priorHandle.Valid && priorHandle.String != "" && priorHandle.String != handle {
+		if err := persistence.QueueBlobOrphan(ctx, q.tables.BlobOrphans(), tx,
+			priorHandle.String, priorBackend.String, time.Now().UTC(), q.tables.blobRetention); err != nil {
+			return fmt.Errorf("postgres.WriteScratchInTx: queue prior orphan: %w", err)
+		}
 	}
 	return nil
 }

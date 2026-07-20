@@ -59,6 +59,21 @@ func TestCreateTag_RejectsHashShape(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
+func TestCreateTag_RejectsSlash(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("slash-tag-"+uuid.NewString()))
+	tplID := out["template_id"].(string)
+
+	status, body := h.httpJSON(t, "POST", "/v1/tags", map[string]any{
+		"tag": "env/prod-" + uuid.NewString(), "template": tplID,
+	})
+	require.Equal(t, http.StatusBadRequest, status, body,
+		"a tag containing '/' would be unaddressable via the {tag}/{id} path routes once created, so it must be rejected at creation")
+}
+
 func TestListTags(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

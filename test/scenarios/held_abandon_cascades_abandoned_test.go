@@ -157,10 +157,11 @@ func TestHeldAbandonCascadesAbandoned(t *testing.T) {
 			acquirerSignalKinds = append(acquirerSignalKinds, kind)
 			return nil
 		})
-	require.Equal(t, []string{"terminal/success", "terminal/error/abandoned"}, acquirerSignalKinds,
-		"acquirer must emit terminal/success (held moment, filtered to subgraph members only, so B never "+
-			"sees it) then terminal/error/abandoned (auto-terminal abandon moment, unfiltered, so B sees "+
-			"it) in that order; got %v", acquirerSignalKinds)
+	require.Equal(t, []string{"terminal/error/abandoned"}, acquirerSignalKinds,
+		"acquirer's audited terminal events are exactly the settlement: the held moment fires a "+
+			"member-filtered CASCADE but writes NO audit event (a held node-run's running-to-held "+
+			"transition emits no terminal signal), so the only audited terminal is terminal/error/abandoned "+
+			"at the auto-terminal abandon moment; got %v", acquirerSignalKinds)
 
 	var observerSuccessTime time.Time
 	h.QueryRowSQL(`
@@ -169,11 +170,11 @@ func TestHeldAbandonCascadesAbandoned(t *testing.T) {
 		 ORDER BY occurred_at ASC LIMIT 1`,
 		[]any{observer.ID}, &observerSuccessTime)
 
-	require.False(t, observerSuccessTime.Before(acquirerSignalTimes[1]),
+	require.False(t, observerSuccessTime.Before(acquirerSignalTimes[0]),
 		"B must not dispatch before A's auto-terminal abandon: B's terminal/success occurred at %s, "+
 			"which must not be earlier than A's terminal/error/abandoned at %s — an earlier B settlement "+
 			"would mean B fired on A's held terminal instead of waiting for the abandon",
-		observerSuccessTime, acquirerSignalTimes[1])
+		observerSuccessTime, acquirerSignalTimes[0])
 
 	var inheritorRuns int
 	h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`,

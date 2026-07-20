@@ -124,3 +124,15 @@ func DeclaredTagsFor(alias string) ([]string, bool) {
 	}
 	return nil, false
 }
+
+func DeclaredErrorClassesFor(alias string) ([]string, bool) {
+	switch alias {
+	case loop_counter.ExecutorAlias:
+		return loop_counter.DeclaredErrorClasses(), true
+	case attribute_passthrough.ExecutorAlias:
+		return attribute_passthrough.DeclaredErrorClasses(), true
+	case send_message.ExecutorAlias:
+		return send_message.DeclaredErrorClasses(), true
+	}
+	return nil, false
+}

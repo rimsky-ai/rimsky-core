@@ -32,6 +32,8 @@ const (
 type instanceClient interface {
 	GetInstance(ctx context.Context, idOrKey string) (*cli.Instance, error)
 	ListInstanceNodes(ctx context.Context, idOrKey string) (*cli.ListInstanceNodesResponse, error)
+	ListInstanceFrames(ctx context.Context, idOrKey, state string) (*cli.ListFramesResponse, error)
+	ListInstanceMessages(ctx context.Context, idOrKey string, q cli.ListMessagesQuery) (*cli.ListMessagesResponse, error)
 	TerminateInstance(ctx context.Context, idOrKey string, reason string) (*cli.Instance, error)
 }
 
@@ -106,16 +108,23 @@ func WaitForInstancesTerminal(
 			if nodes == nil {
 				continue
 			}
-			if !allNodesSettled(nodes.Nodes) {
+			idle, ierr := instanceIsIdle(ctx, client, id)
+			if ierr != nil {
+				if ctx.Err() != nil {
+					return outcomes, ctx.Err()
+				}
+				continue
+			}
+			if !idle {
 				continue
 			}
 			name := keys[id]
 			if name == "" {
 				name = id
 			}
-			outcome, frames := classifyInstanceOutcome(nodes.Nodes)
+			outcome, nodeCount := classifyInstanceOutcome(nodes.Nodes)
 			outcomes[id] = outcome
-			printer.InstanceTerminal(project, name, outcome, frames)
+			printer.InstanceTerminal(project, name, outcome, nodeCount)
 			delete(remaining, id)
 			_ = inst
 		}
@@ -140,6 +149,24 @@ func WaitForInstancesTerminal(
 		timer.Reset(currentInterval)
 	}
 	return outcomes, nil
+}
+
+// @story: one-shot-to-terminal
+// @concept: frame
+func instanceIsIdle(ctx context.Context, client instanceClient, id string) (bool, error) {
+	frames, err := client.ListInstanceFrames(ctx, id, "running")
+	if err != nil {
+		return false, err
+	}
+	if len(frames.Frames) > 0 {
+		return false, nil
+	}
+	pending := true
+	messages, err := client.ListInstanceMessages(ctx, id, cli.ListMessagesQuery{Pending: &pending})
+	if err != nil {
+		return false, err
+	}
+	return len(messages.Messages) == 0, nil
 }
 
 // @concept: node

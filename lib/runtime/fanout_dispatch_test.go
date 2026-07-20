@@ -13,10 +13,22 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
+
+type fakeScopeOnlyTables struct {
+	persistence.Tables
+	scopes persistence.RunScopeTable
+}
+
+func (f fakeScopeOnlyTables) RunScopes() persistence.RunScopeTable { return f.scopes }
+
+func (f fakeScopeOnlyTables) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
+	return fn(ctx, nil)
+}
 
 func TestFanOutPartitions_ProjectsPartitionKeys(t *testing.T) {
 	subClaims := []SubClaim{
@@ -137,6 +149,60 @@ func TestIsFanOutNode(t *testing.T) {
 				t.Errorf("got %v want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestFanOutParallelismSemaphore_WiredForFanOutChild(t *testing.T) {
+	_, scopes := newFakes()
+	parentRunID := newUUID()
+	mainScope := scopes.makeRootScope("main", newUUID())
+	subScope := scopes.makeChildScope(mainScope, parentRunID, "p1", "main")
+
+	registry := NewFanOutSemaphoreRegistry()
+	args := RunArgs{Persist: fakeScopeOnlyTables{scopes: scopes}, FanOutSemaphores: registry}
+	acq := &acquisition{
+		RunScopeID: subScope,
+		NodeDef:    &node.TemplateNodeDef{FanOut: &spec.FanOutSpec{Parallelism: 3}},
+	}
+	dctx := dispatchContext{Args: args, Acquired: acq}
+
+	sem := fanOutParallelismSemaphore(context.Background(), dctx)
+	if sem == nil {
+		t.Fatalf("dispatch of a fan-out child must acquire a real semaphore, not silently no-op")
+	}
+	if got := registry.GetOrCreate(parentRunID, 3); got != sem {
+		t.Fatalf("semaphore must be keyed by the fan-out parent's node-run ID (the run-scope's ParentNodeRunID)")
+	}
+	if sem2 := fanOutParallelismSemaphore(context.Background(), dctx); sem2 != sem {
+		t.Fatalf("repeated dispatch of siblings of the same fan-out must share one semaphore instance")
+	}
+}
+
+func TestFanOutParallelismSemaphore_NilWhenNotFanOut(t *testing.T) {
+	registry := NewFanOutSemaphoreRegistry()
+	args := RunArgs{FanOutSemaphores: registry}
+	acq := &acquisition{NodeDef: &node.TemplateNodeDef{}}
+	dctx := dispatchContext{Args: args, Acquired: acq}
+	if sem := fanOutParallelismSemaphore(context.Background(), dctx); sem != nil {
+		t.Fatalf("a non-fan-out node must never acquire a parallelism semaphore")
+	}
+}
+
+func TestFanOutParallelismSemaphore_NilWhenUnlimited(t *testing.T) {
+	_, scopes := newFakes()
+	parentRunID := newUUID()
+	mainScope := scopes.makeRootScope("main", newUUID())
+	subScope := scopes.makeChildScope(mainScope, parentRunID, "p1", "main")
+
+	registry := NewFanOutSemaphoreRegistry()
+	args := RunArgs{Persist: fakeScopeOnlyTables{scopes: scopes}, FanOutSemaphores: registry}
+	acq := &acquisition{
+		RunScopeID: subScope,
+		NodeDef:    &node.TemplateNodeDef{FanOut: &spec.FanOutSpec{Parallelism: 0}},
+	}
+	dctx := dispatchContext{Args: args, Acquired: acq}
+	if sem := fanOutParallelismSemaphore(context.Background(), dctx); sem != nil {
+		t.Fatalf("parallelism=0 (unlimited) must not gate dispatch through a semaphore")
 	}
 }
 

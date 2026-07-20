@@ -55,9 +55,12 @@ func (b *BundledRegistrations) ClaimProducerClients() map[string]locks.ClaimProd
 	return out
 }
 
-func (b *BundledRegistrations) AdvertiseInto(disc *observability.Discovery) {
+func (b *BundledRegistrations) AdvertiseInto(disc *observability.Discovery, configuredExecutors map[string]ExecutorEntry, configuredClaimProducers map[string]ClaimProducerEntry) {
 	now := time.Now()
 	for name, adv := range b.ExecutorAdverts {
+		if _, overridden := configuredExecutors[name]; overridden {
+			continue
+		}
 		disc.SetExecutor(observability.PeerEntry{
 			Name:         name,
 			Endpoint:     b.ExecutorAliases[name].URL,
@@ -72,6 +75,9 @@ func (b *BundledRegistrations) AdvertiseInto(disc *observability.Discovery) {
 		})
 	}
 	for name, caps := range b.ClaimProducerAdverts {
+		if _, overridden := configuredClaimProducers[name]; overridden {
+			continue
+		}
 		disc.SetClaimProducer(observability.PeerEntry{
 			Name:         name,
 			Reachability: observability.ReachabilityReachable,

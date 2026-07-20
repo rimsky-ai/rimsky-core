@@ -164,6 +164,57 @@ func TestComputePlan_RemoveFromManifest(t *testing.T) {
 	}
 }
 
+func TestComputePlan_SharedHashSurvivesSiblingTagRemoval(t *testing.T) {
+	srv := clitest.NewServer(t)
+	defer srv.Close()
+	c := cli.NewClient(srv.URL)
+
+	dir, m := makeManifest(t, `project: p
+templates:
+  - path: spec.yml
+    tag: a@1.0
+    state: deployed
+`)
+	for i := range m.Templates {
+		m.Templates[i].Path = filepath.Join(dir, m.Templates[i].Path)
+	}
+
+	hash, spec, err := compose.ResolveTemplate(m.Templates[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registeredHash, _ := srv.State.RegisterTemplate(specToMap(t, spec), "compose:p:a@1.0", "")
+	if registeredHash != hash {
+		t.Fatalf("fixture hash mismatch: registered %q resolved %q", registeredHash, hash)
+	}
+	srv.State.SetTagHash("compose:p:b@1.0", hash)
+	srv.State.SetTemplateState(hash, "deployed")
+
+	state, err := compose.QueryState(context.Background(), c, m.Project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := compose.ComputePlan(context.Background(), c, m, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, s := range plan.Steps {
+		if (s.Action == compose.ActionUndeploy || s.Action == compose.ActionTemplateDelete) && s.TemplateHash == hash {
+			t.Fatalf("plan tears down shared hash %s still referenced by surviving tag a@1.0: %+v", cli.TruncHash(hash), plan.Steps)
+		}
+	}
+	sawTagDelete := false
+	for _, s := range plan.Steps {
+		if s.Action == compose.ActionTagDelete && s.Tag == "compose:p:b@1.0" {
+			sawTagDelete = true
+		}
+	}
+	if !sawTagDelete {
+		t.Fatalf("expected a tag-delete step for removed sibling tag b@1.0: %+v", plan.Steps)
+	}
+}
+
 func TestComputePlan_RestartOnFailure_Failed(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()

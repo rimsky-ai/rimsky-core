@@ -18,6 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
 func mainRunScopeIDForInstance(t *testing.T, h *harness, instanceID shared.UUID) shared.UUID {
@@ -181,6 +182,91 @@ func TestFrames_ListFilteredByStateRunning(t *testing.T) {
 	m, _ := frames[0].(map[string]any)
 	require.Equal(t, runningFrame.String(), m["frame_id"])
 	require.Equal(t, "running", m["state"])
+}
+
+func markFrameFailed(t *testing.T, ctx context.Context, h *harness, instanceID, frameID shared.UUID) {
+	t.Helper()
+	var nodeID shared.UUID
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		nodes, err := h.persist.Nodes().ListByInstance(ctx, instanceID, tx)
+		if err != nil {
+			return err
+		}
+		require.NotEmpty(t, nodes, "instance must have at least one node to attach a failed run to")
+		nodeID = nodes[0].ID
+		return nil
+	}))
+	var runScopeID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, h.driver,
+		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
+		[]any{uuid.UUID(frameID)}, &runScopeID)
+	pgtest.ExecForTest(ctx, t, h.driver, `
+		INSERT INTO rimsky_node_runs
+			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'failed', $3, $4, 0)
+	`, uuid.New(), uuid.UUID(nodeID), uuid.UUID(frameID), uuid.UUID(runScopeID))
+	endFrameForTest(t, ctx, h, frameID)
+}
+
+func TestFrames_ListFilteredByStateDistinguishesFailedFromCompleted(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID := newInstanceForMessages(t, h, "frames-state-failed")
+	instUUID := mustParseUUID(t, instID)
+	completedFrame, _ := seedFrameForTest(t, ctx, h, instUUID, "test/completed")
+	endFrameForTest(t, ctx, h, completedFrame)
+	failedFrame, _ := seedFrameForTest(t, ctx, h, instUUID, "test/failed")
+	markFrameFailed(t, ctx, h, instUUID, failedFrame)
+
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/frames?state=failed", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	frames, _ := out["frames"].([]any)
+	require.Len(t, frames, 1, "state=failed must not also return completed frames")
+	m, _ := frames[0].(map[string]any)
+	require.Equal(t, failedFrame.String(), m["frame_id"])
+	require.Equal(t, "failed", m["state"])
+
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/frames?state=completed", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	frames, _ = out["frames"].([]any)
+	require.Len(t, frames, 1, "state=completed must not also return failed frames")
+	m, _ = frames[0].(map[string]any)
+	require.Equal(t, completedFrame.String(), m["frame_id"])
+	require.Equal(t, "completed", m["state"])
+}
+
+func TestFrames_List_UnknownStateReturns400(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "frames-bad-state")
+	status, _ := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/frames?state=bogus", instID), nil)
+	require.Equal(t, http.StatusBadRequest, status)
+}
+
+func TestFrames_Get_IncludesRootRunScopeID(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID := newInstanceForMessages(t, h, "frames-root-scope")
+	instUUID := mustParseUUID(t, instID)
+	frameID, _ := seedFrameForTest(t, ctx, h, instUUID, "test/root-scope")
+
+	var wantRootScope shared.UUID
+	pgtest.QueryRowForTest(ctx, t, h.driver,
+		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
+		[]any{uuid.UUID(frameID)}, &wantRootScope)
+
+	url := fmt.Sprintf("/v1/instances/%s/frames/%s", instID, frameID.String())
+	status, out := h.httpJSON(t, "GET", url, nil)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, wantRootScope.String(), out["root_run_scope_id"])
 }
 
 func TestFrames_ListUnfilteredIncludesEndedFrames(t *testing.T) {

@@ -404,6 +404,9 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed(t *testing.T) {
 	if plain == nil || plain.IsSubgraphEntryAbsorbed {
 		t.Fatalf("plain node should not carry IsSubgraphEntryAbsorbed: %+v", plain)
 	}
+	if caller.Executor != "stub" {
+		t.Fatalf("absorbed caller must inherit the entry's executor (delegation.md: 'the calling node's executor is taken from the entry'); got %q", caller.Executor)
+	}
 }
 
 func TestCanonicalizeGraphs_EmitsIsSubgraphExit(t *testing.T) {
@@ -542,5 +545,133 @@ func TestCanonicalizeGraphs_RejectCallerExecutorAndDelegate_EntryHasNoExecutor(t
 	msgs := validateMultiGraph(t, spec)
 	if !hasErrorContaining(msgs, "delegate and executor are mutually exclusive") {
 		t.Fatalf("expected mutual-exclusion rejection; got: %v", msgs)
+	}
+}
+
+func TestAbsorbEntryIntoCaller_ExecutorInheritedFromEntry(t *testing.T) {
+	caller := TemplateNodeDef{Type: "caller", Delegate: "sub"}
+	entry := TemplateNodeDef{Type: "entry_node", Executor: "handler.entry"}
+	out, errs := absorbEntryIntoCaller(caller, entry, "graphs[0].nodes[0]")
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %+v", errs)
+	}
+	if out.Executor != "handler.entry" {
+		t.Fatalf("expected caller to inherit entry's executor when caller declares none, got %q", out.Executor)
+	}
+}
+
+func TestAbsorbEntryIntoCaller_CallerOwnExecutorAlwaysRejected(t *testing.T) {
+	cases := []struct {
+		name           string
+		callerExecutor string
+		entryExecutor  string
+	}{
+		{"diverging executors", "handler.caller", "handler.entry"},
+		{"identical executors — still rejected, no carve-out", "handler.shared", "handler.shared"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			caller := TemplateNodeDef{Type: "caller", Executor: tc.callerExecutor, Delegate: "sub"}
+			entry := TemplateNodeDef{Type: "entry_node", Executor: tc.entryExecutor}
+			out, errs := absorbEntryIntoCaller(caller, entry, "graphs[0].nodes[0]")
+			if len(errs) == 0 {
+				t.Fatalf("expected rejection: a delegating caller must never declare its own executor (delegation.md: 'declaring both is rejected'); out=%+v", out)
+			}
+			if !strings.Contains(errs[0].Msg, "delegate and executor are mutually exclusive") {
+				t.Fatalf("expected mutual-exclusion message, got: %+v", errs)
+			}
+		})
+	}
+}
+
+func TestMergeClaimProducersOnAbsorb_IdenticalAliasMerges(t *testing.T) {
+	callerProducers := []NodeClaimProducerRef{
+		{Name: "content", Alias: "shared", Intent: "rw", Selector: "{{params.a}}"},
+	}
+	entryProducers := []NodeClaimProducerRef{
+		{Name: "content", Alias: "shared", Intent: "rw", Selector: "{{params.a}}"},
+	}
+	merged, errs := mergeClaimProducersOnAbsorb(callerProducers, entryProducers, "graphs[0].nodes[0]")
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors merging identical claim producer aliases: %+v", errs)
+	}
+	if len(merged) != 1 {
+		t.Fatalf("expected identical alias to dedup to one entry, got %+v", merged)
+	}
+}
+
+func TestMergeClaimProducersOnAbsorb_DivergingAliasRejected(t *testing.T) {
+	callerProducers := []NodeClaimProducerRef{
+		{Name: "content", Alias: "shared", Intent: "rw", Selector: "{{params.a}}"},
+	}
+	entryProducers := []NodeClaimProducerRef{
+		{Name: "other", Alias: "shared", Intent: "rw", Selector: "{{params.b}}"},
+	}
+	merged, errs := mergeClaimProducersOnAbsorb(callerProducers, entryProducers, "graphs[0].nodes[0]")
+	if len(errs) == 0 {
+		t.Fatalf("expected subgraph_absorption_alias_conflict for diverging claim producer bindings, merged=%+v", merged)
+	}
+	if !strings.Contains(errs[0].Msg, "subgraph_absorption_alias_conflict") {
+		t.Fatalf("expected subgraph_absorption_alias_conflict slug, got: %+v", errs)
+	}
+}
+
+func TestMergeHoldsOnAbsorb_IdenticalAliasMerges(t *testing.T) {
+	callerHolds := map[string]HoldsBinding{"x": {From: "producer"}}
+	entryHolds := map[string]HoldsBinding{"x": {From: "producer"}}
+	merged, errs := mergeHoldsOnAbsorb(callerHolds, entryHolds, "graphs[0].nodes[0]")
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors merging identical holds aliases: %+v", errs)
+	}
+	if len(merged) != 1 || merged["x"].From != "producer" {
+		t.Fatalf("expected merged holds to contain one entry x->producer, got %+v", merged)
+	}
+}
+
+func TestMergeHoldsOnAbsorb_DivergingAliasRejected(t *testing.T) {
+	callerHolds := map[string]HoldsBinding{"x": {From: "producer_a"}}
+	entryHolds := map[string]HoldsBinding{"x": {From: "producer_b"}}
+	merged, errs := mergeHoldsOnAbsorb(callerHolds, entryHolds, "graphs[0].nodes[0]")
+	if len(errs) == 0 {
+		t.Fatalf("expected subgraph_absorption_alias_conflict for diverging holds bindings, merged=%+v", merged)
+	}
+	if !strings.Contains(errs[0].Msg, "subgraph_absorption_alias_conflict") {
+		t.Fatalf("expected subgraph_absorption_alias_conflict slug, got: %+v", errs)
+	}
+}
+
+func TestAbsorbEntryIntoCaller_AttributeSchemaDeepMerges(t *testing.T) {
+	caller := TemplateNodeDef{
+		Type:     "caller",
+		Delegate: "sub",
+		Attributes: &NodeAttributesDef{Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"caller_field": map[string]any{"type": "string", "default": "c"},
+			},
+		}},
+	}
+	entry := TemplateNodeDef{
+		Type: "entry_node",
+		Attributes: &NodeAttributesDef{Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"entry_field": map[string]any{"type": "string", "default": "e"},
+			},
+		}},
+	}
+	out, errs := absorbEntryIntoCaller(caller, entry, "graphs[0].nodes[0]")
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %+v", errs)
+	}
+	if out.Attributes == nil {
+		t.Fatalf("expected merged attributes schema, got nil")
+	}
+	props, _ := out.Attributes.Schema["properties"].(map[string]any)
+	if _, ok := props["caller_field"]; !ok {
+		t.Fatalf("merged schema missing caller_field: %+v", props)
+	}
+	if _, ok := props["entry_field"]; !ok {
+		t.Fatalf("merged schema missing entry_field: %+v", props)
 	}
 }

@@ -75,7 +75,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	child1RunID := uuid.New()
 	grandchild1RunID := uuid.New()
 
-	insertLeafRun := func(t *testing.T, runID, parentNodeRunID uuid.UUID, observedAt time.Time) {
+	insertLeafRun := func(t *testing.T, runID, substitutedFromRunID uuid.UUID, observedAt time.Time) {
 		t.Helper()
 		rec := map[string]any{
 			"run_id":               runID.String(),
@@ -83,8 +83,13 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 			"state":                "fresh",
 			"settling_signal_type": "terminal/success",
 		}
-		if parentNodeRunID != uuid.Nil {
-			rec["parent_run_id"] = parentNodeRunID.String()
+		if substitutedFromRunID != uuid.Nil {
+			rec["substitution_refs"] = []map[string]any{
+				{
+					"source_kind":          "run",
+					"source_version_or_id": substitutedFromRunID.String(),
+				},
+			}
 		}
 		recBytes, err := json.Marshal(rec)
 		require.NoError(t, err)
@@ -708,7 +713,7 @@ func TestLineageRunAncestors_NonRunSourceKindRefsExcluded(t *testing.T) {
 			"even when its source_version_or_id happens to parse as a UUID matching a real lineage record")
 }
 
-func TestLineageEndpoints_BySourceWindowTruncatesAt500(t *testing.T) {
+func TestLineageEndpoints_BySourceScanPagesPastFirst500(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -737,7 +742,7 @@ func TestLineageEndpoints_BySourceWindowTruncatesAt500(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		for i := 0; i < 500; i++ {
+		for i := 0; i < 501; i++ {
 			rec, merr := json.Marshal(map[string]any{"run_id": uuid.NewString()})
 			if merr != nil {
 				return merr
@@ -759,12 +764,13 @@ func TestLineageEndpoints_BySourceWindowTruncatesAt500(t *testing.T) {
 	status, out := h.httpJSON(t, "GET", "/v1/lineage/by-source/run/"+srcID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ := out["records"].([]any)
-	require.Empty(t, records,
-		"the by-source scan window is capped at 500 rows ordered by observed_at DESC; "+
-			"a match older than the newest 500 rows falls outside the window")
+	require.Len(t, records, 1,
+		"a match older than the newest 500 rows must still be found; the reverse-source lookup must page "+
+			"past its first 500-row window rather than silently truncating")
+	require.Equal(t, false, out["truncated"], "the scan completed within its page budget; must not report truncated")
 }
 
-func TestLineageEndpoints_ByProducerWindowTruncatesAt500(t *testing.T) {
+func TestLineageEndpoints_ByProducerScanPagesPastFirst500(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -792,7 +798,7 @@ func TestLineageEndpoints_ByProducerWindowTruncatesAt500(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		for i := 0; i < 500; i++ {
+		for i := 0; i < 501; i++ {
 			rec, merr := json.Marshal(map[string]any{
 				"claim_handle_id": uuid.NewString(),
 				"producer_name":   "filler-store",
@@ -819,10 +825,63 @@ func TestLineageEndpoints_ByProducerWindowTruncatesAt500(t *testing.T) {
 	status, out := h.httpJSON(t, "GET", "/v1/lineage/by-producer/window-store", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ := out["records"].([]any)
-	require.Empty(t, records,
-		"the by-producer scan window is capped at 500 rows ordered by observed_at DESC; "+
-			"a match older than the newest 500 rows falls outside the window")
+	require.Len(t, records, 1,
+		"a match older than the newest 500 rows must still be found; the reverse-producer lookup must page "+
+			"past its first 500-row window rather than silently truncating")
+	require.Equal(t, false, out["truncated"], "the scan completed within its page budget; must not report truncated")
 }
+
+func TestQueryAllLineageRecords_PagesUntilExhaustedThenStops(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, frameID := seedLineageInstance(t, h, "lin-scan-paginate")
+	base := time.Now().UTC()
+
+	const total = 12
+	for i := 0; i < total; i++ {
+		insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+			map[string]any{"run_id": uuid.NewString(), "seq": i}, base.Add(time.Duration(i)*time.Second), "")
+	}
+
+	deps := AppDeps{Persist: h.persist, Logger: shared.SilentLogger{}}
+	matches, truncated, err := queryAllLineageRecords(ctx, deps,
+		persistence.LineageQuery{Kind: persistence.LineageRecordKindLeafRun, InstanceID: instIDPtr(shared.UUID(instID))},
+		func(json.RawMessage) bool { return true },
+		5, 10)
+	require.NoError(t, err)
+	require.False(t, truncated, "12 rows over a 5-per-page budget with 10 pages available must fully exhaust")
+	require.Len(t, matches, total, "every row across all pages must be collected, not just the first page")
+}
+
+func TestQueryAllLineageRecords_ReportsTruncatedWhenPageBudgetExhausted(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, frameID := seedLineageInstance(t, h, "lin-scan-truncate")
+	base := time.Now().UTC()
+
+	const total = 12
+	for i := 0; i < total; i++ {
+		insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+			map[string]any{"run_id": uuid.NewString(), "seq": i}, base.Add(time.Duration(i)*time.Second), "")
+	}
+
+	deps := AppDeps{Persist: h.persist, Logger: shared.SilentLogger{}}
+	matches, truncated, err := queryAllLineageRecords(ctx, deps,
+		persistence.LineageQuery{Kind: persistence.LineageRecordKindLeafRun, InstanceID: instIDPtr(shared.UUID(instID))},
+		func(json.RawMessage) bool { return true },
+		5, 2)
+	require.NoError(t, err)
+	require.True(t, truncated, "12 rows over a 5-per-page budget with only 2 pages available must exhaust the page budget")
+	require.Len(t, matches, 10, "only the rows covered by the exhausted page budget must be returned")
+}
+
+func instIDPtr(id shared.UUID) *shared.UUID { return &id }
 
 func TestLineageRunDescendants_MatchesRuntimeWriterRecordShape(t *testing.T) {
 	t.Parallel()
@@ -844,9 +903,11 @@ func TestLineageRunDescendants_MatchesRuntimeWriterRecordShape(t *testing.T) {
 	childRec := runtime.LeafRunRecord{
 		NodeRunID:          childRunID,
 		FrameID:            shared.UUID(frameID),
-		ParentNodeRunID:    parentRunID.String(),
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		SubstitutionRefs: []runtime.SubstitutionRef{
+			{SourceKind: "run", SourceVersionOrID: parentRunID.String()},
+		},
 	}
 	parentBytes, err := json.Marshal(parentRec)
 	require.NoError(t, err)
@@ -878,7 +939,8 @@ func TestLineageRunDescendants_MatchesRuntimeWriterRecordShape(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	descendants, _ := out["descendants"].([]any)
 	require.Len(t, descendants, 1,
-		"descendants walk must find the child using the runtime writer's own LeafRunRecord.parent_run_id json shape")
+		"descendants walk must find a run that substituted from the parent, using the runtime writer's own "+
+			"LeafRunRecord.substitution_refs json shape — the same relation ancestors already walks in reverse")
 	item := descendants[0].(map[string]any)
 	rec, _ := item["record"].(map[string]any)
 	require.Equal(t, childRunID.String(), rec["run_id"])

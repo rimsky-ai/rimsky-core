@@ -207,3 +207,98 @@ func TestMCPWrite_UnderDryRunGrant_NoMutationAndProtocolSkinMCP(t *testing.T) {
 			"a dry-run MCP write must not mutate state: tag %q was created", tagName)
 	}
 }
+
+func TestMCPLineageAncestorsDescendants_ReachDedicatedRoutesNotTheRunItem(t *testing.T) {
+	h := newMCPParityHarness(t)
+	admin := h.mintKey(t, "admin", `[{"action":"*"}]`)
+
+	status, out := h.http(t, "POST", "/v1/templates", admin, validTemplateBody("mcp-lineage-"+uuid.NewString()))
+	require.Equal(t, http.StatusCreated, status, out)
+	tplID, _ := out["template_id"].(string)
+	require.NotEmpty(t, tplID)
+	deployStatus, _ := h.http(t, "POST", "/v1/templates/"+tplID+"/deploy", admin, map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
+	status, out = h.http(t, "POST", "/v1/instances", admin, map[string]any{
+		"template":     tplID,
+		"instance_key": "mcp-lineage-ck-" + uuid.NewString(),
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	instID, _ := out["instance_id"].(string)
+	require.NotEmpty(t, instID)
+	instUUID, err := uuid.Parse(instID)
+	require.NoError(t, err)
+
+	rootScope := shared.UUID(uuid.New())
+	var frameID shared.UUID
+	require.NoError(t, h.db.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.db.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID: rootScope, GraphName: "main", InstanceID: shared.UUID(instUUID),
+		}); err != nil {
+			return err
+		}
+		msgID := shared.UUID(uuid.New())
+		if err := h.db.Tables().Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID: msgID, InstanceID: shared.UUID(instUUID), Type: "test/seed", Sender: "test", SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		fid, err := h.db.Tables().Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, tx)
+		frameID = fid
+		return err
+	}))
+	require.NotEqual(t, shared.UUID{}, frameID)
+
+	parentRunID := uuid.New()
+	childRunID := uuid.New()
+	base := time.Now().UTC()
+	insertLeaf := func(runID uuid.UUID, substitutedFrom uuid.UUID, observedAt time.Time) {
+		rec := map[string]any{"run_id": runID.String(), "frame_id": frameID.String(), "state": "fresh"}
+		if substitutedFrom != uuid.Nil {
+			rec["substitution_refs"] = []map[string]any{{"source_kind": "run", "source_version_or_id": substitutedFrom.String()}}
+		}
+		recBytes, merr := json.Marshal(rec)
+		require.NoError(t, merr)
+		require.NoError(t, h.db.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+			return h.db.Tables().Lineage().Insert(ctx, tx, persistence.LineageRow{
+				ID: shared.UUID(uuid.New()), RecordKind: persistence.LineageRecordKindLeafRun,
+				InstanceID: shared.UUID(instUUID), FrameID: frameID, ObservedAt: observedAt, Record: recBytes,
+			})
+		}))
+	}
+	insertLeaf(parentRunID, uuid.Nil, base)
+	insertLeaf(childRunID, parentRunID, base.Add(time.Second))
+
+	callTool := func(name string, args map[string]any) map[string]any {
+		rpcBody := map[string]any{
+			"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+			"params": map[string]any{"name": name, "arguments": args},
+		}
+		status, out := h.http(t, "POST", "/v1/mcp", admin, rpcBody)
+		require.Equal(t, http.StatusOK, status, out)
+		result, ok := out["result"].(map[string]any)
+		require.True(t, ok, "expected JSON-RPC result envelope for %s: %v", name, out)
+		content, ok := result["content"].([]any)
+		require.True(t, ok && len(content) > 0, "expected result.content for %s: %v", name, result)
+		first, _ := content[0].(map[string]any)
+		text, _ := first["text"].(string)
+		var toolResult map[string]any
+		require.NoError(t, json.Unmarshal([]byte(text), &toolResult))
+		return toolResult
+	}
+
+	ancestorsResult := callTool("lineage_run_ancestors", map[string]any{"run_id": childRunID.String()})
+	ancestors, _ := ancestorsResult["ancestors"].([]any)
+	require.Len(t, ancestors, 1,
+		"lineage_run_ancestors must reach the ancestors sub-route, not the plain run item")
+	ancItem, _ := ancestors[0].(map[string]any)
+	ancRec, _ := ancItem["record"].(map[string]any)
+	require.Equal(t, parentRunID.String(), ancRec["run_id"])
+
+	descendantsResult := callTool("lineage_run_descendants", map[string]any{"run_id": parentRunID.String()})
+	descendants, _ := descendantsResult["descendants"].([]any)
+	require.Len(t, descendants, 1,
+		"lineage_run_descendants must reach the descendants sub-route, not the plain run item")
+	descItem, _ := descendants[0].(map[string]any)
+	descRec, _ := descItem["record"].(map[string]any)
+	require.Equal(t, childRunID.String(), descRec["run_id"])
+}

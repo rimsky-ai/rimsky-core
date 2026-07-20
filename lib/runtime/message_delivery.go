@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -165,10 +166,22 @@ func deliverNamedMessageInTx(
 	}
 	if receiver == nil {
 		if logger != nil {
-			logger.Warn("deliverNamedMessageInTx: no message-receiver-node found; message delivered as dead letter",
+			logger.Warn("deliverNamedMessageInTx: no message-receiver-node found; recording dead-letter audit event",
 				"instance_id", instanceID.String(),
 				"message_type", msg.Type,
 				"message_id", msg.ID.String())
+		}
+		instID := instanceID
+		if err := persist.Events().Append(ctx, persistence.EventAppendInput{
+			InstanceID: &instID,
+			Kind:       events.KindMessageDeadLettered(),
+			Payload: map[string]any{
+				"message_id":   msg.ID.String(),
+				"message_type": msg.Type,
+				"reason":       "no_message_receiver_node",
+			},
+		}, tx); err != nil {
+			return fmt.Errorf("deliverNamedMessageInTx: append dead-letter audit event for %q: %w", msg.Type, err)
 		}
 		return nil
 	}

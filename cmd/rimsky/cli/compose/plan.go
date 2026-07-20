@@ -268,6 +268,21 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		}
 	}
 
+	keptHashes := map[string]bool{}
+	for _, hash := range resolved {
+		keptHashes[hash] = true
+	}
+	for hash := range oldHashesNeedingUndeploy {
+		if keptHashes[hash] {
+			delete(oldHashesNeedingUndeploy, hash)
+		}
+	}
+	for hash := range oldHashesNeedingDelete {
+		if keptHashes[hash] {
+			delete(oldHashesNeedingDelete, hash)
+		}
+	}
+
 	undeploys := []Step{}
 	for hash := range oldHashesNeedingUndeploy {
 		undeploys = append(undeploys, Step{

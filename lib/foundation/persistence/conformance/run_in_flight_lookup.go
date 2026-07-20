@@ -117,6 +117,47 @@ func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.
 	}
 }
 
+// @concept: wait-set
+func testInFlightLookup_DeterministicWithMultipleCoexistingPendings(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+	q := d.Queue()
+
+	var earliest shared.UUID
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		id, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		earliest = id
+		return err
+	}); err != nil {
+		t.Fatalf("CreateCascadePending(first): %v", err)
+	}
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		return err
+	}); err != nil {
+		t.Fatalf("CreateCascadePending(second): %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		var id shared.UUID
+		var found bool
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			var err error
+			id, found, err = q.GetInFlightRunForNode(ctx, tx, fix.NodeID, fix.MainRunScopeID)
+			return err
+		}); err != nil {
+			t.Fatalf("GetInFlightRunForNode: %v", err)
+		}
+		if !found {
+			t.Fatalf("GetInFlightRunForNode: not found with two coexisting pendings")
+		}
+		if id != earliest {
+			t.Fatalf("GetInFlightRunForNode with two coexisting pendings returned %s, want the sequence-earliest row %s (dispatch claims in sequence order)", id, earliest)
+		}
+	}
+}
+
 func testInFlightLookup_ReturnsNoneWhenAbsent(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)

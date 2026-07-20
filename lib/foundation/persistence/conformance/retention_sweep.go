@@ -95,6 +95,7 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 	frames := d.Tables().Frames()
 	q := d.Queue()
 
+	rootScopeByFrame := map[shared.UUID]shared.UUID{fix.FrameID: fix.MainRunScopeID}
 	mintRunningFrame := func(label string) shared.UUID {
 		var fid shared.UUID
 		frameOp(ctx, t, d, "mint "+label, func(tx persistence.Tx) error {
@@ -104,9 +105,27 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 			if err != nil {
 				return err
 			}
+			rootScopeByFrame[fid] = scope
 			return nil
 		})
 		return fid
+	}
+	assertRootScope := func(fid shared.UUID, wantPresent bool, label string) {
+		t.Helper()
+		scopeID, ok := rootScopeByFrame[fid]
+		if !ok {
+			t.Fatalf("assertRootScope(%s): no root scope recorded for frame %s", label, fid)
+		}
+		frameOp(ctx, t, d, "check root scope "+label, func(tx persistence.Tx) error {
+			row, err := d.Tables().RunScopes().GetByID(ctx, tx, scopeID)
+			if err != nil {
+				return err
+			}
+			if (row != nil) != wantPresent {
+				t.Fatalf("%s root run scope %s: present=%v, want present=%v", label, scopeID, row != nil, wantPresent)
+			}
+			return nil
+		})
 	}
 	terminate := func(fid shared.UUID, label string) {
 		frameOp(ctx, t, d, "terminate "+label, func(tx persistence.Tx) error {
@@ -172,6 +191,11 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 	if run != nil {
 		t.Fatalf("node_run %s survived its frame's prune — cascade did not fire", runOnF1)
 	}
+	assertRootScope(fix.FrameID, false, "fixture frame (pruned)")
+	assertRootScope(f1, false, "f1 (pruned)")
+	assertRootScope(f2, true, "f2 (alive)")
+	assertRootScope(f3, true, "f3 (alive)")
+	assertRootScope(runningF, true, "running survivor")
 
 	n, err = frames.PruneTraceForRetention(ctx, 1, time.Time{})
 	if err != nil {
@@ -189,6 +213,8 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 		}
 		return nil
 	})
+	assertRootScope(f2, false, "f2 (pruned)")
+	assertRootScope(f3, true, "f3 (alive)")
 
 	n, err = frames.PruneTraceForRetention(ctx, 0, time.Now().Add(1*time.Hour))
 	if err != nil {
@@ -197,6 +223,8 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 	if n != 1 {
 		t.Fatalf("far-future prune deleted %d frames, want exactly 1 (f3)", n)
 	}
+	assertRootScope(f3, false, "f3 (pruned)")
+	assertRootScope(runningF, true, "running survivor")
 	frameOp(ctx, t, d, "running frame survives everything", func(tx persistence.Tx) error {
 		row, err := frames.GetForObservability(ctx, runningF, tx)
 		if err != nil || row == nil || row.State != "running" {

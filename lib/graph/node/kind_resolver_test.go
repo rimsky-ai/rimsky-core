@@ -88,6 +88,29 @@ func TestValidateKindDeclaration_RejectsMixedKindAndExecutor(t *testing.T) {
 	}
 }
 
+func TestValidateKindDeclaration_RejectsMixedKindAndSendsMessage(t *testing.T) {
+	aliases := newSeededAliases(t, "loop_counter", "rimsky.loop_counter")
+	spec := &TemplateSpec{
+		Name:    "t",
+		Version: "1",
+		Messages: []MessageSchema{
+			{Type: "ping"},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:         "n",
+			Kind:         "loop_counter",
+			SendsMessage: "ping",
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{KindAliases: aliases})
+	if res.Ok() {
+		t.Fatalf("expected validation to fail for mixed kind+sends_message")
+	}
+	if !findErrorContains(res.Errors, "declares both kind and sends_message") {
+		t.Fatalf("expected error mentioning 'declares both kind and sends_message', got %+v", res.Errors)
+	}
+}
+
 func TestValidateKindDeclaration_RejectsUnknownKind(t *testing.T) {
 	aliases := newSeededAliases(t, "loop_counter", "rimsky.loop_counter")
 	spec := &TemplateSpec{

@@ -80,6 +80,9 @@ type RunArgs struct {
 	PreAcquireUnavailableHook func(ctx context.Context)
 
 	CheckAndFireHook func(ctx context.Context)
+
+	// @concept: fan-out
+	FanOutSemaphores *FanOutSemaphoreRegistry
 }
 
 type MetricsHook interface {
@@ -137,6 +140,7 @@ type AcquiredLock struct {
 	Alias                   string
 	IsHeld                  bool
 	ProducerCandidateHandle []byte
+	ProducerLeaseToken      string
 	UnavailableClass        string
 }
 
@@ -144,7 +148,7 @@ type AcquiredLock struct {
 func RunNode(
 	ctx context.Context,
 	args RunArgs,
-	registerAsync func(ackID string, actx AsyncContext),
+	registerAsync func(ackID string, actx AsyncContext) bool,
 ) (RunnerResult, error) {
 	if err := validateRunArgs(args); err != nil {
 		return RunnerResult{}, err
@@ -221,7 +225,9 @@ func RunNode(
 		if acq.RetryDecision == nil || !acq.RetryDecision.IsRetry() {
 			break
 		}
-		acq.Scratch = terminal.Scratch
+		if len(terminal.Scratch) > 0 {
+			acq.Scratch = terminal.Scratch
+		}
 		if delay := time.Duration(acq.RetryDecision.DelayMs) * time.Millisecond; delay > 0 {
 			select {
 			case <-ctx.Done():

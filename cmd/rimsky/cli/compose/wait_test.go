@@ -74,6 +74,27 @@ func (f *fakeInstanceClient) ListInstanceNodes(ctx context.Context, id string) (
 	return &cli.ListInstanceNodesResponse{Nodes: append([]cli.Node(nil), frames[i].nodes...)}, nil
 }
 
+func (f *fakeInstanceClient) ListInstanceFrames(ctx context.Context, id, state string) (*cli.ListFramesResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	frames, ok := f.frames[id]
+	if !ok || len(frames) == 0 {
+		return &cli.ListFramesResponse{}, nil
+	}
+	i := f.idx[id]
+	if i >= len(frames) {
+		i = len(frames) - 1
+	}
+	if allNodesSettled(frames[i].nodes) {
+		return &cli.ListFramesResponse{}, nil
+	}
+	return &cli.ListFramesResponse{Frames: []cli.FrameItem{{FrameID: "fake-frame", State: "running"}}}, nil
+}
+
+func (f *fakeInstanceClient) ListInstanceMessages(ctx context.Context, id string, q cli.ListMessagesQuery) (*cli.ListMessagesResponse, error) {
+	return &cli.ListMessagesResponse{}, nil
+}
+
 func (f *fakeInstanceClient) TerminateInstance(_ context.Context, id string, _ string) (*cli.Instance, error) {
 	return &cli.Instance{ID: id}, nil
 }
@@ -87,7 +108,7 @@ type nopPrinter struct{}
 
 func (nopPrinter) InstanceStarting(project, name string)                         {}
 func (nopPrinter) NodeRunTerminal(project, name, nodeID, outcome, reason string) {}
-func (nopPrinter) InstanceTerminal(project, name, outcome string, frames int)    {}
+func (nopPrinter) InstanceTerminal(project, name, outcome string, nodeCount int) {}
 func (nopPrinter) FrameTick(project, name string, frameNo int)                   {}
 func (nopPrinter) Finalize()                                                     {}
 
@@ -137,7 +158,7 @@ func TestWaitForInstancesTerminal_CallsPrinter(t *testing.T) {
 	if !contains(out, "instance proj/alpha node a-n1: failure (boom)") {
 		t.Errorf("missing NodeRunTerminal line with reason; output = %q", out)
 	}
-	if !contains(out, "instance proj/alpha: failure (frames=1)") {
+	if !contains(out, "instance proj/alpha: failure (nodes=1)") {
 		t.Errorf("missing InstanceTerminal line; output = %q", out)
 	}
 }
@@ -220,6 +241,59 @@ func TestWaitForInstancesTerminal_TransientNodesErrorPreservesOutcome(t *testing
 	}
 	if got, want := outcomes["a"], OutcomeFailure; got != want {
 		t.Errorf("outcomes[a] = %q, want %q (transient nodes-error must not silently promote failure to success)", got, want)
+	}
+}
+
+type zeroRunNodeClient struct {
+	mu   sync.Mutex
+	poll int
+}
+
+func (c *zeroRunNodeClient) GetInstance(_ context.Context, id string) (*cli.Instance, error) {
+	return &cli.Instance{ID: id}, nil
+}
+
+func (c *zeroRunNodeClient) ListInstanceNodes(_ context.Context, _ string) (*cli.ListInstanceNodesResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.poll++
+	main := cli.Node{ID: "main", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}}
+	if c.poll >= 2 {
+		main = cli.Node{ID: "main", RunSummary: &cli.NodeRunSummary{FreshCount: 1}}
+	}
+	receiver := cli.Node{ID: "receiver", RunSummary: &cli.NodeRunSummary{}}
+	return &cli.ListInstanceNodesResponse{Nodes: []cli.Node{main, receiver}}, nil
+}
+
+func (c *zeroRunNodeClient) ListInstanceFrames(_ context.Context, _, _ string) (*cli.ListFramesResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.poll < 2 {
+		return &cli.ListFramesResponse{Frames: []cli.FrameItem{{FrameID: "f1", State: "running"}}}, nil
+	}
+	return &cli.ListFramesResponse{}, nil
+}
+
+func (c *zeroRunNodeClient) ListInstanceMessages(_ context.Context, _ string, _ cli.ListMessagesQuery) (*cli.ListMessagesResponse, error) {
+	return &cli.ListMessagesResponse{}, nil
+}
+
+func (c *zeroRunNodeClient) TerminateInstance(_ context.Context, id, _ string) (*cli.Instance, error) {
+	return &cli.Instance{ID: id}, nil
+}
+
+// @story: one-shot-to-terminal
+func TestWaitForInstancesTerminal_ZeroRunNodeDoesNotBlockSettlement(t *testing.T) {
+	client := &zeroRunNodeClient{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	outcomes, err := WaitForInstancesTerminal(ctx, client, []string{"a"}, "proj", nil, nopPrinter{}, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("WaitForInstancesTerminal: %v (a permanently-zero-run declared node must not block settlement once the instance has no open frame and no pending message)", err)
+	}
+	if got, want := outcomes["a"], OutcomeSuccess; got != want {
+		t.Errorf("outcomes[a] = %q, want %q", got, want)
 	}
 }
 

@@ -29,7 +29,7 @@ func (b *runTreeImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(t
 
 const sqliteRunTreeCols = `
   id, node_id, frame_id, run_scope_id,
-  state, settling_signal_type, aggregation_policy`
+  state, settling_signal_type, aggregation_policy, changed`
 
 func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, in persistence.CreateRootNodeRunInput) error {
 	if in.RunScopeID == (shared.UUID{}) {
@@ -147,7 +147,7 @@ func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, 
 func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.NodeRunTreeRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
 		`SELECT nr.id, nr.node_id, nr.frame_id, nr.run_scope_id,
-		        nr.state, nr.settling_signal_type, nr.aggregation_policy
+		        nr.state, nr.settling_signal_type, nr.aggregation_policy, nr.changed
 		   FROM rimsky_node_runs nr
 		   JOIN rimsky_run_scopes rs ON rs.id = nr.run_scope_id
 		  WHERE rs.parent_run_id = ?
@@ -173,20 +173,24 @@ func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, paren
 
 func (b *runTreeImpl) UpdateStateAndOutcome(
 	ctx context.Context, tx persistence.Tx, runID shared.UUID,
-	state cascade.NodeState, settlingSignalType *string,
+	state cascade.NodeState, settlingSignalType *string, changed bool,
 ) error {
+	changedArg := 0
+	if changed {
+		changedArg = 1
+	}
 	if settlingSignalType == nil {
 		_, err := b.q(tx).ExecContext(ctx,
-			`UPDATE rimsky_node_runs SET state = ? WHERE id = ?`,
-			string(state), runID.String())
+			`UPDATE rimsky_node_runs SET state = ?, changed = ? WHERE id = ?`,
+			string(state), changedArg, runID.String())
 		if err != nil {
 			return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: %w", err)
 		}
 		return nil
 	}
 	_, err := b.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs SET state = ?, settling_signal_type = ? WHERE id = ?`,
-		string(state), *settlingSignalType, runID.String())
+		`UPDATE rimsky_node_runs SET state = ?, settling_signal_type = ?, changed = ? WHERE id = ?`,
+		string(state), *settlingSignalType, changedArg, runID.String())
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: %w", err)
 	}
@@ -218,12 +222,14 @@ func scanSqliteRunTreeRow(s scannable) (*persistence.NodeRunTreeRow, error) {
 		state                                       string
 		settlingSignal                              sql.NullString
 		policyText                                  sql.NullString
+		changedInt                                  int
 	)
-	if err := s.Scan(&idStr, &nodeIDStr, &frameIDStr, &runScopeIDStr, &state, &settlingSignal, &policyText); err != nil {
+	if err := s.Scan(&idStr, &nodeIDStr, &frameIDStr, &runScopeIDStr, &state, &settlingSignal, &policyText, &changedInt); err != nil {
 		return nil, err
 	}
 	out := &persistence.NodeRunTreeRow{
-		State: cascade.NodeState(state),
+		State:   cascade.NodeState(state),
+		Changed: changedInt != 0,
 	}
 	if settlingSignal.Valid {
 		v := settlingSignal.String

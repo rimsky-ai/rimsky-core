@@ -92,9 +92,8 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 
 	waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/")
 
-	deadline := time.Now().Add(30 * time.Second)
 	var activeCount int
-	for time.Now().Before(deadline) {
+	for {
 		require.NoError(t, h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_claim_handles lh
 			   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
@@ -107,6 +106,15 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 	}
 	require.Equal(t, 0, activeCount,
 		"every rimsky_claim_handles row for this instance must reach a terminal state — auto-terminal must fire when the held-claim acquirer takes resolve=pass; non-zero indicates the inheritor-rows-active leak has regressed")
+
+	var inheritorObserved int
+	for _, o := range h.Stub.Observed() {
+		if o.NodeType == "inheritor" {
+			inheritorObserved++
+		}
+	}
+	require.Equal(t, 0, inheritorObserved,
+		"inheritor executor must not be invoked — terminal/success subscription must not match the acquirer's terminal/error pass settlement")
 
 	var inhLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

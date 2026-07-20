@@ -21,6 +21,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 )
 
 func TestSubstituteAttributesSchema_StaticDefaults(t *testing.T) {
@@ -414,6 +415,42 @@ func TestResolveAttributes_ExecutorSchemaUnavailable(t *testing.T) {
 			t.Fatalf("permissive schema: unified-surface check should bypass readOnly leg; got errors: %+v", errs)
 		}
 	})
+}
+
+func TestResolveAttributes_DispatchReappliesEffectiveSchemaShapeCheck(t *testing.T) {
+	acq := &acquisition{
+		Executor:  "test-executor",
+		GraphName: "main",
+		NodeDef: &node.TemplateNodeDef{
+			Type:     "a",
+			Executor: "test-executor",
+			Attributes: &node.NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"x": map[string]any{"type": "string"},
+				},
+			}},
+		},
+	}
+	args := RunArgs{
+		ExpectedAttributesSchemaFor: func(executorName string) ([]byte, bool) {
+			return []byte(`{"type":"object","properties":{"x":{"type":"string"}}}`), true
+		},
+	}
+	_, _, err := resolveAttributes(context.Background(), args, acq)
+	if err == nil {
+		t.Fatalf("expected a dispatch-side effective-schema shape violation, got nil")
+	}
+	var validation *attributeValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("expected *attributeValidationError, got %T: %v", err, err)
+	}
+	if validation.Reason != "dispatch_effective_schema_shape_violation" {
+		t.Fatalf("got reason %q, want dispatch_effective_schema_shape_violation", validation.Reason)
+	}
+	if !strings.Contains(validation.Error(), "properties.x") {
+		t.Fatalf("expected error to name property x, got %v", validation)
+	}
 }
 
 func TestResolveAttributes_DispatchExecutorSchemaValidation(t *testing.T) {
@@ -928,11 +965,11 @@ func TestResolveAttributes_MissingSnapshotIsInvariantViolation(t *testing.T) {
 // @concept: attribute
 func TestResolveAttributes_DispatchGateRejectsInvalidResolvedBag(t *testing.T) {
 	ctx := context.Background()
-	execSchema := []byte(`{"type":"object","properties":{"model":{"type":"string"}}}`)
+	execSchema := []byte(`{"type":"object","properties":{"model":{"type":"string","readOnly":true}}}`)
 	nodeSchema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"model": map[string]any{"type": "string"},
+			"model": map[string]any{"type": "string", "readOnly": true},
 		},
 	}
 
@@ -1067,5 +1104,116 @@ func TestValidateTags_UndeclaredTagRejected(t *testing.T) {
 	})
 	if passthrough.Kind != terminalKindComplete {
 		t.Fatalf("executor with no declared-tags entry must not be rejected, got Kind=%v", passthrough.Kind)
+	}
+}
+
+type fakeErrorAwareResolver struct {
+	err error
+}
+
+func (r fakeErrorAwareResolver) Resolve(string, executor.DispatchContext) (executor.Endpoint, bool) {
+	return executor.Endpoint{}, false
+}
+
+func (r fakeErrorAwareResolver) AcceptedNames() []string { return nil }
+
+func (r fakeErrorAwareResolver) ResolveWithError(string, executor.DispatchContext) (executor.Endpoint, bool, error) {
+	return executor.Endpoint{}, false, r.err
+}
+
+func TestDispatch_ResolverLookupError_IsRetryableInfraNotTerminalUnresolved(t *testing.T) {
+	wantErr := errors.New("binding lookup: transient db error")
+	dctx := dispatchContext{
+		Args: RunArgs{
+			Resolver: fakeErrorAwareResolver{err: wantErr},
+			Clock:    shared.SystemClock{},
+		},
+		Acquired: &acquisition{
+			NodeID:     newUUID(),
+			InstanceID: newUUID(),
+			Executor:   "late-bound-executor",
+		},
+	}
+
+	ev, result, err := dispatch(context.Background(), dctx)
+	if err != nil {
+		t.Fatalf("dispatch returned error: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected no RunnerResult for a resolver lookup failure, got %+v", result)
+	}
+	if ev.Kind != terminalKindInfra {
+		t.Fatalf("Kind = %v, want terminalKindInfra: a transient resolver lookup error must be retryable infra, not the permanent unresolved_executor terminal", ev.Kind)
+	}
+	if ev.ErrorClass != "executor_resolve_failed" {
+		t.Fatalf("ErrorClass = %q, want executor_resolve_failed", ev.ErrorClass)
+	}
+	if ev.Payload["error"] != wantErr.Error() {
+		t.Fatalf("Payload[error] = %v, want %q", ev.Payload["error"], wantErr.Error())
+	}
+}
+
+// @concept: attribute
+func TestBuildExecuteRequest_NonEncodableAttributesFailsClosed(t *testing.T) {
+	dctx := dispatchContext{
+		Args:       RunArgs{Logger: shared.SilentLogger{}},
+		Attributes: map[string]any{"bad": make(chan int)},
+		Acquired: &acquisition{
+			NodeID:     newUUID(),
+			InstanceID: newUUID(),
+		},
+	}
+
+	_, err := buildExecuteRequest(context.Background(), dctx)
+	if err == nil {
+		t.Fatal("expected buildExecuteRequest to fail when attributes cannot be encoded as structpb, " +
+			"not silently dispatch an empty attributes bag")
+	}
+}
+
+// @concept: attribute
+func TestBuildExecuteRequest_NonEncodableAttributesSchemaFailsClosed(t *testing.T) {
+	dctx := dispatchContext{
+		Args:             RunArgs{Logger: shared.SilentLogger{}},
+		AttributesSchema: map[string]any{"bad": make(chan int)},
+		Acquired: &acquisition{
+			NodeID:     newUUID(),
+			InstanceID: newUUID(),
+		},
+	}
+
+	_, err := buildExecuteRequest(context.Background(), dctx)
+	if err == nil {
+		t.Fatal("expected buildExecuteRequest to fail when attributes_schema cannot be encoded as structpb, " +
+			"not silently dispatch an empty schema")
+	}
+}
+
+// @decision: async-callback-persistent-registry
+func TestRegisterAsyncIfSet_PropagatesCollisionAsFailure(t *testing.T) {
+	dctx := dispatchContext{
+		Args: RunArgs{SupervisorID: "sup-1"},
+		Acquired: &acquisition{
+			NodeID:    newUUID(),
+			NodeRunID: newUUID(),
+		},
+		RegisterAsync: func(string, AsyncContext) bool { return false },
+	}
+	if ok := registerAsyncIfSet(dctx, "ack-1", ""); ok {
+		t.Fatal("registerAsyncIfSet must propagate a collision (RegisterAsync returning false) as failure, " +
+			"not swallow it as success")
+	}
+}
+
+func TestRegisterAsyncIfSet_NilCallbackIsSuccess(t *testing.T) {
+	dctx := dispatchContext{
+		Args: RunArgs{SupervisorID: "sup-1"},
+		Acquired: &acquisition{
+			NodeID:    newUUID(),
+			NodeRunID: newUUID(),
+		},
+	}
+	if ok := registerAsyncIfSet(dctx, "ack-1", ""); !ok {
+		t.Fatal("registerAsyncIfSet with no RegisterAsync callback configured must be a no-op success")
 	}
 }

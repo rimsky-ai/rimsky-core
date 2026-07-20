@@ -22,7 +22,7 @@ func checkSerialization9b(ctx context.Context, c claimproducer.ClaimProducer, ca
 		return CheckResult{Name: "Serialization9bSkipped"}
 	}
 
-	selector := "rimsky/conformance/9b/" + uuid.New().String()
+	selector := identSafeSelector("rimsky_conformance_9b_")
 	writerSpec := claimproducer.ClaimSpec{
 		ProducerName: "conformance-target",
 		Selector:     selector,
@@ -40,7 +40,7 @@ func checkSerialization9b(ctx context.Context, c claimproducer.ClaimProducer, ca
 	}
 
 	defer func() {
-		_ = c.Release(ctx, writerID, writerOut.Result.ClaimScope, writerOut.Result.Address)
+		_ = c.Release(ctx, writerID, writerOut.Result.ClaimScope, writerOut.Result.Address, "")
 	}()
 
 	blocked, readerCleanup := openConcurrentReaders(ctx, c, selector)
@@ -100,7 +100,7 @@ func openConcurrentReaders(ctx context.Context, c claimproducer.ClaimProducer, s
 	cleanup := func(cleanupCtx context.Context, producer claimproducer.ClaimProducer) {
 		for _, o := range outcomes {
 			if o.err == nil && o.out.Available {
-				_ = producer.Release(cleanupCtx, o.claimID, o.out.Result.ClaimScope, o.out.Result.Address)
+				_ = producer.Release(cleanupCtx, o.claimID, o.out.Result.ClaimScope, o.out.Result.Address, "")
 			}
 		}
 	}

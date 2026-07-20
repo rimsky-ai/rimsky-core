@@ -125,6 +125,12 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 	return id
 }
 
+func markMessageDelivered(t *testing.T, ctx context.Context, d persistence.Database, messageID uuid.UUID) {
+	t.Helper()
+	pgtest.ExecForTest(ctx, t, d,
+		`UPDATE rimsky_messages SET delivered_at = now() WHERE id = $1`, messageID)
+}
+
 func seedDispatch(t *testing.T, ctx context.Context, d persistence.Database,
 	nodeID uuid.UUID, frameID uuid.UUID, claimedBy string) {
 	t.Helper()
@@ -156,6 +162,7 @@ func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {
 	now := time.Now()
 	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now)
 	seedNode(t, ctx, d, instanceID, src, "fresh", &frameID)
+	markMessageDelivered(t, ctx, d, msgID)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
@@ -182,6 +189,7 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 	now := time.Now()
 	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now)
 	seedNode(t, ctx, d, instanceID, src, "failed", &frameID)
+	markMessageDelivered(t, ctx, d, msgID)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
@@ -225,6 +233,7 @@ func TestRunTick_FrameEndDetection_ClosesRootScopeTreeAtSettlement(t *testing.T)
         INSERT INTO rimsky_run_scopes (id, parent_run_scope_id, parent_run_id, graph_name, instance_id, partition_key)
         VALUES ($1, $2, $3, 'sub-flow', $4, '')
     `, childScope, rootScope, parentRunID, instanceID)
+	markMessageDelivered(t, ctx, d, msgID)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
@@ -236,6 +245,26 @@ func TestRunTick_FrameEndDetection_ClosesRootScopeTreeAtSettlement(t *testing.T)
 		require.NotNil(t, closed,
 			"frame settlement must close every open scope in the frame's tree (scope %s), not defer to instance teardown", scope)
 	}
+}
+
+func TestRunTick_FrameEndDetection_UndeliveredTriggerNotCompleted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	d := pgtest.OpenDriver(ctx, t)
+
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
+	now := time.Now()
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now)
+
+	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
+
+	var endedAtNull bool
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT ended_at IS NULL FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &endedAtNull)
+	require.True(t, endedAtNull,
+		"a just-opened frame whose triggering message has not yet been delivered has zero node runs "+
+			"by construction — end-detection must not mistake that for settlement and phantom-complete it")
 }
 
 func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {

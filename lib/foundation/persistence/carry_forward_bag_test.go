@@ -23,7 +23,7 @@ func TestCarryForwardBagCopiesSpilledBlobToFreshHandle(t *testing.T) {
 		t.Fatalf("seed blob: %v", err)
 	}
 
-	carried, err := persistence.CarryForwardBag(ctx, bb,
+	carried, err := persistence.CarryForwardBag(ctx, bb, nil,
 		persistence.BlobKey{NodeID: "new", AttributeName: "data"},
 		[]byte("{}"), string(priorHandle), bb.Name())
 	if err != nil {
@@ -60,7 +60,7 @@ func TestCarryForwardBagPassesThroughUnspilled(t *testing.T) {
 	bb := persistence.NewMemoryBackend()
 	payload := []byte(`{"tag":"inline"}`)
 
-	carried, err := persistence.CarryForwardBag(ctx, bb,
+	carried, err := persistence.CarryForwardBag(ctx, bb, nil,
 		persistence.BlobKey{NodeID: "new", AttributeName: "data"},
 		payload, "", "")
 	if err != nil {
@@ -79,7 +79,7 @@ func TestCarryForwardBagMissingBlobYieldsEmpty(t *testing.T) {
 	ctx := context.Background()
 	bb := persistence.NewMemoryBackend()
 
-	carried, err := persistence.CarryForwardBag(ctx, bb,
+	carried, err := persistence.CarryForwardBag(ctx, bb, nil,
 		persistence.BlobKey{NodeID: "new", AttributeName: "data"},
 		[]byte("{}"), "mem:404", bb.Name())
 	if err != nil {

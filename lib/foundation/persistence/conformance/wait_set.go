@@ -208,6 +208,218 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	}
 }
 
+func testWaitSetFrameIsolation(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fixA := seedFixtureSet(ctx, t, d)
+	fixB := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	seedPair := func(fix fixtureSet) (receiverRunID, senderRunID shared.UUID) {
+		receiverID := uuid.New()
+		senderID := uuid.New()
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+				ID: receiverID, InstanceID: fix.InstanceID,
+				NodeType: "receiver", Executor: "test-executor",
+			}, tx); err != nil {
+				return err
+			}
+			_, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+				ID: senderID, InstanceID: fix.InstanceID,
+				NodeType: "sender", Executor: "test-executor",
+			}, tx)
+			return err
+		}); err != nil {
+			t.Fatalf("seed nodes: %v", err)
+		}
+		receiverRunID = seedConformanceRunForNode(ctx, t, d, receiverID, fix.FrameID)
+		senderRunID = seedConformanceRunForNode(ctx, t, d, senderID, fix.FrameID)
+		return receiverRunID, senderRunID
+	}
+
+	receiverA, senderA := seedPair(fixA)
+	receiverB, senderB := seedPair(fixB)
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID: fixA.FrameID, ReceiverNodeRunID: receiverA,
+			SenderNodeRunID: senderA, TopicKind: "state",
+		}, tx); err != nil {
+			return err
+		}
+		return store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID: fixB.FrameID, ReceiverNodeRunID: receiverB,
+			SenderNodeRunID: senderB, TopicKind: "state",
+		}, tx)
+	}); err != nil {
+		t.Fatalf("wait_set insert: %v", err)
+	}
+
+	var byFrameA, byFrameB []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		var err error
+		byFrameA, err = store.WaitSet().ListForFrame(ctx, fixA.FrameID, tx)
+		if err != nil {
+			return err
+		}
+		byFrameB, err = store.WaitSet().ListForFrame(ctx, fixB.FrameID, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("ListForFrame: %v", err)
+	}
+	if len(byFrameA) != 1 || byFrameA[0].ReceiverNodeRunID != receiverA {
+		t.Fatalf("ListForFrame(frameA) = %+v, want exactly frameA's row (receiver %v) — frameB's row must not leak in", byFrameA, receiverA)
+	}
+	if len(byFrameB) != 1 || byFrameB[0].ReceiverNodeRunID != receiverB {
+		t.Fatalf("ListForFrame(frameB) = %+v, want exactly frameB's row (receiver %v) — frameA's row must not leak in", byFrameB, receiverB)
+	}
+
+	var receiverListA []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		var err error
+		receiverListA, err = store.WaitSet().ListForReceiver(ctx, fixA.FrameID, receiverA, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("ListForReceiver: %v", err)
+	}
+	if len(receiverListA) != 1 {
+		t.Fatalf("ListForReceiver(frameA, receiverA) = %+v, want 1 row", receiverListA)
+	}
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.WaitSet().MarkDrainedBySender(ctx, fixB.FrameID, senderB, tx)
+	}); err != nil {
+		t.Fatalf("MarkDrainedBySender(frameB): %v", err)
+	}
+
+	var afterCrossDrain []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		var err error
+		afterCrossDrain, err = store.WaitSet().ListForReceiver(ctx, fixA.FrameID, receiverA, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("ListForReceiver after cross-frame drain: %v", err)
+	}
+	if len(afterCrossDrain) != 1 || afterCrossDrain[0].DrainedAt != nil {
+		t.Fatalf("MarkDrainedBySender(frameB, senderB) must not affect frameA's rows, got %+v", afterCrossDrain)
+	}
+
+	var drainedAttrsA []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		var err error
+		drainedAttrsA, err = store.WaitSet().ListDrainedAttributeRowsForReceiver(ctx, fixA.FrameID, receiverA, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("ListDrainedAttributeRowsForReceiver: %v", err)
+	}
+	if len(drainedAttrsA) != 0 {
+		t.Fatalf("ListDrainedAttributeRowsForReceiver(frameA, receiverA) = %+v, want empty — frameB drain must not leak in", drainedAttrsA)
+	}
+}
+
+func testWaitSetTopicKindDistinctness(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	receiverID := uuid.New()
+	senderID := uuid.New()
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: receiverID, InstanceID: fix.InstanceID,
+			NodeType: "receiver", Executor: "test-executor",
+		}, tx); err != nil {
+			return err
+		}
+		_, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: senderID, InstanceID: fix.InstanceID,
+			NodeType: "sender", Executor: "test-executor",
+		}, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("seed nodes: %v", err)
+	}
+	receiverNodeRunID := seedConformanceRunForNode(ctx, t, d, receiverID, fix.FrameID)
+	senderRunID := seedConformanceRunForNode(ctx, t, d, senderID, fix.FrameID)
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID: fix.FrameID, ReceiverNodeRunID: receiverNodeRunID,
+			SenderNodeRunID: senderRunID,
+			TopicKind:       "state",
+		}, tx)
+	}); err != nil {
+		t.Fatalf("insert (frame, receiver, sender, state): %v", err)
+	}
+
+	var afterState []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverNodeRunID, tx)
+		afterState = rows
+		return err
+	}); err != nil {
+		t.Fatalf("ListForReceiver after state insert: %v", err)
+	}
+	if len(afterState) != 1 {
+		t.Fatalf("ListForReceiver after (frame,receiver,sender,state): got %d rows want 1", len(afterState))
+	}
+
+	filter, _ := json.Marshal(map[string]string{"name": "result"})
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID: fix.FrameID, ReceiverNodeRunID: receiverNodeRunID,
+			SenderNodeRunID: senderRunID,
+			TopicKind:       "attribute",
+			TopicFilter:     filter,
+		}, tx)
+	}); err != nil {
+		t.Fatalf("insert (frame, receiver, sender, attribute): %v", err)
+	}
+
+	var afterAttribute []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverNodeRunID, tx)
+		afterAttribute = rows
+		return err
+	}); err != nil {
+		t.Fatalf("ListForReceiver after attribute insert: %v", err)
+	}
+	if len(afterAttribute) != 2 {
+		t.Fatalf("ListForReceiver after same (frame,receiver,sender) with a second topic_kind: got %d rows want 2 (topic_kind must be part of the wait-set key)", len(afterAttribute))
+	}
+	kinds := map[string]bool{}
+	for _, r := range afterAttribute {
+		if r.SenderNodeRunID != senderRunID {
+			t.Fatalf("ListForReceiver: unexpected sender %v", r.SenderNodeRunID)
+		}
+		kinds[r.TopicKind] = true
+	}
+	if !kinds["state"] || !kinds["attribute"] {
+		t.Fatalf("ListForReceiver: want distinct rows for topic_kind state and attribute, got %v", afterAttribute)
+	}
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID: fix.FrameID, ReceiverNodeRunID: receiverNodeRunID,
+			SenderNodeRunID: senderRunID,
+			TopicKind:       "state",
+		}, tx)
+	}); err != nil {
+		t.Fatalf("re-insert (frame, receiver, sender, state): %v", err)
+	}
+	var afterReinsert []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverNodeRunID, tx)
+		afterReinsert = rows
+		return err
+	}); err != nil {
+		t.Fatalf("ListForReceiver after re-insert: %v", err)
+	}
+	if len(afterReinsert) != 2 {
+		t.Fatalf("ListForReceiver after re-inserting an existing (frame,receiver,sender,topic_kind): got %d rows want 2 (per-topic_kind dedupe must still hold)", len(afterReinsert))
+	}
+}
+
 // @concept: cascade
 // @decision: walker-rule-per-sender-node
 func testWaitSetGateEvaluatorMethods(t *testing.T, d persistence.Database) {

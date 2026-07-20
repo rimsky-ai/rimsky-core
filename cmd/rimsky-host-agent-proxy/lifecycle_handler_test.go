@@ -85,6 +85,32 @@ func TestOnRunScopeTerminalReapsSpawns(t *testing.T) {
 	}
 }
 
+func TestOnInstanceTerminatedEvictsCache(t *testing.T) {
+	state := newProxyState()
+	h := newLifecycleHandler(state, Config{ReapTimeout: time.Second})
+
+	if _, err := h.OnInstanceCreated(context.Background(), &genv1.OnInstanceCreatedRequest{
+		InstanceId:      "inst-1",
+		OwnerApiKeyId:   "owner-1",
+		ServiceBindings: []byte(`{"codegen":{"path":"./codegen"}}`),
+	}); err != nil {
+		t.Fatalf("OnInstanceCreated: %v", err)
+	}
+	if _, ok := state.lookupInstance("inst-1"); !ok {
+		t.Fatalf("instance not cached before termination")
+	}
+
+	if _, err := h.OnInstanceTerminated(context.Background(), &genv1.OnInstanceTerminatedRequest{
+		InstanceId: "inst-1",
+	}); err != nil {
+		t.Fatalf("OnInstanceTerminated: %v", err)
+	}
+
+	if _, ok := state.lookupInstance("inst-1"); ok {
+		t.Fatalf("instance cache entry should be evicted after termination")
+	}
+}
+
 func TestNoOpLifecycleMethods(t *testing.T) {
 	h := newLifecycleHandler(newProxyState(), Config{})
 	ctx := context.Background()

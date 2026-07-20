@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))})
+	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: shared.ParseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))})
 	logger := slog.New(handler)
 	if name := os.Getenv("RIMSKY_LOG_BINARY"); name != "" {
 		logger = logger.With("binary", name)
@@ -35,42 +35,18 @@ func main() {
 	}
 	defer func() { _ = driver.Close() }()
 
-	stop, failCh, err := launch.RunScheduler(ctx, logger, driver, cfg)
+	stop, failCh, err := launch.RunScheduler(ctx, logger, driver, cfg, nil)
 	if err != nil {
 		_ = driver.Close()
 		os.Exit(1)
 	}
 
-	roleErr := waitForSignalOrFailure(log, sigCh, failCh)
+	roleErr := shared.WaitForSignalOrFailure(log, sigCh, failCh)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_ = stop(shutdownCtx)
 	if roleErr != nil {
 		_ = driver.Close()
 		os.Exit(1)
-	}
-}
-
-func parseLogLevel(s string) slog.Level {
-	switch s {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
-}
-
-func waitForSignalOrFailure(log shared.Logger, sigCh <-chan os.Signal, failCh <-chan error) error {
-	select {
-	case s := <-sigCh:
-		log.Info("signal received", "signal", s.String())
-		return nil
-	case err := <-failCh:
-		log.Error("role failed", "error", err.Error())
-		return err
 	}
 }

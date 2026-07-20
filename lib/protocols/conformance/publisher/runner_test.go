@@ -25,6 +25,7 @@ type fakePublisherClient struct {
 	omitResolvedConf bool
 	omitStartedAt    bool
 	wrongMessageType bool
+	noOpUnsubscribe  bool
 }
 
 func newFakePublisherClient(caps *genv1.PublisherCapabilities) *fakePublisherClient {
@@ -62,6 +63,9 @@ func (f *fakePublisherClient) Subscribe(_ context.Context, req *genv1.SubscribeR
 func (f *fakePublisherClient) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest, _ ...grpc.CallOption) (*genv1.UnsubscribeResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.noOpUnsubscribe {
+		return &genv1.UnsubscribeResponse{}, nil
+	}
 	delete(f.subs, req.GetPublisherSubscriptionId())
 	return &genv1.UnsubscribeResponse{}, nil
 }
@@ -180,5 +184,52 @@ func TestCheckListSubscriptions_MissingStartedAt_Fails(t *testing.T) {
 	r := findResult(t, results, "ListSubscriptions")
 	if r.Err == nil {
 		t.Error("ListSubscriptions expected non-nil Err when started_at is unset, got PASS")
+	}
+}
+
+func TestCheckUnsubscribe_NoOpLeaksSubscription_Fails(t *testing.T) {
+	c := newFakePublisherClient(honestCaps())
+	c.noOpUnsubscribe = true
+	results := Run(context.Background(), c, baseRunOpts())
+	r := findResult(t, results, "Unsubscribe")
+	if r.Err == nil {
+		t.Error("Unsubscribe expected non-nil Err when the subscription is still present in ListSubscriptions afterward, got PASS")
+	}
+}
+
+func TestCheckUnsubscribeIdempotent_NoOpLeaksSubscription_Fails(t *testing.T) {
+	c := newFakePublisherClient(honestCaps())
+	results := Run(context.Background(), c, baseRunOpts())
+	if r := findResult(t, results, "Unsubscribe"); r.Err != nil {
+		t.Fatalf("Unsubscribe expected PASS as a precondition, got Err: %v", r.Err)
+	}
+
+	c.mu.Lock()
+	c.noOpUnsubscribe = true
+	c.subs[baseRunOpts().SubscriptionID] = &genv1.PublisherSubscriptionDescriptor{
+		PublisherSubscriptionId: baseRunOpts().SubscriptionID,
+	}
+	c.mu.Unlock()
+
+	r := checkUnsubscribeIdempotent(context.Background(), c, baseRunOpts())
+	if r.Err == nil {
+		t.Error("UnsubscribeIdempotent expected non-nil Err when the subscription is still present in ListSubscriptions afterward, got PASS")
+	}
+}
+
+func TestCheckUnsubscribe_Honest_RemovesFromListSubscriptions(t *testing.T) {
+	c := newFakePublisherClient(honestCaps())
+	results := Run(context.Background(), c, baseRunOpts())
+	for _, name := range []string{"Unsubscribe", "UnsubscribeIdempotent"} {
+		r := findResult(t, results, name)
+		if r.Err != nil {
+			t.Errorf("%s expected PASS for an honest Unsubscribe, got Err: %v", name, r.Err)
+		}
+	}
+	c.mu.Lock()
+	_, stillPresent := c.subs[baseRunOpts().SubscriptionID]
+	c.mu.Unlock()
+	if stillPresent {
+		t.Fatalf("fakePublisherClient bug: subscription still present after honest Unsubscribe")
 	}
 }

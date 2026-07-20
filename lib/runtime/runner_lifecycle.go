@@ -137,6 +137,7 @@ func abandonPartialLocks(ctx context.Context, args RunArgs, partial []AcquiredLo
 				Verb:           persistence.ProducerVerbAbandon,
 				ClaimScopeData: scope,
 				Address:        address,
+				LeaseToken:     lk.ProducerLeaseToken,
 				SupervisorID:   args.SupervisorID,
 				NextAttemptAt:  now,
 				EnqueuedAt:     now,
@@ -146,7 +147,7 @@ func abandonPartialLocks(ctx context.Context, args RunArgs, partial []AcquiredLo
 			}
 			continue
 		}
-		if err := abandonOpenedClaim(ctx, lk.Producer, lk.ClaimHandleID, scope, address); err != nil {
+		if err := abandonOpenedClaim(ctx, lk.Producer, lk.ClaimHandleID, scope, address, lk.ProducerLeaseToken); err != nil {
 			args.Logger.Warn("abandonPartialLocks: Abandon failed",
 				"producer", producerNameForSpec(lk.Spec), "error", err.Error())
 		}

@@ -23,7 +23,7 @@ type Server struct {
 type ToolCatalog interface {
 	Filtered(r *http.Request) []Tool
 
-	Invoke(r *http.Request, name string, args json.RawMessage) (any, *Error)
+	Invoke(r *http.Request, name string, args json.RawMessage) (result any, isError bool, err *Error)
 }
 
 type ResourceCatalog interface {
@@ -170,7 +170,7 @@ func (s *Server) handleToolsCall(w http.ResponseWriter, r *http.Request, req Req
 		writeRPCError(w, req.ID, CodeInvalidParams, "invalid params: "+err.Error())
 		return
 	}
-	result, rpcErr := s.Tools.Invoke(r, p.Name, p.Arguments)
+	result, isError, rpcErr := s.Tools.Invoke(r, p.Name, p.Arguments)
 	if rpcErr != nil {
 		writeRPCErrorObj(w, req.ID, rpcErr)
 		return
@@ -184,6 +184,7 @@ func (s *Server) handleToolsCall(w http.ResponseWriter, r *http.Request, req Req
 		"content": []any{
 			map[string]any{"type": "text", "text": string(bs)},
 		},
+		"isError": isError,
 	})
 }
 

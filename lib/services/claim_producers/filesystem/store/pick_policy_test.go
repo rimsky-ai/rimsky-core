@@ -167,6 +167,38 @@ func TestOpenPickPolicy_Basic(t *testing.T) {
 	}
 }
 
+func TestOpenPickPolicy_RejectsTraversalClaimID(t *testing.T) {
+	root := t.TempDir()
+	sub := "docs"
+	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
+	pp := &PickPolicy{
+		Root:              sub,
+		OnCommit:          action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "on_open",
+	}
+	st, err := New(Config{
+		Root:         root,
+		PickPolicies: map[string]*PickPolicy{"@docs-ring": pp},
+	})
+	must(t, err)
+
+	if _, err := st.Open(context.Background(), "../../escape", "@docs-ring"); err == nil {
+		t.Fatal("Open with traversal claim_id: expected error, got nil")
+	}
+	if _, err := os.Stat(filepath.Join(root, "..", "..", "escape")); err == nil {
+		t.Fatal("traversal claim_id must not create a sentinel outside the store root")
+	}
+
+	inProgDir := filepath.Join(policyStateDir(root, "@docs-ring"), "in_progress")
+	entries, err := os.ReadDir(inProgDir)
+	must(t, err)
+	if len(entries) != 0 {
+		t.Fatalf("in_progress must remain empty after a rejected Open, got %v", entries)
+	}
+}
+
 func TestOpenPickPolicy_EmptyQueueReturnsUnavailable(t *testing.T) {
 	root := t.TempDir()
 	must(t, os.MkdirAll(filepath.Join(root, "docs"), 0o755))
@@ -272,7 +304,7 @@ func TestCommit_ReleaseToBack(t *testing.T) {
 	}
 	var first struct{ Folder string }
 	must(t, json.Unmarshal(o.Result.Payload, &first))
-	must(t, st.Commit(context.Background(), "c-1", o.Result.ClaimScope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c-1", o.Result.ClaimScope, o.Result.Address, ""))
 	o2, _ := st.Open(context.Background(), "c-2", "@r")
 	var second struct{ Folder string }
 	must(t, json.Unmarshal(o2.Result.Payload, &second))
@@ -290,7 +322,7 @@ func TestCommit_PopAndDelete_RemovesFolder(t *testing.T) {
 	if !o.Available {
 		t.Fatal("pick should be Available")
 	}
-	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address, ""))
 	if _, err := os.Stat(filepath.Join(root, sub, "doomed")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("folder should be removed after pop_and_delete commit; stat err = %v", err)
 	}
@@ -309,8 +341,8 @@ func TestCommit_Idempotent(t *testing.T) {
 	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	o, _ := st.Open(context.Background(), "c", "@r")
-	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
-	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address, ""))
+	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address, ""))
 }
 
 func TestCommit_StaleReclaimedClaimantDoesNotClobberSuccessor(t *testing.T) {
@@ -321,7 +353,7 @@ func TestCommit_StaleReclaimedClaimantDoesNotClobberSuccessor(t *testing.T) {
 		Root:              sub,
 		OnCommit:          action.Action{Kind: action.PopAndDelete},
 		OnGiveUp:          action.Action{Kind: action.Recycle},
-		VisibilityTimeout: time.Millisecond,
+		VisibilityTimeout: time.Minute,
 		SyncStrategy:      "on_open",
 	}
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
@@ -332,7 +364,7 @@ func TestCommit_StaleReclaimedClaimantDoesNotClobberSuccessor(t *testing.T) {
 		t.Fatal("stale claim should be Available")
 	}
 
-	time.Sleep(10 * time.Millisecond)
+	ageInProgressEntry(t, root, "@r")
 	must(t, st.sweepOnce())
 
 	fresh, _ := st.Open(context.Background(), "fresh", "@r")
@@ -340,7 +372,7 @@ func TestCommit_StaleReclaimedClaimantDoesNotClobberSuccessor(t *testing.T) {
 		t.Fatal("re-claim should be Available after sweep reclaim")
 	}
 
-	must(t, st.Commit(context.Background(), "stale", stale.Result.ClaimScope, stale.Result.Address))
+	must(t, st.Commit(context.Background(), "stale", stale.Result.ClaimScope, stale.Result.Address, ""))
 
 	if _, err := os.Stat(filepath.Join(root, sub, "doomed")); err != nil {
 		t.Fatalf("stale claimant's commit deleted the successor's live folder: %v", err)
@@ -357,7 +389,7 @@ func TestCommit_StaleReclaimedClaimantDoesNotClobberSuccessor(t *testing.T) {
 		t.Fatalf("surviving in_progress entry claim_id = %q, want %q", c, "fresh")
 	}
 
-	must(t, st.Commit(context.Background(), "fresh", fresh.Result.ClaimScope, fresh.Result.Address))
+	must(t, st.Commit(context.Background(), "fresh", fresh.Result.ClaimScope, fresh.Result.Address, ""))
 	if _, err := os.Stat(filepath.Join(root, sub, "doomed")); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("successor's own commit should pop_and_delete the folder; stat err = %v", err)
 	}
@@ -391,7 +423,7 @@ func TestCommit_CoexistingScopedReaderDoesNotClobberPickEntry(t *testing.T) {
 			picker.Result.ClaimScope, reader.Result.ClaimScope)
 	}
 
-	must(t, st.Commit(context.Background(), "reader", reader.Result.ClaimScope, reader.Result.Address))
+	must(t, st.Commit(context.Background(), "reader", reader.Result.ClaimScope, reader.Result.Address, ""))
 
 	if _, err := os.Stat(filepath.Join(root, sub, "shared")); err != nil {
 		t.Fatalf("scoped reader's commit clobbered the pick claim's live folder: %v", err)
@@ -423,7 +455,7 @@ func TestFindByScope_MatchesBatchLeaseNotSingleClaim(t *testing.T) {
 	if !single.Available {
 		t.Fatal("single claim should be Available")
 	}
-	if pp, _, _, _ := st.findByScope(single.Result.ClaimScope); pp != nil {
+	if pp, _, _, _ := st.findByScope(single.Result.ClaimScope, ""); pp != nil {
 		t.Fatal("findByScope must not resolve a single-claim in_progress entry")
 	}
 
@@ -432,7 +464,7 @@ func TestFindByScope_MatchesBatchLeaseNotSingleClaim(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("BatchPop returned %d items, want 1", len(items))
 	}
-	if ppMatched, _, entry, _ := st.findByScope(items[0].ClaimScopeBytes); ppMatched == nil {
+	if ppMatched, _, entry, _ := st.findByScope(items[0].ClaimScopeBytes, ""); ppMatched == nil {
 		t.Fatal("findByScope must resolve a batch-pop lease entry")
 	} else if !strings.HasPrefix(entryClaimID(t, entry), batchLeaseIDPrefix) {
 		t.Fatalf("matched entry %q is not a batch-pop lease", entry)
@@ -446,6 +478,20 @@ func entryClaimID(t *testing.T, entry string) string {
 	return c
 }
 
+func ageInProgressEntry(t *testing.T, root, selector string) {
+	t.Helper()
+	inProg := filepath.Join(policyStateDir(root, selector), "in_progress")
+	entries, err := os.ReadDir(inProg)
+	must(t, err)
+	if len(entries) != 1 {
+		t.Fatalf("ageInProgressEntry: expected exactly 1 in_progress entry, got %d", len(entries))
+	}
+	folder, claimID, _, perr := parseFromRight(entries[0].Name())
+	must(t, perr)
+	aged := fmt.Sprintf("%s.%s.%d", folder, claimID, int64(0))
+	must(t, os.Rename(filepath.Join(inProg, entries[0].Name()), filepath.Join(inProg, aged)))
+}
+
 func TestSweep_ReclaimsExpired(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -453,7 +499,7 @@ func TestSweep_ReclaimsExpired(t *testing.T) {
 	pp := &PickPolicy{
 		Root: sub, OnCommit: action.Action{Kind: action.Recycle},
 		OnGiveUp:          action.Action{Kind: action.Recycle},
-		VisibilityTimeout: 50 * time.Millisecond,
+		VisibilityTimeout: time.Minute,
 		SyncStrategy:      "on_open",
 	}
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
@@ -462,7 +508,7 @@ func TestSweep_ReclaimsExpired(t *testing.T) {
 	if !o.Available {
 		t.Fatal("pick should be Available")
 	}
-	time.Sleep(100 * time.Millisecond)
+	ageInProgressEntry(t, root, "@r")
 	must(t, st.sweepOnce())
 	availDir := filepath.Join(root, ".fs-store", "r", "available")
 	entries, _ := os.ReadDir(availDir)
@@ -474,6 +520,102 @@ func TestSweep_ReclaimsExpired(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected alpha back in available/ after sweep, got %v", entries)
+	}
+}
+
+func TestSweep_OrphanExpiredSentinelIsUnlinkedNotRequeued(t *testing.T) {
+	root := t.TempDir()
+	sub := "docs"
+	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
+	pp := &PickPolicy{
+		Root: sub, OnCommit: action.Action{Kind: action.PopAndDelete},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "on_open",
+	}
+	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
+	must(t, err)
+	o, _ := st.Open(context.Background(), "c", "@r")
+	if !o.Available {
+		t.Fatal("pick should be Available")
+	}
+
+	must(t, os.RemoveAll(filepath.Join(root, sub, "alpha")))
+	ageInProgressEntry(t, root, "@r")
+	must(t, st.sweepOnce())
+
+	state := policyStateDir(root, "@r")
+	inProgEntries, _ := os.ReadDir(filepath.Join(state, "in_progress"))
+	if len(inProgEntries) != 0 {
+		t.Errorf("orphan expired sentinel should be unlinked from in_progress, got %v", inProgEntries)
+	}
+	availEntries, _ := os.ReadDir(filepath.Join(state, "available"))
+	for _, e := range availEntries {
+		if e.Name() == "alpha" {
+			t.Fatalf("orphan sentinel for a folder that no longer exists must not be requeued to available, got %v", availEntries)
+		}
+	}
+}
+
+func TestOpenPickPolicy_OrphanAvailableSentinelIsSkippedAndCleaned(t *testing.T) {
+	root := t.TempDir()
+	sub := "docs"
+	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
+	pp := &PickPolicy{
+		Root:              sub,
+		OnCommit:          action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "explicit",
+	}
+	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
+	must(t, err)
+
+	availDir := filepath.Join(policyStateDir(root, "@r"), "available")
+	sentinel, ferr := os.OpenFile(filepath.Join(availDir, "alpha"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	must(t, ferr)
+	must(t, sentinel.Close())
+	must(t, os.RemoveAll(filepath.Join(root, sub, "alpha")))
+
+	o, err := st.Open(context.Background(), "c", "@r")
+	must(t, err)
+	if o.Available {
+		t.Fatalf("Open must not hand out a claim addressing a nonexistent folder, got %+v", o)
+	}
+	remaining, _ := os.ReadDir(availDir)
+	if len(remaining) != 0 {
+		t.Errorf("orphan available sentinel should be cleaned up during Open, got %v", remaining)
+	}
+}
+
+func TestBatchPop_OrphanAvailableSentinelIsSkippedAndCleaned(t *testing.T) {
+	root := t.TempDir()
+	sub := "docs"
+	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
+	pp := &PickPolicy{
+		Root:              sub,
+		OnCommit:          action.Action{Kind: action.Pop},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "explicit",
+	}
+	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
+	must(t, err)
+
+	availDir := filepath.Join(policyStateDir(root, "@r"), "available")
+	sentinel, ferr := os.OpenFile(filepath.Join(availDir, "alpha"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	must(t, ferr)
+	must(t, sentinel.Close())
+	must(t, os.RemoveAll(filepath.Join(root, sub, "alpha")))
+
+	items, err := st.BatchPop(context.Background(), "@r", []string{"lease-1"})
+	must(t, err)
+	if len(items) != 0 {
+		t.Fatalf("BatchPop must not hand out a claim addressing a nonexistent folder, got %+v", items)
+	}
+	remaining, _ := os.ReadDir(availDir)
+	if len(remaining) != 0 {
+		t.Errorf("orphan available sentinel should be cleaned up during BatchPop, got %v", remaining)
 	}
 }
 

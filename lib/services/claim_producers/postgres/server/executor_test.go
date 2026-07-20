@@ -246,6 +246,28 @@ func ratioFromFailurePayload(payload *structpb.Struct) (float64, bool) {
 	return 0, false
 }
 
+func TestExecutor_QueryInfraFailureIsNotReportedAsCheckFailure(t *testing.T) {
+	_, ex := bootExecutor(t)
+	ud, _ := structpb.NewStruct(map[string]any{
+		"schema": "no_such_schema",
+		"table":  "no_such_table",
+		"checks": []any{
+			map[string]any{"kind": "row_count_absolute", "config": map[string]any{"min": 1}},
+		},
+	})
+	outcome, err := ex.Execute(context.Background(), &genv1.ExecuteRequest{Attributes: ud})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	errOutcome := outcome.GetError()
+	if errOutcome == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
+	}
+	if got := errOutcome.GetErrorClass(); got != "pg/connection_lost" {
+		t.Fatalf("error_class: %q, want pg/connection_lost (a query infra failure must not surface as pg/verifier_check_failed/*)", got)
+	}
+}
+
 func TestExecutor_InvalidAttributes(t *testing.T) {
 	_, ex := bootExecutor(t)
 	tests := map[string]map[string]any{

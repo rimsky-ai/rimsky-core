@@ -34,3 +34,6 @@ func (*Server) OnInstanceCreated(_ context.Context, _ *genv1.OnInstanceCreatedRe
 func (*Server) OnInstanceTerminated(_ context.Context, _ *genv1.OnInstanceTerminatedRequest) (*genv1.LifecycleAck, error) {
 	return &genv1.LifecycleAck{}, nil
 }
+func (*Server) OnRunScopeTerminal(_ context.Context, _ *genv1.OnRunScopeTerminalRequest) (*genv1.LifecycleAck, error) {
+	return &genv1.LifecycleAck{}, nil
+}

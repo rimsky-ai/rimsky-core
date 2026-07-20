@@ -8,13 +8,17 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -72,7 +76,7 @@ func dialTestGrpc(t *testing.T, executor *ExecutorServer, obs *ObservabilityServ
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(running.Shutdown)
+	t.Cleanup(func() { running.Shutdown(context.Background()) })
 	conn, err := grpc.NewClient(running.Address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatal(err)
@@ -122,6 +126,60 @@ func TestGrpcExecuteAsyncAckAndCallback(t *testing.T) {
 	}
 	if _, hasAck := call.body["async_ack_id"]; hasAck {
 		t.Fatal("gRPC-path callback body must not carry async_ack_id (it rides in the URL)")
+	}
+}
+
+func TestGrpcExecuteProbeCancelSignalsObservedThenAcknowledgedAndSurfacesCanceled(t *testing.T) {
+	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
+	executor, obs, _ := startTestExecutor(t)
+	client, _ := dialTestGrpc(t, executor, obs)
+
+	observed := make(chan struct{})
+	acknowledged := make(chan struct{})
+	callbackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.TrimPrefix(r.URL.Path, "/v1/callback/") {
+		case "cancel-observed":
+			close(observed)
+		case "cancel-acknowledged":
+			close(acknowledged)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer callbackSrv.Close()
+
+	attributes, err := structpb.NewStruct(map[string]any{"probe_cancel": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	execCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, execErr := client.Execute(execCtx, &genv1.ExecuteRequest{
+			NodeId:      "cancel",
+			InstanceId:  "cancel",
+			NodeType:    "claude-agent",
+			Attributes:  attributes,
+			CallbackUrl: callbackSrv.URL,
+		})
+		done <- execErr
+	}()
+
+	<-observed
+	select {
+	case <-acknowledged:
+		t.Fatal("cancel-acknowledged fired before the executor observed context cancellation")
+	default:
+	}
+	cancel()
+	<-acknowledged
+
+	execErr := <-done
+	if execErr == nil {
+		t.Fatal("expected Execute to return an error after mid-flight cancellation")
+	}
+	if status.Code(execErr) != codes.Canceled {
+		t.Fatalf("expected codes.Canceled, got %v", execErr)
 	}
 }
 

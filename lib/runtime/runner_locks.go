@@ -7,16 +7,19 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
+// @concept: advisory-lock
 func sortLockSpecs(specs []any) {
 	sort.SliceStable(specs, func(i, j int) bool {
 		ki, kj := kindForSpec(specs[i]), kindForSpec(specs[j])
@@ -27,6 +30,7 @@ func sortLockSpecs(specs []any) {
 	})
 }
 
+// @concept: named-lock
 func kindForSpec(sp any) string {
 	switch sp.(type) {
 	case locks.NamedLockSpec:
@@ -79,10 +83,14 @@ func buildLockSpecs(
 		templateHash = inst.TemplateHash
 	}
 	registryTypes := declaredMessageTypesForTemplate(ctx, args, templateHash, tx)
+	heldClaims, err := loadInheritedClaimsForNode(ctx, args, tx, nd, frameID)
+	if err != nil {
+		return nil, fmt.Errorf("buildLockSpecs: load inherited claims: %w", err)
+	}
 	resolveCtx := attributes.ResolveContext{
 		Params:                paramsRaw,
 		Deps:                  deps,
-		Claim:                 loadInheritedClaimsForNode(ctx, args, tx, nd),
+		Claim:                 heldClaims,
 		RegistryDeclaredTypes: registryTypes,
 	}
 
@@ -115,52 +123,68 @@ func buildLockSpecs(
 	return out, nil
 }
 
-func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistence.Tx, nd *persistence.NodeRow) map[string]claimproducer.ClaimResult {
+func loadInheritedClaimsForNode(
+	ctx context.Context, args RunArgs, tx persistence.Tx, nd *persistence.NodeRow, frameID shared.UUID,
+) (map[string]claimproducer.ClaimResult, error) {
 	if nd == nil {
-		return nil
+		return nil, nil
 	}
 	inst, err := args.Persist.Instances().Get(ctx, nd.InstanceID, tx)
-	if err != nil || inst == nil {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("loadInheritedClaimsForNode: Instances.Get: %w", err)
+	}
+	if inst == nil {
+		return nil, nil
 	}
 	tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-	if err != nil || tmpl == nil {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("loadInheritedClaimsForNode: Templates.GetByHash: %w", err)
+	}
+	if tmpl == nil {
+		return nil, nil
 	}
 	nodeDef := lookupNodeDef(&tmpl.Spec, nd.NodeType)
 	if nodeDef == nil {
-		return nil
+		return nil, nil
 	}
 	if len(nodeDef.Holds) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := map[string]claimproducer.ClaimResult{}
-	collectCoHeldClaims(ctx, args, tx, &tmpl.Spec, nd.InstanceID, nodeDef, out)
-	if len(out) == 0 {
-		return nil
+	if err := collectCoHeldClaims(ctx, args, tx, &tmpl.Spec, nd.InstanceID, nodeDef, out, frameID); err != nil {
+		return nil, err
 	}
-	return out
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // @concept: claim-co-holdership
 func collectCoHeldClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	spec *node.TemplateSpec, instanceID shared.UUID,
-	nodeDef *node.TemplateNodeDef, out map[string]claimproducer.ClaimResult,
-) {
+	tmplSpec *node.TemplateSpec, instanceID shared.UUID,
+	nodeDef *node.TemplateNodeDef, out map[string]claimproducer.ClaimResult, frameID shared.UUID,
+) error {
 	if nodeDef == nil || len(nodeDef.Holds) == 0 {
-		return
+		return nil
 	}
 	for alias, binding := range nodeDef.Holds {
 		upstreamType := binding.From
 		if upstreamType == "" {
 			continue
 		}
-		upstreamNode := findInstanceNodeByType(ctx, args, tx, instanceID, upstreamType)
+		upstreamNode, err := findInstanceNodeByType(ctx, args, tx, instanceID, upstreamType)
+		if err != nil {
+			return fmt.Errorf("collectCoHeldClaims: lookup upstream node (alias %q): %w", alias, err)
+		}
 		if upstreamNode == nil {
 			continue
 		}
-		lh := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, spec, upstreamType, alias)
+		lh, err := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmplSpec, upstreamType, alias, frameID)
+		if err != nil {
+			return fmt.Errorf("collectCoHeldClaims: lookup claim handle (alias %q): %w", alias, err)
+		}
 		if lh == nil {
 			continue
 		}
@@ -174,32 +198,34 @@ func collectCoHeldClaims(
 			ClaimScope: lh.ClaimScopeData,
 		}
 	}
+	return nil
 }
 
 func findInstanceNodeByType(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	instanceID shared.UUID, t string,
-) *persistence.NodeRow {
+) (*persistence.NodeRow, error) {
 	rows, err := args.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("findInstanceNodeByType: ListByInstance: %w", err)
 	}
 	for i := range rows {
 		if rows[i].NodeType == t {
-			return &rows[i]
+			return &rows[i], nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
+// @concept: claim-co-holdership
 func lookupClaimHandleForAlias(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	upstreamNodeID shared.UUID, tmplSpec *node.TemplateSpec,
-	upstreamType string, alias string,
-) *persistence.ClaimHandleRow {
+	upstreamType string, alias string, frameID shared.UUID,
+) (*persistence.ClaimHandleRow, error) {
 	upstreamDef := lookupNodeDef(tmplSpec, upstreamType)
 	if upstreamDef == nil {
-		return nil
+		return nil, nil
 	}
 	var producerName string
 	for _, sref := range upstreamDef.ClaimProducers {
@@ -209,11 +235,11 @@ func lookupClaimHandleForAlias(
 		}
 	}
 	if producerName == "" {
-		return nil
+		return nil, nil
 	}
 	handles, err := args.ClaimHandles.ListByHolderNode(ctx, upstreamNodeID, tx)
-	if err != nil || len(handles) == 0 {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("lookupClaimHandleForAlias: ListByHolderNode: %w", err)
 	}
 	var best *persistence.ClaimHandleRow
 	for i := range handles {
@@ -221,11 +247,17 @@ func lookupClaimHandleForAlias(
 		if h.ProducerName == nil || *h.ProducerName != producerName {
 			continue
 		}
+		if h.State != spec.ClaimHandleStateActive && h.State != spec.ClaimHandleStateCommitted {
+			continue
+		}
+		if h.Lifetime != spec.ClaimLifetimeDurable && (h.FrameID == nil || *h.FrameID != frameID) {
+			continue
+		}
 		if best == nil || h.ClaimedAt.After(best.ClaimedAt) {
 			best = h
 		}
 	}
-	return best
+	return best, nil
 }
 
 func instTemplateScope(inst *persistence.InstanceRow) string {

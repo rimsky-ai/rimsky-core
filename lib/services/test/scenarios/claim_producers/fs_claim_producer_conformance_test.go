@@ -49,10 +49,10 @@ func TestFsStore_ClaimProducerConformance(t *testing.T) {
 	}
 
 	for _, name := range []string{
-		"SplitScopeListReturnsAllElements",
-		"SplitScopePreservesPartitionKey",
-		"SplitScopePreservesPayload",
-		"SplitScopeAddressFieldPresent",
+		"SplitScopeListShapeReturnsAllElements",
+		"SplitScopeListShapePreservesPartitionKey",
+		"SplitScopeListShapePreservesPayload",
+		"SplitScopeListShapeAddressFieldPresent",
 	} {
 		assertFsResultPassing(t, results, name)
 	}

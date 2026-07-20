@@ -188,13 +188,16 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 
 	a.childMu.Lock()
 	a.children[spawnID] = &liveChild{
-		spawnID: spawnID,
-		cmd:     spawned.Cmd,
-		conn:    conn,
-		port:    spawned.Port,
-		exited:  spawned.Exited,
+		spawnID:     spawnID,
+		runScopeID:  sp.GetRunScopeId(),
+		bindingPath: path,
+		cmd:         spawned.Cmd,
+		conn:        conn,
+		port:        spawned.Port,
+		exited:      spawned.Exited,
 	}
 	a.childMu.Unlock()
+	a.writeStatus()
 
 	slog.Info("hostagent: spawned child", "spawn_id", sp.GetSpawnId(), "path", execPath, "port", spawned.Port, "protocols", sp.GetExpectedProtocols())
 	return &genv1.SpawnAck{
@@ -327,6 +330,9 @@ func (a *agent) handleReap(reap *genv1.Reap) *genv1.Reaped {
 		delete(a.children, reap.GetSpawnId())
 	}
 	a.childMu.Unlock()
+	if ok {
+		a.writeStatus()
+	}
 	a.forgetBootstrapToken(reap.GetSpawnId())
 
 	if !ok {

@@ -23,6 +23,7 @@ func memoryBackend() *persistence.MemoryBackend {
 	return sharedMemoryBackend
 }
 
+// @concept: blob-backend
 func OpenBlobBackend(cfg persistence.BlobConfig, db persistence.Database, topology persistence.Topology) (persistence.BlobBackend, error) {
 	if err := persistence.ValidateBlobConfig(cfg, topology); err != nil {
 		return nil, err

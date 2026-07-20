@@ -7,6 +7,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 )
 
@@ -25,6 +26,18 @@ type DispatchContext struct {
 type Resolver interface {
 	Resolve(name string, ctx DispatchContext) (Endpoint, bool)
 	AcceptedNames() []string
+}
+
+type ErrorAwareResolver interface {
+	ResolveWithError(name string, ctx DispatchContext) (Endpoint, bool, error)
+}
+
+func ResolveExecutor(r Resolver, name string, ctx DispatchContext) (Endpoint, bool, error) {
+	if er, ok := r.(ErrorAwareResolver); ok {
+		return er.ResolveWithError(name, ctx)
+	}
+	ep, ok := r.Resolve(name, ctx)
+	return ep, ok, nil
 }
 
 type StaticResolver struct {
@@ -83,31 +96,40 @@ func NewLateBindResolver(
 }
 
 func (r *LateBindResolver) Resolve(name string, ctx DispatchContext) (Endpoint, bool) {
+	ep, ok, _ := r.ResolveWithError(name, ctx)
+	return ep, ok
+}
+
+func (r *LateBindResolver) ResolveWithError(name string, ctx DispatchContext) (Endpoint, bool, error) {
 	if ep, ok := r.static.Resolve(name, ctx); ok {
-		return ep, true
+		return ep, true, nil
 	}
 	if ctx.InstanceID == "" {
-		return Endpoint{}, false
+		return Endpoint{}, false, nil
 	}
 	if r.lookupBindings == nil || len(r.lateBindProxies) == 0 {
-		return Endpoint{}, false
+		return Endpoint{}, false, nil
 	}
 	proxyName, ok := r.lateBindProxies["executor"]
 	if !ok || proxyName == "" {
-		return Endpoint{}, false
+		return Endpoint{}, false, nil
 	}
 	lookupCtx := ctx.Ctx
 	if lookupCtx == nil {
 		lookupCtx = context.Background()
 	}
 	bindings, ok, err := r.lookupBindings(lookupCtx, ctx.InstanceID)
-	if err != nil || !ok {
-		return Endpoint{}, false
+	if err != nil {
+		return Endpoint{}, false, fmt.Errorf("LateBindResolver.ResolveWithError: lookupBindings(%s): %w", ctx.InstanceID, err)
+	}
+	if !ok {
+		return Endpoint{}, false, nil
 	}
 	if _, exists := bindings[name]; !exists {
-		return Endpoint{}, false
+		return Endpoint{}, false, nil
 	}
-	return r.static.Resolve(proxyName, ctx)
+	ep, ok := r.static.Resolve(proxyName, ctx)
+	return ep, ok, nil
 }
 
 func (r *LateBindResolver) AcceptedNames() []string {

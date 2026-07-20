@@ -61,6 +61,127 @@ func TestSubscribe_RestartReplay_PreloadsWatermark(t *testing.T) {
 	}
 }
 
+func TestSeenNames_PersistAndRoundTripAcrossRestart(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	t.Setenv("RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN", dsn)
+
+	s1, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB: %v", err)
+	}
+	w := &Watch{
+		SubscriptionID: "sub-seen",
+		InstanceID:     "inst-seen",
+		Backend:        "memory",
+		Bucket:         "test-bucket",
+		PollInterval:   30 * time.Second,
+		WatermarkField: "name",
+		MessageType:    "invalidate",
+	}
+	if err := s1.UpsertSubscription(ctx, w); err != nil {
+		t.Fatalf("UpsertSubscription: %v", err)
+	}
+	if err := s1.AddSeenName(ctx, "sub-seen", "b.json"); err != nil {
+		t.Fatalf("AddSeenName: %v", err)
+	}
+	if err := s1.AddSeenName(ctx, "sub-seen", "a.json"); err != nil {
+		t.Fatalf("AddSeenName: %v", err)
+	}
+	if err := s1.AddSeenName(ctx, "sub-seen", "a.json"); err != nil {
+		t.Fatalf("AddSeenName (duplicate insert must not error): %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s2, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB after restart: %v", err)
+	}
+	defer s2.Close()
+	names, err := s2.ListSeenNames(ctx, "sub-seen")
+	if err != nil {
+		t.Fatalf("ListSeenNames: %v", err)
+	}
+	got := map[string]bool{}
+	for _, n := range names {
+		got[n] = true
+	}
+	if len(got) != 2 || !got["a.json"] || !got["b.json"] {
+		t.Fatalf("ListSeenNames after restart = %v, want exactly [a.json b.json]", names)
+	}
+
+	if err := s2.DeleteSubscription(ctx, "sub-seen"); err != nil {
+		t.Fatalf("DeleteSubscription: %v", err)
+	}
+	names, err = s2.ListSeenNames(ctx, "sub-seen")
+	if err != nil {
+		t.Fatalf("ListSeenNames after delete: %v", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("ListSeenNames after DeleteSubscription = %v, want empty (cascade cleanup)", names)
+	}
+}
+
+func TestAdvanceWatermarkTime_ResetsSeenNamesToNewTie(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	t.Setenv("RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN", dsn)
+
+	s1, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB: %v", err)
+	}
+	defer s1.Close()
+	w := &Watch{
+		SubscriptionID: "sub-lm",
+		InstanceID:     "inst-lm",
+		Backend:        "memory",
+		Bucket:         "test-bucket",
+		PollInterval:   30 * time.Second,
+		WatermarkField: "last_modified",
+		MessageType:    "invalidate",
+	}
+	if err := s1.UpsertSubscription(ctx, w); err != nil {
+		t.Fatalf("UpsertSubscription: %v", err)
+	}
+	tied := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := s1.AdvanceWatermarkTime(ctx, "sub-lm", tied, "sibling-a.json"); err != nil {
+		t.Fatalf("AdvanceWatermarkTime: %v", err)
+	}
+	if err := s1.AddSeenName(ctx, "sub-lm", "sibling-b.json"); err != nil {
+		t.Fatalf("AddSeenName: %v", err)
+	}
+	names, err := s1.ListSeenNames(ctx, "sub-lm")
+	if err != nil {
+		t.Fatalf("ListSeenNames: %v", err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("ListSeenNames before advance = %v, want 2 tied siblings", names)
+	}
+
+	later := tied.Add(time.Hour)
+	if err := s1.AdvanceWatermarkTime(ctx, "sub-lm", later, "next.json"); err != nil {
+		t.Fatalf("AdvanceWatermarkTime: %v", err)
+	}
+	names, err = s1.ListSeenNames(ctx, "sub-lm")
+	if err != nil {
+		t.Fatalf("ListSeenNames: %v", err)
+	}
+	if len(names) != 1 || names[0] != "next.json" {
+		t.Fatalf("ListSeenNames after watermark advanced = %v, want exactly [next.json] (stale tie set pruned)", names)
+	}
+
+	got, err := s1.GetSubscription(ctx, "sub-lm")
+	if err != nil {
+		t.Fatalf("GetSubscription: %v", err)
+	}
+	if got.WatermarkTime == nil || !got.WatermarkTime.Equal(later) {
+		t.Fatalf("WatermarkTime = %v, want %v", got.WatermarkTime, later)
+	}
+}
+
 func TestStateDB_PersistsAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	dsn := harness.StartFreshPostgres(ctx, t)

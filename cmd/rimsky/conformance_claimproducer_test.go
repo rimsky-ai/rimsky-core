@@ -38,11 +38,11 @@ func TestClaimProducerConformance_StubStore(t *testing.T) {
 		}
 	}
 	wantNames := map[string]bool{
-		"SplitScopeListReturnsAllElements": false,
-		"SplitScopePreservesPartitionKey":  false,
-		"SplitScopePreservesPayload":       false,
-		"SplitScopeAddressFieldPresent":    false,
-		"ScopesConflict":                   false,
+		"SplitScopeListShapeReturnsAllElements":    false,
+		"SplitScopeListShapePreservesPartitionKey": false,
+		"SplitScopeListShapePreservesPayload":      false,
+		"SplitScopeListShapeAddressFieldPresent":   false,
+		"ScopesConflict":                           false,
 	}
 	seenCounts := make(map[string]int, len(results))
 	for _, r := range results {

@@ -63,12 +63,15 @@ func SaveConfig(path string, cfg *Config) error {
 	if cfg.CurrentContext != "" && !ValidContextName(cfg.CurrentContext) {
 		return fmt.Errorf("invalid current_context %q", cfg.CurrentContext)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, out, 0o644)
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }

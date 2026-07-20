@@ -90,8 +90,15 @@ func TestCascadeInvalidate(t *testing.T) {
 	require.Contains(t, bRow.Data, "a", "b.attributes.data should contain `a` from nodes.a.attribute.a")
 	require.Contains(t, bRow.Data, "b", "b.attributes.data should contain `b` from executor delta")
 
+	aBefore := h.EventCount(a.ID, "terminal/success")
+	bBefore := h.EventCount(b.ID, "terminal/success")
+	cBefore := h.EventCount(c.ID, "terminal/success")
+
 	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
+	h.WaitForEventCount(a.ID, "terminal/success", aBefore+1)
+	h.WaitForEventCount(b.ID, "terminal/success", bBefore+1)
+	h.WaitForEventCount(c.ID, "terminal/success", cBefore+1)
 	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(c.ID, cascade.NodeStateFresh)

@@ -149,6 +149,45 @@ func TestSubstitute(t *testing.T) {
 	}
 }
 
+func TestSubstitute_LargeIntegerPreservesPrecision(t *testing.T) {
+	t.Parallel()
+
+	ctx := ResolveContext{
+		Params: json.RawMessage(`{"started_ms": 1704067200000, "big_id": 9007199254740993}`),
+	}
+
+	t.Run("embedded mode does not render scientific notation", func(t *testing.T) {
+		got, err := Substitute("run-{{params.started_ms}}", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "run-1704067200000" {
+			t.Fatalf("got %q, want run-1704067200000 (no scientific notation)", got)
+		}
+	})
+
+	t.Run("whole-directive mode preserves int64 precision above 2^53", func(t *testing.T) {
+		val, err := SubstituteValue("{{params.big_id}}", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		n, ok := val.(json.Number)
+		if !ok || n.String() != "9007199254740993" {
+			t.Fatalf("got %v (%T), want json.Number(9007199254740993) exactly", val, val)
+		}
+	})
+
+	t.Run("embedded mode string rendering also preserves int64 precision above 2^53", func(t *testing.T) {
+		got, err := Substitute("id={{params.big_id}}", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "id=9007199254740993" {
+			t.Fatalf("got %q, want id=9007199254740993 exactly", got)
+		}
+	})
+}
+
 func TestSubstitute_NilContext(t *testing.T) {
 	t.Parallel()
 
@@ -635,8 +674,8 @@ func TestSubstituteValue_WholeDirective(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected map[string]any, got %T", got)
 		}
-		if m["a"] != float64(1) {
-			t.Fatalf("expected a=1, got %v", m["a"])
+		if m["a"] != json.Number("1") {
+			t.Fatalf("expected a=1, got %v (%T)", m["a"], m["a"])
 		}
 	})
 
@@ -669,8 +708,8 @@ func TestSubstituteValue_WholeDirective(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got != float64(42) {
-			t.Fatalf("got %v (%T) want 42 (float64)", got, got)
+		if got != json.Number("42") {
+			t.Fatalf("got %v (%T) want 42 (json.Number)", got, got)
 		}
 	})
 
@@ -762,8 +801,8 @@ func TestSubstituteValue_BareForm(t *testing.T) {
 			t.Fatalf("err: %v", err)
 		}
 		m, _ := got.(map[string]any)
-		if m["items"] != float64(5) {
-			t.Fatalf("got %v", got)
+		if m["items"] != json.Number("5") {
+			t.Fatalf("got %v (%T)", m["items"], m["items"])
 		}
 	})
 

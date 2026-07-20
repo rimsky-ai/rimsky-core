@@ -184,10 +184,10 @@ func testRunStateWritesIsolated_ClearSettlingSignalType(t *testing.T, d persiste
 
 	successSig := "terminal/success"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFresh, &successSig); err != nil {
+		if err := store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFresh, &successSig, false); err != nil {
 			return err
 		}
-		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFresh, &successSig)
+		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFresh, &successSig, false)
 	}); err != nil {
 		t.Fatalf("seed settling_signal_type: %v", err)
 	}
@@ -211,18 +211,28 @@ func testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t *testing
 
 	failedSig := "terminal/error/aggregate/strict_failed"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFailed, &failedSig); err != nil {
+		if err := store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFailed, &failedSig, false); err != nil {
 			return err
 		}
-		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFailed, &failedSig)
+		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFailed, &failedSig, false)
 	}); err != nil {
 		t.Fatalf("seed failed: %v", err)
+	}
+	beforeA := snapshotRun(ctx, t, d, f.runA)
+	if beforeA.SettlingSignalType != failedSig {
+		t.Fatalf("ResetFailedTerminalSettlingSignalType: precondition failed, A.SettlingSignalType=%q want %q",
+			beforeA.SettlingSignalType, failedSig)
 	}
 	before := snapshotRun(ctx, t, d, f.runB)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().ResetFailedTerminalSettlingSignalType(ctx, f.fix.NodeID, f.scopeA, tx)
 	}); err != nil {
 		t.Fatalf("ResetFailedTerminalSettlingSignalType(A): %v", err)
+	}
+	afterA := snapshotRun(ctx, t, d, f.runA)
+	if afterA.SettlingSignalType != "" {
+		t.Fatalf("ResetFailedTerminalSettlingSignalType did not fire: A.SettlingSignalType=%q, want cleared",
+			afterA.SettlingSignalType)
 	}
 	after := snapshotRun(ctx, t, d, f.runB)
 	if before.SettlingSignalType != after.SettlingSignalType {

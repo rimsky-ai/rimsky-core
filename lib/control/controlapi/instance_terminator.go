@@ -6,20 +6,16 @@ package controlapi
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
 const tickBudget = 10 * time.Second
 
 const stopBudget = 5 * time.Second
-
-var errClaimProducersRegistryUnset = errors.New("terminator: store registry not initialized")
 
 type InstanceTerminator struct {
 	deps         AppDeps
@@ -114,7 +110,7 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 			continue
 		}
 		if tpl == nil {
-			if err := t.fanOutFromLifecycleRows(tickCtx, inst); err != nil {
+			if err := fanOutInstanceTerminatedFromLifecycleRows(tickCtx, t.deps, inst, "instance_terminated"); err != nil {
 				t.logger.Warn("instance_terminator.fallback_fanout_failed",
 					"instance_id", inst.ID,
 					"template_hash", inst.TemplateHash,
@@ -142,48 +138,4 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 			continue
 		}
 	}
-}
-
-func (t *InstanceTerminator) fanOutFromLifecycleRows(ctx context.Context, inst persistence.InstanceRow) error {
-	var rows []persistence.LifecycleIdempotencyRow
-	if err := t.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := t.deps.Persist.LifecycleIdempotency().ListByScope(ctx,
-			persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx)
-		rows = r
-		return err
-	}); err != nil {
-		return err
-	}
-	if t.deps.LifecycleSubs == nil {
-		return errClaimProducersRegistryUnset
-	}
-	for _, r := range rows {
-		s, ok := t.deps.LifecycleSubs.Get(r.StoreRegistrationName)
-		if !ok {
-			t.logger.Warn("instance_terminator.unknown_lifecycle_subscriber",
-				"instance_id", inst.ID,
-				"peer_name", r.StoreRegistrationName)
-			continue
-		}
-		var terminatedAtMs int64
-		if inst.TerminatedAt != nil {
-			terminatedAtMs = inst.TerminatedAt.UnixMilli()
-		}
-		if err := s.OnInstanceTerminated(ctx, locks.OnInstanceTerminatedRequest{
-			InstanceID:         inst.ID.String(),
-			TemplateHash:       inst.TemplateHash,
-			TerminatedAtUnixMs: terminatedAtMs,
-		}); err != nil {
-			return err
-		}
-		if err := t.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return t.deps.Persist.LifecycleIdempotency().Delete(ctx,
-				r.StoreRegistrationName,
-				persistence.LifecycleIdempotencyScopeInstance,
-				inst.ID.String(), tx)
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
 }

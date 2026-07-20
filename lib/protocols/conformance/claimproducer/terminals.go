@@ -16,14 +16,14 @@ import (
 func checkTerminals(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 	out := make([]CheckResult, 0, 6)
 	commit := func(id claimproducer.ClaimID, scope, addr []byte) error {
-		_, err := c.Commit(ctx, id, scope, addr)
+		_, err := c.Commit(ctx, id, scope, addr, "")
 		return err
 	}
 	abandon := func(id claimproducer.ClaimID, scope, addr []byte) error {
-		return c.Abandon(ctx, id, scope, addr)
+		return c.Abandon(ctx, id, scope, addr, "")
 	}
 	release := func(id claimproducer.ClaimID, scope, addr []byte) error {
-		return c.Release(ctx, id, scope, addr)
+		return c.Release(ctx, id, scope, addr, "")
 	}
 	out = append(out, checkTerminalVerb(ctx, c, "Commit", commit))
 	out = append(out, checkTerminalVerb(ctx, c, "Abandon", abandon))

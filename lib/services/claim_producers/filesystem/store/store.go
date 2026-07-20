@@ -34,9 +34,12 @@ type PickPolicy struct {
 }
 
 type Config struct {
-	Root         string
-	PickPolicies map[string]*PickPolicy
+	Root             string
+	PickPolicies     map[string]*PickPolicy
+	LedgerMaxRecords int
 }
+
+const defaultLedgerMaxRecords = 1024
 
 type Store struct {
 	root         string
@@ -132,12 +135,16 @@ func New(cfg Config) (*Store, error) {
 			}
 		}
 	}
+	ledgerMax := cfg.LedgerMaxRecords
+	if ledgerMax <= 0 {
+		ledgerMax = defaultLedgerMaxRecords
+	}
 	return &Store{
 		root:         cfg.Root,
 		caseFold:     detectCaseInsensitiveRoot(cfg.Root),
 		pickPolicies: cfg.PickPolicies,
 		claims:       make(map[string]string),
-		ledger:       NewClaimLedger(1024),
+		ledger:       NewClaimLedger(ledgerMax),
 	}, nil
 }
 
@@ -155,6 +162,9 @@ func (s *Store) Capabilities() claimproducer.Capabilities {
 }
 
 func (s *Store) Open(_ context.Context, claimID, selector string) (claimproducer.OpenOutcome, error) {
+	if err := validateClaimID(claimID); err != nil {
+		return claimproducer.OpenOutcome{}, fmt.Errorf("filesystem store: Open: %w", err)
+	}
 	if err := s.checkRootAvailable("Open"); err != nil {
 		return claimproducer.OpenOutcome{}, err
 	}
@@ -219,13 +229,13 @@ func (s *Store) openScoped(claimID, selector string) (claimproducer.OpenOutcome,
 	}, nil
 }
 
-func (s *Store) Commit(_ context.Context, claimID string, scope []byte, _ []byte) error {
+func (s *Store) Commit(_ context.Context, claimID string, scope []byte, _ []byte, leaseToken string) error {
 	if err := s.checkRootAvailable("Commit"); err != nil {
 		return err
 	}
 	pp, sel, entry, folder := s.findByClaimID(claimID)
 	if pp == nil {
-		pp, sel, entry, folder = s.findByScope(scope)
+		pp, sel, entry, folder = s.findByScope(scope, leaseToken)
 	}
 	s.mu.Lock()
 	delete(s.claims, claimID)
@@ -240,13 +250,13 @@ func (s *Store) Commit(_ context.Context, claimID string, scope []byte, _ []byte
 	return nil
 }
 
-func (s *Store) Abandon(_ context.Context, claimID string, scope []byte, _ []byte) error {
+func (s *Store) Abandon(_ context.Context, claimID string, scope []byte, _ []byte, leaseToken string) error {
 	if err := s.checkRootAvailable("Abandon"); err != nil {
 		return err
 	}
 	pp, sel, entry, folder := s.findByClaimID(claimID)
 	if pp == nil {
-		pp, sel, entry, folder = s.findByScope(scope)
+		pp, sel, entry, folder = s.findByScope(scope, leaseToken)
 	}
 	s.mu.Lock()
 	delete(s.claims, claimID)
@@ -286,6 +296,20 @@ func (s *Store) checkRootAvailable(verb string) error {
 
 func hasGlobMeta(s string) bool {
 	return strings.ContainsAny(s, "*?[")
+}
+
+var claimIDRegex = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func validateClaimID(claimID string) error {
+	if claimID == "" {
+		return errors.New("claim_id must not be empty")
+	}
+	if !claimIDRegex.MatchString(claimID) {
+		return fmt.Errorf(
+			"claim_id %q must contain only letters, digits, underscore, or hyphen (in_progress sentinel filenames embed claim_id raw; '.' breaks folder/claim_id parsing and '/' enables path traversal)",
+			claimID)
+	}
+	return nil
 }
 
 func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) action.ValidationResult {

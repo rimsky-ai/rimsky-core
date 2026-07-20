@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -35,11 +36,13 @@ const reconnectMinBackoff = 250 * time.Millisecond
 const reconnectMaxBackoff = 10 * time.Second
 
 type liveChild struct {
-	spawnID string
-	cmd     *exec.Cmd
-	conn    *grpc.ClientConn
-	port    int
-	exited  <-chan struct{}
+	spawnID     string
+	runScopeID  string
+	bindingPath string
+	cmd         *exec.Cmd
+	conn        *grpc.ClientConn
+	port        int
+	exited      <-chan struct{}
 }
 
 type agent struct {
@@ -47,6 +50,7 @@ type agent struct {
 	trust           *localTrust
 	enrollBaseURL   string
 	callbackBaseURL string
+	connectedAt     string
 
 	sendMu     sync.Mutex
 	stream     genv1.HostAgent_ConnectClient
@@ -189,11 +193,8 @@ func Run(ctx context.Context, cfg Config) error {
 		cur = a
 		curMu.Unlock()
 
-		writeStatusFile(cfg.StatusFile, statusSnapshot{
-			Connected: true,
-			Proxy:     cfg.RimskyURL,
-			Since:     time.Now().UTC().Format(time.RFC3339),
-		})
+		a.connectedAt = time.Now().UTC().Format(time.RFC3339)
+		a.writeStatus()
 
 		a.serve(ctx)
 
@@ -217,9 +218,46 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 type statusSnapshot struct {
-	Connected bool   `json:"connected"`
-	Proxy     string `json:"proxy"`
-	Since     string `json:"since"`
+	Connected bool          `json:"connected"`
+	Proxy     string        `json:"proxy"`
+	Since     string        `json:"since"`
+	Children  []childStatus `json:"children"`
+}
+
+// @story: host-agent-control-plane
+type childStatus struct {
+	SpawnID    string `json:"spawn_id"`
+	RunScopeID string `json:"run_scope_id"`
+	Binding    string `json:"binding"`
+}
+
+// @story: host-agent-control-plane
+func (a *agent) snapshotChildren() []childStatus {
+	a.childMu.Lock()
+	defer a.childMu.Unlock()
+	if len(a.children) == 0 {
+		return nil
+	}
+	out := make([]childStatus, 0, len(a.children))
+	for _, child := range a.children {
+		out = append(out, childStatus{
+			SpawnID:    child.spawnID,
+			RunScopeID: child.runScopeID,
+			Binding:    child.bindingPath,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].SpawnID < out[j].SpawnID })
+	return out
+}
+
+// @story: host-agent-control-plane
+func (a *agent) writeStatus() {
+	writeStatusFile(a.cfg.StatusFile, statusSnapshot{
+		Connected: true,
+		Proxy:     a.cfg.RimskyURL,
+		Since:     a.connectedAt,
+		Children:  a.snapshotChildren(),
+	})
 }
 
 func writeStatusFile(path string, snap statusSnapshot) {

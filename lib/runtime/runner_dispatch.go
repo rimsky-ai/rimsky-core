@@ -60,7 +60,7 @@ type dispatchContext struct {
 	AttributesSchema map[string]any
 	LivenessInterval time.Duration
 	Log              shared.Logger
-	RegisterAsync    func(ackID string, actx AsyncContext)
+	RegisterAsync    func(ackID string, actx AsyncContext) bool
 }
 
 type terminalEvent struct {
@@ -109,11 +109,15 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		return terminalEvent{Kind: terminalKindComplete, Changed: true, ChangeSummary: summary}, nil, nil
 	}
 
-	ep, ok := args.Resolver.Resolve(acq.Executor, executor.DispatchContext{
+	ep, ok, resolveErr := executor.ResolveExecutor(args.Resolver, acq.Executor, executor.DispatchContext{
 		Ctx:        ctx,
 		InstanceID: acq.InstanceID.String(),
 		RunScopeID: acq.RunScopeID.String(),
 	})
+	if resolveErr != nil {
+		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "executor_resolve_failed",
+			Payload: map[string]any{"executor_name": acq.Executor, "error": resolveErr.Error()}}, nil, nil
+	}
 	if !ok {
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -165,6 +169,13 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		FrameID:         acq.FrameID,
 		SendMessageType: sendMessageType,
 	})
+	if sem := fanOutParallelismSemaphore(ctx, dctx); sem != nil {
+		if err := sem.Acquire(ctx); err != nil {
+			return terminalEvent{Kind: terminalKindInfra, ErrorClass: "fanout_parallelism_wait_cancelled",
+				Payload: map[string]any{"error": err.Error()}}, nil, nil
+		}
+		defer sem.Release()
+	}
 	outcome, peerPrincipal, err := client.Execute(ctx, req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -182,30 +193,34 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	}
 	terminal, asyncAck := readExecutorOutcome(ctx, dctx, outcome)
 
+	// @decision: async-callback-persistent-registry
 	if asyncAck != "" {
-		registerAsyncIfSet(dctx, asyncAck, peerPrincipal)
-		// @concept: signal
-		if dctx.Args.Persist != nil && dctx.Args.Queue != nil {
-			maxQuietSec, maxRuntimeSec := computeEffectiveDeadlineSecs(acq.NodeDef, dctx.Args.MaxQuietPeriodDefault, dctx.Args.MaxRuntimeDefault)
-			awaitSig := signalpkg.Signal{
-				Type: "transient/await_async",
-				Payload: map[string]any{
-					"async_ack_id": asyncAck,
-					"callback_url": dctx.Args.CallbackURL,
-				},
+		if dctx.Args.Persist == nil || dctx.Args.Queue == nil {
+			return terminalEvent{}, nil, fmt.Errorf(
+				"runner_dispatch: async outcome for ack %q but Persist/Queue are not configured for async-ack registration",
+				asyncAck)
+		}
+		maxQuietSec, maxRuntimeSec := computeEffectiveDeadlineSecs(acq.NodeDef, dctx.Args.MaxQuietPeriodDefault, dctx.Args.MaxRuntimeDefault)
+		awaitSig := signalpkg.Signal{
+			Type: "transient/await_async",
+			Payload: map[string]any{
+				"async_ack_id": asyncAck,
+				"callback_url": dctx.Args.CallbackURL,
+			},
+		}
+		if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			if err := dctx.Args.Queue.RegisterAsyncAck(ctx, tx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec, peerPrincipal); err != nil {
+				return fmt.Errorf("register async ack: %w", err)
 			}
-			if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				if err := dctx.Args.Queue.RegisterAsyncAck(ctx, tx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec, peerPrincipal); err != nil {
-					return fmt.Errorf("register async ack: %w", err)
-				}
-				return signalaudit.EmitSignal(ctx, dctx.Args.Persist.Events(),
-					acq.InstanceID, acq.NodeID, awaitSig, dctx.Args.Clock.Now(), tx)
-			}); err != nil && dctx.Args.Logger != nil {
-				dctx.Args.Logger.Warn("runner_dispatch: persist async-callback registry failed; await_async signal not emitted, restart-survival not in effect for this ack",
-					"node_id", acq.NodeID.String(),
-					"async_ack_id", asyncAck,
-					"error", err.Error())
-			}
+			return signalaudit.EmitSignal(ctx, dctx.Args.Persist.Events(),
+				acq.InstanceID, acq.NodeID, awaitSig, dctx.Args.Clock.Now(), tx)
+		}); err != nil {
+			return terminalEvent{}, nil, fmt.Errorf(
+				"runner_dispatch: persist async-callback registration failed for ack %q: %w", asyncAck, err)
+		}
+		if !registerAsyncIfSet(dctx, asyncAck, peerPrincipal) {
+			return terminalEvent{}, nil, fmt.Errorf(
+				"runner_dispatch: async_ack_id %q collides with an existing in-memory callback registration", asyncAck)
 		}
 		return terminalEvent{}, &RunnerResult{
 			Ran:        true,
@@ -218,12 +233,12 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	return terminal, nil, nil
 }
 
-func registerAsyncIfSet(dctx dispatchContext, asyncAck, peerPrincipal string) {
+func registerAsyncIfSet(dctx dispatchContext, asyncAck, peerPrincipal string) bool {
 	if dctx.RegisterAsync == nil {
-		return
+		return true
 	}
 	acq := dctx.Acquired
-	dctx.RegisterAsync(asyncAck, AsyncContext{
+	return dctx.RegisterAsync(asyncAck, AsyncContext{
 		NodeID:             acq.NodeID,
 		InstanceID:         acq.InstanceID,
 		NodeRunID:          acq.NodeRunID,
@@ -359,35 +374,28 @@ func validateTags(_ context.Context, dctx dispatchContext, t terminalEvent) term
 
 // @decision: walker-rule-per-sender-node
 // @story: resume-preserves-snapshot
-func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
-	if acq.Executor != "" && acq.NodeDef != nil && acq.NodeDef.Attributes != nil {
-		schema, _, execSchemaVisible := computeEffectiveAttributeSchema(args, acq)
-		if !execSchemaVisible {
-			return nil, schema, &executorSchemaUnavailableError{Executor: acq.Executor}
-		}
-	}
+func resolveAttributesCore(ctx context.Context, args RunArgs, acq *acquisition) (filled, schema map[string]any, matched []int, partitionKey string, err error) {
 	snapshot, schema, err := loadDispatchBag(ctx, args, acq)
 	if err != nil {
-		return nil, schema, err
+		return nil, schema, nil, "", err
 	}
-	claims := claimsMapFromAcq(acq)
 	var paramsRaw json.RawMessage
 	if len(acq.InstanceParams) > 0 {
 		b, mErr := json.Marshal(acq.InstanceParams)
 		if mErr != nil {
-			return nil, schema, mErr
+			return nil, schema, nil, "", mErr
 		}
 		paramsRaw = b
 	}
 	scope := resolveAcqScope(ctx, args, acq)
 	rctx := attributes.ResolveContext{
-		Claim:             claims,
+		Claim:             claimsMapFromAcq(acq),
 		Params:            paramsRaw,
 		ChildPartitionKey: scope.PartitionKey,
 	}
-	filled, err := fillClaimRefs(schema, rctx, snapshot)
+	filled, err = fillClaimRefs(schema, rctx, snapshot)
 	if err != nil {
-		return nil, schema, err
+		return nil, schema, nil, scope.PartitionKey, err
 	}
 	filled = mergeSchemaDefaultsForDispatch(schema, filled)
 	merged, matched := applyAttributeOverrides(
@@ -399,10 +407,31 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 		scope.PartitionKey,
 		args.Logger,
 	)
-	filled = merged
+	return merged, schema, matched, scope.PartitionKey, nil
+}
+
+func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
+	if acq.Executor != "" && acq.NodeDef != nil && acq.NodeDef.Attributes != nil {
+		schema, execSchema, execSchemaVisible := computeEffectiveAttributeSchema(args, acq)
+		if !execSchemaVisible {
+			return nil, schema, &executorSchemaUnavailableError{Executor: acq.Executor}
+		}
+		if shapeErrs := node.CheckEffectiveAttributesSchema(
+			schema, acq.NodeDef.Attributes.Schema, execSchema, extractReadOnlyPropsLocal(execSchema), execSchemaVisible,
+		); len(shapeErrs) > 0 {
+			return nil, schema, &attributeValidationError{
+				Reason: "dispatch_effective_schema_shape_violation",
+				Cause:  effectiveSchemaShapeErrors(shapeErrs),
+			}
+		}
+	}
+	filled, schema, matched, partitionKey, err := resolveAttributesCore(ctx, args, acq)
+	if err != nil {
+		return nil, schema, err
+	}
 	acq.MergedAttributes = filled
 	emitOverrideMatchEventsAfterMerge(ctx, args.Persist, args.Logger, acq.InstanceID, matched)
-	bpFilled, bpErr := evaluateBeforeDispatchBreakpoints(ctx, args, acq, scope.PartitionKey, filled, schema)
+	bpFilled, bpErr := evaluateBeforeDispatchBreakpoints(ctx, args, acq, partitionKey, filled, schema)
 	if bpErr != nil {
 		return nil, schema, bpErr
 	}
@@ -517,6 +546,15 @@ func computeEffectiveAttributeSchema(args RunArgs, acq *acquisition) (map[string
 		return nil, nil, execSchemaVisible
 	}
 	return node.MergeAttributeDefaults(execSchema, acq.TemplateAttributeDefaults, nodeSchema), execSchema, execSchemaVisible
+}
+
+// @concept: attribute
+func effectiveSchemaShapeErrors(errs []node.AttributesSchemaCheckError) error {
+	msgs := make([]string, 0, len(errs))
+	for _, e := range errs {
+		msgs = append(msgs, fmt.Sprintf("%s: %s", e.Path, e.Msg))
+	}
+	return errors.New(strings.Join(msgs, "; "))
 }
 
 func extractReadOnlyPropsLocal(schema map[string]any) map[string]bool {
@@ -841,29 +879,24 @@ func runScopeIDString(id shared.UUID) string {
 	return id.String()
 }
 
+// @concept: attribute
 func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.ExecuteRequest, error) {
 	acq := dctx.Acquired
 	attrStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
 	if len(dctx.Attributes) > 0 {
 		s, err := structpb.NewStruct(dctx.Attributes)
 		if err != nil {
-			dctx.Args.Logger.Warn("buildExecuteRequest: structpb.NewStruct failed for attributes",
-				"node_id", acq.NodeID.String(),
-				"error", err.Error())
-		} else {
-			attrStruct = s
+			return nil, fmt.Errorf("buildExecuteRequest: structpb.NewStruct failed for attributes: %w", err)
 		}
+		attrStruct = s
 	}
 	schemaStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
 	if len(dctx.AttributesSchema) > 0 {
 		s, err := structpb.NewStruct(dctx.AttributesSchema)
 		if err != nil {
-			dctx.Args.Logger.Warn("buildExecuteRequest: structpb.NewStruct failed for attributes_schema",
-				"node_id", acq.NodeID.String(),
-				"error", err.Error())
-		} else {
-			schemaStruct = s
+			return nil, fmt.Errorf("buildExecuteRequest: structpb.NewStruct failed for attributes_schema: %w", err)
 		}
+		schemaStruct = s
 	}
 
 	claimProducers, err := buildClaimProducerHandles(acq)

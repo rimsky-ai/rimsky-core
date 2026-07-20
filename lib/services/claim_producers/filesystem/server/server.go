@@ -37,17 +37,19 @@ import (
 const gracefulStopBudget = 5 * time.Second
 
 type Config struct {
-	Root            string
-	PickPolicies    map[string]*fsstore.PickPolicy
-	SweepInterval   time.Duration
-	HTTPBridgeURL   string
-	EnableLifecycle bool
+	Root             string
+	PickPolicies     map[string]*fsstore.PickPolicy
+	SweepInterval    time.Duration
+	HTTPBridgeURL    string
+	EnableLifecycle  bool
+	LedgerMaxRecords int
 }
 
 func New(cfg Config) (*Server, error) {
 	st, err := fsstore.New(fsstore.Config{
-		Root:         cfg.Root,
-		PickPolicies: cfg.PickPolicies,
+		Root:             cfg.Root,
+		PickPolicies:     cfg.PickPolicies,
+		LedgerMaxRecords: cfg.LedgerMaxRecords,
 	})
 	if err != nil {
 		return nil, err
@@ -168,14 +170,14 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 }
 
 func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
-	if err := s.store.Commit(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
+	if err := s.store.Commit(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress(), req.GetLeaseToken()); err != nil {
 		return nil, classedStatus(err)
 	}
 	return &genv1.CommitResponse{}, nil
 }
 
 func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
-	if err := s.store.Abandon(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
+	if err := s.store.Abandon(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress(), req.GetLeaseToken()); err != nil {
 		return nil, classedStatus(err)
 	}
 	return &genv1.AbandonResponse{}, nil
@@ -271,6 +273,12 @@ func (s *Server) splitListArray(_ context.Context, parent parentClaimInfo, parti
 		return nil, status.Errorf(codes.InvalidArgument,
 			"filesystem store: SplitScope list: %v", err)
 	}
+	for _, el := range req.List {
+		if err := validateListElementKey(el.Key); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"filesystem store: SplitScope list: %v", err)
+		}
+	}
 	subs, err := listarray.ToSubScopes(req, func(key string) ([]byte, error) {
 		syntheticPath := filepath.Join(parent.AbsPath, "_list", key)
 		return s.store.ScopeBytesForAbs(syntheticPath)
@@ -289,6 +297,16 @@ func (s *Server) splitListArray(_ context.Context, parent parentClaimInfo, parti
 		})
 	}
 	return out, nil
+}
+
+func validateListElementKey(key string) error {
+	if strings.ContainsAny(key, "/\\") {
+		return fmt.Errorf("element key %q must not contain a path separator", key)
+	}
+	if key == "." || key == ".." {
+		return fmt.Errorf("element key %q is not a valid list element key", key)
+	}
+	return nil
 }
 
 func (s *Server) splitBatchPick(ctx context.Context, parent parentClaimInfo, batchPickJSON []byte) ([]*genv1.SubScopeDescriptor, error) {
@@ -333,6 +351,7 @@ func (s *Server) splitBatchPick(ctx context.Context, parent parentClaimInfo, bat
 			ClaimScopeData: item.ClaimScopeBytes,
 			Address:        item.AddressBytes,
 			Payload:        item.PayloadBytes,
+			LeaseToken:     item.LeaseToken,
 		})
 	}
 	return out, nil

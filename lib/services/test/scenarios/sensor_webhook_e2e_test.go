@@ -39,6 +39,16 @@ const webhookSignatureHeader = "X-Rimsky-Signature"
 
 const webhookTimestampHeader = "X-Rimsky-Timestamp"
 
+const webhookRestartPublisherName = "intake-restart"
+
+const webhookRestartReactorNode = "reactor"
+
+const webhookRestartMessageType = "invalidate/reactor-restart"
+
+const webhookRestartPathPrefix = "/wh/restart-ingest"
+
+const webhookRestartIdemHeader = "X-Idem-Key"
+
 func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -125,6 +135,148 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 	requirePersistedWebhookPayload(t, persisted, inboundBody, webhookPathPrefix)
 }
 
+func TestSensorWebhook_RestartRecoversMountAndWatermark(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	netName := harness.NewNetwork(ctx, t)
+	statePGContainer := startSensorStatePostgres(ctx, t, netName)
+
+	rimskyAlias := harness.NextRimskyAlias()
+	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
+	sensor := harness.StartSensorWebhookWithState(ctx, t, netName, "sensor-webhook-restart",
+		rimskyInternalURL, statePGContainer.internalDSN)
+
+	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName)
+
+	ep := harness.BringUpRimsky(ctx, t,
+		harness.WithExistingNetwork(netName),
+		harness.WithRimskyAlias(rimskyAlias),
+		harness.WithExecutor("stub", execEP),
+		harness.WithPublisher(webhookRestartPublisherName, sensor.GRPCEndpoint),
+	)
+
+	templateID := deploySensorWebhookRestartTemplate(t, ep)
+	instanceID := createSensorWebhookInstance(t, ep, templateID, "ck-sensor-webhook-restart")
+
+	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookRestartPathPrefix, 30*time.Second)
+
+	preRestartPath := sensor.WebhookBaseURL + webhookRestartPathPrefix
+	status, body := postWebhookSignedWithHeaders(t, preRestartPath, []byte(`{"seq":1}`), webhookAuthSecret,
+		map[string]string{webhookRestartIdemHeader: "k1"})
+	if status != http.StatusOK {
+		t.Fatalf("pre-restart signed POST to %s returned %d (want 200), body=%q", preRestartPath, status, string(body))
+	}
+	requirePublisherMessageCountReaches(t, ep, instanceID, 1, 30*time.Second, "pre-restart-delivery")
+
+	sensor.Stop(ctx)
+	t.Logf("sensor-webhook stopped at %s", time.Now().UTC().Format(time.RFC3339Nano))
+
+	sensor.Restart(ctx)
+	t.Logf("sensor-webhook restarted at %s; the publisher-subscription reconciler must re-mount "+
+		"the path and the state DB must rehydrate the idempotency watermark",
+		time.Now().UTC().Format(time.RFC3339Nano))
+
+	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookRestartPathPrefix, 30*time.Second)
+
+	postRestartPath := sensor.WebhookBaseURL + webhookRestartPathPrefix
+	replayStatus, replayBody := postWebhookSignedWithHeaders(t, postRestartPath, []byte(`{"seq":1}`), webhookAuthSecret,
+		map[string]string{webhookRestartIdemHeader: "k1"})
+	if replayStatus != http.StatusOK {
+		t.Fatalf("post-restart replayed-key POST to %s returned %d (want 200 dedup ack), body=%q",
+			postRestartPath, replayStatus, string(replayBody))
+	}
+	requirePublisherMessageCountStable(t, ep, instanceID, 1, 3*time.Second,
+		"replayed-idempotency-key-must-not-emit-after-restart — the durable watermark must have "+
+			"rehydrated from the state DB, otherwise the replay would be treated as a fresh delivery")
+
+	freshStatus, freshBody := postWebhookSignedWithHeaders(t, postRestartPath, []byte(`{"seq":2}`), webhookAuthSecret,
+		map[string]string{webhookRestartIdemHeader: "k2"})
+	if freshStatus != http.StatusOK {
+		t.Fatalf("post-restart fresh-key POST to %s returned %d (want 200), body=%q",
+			postRestartPath, freshStatus, string(freshBody))
+	}
+	requirePublisherMessageCountReaches(t, ep, instanceID, 2, 30*time.Second,
+		"post-restart-fresh-key-must-deliver — the path binding must be live again, not stuck "+
+			"404ing because the sensor never recovered its mount")
+}
+
+func deploySensorWebhookRestartTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
+	t.Helper()
+	sensorConfig := map[string]any{
+		"path_prefix":        webhookRestartPathPrefix,
+		"idempotency_header": webhookRestartIdemHeader,
+		"auth": map[string]any{
+			"mode":             "hmac",
+			"secret":           webhookAuthSecret,
+			"signature_header": webhookSignatureHeader,
+			"timestamp_header": webhookTimestampHeader,
+		},
+	}
+	configBytes, err := json.Marshal(sensorConfig)
+	if err != nil {
+		t.Fatalf("marshal sensor config: %v", err)
+	}
+	body := map[string]any{
+		"spec": map[string]any{
+			"name":    "sensor-webhook-restart-recovery",
+			"version": "1",
+			"messages": []map[string]any{
+				{
+					"type": webhookRestartMessageType,
+					"body_schema": map[string]any{
+						"type":                 "object",
+						"properties":           map[string]any{},
+						"additionalProperties": true,
+					},
+				},
+			},
+			"nodes": []map[string]any{
+				{
+					"type":     webhookRestartReactorNode,
+					"executor": "stub",
+					"subscribes": []map[string]any{
+						{
+							"node":                   webhookRestartMessageType,
+							"type":                   "terminal/success",
+							"force_upstream_refresh": false,
+						},
+					},
+				},
+			},
+			"publishers": []map[string]any{
+				{
+					"name":         webhookRestartPublisherName,
+					"kind":         "webhook",
+					"config":       json.RawMessage(configBytes),
+					"message_type": webhookRestartMessageType,
+				},
+			},
+		},
+	}
+	status, raw := ep.PostJSON(t, "/v1/templates", body)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /templates: %d %s", status, string(raw))
+	}
+	var resp struct {
+		TemplateID string `json:"template_id"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode template response: %v: %s", err, string(raw))
+	}
+	if resp.TemplateID == "" {
+		t.Fatalf("template_id empty: %s", string(raw))
+	}
+	deployStatus, deployRaw := ep.PostJSON(t,
+		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
+	if deployStatus != http.StatusOK {
+		t.Fatalf("POST /templates/%s/deploy: %d %s",
+			resp.TemplateID, deployStatus, string(deployRaw))
+	}
+	return resp.TemplateID
+}
+
 func postWebhook(t *testing.T, url string, body []byte) (int, []byte) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
@@ -150,6 +302,10 @@ func webhookSignature(secret, ts string, body []byte) string {
 }
 
 func postWebhookSigned(t *testing.T, url string, body []byte, secret string) (int, []byte) {
+	return postWebhookSignedWithHeaders(t, url, body, secret, nil)
+}
+
+func postWebhookSignedWithHeaders(t *testing.T, url string, body []byte, secret string, extraHeaders map[string]string) (int, []byte) {
 	t.Helper()
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
@@ -159,6 +315,9 @@ func postWebhookSigned(t *testing.T, url string, body []byte, secret string) (in
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(webhookSignatureHeader, webhookSignature(secret, ts, body))
 	req.Header.Set(webhookTimestampHeader, ts)
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("signed POST %s: %v", url, err)

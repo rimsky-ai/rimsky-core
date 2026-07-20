@@ -160,8 +160,6 @@ type Queue interface {
 
 	ResumeParkedInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID) (resumed bool, err error)
 
-	RebindRunFrameInTx(ctx context.Context, tx Tx, nodeRunID, newFrameID shared.UUID) error
-
 	GetRetryNoProgress(ctx context.Context, nodeRunID shared.UUID) (count int, override *int, err error)
 
 	SetRetryNoProgressForRunInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, count int) error

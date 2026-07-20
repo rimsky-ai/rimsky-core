@@ -48,6 +48,7 @@ type Watch struct {
 	LastPollAt    time.Time
 	WatermarkName string
 	WatermarkTime time.Time
+	SeenNames     map[string]struct{}
 }
 
 type SensorService struct {
@@ -93,6 +94,13 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 		}
 		if r.WatermarkTime != nil {
 			w.WatermarkTime = *r.WatermarkTime
+		}
+		names, err := state.ListSeenNames(context.Background(), r.SubscriptionID)
+		if err != nil {
+			s.logger.Warn("sensor-object-store.attach_state_db.seen_names_failed",
+				"publisher_subscription_id", r.SubscriptionID, "error", err.Error())
+		} else {
+			w.SeenNames = seenNameSet(names)
 		}
 		s.watches[r.SubscriptionID] = w
 		s.logger.Info("sensor-object-store.state_recovered",
@@ -240,6 +248,12 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 			if persisted.WatermarkTime != nil {
 				w.WatermarkTime = *persisted.WatermarkTime
 			}
+			if names, err := state.ListSeenNames(ctx, w.SubscriptionID); err != nil {
+				s.logger.Warn("sensor-object-store.subscribe.seen_names_failed",
+					"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+			} else {
+				w.SeenNames = seenNameSet(names)
+			}
 		}
 	}
 	s.mu.Lock()
@@ -347,14 +361,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 			s.mu.Unlock()
 			return
 		}
-		isNew := false
-		switch cur.WatermarkField {
-		case "last_modified":
-			isNew = o.LastModified.After(cur.WatermarkTime)
-		default:
-			isNew = o.Name > cur.WatermarkName
-		}
-		if !isNew {
+		if !isNewObject(cur, o) {
 			s.mu.Unlock()
 			continue
 		}
@@ -372,10 +379,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 			"etag":          o.ETag,
 			"last_modified": o.LastModified.UTC().Format(time.RFC3339),
 		}
-		idemKey := fmt.Sprintf("%s+%s", w.SubscriptionID, o.ETag)
-		if o.ETag == "" {
-			idemKey = fmt.Sprintf("%s+%s", w.SubscriptionID, o.Name)
-		}
+		idemKey := fmt.Sprintf("%s+%s+%s", w.SubscriptionID, o.Name, o.ETag)
 		if err := s.postMessage(ctx, w, obs, idemKey); err != nil {
 			s.logger.Warn("sensor-object-store.message_post_failed",
 				"publisher_subscription_id", w.SubscriptionID, "object_name", o.Name, "error", err.Error())
@@ -388,20 +392,22 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 			s.mu.Unlock()
 			return
 		}
-		switch watermarkField {
-		case "last_modified":
-			cur.WatermarkTime = o.LastModified
-		default:
-			cur.WatermarkName = o.Name
-		}
+		watermarkAdvanced := markObjectSeen(cur, o)
 		s.mu.Unlock()
 		if state != nil {
 			var err error
 			switch watermarkField {
 			case "last_modified":
-				err = state.UpdateWatermarkTime(ctx, w.SubscriptionID, o.LastModified)
+				if watermarkAdvanced {
+					err = state.AdvanceWatermarkTime(ctx, w.SubscriptionID, o.LastModified, o.Name)
+				} else {
+					err = state.AddSeenName(ctx, w.SubscriptionID, o.Name)
+				}
 			default:
-				err = state.UpdateWatermarkName(ctx, w.SubscriptionID, o.Name)
+				err = state.AddSeenName(ctx, w.SubscriptionID, o.Name)
+				if err == nil {
+					err = state.UpdateWatermarkName(ctx, w.SubscriptionID, o.Name)
+				}
 			}
 			if err != nil {
 				s.logger.Warn("sensor-object-store.poll.state_update_failed",
@@ -409,6 +415,55 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 			}
 		}
 	}
+}
+
+func isNewObject(w *Watch, o ObjectMeta) bool {
+	switch w.WatermarkField {
+	case "last_modified":
+		switch {
+		case o.LastModified.After(w.WatermarkTime):
+			return true
+		case o.LastModified.Equal(w.WatermarkTime):
+			_, seen := w.SeenNames[o.Name]
+			return !seen
+		default:
+			return false
+		}
+	default:
+		_, seen := w.SeenNames[o.Name]
+		return !seen
+	}
+}
+
+func markObjectSeen(w *Watch, o ObjectMeta) bool {
+	switch w.WatermarkField {
+	case "last_modified":
+		if o.LastModified.After(w.WatermarkTime) {
+			w.WatermarkTime = o.LastModified
+			w.SeenNames = map[string]struct{}{o.Name: {}}
+			return true
+		}
+		if w.SeenNames == nil {
+			w.SeenNames = make(map[string]struct{})
+		}
+		w.SeenNames[o.Name] = struct{}{}
+		return false
+	default:
+		if w.SeenNames == nil {
+			w.SeenNames = make(map[string]struct{})
+		}
+		w.SeenNames[o.Name] = struct{}{}
+		w.WatermarkName = o.Name
+		return false
+	}
+}
+
+func seenNameSet(names []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		out[n] = struct{}{}
+	}
+	return out
 }
 
 func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[string]any, idempotencyKey string) error {

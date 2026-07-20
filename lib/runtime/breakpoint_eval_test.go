@@ -397,6 +397,61 @@ func TestEvaluateBreakpoints_OverflowDropOldestEvictsAndIncrementsCounter(t *tes
 	}
 }
 
+func TestEvaluateBreakpoints_NotifyOnlyAutoResumeTTLOverflowNeverBlocks(t *testing.T) {
+	ctx := context.Background()
+	tables := openInMemoryTables(t)
+	instanceID := seedBreakpointEvalFixture(t, ctx, tables)
+	bpID := createBreakpointForEval(t, ctx, tables, persistence.BreakpointRow{
+		InstanceID:     instanceID,
+		Matcher:        map[string]any{},
+		Checkpoint:     persistence.CheckpointBeforeDispatch,
+		Mode:           persistence.BreakpointModeNotifyOnly,
+		OverflowPolicy: persistence.OverflowAutoResumeAfterTTL,
+		HitTTLSeconds:  300,
+		CreatedByKey:   "test",
+	})
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for i := 0; i < 100; i++ {
+			if _, _, err := tables.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
+				BreakpointID: bpID,
+				InstanceID:   instanceID,
+				Checkpoint:   persistence.CheckpointBeforeDispatch,
+				Mode:         persistence.BreakpointModeNotifyOnly,
+				Snapshot:     map[string]any{"seed": i},
+			}, tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed 100 unresumed hits: %v", err)
+	}
+
+	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
+	cc := newCheckpointContext(instanceID)
+
+	if _, err := runtime.EvaluateBreakpoints(ctx, args, cc); err != nil {
+		t.Fatalf("EvaluateBreakpoints: %v", err)
+	}
+
+	hits := listHitsForBreakpoint(t, ctx, tables, bpID)
+	if len(hits) != 100 {
+		t.Errorf("expected the queue to stay at cap (overflow hit dropped, not queued), got %d hit rows", len(hits))
+	}
+
+	var bp *persistence.BreakpointRow
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		bp, err = tables.Breakpoints().Get(ctx, bpID, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("get breakpoint: %v", err)
+	}
+	if bp.DroppedCount < 1 {
+		t.Errorf("expected dropped_count >= 1 (notify_only overflow must be dropped, not blocked), got %d", bp.DroppedCount)
+	}
+}
+
 func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)

@@ -231,7 +231,7 @@ func (s *instancesImpl) CountActiveByTemplate(ctx context.Context, templateHash 
 	return n, nil
 }
 
-// @concept: breakpoint
+// @concept: instance
 func (s *instancesImpl) SetPaused(ctx context.Context, instanceID foundationshared.UUID, paused bool, tx persistence.Tx) (bool, error) {
 	q := s.q(tx)
 	var prior int64

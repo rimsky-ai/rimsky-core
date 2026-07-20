@@ -20,23 +20,27 @@ import (
 const ConfigEnv = "STORE_FILESYSTEM_CONFIG"
 
 type Opts struct {
-	Configured    bool
-	Root          string
-	PickPolicies  map[string]*fsstore.PickPolicy
-	SweepInterval time.Duration
-	HTTPBridgeURL string
-	Host          string
-	GRPCPort      int
-	HTTPPort      int
-	AdminPort     int
+	Configured       bool
+	Root             string
+	PickPolicies     map[string]*fsstore.PickPolicy
+	SweepInterval    time.Duration
+	HTTPBridgeURL    string
+	EnableLifecycle  bool
+	LedgerMaxRecords int
+	Host             string
+	GRPCPort         int
+	HTTPPort         int
+	AdminPort        int
 }
 
 func (o Opts) ServerConfig() Config {
 	return Config{
-		Root:          o.Root,
-		PickPolicies:  o.PickPolicies,
-		SweepInterval: o.SweepInterval,
-		HTTPBridgeURL: o.HTTPBridgeURL,
+		Root:             o.Root,
+		PickPolicies:     o.PickPolicies,
+		SweepInterval:    o.SweepInterval,
+		HTTPBridgeURL:    o.HTTPBridgeURL,
+		EnableLifecycle:  o.EnableLifecycle,
+		LedgerMaxRecords: o.LedgerMaxRecords,
 	}
 }
 
@@ -49,6 +53,8 @@ type yamlConfig struct {
 	AdminPort            int                       `yaml:"admin_port"`
 	PickPolicies         map[string]yamlPickPolicy `yaml:"pick_policies"`
 	SweepIntervalSeconds int                       `yaml:"sweep_interval_seconds"`
+	EnableLifecycle      bool                      `yaml:"enable_lifecycle"`
+	LedgerMaxRecords     int                       `yaml:"ledger_max_records"`
 }
 
 type yamlPickPolicy struct {
@@ -106,15 +112,17 @@ func LoadOptsFromEnv() (Opts, error) {
 	}
 
 	return Opts{
-		Configured:    true,
-		Root:          cfg.Root,
-		PickPolicies:  policies,
-		SweepInterval: sweepInterval,
-		HTTPBridgeURL: cfg.HTTPBridgeURL,
-		Host:          host,
-		GRPCPort:      agentport.Override(cfg.GRPCPort),
-		HTTPPort:      cfg.HTTPPort,
-		AdminPort:     cfg.AdminPort,
+		Configured:       true,
+		Root:             cfg.Root,
+		PickPolicies:     policies,
+		SweepInterval:    sweepInterval,
+		HTTPBridgeURL:    cfg.HTTPBridgeURL,
+		EnableLifecycle:  cfg.EnableLifecycle,
+		LedgerMaxRecords: cfg.LedgerMaxRecords,
+		Host:             host,
+		GRPCPort:         agentport.Override(cfg.GRPCPort),
+		HTTPPort:         cfg.HTTPPort,
+		AdminPort:        cfg.AdminPort,
 	}, nil
 }
 

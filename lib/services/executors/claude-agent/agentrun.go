@@ -147,8 +147,9 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 			}
 		}
 		return AgentOutcome{
-			Kind:     OutcomeParkRequested,
-			ResumeAt: &t,
+			Kind:         OutcomeParkRequested,
+			ResumeAt:     &t,
+			SessionToken: opts.SessionID,
 		}
 	}
 
@@ -540,6 +541,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 		logger.Info("cli.resume_with_session_token", "run_id", opts.SessionID, "session_token", opts.SessionToken)
 		handle, spawnErr = opts.CliRunner.Resume(CliResumeRequest{
 			SessionID:       opts.SessionToken,
+			NewSessionID:    opts.SessionID,
 			Prompt:          renderedUser,
 			Tools:           tools,
 			Model:           opts.Model,
@@ -745,6 +747,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 				"run_id", opts.SessionID, "exit_code", 0, "duration_ms", time.Since(spawnedAt).Milliseconds())
 			retryHandle, retryErr := opts.CliRunner.Resume(CliResumeRequest{
 				SessionID:       opts.SessionID,
+				NewSessionID:    opts.SessionID,
 				Prompt:          reminderPrompt,
 				Tools:           tools,
 				Model:           opts.Model,

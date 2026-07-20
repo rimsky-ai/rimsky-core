@@ -16,6 +16,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
+const grpcShutdownGracePeriod = 10 * time.Second
+
 func Serve(opts Opts) error {
 	if !opts.CredentialsConfigured() {
 		return ErrCredentialsMissing
@@ -40,9 +42,9 @@ func Serve(opts Opts) error {
 	if err != nil {
 		return err
 	}
-	callbackClient := http.DefaultClient
+	callbackClient := &http.Client{Timeout: callbackPostTimeout}
 	if identity.Enabled() {
-		callbackClient = &http.Client{Transport: &http.Transport{TLSClientConfig: identity.ClientTLSConfig()}}
+		callbackClient.Transport = &http.Transport{TLSClientConfig: identity.ClientTLSConfig()}
 	}
 
 	obs := NewObservabilityServer(opts.ObservabilityHTTPBridgeURL)
@@ -86,7 +88,9 @@ func Serve(opts Opts) error {
 	<-sigCh
 	slog.Info("claude-agent stopping")
 	cancelSweep()
-	grpcSrv.Shutdown()
+	grpcShutdownCtx, cancelGrpcShutdown := context.WithTimeout(context.Background(), grpcShutdownGracePeriod)
+	defer cancelGrpcShutdown()
+	grpcSrv.Shutdown(grpcShutdownCtx)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return httpBridge.Shutdown(ctx)

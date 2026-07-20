@@ -189,10 +189,8 @@ func buildResolvedBagAtGateEvalCarry(
 		return carryForward, nil
 	}
 	nodeDef := lookupNodeDef(tmplSpec, receiverNode.NodeType)
-	if nodeDef == nil || nodeDef.Attributes == nil {
-		return map[string]any{}, nil
-	}
-	schema := schemaForGateEval(args, receiverNode.Executor, tmplSpec, nodeDef)
+	templateDefaults := templateAttributeDefaultsFor(tmplSpec, receiverNode.Executor)
+	schema := schemaForGateEval(args, receiverNode.Executor, templateDefaults, nodeDef)
 	if schema == nil {
 		return map[string]any{}, nil
 	}
@@ -224,7 +222,7 @@ func buildResolvedBagAtGateEvalCarry(
 }
 
 // @concept: attribute
-func schemaForGateEval(args RunArgs, executor string, _ *node.TemplateSpec, nodeDef *node.TemplateNodeDef) map[string]any {
+func schemaForGateEval(args RunArgs, executor string, templateDefaults map[string]any, nodeDef *node.TemplateNodeDef) map[string]any {
 	var nodeSchema map[string]any
 	if nodeDef != nil && nodeDef.Attributes != nil {
 		nodeSchema = nodeDef.Attributes.Schema
@@ -238,7 +236,7 @@ func schemaForGateEval(args RunArgs, executor string, _ *node.TemplateSpec, node
 	if execSchema == nil && nodeSchema == nil {
 		return nil
 	}
-	return node.MergeAttributeDefaults(execSchema, nil, nodeSchema)
+	return node.MergeAttributeDefaults(execSchema, templateDefaults, nodeSchema)
 }
 
 // @concept: cascade
@@ -417,7 +415,7 @@ func bagsEqual(
 		}
 		resolved, rerr := buildResolvedBagAtGateEvalCarry(ctx, args, tx, priorRow, carry)
 		if rerr != nil {
-			return false, nil
+			return false, fmt.Errorf("prior on-demand resolve: %w", rerr)
 		}
 		prior = resolved
 	}

@@ -63,6 +63,7 @@ func ReleaseHeldDurableClaims(
 			Verb:           persistence.ProducerVerbRelease,
 			ClaimScopeData: []byte(r.ClaimScopeData),
 			Address:        []byte(r.Address),
+			LeaseToken:     r.ProducerLeaseToken,
 			SupervisorID:   args.SupervisorID,
 			InstanceID:     &instID,
 			NextAttemptAt:  now,

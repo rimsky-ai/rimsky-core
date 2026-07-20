@@ -6,9 +6,11 @@ package scenarios
 
 import (
 	"testing"
-	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -70,37 +72,27 @@ func TestChildPartitionKeyBinds(t *testing.T) {
 
 	iid := h.CreateInstance(tid, "ck-child-partition-key", map[string]any{})
 
+	fanChild := h.FindNode(iid, "fan-child")
+	require.NotNil(t, fanChild)
+
+	h.WaitForNodeState(fanChild.ID, cascade.NodeStateFresh)
+
 	wantPartitions := map[string]bool{"a": true, "b": true, "c": true}
-	converged := false
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		seen := map[string]int{}
-		for _, o := range h.Stub.Observed() {
-			if o.NodeType != "fan-child" {
-				continue
-			}
-			p, _ := o.Attributes["partition"].(string)
-			if p == "" {
-				continue
-			}
-			seen[p]++
+	seen := map[string]int{}
+	var emptyPartitionDispatches int
+	for _, o := range h.Stub.Observed() {
+		if o.NodeType != "fan-child" {
+			continue
 		}
-		if len(seen) == len(wantPartitions) {
-			ok := true
-			for want := range wantPartitions {
-				if seen[want] != 1 {
-					ok = false
-					break
-				}
-			}
-			if ok {
-				converged = true
-				break
-			}
+		p, _ := o.Attributes["partition"].(string)
+		if p == "" {
+			emptyPartitionDispatches++
+			continue
 		}
-		time.Sleep(50 * time.Millisecond)
+		seen[p]++
 	}
-	if !converged {
+
+	logDiagnostics := func() {
 		obs := h.Stub.Observed()
 		t.Logf("stub observed %d dispatches:", len(obs))
 		for i, o := range obs {
@@ -122,6 +114,20 @@ func TestChildPartitionKeyBinds(t *testing.T) {
 			t.Logf("  event %s %s", kind, payload)
 			return nil
 		})
-		t.Fatalf("each fan-out child should dispatch with `partition` resolved from {{child.partition_key}} equal to its own partition key (want exactly one dispatch per key in {a,b,c}); did not converge")
+	}
+
+	if emptyPartitionDispatches > 0 {
+		logDiagnostics()
+		t.Fatalf("fan-out children must resolve `partition` from {{child.partition_key}}; got %d dispatch(es) with an empty partition", emptyPartitionDispatches)
+	}
+	for want := range wantPartitions {
+		if seen[want] != 1 {
+			logDiagnostics()
+			t.Fatalf("each fan-out child should dispatch with `partition` resolved from {{child.partition_key}} equal to its own partition key (want exactly one dispatch per key in {a,b,c}); partition %q was dispatched %d time(s)", want, seen[want])
+		}
+	}
+	if len(seen) != len(wantPartitions) {
+		logDiagnostics()
+		t.Fatalf("expected dispatches for exactly the partitions %v, got %v", wantPartitions, seen)
 	}
 }

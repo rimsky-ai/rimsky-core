@@ -26,6 +26,8 @@ type Server struct {
 
 	failMu   sync.Mutex
 	failNext map[string]*FailureSpec
+
+	ListInstancesDefaultPageSize int
 }
 
 type FailureSpec struct {
@@ -567,13 +569,39 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hash := r.URL.Query().Get("template_hash")
+	all := s.State.ListInstances(hash, "")
+
+	start := 0
+	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+		for i, inst := range all {
+			if inst.ID == cursor {
+				start = i + 1
+				break
+			}
+		}
+	}
+
+	limit := s.ListInstancesDefaultPageSize
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	end := len(all)
+	nextCursor := ""
+	if limit > 0 && start+limit < len(all) {
+		end = start + limit
+		nextCursor = all[end-1].ID
+	}
+
 	out := []map[string]any{}
-	for _, inst := range s.State.ListInstances(hash, "") {
+	for _, inst := range all[start:end] {
 		out = append(out, instanceToWire(inst))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"instances":   out,
-		"next_cursor": "",
+		"next_cursor": nextCursor,
 	})
 }
 

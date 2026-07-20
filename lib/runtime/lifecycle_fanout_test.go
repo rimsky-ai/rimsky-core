@@ -41,7 +41,7 @@ func fanOutRunScopeEventInTx(
 ) {
 	t.Helper()
 	require.NoError(t, persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		FanOutRunScopeEvent(ctx, persist, lifecycleSubs, peersForSpec, tplSpec, runScopeID, instanceID, terminalReason, tx)
+		FanOutRunScopeEvent(ctx, persist, lifecycleSubs, peersForSpec, tplSpec, runScopeID, instanceID, terminalReason, tx, nil)
 		return nil
 	}))
 }
@@ -87,4 +87,59 @@ func TestFanOutRunScopeEvent_DistinctRunScopesEachDeliverOnce(t *testing.T) {
 	require.Len(t, fake.Calls(), 2,
 		"two distinct run scopes for the same peer must each deliver independently; "+
 			"idempotency must be keyed by run-scope id, not collapsed across scopes")
+}
+
+func TestFanOutRunScopeEvent_NilTxCommitsIndependently(t *testing.T) {
+	persist := openLifecycleFanoutTestTables(t)
+
+	fake := storetest.NewFake("peer-a", claimproducer.Capabilities{})
+	lcReg := locks.NewLifecycleRegistry()
+	lcReg.Add("peer-a", fake)
+	peersForSpec := func(node.TemplateSpec) []string { return []string{"peer-a"} }
+	tplSpec := node.TemplateSpec{Name: "fanout-niltx", Version: "v1"}
+
+	runScopeID := shared.UUID(uuid.New())
+	instanceID := shared.UUID(uuid.New())
+
+	FanOutRunScopeEvent(context.Background(), persist, lcReg, peersForSpec, tplSpec,
+		runScopeID, instanceID, "subgraph_exit", nil, nil)
+	require.Len(t, fake.Calls(), 1,
+		"a nil tx must still deliver to the peer, managing its own short transactions for the idempotency read/write")
+
+	require.NoError(t, persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		row, err := persist.LifecycleIdempotency().Get(ctx, "peer-a",
+			persistence.LifecycleIdempotencyScopeRunScope, runScopeID.String(), tx)
+		require.NoError(t, err)
+		require.NotNil(t, row, "the idempotency upsert must be durably committed by the time FanOutRunScopeEvent returns, "+
+			"independent of any caller transaction that may later fail — a nil tx must not leave the row uncommitted")
+		require.Equal(t, persistence.LifecycleIdempotencyStateRunScopeTerminal, row.State)
+		return nil
+	}))
+}
+
+func TestFanOutRunScopeEventPostCommit_DeliversToPeer(t *testing.T) {
+	persist := openLifecycleFanoutTestTables(t)
+
+	fake := storetest.NewFake("peer-a", claimproducer.Capabilities{})
+	lcReg := locks.NewLifecycleRegistry()
+	lcReg.Add("peer-a", fake)
+	tplSpec := node.TemplateSpec{Name: "fanout-postcommit", Version: "v1"}
+	runScopeID := shared.UUID(uuid.New())
+	instanceID := shared.UUID(uuid.New())
+
+	args := RunArgs{
+		Persist:               persist,
+		LifecycleSubs:         lcReg,
+		LifecyclePeersForSpec: func(node.TemplateSpec) []string { return []string{"peer-a"} },
+		Logger:                shared.SilentLogger{},
+	}
+
+	pc := fanOutRunScopeEventPostCommit(args, tplSpec, runScopeID, instanceID, "fanout_partition_terminal")
+	require.NotNil(t, pc, "SettleFromFanoutChild/SettleFromDelegate must be able to chain this into their returned postCommitFn")
+	require.Empty(t, fake.Calls(), "constructing the post-commit closure must not deliver anything before it is invoked")
+
+	pc(context.Background())
+	require.Len(t, fake.Calls(), 1,
+		"invoking the returned postCommitFn (as callers do only after their settle transaction has committed) "+
+			"must deliver on_run_scope_terminal to the peer exactly once")
 }

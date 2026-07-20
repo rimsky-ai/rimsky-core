@@ -18,6 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/internal/bundledwire"
 	"github.com/rimsky-ai/rimsky-core/lib/control/launch"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 const shutdownDeadline = 30 * time.Second
@@ -145,7 +146,7 @@ func runMigrateIfOwned(plan LaunchPlan, sigCh <-chan os.Signal) {
 }
 
 func runUnified(sigCh <-chan os.Signal) {
-	level := parseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))
+	level := shared.ParseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))
 	base := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
 	ctx := context.Background()
@@ -276,19 +277,6 @@ func exitCode(err error) int {
 		return ee.ExitCode()
 	}
 	return 1
-}
-
-func parseLogLevel(s string) slog.Level {
-	switch s {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
 }
 
 type childExit struct {

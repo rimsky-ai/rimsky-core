@@ -36,14 +36,11 @@ func (s *templatesImpl) Insert(ctx context.Context, in persistence.TemplateInser
 	}
 	_, err = ex.Exec(ctx,
 		`INSERT INTO rimsky_templates (id, spec, state, source)
-		 VALUES ($1, $2, $3, $4)`,
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (id) DO NOTHING`,
 		in.ID, specBytes, string(state), source,
 	)
 	if err != nil {
-		if isUniqueViolation(err) {
-			return shared.Wrap(shared.ErrTemplateInUse, "template already registered",
-				map[string]any{"id": in.ID})
-		}
 		return fmt.Errorf("templates.insert: %w", err)
 	}
 	return nil

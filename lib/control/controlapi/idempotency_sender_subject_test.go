@@ -118,6 +118,28 @@ func (h *senderSubjectHarness) mintActiveAPIKey(t *testing.T, name string, perms
 	return plaintext, id
 }
 
+func (h *senderSubjectHarness) mintExpiringAPIKey(t *testing.T, name string, perms []map[string]any, expiresAt time.Time) (string, shared.UUID) {
+	t.Helper()
+	plaintext, hash, err := auth.Mint()
+	require.NoError(t, err)
+	id := shared.UUID(uuid.New())
+	permsJSON, err := json.Marshal(perms)
+	require.NoError(t, err)
+	expires := expiresAt
+	require.NoError(t, h.db.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		return h.db.Tables().APIKeys().Insert(ctx, persistence.APIKey{
+			ID:          id,
+			Name:        name,
+			KeyHash:     hash[:],
+			Permissions: permsJSON,
+			CreatedAt:   h.clock.Now(),
+			ExpiresAt:   &expires,
+		}, tx)
+	}))
+	h.auth.InvalidateAnonCache()
+	return plaintext, id
+}
+
 func (h *senderSubjectHarness) httpPostAs(t *testing.T, path string, body any, bearer, idemKey string) (int, map[string]any) {
 	t.Helper()
 	raw, err := json.Marshal(body)

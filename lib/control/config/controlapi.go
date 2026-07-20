@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,6 +46,9 @@ type ControlAPIConfig struct {
 	LateBindServiceProxies map[string]string
 	PeerAuth               string
 
+	// @concept: validation
+	UnreachableValidatorPolicy string
+
 	Bundled *BundledRegistrations
 }
 
@@ -64,6 +68,15 @@ type controlAPIHandle struct {
 	cancelLoops     context.CancelFunc
 	cancelDiscovery context.CancelFunc
 	peerClosers     []func()
+	wg              sync.WaitGroup
+}
+
+func (h *controlAPIHandle) goWG(f func()) {
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		f()
+	}()
 }
 
 func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
@@ -77,6 +90,10 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 	if h.cancelDiscovery != nil {
 		h.cancelDiscovery()
 	}
+	if h.terminator != nil {
+		h.terminator.Stop()
+	}
+	h.wg.Wait()
 	if h.registry != nil {
 		h.registry.Close()
 	}
@@ -85,9 +102,6 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 	}
 	for _, c := range h.peerClosers {
 		c()
-	}
-	if h.terminator != nil {
-		h.terminator.Stop()
 	}
 	return err
 }
@@ -124,7 +138,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			obsLog.Info("bundled claim producer overridden by configured endpoint", "producer", name)
 		})
 	}
-	lifecycleReg, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors)
+	lifecycleReg, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
 	if err != nil {
 		registry.Close()
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
@@ -169,12 +183,12 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		})
 	}
 	obsLogger := slogLoggerFor(cfg.Logger)
+	// @concept: observability
 	disc := observability.RunHandshake(context.Background(), observability.NewGRPCProber(), execPeers, storePeers, obsLogger)
 	if cfg.Bundled != nil {
-		cfg.Bundled.AdvertiseInto(disc)
+		cfg.Bundled.AdvertiseInto(disc, cfg.Executors.Executors, cfg.ClaimProducers.ClaimProducers)
 	}
 	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
-	go disc.RefreshLoop(discoveryCtx, ObservabilityRefreshInterval(), obsLogger)
 	publisherReg, validationReg, dataProcessorReg, peerClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers, cfg.Validators, cfg.DataProcessors)
 	if err != nil {
 		cancelDiscovery()
@@ -240,14 +254,15 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 				Discovery:      disc,
 			})
 		},
-		Metrics:                cfg.Metrics,
-		Publishers:             publisherReg,
-		Validators:             validationReg,
-		DataProcessors:         dataProcessorReg,
-		LateBindServiceProxies: cfg.LateBindServiceProxies,
-		KindAliases:            buildKindAliases(),
-		PeerAuth:               cfg.PeerAuth,
-		Enroll:                 enrollDeps,
+		Metrics:                    cfg.Metrics,
+		Publishers:                 publisherReg,
+		Validators:                 validationReg,
+		UnreachableValidatorPolicy: runtime.UnreachableValidatorPolicy(cfg.UnreachableValidatorPolicy),
+		DataProcessors:             dataProcessorReg,
+		LateBindServiceProxies:     cfg.LateBindServiceProxies,
+		KindAliases:                buildKindAliases(),
+		PeerAuth:                   cfg.PeerAuth,
+		Enroll:                     enrollDeps,
 	}
 	app := controlapi.NewApp(deps)
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
@@ -274,16 +289,17 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		cancelDiscovery: cancelDiscovery,
 		peerClosers:     peerClosers,
 	}
-	go func() {
+	h.goWG(func() { disc.RefreshLoop(discoveryCtx, ObservabilityRefreshInterval(), obsLogger) })
+	h.goWG(func() {
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			if cfg.Logger != nil {
 				cfg.Logger.Error("controlapi serve", "error", err.Error())
 			}
 			h.serveErr <- err
 		}
-	}()
-	go terminator.Run(loopCtx)
-	go controlapi.WatchAnonymousMode(loopCtx, authState, controlapi.DefaultBannerInterval)
+	})
+	h.goWG(func() { terminator.Run(loopCtx) })
+	h.goWG(func() { controlapi.WatchAnonymousMode(loopCtx, authState, controlapi.DefaultBannerInterval) })
 	resyncLog := cfg.Logger
 	if resyncLog == nil {
 		resyncLog = shared.SilentLogger{}
@@ -294,13 +310,15 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		Clock:      cfg.Clock,
 		Logger:     resyncLog,
 	}
-	go func() {
+	h.goWG(func() {
 		if err := resyncPublishersAtStartup(loopCtx, publisherDeps); err != nil {
 			resyncLog.Warn("controlapi.publisher_resync.failed", "error", err.Error())
 		}
-	}()
-	go runPublisherSubscriptionReconciler(loopCtx, publisherDeps,
-		runtime.DefaultPublisherSubscriptionReconcileInterval)
+	})
+	h.goWG(func() {
+		runPublisherSubscriptionReconciler(loopCtx, publisherDeps,
+			runtime.DefaultPublisherSubscriptionReconcileInterval)
+	})
 	return h, nil
 }
 

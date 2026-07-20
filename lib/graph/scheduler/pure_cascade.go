@@ -39,7 +39,12 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 
 	count := 0
 	for _, n := range ready {
-		def := lookupTemplateNodeDefByType(ctx, sb, n.InstanceID, n.NodeType)
+		def, err := lookupTemplateNodeDefByType(ctx, sb, n.InstanceID, n.NodeType)
+		if err != nil {
+			log.Warn("ProcessPureCascade: lookup template node def failed; skipping this pass, will retry next tick",
+				"node_id", n.NodeID.String(), "node_type", n.NodeType, "error", err.Error())
+			continue
+		}
 		if acquiresClaims(def) {
 			prepared, err := prepareNativeClaimRouting(ctx, args, n, def)
 			if err != nil {
@@ -60,23 +65,39 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 	return count, nil
 }
 
+// @concept: run-scope
 func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persistence.PureCascadeReadyRow, log shared.Logger) error {
 	sb := args.Persist
+	runArgs := runtime.RunArgs{Persist: sb, Queue: args.Queue, Clock: args.Clock, Logger: log}
+	pureCascadeSig := "terminal/success"
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pureCascadeSig := "terminal/success"
 		if err := sb.Nodes().UpdateState(ctx, n.NodeRunID, cascade.NodeStateFresh, cascade.ReasonPureCascade, &pureCascadeSig, tx); err != nil {
 			return err
 		}
 		if err := args.Queue.ForceRemoveForNodeInTx(ctx, n.NodeID, n.RunScopeID, tx); err != nil {
 			return err
 		}
-		runArgs := runtime.RunArgs{Persist: sb, Queue: args.Queue, Clock: args.Clock, Logger: log}
 		return runtime.EmitTerminalSuccessAndDrainInTx(ctx, runArgs, tx,
 			n.NodeID, n.NodeType, n.NodeRunID, n.InstanceID, n.FrameID, "pure_cascade")
 	}); err != nil {
 		log.Warn("ProcessPureCascade: state transition + cascade failed",
 			"node_id", n.NodeID.String(), "error", err.Error())
 		return err
+	}
+	runtime.EmitLeafRunLineage(ctx, runArgs, runtime.LeafRunEmitInput{
+		InstanceID:         n.InstanceID,
+		FrameID:            n.FrameID,
+		NodeRunID:          n.NodeRunID,
+		NodeID:             n.NodeID,
+		State:              string(cascade.NodeStateFresh),
+		SettlingSignalType: pureCascadeSig,
+		TerminalKind:       "pure_cascade",
+		NodeAlias:          n.NodeType,
+	})
+	if _, err := runtime.PropagateIfChildAfterTerminal(ctx, runArgs, n.NodeRunID,
+		cascade.NodeStateFresh, &pureCascadeSig); err != nil {
+		log.Warn("ProcessPureCascade: run-tree propagation failed",
+			"node_id", n.NodeID.String(), "error", err.Error())
 	}
 	return nil
 }
@@ -95,10 +116,10 @@ func prepareNativeClaimRouting(ctx context.Context, args PureCascadeArgs, n pers
 	return prepared, err
 }
 
-func lookupTemplateNodeDefByType(ctx context.Context, sb persistence.Tables, instanceID shared.UUID, nodeType string) *nodepkg.TemplateNodeDef {
+func lookupTemplateNodeDefByType(ctx context.Context, sb persistence.Tables, instanceID shared.UUID, nodeType string) (*nodepkg.TemplateNodeDef, error) {
 	var inst *persistence.InstanceRow
 	var tmpl *persistence.TemplateRow
-	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		i, err := sb.Instances().Get(ctx, instanceID, tx)
 		if err != nil || i == nil {
 			return err
@@ -107,16 +128,18 @@ func lookupTemplateNodeDefByType(ctx context.Context, sb persistence.Tables, ins
 		t, err := sb.Templates().GetByHash(ctx, i.TemplateHash, tx)
 		tmpl = t
 		return err
-	})
+	}); err != nil {
+		return nil, err
+	}
 	if inst == nil || tmpl == nil {
-		return nil
+		return nil, nil
 	}
 	for i := range tmpl.Spec.Nodes {
 		if tmpl.Spec.Nodes[i].Type == nodeType {
-			return &tmpl.Spec.Nodes[i]
+			return &tmpl.Spec.Nodes[i], nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func acquiresClaims(def *nodepkg.TemplateNodeDef) bool {

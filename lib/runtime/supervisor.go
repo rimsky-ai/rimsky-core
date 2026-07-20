@@ -251,7 +251,8 @@ func Start(cfg Config) (*Handle, error) {
 	clientPool := executor.NewClientPoolWithInProcess(inprocReg, newHctx)
 	advertised := advertisedCallbackURL(host, port, cfg.PeerAuth)
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg, callbackServeErr: callbackSrv.ServeErr()}
-	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedClaimProducers, lockHolders, verbDispatcher)
+	fanOutSems := NewFanOutSemaphoreRegistry()
+	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedClaimProducers, lockHolders, verbDispatcher, fanOutSems)
 	return h, nil
 }
 
@@ -328,6 +329,7 @@ func runLoop(
 	acceptedClaimProducers []string,
 	lockHolders persistence.ClaimHandleTable,
 	verbDispatcher *ProducerVerbDispatcher,
+	fanOutSems *FanOutSemaphoreRegistry,
 ) {
 	defer close(h.done)
 	cfg.Logger.Info("supervisor started",
@@ -338,7 +340,11 @@ func runLoop(
 	dispatchCtx, cancelDispatch := context.WithCancel(context.Background())
 	defer cancelDispatch()
 	if verbDispatcher != nil {
-		go verbDispatcher.Run(dispatchCtx)
+		h.wg.Add(1)
+		go func() {
+			defer h.wg.Done()
+			verbDispatcher.Run(dispatchCtx)
+		}()
 	}
 
 	var activeMu sync.Mutex
@@ -387,6 +393,7 @@ func runLoop(
 				LateBindServiceProxies:      cfg.LateBindServiceProxies,
 				DataProcessors:              cfg.DataProcessors,
 				ProducerVerbKick:            verbDispatcher.Kick,
+				FanOutSemaphores:            fanOutSems,
 			}, reg.Register)
 			if runErr != nil {
 				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())
@@ -410,6 +417,7 @@ func runLoop(
 	for {
 		select {
 		case <-h.stop:
+			cancelDispatch()
 			waitCtx, cancelWait := context.WithTimeout(context.Background(), 30*time.Second)
 			waitDone := make(chan struct{})
 			go func() {

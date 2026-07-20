@@ -282,6 +282,33 @@ func TestBuildClaudeCliResumeArgsCarriesRestrictionsAndBudget(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeCliResumeArgsRebindsToNewSessionID(t *testing.T) {
+	args, err := BuildClaudeCliResumeArgs(CliResumeRequest{
+		SessionID:    "prior-session",
+		NewSessionID: "next-session",
+		Prompt:       "resume",
+	}, CliArgPaths{McpConfigPath: "/tmp/mcp.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.Index(args, "--session-id")
+	if i < 0 || args[i+1] != "next-session" {
+		t.Fatalf("expected --session-id next-session to rebind the resumed conversation: %v", args)
+	}
+	if slices.Contains(mustResumeArgs(t, CliResumeRequest{SessionID: "s", Prompt: "p"}), "--session-id") {
+		t.Fatal("expected no --session-id when NewSessionID unset")
+	}
+}
+
+func mustResumeArgs(t *testing.T, req CliResumeRequest) []string {
+	t.Helper()
+	args, err := BuildClaudeCliResumeArgs(req, CliArgPaths{McpConfigPath: "/tmp/mcp.json"})
+	if err != nil {
+		t.Fatalf("BuildClaudeCliResumeArgs: %v", err)
+	}
+	return args
+}
+
 func TestBuildClaudeCliResumeArgsRejectsFlagLikeAddDir(t *testing.T) {
 	if _, err := BuildClaudeCliResumeArgs(CliResumeRequest{
 		SessionID: "s",

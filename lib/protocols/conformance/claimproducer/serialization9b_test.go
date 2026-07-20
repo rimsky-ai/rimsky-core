@@ -14,7 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-const nineBSelectorPrefix = "rimsky/conformance/9b/"
+const nineBSelectorPrefix = "rimsky_conformance_9b_"
 
 type fake9bProducer struct {
 	dishonestSerializeReaders bool
@@ -71,15 +71,15 @@ func (f *fake9bProducer) Open(ctx context.Context, claimID claimproducer.ClaimID
 	return claimproducer.OpenOutcome{Available: true, Result: result}, nil
 }
 
-func (f *fake9bProducer) Commit(context.Context, claimproducer.ClaimID, []byte, []byte) (claimproducer.CommitResult, error) {
+func (f *fake9bProducer) Commit(context.Context, claimproducer.ClaimID, []byte, []byte, string) (claimproducer.CommitResult, error) {
 	return claimproducer.CommitResult{}, nil
 }
 
-func (f *fake9bProducer) Abandon(context.Context, claimproducer.ClaimID, []byte, []byte) error {
+func (f *fake9bProducer) Abandon(context.Context, claimproducer.ClaimID, []byte, []byte, string) error {
 	return nil
 }
 
-func (f *fake9bProducer) Release(_ context.Context, claimID claimproducer.ClaimID, _ []byte, _ []byte) error {
+func (f *fake9bProducer) Release(_ context.Context, claimID claimproducer.ClaimID, _ []byte, _ []byte, leaseToken string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.writerOpen && claimID == f.writerID {

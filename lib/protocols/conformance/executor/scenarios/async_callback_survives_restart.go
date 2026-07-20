@@ -32,6 +32,9 @@ func init() {
 				Attributes:  attrs,
 				CallbackUrl: env.Callbacks.URL(),
 			}
+
+			restartHit := env.Callbacks.SimulateRestart()
+
 			outcome, err := env.Client.Execute(ctx, req)
 			if err != nil {
 				return fmt.Errorf("Execute: %w", err)
@@ -44,12 +47,27 @@ func init() {
 			if ackID == "" {
 				return fmt.Errorf("AwaitAsyncCallback async_ack_id is empty; supervisor cannot route the callback")
 			}
+
+			for observedOwnRejection := false; !observedOwnRejection; {
+				select {
+				case rejectedAckID := <-restartHit:
+					observedOwnRejection = rejectedAckID == ackID
+				case <-ctx.Done():
+					return fmt.Errorf("timed out waiting for the executor to attempt callback delivery during the " +
+						"simulated supervisor restart; the callback was never even attempted, so restart survival " +
+						"cannot be exercised")
+				}
+			}
+			env.Callbacks.EndSimulatedRestart()
+
 			settled, err := conformance.AwaitTerminal(ctx, outcome, env)
 			if err != nil {
-				return fmt.Errorf("AwaitTerminal: %w", err)
+				return fmt.Errorf("the executor never delivered its async callback after the simulated supervisor "+
+					"restart came back up; a callback attempt that hits a rejected delivery must be retried once "+
+					"the receiving endpoint is reachable again: %w", err)
 			}
 			if _, isAsync := settled.GetOutcome().(*genv1.Outcome_AwaitAsync); isAsync {
-				return fmt.Errorf("expected a settling terminal after async callback, got AwaitAsyncCallback again")
+				return fmt.Errorf("expected a settling terminal after the retried async callback, got AwaitAsyncCallback again")
 			}
 			return nil
 		},

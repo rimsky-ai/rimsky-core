@@ -20,6 +20,10 @@ func SchemaBytes() []byte {
 // @concept: terminal-tag
 func DeclaredTags() []string { return []string{"loop", "done"} }
 
+const AttributesSchemaInvalidClass = "attributes_schema_invalid"
+
+func DeclaredErrorClasses() []string { return []string{AttributesSchemaInvalidClass} }
+
 const ExecutorAlias = "rimsky.loop_counter"
 
 const KindName = "loop_counter"

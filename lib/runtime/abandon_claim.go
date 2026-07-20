@@ -20,8 +20,9 @@ func abandonOpenedClaim(
 	producer locks.ClaimProducer,
 	claimHandleID shared.UUID,
 	scope, address []byte,
+	leaseToken string,
 ) error {
 	claimID := claimproducer.ClaimID(claimHandleID.String())
 	ctx = peer.WithServiceName(ctx, producer.Name())
-	return producer.Abandon(ctx, claimID, scope, address)
+	return producer.Abandon(ctx, claimID, scope, address, leaseToken)
 }

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,6 +98,59 @@ func TestSubscribeThenListSubscriptions_RoundTripsResolvedConfig(t *testing.T) {
 	}
 	if resp.Subscriptions[0].GetStartedAt() == nil {
 		t.Error("started_at not set")
+	}
+}
+
+func TestSubscribe_NeverFiringCronDoesNotSetZeroFireTime(t *testing.T) {
+	s := NewSensorService("", noopLogger{})
+	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	cfg := map[string]any{"cron": "0 0 31 2 *"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	w := s.watches["w1"]
+	s.mu.Unlock()
+	if !w.NextFireAt.IsZero() {
+		t.Fatalf("next_fire_at: %s (want zero time for a schedule that never fires)", w.NextFireAt)
+	}
+}
+
+func TestTick_NeverFiringCronDoesNotFireOrLoop(t *testing.T) {
+	var observed int32
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&observed, 1)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	cfg := map[string]any{"cron": "0 0 31 2 *"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		s.clock = func() time.Time { return pin.Add(time.Duration(i) * 10 * 365 * 24 * time.Hour) }
+		s.Tick(context.Background())
+	}
+	if got := atomic.LoadInt32(&observed); got != 0 {
+		t.Errorf("messages observed for a never-firing cron: %d (want 0)", got)
+	}
+	s.mu.Lock()
+	w := s.watches["w1"]
+	s.mu.Unlock()
+	if !w.NextFireAt.IsZero() {
+		t.Errorf("next_fire_at after ticking: %s (want it to stay zero, not become permanently due)", w.NextFireAt)
 	}
 }
 

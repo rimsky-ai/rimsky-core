@@ -26,6 +26,7 @@ type ProducerVerbOutboxRow struct {
 	Verb                ProducerVerb
 	ClaimScopeData      []byte
 	Address             []byte
+	LeaseToken          string
 	SupervisorID        string
 	InstanceID          *shared.UUID
 	ParentClaimHandleID *shared.UUID
@@ -41,6 +42,7 @@ type ProducerVerbOutboxInsertInput struct {
 	Verb                ProducerVerb
 	ClaimScopeData      []byte
 	Address             []byte
+	LeaseToken          string
 	SupervisorID        string
 	InstanceID          *shared.UUID
 	ParentClaimHandleID *shared.UUID

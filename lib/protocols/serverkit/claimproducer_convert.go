@@ -71,8 +71,8 @@ func OpenOutcomeFromProto(resp *genv1.OpenResponse) (claimproducer.OpenOutcome, 
 	}, nil
 }
 
-func CommitRequestFromArgs(claimID claimproducer.ClaimID, scope, address []byte) *genv1.CommitRequest {
-	return &genv1.CommitRequest{ClaimId: string(claimID), ClaimScope: scope, Address: address}
+func CommitRequestFromArgs(claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) *genv1.CommitRequest {
+	return &genv1.CommitRequest{ClaimId: string(claimID), ClaimScope: scope, Address: address, LeaseToken: leaseToken}
 }
 
 func CommitResultFromProto(resp *genv1.CommitResponse) claimproducer.CommitResult {
@@ -82,12 +82,12 @@ func CommitResultFromProto(resp *genv1.CommitResponse) claimproducer.CommitResul
 	}
 }
 
-func AbandonRequestFromArgs(claimID claimproducer.ClaimID, scope, address []byte) *genv1.AbandonRequest {
-	return &genv1.AbandonRequest{ClaimId: string(claimID), ClaimScope: scope, Address: address}
+func AbandonRequestFromArgs(claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) *genv1.AbandonRequest {
+	return &genv1.AbandonRequest{ClaimId: string(claimID), ClaimScope: scope, Address: address, LeaseToken: leaseToken}
 }
 
-func ReleaseRequestFromArgs(claimID claimproducer.ClaimID, scope, address []byte) *genv1.ReleaseRequest {
-	return &genv1.ReleaseRequest{ClaimId: string(claimID), ClaimScope: scope, Address: address}
+func ReleaseRequestFromArgs(claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) *genv1.ReleaseRequest {
+	return &genv1.ReleaseRequest{ClaimId: string(claimID), ClaimScope: scope, Address: address, LeaseToken: leaseToken}
 }
 
 func SplitScopeRequestToProto(req claimproducer.SplitClaimScopeRequest) *genv1.SplitScopeRequest {
@@ -106,6 +106,7 @@ func SplitScopeResponseFromProto(resp *genv1.SplitScopeResponse) claimproducer.S
 			ProducerMetadata: sub.GetProducerMetadata(),
 			Address:          sub.GetAddress(),
 			Payload:          sub.GetPayload(),
+			LeaseToken:       sub.GetLeaseToken(),
 		})
 	}
 	return out

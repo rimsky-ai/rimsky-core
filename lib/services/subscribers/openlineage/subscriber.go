@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -121,6 +122,10 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*Subscriber, err
 		s.Close()
 		return nil, err
 	}
+	if err := s.ensureDeadLetterTable(ctx); err != nil {
+		s.Close()
+		return nil, err
+	}
 	if err := s.loadCursor(ctx); err != nil {
 		s.Close()
 		return nil, err
@@ -156,6 +161,35 @@ func (s *Subscriber) ensureCursorTable(ctx context.Context) error {
 		UPDATE rimsky_openlineage_cursor
 		   SET last_id = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
 		 WHERE last_id = '00000000-0000-0000-0000-000000000000'`)
+	return err
+}
+
+func (s *Subscriber) ensureDeadLetterTable(ctx context.Context) error {
+	_, err := s.state.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS rimsky_openlineage_dead_letter (
+		    id               UUID NOT NULL,
+		    namespace        TEXT NOT NULL,
+		    record_kind      TEXT NOT NULL,
+		    instance_id      UUID NOT NULL,
+		    frame_id         UUID NOT NULL,
+		    observed_at      TIMESTAMPTZ NOT NULL,
+		    record           JSONB NOT NULL,
+		    status_code      INT NOT NULL,
+		    reason           TEXT NOT NULL,
+		    dead_lettered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		    PRIMARY KEY (namespace, id)
+		)`)
+	return err
+}
+
+func (s *Subscriber) persistDeadLetter(ctx context.Context, r LineageRow, statusCode int, reason string) error {
+	_, err := s.state.Exec(ctx, `
+		INSERT INTO rimsky_openlineage_dead_letter
+		    (id, namespace, record_kind, instance_id, frame_id, observed_at, record, status_code, reason)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (namespace, id) DO NOTHING`,
+		r.ID, s.cfg.Namespace, r.RecordKind, r.InstanceID, r.FrameID, r.ObservedAt, r.Record, statusCode, reason,
+	)
 	return err
 }
 
@@ -198,13 +232,15 @@ func (s *Subscriber) persistCursor(ctx context.Context) error {
 }
 
 func (s *Subscriber) fetchSince(ctx context.Context) ([]LineageRow, error) {
+	safeUntil := s.nowFn().Add(-s.cfg.LagWindow)
 	rows, err := s.rimsky.Query(ctx, `
 		SELECT id, record_kind, instance_id, frame_id, observed_at, record
 		  FROM rimsky_lineage
 		 WHERE (observed_at, id) > ($1, $2)
+		   AND observed_at < $3
 		 ORDER BY observed_at ASC, id ASC
-		 LIMIT $3`,
-		s.cursorAt, s.cursorID, s.cfg.BatchSize,
+		 LIMIT $4`,
+		s.cursorAt, s.cursorID, safeUntil, s.cfg.BatchSize,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("openlineage: fetch: %w", err)
@@ -247,6 +283,22 @@ func (s *Subscriber) tick(ctx context.Context) error {
 			continue
 		}
 		if err := s.emitter.Send(ctx, ev); err != nil {
+			var sendErr *SendError
+			if errors.As(err, &sendErr) && sendErr.Permanent() {
+				s.logger.Error("openlineage.emit_rejected_dead_letter",
+					"id", r.ID.String(),
+					"record_kind", r.RecordKind,
+					"status_code", sendErr.StatusCode,
+					"error", err.Error())
+				if dlErr := s.persistDeadLetter(ctx, r, sendErr.StatusCode, err.Error()); dlErr != nil {
+					s.logger.Warn("openlineage.dead_letter_persist_failed",
+						"id", r.ID.String(), "error", dlErr.Error())
+				}
+				lastAt = r.ObservedAt
+				lastID = r.ID
+				progressed = true
+				continue
+			}
 			s.logger.Warn("openlineage.emit_failed",
 				"id", r.ID.String(),
 				"record_kind", r.RecordKind,
@@ -274,7 +326,7 @@ func (s *Subscriber) toEvent(r LineageRow) (Event, error) {
 		if err := json.Unmarshal(r.Record, &rec); err != nil {
 			return Event{}, fmt.Errorf("decode leaf_run: %w", err)
 		}
-		return MakeLeafRunEvent(rec, r.ObservedAt, r.InstanceID.String(), s.cfg.Namespace), nil
+		return MakeLeafRunEvent(rec, r.ObservedAt, s.cfg.Namespace), nil
 	case "claim_terminal":
 		var rec ClaimTerminalRecord
 		if err := json.Unmarshal(r.Record, &rec); err != nil {

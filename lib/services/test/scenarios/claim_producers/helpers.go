@@ -6,10 +6,8 @@ package stores
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -59,38 +57,4 @@ func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanc
 	}
 	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "claim_producers", instanceKey)
 	return resp.InstanceID
-}
-
-func waitForNodeTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
-	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastSummary string
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t,
-			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			var resp struct {
-				RunSummary struct {
-					ActiveCount  int `json:"active_count"`
-					PendingCount int `json:"pending_count"`
-					FreshCount   int `json:"fresh_count"`
-					FailedCount  int `json:"failed_count"`
-				} `json:"run_summary"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastSummary = fmt.Sprintf("active=%d pending=%d fresh=%d failed=%d",
-					resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount,
-					resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
-				if resp.RunSummary.FailedCount > 0 {
-					return
-				}
-				if resp.RunSummary.FreshCount > 0 && resp.RunSummary.ActiveCount == 0 && resp.RunSummary.PendingCount == 0 {
-					return
-				}
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %q on instance %s did not reach terminal within %v; last run_summary=%s",
-		nodeType, instanceID, deadline, lastSummary)
 }

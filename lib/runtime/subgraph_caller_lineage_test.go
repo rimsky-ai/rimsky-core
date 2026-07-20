@@ -143,7 +143,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 			return err
 		}
 		return backend.NodeRunTree().UpdateStateAndOutcome(ctx, tx, callerRunID,
-			cascade.NodeStateRunning, nil)
+			cascade.NodeStateRunning, nil, false)
 	}))
 
 	nodeDef := lookupNodeDef(&tmplSpec, "outer-caller")

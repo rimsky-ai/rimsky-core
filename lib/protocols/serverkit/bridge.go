@@ -39,6 +39,7 @@ func MountLifecycle(mux *http.ServeMux, srv genv1.LifecycleSubscriberServer) {
 	mux.HandleFunc("/v1/on_template_deregistered", lifecycleHandler(srv, "on_template_deregistered"))
 	mux.HandleFunc("/v1/on_instance_created", lifecycleHandler(srv, "on_instance_created"))
 	mux.HandleFunc("/v1/on_instance_terminated", lifecycleHandler(srv, "on_instance_terminated"))
+	mux.HandleFunc("/v1/on_run_scope_terminal", lifecycleHandler(srv, "on_run_scope_terminal"))
 }
 
 func producerHandler(srv genv1.ClaimProducerServer, verb string) http.HandlerFunc {
@@ -108,6 +109,7 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 			Alias:        req.Alias,
 			TemplateId:   req.TemplateID,
 			InstanceId:   req.InstanceID,
+			RunScopeId:   req.RunScopeID,
 		})
 	case "commit":
 		var req actionBody
@@ -115,7 +117,7 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
 		return srv.Commit(ctx, &genv1.CommitRequest{
-			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address,
+			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address, LeaseToken: req.LeaseToken,
 		})
 	case "abandon":
 		var req actionBody
@@ -123,7 +125,7 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
 		return srv.Abandon(ctx, &genv1.AbandonRequest{
-			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address,
+			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address, LeaseToken: req.LeaseToken,
 		})
 	case "release":
 		var req actionBody
@@ -131,7 +133,7 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
 		return srv.Release(ctx, &genv1.ReleaseRequest{
-			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address,
+			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address, LeaseToken: req.LeaseToken,
 		})
 	case "split_scope":
 		var req splitScopeBody
@@ -184,10 +186,12 @@ func dispatchLifecycle(ctx context.Context, srv genv1.LifecycleSubscriberServer,
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
 		return srv.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{
-			InstanceId:   req.InstanceID,
-			TemplateHash: req.TemplateHash,
-			InstanceKey:  req.InstanceKey,
-			Params:       req.Params,
+			InstanceId:      req.InstanceID,
+			TemplateHash:    req.TemplateHash,
+			InstanceKey:     req.InstanceKey,
+			Params:          req.Params,
+			ServiceBindings: req.ServiceBindings,
+			OwnerApiKeyId:   req.OwnerAPIKeyID,
 		})
 	case "on_instance_terminated":
 		var req instanceScopeBody
@@ -198,6 +202,16 @@ func dispatchLifecycle(ctx context.Context, srv genv1.LifecycleSubscriberServer,
 			InstanceId:         req.InstanceID,
 			TemplateHash:       req.TemplateHash,
 			TerminatedAtUnixMs: req.TerminatedAtUnixMs,
+		})
+	case "on_run_scope_terminal":
+		var req runScopeTerminalBody
+		if err := decodeOptional(body, &req); err != nil {
+			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		}
+		return srv.OnRunScopeTerminal(ctx, &genv1.OnRunScopeTerminalRequest{
+			RunScopeId:     req.RunScopeID,
+			TerminalReason: req.TerminalReason,
+			InstanceId:     req.InstanceID,
 		})
 	}
 	return nil, errUnknownVerb
@@ -211,12 +225,14 @@ type openBody struct {
 	Alias        string `json:"alias"`
 	TemplateID   string `json:"template_id"`
 	InstanceID   string `json:"instance_id"`
+	RunScopeID   string `json:"run_scope_id,omitempty"`
 }
 
 type actionBody struct {
-	ClaimID string `json:"claim_id"`
-	Scope   []byte `json:"scope"`
-	Address []byte `json:"address"`
+	ClaimID    string `json:"claim_id"`
+	Scope      []byte `json:"scope"`
+	Address    []byte `json:"address"`
+	LeaseToken string `json:"lease_token,omitempty"`
 }
 
 type splitScopeBody struct {
@@ -236,6 +252,14 @@ type instanceScopeBody struct {
 	InstanceKey        string `json:"instance_key,omitempty"`
 	Params             []byte `json:"params,omitempty"`
 	TerminatedAtUnixMs int64  `json:"terminated_at_unix_ms,omitempty"`
+	ServiceBindings    []byte `json:"service_bindings,omitempty"`
+	OwnerAPIKeyID      string `json:"owner_api_key_id,omitempty"`
+}
+
+type runScopeTerminalBody struct {
+	RunScopeID     string `json:"run_scope_id"`
+	TerminalReason string `json:"terminal_reason,omitempty"`
+	InstanceID     string `json:"instance_id,omitempty"`
 }
 
 func decodeOptional(body []byte, v any) error {

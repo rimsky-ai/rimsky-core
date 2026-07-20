@@ -40,7 +40,7 @@ Owns: the lock-state ledger, claimant-guarded mutation predicates, the held-flag
 
 ## Invariants
 
-- Every active-row mutation that deletes the row or nullifies its holder reference (promote to a settled state, the ownership-bail delete) matches the holding supervisor in its predicate (invariant 4 — claimant-guarded release); a narrow set of field-repoint mutations that neither delete the row nor change its holder are exempt by design.
+- Every active-row mutation — whether it deletes the row, nullifies its holder reference (promote to a settled state, the ownership-bail delete), or repoints a field on an otherwise-active row (address, payload, realized write semantics, claim scope, version id, aggregation policy, child-count counters, or the linked node-run) — matches the holding supervisor in its predicate (invariant 4 — claimant-guarded release). There is no field-repoint carve-out.
 - Non-active-row deletion (retention sweep, asset Release path) is absence-guarded: the row has a null holder-supervisor reference by construction; the row-discovery query filter (committed-durable rows for Release; committed-subgraph-or-abandoned rows, excluding committed-durable, for the retention sweep) substitutes for the per-row claimant check.
 - The holder-supervisor reference is set on active rows (per the first CHECK constraint), null on terminal rows (per the second CHECK constraint).
 - The node-run reference nulls on the parent's deletion (rather than cascading) so terminal handles survive their parent's deletion until either the retention sweep reaps them or (for durable-committed) the asset Release path fires.

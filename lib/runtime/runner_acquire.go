@@ -477,7 +477,11 @@ func tryAcquire(
 		out.InstanceAttributeOverrides = inst.AttributeOverrides
 		out.TemplateHash = inst.TemplateHash
 	}
-	if held := loadInheritedClaimsForNode(ctx, args, tx, nd); len(held) > 0 {
+	held, err := loadInheritedClaimsForNode(ctx, args, tx, nd, cand.FrameID)
+	if err != nil {
+		return acquisition{PartialLocks: acquiredLocks}, false, fmt.Errorf("tryAcquire: load inherited claims: %w", err)
+	}
+	if len(held) > 0 {
 		out.HeldClaims = held
 	}
 	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, livenessInterval); err != nil {

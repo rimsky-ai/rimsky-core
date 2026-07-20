@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
@@ -46,6 +47,10 @@ func (s *Store) SetPartitionPoliciesForTest(policies map[string]*PartitionPolicy
 	s.partitionPolicies = policies
 }
 
+func (s *Store) SetPickPoliciesForTest(policies map[string]*PickPolicy) {
+	s.pickPolicies = policies
+}
+
 type PickPolicy struct {
 	ItemsTable        string
 	OnCommit          action.Action
@@ -67,7 +72,10 @@ type Config struct {
 	WriteSemantics    claimproducer.WriteSemantics
 	PickPolicies      map[string]*PickPolicy
 	PartitionPolicies map[string]*PartitionPolicy
+	LedgerMaxRecords  int
 }
+
+const defaultLedgerMaxRecords = 1024
 
 func New(ctx context.Context, cfg Config) (*Store, error) {
 	if cfg.Connection == "" {
@@ -106,12 +114,16 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 			return nil, err
 		}
 	}
+	ledgerMax := cfg.LedgerMaxRecords
+	if ledgerMax <= 0 {
+		ledgerMax = defaultLedgerMaxRecords
+	}
 	return &Store{
 		pool:              pool,
 		writeSemantics:    cfg.WriteSemantics,
 		pickPolicies:      cfg.PickPolicies,
 		partitionPolicies: cfg.PartitionPolicies,
-		ledger:            NewClaimLedger(1024),
+		ledger:            NewClaimLedger(ledgerMax),
 	}, nil
 }
 
@@ -183,7 +195,13 @@ func (s *Store) Open(ctx context.Context, claimID, selector string, intent claim
 		}
 		return out, err
 	}
-	if s.stagedScopeBytes(selector) && intent != claimproducer.IntentRead {
+	if s.writeSemantics == claimproducer.WriteSemanticsStagedAsync && intent != claimproducer.IntentRead {
+		if !schemaIdentRegex.MatchString(selector) {
+			return claimproducer.OpenOutcome{}, fmt.Errorf(
+				"postgres store: staged_async write on selector %q requires a valid schema identifier "+
+					"(lowercase letters/digits/underscore; not starting with a digit); rejecting rather than "+
+					"silently realizing an in-place write while reporting staged_async coexistence", selector)
+		}
 		addr, scope, err := s.openStaging(ctx, claimID, selector)
 		if err != nil {
 			return claimproducer.OpenOutcome{}, err
@@ -593,6 +611,7 @@ func (s *Store) RunPartitionPolicy(ctx context.Context, pp *PartitionPolicy, par
 		colNames[i] = string(f.Name)
 	}
 	var out []PolicyRow
+	seenIDs := make(map[string]struct{})
 	for rows.Next() {
 		vals, scanErr := rows.Values()
 		if scanErr != nil {
@@ -605,6 +624,13 @@ func (s *Store) RunPartitionPolicy(ctx context.Context, pp *PartitionPolicy, par
 		if idErr != nil {
 			return nil, fmt.Errorf("postgres store: RunPartitionPolicy: canonicalize row id (col %q): %w", colNames[0], idErr)
 		}
+		if _, dup := seenIDs[id]; dup {
+			return nil, fmt.Errorf(
+				"postgres store: RunPartitionPolicy: row id %q (col %q) is returned more than once; "+
+					"a partition policy's select must yield distinct ids so sub-claim scopes stay disjoint",
+				id, colNames[0])
+		}
+		seenIDs[id] = struct{}{}
 		row := make(map[string]any, len(colNames))
 		for i, name := range colNames {
 			row[name] = normalizePolicyValue(vals[i])
@@ -627,6 +653,10 @@ func canonicalRowID(v any) (string, error) {
 		return val, nil
 	case []byte:
 		return string(val), nil
+	case [16]byte:
+		return uuid.UUID(val).String(), nil
+	case pgtype.Numeric:
+		return canonicalNumericString(val)
 	}
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -642,6 +672,21 @@ func canonicalRowID(v any) (string, error) {
 	return s, nil
 }
 
+func canonicalNumericString(n pgtype.Numeric) (string, error) {
+	if !n.Valid {
+		return "", fmt.Errorf("numeric row id is NULL")
+	}
+	dv, err := n.Value()
+	if err != nil {
+		return "", fmt.Errorf("encode numeric row id: %w", err)
+	}
+	s, ok := dv.(string)
+	if !ok {
+		return "", fmt.Errorf("numeric row id encoded as unexpected type %T", dv)
+	}
+	return s, nil
+}
+
 func normalizePolicyValue(v any) any {
 	switch val := v.(type) {
 	case []byte:
@@ -649,6 +694,14 @@ func normalizePolicyValue(v any) any {
 			return json.RawMessage(val)
 		}
 		return string(val)
+	case [16]byte:
+		return uuid.UUID(val).String()
+	case pgtype.Numeric:
+		s, err := canonicalNumericString(val)
+		if err != nil {
+			return nil
+		}
+		return json.Number(s)
 	}
 	return v
 }

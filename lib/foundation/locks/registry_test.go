@@ -31,15 +31,15 @@ func (m mockProducer) Open(_ context.Context, _ claimproducer.ClaimID, _ claimpr
 	return claimproducer.OpenOutcome{}, nil
 }
 
-func (m mockProducer) Commit(_ context.Context, _ claimproducer.ClaimID, _, _ []byte) (claimproducer.CommitResult, error) {
+func (m mockProducer) Commit(_ context.Context, _ claimproducer.ClaimID, _, _ []byte, leaseToken string) (claimproducer.CommitResult, error) {
 	return claimproducer.CommitResult{}, nil
 }
 
-func (m mockProducer) Abandon(_ context.Context, _ claimproducer.ClaimID, _, _ []byte) error {
+func (m mockProducer) Abandon(_ context.Context, _ claimproducer.ClaimID, _, _ []byte, leaseToken string) error {
 	return nil
 }
 
-func (m mockProducer) Release(_ context.Context, _ claimproducer.ClaimID, _, _ []byte) error {
+func (m mockProducer) Release(_ context.Context, _ claimproducer.ClaimID, _, _ []byte, leaseToken string) error {
 	return nil
 }
 
@@ -71,15 +71,15 @@ func (m bareMockProducer) Open(_ context.Context, _ claimproducer.ClaimID, _ cla
 	return claimproducer.OpenOutcome{}, nil
 }
 
-func (m bareMockProducer) Commit(_ context.Context, _ claimproducer.ClaimID, _, _ []byte) (claimproducer.CommitResult, error) {
+func (m bareMockProducer) Commit(_ context.Context, _ claimproducer.ClaimID, _, _ []byte, leaseToken string) (claimproducer.CommitResult, error) {
 	return claimproducer.CommitResult{}, nil
 }
 
-func (m bareMockProducer) Abandon(_ context.Context, _ claimproducer.ClaimID, _, _ []byte) error {
+func (m bareMockProducer) Abandon(_ context.Context, _ claimproducer.ClaimID, _, _ []byte, leaseToken string) error {
 	return nil
 }
 
-func (m bareMockProducer) Release(_ context.Context, _ claimproducer.ClaimID, _, _ []byte) error {
+func (m bareMockProducer) Release(_ context.Context, _ claimproducer.ClaimID, _, _ []byte, leaseToken string) error {
 	return nil
 }
 

@@ -19,7 +19,7 @@ func TestExecuteReturnsSuccessOutcome(t *testing.T) {
 	e := &Executor{}
 	outcome, err := e.Execute(context.Background(), &genv1.ExecuteRequest{})
 	if err != nil {
-		return
+		t.Fatalf("Execute: %v", err)
 	}
 	success, ok := outcome.GetOutcome().(*genv1.Outcome_Success)
 	if !ok {

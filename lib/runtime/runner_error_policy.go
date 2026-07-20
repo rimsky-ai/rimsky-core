@@ -45,6 +45,18 @@ func applyErrorPolicyWithScratch(
 	errorClass string, fallbackClass string,
 	payload map[string]any, tags []string, attributesDel map[string]any, scratch []byte, tx persistence.Tx,
 ) (postCommitFn, error) {
+	return applyErrorPolicyWithScratchAndSettleHook(ctx, args, acq, errorClass, fallbackClass,
+		payload, tags, attributesDel, scratch, tx, nil)
+}
+
+// @concept: executor
+// @concept: error-policy
+func applyErrorPolicyWithScratchAndSettleHook(
+	ctx context.Context, args RunArgs, acq *acquisition,
+	errorClass string, fallbackClass string,
+	payload map[string]any, tags []string, attributesDel map[string]any, scratch []byte, tx persistence.Tx,
+	onSettle func(ctx context.Context, tx persistence.Tx) error,
+) (postCommitFn, error) {
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, scratch); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
@@ -99,8 +111,22 @@ func applyErrorPolicyWithScratch(
 		return chainPostCommit(releasePC, requeuePC), nil
 	}
 
+	if onSettle != nil {
+		if err := onSettle(ctx, tx); err != nil {
+			return nil, fmt.Errorf("applyErrorPolicy: settle hook: %w", err)
+		}
+	}
+
 	nodeRunID := acq.NodeRunID
 	successOutcome := resolved.Kind == spec.ActionPass
+
+	// @concept: claim-handle
+	// @decision: held-as-state-not-phase
+	heldBeforeRelease, herr := runHasActiveHeldClaims(ctx, args, tx, acq.NodeRunID)
+	if herr != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: held probe (pre-release): %w", herr)
+	}
+
 	releasePC, err := releaseLocksInTx(ctx, args, tx, acq, successOutcome, false)
 	if err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
@@ -114,6 +140,21 @@ func applyErrorPolicyWithScratch(
 	if run != nil {
 		curState = run.State
 	}
+	giveUpInFlight := resolved.Kind == spec.ActionGiveUp &&
+		(curState == cascade.NodeStateRunning || curState == cascade.NodeStateStale)
+
+	// @decision: held-as-state-not-phase
+	if giveUpInFlight && heldBeforeRelease {
+		pc, err := applyErrorPolicyGiveUpHeld(ctx, args, acq, tx, sig, settlingSig, errorClass)
+		if err != nil {
+			return nil, err
+		}
+		acq.RetryDecision = &decision
+		return chainPostCommit(releasePC, pc), nil
+	}
+
+	var transitioned bool
+	finalState := cascade.NodeStateFresh
 	if resolved.Kind == spec.ActionPass {
 		switch curState {
 		case cascade.NodeStateRunning:
@@ -121,17 +162,26 @@ func applyErrorPolicyWithScratch(
 				cascade.NodeStateFresh, cascade.ReasonHandlerPass, &settlingSig, tx); err != nil {
 				return nil, err
 			}
+			transitioned = true
 		case cascade.NodeStateStale:
 			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 				cascade.NodeStateFresh, cascade.ReasonAcquirePass, &settlingSig, tx); err != nil {
 				return nil, err
 			}
+			transitioned = true
 		}
-	} else if curState == cascade.NodeStateRunning || curState == cascade.NodeStateStale {
+		if transitioned {
+			if err := recordRunTreeChanged(ctx, args, tx, acq.NodeRunID, cascade.NodeStateFresh, &settlingSig, false); err != nil {
+				return nil, fmt.Errorf("applyErrorPolicy: %w", err)
+			}
+		}
+	} else if giveUpInFlight {
 		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
 			return nil, err
 		}
+		finalState = cascade.NodeStateFailed
+		transitioned = true
 	}
 	if err := emitSignalInTxOnce(ctx, args, tx,
 		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, sig); err != nil {
@@ -150,36 +200,105 @@ func applyErrorPolicyWithScratch(
 	}
 
 	post := func(ctx context.Context) {
-		if resolved.Kind == spec.ActionGiveUp {
-			scope := resolveAcqScope(ctx, args, acq)
-			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-				InstanceID:         acq.InstanceID,
-				FrameID:            acq.FrameID,
-				NodeRunID:          nodeRunID,
-				NodeID:             acq.NodeID,
-				State:              string(cascade.NodeStateFailed),
-				SettlingSignalType: settlingSig,
-				ErrorClass:         errorClass,
-				TerminalKind:       "errored",
-				NodeAlias:          acq.NodeType,
-				ExecutorName:       acq.Executor,
-				TemplateHash:       acq.TemplateHash,
-				Params:             acq.InstanceParams,
-				AttributesMerged:   acq.MergedAttributes,
-				HeldClaims:         HeldClaimsForLineage(acq),
-				ParentNodeRunID:    scope.ParentNodeRunID,
-				ChildKey:           scope.PartitionKey,
-				SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
-			})
-			if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
-				cascade.NodeStateFailed, &settlingSig); err != nil {
-				args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
-					"run_id", nodeRunID.String(), "error", err.Error())
-			}
+		if !transitioned {
+			return
+		}
+		terminalKind := "handler_pass"
+		errClass := ""
+		if finalState == cascade.NodeStateFailed {
+			terminalKind = "errored"
+			errClass = errorClass
+		}
+		scope := resolveAcqScope(ctx, args, acq)
+		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			InstanceID:         acq.InstanceID,
+			FrameID:            acq.FrameID,
+			NodeRunID:          nodeRunID,
+			NodeID:             acq.NodeID,
+			State:              string(finalState),
+			SettlingSignalType: settlingSig,
+			ErrorClass:         errClass,
+			TerminalKind:       terminalKind,
+			NodeAlias:          acq.NodeType,
+			ExecutorName:       acq.Executor,
+			TemplateHash:       acq.TemplateHash,
+			Params:             acq.InstanceParams,
+			AttributesMerged:   acq.MergedAttributes,
+			HeldClaims:         HeldClaimsForLineage(acq),
+			ParentNodeRunID:    scope.ParentNodeRunID,
+			ChildKey:           scope.PartitionKey,
+			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
+		})
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
+			finalState, &settlingSig); err != nil {
+			args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
+				"run_id", nodeRunID.String(), "error", err.Error())
 		}
 	}
 	acq.RetryDecision = &decision
 	return chainPostCommit(releasePC, post), nil
+}
+
+// @concept: claim-handle
+// @decision: held-as-state-not-phase
+func applyErrorPolicyGiveUpHeld(
+	ctx context.Context, args RunArgs, acq *acquisition, tx persistence.Tx,
+	sig signalpkg.Signal, settlingSig, errorClass string,
+) (postCommitFn, error) {
+	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
+		cascade.NodeStateHeld, cascade.ReasonHandlerHeld, &settlingSig, tx); err != nil {
+		return nil, err
+	}
+	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
+		return nil, fmt.Errorf("applyErrorPolicyGiveUpHeld: remove for node: %w", err)
+	}
+	tmplSpec, terr := loadTemplateSpec(ctx, args, tx, acq.InstanceID)
+	if terr != nil {
+		return nil, fmt.Errorf("applyErrorPolicyGiveUpHeld: load template for held filter: %w", terr)
+	}
+	heldFilter := subgraphMemberFilter(tmplSpec, acq.NodeType)
+	visited := map[foundationshared.UUID]struct{}{}
+	if err := cascadeSignalInTxWithFilter(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
+		sig, visited, heldFilter); err != nil {
+		return nil, err
+	}
+	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
+		visited, heldFilter); err != nil {
+		return nil, err
+	}
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeRunID); err != nil {
+		return nil, err
+	}
+	transitionPC, err := transitionThisHolderIfFullyResolved(ctx, args, tx, acq)
+	if err != nil {
+		return nil, err
+	}
+	nodeRunID := acq.NodeRunID
+	post := func(ctx context.Context) {
+		fanoutRecalculate(ctx, args, acq)
+		scope := resolveAcqScope(ctx, args, acq)
+		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			InstanceID:       acq.InstanceID,
+			FrameID:          acq.FrameID,
+			NodeRunID:        nodeRunID,
+			NodeID:           acq.NodeID,
+			State:            string(cascade.NodeStateHeld),
+			TerminalKind:     "errored",
+			ErrorClass:       errorClass,
+			NodeAlias:        acq.NodeType,
+			ExecutorName:     acq.Executor,
+			TemplateHash:     acq.TemplateHash,
+			Params:           acq.InstanceParams,
+			AttributesMerged: acq.MergedAttributes,
+			HeldClaims:       HeldClaimsForLineage(acq),
+			ParentNodeRunID:  scope.ParentNodeRunID,
+			ChildKey:         scope.PartitionKey,
+			SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+		})
+	}
+	return chainPostCommit(transitionPC, post), nil
 }
 
 // @concept: claim-handle
@@ -211,9 +330,6 @@ func applyTerminalInfraError(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any, scratch []byte, tx persistence.Tx,
 ) (postCommitFn, error) {
-	if isSubgraphExitNode(acq) {
-		return nil, nil
-	}
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, scratch); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
@@ -277,11 +393,13 @@ func applyInfraGiveUp(
 	if rerr != nil {
 		return nil, fmt.Errorf("applyInfraGiveUp: run lookup: %w", rerr)
 	}
+	var transitioned bool
 	if run != nil && (run.State == cascade.NodeStateRunning || run.State == cascade.NodeStateStale) {
 		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
 			return nil, err
 		}
+		transitioned = true
 	}
 	sig := signalpkg.BuildTerminalErrorSignal(errorClass, payload, retriesSoFar, retriesSoFar, nil, nil)
 	if err := emitSignalInTxOnce(ctx, args, tx,
@@ -300,7 +418,38 @@ func applyInfraGiveUp(
 		return nil, err
 	}
 	acq.RetryDecision = &policyDecision{Kind: spec.ActionGiveUp, Signal: sig}
-	return releasePC, nil
+	if !transitioned {
+		return releasePC, nil
+	}
+	nodeRunID := acq.NodeRunID
+	post := func(ctx context.Context) {
+		scope := resolveAcqScope(ctx, args, acq)
+		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			InstanceID:         acq.InstanceID,
+			FrameID:            acq.FrameID,
+			NodeRunID:          nodeRunID,
+			NodeID:             acq.NodeID,
+			State:              string(cascade.NodeStateFailed),
+			SettlingSignalType: settlingSig,
+			ErrorClass:         errorClass,
+			TerminalKind:       "errored",
+			NodeAlias:          acq.NodeType,
+			ExecutorName:       acq.Executor,
+			TemplateHash:       acq.TemplateHash,
+			Params:             acq.InstanceParams,
+			AttributesMerged:   acq.MergedAttributes,
+			HeldClaims:         HeldClaimsForLineage(acq),
+			ParentNodeRunID:    scope.ParentNodeRunID,
+			ChildKey:           scope.PartitionKey,
+			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
+		})
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
+			cascade.NodeStateFailed, &settlingSig); err != nil {
+			args.Logger.Warn("applyInfraGiveUp: run-tree propagation failed",
+				"run_id", nodeRunID.String(), "error", err.Error())
+		}
+	}
+	return chainPostCommit(releasePC, post), nil
 }
 
 func lookupPolicyForNode(acq *acquisition, errorClass string) *node.ErrorTypePolicy {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
+	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
@@ -28,15 +29,15 @@ func (m bundledMergeMockProducer) Open(context.Context, claimproducer.ClaimID, c
 	return claimproducer.OpenOutcome{}, nil
 }
 
-func (m bundledMergeMockProducer) Commit(context.Context, claimproducer.ClaimID, []byte, []byte) (claimproducer.CommitResult, error) {
+func (m bundledMergeMockProducer) Commit(context.Context, claimproducer.ClaimID, []byte, []byte, string) (claimproducer.CommitResult, error) {
 	return claimproducer.CommitResult{}, nil
 }
 
-func (m bundledMergeMockProducer) Abandon(context.Context, claimproducer.ClaimID, []byte, []byte) error {
+func (m bundledMergeMockProducer) Abandon(context.Context, claimproducer.ClaimID, []byte, []byte, string) error {
 	return nil
 }
 
-func (m bundledMergeMockProducer) Release(context.Context, claimproducer.ClaimID, []byte, []byte) error {
+func (m bundledMergeMockProducer) Release(context.Context, claimproducer.ClaimID, []byte, []byte, string) error {
 	return nil
 }
 
@@ -120,5 +121,45 @@ func TestMergeBundledExecutorEntries_ConfiguredWinsOverBundled(t *testing.T) {
 	wantB := controlapi.ExecutorEntry{Transport: "inproc", Endpoint: "bundled-b"}
 	if got := configured["exec-b"]; got != wantB {
 		t.Fatalf("exec-b: got %+v, want %+v", got, wantB)
+	}
+}
+
+func TestAdvertiseInto_SkipsNamesOverriddenByConfiguredEndpoint(t *testing.T) {
+	regs := &BundledRegistrations{
+		ExecutorAliases: map[string]executor.Endpoint{
+			"exec-overridden":   {Transport: "inproc", URL: "bundled-overridden"},
+			"exec-only-bundled": {Transport: "inproc", URL: "bundled-only"},
+		},
+		ExecutorAdverts: map[string]BundledExecutorAdvertisement{
+			"exec-overridden":   {Schema: []byte(`{"bundled":true}`)},
+			"exec-only-bundled": {Schema: []byte(`{"bundled":true}`)},
+		},
+		ClaimProducerAdverts: map[string]claimproducer.Capabilities{
+			"store-overridden":   {},
+			"store-only-bundled": {},
+		},
+	}
+
+	disc := observability.NewDiscovery(nil)
+	configuredExecutors := map[string]ExecutorEntry{
+		"exec-overridden": {Transport: "grpc", Endpoint: "configured-host:9090"},
+	}
+	configuredClaimProducers := map[string]ClaimProducerEntry{
+		"store-overridden": {Endpoint: "configured-store:9090"},
+	}
+
+	regs.AdvertiseInto(disc, configuredExecutors, configuredClaimProducers)
+
+	if _, ok := disc.GetExecutor("exec-overridden"); ok {
+		t.Fatalf("exec-overridden: bundled advert clobbered the configured executor's discovery entry")
+	}
+	if _, ok := disc.GetExecutor("exec-only-bundled"); !ok {
+		t.Fatalf("exec-only-bundled: expected a discovery entry for the un-overridden bundled executor")
+	}
+	if _, ok := disc.GetStore("store-overridden"); ok {
+		t.Fatalf("store-overridden: bundled advert clobbered the configured claim producer's discovery entry")
+	}
+	if _, ok := disc.GetStore("store-only-bundled"); !ok {
+		t.Fatalf("store-only-bundled: expected a discovery entry for the un-overridden bundled claim producer")
 	}
 }

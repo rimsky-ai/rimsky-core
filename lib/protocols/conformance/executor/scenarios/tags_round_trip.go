@@ -20,7 +20,19 @@ func init() {
 		Name:         "tags_round_trip",
 		RequiresStub: true,
 		Run: func(ctx context.Context, env conformance.Env) error {
-			attrs, err := structpb.NewStruct(map[string]any{"stub_probe": true})
+			declared, err := declaredTagsFor(ctx, env.Client)
+			if err != nil {
+				return fmt.Errorf("DeclaredTags: %w", err)
+			}
+			if len(declared) == 0 {
+				return nil
+			}
+			tag := declared[0]
+
+			attrs, err := structpb.NewStruct(map[string]any{
+				"stub_probe": true,
+				"stub_tags":  []any{tag},
+			})
 			if err != nil {
 				return fmt.Errorf("build attributes: %w", err)
 			}
@@ -43,8 +55,29 @@ func init() {
 			if !ok {
 				return fmt.Errorf("expected Outcome_Success, got %T", settled.GetOutcome())
 			}
-			_ = success.Success.GetTags()
+			got := success.Success.GetTags()
+			if !containsTag(got, tag) {
+				return fmt.Errorf("requested declared tag %q via stub_tags but the settling Outcome.Success.tags=%v did not carry it; "+
+					"tags declared via Capabilities must round-trip on the settling Outcome (concept:terminal-tag)", tag, got)
+			}
 			return nil
 		},
 	})
+}
+
+func declaredTagsFor(ctx context.Context, c conformance.Client) ([]string, error) {
+	dt, ok := c.(conformance.DeclaredTagsClient)
+	if !ok {
+		return nil, nil
+	}
+	return dt.DeclaredTags(ctx)
+}
+
+func containsTag(tags []string, want string) bool {
+	for _, t := range tags {
+		if t == want {
+			return true
+		}
+	}
+	return false
 }

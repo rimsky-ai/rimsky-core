@@ -31,6 +31,25 @@ func running() ChildState {
 	return ChildState{State: cascade.NodeStateRunning}
 }
 
+func parked() ChildState {
+	return ChildState{State: cascade.NodeStateParked}
+}
+
+func TestChildState_IsSettled_ParkedIsNotSettled(t *testing.T) {
+	if parked().IsSettled() {
+		t.Fatal("parked must not count as settled — it is an in-flight state per concept:node-run's " +
+			"{pending, stale, running, held, parked} set")
+	}
+}
+
+func TestAggregate_Strict_ParkedChildKeepsParentWaiting(t *testing.T) {
+	children := []ChildState{success(true), parked()}
+	res := Aggregate(children, spec.AggregationPolicy{Kind: "strict"})
+	if res.IsSettled {
+		t.Fatalf("a parked sibling must hold strict aggregation open; got %+v", res)
+	}
+}
+
 func TestAggregate_StrictAllSuccess(t *testing.T) {
 	children := []ChildState{
 		success(false),

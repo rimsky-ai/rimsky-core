@@ -154,12 +154,11 @@ func (q *queueImpl) SelectCandidates(
 		    AND d.state = 'stale'
 		    AND i.paused = false
 		    AND i.terminated_at IS NULL
-		    AND (
-		      d.required_stores <@ $1::text[]
-		      OR (
-		        $5 <> ''
-		        AND $5 = ANY($1::text[])
-		        AND (SELECT COALESCE(bool_and(i.service_bindings ? rs.name), false) FROM unnest(d.required_stores) AS rs(name))
+		    AND NOT EXISTS (
+		      SELECT 1 FROM unnest(d.required_stores) AS rs(name)
+		      WHERE NOT (
+		        rs.name = ANY($1::text[])
+		        OR ($5 <> '' AND $5 = ANY($1::text[]) AND i.service_bindings ? rs.name)
 		      )
 		    )
 		    AND (
@@ -723,6 +722,7 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 		`SELECT id FROM rimsky_node_runs
 		  WHERE node_id = $1 AND run_scope_id = $2
 		    AND state IN ('pending','stale','running','held','parked')
+		  ORDER BY sequence ASC
 		  LIMIT 1`,
 		nodeID, runScopeID).Scan(&id)
 	if err != nil {
@@ -741,7 +741,7 @@ func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persi
 	err := ex.QueryRow(ctx,
 		`SELECT id FROM rimsky_node_runs
 		  WHERE node_id = $1 AND run_scope_id = $2
-		  ORDER BY enqueued_at DESC, id DESC
+		  ORDER BY sequence DESC
 		  LIMIT 1`,
 		nodeID, runScopeID).Scan(&id)
 	if err != nil {

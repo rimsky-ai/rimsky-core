@@ -471,6 +471,102 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 }
 
 // @concept: fan-out
+func TestAcquireFanOutIfDeclared_SubgraphDelegationScopeStillFansOut(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const storeName = "delegation-scope-store"
+	instanceID := shared.UUID(uuid.New())
+	parentRun := shared.UUID(uuid.New())
+	delegationScopeID := shared.UUID(uuid.New())
+
+	scopes := &staticScopeTable{}
+	_ = scopes.Create(ctx, nil, persistence.RunScopeRow{
+		ID: delegationScopeID, ParentNodeRunID: &parentRun, PartitionKey: "", GraphName: "staging",
+	})
+
+	errStop := errors.New("stop-after-capture")
+	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+	})
+	store.SplitClaimScopeFunc = func(claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+		return claimproducer.SplitClaimScopeResponse{}, errStop
+	}
+	reg := locks.NewRegistry()
+	reg.Add(storeName, store)
+
+	nodeDef := &node.TemplateNodeDef{
+		Type:     "fan-in-subgraph",
+		Executor: "stub",
+		FanOut: &node.FanOutSpec{
+			Claim:            "data",
+			PartitionRequest: `"all"`,
+		},
+	}
+	acquiredLocks := []AcquiredLock{{
+		Alias:         "data",
+		Spec:          claimproducer.ClaimSpec{ProducerName: storeName, Intent: "rw"},
+		ClaimHandleID: shared.UUID(uuid.New()),
+		ClaimResult:   claimproducer.ClaimResult{ClaimScope: json.RawMessage(`"parent-scope"`)},
+	}}
+
+	out := &acquisition{InstanceID: instanceID, RunScopeID: delegationScopeID}
+	args := RunArgs{
+		Persist:       &scopeOnlyPersist{scopes: scopes},
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		SupervisorID:  "sup-FAN-DELEGATE",
+	}
+	cand := persistence.Candidate{
+		FrameID:   shared.UUID(uuid.New()),
+		NodeID:    shared.UUID(uuid.New()),
+		NodeRunID: shared.UUID(uuid.New()),
+	}
+
+	err := acquireFanOutIfDeclared(ctx, args, nil, instanceID, out, cand, nodeDef, acquiredLocks, 30*time.Second)
+	if !errors.Is(err, errStop) {
+		t.Fatalf("expected fan-out to reach SplitScope from a sub-graph delegation scope "+
+			"(ParentNodeRunID set, PartitionKey empty) — the recursion guard must only suppress "+
+			"re-fan-out of fan-out PARTITION scopes, not every non-root scope; got err=%v", err)
+	}
+}
+
+// @concept: fan-out
+type erroringScopeTable struct {
+	staticScopeTable
+	err error
+}
+
+func (s *erroringScopeTable) GetByID(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.RunScopeRow, error) {
+	return nil, s.err
+}
+
+func TestAcquireFanOutIfDeclared_RunScopeLookupErrorPropagates(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("run-scope lookup: transient db error")
+	scopes := &erroringScopeTable{err: wantErr}
+	out := &acquisition{RunScopeID: shared.UUID(uuid.New())}
+	nodeDef := &node.TemplateNodeDef{
+		Type:     "fan-leaf",
+		Executor: "stub",
+		FanOut: &node.FanOutSpec{
+			Claim:            "data",
+			PartitionRequest: `"all"`,
+		},
+	}
+	args := RunArgs{Persist: &scopeOnlyPersist{scopes: scopes}}
+	err := acquireFanOutIfDeclared(
+		context.Background(), args, (persistence.Tx)(nil), shared.UUID{}, out,
+		persistence.Candidate{}, nodeDef, nil, 30*time.Second,
+	)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected acquireFanOutIfDeclared to propagate the RunScopes.GetByID error instead of "+
+			"silently falling through and treating the run as a fan-out root; got %v", err)
+	}
+}
+
+// @concept: fan-out
 // @decision: substitution-grammar-closed
 // @story: typed-message-substitution
 func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
@@ -631,7 +727,7 @@ func (f *fakeRunTreeDeps) LockTreeForUpdate(ctx context.Context, tx persistence.
 func (f *fakeRunTreeDeps) ListChildren(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.NodeRunTreeRow, error) {
 	return nil, nil
 }
-func (f *fakeRunTreeDeps) UpdateStateAndOutcome(_ context.Context, _ persistence.Tx, _ shared.UUID, _ cascade.NodeState, _ *string) error {
+func (f *fakeRunTreeDeps) UpdateStateAndOutcome(_ context.Context, _ persistence.Tx, _ shared.UUID, _ cascade.NodeState, _ *string, _ bool) error {
 	return nil
 }
 func (f *fakeRunTreeDeps) UpdateAggregationPolicy(_ context.Context, _ persistence.Tx, _ shared.UUID, _ spec.AggregationPolicy) error {

@@ -82,14 +82,18 @@ func builtinSchemas() map[string][]byte {
 		"node_get":   []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		"node_reset": []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 
-		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"type":{"type":"string"},"payload":{},"sender":{"type":"string"},"publisher_subscription_id":{"type":"string","description":"if set, request is treated as a publisher send; otherwise as an operator send"}},"required":["id","type"]}`),
+		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"type":{"type":"string"},"payload":{},"sender":{"type":"string"},"publisher_subscription_id":{"type":"string","description":"if set, request is treated as a publisher send; otherwise as an operator send"},"idempotency_key":{"type":"string","description":"caller-supplied dedup key; a client retry with the same key replays instead of double-sending. Omit to have the server synthesize a random one"}},"required":["id","type"]}`),
 		"message_list": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
 		"message_get":  []byte(`{"type":"object","properties":{"id":{"type":"string","description":"message id"}},"required":["id"]}`),
 
 		"event_list": obj,
 
-		"lineage_get":   []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"claim_handle_id":{"type":"string"},"source_type":{"type":"string"},"source_id":{"type":"string"},"executor_name":{"type":"string"}}}`),
-		"lineage_prune": []byte(`{"type":"object","properties":{"before":{"type":"string","description":"RFC3339 timestamp"}},"required":["before"]}`),
+		"lineage_get":               []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"claim_handle_id":{"type":"string"},"source_type":{"type":"string"},"source_id":{"type":"string"},"executor_name":{"type":"string"}}}`),
+		"lineage_run_ancestors":     []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"}},"required":["run_id"]}`),
+		"lineage_run_descendants":   []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"}},"required":["run_id"]}`),
+		"lineage_claim_ancestors":   []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"}},"required":["claim_handle_id"]}`),
+		"lineage_claim_descendants": []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"}},"required":["claim_handle_id"]}`),
+		"lineage_prune":             []byte(`{"type":"object","properties":{"before":{"type":"string","description":"RFC3339 timestamp"}},"required":["before"]}`),
 
 		"parked_node_list":   []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`),
 		"waitset_list":       obj,

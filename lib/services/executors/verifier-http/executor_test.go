@@ -9,8 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -196,6 +198,107 @@ func TestExecute_CustomClassField(t *testing.T) {
 	}
 	if got, want := errOut.GetErrorClass(), "verifier/check_failed/rate_limited"; got != want {
 		t.Errorf("error_class=%q, want %q", got, want)
+	}
+}
+
+func TestExecute_DefaultExpectedStatusAcceptsNon200TwoXX(t *testing.T) {
+	for _, code := range []int{201, 202, 204} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(code)
+		}))
+		req := buildReq(t, map[string]any{"url": srv.URL})
+		outcome, err := NewServer(false).Execute(context.Background(), req)
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		success := outcome.GetSuccess()
+		if success == nil {
+			t.Fatalf("status %d: expected Success under the default 2xx-to-success mapping, got %T", code, outcome.GetOutcome())
+		}
+	}
+}
+
+func TestExecute_DefaultExpectedStatusRejectsNon2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	req := buildReq(t, map[string]any{"url": srv.URL})
+	outcome, err := NewServer(false).Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
+	}
+	payload := errOut.GetPayload().AsMap()
+	if payload["expected_status"] != "2xx" {
+		t.Errorf("expected_status = %+v, want \"2xx\"", payload["expected_status"])
+	}
+}
+
+func TestExecute_ErrorPayloadSurvivesBinaryBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte{0xff, 0xfe, 0x00, 0x01, 0x02})
+	}))
+	defer srv.Close()
+	req := buildReq(t, map[string]any{"url": srv.URL})
+	outcome, err := NewServer(false).Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
+	}
+	if errOut.GetPayload() == nil {
+		t.Fatal("a non-UTF-8 response body must not drop the Error payload")
+	}
+	payload := errOut.GetPayload().AsMap()
+	if payload["actual_status"] != float64(http.StatusInternalServerError) {
+		t.Errorf("actual_status missing from payload: %+v", payload)
+	}
+	if payload["expected_status"] != "2xx" {
+		t.Errorf("expected_status missing from payload: %+v", payload)
+	}
+}
+
+func TestExecute_ErrorPayloadSurvivesMidRuneTruncation(t *testing.T) {
+	body := strings.Repeat("é", 300)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	req := buildReq(t, map[string]any{"url": srv.URL})
+	outcome, err := NewServer(false).Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
+	}
+	if errOut.GetPayload() == nil {
+		t.Fatal("a mid-rune 512-byte truncation must not drop the Error payload")
+	}
+	payload := errOut.GetPayload().AsMap()
+	if payload["actual_status"] != float64(http.StatusInternalServerError) {
+		t.Errorf("actual_status missing from payload: %+v", payload)
+	}
+	preview, _ := payload["body_preview"].(string)
+	if !utf8.ValidString(preview) {
+		t.Errorf("body_preview is not valid UTF-8: %q", preview)
+	}
+}
+
+func TestNewServer_ClientCarriesNoFixedTimeout(t *testing.T) {
+	s := NewServer(false)
+	if s.client.Timeout != 0 {
+		t.Fatalf("client.Timeout = %v, want 0 (unbounded) so attributes.timeout_ms alone governs the per-dispatch deadline via context, not a hardcoded client cap", s.client.Timeout)
 	}
 }
 

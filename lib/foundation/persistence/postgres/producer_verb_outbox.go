@@ -31,14 +31,14 @@ func (b *producerVerbOutboxImpl) run(tx persistence.Tx) querier {
 
 const insertProducerVerbOutboxSQL = `
 	INSERT INTO rimsky_producer_verb_outbox
-	    (claim_handle_id, producer_name, verb, claim_scope_data, address,
+	    (claim_handle_id, producer_name, verb, claim_scope_data, address, lease_token,
 	     supervisor_id, instance_id, parent_claim_handle_id, next_attempt_at, enqueued_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	ON CONFLICT (claim_handle_id, verb) DO NOTHING`
 
 func (b *producerVerbOutboxImpl) Enqueue(ctx context.Context, in persistence.ProducerVerbOutboxInsertInput, tx persistence.Tx) error {
 	if _, err := b.run(tx).Exec(ctx, insertProducerVerbOutboxSQL,
-		in.ClaimHandleID, in.ProducerName, string(in.Verb), in.ClaimScopeData, in.Address,
+		in.ClaimHandleID, in.ProducerName, string(in.Verb), in.ClaimScopeData, in.Address, in.LeaseToken,
 		in.SupervisorID, in.InstanceID, in.ParentClaimHandleID, in.NextAttemptAt, in.EnqueuedAt,
 	); err != nil {
 		return fmt.Errorf("postgres.ProducerVerbOutbox.Enqueue: %w", err)
@@ -47,7 +47,7 @@ func (b *producerVerbOutboxImpl) Enqueue(ctx context.Context, in persistence.Pro
 }
 
 const selectProducerVerbOutboxSQL = `
-	SELECT seq, claim_handle_id, producer_name, verb, claim_scope_data, address,
+	SELECT seq, claim_handle_id, producer_name, verb, claim_scope_data, address, lease_token,
 	       supervisor_id, instance_id, parent_claim_handle_id, attempt_count, next_attempt_at, last_error, enqueued_at
 	  FROM rimsky_producer_verb_outbox`
 
@@ -117,7 +117,7 @@ func scanProducerVerbOutboxRows(rows pgx.Rows) ([]persistence.ProducerVerbOutbox
 			r    persistence.ProducerVerbOutboxRow
 			verb string
 		)
-		if err := rows.Scan(&r.Seq, &r.ClaimHandleID, &r.ProducerName, &verb, &r.ClaimScopeData, &r.Address,
+		if err := rows.Scan(&r.Seq, &r.ClaimHandleID, &r.ProducerName, &verb, &r.ClaimScopeData, &r.Address, &r.LeaseToken,
 			&r.SupervisorID, &r.InstanceID, &r.ParentClaimHandleID, &r.AttemptCount, &r.NextAttemptAt, &r.LastError, &r.EnqueuedAt,
 		); err != nil {
 			return nil, fmt.Errorf("postgres.ProducerVerbOutbox.scan: %w", err)

@@ -83,13 +83,13 @@ func TestStartUnifiedStack_OneDriverAcrossRunners(t *testing.T) {
 		ch := make(chan error)
 		return fakeStop, ch, nil
 	}
-	runSchedulerFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig) (StopFunc, <-chan error, error) {
+	runSchedulerFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig, _ persistence.BlobBackend) (StopFunc, <-chan error, error) {
 		return record(d)
 	}
-	runSupervisorFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig, _ *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+	runSupervisorFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig, _ *config.BundledRegistrations, _ persistence.BlobBackend) (StopFunc, <-chan error, error) {
 		return record(d)
 	}
-	runControlAPIFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig, _ *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+	runControlAPIFn = func(_ context.Context, _ *slog.Logger, d persistence.Database, _ *config.RimskyConfig, _ *config.BundledRegistrations, _ persistence.BlobBackend) (StopFunc, <-chan error, error) {
 		return record(d)
 	}
 
@@ -114,7 +114,73 @@ func TestStartUnifiedStack_OneDriverAcrossRunners(t *testing.T) {
 	}
 }
 
-type fakeDriver struct{ persistence.Database }
+func TestStartUnifiedStack_BlobBackendOpenedOnceAndSharedAcrossRunners(t *testing.T) {
+	origScheduler, origSupervisor, origControlAPI := runSchedulerFn, runSupervisorFn, runControlAPIFn
+	defer func() {
+		runSchedulerFn = origScheduler
+		runSupervisorFn = origSupervisor
+		runControlAPIFn = origControlAPI
+	}()
+
+	var (
+		mu        sync.Mutex
+		seenBlobs []persistence.BlobBackend
+		fakeStop  = func(context.Context) error { return nil }
+	)
+	record := func(bb persistence.BlobBackend) (StopFunc, <-chan error, error) {
+		mu.Lock()
+		seenBlobs = append(seenBlobs, bb)
+		mu.Unlock()
+		return fakeStop, make(chan error), nil
+	}
+	runSchedulerFn = func(_ context.Context, _ *slog.Logger, _ persistence.Database, _ *config.RimskyConfig, bb persistence.BlobBackend) (StopFunc, <-chan error, error) {
+		return record(bb)
+	}
+	runSupervisorFn = func(_ context.Context, _ *slog.Logger, _ persistence.Database, _ *config.RimskyConfig, _ *config.BundledRegistrations, bb persistence.BlobBackend) (StopFunc, <-chan error, error) {
+		return record(bb)
+	}
+	runControlAPIFn = func(_ context.Context, _ *slog.Logger, _ persistence.Database, _ *config.RimskyConfig, _ *config.BundledRegistrations, bb persistence.BlobBackend) (StopFunc, <-chan error, error) {
+		return record(bb)
+	}
+
+	setCalls := 0
+	driver := &fakeDriver{onSetBlobBackend: func() { setCalls++ }}
+	logger := slog.New(slog.NewTextHandler(discardWriter{}, nil))
+	stack, err := StartUnifiedStack(context.Background(), logger, driver, &config.RimskyConfig{}, &config.BundledRegistrations{})
+	if err != nil {
+		t.Fatalf("StartUnifiedStack: %v", err)
+	}
+	defer stack.Drain(context.Background(), time.Second)
+
+	if setCalls != 1 {
+		t.Fatalf("driver.SetBlobBackend called %d times, want exactly 1 (each additional call is an unsynchronized field write racing already-running roles' readers)", setCalls)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seenBlobs) != 3 {
+		t.Fatalf("want 3 runner invocations, got %d", len(seenBlobs))
+	}
+	for i, bb := range seenBlobs {
+		if bb == nil {
+			t.Fatalf("runner[%d] received a nil blob backend", i)
+		}
+		if bb != seenBlobs[0] {
+			t.Errorf("runner[%d] blob backend = %v, want the same pre-opened instance as runner[0] = %v", i, bb, seenBlobs[0])
+		}
+	}
+}
+
+type fakeDriver struct {
+	persistence.Database
+	onSetBlobBackend func()
+}
+
+func (f *fakeDriver) SetBlobBackend(persistence.BlobBackend, int, time.Duration) {
+	if f.onSetBlobBackend != nil {
+		f.onSetBlobBackend()
+	}
+}
 
 type discardWriter struct{}
 
@@ -137,18 +203,18 @@ func TestUnifiedStack_FailChDeliversFailure(t *testing.T) {
 	}
 }
 
-func stubRunners() (schedulerFn func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig) (StopFunc, <-chan error, error),
-	supervisorFn func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error),
-	controlAPIFn func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error),
+func stubRunners() (schedulerFn func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, persistence.BlobBackend) (StopFunc, <-chan error, error),
+	supervisorFn func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations, persistence.BlobBackend) (StopFunc, <-chan error, error),
+	controlAPIFn func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations, persistence.BlobBackend) (StopFunc, <-chan error, error),
 ) {
 	fakeStop := func(context.Context) error { return nil }
-	return func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig) (StopFunc, <-chan error, error) {
+	return func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, persistence.BlobBackend) (StopFunc, <-chan error, error) {
 			return fakeStop, make(chan error), nil
 		},
-		func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+		func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations, persistence.BlobBackend) (StopFunc, <-chan error, error) {
 			return fakeStop, make(chan error), nil
 		},
-		func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+		func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations, persistence.BlobBackend) (StopFunc, <-chan error, error) {
 			return fakeStop, make(chan error), nil
 		}
 }
@@ -163,7 +229,7 @@ func TestStartUnifiedStack_ForwardsRunnerFailure(t *testing.T) {
 
 	schedFailCh := make(chan error)
 	fakeStop := func(context.Context) error { return nil }
-	runSchedulerFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig) (StopFunc, <-chan error, error) {
+	runSchedulerFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, persistence.BlobBackend) (StopFunc, <-chan error, error) {
 		return fakeStop, schedFailCh, nil
 	}
 	_, supervisorFn, controlAPIFn := stubRunners()
@@ -197,10 +263,10 @@ func TestStartUnifiedStack_IgnoresNilAndClosedRunnerFailure(t *testing.T) {
 	schedFailCh := make(chan error)
 	supFailCh := make(chan error)
 	fakeStop := func(context.Context) error { return nil }
-	runSchedulerFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig) (StopFunc, <-chan error, error) {
+	runSchedulerFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, persistence.BlobBackend) (StopFunc, <-chan error, error) {
 		return fakeStop, schedFailCh, nil
 	}
-	runSupervisorFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+	runSupervisorFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations, persistence.BlobBackend) (StopFunc, <-chan error, error) {
 		return fakeStop, supFailCh, nil
 	}
 	_, _, controlAPIFn := stubRunners()
@@ -236,7 +302,7 @@ func TestStartUnifiedStack_StartupFailureDrainsStartedRoles(t *testing.T) {
 		stopped          []string
 		controlAPICalled bool
 	)
-	runSchedulerFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig) (StopFunc, <-chan error, error) {
+	runSchedulerFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, persistence.BlobBackend) (StopFunc, <-chan error, error) {
 		stop := func(context.Context) error {
 			mu.Lock()
 			stopped = append(stopped, "scheduler")
@@ -246,10 +312,10 @@ func TestStartUnifiedStack_StartupFailureDrainsStartedRoles(t *testing.T) {
 		return stop, make(chan error), nil
 	}
 	supervisorErr := errors.New("supervisor boom")
-	runSupervisorFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+	runSupervisorFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations, persistence.BlobBackend) (StopFunc, <-chan error, error) {
 		return nil, nil, supervisorErr
 	}
-	runControlAPIFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+	runControlAPIFn = func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations, persistence.BlobBackend) (StopFunc, <-chan error, error) {
 		mu.Lock()
 		controlAPICalled = true
 		mu.Unlock()

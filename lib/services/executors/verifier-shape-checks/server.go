@@ -6,7 +6,6 @@ package verifiershapechecks
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -36,16 +35,28 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest) *genv1.Outcome {
 	if err != nil {
 		return erroredOutcome("verifier/attribute_invalid", err.Error())
 	}
-	rows, err := parseRows(ud)
+	rows, rowsPresent, err := parseRows(ud)
 	if err != nil {
 		return erroredOutcome("verifier/attribute_invalid", err.Error())
 	}
+	if !rowsPresent {
+		if missing := firstRowLevelKind(specs); missing != "" {
+			return erroredOutcome("verifier/attribute_invalid",
+				fmt.Sprintf("attributes.rows (array) required: check %q needs row-level data", missing))
+		}
+	}
 	results := make([]scoredResult, 0, len(specs))
+	var configErrors []scoredResult
 	blockingFailures := 0
 	firstBlockingKind := ""
 	for _, spec := range specs {
 		r := checks.Run(spec, rows)
-		results = append(results, scoredResult{Result: r, Severity: spec.Severity})
+		sr := scoredResult{Result: r, Severity: spec.Severity}
+		results = append(results, sr)
+		if r.ConfigError {
+			configErrors = append(configErrors, sr)
+			continue
+		}
 		if r.Pass || spec.Severity != checks.SeverityError {
 			continue
 		}
@@ -56,6 +67,9 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest) *genv1.Outcome {
 				firstBlockingKind = r.Kind
 			}
 		}
+	}
+	if len(configErrors) > 0 {
+		return erroredOutcome("verifier/attribute_invalid", configErrorMessage(configErrors))
 	}
 	if blockingFailures > 0 {
 		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
@@ -110,20 +124,41 @@ func parseSeverity(raw any, i int) (checks.Severity, error) {
 		i, s, checks.SeverityError, checks.SeverityWarning)
 }
 
-func parseRows(ud map[string]any) ([]checks.Row, error) {
-	raw, ok := ud["rows"].([]any)
+func parseRows(ud map[string]any) ([]checks.Row, bool, error) {
+	v, present := ud["rows"]
+	if !present || v == nil {
+		return nil, false, nil
+	}
+	raw, ok := v.([]any)
 	if !ok {
-		return nil, nil
+		return nil, false, fmt.Errorf("attributes.rows must be an array, got %T", v)
 	}
 	out := make([]checks.Row, 0, len(raw))
 	for i, item := range raw {
 		obj, ok := item.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("rows[%d] must be an object", i)
+			return nil, false, fmt.Errorf("rows[%d] must be an object", i)
 		}
 		out = append(out, obj)
 	}
-	return out, nil
+	return out, true, nil
+}
+
+func firstRowLevelKind(specs []checks.CheckSpec) string {
+	for _, spec := range specs {
+		if checks.RequiresRows(spec.Kind) {
+			return spec.Kind
+		}
+	}
+	return ""
+}
+
+func configErrorMessage(configErrors []scoredResult) string {
+	parts := make([]string, 0, len(configErrors))
+	for _, sr := range configErrors {
+		parts = append(parts, fmt.Sprintf("%s: %s", sr.Kind, sr.Message))
+	}
+	return strings.Join(parts, "; ")
 }
 
 type scoredResult struct {
@@ -210,5 +245,3 @@ func stubSuccess() *genv1.Outcome {
 		ChangeSummary:   "verifier-shape-checks stub",
 	}}}
 }
-
-var _ = json.Marshal

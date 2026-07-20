@@ -192,6 +192,67 @@ func TestMessagesList_DeliveredAfterBefore_Postgres(t *testing.T) {
 	}
 }
 
+func TestMessagesList_CursorPagination_Postgres(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	instanceID := seedMessageInstanceForNullTest(t, ctx, d)
+	messages := d.Tables().Messages()
+
+	const total = 7
+	ids := make([]shared.UUID, total)
+	base := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
+	for i := 0; i < total; i++ {
+		ids[i] = shared.UUID(uuid.New())
+		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+				ID:         ids[i],
+				InstanceID: instanceID,
+				Type:       "ping/recheck",
+				Sender:     "operator",
+				SenderKind: "operator",
+				ReceivedAt: base.Add(time.Duration(i) * time.Minute),
+			})
+		}); err != nil {
+			t.Fatalf("Messages.Insert[%d]: %v", i, err)
+		}
+	}
+
+	instUUID := shared.UUID(instanceID)
+	var seen []shared.UUID
+	pag := persistence.ListPagination{Limit: 3}
+	for pages := 0; pages < total*2; pages++ {
+		page, err := messages.List(ctx, persistence.MessageListFilter{InstanceID: &instUUID}, pag)
+		if err != nil {
+			t.Fatalf("List page %d: %v", pages, err)
+		}
+		for _, r := range page.Rows {
+			seen = append(seen, r.ID)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		pag.Cursor = page.NextCursor
+	}
+
+	if len(seen) != total {
+		t.Fatalf("cursor pagination collected %d messages across pages, want %d "+
+			"(next_cursor must actually page past the first window instead of re-serving it or stopping short)", len(seen), total)
+	}
+	seenSet := make(map[shared.UUID]bool, len(seen))
+	for _, id := range seen {
+		if seenSet[id] {
+			t.Fatalf("message %s returned more than once across pages; cursor pagination must not duplicate rows", id)
+		}
+		seenSet[id] = true
+	}
+	for _, id := range ids {
+		if !seenSet[id] {
+			t.Fatalf("message %s never appeared across any page; cursor pagination must not drop rows", id)
+		}
+	}
+}
+
 func TestMessagesScan_NonNullPayload_Postgres(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

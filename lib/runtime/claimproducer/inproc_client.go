@@ -48,23 +48,23 @@ func (c *Client) Open(ctx context.Context, claimID protocol.ClaimID, spec protoc
 	return out, nil
 }
 
-func (c *Client) Commit(ctx context.Context, claimID protocol.ClaimID, scope, address []byte) (protocol.CommitResult, error) {
-	res, err := c.handler.Commit(ctx, claimID, scope, address)
+func (c *Client) Commit(ctx context.Context, claimID protocol.ClaimID, scope, address []byte, leaseToken string) (protocol.CommitResult, error) {
+	res, err := c.handler.Commit(ctx, claimID, scope, address, leaseToken)
 	if err != nil {
 		return protocol.CommitResult{}, callError(c.name, "Commit", err)
 	}
 	return res, nil
 }
 
-func (c *Client) Abandon(ctx context.Context, claimID protocol.ClaimID, scope, address []byte) error {
-	if err := c.handler.Abandon(ctx, claimID, scope, address); err != nil {
+func (c *Client) Abandon(ctx context.Context, claimID protocol.ClaimID, scope, address []byte, leaseToken string) error {
+	if err := c.handler.Abandon(ctx, claimID, scope, address, leaseToken); err != nil {
 		return callError(c.name, "Abandon", err)
 	}
 	return nil
 }
 
-func (c *Client) Release(ctx context.Context, claimID protocol.ClaimID, scope, address []byte) error {
-	if err := c.handler.Release(ctx, claimID, scope, address); err != nil {
+func (c *Client) Release(ctx context.Context, claimID protocol.ClaimID, scope, address []byte, leaseToken string) error {
+	if err := c.handler.Release(ctx, claimID, scope, address, leaseToken); err != nil {
 		return callError(c.name, "Release", err)
 	}
 	return nil

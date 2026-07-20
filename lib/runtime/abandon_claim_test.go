@@ -31,18 +31,18 @@ func (s *abandonStub) Open(context.Context, claimproducer.ClaimID, claimproducer
 	return claimproducer.OpenOutcome{}, errors.New("Open not implemented in stub")
 }
 
-func (s *abandonStub) Commit(context.Context, claimproducer.ClaimID, []byte, []byte) (claimproducer.CommitResult, error) {
+func (s *abandonStub) Commit(context.Context, claimproducer.ClaimID, []byte, []byte, string) (claimproducer.CommitResult, error) {
 	return claimproducer.CommitResult{}, errors.New("Commit not implemented in stub")
 }
 
-func (s *abandonStub) Abandon(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
+func (s *abandonStub) Abandon(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
 	s.lastClaimID = claimID
 	s.lastScope = scope
 	s.lastAddress = address
 	return s.abandonErr
 }
 
-func (s *abandonStub) Release(context.Context, claimproducer.ClaimID, []byte, []byte) error {
+func (s *abandonStub) Release(context.Context, claimproducer.ClaimID, []byte, []byte, string) error {
 	return errors.New("Release not implemented in stub")
 }
 
@@ -63,7 +63,7 @@ func TestAbandonOpenedClaim(t *testing.T) {
 
 	t.Run("forwards args to producer.Abandon", func(t *testing.T) {
 		stub := &abandonStub{}
-		err := abandonOpenedClaim(context.Background(), stub, handleID, scope, address)
+		err := abandonOpenedClaim(context.Background(), stub, handleID, scope, address, "")
 		if err != nil {
 			t.Fatalf("expected nil, got %v", err)
 		}
@@ -82,7 +82,7 @@ func TestAbandonOpenedClaim(t *testing.T) {
 	t.Run("returns producer.Abandon error", func(t *testing.T) {
 		want := errors.New("producer go boom")
 		stub := &abandonStub{abandonErr: want}
-		err := abandonOpenedClaim(context.Background(), stub, handleID, scope, address)
+		err := abandonOpenedClaim(context.Background(), stub, handleID, scope, address, "")
 		if !errors.Is(err, want) {
 			t.Errorf("err = %v, want %v", err, want)
 		}

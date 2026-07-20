@@ -155,8 +155,14 @@ func stringMapOrNil(v any) map[string]string {
 }
 
 func ParseCliConfig(v any) (*CliConfig, error) {
+	if v == nil {
+		return nil, nil
+	}
 	cli, ok := v.(map[string]any)
-	if !ok || len(cli) == 0 {
+	if !ok {
+		return nil, &CliConfigError{Message: fmt.Sprintf("attributes.cli must be an object, got %T", v)}
+	}
+	if len(cli) == 0 {
 		return nil, nil
 	}
 	out := &CliConfig{}

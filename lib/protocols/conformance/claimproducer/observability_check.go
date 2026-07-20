@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -112,23 +113,87 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 	}
 
 	if opts.RetentionTestSeconds > 0 && caps.GetSupportsClaimGet() {
-		wait := time.Duration(opts.RetentionTestSeconds+1) * time.Second
-		logf("observability: retention probe — sleeping %v before re-querying\n", wait)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(wait):
+		claimClient := genv1.NewClaimProducerClient(conn)
+		if err := runRetentionProbe(ctx, claimClient, client, opts.RetentionTestSeconds, logf, sleepRealtime); err != nil {
+			return err
 		}
-		detail, err := client.GetClaim(ctx, &genv1.GetClaimRequest{ClaimId: probeID})
-		if err != nil {
-			return fmt.Errorf("GetClaim post-retention: %w", err)
-		}
-		if detail.GetState() != genv1.ClaimState_UNKNOWN {
-			return fmt.Errorf("GetClaim post-retention state=%v, want UNKNOWN", detail.GetState())
-		}
-		logf("observability: retention probe ok (UNKNOWN preserved)\n")
 	}
 	return nil
+}
+
+func runRetentionProbe(
+	ctx context.Context,
+	claimClient genv1.ClaimProducerClient,
+	obsClient genv1.ClaimProducerObservabilityClient,
+	retentionSeconds int,
+	logf func(format string, args ...any),
+	wait func(ctx context.Context, d time.Duration) error,
+) error {
+	claimID := "conformance-retention-probe-" + uuid.New().String()
+
+	openResp, err := claimClient.Open(ctx, &genv1.OpenRequest{
+		ClaimId:      claimID,
+		ProducerName: "conformance-target",
+		Selector:     "rimsky/conformance/retention-probe/" + claimID,
+		Intent:       "r",
+		Alias:        "conformance-retention-probe",
+	})
+	if err != nil {
+		return fmt.Errorf("retention probe: Open: %w", err)
+	}
+	acquired := openResp.GetAcquired()
+	if acquired == nil {
+		return fmt.Errorf("retention probe: producer returned Unavailable for a fresh synthetic selector — cannot drive a canned claim to test retention")
+	}
+
+	preCommit, err := obsClient.GetClaim(ctx, &genv1.GetClaimRequest{ClaimId: claimID})
+	if err != nil {
+		return fmt.Errorf("retention probe: GetClaim after Open: %w", err)
+	}
+	if preCommit.GetState() == genv1.ClaimState_UNKNOWN {
+		return fmt.Errorf("retention probe: GetClaim after Open returned UNKNOWN for a just-opened claim; the driven claim must be visible before the retention window expires")
+	}
+
+	if _, err := claimClient.Commit(ctx, &genv1.CommitRequest{
+		ClaimId:    claimID,
+		ClaimScope: acquired.GetClaimScope(),
+		Address:    acquired.GetAddress(),
+	}); err != nil {
+		return fmt.Errorf("retention probe: Commit: %w", err)
+	}
+
+	postCommit, err := obsClient.GetClaim(ctx, &genv1.GetClaimRequest{ClaimId: claimID})
+	if err != nil {
+		return fmt.Errorf("retention probe: GetClaim after Commit: %w", err)
+	}
+	if postCommit.GetState() == genv1.ClaimState_UNKNOWN {
+		return fmt.Errorf("retention probe: GetClaim immediately after Commit returned UNKNOWN; a just-terminated claim must remain visible until the retention window expires")
+	}
+
+	waitFor := time.Duration(retentionSeconds+1) * time.Second
+	logf("observability: retention probe — driven claim %q terminal, sleeping %v before re-querying\n", claimID, waitFor)
+	if err := wait(ctx, waitFor); err != nil {
+		return err
+	}
+
+	detail, err := obsClient.GetClaim(ctx, &genv1.GetClaimRequest{ClaimId: claimID})
+	if err != nil {
+		return fmt.Errorf("retention probe: GetClaim post-retention: %w", err)
+	}
+	if detail.GetState() != genv1.ClaimState_UNKNOWN {
+		return fmt.Errorf("retention probe: GetClaim post-retention state=%v, want UNKNOWN (producer must evict claim data after its retention window)", detail.GetState())
+	}
+	logf("observability: retention probe ok (driven claim visible pre-eviction, UNKNOWN after the retention window)\n")
+	return nil
+}
+
+func sleepRealtime(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
 }
 
 func stripScheme(s string) string {

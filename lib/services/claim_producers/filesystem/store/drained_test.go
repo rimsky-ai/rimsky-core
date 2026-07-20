@@ -45,7 +45,7 @@ func TestOnDrain_SinglePass(t *testing.T) {
 		if !o.Available {
 			t.Fatalf("pass 1 iteration %d: expected Available, got Unavailable", i)
 		}
-		must(t, st.Commit(context.Background(), fmt.Sprintf("p1-c%d", i), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("p1-c%d", i), o.Result.ClaimScope, o.Result.Address, ""))
 	}
 	if _, err := os.Stat(drainedPathFor(root, "@r")); err != nil {
 		t.Errorf("pass 1: expected drained sentinel after final pop; stat err = %v", err)
@@ -65,7 +65,7 @@ func TestOnDrain_SinglePass(t *testing.T) {
 		if !o.Available {
 			t.Fatalf("pass 2 iteration %d: expected Available, got Unavailable", i)
 		}
-		must(t, st.Commit(context.Background(), fmt.Sprintf("p2-c%d", i), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("p2-c%d", i), o.Result.ClaimScope, o.Result.Address, ""))
 	}
 	o, err = st.Open(context.Background(), "p2-x", "@r")
 	must(t, err)
@@ -82,7 +82,7 @@ func TestOnDrain_SinglePass(t *testing.T) {
 			break
 		}
 		picks++
-		must(t, st.Commit(context.Background(), fmt.Sprintf("p3-c%d", picks-1), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("p3-c%d", picks-1), o.Result.ClaimScope, o.Result.Address, ""))
 		if picks > 5 {
 			t.Fatal("pass 3: more picks than expected")
 		}
@@ -123,7 +123,7 @@ func TestOnDrain_SweepClearsDrained(t *testing.T) {
 		Root:              sub,
 		OnCommit:          action.Action{Kind: action.Pop},
 		OnGiveUp:          action.Action{Kind: action.Recycle},
-		VisibilityTimeout: 50 * time.Millisecond,
+		VisibilityTimeout: time.Minute,
 		SyncStrategy:      "on_drain",
 	}
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
@@ -138,7 +138,7 @@ func TestOnDrain_SweepClearsDrained(t *testing.T) {
 		t.Errorf("expected drained sentinel after claiming sole item; stat err = %v", err)
 	}
 
-	time.Sleep(80 * time.Millisecond)
+	ageInProgressEntry(t, root, "@r")
 	must(t, st.sweepOnce())
 	if _, err := os.Stat(drainedPathFor(root, "@r")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("drained should be cleared by sweep reclaim; stat err = %v", err)
@@ -184,7 +184,7 @@ func TestOnDrain_RaceUnderConcurrentOpens(t *testing.T) {
 			if o.Available {
 				atomic.AddInt64(&available, 1)
 				if err := st.Commit(context.Background(), fmt.Sprintf("c-%d", i),
-					o.Result.ClaimScope, o.Result.Address); err != nil {
+					o.Result.ClaimScope, o.Result.Address, ""); err != nil {
 					t.Errorf("goroutine %d: Commit: %v", i, err)
 				}
 				return
@@ -224,7 +224,7 @@ func TestOnDrain_RaceUnderConcurrentOpens(t *testing.T) {
 			break
 		}
 		must(t, st.Commit(context.Background(), fmt.Sprintf("post-storm-%d", i),
-			o.Result.ClaimScope, o.Result.Address))
+			o.Result.ClaimScope, o.Result.Address, ""))
 		curDrained := drainedFileExists(drainedPathFor(root, "@r"))
 		if curDrained != prevDrained {
 			drainedFlipped = true

@@ -102,11 +102,12 @@ func (c *ClaimProducerClient) Open(ctx context.Context, claimID claimproducer.Cl
 	}, nil
 }
 
-func (c *ClaimProducerClient) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte) (claimproducer.CommitResult, error) {
+func (c *ClaimProducerClient) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte, leaseToken string) (claimproducer.CommitResult, error) {
 	resp, err := c.rpc.Commit(ctx, &genv1.CommitRequest{
 		ClaimId:    string(claimID),
 		ClaimScope: scope,
 		Address:    address,
+		LeaseToken: leaseToken,
 	})
 	if err != nil {
 		return claimproducer.CommitResult{}, err
@@ -117,20 +118,22 @@ func (c *ClaimProducerClient) Commit(ctx context.Context, claimID claimproducer.
 	}, nil
 }
 
-func (c *ClaimProducerClient) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte) error {
+func (c *ClaimProducerClient) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte, leaseToken string) error {
 	_, err := c.rpc.Abandon(ctx, &genv1.AbandonRequest{
 		ClaimId:    string(claimID),
 		ClaimScope: scope,
 		Address:    address,
+		LeaseToken: leaseToken,
 	})
 	return err
 }
 
-func (c *ClaimProducerClient) Release(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte) error {
+func (c *ClaimProducerClient) Release(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte, leaseToken string) error {
 	_, err := c.rpc.Release(ctx, &genv1.ReleaseRequest{
 		ClaimId:    string(claimID),
 		ClaimScope: scope,
 		Address:    address,
+		LeaseToken: leaseToken,
 	})
 	return err
 }

@@ -188,6 +188,9 @@ type RimskyConfig struct {
 	PeerAuth               string
 	Topology               persistence.Topology
 	Warnings               []string
+
+	// @concept: validation
+	UnreachableValidatorPolicy string
 }
 
 func ParsePeerAuth(raw string) (string, error) {
@@ -198,6 +201,22 @@ func ParsePeerAuth(raw string) (string, error) {
 		return peer.PeerAuthMTLS, nil
 	default:
 		return "", fmt.Errorf("peer_auth: unknown value %q (one of: none, mtls)", raw)
+	}
+}
+
+const (
+	unreachableValidatorPolicyPermissiveWarn = "permissive_warn"
+	unreachableValidatorPolicyStrict         = "strict"
+)
+
+func ParseUnreachableValidatorPolicy(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", unreachableValidatorPolicyPermissiveWarn:
+		return unreachableValidatorPolicyPermissiveWarn, nil
+	case unreachableValidatorPolicyStrict:
+		return unreachableValidatorPolicyStrict, nil
+	default:
+		return "", fmt.Errorf("unreachable_validator_policy: unknown value %q (one of: permissive_warn, strict)", raw)
 	}
 }
 
@@ -272,18 +291,20 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			} `yaml:"sqlite"`
 			Blob *yamlBlob `yaml:"blob"`
 		} `yaml:"persistence"`
-		ClaimProducers         map[string]yamlClaimProducerEntry `yaml:"claim_producers"`
-		RetiredStoresKey       map[string]yamlClaimProducerEntry `yaml:"stores"`
-		NamedLocks             map[string]locks.NamedLockConfig  `yaml:"named_locks"`
-		Executors              map[string]yamlExecutorEntry      `yaml:"executors"`
-		Publishers             map[string]yamlPublisherEntry     `yaml:"publishers"`
-		Validators             map[string]yamlValidatorEntry     `yaml:"validators"`
-		DataProcessors         map[string]yamlDataProcessorEntry `yaml:"data_processors"`
-		Retention              *yamlRetention                    `yaml:"retention"`
-		LateBindServiceProxies map[string]string                 `yaml:"late_bind_service_proxies"`
-		PeerAuth               string                            `yaml:"peer_auth"`
-		RetiredTemplatesKey    map[string]any                    `yaml:"templates"`
-		RetiredMaxParkKey      map[string]any                    `yaml:"max_park_duration"`
+		ClaimProducers   map[string]yamlClaimProducerEntry `yaml:"claim_producers"`
+		RetiredStoresKey map[string]yamlClaimProducerEntry `yaml:"stores"`
+		// @concept: named-lock
+		NamedLocks                 map[string]locks.NamedLockConfig  `yaml:"named_locks"`
+		Executors                  map[string]yamlExecutorEntry      `yaml:"executors"`
+		Publishers                 map[string]yamlPublisherEntry     `yaml:"publishers"`
+		Validators                 map[string]yamlValidatorEntry     `yaml:"validators"`
+		DataProcessors             map[string]yamlDataProcessorEntry `yaml:"data_processors"`
+		Retention                  *yamlRetention                    `yaml:"retention"`
+		LateBindServiceProxies     map[string]string                 `yaml:"late_bind_service_proxies"`
+		PeerAuth                   string                            `yaml:"peer_auth"`
+		UnreachableValidatorPolicy string                            `yaml:"unreachable_validator_policy"`
+		RetiredTemplatesKey        map[string]any                    `yaml:"templates"`
+		RetiredMaxParkKey          map[string]any                    `yaml:"max_park_duration"`
 	}
 	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
 		return RimskyConfig{}, fmt.Errorf("parse rimsky config %q: %w", path, err)
@@ -521,20 +542,26 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		}
 	}
 
+	unreachableValidatorPolicy, err := ParseUnreachableValidatorPolicy(wrapper.UnreachableValidatorPolicy)
+	if err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+	}
+
 	return RimskyConfig{
-		Persistence:            pcfg,
-		Blob:                   bcfg,
-		ClaimProducers:         stores,
-		NamedLocks:             locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
-		Executors:              executors,
-		Publishers:             publishersCfg,
-		Validators:             validatorsCfg,
-		DataProcessors:         dataProcessorsCfg,
-		Retention:              retentionCfg,
-		LateBindServiceProxies: wrapper.LateBindServiceProxies,
-		PeerAuth:               peerAuth,
-		Topology:               topology,
-		Warnings:               warnings,
+		Persistence:                pcfg,
+		Blob:                       bcfg,
+		ClaimProducers:             stores,
+		NamedLocks:                 locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
+		Executors:                  executors,
+		Publishers:                 publishersCfg,
+		Validators:                 validatorsCfg,
+		DataProcessors:             dataProcessorsCfg,
+		Retention:                  retentionCfg,
+		LateBindServiceProxies:     wrapper.LateBindServiceProxies,
+		PeerAuth:                   peerAuth,
+		Topology:                   topology,
+		Warnings:                   warnings,
+		UnreachableValidatorPolicy: unreachableValidatorPolicy,
 	}, nil
 }
 
@@ -644,7 +671,7 @@ func dialRemoteClaimProducers(
 	lateBindServiceProxies map[string]string,
 ) (*locks.Registry, error) {
 	lookupBindings := func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
-		return lookupInstanceBindings(ctx, persist, instanceID)
+		return LookupInstanceBindings(ctx, persist, instanceID)
 	}
 	reg := locks.NewRegistry(
 		locks.WithLookupInstanceBindings(lookupBindings),
@@ -672,7 +699,7 @@ func dialRemoteClaimProducers(
 	return reg, nil
 }
 
-func lookupInstanceBindings(ctx context.Context, persist persistence.Tables, instanceID string) (map[string]json.RawMessage, bool, error) {
+func LookupInstanceBindings(ctx context.Context, persist persistence.Tables, instanceID string) (map[string]json.RawMessage, bool, error) {
 	instID, err := uuid.Parse(instanceID)
 	if err != nil {
 		return nil, false, err
@@ -695,7 +722,8 @@ func lookupInstanceBindings(ctx context.Context, persist persistence.Tables, ins
 	return bindings, true, nil
 }
 
-func DialLifecycleSubscribers(ctx context.Context, stores RemoteClaimProducersConfig, execs ExecutorsConfig) (*locks.LifecycleRegistry, error) {
+// @concept: lifecycle-subscriber
+func DialLifecycleSubscribers(ctx context.Context, stores RemoteClaimProducersConfig, execs ExecutorsConfig, publishers RemotePublishersConfig) (*locks.LifecycleRegistry, error) {
 	reg := locks.NewLifecycleRegistry()
 	for name, entry := range stores.ClaimProducers {
 		if !entry.HasProtocol(claimproducer.ProtocolLifecycleSubscriber) {
@@ -720,6 +748,19 @@ func DialLifecycleSubscribers(ctx context.Context, stores RemoteClaimProducersCo
 		if err != nil {
 			reg.Close()
 			return nil, fmt.Errorf("DialLifecycleSubscribers: executor %q: %w", name, err)
+		}
+		reg.Add(name, client)
+	}
+	for name, entry := range publishers.Publishers {
+		if !entry.HasProtocol(claimproducer.ProtocolLifecycleSubscriber) {
+			continue
+		}
+		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
+		client, err := peer.DialLifecycle(dialCtx, name, entry.Endpoint, entry.TLS)
+		cancel()
+		if err != nil {
+			reg.Close()
+			return nil, fmt.Errorf("DialLifecycleSubscribers: publisher %q: %w", name, err)
 		}
 		reg.Add(name, client)
 	}

@@ -77,6 +77,9 @@ func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequ
 	if err != nil {
 		return verifierErrorOutcome("pg/attribute_invalid", err.Error(), nil), nil
 	}
+	if msg, ok := firstInfraError(results); ok {
+		return verifierErrorOutcome("pg/connection_lost", msg, nil), nil
+	}
 	if anyFailed(results) {
 		failedKind := firstFailedCheckKind(results)
 		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
@@ -98,6 +101,15 @@ func firstFailedCheckKind(results []sqlchecks.Result) string {
 		}
 	}
 	return "unknown"
+}
+
+func firstInfraError(results []sqlchecks.Result) (string, bool) {
+	for _, r := range results {
+		if r.Error != "" {
+			return r.Error, true
+		}
+	}
+	return "", false
 }
 
 func parseVerifierAttributes(ud map[string]any) (string, string, []sqlchecks.CheckSpec, error) {

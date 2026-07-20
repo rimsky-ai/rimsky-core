@@ -74,6 +74,13 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 		nodeID := uuid.New().String()
 		runID := uuid.New().String()
 		msgID := uuid.New().String()
+		frameScopeID := uuid.New().String()
+		if _, err := rawDB.ExecContext(ctx,
+			`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id) VALUES (?, 'main', '', ?)`,
+			frameScopeID, instanceID,
+		); err != nil {
+			t.Fatalf("seed frame run_scope: %v", err)
+		}
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_messages
 			   (id, instance_id, type, sender, sender_kind, received_at)
@@ -86,7 +93,7 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 			`INSERT INTO rimsky_frames
 			   (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, ended_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`,
-			frameID, instanceID, msgID, scopeID, rfc(endedAt), rfc(endedAt),
+			frameID, instanceID, msgID, frameScopeID, rfc(endedAt), rfc(endedAt),
 		); err != nil {
 			t.Fatalf("seed frame: %v", err)
 		}
@@ -100,7 +107,7 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 			`INSERT INTO rimsky_node_runs
 			   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
 			 VALUES (?, ?, 'stub', '[]', ?, 'failed', 'cascade', 1, ?, ?)`,
-			runID, nodeID, rfc(endedAt), frameID, scopeID,
+			runID, nodeID, rfc(endedAt), frameID, frameScopeID,
 		); err != nil {
 			t.Fatalf("seed node_run: %v", err)
 		}

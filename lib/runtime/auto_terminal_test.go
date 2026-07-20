@@ -279,6 +279,132 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	require.False(t, abandonSeen, "aggregate-completed must NOT invoke Abandon on the store")
 }
 
+type errInstancesTable struct {
+	persistence.InstanceTable
+	err error
+}
+
+func (t errInstancesTable) Get(context.Context, shared.UUID, persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, t.err
+}
+
+type errInstancesTables struct {
+	persistence.Tables
+	err error
+}
+
+func (t errInstancesTables) Instances() persistence.InstanceTable {
+	return errInstancesTable{t.Tables.Instances(), t.err}
+}
+
+// @concept: auto-terminal
+func TestCheckAndFireResolution_TransientInstancesLookupErrorPropagates(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
+		Name: "auto-term-inst-err", Version: "1",
+	})
+	ck := "ck-inst-err"
+	var mainScopeID shared.UUID
+	var inst persistence.InstanceRow
+	var acqNode, inhNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		inst = i
+		mainScopeID = ms
+		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "acquirer", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		acqNode = a
+		ih, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "inheritor", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		inhNode = ih
+		return nil
+	}))
+
+	reg := locks.NewRegistry()
+	stubStore := storetest.NewFake("workspace-inst-err", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
+	reg.Add("workspace-inst-err", stubStore)
+
+	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
+	inhRunID := seedRunForNode(ctx, t, backend, d.Queue(), inhNode.ID, frameID)
+
+	storeName := "workspace-inst-err"
+	intent := "rw"
+	claimHandleID := shared.UUID(uuid.New())
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID: claimHandleID, LockKind: persistence.LockKindScope,
+			ProducerName: &storeName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
+			Intent:             &intent,
+			HolderSupervisorID: "sup-IE", HolderNodeID: acqNode.ID,
+			ExpiresAt: time.Now().Add(10 * time.Minute),
+		}, tx); err != nil {
+			return err
+		}
+		if err := backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
+			ID: shared.UUID(uuid.New()), ClaimHandleID: claimHandleID, HolderNodeRunID: acqRunID,
+		}, tx); err != nil {
+			return err
+		}
+		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
+			ID: shared.UUID(uuid.New()), ClaimHandleID: claimHandleID, HolderNodeRunID: inhRunID,
+		}, tx)
+	}))
+
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.ClaimHolders().CompleteByClaimHandleAndRun(
+			ctx, claimHandleID, acqRunID, persistence.ClaimHolderStateCompleted, tx,
+		); err != nil {
+			return err
+		}
+		return backend.ClaimHolders().CompleteByClaimHandleAndRun(
+			ctx, claimHandleID, inhRunID, persistence.ClaimHolderStateCompleted, tx,
+		)
+	}))
+
+	injectedErr := errors.New("simulated transient instances-lookup failure")
+	args := runtime.RunArgs{
+		Persist:       errInstancesTables{Tables: backend, err: injectedErr},
+		ClaimHandles:  backend.ClaimHandles(),
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		SupervisorID:  "sup-IE",
+	}
+	args = withSyncVerbFlush(args)
+	err := backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		return err
+	})
+	require.Error(t, err, "a transient Instances().Get failure must propagate, not be treated as legitimate row absence")
+	require.ErrorIs(t, err, injectedErr)
+
+	var row *persistence.ClaimHandleRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := backend.ClaimHandles().Get(ctx, claimHandleID, tx)
+		row = r
+		return err
+	}))
+	require.NotNil(t, row)
+	require.Equal(t, spec.ClaimHandleStateActive, row.State,
+		"resolution must not fire Commit when the expected-inheritor check failed transiently")
+
+	for _, c := range stubStore.Calls() {
+		require.NotEqual(t, "commit", c.Verb, "Commit must never fire off a transient lookup error")
+	}
+}
+
 func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -618,6 +744,66 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 		"threshold(2) with abandoned=1 must Commit the parent")
 	require.Equal(t, 0, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
 		"threshold(2) with abandoned=1 must NOT Abandon the parent")
+}
+
+func TestResolveParentClaimChain_Threshold_AbandonsAtExactMax(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
+		Name: "threshold-exact-max-fanout", Version: "1",
+	})
+	ck := "ck-th-exact"
+	var mainScopeID shared.UUID
+	var inst persistence.InstanceRow
+	var parentNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		inst = i
+		mainScopeID = ms
+		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		parentNode = p
+		return nil
+	}))
+
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+
+	reg := locks.NewRegistry()
+	store := storetest.NewFake("th-exact-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+	})
+	reg.Add("th-exact-store", store)
+	args := runtime.RunArgs{
+		Persist:       backend,
+		ClaimHandles:  backend.ClaimHandles(),
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		SupervisorID:  "sup-TH-EXACT",
+	}
+	args = withSyncVerbFlush(args)
+
+	policy := spec.AggregationPolicy{Kind: spec.AggregationKindThreshold, MaxFailures: 2}
+	parentID, subIDs := seedFanOutParentAndSubclaims(
+		ctx, t, backend, parentNodeRunID, parentNode.ID, "sup-TH-EXACT",
+		"th-exact-store", policy, 3,
+	)
+	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.OutcomeCommit)
+	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.OutcomeAbandon)
+	resolveSubclaim(ctx, t, backend, args, subIDs[2], parentID, store, runtime.OutcomeAbandon)
+
+	require.Equal(t, 0, countCallsOnID(store.Calls(), parentID.String(), "commit"),
+		"threshold(2) with abandoned=2 (== max_failures) must NOT Commit the parent claim, "+
+			"matching the run-tree aggregator's failures>=max boundary")
+	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
+		"threshold(2) with abandoned=2 (== max_failures) must Abandon the parent claim at the exact threshold")
 }
 
 func TestResolveParentClaimChain_ThresholdFullCount_SurvivingSiblingsKeepRunningAndCommit(t *testing.T) {

@@ -46,6 +46,7 @@ type ClaimHandleRow struct {
 	ResolvedAt              *time.Time            `json:"resolved_at,omitempty"`
 	VersionID               string                `json:"version_id,omitempty"`
 	ProducerCandidateHandle []byte                `json:"-"`
+	ProducerLeaseToken      string                `json:"-"`
 	AggregationPolicy       json.RawMessage       `json:"aggregation_policy,omitempty"`
 	ExpectedChildrenCount   int                   `json:"expected_children_count,omitempty"`
 	CommittedChildrenCount  int                   `json:"committed_children_count,omitempty"`
@@ -72,6 +73,7 @@ type ClaimHandleInsertInput struct {
 	// @concept: claim-lifetime
 	Lifetime                spec.ClaimLifetime
 	ProducerCandidateHandle []byte
+	ProducerLeaseToken      string
 	AggregationPolicy       json.RawMessage
 }
 
@@ -100,7 +102,7 @@ type ClaimHandleTable interface {
 
 	UpdateClaimScope(ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx Tx) error
 
-	UpdateNodeRunID(ctx context.Context, id shared.UUID, nodeRunID shared.UUID, tx Tx) error
+	UpdateNodeRunID(ctx context.Context, id shared.UUID, nodeRunID shared.UUID, supervisorID string, tx Tx) error
 
 	ReassignHolderSupervisor(ctx context.Context, id shared.UUID, fromSupervisorID, toSupervisorID string, tx Tx) error
 
@@ -119,6 +121,8 @@ type ClaimHandleTable interface {
 	DeleteResolvedOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 
 	DeleteResolved(ctx context.Context, id shared.UUID, tx Tx) error
+
+	DeleteResolvedIfNoActiveHolders(ctx context.Context, id shared.UUID, tx Tx) (bool, error)
 
 	Promote(ctx context.Context, id shared.UUID, supervisorID string,
 		newState spec.ClaimHandleState, tx Tx) error

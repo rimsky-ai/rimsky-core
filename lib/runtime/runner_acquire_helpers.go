@@ -31,26 +31,20 @@ func acquireFanOutIfDeclared(
 	// @concept: fan-out
 	// @concept: run-scope
 	if scopes := args.Persist.RunScopes(); scopes != nil {
-		if rs, err := scopes.GetByID(ctx, tx, out.RunScopeID); err == nil && rs != nil && rs.ParentNodeRunID != nil {
+		rs, err := scopes.GetByID(ctx, tx, out.RunScopeID)
+		if err != nil {
+			return fmt.Errorf("acquireFanOutIfDeclared: load run scope %s: %w", out.RunScopeID, err)
+		}
+		if rs != nil && rs.ParentNodeRunID != nil && rs.PartitionKey != "" {
 			return nil
 		}
 	}
 	fanOutClaim := nodeDef.FanOut.Claim
-	var parent *AcquiredLock
-	for i := range acquiredLocks {
-		if acquiredLocks[i].Alias == fanOutClaim {
-			parent = &acquiredLocks[i]
-			break
-		}
+	parent, err := resolveFanOutParentClaim(ctx, args, tx, instanceID, cand, nodeDef, acquiredLocks, fanOutClaim)
+	if err != nil {
+		return fmt.Errorf("acquireFanOutIfDeclared: resolve fan_out.claim %q: %w", fanOutClaim, err)
 	}
 	if parent == nil {
-		return nil
-	}
-	parentClaimSpec, ok := parent.Spec.(claimproducer.ClaimSpec)
-	if !ok {
-		args.Logger.Warn("tryAcquire: fan-out alias references non-claim spec; ignored",
-			"node_id", cand.NodeID.String(),
-			"alias", fanOutClaim)
 		return nil
 	}
 	frameID := cand.FrameID
@@ -63,8 +57,8 @@ func acquireFanOutIfDeclared(
 	}
 	subClaims, err := AcquireSubClaims(ctx, args, tx, AcquireSubClaimsInput{
 		ParentClaimHandleID: parent.ClaimHandleID,
-		ParentClaimScope:    parent.ClaimResult.ClaimScope,
-		ProducerName:        parentClaimSpec.ProducerName,
+		ParentClaimScope:    parent.ClaimScope,
+		ProducerName:        parent.ProducerName,
 		NodeRunID:           cand.NodeRunID,
 		HolderNodeID:        cand.NodeID,
 		HolderSupervisorID:  args.SupervisorID,
@@ -73,20 +67,101 @@ func acquireFanOutIfDeclared(
 		LivenessInterval:    livenessInterval,
 		PartitionRequest:    partitionRequest,
 		// @concept: claim-lifetime
-		Lifetime:          spec.ClaimLifetime(parentClaimSpec.Lifetime),
+		Lifetime:          parent.Lifetime,
 		ParentIsHeld:      parent.IsHeld,
 		AggregationPolicy: nodeDef.FanOut.ErrorPolicy,
-		ParentIntent:      string(parentClaimSpec.Intent),
+		ParentIntent:      parent.Intent,
 	})
 	if err != nil {
 		args.Logger.Warn("tryAcquire: fan-out sub-claim acquisition failed",
 			"node_id", cand.NodeID.String(),
-			"producer", parentClaimSpec.ProducerName,
+			"producer", parent.ProducerName,
 			"error", err.Error())
 		return fmt.Errorf("acquireFanOutIfDeclared: %w", err)
 	}
 	out.SubClaims = subClaims
 	return nil
+}
+
+// @concept: fan-out
+// @concept: claim-co-holdership
+type fanOutParentClaim struct {
+	ClaimHandleID shared.UUID
+	ClaimScope    json.RawMessage
+	ProducerName  string
+	Lifetime      spec.ClaimLifetime
+	IsHeld        bool
+	Intent        string
+}
+
+// @concept: fan-out
+// @concept: claim-co-holdership
+func resolveFanOutParentClaim(
+	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
+	cand persistence.Candidate, nodeDef *node.TemplateNodeDef,
+	acquiredLocks []AcquiredLock, alias string,
+) (*fanOutParentClaim, error) {
+	for i := range acquiredLocks {
+		if acquiredLocks[i].Alias != alias {
+			continue
+		}
+		parentClaimSpec, ok := acquiredLocks[i].Spec.(claimproducer.ClaimSpec)
+		if !ok {
+			args.Logger.Warn("tryAcquire: fan-out alias references non-claim spec; ignored",
+				"node_id", cand.NodeID.String(),
+				"alias", alias)
+			return nil, nil
+		}
+		return &fanOutParentClaim{
+			ClaimHandleID: acquiredLocks[i].ClaimHandleID,
+			ClaimScope:    acquiredLocks[i].ClaimResult.ClaimScope,
+			ProducerName:  parentClaimSpec.ProducerName,
+			Lifetime:      spec.ClaimLifetime(parentClaimSpec.Lifetime),
+			IsHeld:        acquiredLocks[i].IsHeld,
+			Intent:        string(parentClaimSpec.Intent),
+		}, nil
+	}
+	binding, ok := nodeDef.Holds[alias]
+	if !ok || binding.From == "" {
+		return nil, nil
+	}
+	upstreamNode, err := findInstanceNodeByType(ctx, args, tx, instanceID, binding.From)
+	if err != nil {
+		return nil, fmt.Errorf("resolveFanOutParentClaim: find upstream node: %w", err)
+	}
+	if upstreamNode == nil {
+		return nil, nil
+	}
+	tmplSpec, err := loadTemplateSpec(ctx, args, tx, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolveFanOutParentClaim: load template: %w", err)
+	}
+	if tmplSpec == nil {
+		return nil, nil
+	}
+	lh, err := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmplSpec, binding.From, alias, cand.FrameID)
+	if err != nil {
+		return nil, fmt.Errorf("resolveFanOutParentClaim: lookup claim handle: %w", err)
+	}
+	if lh == nil {
+		return nil, nil
+	}
+	producerName := ""
+	if lh.ProducerName != nil {
+		producerName = *lh.ProducerName
+	}
+	intent := ""
+	if lh.Intent != nil {
+		intent = *lh.Intent
+	}
+	return &fanOutParentClaim{
+		ClaimHandleID: lh.ID,
+		ClaimScope:    lh.ClaimScopeData,
+		ProducerName:  producerName,
+		Lifetime:      lh.Lifetime,
+		IsHeld:        lh.IsHeld,
+		Intent:        intent,
+	}, nil
 }
 
 // @concept: fan-out

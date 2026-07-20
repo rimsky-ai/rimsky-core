@@ -5,6 +5,8 @@
 package scenarios
 
 import (
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,18 +46,32 @@ func TestHostAgentDisconnectMidDispatch(t *testing.T) {
 	fx := newHostAgentFixture(t, fixtureOpts{withAgent: true})
 
 	tid := fx.deployLateBindTemplate(t, "fail-disconnect")
-	fx.cancelAgent()
-	select {
-	case <-fx.agentDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("agent did not stop after cancel")
+	bindings := map[string]any{
+		lateBindServiceName: map[string]any{
+			"path":            fx.stubBinary,
+			"env":             map[string]string{"STUBCHILD_NO_BIND": "1"},
+			"timeout_seconds": 20,
+		},
 	}
-	time.Sleep(300 * time.Millisecond)
+	iid := fx.h.CreateInstanceWithServiceBindings(tid, "ck-disconnect", fx.adminKey, map[string]any{}, bindings)
 
-	iid := fx.createLateBindInstance(t, tid, "ck-disconnect", fx.stubBinary)
+	waitForProcessRunning(t, fx.stubBinary)
 
-	fx.waitForNodeEventKind(t, iid,
-		"terminal/error/host_agent_disconnected", "terminal/error/host_agent_not_connected")
+	fx.cancelAgent()
+	<-fx.agentDone
+
+	fx.waitForNodeEventKind(t, iid, "terminal/error/host_agent_disconnected")
+}
+
+func waitForProcessRunning(t *testing.T, binaryPath string) {
+	t.Helper()
+	for {
+		out, err := exec.Command("pgrep", "-f", binaryPath).Output()
+		if err == nil && len(strings.TrimSpace(string(out))) > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func TestProxyReconnectAfterAgentRestart(t *testing.T) {

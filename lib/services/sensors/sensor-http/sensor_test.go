@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -201,12 +202,12 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	if sub, _ := obsBody[0]["publisher_subscription_id"].(string); sub == "" {
 		t.Errorf("publisher_subscription_id: missing or empty (auth path discriminator)")
 	}
-	wantIdem := func(body string) string {
+	wantIdem := func(body string, at time.Time) string {
 		sum := sha256.Sum256([]byte(body))
-		return "w1+" + hex.EncodeToString(sum[:])
+		return fmt.Sprintf("w1+%s+%d", hex.EncodeToString(sum[:]), at.UnixNano())
 	}
-	if got, want := obsIdem[0], wantIdem(`{"status":"ready","version":1}`); got != want {
-		t.Errorf("Idempotency-Key = %q, want %q (sub id + body sha-256)", got, want)
+	if got, want := obsIdem[0], wantIdem(`{"status":"ready","version":1}`, pin); got != want {
+		t.Errorf("Idempotency-Key = %q, want %q (sub id + body sha-256 + observation nanotime)", got, want)
 	}
 	obsMu.Unlock()
 
@@ -219,16 +220,72 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	obsMu.Unlock()
 
 	target.Store(`{"status":"ready","version":2}`)
-	s.clock = func() time.Time { return pin.Add(30 * time.Second) }
+	changedAt := pin.Add(30 * time.Second)
+	s.clock = func() time.Time { return changedAt }
 	s.Tick(context.Background())
 	obsMu.Lock()
 	if len(obsBody) != 2 {
 		t.Errorf("messages after change: %d (want 2)", len(obsBody))
 	}
-	if got, want := obsIdem[1], wantIdem(`{"status":"ready","version":2}`); got != want {
-		t.Errorf("Idempotency-Key after change = %q, want %q (sub id + new body sha-256)", got, want)
+	if got, want := obsIdem[1], wantIdem(`{"status":"ready","version":2}`, changedAt); got != want {
+		t.Errorf("Idempotency-Key after change = %q, want %q (sub id + new body sha-256 + observation nanotime)", got, want)
 	}
 	obsMu.Unlock()
+}
+
+func TestTick_RevertedBodyGetsDistinctIdempotencyKeyFromEarlierObservation(t *testing.T) {
+	var (
+		target  atomic.Value
+		obsMu   sync.Mutex
+		obsIdem []string
+	)
+	target.Store(`{"status":"A"}`)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		body := target.Load().(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer upstream.Close()
+
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		obsMu.Lock()
+		obsIdem = append(obsIdem, r.Header.Get("Idempotency-Key"))
+		obsMu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, loopbackGuard(t), noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	cfg := map[string]any{"url": upstream.URL, "poll_interval": "10s"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Tick(context.Background())
+
+	target.Store(`{"status":"B"}`)
+	s.clock = func() time.Time { return pin.Add(10 * time.Second) }
+	s.Tick(context.Background())
+
+	target.Store(`{"status":"A"}`)
+	s.clock = func() time.Time { return pin.Add(20 * time.Second) }
+	s.Tick(context.Background())
+
+	obsMu.Lock()
+	defer obsMu.Unlock()
+	if len(obsIdem) != 3 {
+		t.Fatalf("messages observed for A->B->A: %d (want 3)", len(obsIdem))
+	}
+	if obsIdem[0] == obsIdem[2] {
+		t.Errorf("idempotency key for the reverted-to-A observation collided with the original A observation: %q == %q; "+
+			"the durable message-idempotency table would silently drop this legitimate change-back", obsIdem[2], obsIdem[0])
+	}
 }
 
 func TestTick_PollClientEnforcesEgressGuard(t *testing.T) {

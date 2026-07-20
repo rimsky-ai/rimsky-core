@@ -100,7 +100,7 @@ func walkUpwards(
 		}
 		if isSettled(parent.State) && parent.State == result.ParentState {
 			newSig := string(result.ParentSettlingSignalType)
-			if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, &newSig); err != nil {
+			if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, &newSig, result.ParentChanged); err != nil {
 				return actions, settlements, fmt.Errorf("walkUpwards: correct settled parent %s signal: %w", current, err)
 			}
 			return actions, settlements, nil
@@ -116,7 +116,7 @@ func walkUpwards(
 		if newSig != "" {
 			newSigArg = &newSig
 		}
-		if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, newSigArg); err != nil {
+		if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, newSigArg, result.ParentChanged); err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: update parent %s: %w", current, err)
 		}
 		if result.Action != AggregateActionNone {
@@ -171,11 +171,7 @@ type CancelAction struct {
 }
 
 func isSettled(state cascade.NodeState) bool {
-	switch state {
-	case cascade.NodeStateFresh, cascade.NodeStateFailed, cascade.NodeStateParked:
-		return true
-	}
-	return false
+	return ChildState{State: state}.IsSettled()
 }
 
 func PropagateIfChildAfterTerminal(

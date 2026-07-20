@@ -135,6 +135,7 @@ func createHitWithinCap(ctx context.Context, args RunArgs, cc CheckpointContext,
 		var (
 			hitID    shared.UUID
 			inserted bool
+			dropped  bool
 		)
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			if err := args.Persist.Breakpoints().Lock(ctx, bp.ID, tx); err != nil {
@@ -145,14 +146,23 @@ func createHitWithinCap(ctx context.Context, args RunArgs, cc CheckpointContext,
 				return &BreakpointInfraError{Phase: "overflow_check", Cause: err}
 			}
 			if unresumed >= breakpointQueueCap {
-				if bp.OverflowPolicy != persistence.OverflowDropOldest {
+				switch {
+				case bp.OverflowPolicy == persistence.OverflowDropOldest:
+					if _, err := args.Persist.BreakpointHits().DropOldest(ctx, bp.ID, breakpointQueueCap-1, tx); err != nil {
+						return &BreakpointInfraError{Phase: "drop_oldest", Cause: err}
+					}
+					if err := args.Persist.Breakpoints().IncrementDropped(ctx, bp.ID, tx); err != nil {
+						return &BreakpointInfraError{Phase: "drop_oldest", Cause: err}
+					}
+				case bp.Mode == persistence.BreakpointModeNotifyOnly:
+					// @concept: breakpoint
+					if err := args.Persist.Breakpoints().IncrementDropped(ctx, bp.ID, tx); err != nil {
+						return &BreakpointInfraError{Phase: "notify_only_overflow", Cause: err}
+					}
+					dropped = true
 					return nil
-				}
-				if _, err := args.Persist.BreakpointHits().DropOldest(ctx, bp.ID, breakpointQueueCap-1, tx); err != nil {
-					return &BreakpointInfraError{Phase: "drop_oldest", Cause: err}
-				}
-				if err := args.Persist.Breakpoints().IncrementDropped(ctx, bp.ID, tx); err != nil {
-					return &BreakpointInfraError{Phase: "drop_oldest", Cause: err}
+				default:
+					return nil
 				}
 			}
 			hitID, _, err = args.Persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
@@ -189,6 +199,9 @@ func createHitWithinCap(ctx context.Context, args RunArgs, cc CheckpointContext,
 		}
 		if inserted {
 			return hitID, nil
+		}
+		if dropped {
+			return shared.UUID{}, nil
 		}
 
 		switch bp.OverflowPolicy {

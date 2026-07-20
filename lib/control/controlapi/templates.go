@@ -18,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -25,6 +26,27 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
 )
+
+var errTagMoveForbidden = errors.New("tag already points at another template; moving it requires tag:set permission on that tag")
+
+func callerCanSetTag(req *http.Request, tag string) bool {
+	ident, ok := IdentityFromContextOK(req.Context())
+	if !ok {
+		return false
+	}
+	return auth.CheckGrant(ident.Permissions, "tag:set", map[string]string{"template_tag": tag}).Allowed
+}
+
+func upsertTagIfNotConflicting(ctx context.Context, deps AppDeps, tx persistence.Tx, req *http.Request, tag, hash string) error {
+	existing, err := deps.Persist.TemplateTags().Get(ctx, tag, tx)
+	if err != nil {
+		return err
+	}
+	if existing != nil && existing.TemplateID != hash && !callerCanSetTag(req, tag) {
+		return errTagMoveForbidden
+	}
+	return deps.Persist.TemplateTags().Upsert(ctx, tag, hash, tx)
+}
 
 func readAllBody(req *http.Request) ([]byte, error) {
 	defer req.Body.Close()
@@ -144,8 +166,8 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			return tags, ok
 		}
 		hooks.ExecutorDeclaredErrorClasses = func(name string) ([]string, bool) {
-			if builtin.IsBuiltinAlias(name) {
-				return nil, true
+			if classes, ok := builtin.DeclaredErrorClassesFor(name); ok {
+				return classes, true
 			}
 			_, classes, _, ok := deps.ExecutorCapabilities(name)
 			return classes, ok
@@ -164,12 +186,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		hooks.ExecutorDeclaredTags = func(name string) ([]string, bool) {
 			return builtin.DeclaredTagsFor(name)
 		}
-		hooks.ExecutorDeclaredErrorClasses = func(name string) ([]string, bool) {
-			if builtin.IsBuiltinAlias(name) {
-				return nil, true
-			}
-			return nil, false
-		}
+		hooks.ExecutorDeclaredErrorClasses = builtin.DeclaredErrorClassesFor
 		hooks.ExecutorExpectedAttributesSchema = func(name string) ([]byte, bool) {
 			return builtin.SchemaFor(name)
 		}
@@ -193,6 +210,10 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		}
 		if tag != "" && !validTag(tag) {
 			badRequest(w, "invalid tag identifier")
+			return
+		}
+		if tag != "" && strings.HasPrefix(tag, composeReservedPrefix) && !isComposeOrigin(req) {
+			badRequest(w, "tag uses reserved prefix \"compose:\" (managed by the compose command)")
 			return
 		}
 
@@ -288,9 +309,14 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		}
 		if existing != nil {
 			if tag != "" {
-				if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-					return deps.Persist.TemplateTags().Upsert(ctx, tag, hash, tx)
-				}); err != nil {
+				err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+					return upsertTagIfNotConflicting(ctx, deps, tx, req, tag, hash)
+				})
+				if errors.Is(err, errTagMoveForbidden) {
+					writeJSON(w, http.StatusForbidden, map[string]any{"error": errTagMoveForbidden.Error()})
+					return
+				}
+				if err != nil {
 					writeError(w, err)
 					return
 				}
@@ -309,18 +335,10 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		tFanOut := time.Now()
-		peers, perStore, ferr := FanOutTemplateEvent(req.Context(), deps, EventTemplateRegistered, hash, spec, TemplatePayload{Spec: canonBytes}, nil)
-		log.Debug("register.fanout.done", "elapsed_ms", time.Since(tFanOut).Milliseconds(), "peers", len(peers), "err", ferr)
-		if ferr != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{
-				"error":   "template lifecycle fan-out failed",
-				"details": perStore,
-			})
-			return
-		}
 
 		tTx := time.Now()
+		var fanOutErr error
+		var fanOutDetails map[string]error
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if err := deps.Persist.Templates().Insert(ctx, persistence.TemplateInsertInput{
 				ID:     hash,
@@ -331,12 +349,31 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			if tag != "" {
-				return deps.Persist.TemplateTags().Upsert(ctx, tag, hash, tx)
+				if err := upsertTagIfNotConflicting(ctx, deps, tx, req, tag, hash); err != nil {
+					return err
+				}
+			}
+			_, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateRegistered, hash, spec, TemplatePayload{Spec: canonBytes}, tx)
+			if ferr != nil {
+				fanOutErr = ferr
+				fanOutDetails = perStore
+				return ferr
 			}
 			return nil
 		})
 		log.Debug("register.tx.done", "elapsed_ms", time.Since(tTx).Milliseconds(), "total_ms", time.Since(t0).Milliseconds(), "err", err)
+		if errors.Is(err, errTagMoveForbidden) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": errTagMoveForbidden.Error()})
+			return
+		}
 		if err != nil {
+			if fanOutErr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":   "template lifecycle fan-out failed",
+					"details": fanOutDetails,
+				})
+				return
+			}
 			writeError(w, err)
 			return
 		}
@@ -608,14 +645,15 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 		}) {
 			return
 		}
-		if _, perStore, err := FanOutTemplateEvent(req.Context(), deps, EventTemplateDeregistered, hash, row.Spec, TemplatePayload{}, nil); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{
-				"error":   "template lifecycle fan-out failed",
-				"details": perStore,
-			})
-			return
-		}
+		var fanOutErr error
+		var fanOutDetails map[string]error
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			_, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateDeregistered, hash, row.Spec, TemplatePayload{}, tx)
+			if ferr != nil {
+				fanOutErr = ferr
+				fanOutDetails = perStore
+				return ferr
+			}
 			if isTag {
 				if _, err := deps.Persist.TemplateTags().Delete(ctx, idOrTag, tx); err != nil {
 					return err
@@ -634,6 +672,13 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			return deps.Persist.Templates().DeleteByHash(ctx, hash, tx)
 		})
 		if err != nil {
+			if fanOutErr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":   "template lifecycle fan-out failed",
+					"details": fanOutDetails,
+				})
+				return
+			}
 			writeError(w, err)
 			return
 		}

@@ -297,19 +297,7 @@ func createSensorCascadeInstance(t *testing.T, ep harness.RimskyEndpoint, templa
 	return resp.InstanceID
 }
 
-type sensorNodeStateResponse struct {
-	RunSummary struct {
-		ActiveCount  int `json:"active_count"`
-		PendingCount int `json:"pending_count"`
-		FreshCount   int `json:"fresh_count"`
-		FailedCount  int `json:"failed_count"`
-	} `json:"run_summary"`
-	Events []struct {
-		Kind string `json:"kind"`
-	} `json:"events"`
-}
-
-func sensorNodeMatches(summary sensorNodeStateResponse, want string) bool {
+func sensorNodeMatches(summary harness.NodeObservability, want string) bool {
 	switch want {
 	case "fresh":
 		return summary.RunSummary.ActiveCount == 0 && summary.RunSummary.PendingCount == 0
@@ -321,25 +309,13 @@ func sensorNodeMatches(summary sensorNodeStateResponse, want string) bool {
 
 func waitForSensorNodeState(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType, want string, deadline time.Duration) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastSummary string
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			var resp sensorNodeStateResponse
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastSummary = fmt.Sprintf("active=%d pending=%d fresh=%d failed=%d",
-					resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount,
-					resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
-				if sensorNodeMatches(resp, want) {
-					return
-				}
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
+	obs, ok := ep.PollNodeObservability(t, instanceID, nodeType, deadline, func(o harness.NodeObservability) bool {
+		return sensorNodeMatches(o, want)
+	})
+	if !ok {
+		t.Fatalf("node %q on instance %s did not reach %q within %v; last run_summary=%+v",
+			nodeType, instanceID, want, deadline, obs.RunSummary)
 	}
-	t.Fatalf("node %q on instance %s did not reach %q within %v; last run_summary=%s",
-		nodeType, instanceID, want, deadline, lastSummary)
 }
 
 func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
@@ -360,16 +336,12 @@ func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, no
 
 func workStartedCount(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) int {
 	t.Helper()
-	status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
+	status, obs, _ := ep.GetNodeObservability(t, instanceID, nodeType)
 	if status != http.StatusOK {
 		return 0
 	}
-	var resp sensorNodeStateResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return 0
-	}
 	n := 0
-	for _, e := range resp.Events {
+	for _, e := range obs.Events {
 		if e.Kind == "work_started" {
 			n++
 		}

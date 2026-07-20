@@ -113,7 +113,7 @@ func TestAcquireOneLock_ParkedHolderBlocksContenderWithoutPreemption(t *testing.
 		}, tx); err != nil {
 			return err
 		}
-		return tables.NodeRunTree().UpdateStateAndOutcome(ctx, tx, holderRunID, cascade.NodeStateParked, nil)
+		return tables.NodeRunTree().UpdateStateAndOutcome(ctx, tx, holderRunID, cascade.NodeStateParked, nil, false)
 	}); err != nil {
 		t.Fatalf("seed fixture: %v", err)
 	}

@@ -55,19 +55,33 @@ func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest
 	if c.newHctx != nil {
 		hctx = c.newHctx(ctx, shared.UUID(nodeRunID), shared.UUID(nodeID))
 	}
-	var outcome *genv1.Outcome
-	func() {
-		defer func() {
-			if p := recover(); p != nil {
-				err = fmt.Errorf("inproc handler panic: %v", p)
-			}
-		}()
-		outcome, err = h.Execute(ctx, req, hctx)
-	}()
-	if err != nil {
-		return nil, "", err
+	type handlerResult struct {
+		outcome *genv1.Outcome
+		err     error
 	}
-	return outcome, "", nil
+	resCh := make(chan handlerResult, 1)
+	go func() {
+		var outcome *genv1.Outcome
+		var runErr error
+		func() {
+			defer func() {
+				if p := recover(); p != nil {
+					runErr = fmt.Errorf("inproc handler panic: %v", p)
+				}
+			}()
+			outcome, runErr = h.Execute(ctx, req, hctx)
+		}()
+		resCh <- handlerResult{outcome: outcome, err: runErr}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, "", ctx.Err()
+	case res := <-resCh:
+		if res.err != nil {
+			return nil, "", res.err
+		}
+		return res.outcome, "", nil
+	}
 }
 
 func (c *InProcessClient) Close() error { return nil }

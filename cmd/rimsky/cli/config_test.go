@@ -5,6 +5,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -41,6 +42,50 @@ func TestConfig_RoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("round-trip diff:\nwant %+v\ngot  %+v", want, got)
+	}
+}
+
+func TestConfig_SavedFileNotWorldReadable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nested", "config.yml")
+	cfg := &Config{Contexts: map[string]Context{"dev": {Endpoint: "http://localhost:8080", APIKey: "secret-token"}}}
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("config file mode = %o, want 0600 (must not be group/world readable, it carries a plaintext api key)", perm)
+	}
+
+	di, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := di.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("config dir mode = %o, want 0700", perm)
+	}
+}
+
+func TestConfig_ResavingTightensExistingPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(path, []byte("current_context: dev\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveConfig(path, &Config{Contexts: map[string]Context{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("config file mode after re-save = %o, want 0600", perm)
 	}
 }
 

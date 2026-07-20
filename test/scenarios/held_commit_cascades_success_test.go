@@ -132,10 +132,11 @@ func TestHeldCommitCascadesSuccess(t *testing.T) {
 			acquirerSuccessTimes = append(acquirerSuccessTimes, ts)
 			return nil
 		})
-	require.Len(t, acquirerSuccessTimes, 2,
-		"acquirer must emit terminal/success exactly twice: once at the held moment (filtered to subgraph "+
-			"members only, so B never sees it) and once at the auto-terminal commit moment (unfiltered, so "+
-			"B sees it); got %d", len(acquirerSuccessTimes))
+	require.Len(t, acquirerSuccessTimes, 1,
+		"acquirer audits terminal/success exactly once: the held moment fires a member-filtered CASCADE "+
+			"but writes NO audit event (a held node-run's running-to-held transition emits no terminal "+
+			"signal), so the only audited terminal/success is the auto-terminal commit moment; got %d",
+		len(acquirerSuccessTimes))
 
 	var observerSuccessTime time.Time
 	h.QueryRowSQL(`
@@ -144,11 +145,11 @@ func TestHeldCommitCascadesSuccess(t *testing.T) {
 		 ORDER BY occurred_at ASC LIMIT 1`,
 		[]any{observer.ID}, &observerSuccessTime)
 
-	require.False(t, observerSuccessTime.Before(acquirerSuccessTimes[1]),
+	require.False(t, observerSuccessTime.Before(acquirerSuccessTimes[0]),
 		"B must not dispatch before A's auto-terminal commit: B's terminal/success occurred at %s, "+
-			"which must not be earlier than A's second (commit-moment) terminal/success at %s — an "+
+			"which must not be earlier than A's commit-moment terminal/success at %s — an "+
 			"earlier B settlement would mean B fired on A's held terminal instead of waiting for commit",
-		observerSuccessTime, acquirerSuccessTimes[1])
+		observerSuccessTime, acquirerSuccessTimes[0])
 
 	var inheritorRuns int
 	h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`,

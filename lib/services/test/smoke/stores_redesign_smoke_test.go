@@ -64,7 +64,7 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 	const perCycle = 30 * time.Second
 
 	for n := 1; n <= cycles; n++ {
-		smokeWaitForTerminal(t, ep, instanceID, "claim-acquirer", 30*time.Second)
+		ep.RequireNodeTerminalSucceeded(t, instanceID, "claim-acquirer", 30*time.Second)
 		status, raw := ep.PostJSON(t,
 			fmt.Sprintf("/v1/instances/%s/pause", instanceID), nil)
 		if status != http.StatusOK {
@@ -87,7 +87,7 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 		_ = perCycle
 	}
 
-	smokeWaitForTerminal(t, ep, instanceID, "claim-acquirer", perCycle)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "claim-acquirer", perCycle)
 }
 
 func smokeDeployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
@@ -132,38 +132,4 @@ func smokeCreateInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, in
 	}
 	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "smoke", instanceKey)
 	return resp.InstanceID
-}
-
-func smokeWaitForTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
-	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastSummary string
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t,
-			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			var resp struct {
-				RunSummary struct {
-					ActiveCount  int `json:"active_count"`
-					PendingCount int `json:"pending_count"`
-					FreshCount   int `json:"fresh_count"`
-					FailedCount  int `json:"failed_count"`
-				} `json:"run_summary"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastSummary = fmt.Sprintf("active=%d pending=%d fresh=%d failed=%d",
-					resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount,
-					resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
-				if resp.RunSummary.FailedCount > 0 {
-					return
-				}
-				if resp.RunSummary.FreshCount > 0 && resp.RunSummary.ActiveCount == 0 && resp.RunSummary.PendingCount == 0 {
-					return
-				}
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %q on instance %s did not reach terminal within %v; last run_summary=%s",
-		nodeType, instanceID, deadline, lastSummary)
 }

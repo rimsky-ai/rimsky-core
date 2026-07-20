@@ -14,6 +14,8 @@ func SchemaBytes() []byte {
 
 func DeclaredTags() []string { return nil }
 
+func DeclaredErrorClasses() []string { return nil }
+
 const ExecutorAlias = "rimsky.attribute_passthrough"
 
 const KindName = "attribute_passthrough"

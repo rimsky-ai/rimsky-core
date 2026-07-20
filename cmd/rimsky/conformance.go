@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/blobbackend"
@@ -206,6 +207,8 @@ func runConformanceClaimProducer(args []string) int {
 	return 0
 }
 
+const defaultConformancePublisherMessageType = "system/conformance"
+
 func runConformancePublisher(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance publisher", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "publisher gRPC endpoint (e.g. grpc://localhost:9202)")
@@ -214,6 +217,8 @@ func runConformancePublisher(args []string) int {
 	resolvedConfig := fs.String("resolved-config", "", "JSON resolved_config to drive Subscribe (kind-specific)")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-suite timeout")
 	instanceID := fs.String("instance-id", "", "instance_id passed to Subscribe; required when publisher pushes to /instances/{id}/messages")
+	messageType := fs.String("message-type", "", "message type passed to Subscribe and watched for on the control API (default: "+defaultConformancePublisherMessageType+")")
+	controlAPI := fs.String("control-api", "", "control-API base URL to poll for the publisher's pushed message (e.g. http://localhost:8080); enables the MessagePush check together with --instance-id (overrides $RIMSKY_CONTROL_API)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -243,11 +248,28 @@ func runConformancePublisher(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
+	effectiveMessageType := *messageType
+	if effectiveMessageType == "" {
+		effectiveMessageType = defaultConformancePublisherMessageType
+	}
+
 	opts := publisher.RunOpts{
 		Kind:           *kind,
 		ResolvedConfig: []byte(*resolvedConfig),
 		InstanceID:     *instanceID,
+		MessageType:    effectiveMessageType,
 	}
+
+	controlAPIURL := *controlAPI
+	if controlAPIURL == "" {
+		controlAPIURL = os.Getenv("RIMSKY_CONTROL_API")
+	}
+	if *instanceID != "" && controlAPIURL != "" {
+		receiver := publisher.NewMessageReceiver()
+		opts.MessageReceiver = receiver
+		go pollForConformancePublisherMessage(ctx, controlAPIURL, *instanceID, effectiveMessageType, receiver)
+	}
+
 	results := publisher.Run(ctx, client, opts)
 	failed := 0
 	for _, r := range results {
@@ -263,6 +285,27 @@ func runConformancePublisher(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func pollForConformancePublisherMessage(ctx context.Context, controlAPIURL, instanceID, messageType string, receiver *publisher.MessageReceiver) {
+	c := cli.NewClient(controlAPIURL)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		resp, err := c.ListInstanceMessages(ctx, instanceID, cli.ListMessagesQuery{Type: messageType})
+		if err != nil || resp == nil {
+			continue
+		}
+		if len(resp.Messages) > 0 {
+			receiver.NoteMessage(instanceID)
+			return
+		}
+	}
 }
 
 func runConformanceValidation(args []string) int {

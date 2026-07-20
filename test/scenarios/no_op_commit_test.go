@@ -7,7 +7,6 @@ package scenarios
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -70,43 +69,15 @@ func TestNoOpCommit(t *testing.T) {
 	h.WaitForNodeState(producer.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(dep.ID, cascade.NodeStateFresh)
 
-	var depBefore *persistence.NodeRow
-	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, dep.ID, tx)
-		depBefore = r
-		return err
-	}))
-
 	h.Stub.WhenType("producer").Success(map[string]any{"x": 1}, false, "noop")
 
 	pid := producer.ID
-	var priorCommitted persistence.EventListResult
-	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Events().List(h.Ctx,
-			persistence.EventListFilter{NodeID: &pid, Kind: "terminal/success"},
-			persistence.ListPagination{Limit: 200}, tx)
-		priorCommitted = r
-		return err
-	}))
-	priorCount := len(priorCommitted.Events)
+	priorCount := h.EventCount(pid, "terminal/success")
+	depPriorCount := h.EventCount(dep.ID, "terminal/success")
 
 	h.PostInstanceMessage(iid, "test/wake/producer", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	require.Eventually(t,
-		func() bool {
-			var ev persistence.EventListResult
-			err := h.InTx(func(tx persistence.Tx) error {
-				r, lerr := h.Persist.Events().List(h.Ctx,
-					persistence.EventListFilter{NodeID: &pid, Kind: "terminal/success"},
-					persistence.ListPagination{Limit: 200}, tx)
-				ev = r
-				return lerr
-			})
-			return err == nil && len(ev.Events) > priorCount
-		},
-		60*time.Second, 100*time.Millisecond,
-		"producer did not emit a second terminal/success after changed=false run",
-	)
+	h.WaitForEventCount(pid, "terminal/success", priorCount+1)
 
 	var allCommitted persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -123,7 +94,6 @@ func TestNoOpCommit(t *testing.T) {
 	require.False(t, changedVal,
 		"second run's terminal/success must carry payload.changed=false")
 
+	h.WaitForEventCount(dep.ID, "terminal/success", depPriorCount+1)
 	h.WaitForNodeState(dep.ID, cascade.NodeStateFresh)
-
-	_ = depBefore
 }

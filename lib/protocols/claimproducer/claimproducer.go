@@ -13,11 +13,11 @@ type ClaimProducer interface {
 
 	Open(ctx context.Context, claimID ClaimID, spec ClaimSpec) (OpenOutcome, error)
 
-	Commit(ctx context.Context, claimID ClaimID, scope []byte, address []byte) (CommitResult, error)
+	Commit(ctx context.Context, claimID ClaimID, scope []byte, address []byte, leaseToken string) (CommitResult, error)
 
-	Abandon(ctx context.Context, claimID ClaimID, scope []byte, address []byte) error
+	Abandon(ctx context.Context, claimID ClaimID, scope []byte, address []byte, leaseToken string) error
 
-	Release(ctx context.Context, claimID ClaimID, scope []byte, address []byte) error
+	Release(ctx context.Context, claimID ClaimID, scope []byte, address []byte, leaseToken string) error
 
 	SplitScope(ctx context.Context, req SplitClaimScopeRequest) (SplitClaimScopeResponse, error)
 

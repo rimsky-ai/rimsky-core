@@ -448,7 +448,11 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 		property string
 	}
 	seen := map[dedupKey]struct{}{}
-	scan := func(src, propertyPath string) {
+	scan := func(rawSrc any, propertyPath string) {
+		src, ok := rawSrc.(string)
+		if !ok {
+			return
+		}
 		for _, m := range substitutionDirectiveRe.FindAllStringSubmatch(src, -1) {
 			literal := m[0]
 			body := strings.TrimSpace(m[1])
@@ -544,7 +548,7 @@ func parseSubstitutionDirective(body string) (substitutionRef, bool) {
 	}
 }
 
-func walkSchemaForSourcesWithPath(node any, path string, cb func(src, path string)) {
+func walkSchemaForSourcesWithPath(node any, path string, cb func(raw any, path string)) {
 	switch v := node.(type) {
 	case map[string]any:
 		for k, child := range v {
@@ -553,9 +557,7 @@ func walkSchemaForSourcesWithPath(node any, path string, cb func(src, path strin
 				childPath = path + "." + k
 			}
 			if k == "source" {
-				if s, ok := child.(string); ok {
-					cb(s, childPath)
-				}
+				cb(child, childPath)
 				continue
 			}
 			walkSchemaForSourcesWithPath(child, childPath, cb)

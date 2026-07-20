@@ -179,7 +179,7 @@ func evaluateClaimScopeConflict(
 		sawDurableCommittedConf bool
 	)
 	for _, h := range holders {
-		if h.HolderNodeID == cand.NodeID && h.HolderSupervisorID != nil && *h.HolderSupervisorID == args.SupervisorID {
+		if h.NodeRunID != nil && *h.NodeRunID == cand.NodeRunID {
 			continue
 		}
 		// @concept: asset

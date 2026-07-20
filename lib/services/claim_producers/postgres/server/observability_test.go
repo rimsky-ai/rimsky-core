@@ -15,6 +15,59 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
+func TestObservability_ItemsQueueView_CountsStoreStateVocabulary(t *testing.T) {
+	pool, _ := bootPostgresTestContainer(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE queue_items (
+			item_id     TEXT PRIMARY KEY,
+			payload     JSONB NOT NULL,
+			state       TEXT NOT NULL,
+			priority    INT NOT NULL DEFAULT 0,
+			sequence    BIGSERIAL,
+			claim_token TEXT,
+			claimed_at  TIMESTAMPTZ
+		)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	seed := []struct {
+		id, state string
+	}{
+		{"a", "available"}, {"b", "available"}, {"c", "in_progress"},
+	}
+	for _, s := range seed {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO queue_items (item_id, payload, state) VALUES ($1, '{}'::jsonb, $2)`,
+			s.id, s.state,
+		); err != nil {
+			t.Fatalf("seed %s: %v", s.id, err)
+		}
+	}
+
+	st := pgsstore.NewForTest()
+	st.SetPoolForTest(pool)
+	st.SetPickPoliciesForTest(map[string]*pgsstore.PickPolicy{
+		"@queue": {ItemsTable: "queue_items"},
+	})
+	obs := &ObservabilityServer{store: st}
+
+	view, err := obs.GetAdminView(ctx, &genv1.GetAdminViewRequest{ViewName: "items_queue"})
+	if err != nil {
+		t.Fatalf("GetAdminView: %v", err)
+	}
+	rows := view.Data.Fields["rows"].GetListValue().Values
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	row := rows[0].GetStructValue().Fields
+	if got := row["queued_count"].GetNumberValue(); got != 2 {
+		t.Errorf("queued_count = %v, want 2 (rows with state='available')", got)
+	}
+	if got := row["in_progress_count"].GetNumberValue(); got != 1 {
+		t.Errorf("in_progress_count = %v, want 1", got)
+	}
+}
+
 func newLedgerOnlyServer() *ObservabilityServer {
 	return &ObservabilityServer{store: pgsstore.NewForTest()}
 }

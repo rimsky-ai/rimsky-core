@@ -23,6 +23,7 @@ type OrphanBlobsArgs struct {
 	Limit       int
 }
 
+// @concept: blob-backend
 func SweepOrphanedBlobs(ctx context.Context, args OrphanBlobsArgs) error {
 	log := args.Logger
 	if log == nil {

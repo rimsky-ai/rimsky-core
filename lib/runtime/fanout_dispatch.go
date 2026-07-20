@@ -99,6 +99,22 @@ func (r *FanOutSemaphoreRegistry) Drop(parentNodeRunID shared.UUID) {
 	delete(r.m, parentNodeRunID)
 }
 
+// @concept: fan-out
+func fanOutParallelismSemaphore(ctx context.Context, dctx dispatchContext) *FanOutParallelismSemaphore {
+	acq := dctx.Acquired
+	if acq == nil || acq.NodeDef == nil || acq.NodeDef.FanOut == nil || acq.NodeDef.FanOut.Parallelism <= 0 {
+		return nil
+	}
+	if dctx.Args.FanOutSemaphores == nil {
+		return nil
+	}
+	scope := resolveAcqScope(ctx, dctx.Args, acq)
+	if scope.ParentNodeRunID == nil {
+		return nil
+	}
+	return dctx.Args.FanOutSemaphores.GetOrCreate(*scope.ParentNodeRunID, acq.NodeDef.FanOut.Parallelism)
+}
+
 func IsFanOutNode(def *node.TemplateNodeDef) bool {
 	return def != nil && def.FanOut != nil
 }

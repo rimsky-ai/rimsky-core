@@ -421,8 +421,9 @@ func TestInstanceTerminator_TickRacesConcurrentDirectFanOut(t *testing.T) {
 			terminatedCalls++
 		}
 	}
-	require.GreaterOrEqual(t, terminatedCalls, 1, "at least one of the racing paths must have delivered on_instance_terminated")
-	require.LessOrEqual(t, terminatedCalls, 2, "at most one dispatch per racing caller")
+	require.Equal(t, 1, terminatedCalls,
+		"the idempotency ledger must be consulted under a lock so a tick racing a concurrent direct fan-out "+
+			"delivers on_instance_terminated exactly once, never twice")
 }
 
 func TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows(t *testing.T) {
@@ -434,8 +435,21 @@ func TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows(t *testing.T
 	term.tick(context.Background())
 
 	calls := f.alpha.Calls()
-	require.Len(t, calls, 1, "fallback path must fire OnInstanceTerminated against the lifecycle-row store")
-	require.Equal(t, "on_instance_terminated", calls[0].Verb)
+	require.Len(t, calls, 2, "fallback path must close the frame root run-scope and fire OnInstanceTerminated")
+	var runScopeCall, terminatedCall *storetest.FakeCall
+	for i := range calls {
+		switch calls[i].Verb {
+		case "on_run_scope_terminal":
+			runScopeCall = &calls[i]
+		case "on_instance_terminated":
+			terminatedCall = &calls[i]
+		}
+	}
+	require.NotNil(t, runScopeCall, "OnRunScopeTerminal must fire even when the template row is gone")
+	require.NotEmpty(t, runScopeCall.RunScopeID)
+	require.NotNil(t, terminatedCall, "OnInstanceTerminated must fire against the lifecycle-row store")
+	require.Less(t, runScopeCall.Sequence, terminatedCall.Sequence,
+		"OnRunScopeTerminal must fire before OnInstanceTerminated")
 
 	var row *persistence.LifecycleIdempotencyRow
 	require.NoError(t, f.deps.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {

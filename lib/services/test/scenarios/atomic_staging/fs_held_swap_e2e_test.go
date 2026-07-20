@@ -7,7 +7,6 @@ package atomicstaging
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -177,43 +176,30 @@ func createHeldSwapInstance(t *testing.T, ep harness.RimskyEndpoint, templateID,
 
 func waitForNodeState(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType, want string, deadline time.Duration) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastSummary string
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			var resp struct {
-				RunSummary struct {
-					ActiveCount  int `json:"active_count"`
-					PendingCount int `json:"pending_count"`
-					FreshCount   int `json:"fresh_count"`
-					FailedCount  int `json:"failed_count"`
-				} `json:"run_summary"`
+	var failedEarly bool
+	obs, ok := ep.PollNodeObservability(t, instanceID, nodeType, deadline, func(o harness.NodeObservability) bool {
+		switch want {
+		case "fresh":
+			if o.RunSummary.FreshCount > 0 && o.RunSummary.ActiveCount == 0 && o.RunSummary.PendingCount == 0 {
+				return true
 			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastSummary = fmt.Sprintf("active=%d pending=%d fresh=%d failed=%d",
-					resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount,
-					resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
-				switch want {
-				case "fresh":
-					if resp.RunSummary.FreshCount > 0 && resp.RunSummary.ActiveCount == 0 && resp.RunSummary.PendingCount == 0 {
-						return
-					}
-					if resp.RunSummary.FailedCount > 0 {
-						t.Fatalf("node %q on instance %s settled with failed_count=%d, want fresh terminal (run_summary=%s)",
-							nodeType, instanceID, resp.RunSummary.FailedCount, lastSummary)
-					}
-				case "failed":
-					if resp.RunSummary.FailedCount > 0 {
-						return
-					}
-				}
+			if o.RunSummary.FailedCount > 0 {
+				failedEarly = true
+				return true
 			}
+		case "failed":
+			return o.RunSummary.FailedCount > 0
 		}
-		time.Sleep(250 * time.Millisecond)
+		return false
+	})
+	if failedEarly {
+		t.Fatalf("node %q on instance %s settled with failed_count=%d, want fresh terminal (run_summary=%+v)",
+			nodeType, instanceID, obs.RunSummary.FailedCount, obs.RunSummary)
 	}
-	t.Fatalf("node %q on instance %s did not reach %q within %v; last run_summary=%s",
-		nodeType, instanceID, want, deadline, lastSummary)
+	if !ok {
+		t.Fatalf("node %q on instance %s did not reach %q within %v; last run_summary=%+v",
+			nodeType, instanceID, want, deadline, obs.RunSummary)
+	}
 }
 
 func requireEventuallyMoved(t *testing.T, dst, src string, deadline time.Duration) {

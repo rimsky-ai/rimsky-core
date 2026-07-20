@@ -65,19 +65,19 @@ func (c *Catalog) Filtered(r *http.Request) []Tool {
 	return out
 }
 
-func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (any, *Error) {
+func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (any, bool, *Error) {
 	entry, ok := c.Registry.EntryForTool(name)
 	if !ok {
-		return nil, &Error{Code: CodeMethodNotFound, Message: "unknown tool: " + name}
+		return nil, false, &Error{Code: CodeMethodNotFound, Message: "unknown tool: " + name}
 	}
 	if len(entry.Routes) == 0 {
-		return nil, &Error{Code: CodeInternalError, Message: "tool has no route: " + name}
+		return nil, false, &Error{Code: CodeInternalError, Message: "tool has no route: " + name}
 	}
 	parsedArgs := map[string]json.RawMessage{}
 	if len(args) > 0 {
 		if !bytes.Equal(bytes.TrimSpace(args), []byte("null")) {
 			if err := json.Unmarshal(args, &parsedArgs); err != nil {
-				return nil, &Error{Code: CodeInvalidParams, Message: "args must be a JSON object: " + err.Error()}
+				return nil, false, &Error{Code: CodeInvalidParams, Message: "args must be a JSON object: " + err.Error()}
 			}
 		}
 	}
@@ -86,8 +86,10 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 
 	path, remaining, err := substitutePathParams(route.Path, parsedArgs)
 	if err != nil {
-		return nil, &Error{Code: CodeInvalidParams, Message: err.Error()}
+		return nil, false, &Error{Code: CodeInvalidParams, Message: err.Error()}
 	}
+
+	idempotencyKey := extractIdempotencyKey(remaining)
 
 	var body io.Reader = http.NoBody
 	hasBody := false
@@ -105,7 +107,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 		if len(remaining) > 0 {
 			bs, err := json.Marshal(remaining)
 			if err != nil {
-				return nil, &Error{Code: CodeInvalidParams, Message: "marshal body: " + err.Error()}
+				return nil, false, &Error{Code: CodeInvalidParams, Message: "marshal body: " + err.Error()}
 			}
 			body = bytes.NewReader(bs)
 			hasBody = true
@@ -115,7 +117,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	innerCtx := context.WithValue(r.Context(), chi.RouteCtxKey, (*chi.Context)(nil))
 	inner, err := http.NewRequestWithContext(innerCtx, route.Method, path, body)
 	if err != nil {
-		return nil, &Error{Code: CodeInternalError, Message: "build inner request: " + err.Error()}
+		return nil, false, &Error{Code: CodeInternalError, Message: "build inner request: " + err.Error()}
 	}
 	if bearer := r.Header.Get("Authorization"); bearer != "" {
 		inner.Header.Set("Authorization", bearer)
@@ -124,7 +126,10 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 		inner.Header.Set("Content-Type", "application/json")
 	}
 	if route.Method == http.MethodPost || route.Method == http.MethodPut {
-		inner.Header.Set("Idempotency-Key", "mcp-"+uuid.NewString())
+		if idempotencyKey == "" {
+			idempotencyKey = "mcp-" + uuid.NewString()
+		}
+		inner.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 	if c.WithProtocolSkin != nil {
 		inner = inner.WithContext(c.WithProtocolSkin(inner.Context(), "mcp"))
@@ -142,9 +147,24 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 			"error":   true,
 			"body":    rawOrString(bs),
 			"isError": true,
-		}, nil
+		}, true, nil
 	}
-	return rawOrString(bs), nil
+	return rawOrString(bs), false, nil
+}
+
+const idempotencyKeyArgName = "idempotency_key"
+
+func extractIdempotencyKey(args map[string]json.RawMessage) string {
+	raw, ok := args[idempotencyKeyArgName]
+	if !ok {
+		return ""
+	}
+	delete(args, idempotencyKeyArgName)
+	var key string
+	if err := json.Unmarshal(raw, &key); err != nil {
+		return ""
+	}
+	return key
 }
 
 func substitutePathParams(pattern string, args map[string]json.RawMessage) (string, map[string]json.RawMessage, error) {

@@ -20,7 +20,7 @@ type InstanceRow struct {
 	AttributeOverrides map[string]any `json:"attribute_overrides"`
 	CreatedAt          time.Time      `json:"created_at"`
 	TerminatedAt       *time.Time     `json:"terminated_at"`
-	// @concept: breakpoint
+	// @concept: instance
 	Paused            bool            `json:"paused"`
 	ServiceBindings   json.RawMessage `json:"service_bindings,omitempty"`
 	CreatedByAPIKeyID *shared.UUID    `json:"created_by_api_key_id,omitempty"`
@@ -39,7 +39,7 @@ type InstanceTable interface {
 	CountActiveByTemplate(ctx context.Context, templateHash string, tx Tx) (int, error)
 	ListTerminatedWithLifecycleRows(ctx context.Context, limit int, tx Tx) ([]InstanceRow, error)
 	CountByActive(ctx context.Context, tx Tx) (active int, terminated int, err error)
-	// @concept: breakpoint
+	// @concept: instance
 	SetPaused(ctx context.Context, instanceID shared.UUID, paused bool, tx Tx) (priorValue bool, err error)
 }
 
@@ -49,7 +49,7 @@ type InstanceCreateInput struct {
 	InstanceKey        *string
 	Params             map[string]any
 	AttributeOverrides map[string]any
-	// @concept: breakpoint
+	// @concept: instance
 	Paused            bool
 	ServiceBindings   json.RawMessage
 	CreatedByAPIKeyID *shared.UUID

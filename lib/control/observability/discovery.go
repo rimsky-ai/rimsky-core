@@ -69,6 +69,7 @@ type PeerEntry struct {
 	Static                bool                       `json:"static,omitempty"`
 }
 
+// @concept: discovery-cache
 type Discovery struct {
 	mu        sync.RWMutex
 	executors map[string]PeerEntry

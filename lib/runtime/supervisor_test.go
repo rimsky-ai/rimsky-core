@@ -6,6 +6,8 @@ package runtime_test
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
@@ -57,6 +60,49 @@ func TestSupervisor_StartShutdown(t *testing.T) {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	require.NoError(t, h.Shutdown(shutdownCtx))
+}
+
+// @concept: supervisor
+func TestSupervisor_ShutdownJoinsProducerVerbDispatcherBeforeReturning(t *testing.T) {
+	t.Parallel()
+	for i := 0; i < 10; i++ {
+		i := i
+		t.Run(fmt.Sprintf("iter-%d", i), func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			dbPath := filepath.Join(t.TempDir(), "rimsky.db")
+			db, err := persistence.Open(ctx, persistence.Config{
+				Driver: "sqlite", SQLite: &persistence.SQLiteConfig{Path: dbPath},
+			})
+			require.NoError(t, err)
+			require.NoError(t, db.Migrate(ctx, shared.SilentLogger{}))
+
+			h, err := runtime.Start(runtime.Config{
+				SupervisorID:      fmt.Sprintf("test-sv-sync-shutdown-%d", i),
+				Persist:           db.Tables(),
+				Queue:             db.Queue(),
+				AdvisoryLocker:    db.AdvisoryLocker(),
+				Clock:             shared.SystemClock{},
+				Logger:            shared.SilentLogger{},
+				Concurrency:       1,
+				LivenessInterval:  200 * time.Millisecond,
+				ClaimPollInterval: 5 * time.Millisecond,
+				Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
+				StoreRegistry:     locks.NewRegistry(),
+				CallbackHost:      "127.0.0.1",
+				CallbackPort:      0,
+			})
+			require.NoError(t, err)
+
+			shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			require.NoError(t, h.Shutdown(shutdownCtx))
+
+			require.NoError(t, db.Close(),
+				"Shutdown must fully join its background goroutines before returning, "+
+					"so closing the store immediately after is always safe")
+		})
+	}
 }
 
 func TestSupervisor_StartFailsFastOnWildcardBindWithoutAdvertise(t *testing.T) {

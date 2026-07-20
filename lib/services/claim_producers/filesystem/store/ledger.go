@@ -264,27 +264,23 @@ func (l *ClaimLedger) List(stateFilter string, cursor string, limit int) ([]*Cla
 
 func (l *ClaimLedger) evictIfNeeded() {
 	for len(l.records) > l.max {
-		evicted := ""
+		evicted := false
 		for i, id := range l.order {
 			rec, ok := l.records[id]
 			if !ok {
-				continue
+				l.order = append(l.order[:i], l.order[i+1:]...)
+				evicted = true
+				break
 			}
 			if rec.State != ClaimStateOpen {
 				delete(l.records, id)
 				l.order = append(l.order[:i], l.order[i+1:]...)
-				evicted = id
+				evicted = true
 				break
 			}
 		}
-		if evicted != "" {
-			continue
-		}
-		if len(l.order) == 0 {
+		if !evicted {
 			return
 		}
-		oldest := l.order[0]
-		l.order = l.order[1:]
-		delete(l.records, oldest)
 	}
 }

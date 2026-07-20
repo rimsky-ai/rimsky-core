@@ -9,6 +9,7 @@ package events
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -113,6 +114,7 @@ var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_BREAKPOINT_HIT:                  "breakpoint.hit",
 	genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT:                    "message_sent",
 	genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED:                "message_received",
+	genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_DEAD_LETTERED:           "message.dead_lettered",
 	genv1.OperationalKind_OPERATIONAL_KIND_FAN_OUT_DISPATCHED:              "fan_out_dispatched",
 	genv1.OperationalKind_OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED:         "fanout.children_created",
 	genv1.OperationalKind_OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE:        "subclaim.begin_candidate",
@@ -131,6 +133,22 @@ var operationalKindFromWire = func() map[string]genv1.OperationalKind {
 	}
 	return m
 }()
+
+func init() {
+	var missing []string
+	for value, name := range genv1.OperationalKind_name {
+		if value == int32(genv1.OperationalKind_OPERATIONAL_KIND_UNSPECIFIED) {
+			continue
+		}
+		if _, ok := operationalKindWireForm[genv1.OperationalKind(value)]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		panic(fmt.Sprintf("events: operationalKindWireForm is missing a wire form for proto OperationalKind value(s): %s — every non-UNSPECIFIED value in events.proto must have an entry or it silently String()s to \"\"", strings.Join(missing, ", ")))
+	}
+}
 
 func AllOperationalKinds() []string {
 	out := make([]string, 0, len(operationalKindWireForm))
@@ -244,6 +262,9 @@ func KindAttributeOverrideMatched() Kind {
 }
 func KindMessageReceived() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED)
+}
+func KindMessageDeadLettered() Kind {
+	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_MESSAGE_DEAD_LETTERED)
 }
 func KindFanOutDispatched() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_FAN_OUT_DISPATCHED)

@@ -437,6 +437,106 @@ func TestSubscribe_MountsRouteAndForwards(t *testing.T) {
 	}
 }
 
+func TestDispatchWebhook_RoutesSubPathsUnderDeclaredPrefix(t *testing.T) {
+	var (
+		obsMu   sync.Mutex
+		obsPath []string
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		payload, _ := body["payload"].(map[string]any)
+		path, _ := payload["path"].(string)
+		obsMu.Lock()
+		obsPath = append(obsPath, path)
+		obsMu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	router := chi.NewRouter()
+	s := NewSensorService(rimsky.URL, router, noopLogger{})
+	subscribeWithAuth(t, s, "w1", "/wh/github", map[string]any{"mode": "none"})
+
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/wh/github/push", "application/json", bytes.NewReader([]byte(`{"event":"push"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST under path_prefix status: %d (want 200; routes under the declared prefix must dispatch)", resp.StatusCode)
+	}
+
+	resp, err = http.Post(srv.URL+"/wh/github", "application/json", bytes.NewReader([]byte(`{"event":"exact"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST to exact prefix status: %d (want 200)", resp.StatusCode)
+	}
+
+	resp, err = http.Post(srv.URL+"/wh/githubx", "application/json", bytes.NewReader([]byte(`{"event":"x"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("POST to a path merely sharing the prefix's characters (no segment boundary) status: %d (want 404)", resp.StatusCode)
+	}
+
+	obsMu.Lock()
+	defer obsMu.Unlock()
+	if len(obsPath) != 2 || obsPath[0] != "/wh/github/push" || obsPath[1] != "/wh/github" {
+		t.Errorf("delivered paths: %v (want [/wh/github/push /wh/github])", obsPath)
+	}
+}
+
+func TestDispatchWebhook_LongestPrefixWinsAmongOverlappingSubscriptions(t *testing.T) {
+	var (
+		obsMu   sync.Mutex
+		obsSubs []string
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		sub, _ := body["publisher_subscription_id"].(string)
+		obsMu.Lock()
+		obsSubs = append(obsSubs, sub)
+		obsMu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	router := chi.NewRouter()
+	s := NewSensorService(rimsky.URL, router, noopLogger{})
+	subscribeWithAuth(t, s, "w-broad", "/wh", map[string]any{"mode": "none"})
+	subscribeWithAuth(t, s, "w-narrow", "/wh/github", map[string]any{"mode": "none"})
+
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/wh/github/push", "application/json", bytes.NewReader([]byte(`{"event":"push"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+
+	obsMu.Lock()
+	defer obsMu.Unlock()
+	if len(obsSubs) != 1 || obsSubs[0] != "w-narrow" {
+		t.Errorf("routed to %v, want [w-narrow] (longest matching path_prefix wins)", obsSubs)
+	}
+}
+
 func TestSubscribe_NormalizesLeadingSlash(t *testing.T) {
 	router := chi.NewRouter()
 	s := NewSensorService("", router, noopLogger{})

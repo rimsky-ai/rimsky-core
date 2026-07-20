@@ -132,6 +132,11 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 		return nil, fmt.Errorf("invalid cron %q: %w", cfg.Cron, err)
 	}
 	now := s.clock()
+	nextFireAt := sched.Next(now)
+	if nextFireAt.IsZero() {
+		s.logger.Warn("sensor-cron.never_fires",
+			"publisher_subscription_id", req.GetPublisherSubscriptionId(), "cron", cfg.Cron)
+	}
 	messageType := req.GetMessageType()
 	w := &Watch{
 		SubscriptionID: req.GetPublisherSubscriptionId(),
@@ -139,7 +144,7 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 		CronExpr:       cfg.Cron,
 		MessageType:    messageType,
 		ResolvedConfig: append([]byte(nil), req.GetResolvedConfig()...),
-		NextFireAt:     sched.Next(now),
+		NextFireAt:     nextFireAt,
 		StartedAt:      now,
 	}
 	s.mu.Lock()
@@ -202,7 +207,7 @@ func (s *SensorService) Tick(ctx context.Context) {
 	s.mu.Lock()
 	due := make([]*Watch, 0)
 	for _, w := range s.watches {
-		if !now.Before(w.NextFireAt) {
+		if !w.NextFireAt.IsZero() && !now.Before(w.NextFireAt) {
 			due = append(due, w)
 		}
 	}
@@ -244,6 +249,10 @@ func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 	lastFireAt := cur.LastFireAt
 	state := s.state
 	s.mu.Unlock()
+	if nextFireAt.IsZero() {
+		s.logger.Warn("sensor-cron.never_fires_again",
+			"publisher_subscription_id", w.SubscriptionID, "cron", w.CronExpr)
+	}
 	if state != nil {
 		if err := state.UpdateNextFire(ctx, w.SubscriptionID, nextFireAt, lastFireAt); err != nil {
 			s.logger.Warn("sensor-cron.fire.state_update_failed",

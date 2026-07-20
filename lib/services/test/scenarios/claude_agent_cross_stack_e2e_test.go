@@ -309,12 +309,7 @@ func waitNodeSettledClaudeAgent(
 		status, raw := ep.GetJSON(t, "/v1/nodes/"+nodeID, "")
 		if status == http.StatusOK {
 			var resp struct {
-				RunSummary struct {
-					ActiveCount  int `json:"active_count"`
-					PendingCount int `json:"pending_count"`
-					FreshCount   int `json:"fresh_count"`
-					FailedCount  int `json:"failed_count"`
-				} `json:"run_summary"`
+				RunSummary harness.NodeRunSummary `json:"run_summary"`
 			}
 			lastBody = string(raw)
 			if err := json.Unmarshal(raw, &resp); err == nil {

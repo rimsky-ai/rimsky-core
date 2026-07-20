@@ -27,7 +27,7 @@ const lockHolderCols = `
   claimed_at, expires_at, frame_id,
   node_run_id, is_held,
   parent_claim_handle_id, lifetime, version_id,
-  producer_candidate_handle,
+  producer_candidate_handle, producer_lease_token,
   aggregation_policy, expected_children_count,
   committed_children_count, abandoned_children_count,
   state, resolved_at
@@ -65,9 +65,9 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 		   holder_supervisor_id, holder_node_id,
 		   claimed_at, expires_at, frame_id,
 		   node_run_id, is_held,
-		   parent_claim_handle_id, lifetime, producer_candidate_handle,
+		   parent_claim_handle_id, lifetime, producer_candidate_handle, producer_lease_token,
 		   aggregation_policy
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.ID.String(), string(in.LockKind),
 		in.LockName, in.ProducerName,
 		nullableJSONB(in.ClaimScopeData), nullableJSONB(in.Address), nullableJSONB(in.Payload),
@@ -76,7 +76,7 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 		in.HolderSupervisorID, in.HolderNodeID.String(),
 		now, formatTime(in.ExpiresAt), nullableUUID(in.FrameID),
 		nullableUUID(in.NodeRunID), isHeldInt,
-		nullableUUID(in.ParentClaimHandleID), string(lifetime), candidateHandle,
+		nullableUUID(in.ParentClaimHandleID), string(lifetime), candidateHandle, in.ProducerLeaseToken,
 		aggPolicy,
 	)
 	if err != nil {
@@ -151,16 +151,25 @@ func (s *claimHandlesImpl) UpdateClaimScope(
 }
 
 func (s *claimHandlesImpl) UpdateNodeRunID(
-	ctx context.Context, id shared.UUID, nodeRunID shared.UUID, tx persistence.Tx,
+	ctx context.Context, id shared.UUID, nodeRunID shared.UUID, supervisorID string, tx persistence.Tx,
 ) error {
-	_, err := s.q(tx).ExecContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET node_run_id = ?
-		  WHERE id = ?`,
-		nodeRunID.String(), id.String(),
+		  WHERE id = ?
+		    AND state = 'active'
+		    AND `+claimantGuardClause,
+		nodeRunID.String(), id.String(), supervisorID,
 	)
 	if err != nil {
 		return fmt.Errorf("lockholders.UpdateNodeRunID: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("lockholders.UpdateNodeRunID: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -320,6 +329,31 @@ func (s *claimHandlesImpl) DeleteResolved(
 }
 
 // @concept: claim-handle
+// @concept: claim-co-holdership
+func (s *claimHandlesImpl) DeleteResolvedIfNoActiveHolders(
+	ctx context.Context, id shared.UUID, tx persistence.Tx,
+) (bool, error) {
+	res, err := s.q(tx).ExecContext(ctx,
+		`DELETE FROM rimsky_claim_handles
+		  WHERE id = ?
+		    AND state IN ('committed', 'abandoned')
+		    AND holder_supervisor_id IS NULL
+		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_claim_holders
+		       WHERE rimsky_claim_holders.claim_handle_id = rimsky_claim_handles.id
+		         AND rimsky_claim_holders.state = 'active'
+		    )`, id.String())
+	if err != nil {
+		return false, fmt.Errorf("lockholders.DeleteResolvedIfNoActiveHolders: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("lockholders.DeleteResolvedIfNoActiveHolders: rows-affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// @concept: claim-handle
 func (s *claimHandlesImpl) Promote(
 	ctx context.Context, id shared.UUID, supervisorID string,
 	newState spec.ClaimHandleState, tx persistence.Tx,
@@ -465,7 +499,7 @@ func qualifiedLockHolderCols(alias string) string {
 		alias + `.frame_id, ` + alias + `.node_run_id, ` + alias + `.is_held, ` +
 		alias + `.parent_claim_handle_id, ` + alias + `.lifetime, ` +
 		alias + `.version_id, ` +
-		alias + `.producer_candidate_handle, ` +
+		alias + `.producer_candidate_handle, ` + alias + `.producer_lease_token, ` +
 		alias + `.aggregation_policy, ` + alias + `.expected_children_count, ` +
 		alias + `.committed_children_count, ` + alias + `.abandoned_children_count, ` +
 		alias + `.state, ` + alias + `.resolved_at`
@@ -684,6 +718,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		lifetime           sql.NullString
 		versionID          sql.NullString
 		candidateHandle    []byte
+		leaseToken         string
 		aggregation        sql.NullString
 		expectedChildren   int
 		committed          int
@@ -699,7 +734,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		&claimedAtStr, &expiresAtStr, &frameIDStr,
 		&workerRequestIDStr, &isHeldInt,
 		&parentClaimIDStr, &lifetime, &versionID,
-		&candidateHandle,
+		&candidateHandle, &leaseToken,
 		&aggregation, &expectedChildren,
 		&committed, &abandoned,
 		&stateStr, &resolvedAtStr,
@@ -768,6 +803,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		r.VersionID = versionID.String
 	}
 	r.ProducerCandidateHandle = candidateHandle
+	r.ProducerLeaseToken = leaseToken
 	if aggregation.Valid {
 		r.AggregationPolicy = json.RawMessage(aggregation.String)
 	}

@@ -44,8 +44,29 @@ func emitSignalInTxWithFilter(
 	visited map[foundationshared.UUID]struct{},
 	filter receiverFilter,
 ) error {
+	if err := cascadeSignalInTxWithFilter(ctx, args, tx, senderID, senderNodeType, senderNodeRunID,
+		instanceID, senderFrameID, sig, visited, filter); err != nil {
+		return err
+	}
+	return signalaudit.EmitSignal(ctx, args.Persist.Events(),
+		instanceID, senderID, sig, args.Clock.Now(), tx)
+}
+
+// @concept: cascade
+// @decision: held-as-state-not-phase
+func cascadeSignalInTxWithFilter(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	senderID foundationshared.UUID,
+	senderNodeType string,
+	senderNodeRunID foundationshared.UUID,
+	instanceID foundationshared.UUID,
+	senderFrameID foundationshared.UUID,
+	sig signalpkg.Signal,
+	visited map[foundationshared.UUID]struct{},
+	filter receiverFilter,
+) error {
 	if err := signalpkg.ValidateTypePath(sig.Type); err != nil {
-		return fmt.Errorf("emitSignalInTx: %w", err)
+		return fmt.Errorf("cascadeSignalInTxWithFilter: %w", err)
 	}
 	var zeroUUID foundationshared.UUID
 	if senderNodeRunID != zeroUUID && senderFrameID != zeroUUID {
@@ -54,8 +75,7 @@ func emitSignalInTxWithFilter(
 			return err
 		}
 	}
-	return signalaudit.EmitSignal(ctx, args.Persist.Events(),
-		instanceID, senderID, sig, args.Clock.Now(), tx)
+	return nil
 }
 
 func emitSignalInTxOnce(

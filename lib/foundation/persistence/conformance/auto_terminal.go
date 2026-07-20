@@ -21,13 +21,13 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	lockHolderID := uuid.New()
+	claimHandleID := uuid.New()
 	supID := "autoterminal-supervisor"
 	lockName := "autoterminal-lock"
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
-			ID:                 lockHolderID,
+			ID:                 claimHandleID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
 			HolderSupervisorID: supID,
@@ -35,7 +35,7 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 			ExpiresAt:          time.Now().Add(1 * time.Hour),
 		}, tx)
 	}); err != nil {
-		t.Fatalf("seed lock-holder: %v", err)
+		t.Fatalf("seed claim-handle: %v", err)
 	}
 
 	var (
@@ -49,7 +49,7 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 	go func() {
 		defer wg.Done()
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			row, err := store.ClaimHandles().LockForUpdate(ctx, lockHolderID, tx)
+			row, err := store.ClaimHandles().LockForUpdate(ctx, claimHandleID, tx)
 			if err != nil {
 				return err
 			}
@@ -72,7 +72,7 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 	go func() {
 		defer wg.Done()
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			row, err := store.ClaimHandles().LockForUpdate(ctx, lockHolderID, tx)
+			row, err := store.ClaimHandles().LockForUpdate(ctx, claimHandleID, tx)
 			if err != nil {
 				return err
 			}

@@ -166,13 +166,41 @@ func NewSensorService(rimskyEndpoint string, router *chi.Mux, log logger) *Senso
 
 func (s *SensorService) dispatchWebhook(rw http.ResponseWriter, req *http.Request) {
 	s.mu.Lock()
-	w, ok := s.pathToWatch[req.URL.Path]
+	w := matchPathPrefix(s.pathToWatch, req.URL.Path)
 	s.mu.Unlock()
-	if !ok {
+	if w == nil {
 		http.Error(rw, "no active sensor-webhook subscription for this path", http.StatusNotFound)
 		return
 	}
 	s.serveWebhook(w, rw, req)
+}
+
+func matchPathPrefix(watches map[string]*Watch, path string) *Watch {
+	var best *Watch
+	bestLen := -1
+	for prefix, w := range watches {
+		if !pathUnderPrefix(path, prefix) {
+			continue
+		}
+		if len(prefix) > bestLen {
+			best = w
+			bestLen = len(prefix)
+		}
+	}
+	return best
+}
+
+func pathUnderPrefix(path, prefix string) bool {
+	if path == prefix {
+		return true
+	}
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	if strings.HasSuffix(prefix, "/") {
+		return true
+	}
+	return path[len(prefix)] == '/'
 }
 
 func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.PublisherCapabilities, error) {

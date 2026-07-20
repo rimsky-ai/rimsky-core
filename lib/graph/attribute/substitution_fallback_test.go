@@ -50,9 +50,20 @@ func TestFallbackOperator_NumberLiteral(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got, ok := val.(float64)
-	if !ok || got != 42 {
-		t.Fatalf("got %v (%T), want 42.0", val, val)
+	got, ok := val.(json.Number)
+	if !ok || got != "42" {
+		t.Fatalf("got %v (%T), want json.Number(42)", val, val)
+	}
+}
+
+func TestFallbackOperator_NumberLiteral_LargeIntegerPreservesPrecision(t *testing.T) {
+	val, err := SubstituteValue(`{{nodes.X.attribute.Y | 9007199254740993}}`, ResolveContext{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, ok := val.(json.Number)
+	if !ok || got.String() != "9007199254740993" {
+		t.Fatalf("got %v (%T), want json.Number(9007199254740993) exactly (no float64 rounding)", val, val)
 	}
 }
 

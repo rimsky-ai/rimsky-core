@@ -76,6 +76,7 @@ enum OperationalKind {
   // from the signal-class `message/...` topology).
   OPERATIONAL_KIND_MESSAGE_SENT = 60;
   OPERATIONAL_KIND_MESSAGE_RECEIVED = 61;
+  OPERATIONAL_KIND_MESSAGE_DEAD_LETTERED = 62;
   // Fan-out + sub-claim + sub-graph dispatch.
   OPERATIONAL_KIND_FAN_OUT_DISPATCHED = 70;
   OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED = 71;

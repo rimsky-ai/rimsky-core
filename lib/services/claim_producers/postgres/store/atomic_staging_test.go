@@ -474,6 +474,35 @@ func canonicalItemCount(t *testing.T, pool *pgxpool.Pool, schema string) int {
 	return count
 }
 
+func TestAtomicStaging_WriteOnInvalidSchemaIdentSelectorIsRejected(t *testing.T) {
+	_, st := bootStagingStore(t)
+	ctx := context.Background()
+
+	invalidSelectors := []string{"My-Table", "has space", "123leading", "quote'injection"}
+	for _, sel := range invalidSelectors {
+		t.Run(sel, func(t *testing.T) {
+			out, err := st.Open(ctx, uuid.NewString(), sel, claimproducer.IntentReadWrite)
+			if err == nil {
+				t.Fatalf("Open(write, selector=%q): expected rejection under staged_async, got Available=%v RealizedWriteSemantics=%q",
+					sel, out.Available, out.Result.RealizedWriteSemantics)
+			}
+		})
+	}
+}
+
+func TestAtomicStaging_ReadOnInvalidSchemaIdentSelectorStillWorks(t *testing.T) {
+	_, st := bootStagingStore(t)
+	ctx := context.Background()
+
+	out, err := st.Open(ctx, uuid.NewString(), "My-Table", claimproducer.IntentRead)
+	if err != nil {
+		t.Fatalf("Open(read, selector=%q): unexpected error: %v", "My-Table", err)
+	}
+	if !out.Available {
+		t.Fatal("Open(read): expected Available")
+	}
+}
+
 func TestAtomicStaging_TerminalVerbsRejectNonStagingSchemas(t *testing.T) {
 	pool, st := bootStagingStore(t)
 	ctx := context.Background()

@@ -35,11 +35,12 @@ import (
 )
 
 type authFixture struct {
-	srv      *httptest.Server
-	db       persistence.Database
-	state    *controlapi.AuthState
-	clock    *shared.ControllableClock
-	teardown func()
+	srv            *httptest.Server
+	db             persistence.Database
+	state          *controlapi.AuthState
+	clock          *shared.ControllableClock
+	claimProducers *locks.Registry
+	teardown       func()
 }
 
 func newAuthFixture(t *testing.T) *authFixture {
@@ -73,13 +74,15 @@ func newAuthFixtureOpts(t *testing.T, withObservability bool) *authFixture {
 		Clock:    clock,
 		Logger:   shared.SilentLogger{},
 	}
+	claimProducers := locks.NewRegistry()
 	deps := controlapi.AppDeps{
-		Persist:       d.Tables(),
-		Queue:         d.Queue(),
-		Clock:         clock,
-		Logger:        shared.SilentLogger{},
-		LifecycleSubs: locks.NewLifecycleRegistry(),
-		AuthState:     state,
+		Persist:        d.Tables(),
+		Queue:          d.Queue(),
+		Clock:          clock,
+		Logger:         shared.SilentLogger{},
+		LifecycleSubs:  locks.NewLifecycleRegistry(),
+		ClaimProducers: claimProducers,
+		AuthState:      state,
 	}
 	if withObservability {
 		deps.Observability = func(r chi.Router) {
@@ -93,10 +96,11 @@ func newAuthFixtureOpts(t *testing.T, withObservability bool) *authFixture {
 	app := controlapi.NewApp(deps)
 	srv := httptest.NewServer(app)
 	return &authFixture{
-		srv:   srv,
-		db:    d,
-		state: state,
-		clock: clock,
+		srv:            srv,
+		db:             d,
+		state:          state,
+		clock:          clock,
+		claimProducers: claimProducers,
 		teardown: func() {
 			srv.Close()
 			_ = d.Close()

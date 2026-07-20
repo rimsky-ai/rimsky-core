@@ -291,6 +291,8 @@ type lifecycleFakeServer struct {
 
 	OnTemplateDeployedFunc   func(*genv1.OnTemplateDeployedRequest) (*genv1.LifecycleAck, error)
 	OnInstanceTerminatedFunc func(*genv1.OnInstanceTerminatedRequest) (*genv1.LifecycleAck, error)
+	OnInstanceCreatedFunc    func(*genv1.OnInstanceCreatedRequest) (*genv1.LifecycleAck, error)
+	OnRunScopeTerminalFunc   func(*genv1.OnRunScopeTerminalRequest) (*genv1.LifecycleAck, error)
 }
 
 func (f *lifecycleFakeServer) OnTemplateDeployed(_ context.Context, req *genv1.OnTemplateDeployedRequest) (*genv1.LifecycleAck, error) {
@@ -305,4 +307,131 @@ func (f *lifecycleFakeServer) OnInstanceTerminated(_ context.Context, req *genv1
 		return f.OnInstanceTerminatedFunc(req)
 	}
 	return &genv1.LifecycleAck{}, nil
+}
+
+func (f *lifecycleFakeServer) OnInstanceCreated(_ context.Context, req *genv1.OnInstanceCreatedRequest) (*genv1.LifecycleAck, error) {
+	if f.OnInstanceCreatedFunc != nil {
+		return f.OnInstanceCreatedFunc(req)
+	}
+	return &genv1.LifecycleAck{}, nil
+}
+
+func (f *lifecycleFakeServer) OnRunScopeTerminal(_ context.Context, req *genv1.OnRunScopeTerminalRequest) (*genv1.LifecycleAck, error) {
+	if f.OnRunScopeTerminalFunc != nil {
+		return f.OnRunScopeTerminalFunc(req)
+	}
+	return &genv1.LifecycleAck{}, nil
+}
+
+func TestOpenBridge_RunScopeIDThreaded(t *testing.T) {
+	var gotRunScopeID string
+	srv := &fakeServer{
+		OpenFunc: func(req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
+			gotRunScopeID = req.GetRunScopeId()
+			return &genv1.OpenResponse{
+				Result: &genv1.OpenResponse_Unavailable{Unavailable: &genv1.Unavailable{}},
+			}, nil
+		},
+	}
+	ts := mountFake(t, srv)
+
+	body, err := json.Marshal(map[string]any{
+		"claim_id":      "00000000-0000-0000-0000-000000000001",
+		"producer_name": "fake",
+		"selector":      "items/x",
+		"intent":        "rw",
+		"run_scope_id":  "rs-1",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/v1/open", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /v1/open: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, raw)
+	}
+	if gotRunScopeID != "rs-1" {
+		t.Fatalf("run_scope_id mismatch: got %q, want \"rs-1\" (claim_producer.proto field 8 must survive the HTTP bridge)", gotRunScopeID)
+	}
+}
+
+func TestLifecycleBridge_InstanceCreatedCarriesServiceBindingsAndOwnerAPIKeyID(t *testing.T) {
+	var gotBindings []byte
+	var gotOwnerKeyID string
+	srv := &lifecycleFakeServer{
+		OnInstanceCreatedFunc: func(req *genv1.OnInstanceCreatedRequest) (*genv1.LifecycleAck, error) {
+			gotBindings = req.GetServiceBindings()
+			gotOwnerKeyID = req.GetOwnerApiKeyId()
+			return &genv1.LifecycleAck{}, nil
+		},
+	}
+	mux := http.NewServeMux()
+	MountLifecycle(mux, srv)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	body, err := json.Marshal(map[string]any{
+		"template_hash":    "sha256-abc",
+		"instance_id":      "00000000-0000-0000-0000-000000000abc",
+		"service_bindings": []byte(`{"svc":"127.0.0.1:9090"}`),
+		"owner_api_key_id": "key-1",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/v1/on_instance_created", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, raw)
+	}
+	if string(gotBindings) != `{"svc":"127.0.0.1:9090"}` {
+		t.Fatalf("service_bindings mismatch: got %s (lifecycle.proto field 5 must survive the HTTP bridge)", gotBindings)
+	}
+	if gotOwnerKeyID != "key-1" {
+		t.Fatalf("owner_api_key_id mismatch: got %q (lifecycle.proto field 6 must survive the HTTP bridge)", gotOwnerKeyID)
+	}
+}
+
+func TestLifecycleBridge_OnRunScopeTerminalMounted(t *testing.T) {
+	var gotRunScopeID, gotReason, gotInstanceID string
+	srv := &lifecycleFakeServer{
+		OnRunScopeTerminalFunc: func(req *genv1.OnRunScopeTerminalRequest) (*genv1.LifecycleAck, error) {
+			gotRunScopeID = req.GetRunScopeId()
+			gotReason = req.GetTerminalReason()
+			gotInstanceID = req.GetInstanceId()
+			return &genv1.LifecycleAck{}, nil
+		},
+	}
+	mux := http.NewServeMux()
+	MountLifecycle(mux, srv)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	body := []byte(`{"run_scope_id":"rs-1","terminal_reason":"completed","instance_id":"00000000-0000-0000-0000-000000000abc"}`)
+	resp, err := http.Post(ts.URL+"/v1/on_run_scope_terminal", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /v1/on_run_scope_terminal: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s (lifecycle.proto's 7th RPC must be mounted on the HTTP bridge)", resp.StatusCode, raw)
+	}
+	if gotRunScopeID != "rs-1" {
+		t.Fatalf("run_scope_id mismatch: got %q", gotRunScopeID)
+	}
+	if gotReason != "completed" {
+		t.Fatalf("terminal_reason mismatch: got %q", gotReason)
+	}
+	if gotInstanceID != "00000000-0000-0000-0000-000000000abc" {
+		t.Fatalf("instance_id mismatch: got %q", gotInstanceID)
+	}
 }

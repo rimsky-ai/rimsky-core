@@ -17,13 +17,14 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func main() {
 	cfg := LoadConfig()
 
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(cfg.LogLevel)})
+	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: shared.ParseLogLevel(cfg.LogLevel)})
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 	slog.Info("rimsky-host-agent-proxy starting", "grpc_port", cfg.GRPCPort)
@@ -69,17 +70,4 @@ func main() {
 	<-sigs
 	slog.Info("rimsky-host-agent-proxy shutting down")
 	grpcSrv.GracefulStop()
-}
-
-func parseLogLevel(s string) slog.Level {
-	switch s {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
 }

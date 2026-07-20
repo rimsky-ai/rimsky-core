@@ -432,9 +432,9 @@ func TestClaimTerminalRecord_WireContract(t *testing.T) {
 	}
 
 	ev := MakeClaimTerminalEvent(rec, time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC), "ns-test")
-	facets, ok := ev.Facets["rimsky"].(map[string]any)
+	facets, ok := ev.Run.Facets["rimsky"].(map[string]any)
 	if !ok {
-		t.Fatalf("rimsky facet block missing or wrong type: %+v", ev.Facets)
+		t.Fatalf("rimsky facet block missing or wrong type: %+v", ev.Run.Facets)
 	}
 	if facets["run_id"] != "22222222-2222-2222-2222-222222222222" {
 		t.Errorf("facet run_id = %v", facets["run_id"])

@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The compose driver sends an empty message per declared instance after creating it, via the same HTTP client path it already uses for instance-create, with a deterministic idempotency key derived from the instance key. The wake send precedes the wait-for-terminal loop.
+The compose driver sends an empty wake message after creating an instance, via the same HTTP client path it already uses for instance-create, with a deterministic idempotency key derived from the instance key — but only for instances whose template declares at least one structural root; an instance whose template has no structural root receives no wake message, since there is nothing for the empty message to wake. The wake send precedes the wait-for-terminal loop.
 
 ## Rationale
 

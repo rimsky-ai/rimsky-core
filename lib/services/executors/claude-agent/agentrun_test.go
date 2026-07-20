@@ -228,6 +228,16 @@ func TestRunAgentStubProbePark(t *testing.T) {
 	}
 }
 
+func TestRunAgentStubProbeAsyncRoutesToStubNotRealCLI(t *testing.T) {
+	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
+	opts := baseRunOpts(&fakeRunner{})
+	opts.Attributes = map[string]any{"probe_async": true}
+	outcome := RunAgent(opts)
+	if outcome.Kind != OutcomeComplete || outcome.AttributesDelta["stub"] != true {
+		t.Fatalf("probe_async alone must route to the stub path (fast, deterministic), not attempt a real CLI spawn: outcome = %+v", outcome)
+	}
+}
+
 func TestRunAgentMalformedAttributes(t *testing.T) {
 	opts := baseRunOpts(&fakeRunner{})
 	opts.Attributes = map[string]any{"_invalid": "yes"}
@@ -761,6 +771,9 @@ func TestRunAgentSessionTokenTriggersResumePath(t *testing.T) {
 	if resumeReq.SessionID != "prior-session" {
 		t.Fatalf("resume session = %q", resumeReq.SessionID)
 	}
+	if resumeReq.NewSessionID != "run-1" {
+		t.Fatalf("resume must rebind the resumed conversation onto the current dispatch's run id so the next resume targets an existing CLI session, got NewSessionID = %q", resumeReq.NewSessionID)
+	}
 	client := &mcpTestClient{t: t, url: resumeReq.Env["RIMSKY_CALLBACK_URL"]}
 	client.initialize()
 	_, _ = client.callTool("report_complete",
@@ -768,5 +781,69 @@ func TestRunAgentSessionTokenTriggersResumePath(t *testing.T) {
 	outcome := <-done
 	if outcome.Kind != OutcomeComplete {
 		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
+func TestRunAgentCleanExitOnResumedRunRetriesOnReboundSession(t *testing.T) {
+	firstLeg := newFakeHandle(true)
+	retryLeg := newFakeHandle(true)
+	runner := &fakeRunner{resumeHandles: []*fakeHandle{firstLeg, retryLeg}}
+	opts := baseRunOpts(runner)
+	opts.SessionToken = "prior-session"
+	done := make(chan AgentOutcome, 1)
+	go func() { done <- RunAgent(opts) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		runner.mu.Lock()
+		n := len(runner.resumes)
+		runner.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	runner.mu.Lock()
+	if len(runner.resumes) != 1 {
+		runner.mu.Unlock()
+		t.Fatal("expected the first resume attempt")
+	}
+	firstResumeReq := runner.resumes[0]
+	runner.mu.Unlock()
+	if firstResumeReq.SessionID != "prior-session" || firstResumeReq.NewSessionID != "run-1" {
+		t.Fatalf("first resume wrong: %+v", firstResumeReq)
+	}
+
+	code := 0
+	firstLeg.exit(ExitResult{ExitCode: &code})
+
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		runner.mu.Lock()
+		n := len(runner.resumes)
+		runner.mu.Unlock()
+		if n > 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	runner.mu.Lock()
+	if len(runner.resumes) != 2 {
+		runner.mu.Unlock()
+		t.Fatal("expected a reminder-retry resume after the clean exit on the resumed leg")
+	}
+	retryReq := runner.resumes[1]
+	runner.mu.Unlock()
+	if retryReq.SessionID != "run-1" {
+		t.Fatalf("reminder retry must resume the session the run actually started with (rebound to run-1 via --session-id on the first resume), got SessionID = %q", retryReq.SessionID)
+	}
+
+	client := &mcpTestClient{t: t, url: retryReq.Env["RIMSKY_CALLBACK_URL"]}
+	client.initialize()
+	_, _ = client.callTool("report_complete",
+		fmt.Sprintf(`{"token":%q,"changed":false}`, retryReq.Env["RIMSKY_CALLBACK_TOKEN"]))
+	outcome := <-done
+	if outcome.Kind != OutcomeComplete {
+		t.Fatalf("expected the reminder retry to recover the dispatch, got %+v", outcome)
 	}
 }

@@ -157,29 +157,22 @@ func dispatchAndReadTerminal(t *testing.T, ep harness.RimskyEndpoint, templateBy
 
 	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
 
-	status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/worker", "")
+	status, obs, raw := ep.GetNodeObservability(t, instanceID, "worker")
 	if status != http.StatusOK {
 		t.Fatalf("GET node observability: %d %s", status, string(raw))
 	}
-	var resp struct {
-		NodeType         string `json:"node_type"`
-		LatestAttributes struct {
-			Stub bool `json:"stub"`
-		} `json:"latest_attributes"`
-		RunSummary struct {
-			FreshCount  int `json:"fresh_count"`
-			FailedCount int `json:"failed_count"`
-		} `json:"run_summary"`
+	var latestAttrs struct {
+		Stub bool `json:"stub"`
 	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode node observability: %v: %s", err, string(raw))
+	if err := json.Unmarshal(obs.LatestAttributes, &latestAttrs); err != nil {
+		t.Fatalf("decode latest_attributes: %v: %s", err, string(raw))
 	}
-	if !resp.LatestAttributes.Stub {
+	if !latestAttrs.Stub {
 		t.Fatalf("stub outcome missing from latest_attributes; body=%s", string(raw))
 	}
 	return portableTerminalShape{
-		NodeType:         resp.NodeType,
-		TerminalTagClass: terminalTagFromRunSummary(resp.RunSummary.FreshCount, resp.RunSummary.FailedCount),
+		NodeType:         obs.NodeType,
+		TerminalTagClass: terminalTagFromRunSummary(obs.RunSummary.FreshCount, obs.RunSummary.FailedCount),
 	}
 }
 

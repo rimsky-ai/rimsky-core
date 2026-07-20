@@ -376,6 +376,76 @@ func TestReceiver_HandleSuccessReturns204(t *testing.T) {
 	}
 }
 
+func TestReceiver_SimulateRestart_RejectsAndSignalsAckID(t *testing.T) {
+	r, err := StartCallbackReceiver()
+	if err != nil {
+		t.Fatalf("StartCallbackReceiver: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	ackID := "ack-restart"
+	ch := r.Register(ackID)
+	hits := r.SimulateRestart()
+
+	buf, _ := json.Marshal(map[string]any{"success": map[string]any{"changed": true}})
+	resp, err := http.Post(r.URL()+"/v1/callback/"+ackID, "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d, want %d during simulated restart", resp.StatusCode, http.StatusServiceUnavailable)
+	}
+
+	select {
+	case gotID := <-hits:
+		if gotID != ackID {
+			t.Fatalf("restart-hit ackID=%q, want %q", gotID, ackID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the restart-simulation hit signal")
+	}
+
+	select {
+	case <-ch:
+		t.Fatal("the rejected callback must not resolve the registered channel")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestReceiver_EndSimulatedRestart_ResumesNormalDelivery(t *testing.T) {
+	r, err := StartCallbackReceiver()
+	if err != nil {
+		t.Fatalf("StartCallbackReceiver: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	ackID := "ack-restart-resume"
+	ch := r.Register(ackID)
+	hits := r.SimulateRestart()
+
+	buf, _ := json.Marshal(map[string]any{"success": map[string]any{"changed": true}})
+	resp, err := http.Post(r.URL()+"/v1/callback/"+ackID, "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	<-hits
+	r.EndSimulatedRestart()
+
+	postCallback(t, r.URL(), ackID, map[string]any{"success": map[string]any{"changed": true}})
+
+	select {
+	case out := <-ch:
+		if _, ok := out.GetOutcome().(*genv1.Outcome_Success); !ok {
+			t.Fatalf("expected Success after EndSimulatedRestart, got %T", out.GetOutcome())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for delivery after EndSimulatedRestart")
+	}
+}
+
 func postCallback(t *testing.T, baseURL, ackID string, body map[string]any) {
 	t.Helper()
 	buf, err := json.Marshal(body)

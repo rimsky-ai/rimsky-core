@@ -347,6 +347,51 @@ func testClaimantGuardHandlePromote(t *testing.T, d persistence.Database) {
 	}
 }
 
+func testClaimantGuardHandleUpdateNodeRunID(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	runA := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+	nodeB := seedExtraNode(ctx, t, d, fix, "guard-update-node-run-id-node-b")
+	runB := seedConformanceRunForNode(ctx, t, d, nodeB, fix.FrameID)
+
+	in := guardScopeHandleInput(fix, guardSupA, time.Now().Add(1*time.Hour))
+	in.NodeRunID = &runA
+	seedGuardClaimHandle(ctx, t, d, in)
+	before := getGuardClaimHandle(ctx, t, d, in.ID)
+
+	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return store.ClaimHandles().UpdateNodeRunID(ctx, in.ID, runB, guardSupB, tx)
+	})
+	if !errors.Is(err, spec.ErrIllegalClaimHandleTransition) {
+		t.Fatalf("wrong-claimant UpdateNodeRunID: got err %v, want ErrIllegalClaimHandleTransition", err)
+	}
+	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "UpdateNodeRunID")
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return store.ClaimHandles().UpdateNodeRunID(ctx, in.ID, runB, guardSupA, tx)
+	}); err != nil {
+		t.Fatalf("owner UpdateNodeRunID: %v", err)
+	}
+	after := getGuardClaimHandle(ctx, t, d, in.ID)
+	if after == nil || after.NodeRunID == nil || *after.NodeRunID != runB {
+		t.Fatalf("owner UpdateNodeRunID did not land: %+v", after)
+	}
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return store.ClaimHandles().Promote(ctx, in.ID, guardSupA, spec.ClaimHandleStateCommitted, tx)
+	}); err != nil {
+		t.Fatalf("settle handle: %v", err)
+	}
+	err = store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return store.ClaimHandles().UpdateNodeRunID(ctx, in.ID, runA, guardSupA, tx)
+	})
+	if !errors.Is(err, spec.ErrIllegalClaimHandleTransition) {
+		t.Fatalf("non-active UpdateNodeRunID: got err %v, want ErrIllegalClaimHandleTransition", err)
+	}
+}
+
 func testClaimantGuardHandleReassignHolder(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -638,6 +683,110 @@ func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Databas
 	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "ClaimDispatchRow self-reclaim")
 }
 
+func testClaimantGuardRunPromote(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+	q := d.Queue()
+
+	var nodeRunID shared.UUID
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:                 fix.NodeID,
+			ExecutorName:           "test-executor",
+			RequiredClaimProducers: []string{},
+			EnqueuedAt:             time.Now().Add(-1 * time.Second),
+			FrameID:                fix.FrameID,
+			RunScopeID:             fix.MainRunScopeID,
+		}, tx); err != nil {
+			return err
+		}
+		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+			AcceptedExecutors:      []string{"test-executor"},
+			AcceptedClaimProducers: []string{},
+			Limit:                  10,
+		})
+		if err != nil {
+			return err
+		}
+		if len(cands) == 0 {
+			t.Fatalf("RunPromote: candidate not surfaced")
+		}
+		nodeRunID = cands[0].NodeRunID
+		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, guardSupA)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			t.Fatalf("RunPromote: ClaimDispatchRow returned !ok")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("RunPromote: claim leg: %v", err)
+	}
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		promoted, err := q.PromoteClaimedToRunning(ctx, tx, nodeRunID, guardSupB)
+		if err != nil {
+			return err
+		}
+		if promoted {
+			t.Fatalf("wrong-claimant PromoteClaimedToRunning reported promoted=true")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("RunPromote: wrong-claimant promote tx: %v", err)
+	}
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		latest, err := store.Nodes().GetLatestRunForNode(ctx, tx, fix.NodeID)
+		if err != nil {
+			return err
+		}
+		if latest == nil {
+			t.Fatalf("RunPromote: GetLatestRunForNode returned nil after wrong-claimant promote")
+		}
+		if latest.State != cascade.NodeStateStale {
+			t.Fatalf("wrong-claimant PromoteClaimedToRunning mutated state: got %q, want %q", latest.State, cascade.NodeStateStale)
+		}
+		if latest.ClaimedBy != guardSupA {
+			t.Fatalf("wrong-claimant PromoteClaimedToRunning mutated claimed_by: got %q, want %q", latest.ClaimedBy, guardSupA)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("RunPromote: post-wrong-claimant probe: %v", err)
+	}
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		promoted, err := q.PromoteClaimedToRunning(ctx, tx, nodeRunID, guardSupA)
+		if err != nil {
+			return err
+		}
+		if !promoted {
+			t.Fatalf("owner PromoteClaimedToRunning reported promoted=false")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("RunPromote: owner promote tx: %v", err)
+	}
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		latest, err := store.Nodes().GetLatestRunForNode(ctx, tx, fix.NodeID)
+		if err != nil {
+			return err
+		}
+		if latest == nil {
+			t.Fatalf("RunPromote: GetLatestRunForNode returned nil after owner promote")
+		}
+		if latest.State != cascade.NodeStateRunning {
+			t.Fatalf("owner PromoteClaimedToRunning did not transition state: got %q, want %q", latest.State, cascade.NodeStateRunning)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("RunPromote: post-owner-promote probe: %v", err)
+	}
+}
+
 func testClaimantGuardRunReleaseClaim(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -857,16 +1006,8 @@ func testClaimantGuardUnguardedMutationCarveOuts(t *testing.T, d persistence.Dat
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
 	in := guardScopeHandleInput(fix, guardSupA, time.Now().Add(1*time.Hour))
+	in.NodeRunID = &runID
 	seedGuardClaimHandle(ctx, t, d, in)
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.ClaimHandles().UpdateNodeRunID(ctx, in.ID, runID, tx)
-	}); err != nil {
-		t.Fatalf("UpdateNodeRunID carve-out: %v", err)
-	}
-	h := getGuardClaimHandle(ctx, t, d, in.ID)
-	if h == nil || h.NodeRunID == nil || *h.NodeRunID != runID {
-		t.Fatalf("UpdateNodeRunID carve-out did not repoint node_run_id: %+v", h)
-	}
 
 	holderID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {

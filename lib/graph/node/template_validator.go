@@ -66,8 +66,6 @@ type RegistryHooks struct {
 
 	ExecutorExpectedAttributesSchema func(name string) ([]byte, bool)
 
-	StoreAdvertisesDataProcessing func(name string) bool
-
 	ClaimProducerAdvertisesSplitScope func(name string) bool
 
 	// @concept: node
@@ -90,6 +88,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 
 	rejectAuthorSetInternalFlags(spec, &res)
 	canonicalizeGraphs(spec, &res)
+	validateDelegateTargets(spec, &res)
 
 	if len(spec.Nodes) == 0 {
 		res.Errors = append(res.Errors, ValidationError{Path: "nodes", Msg: "template must declare at least one node"})
@@ -134,10 +133,11 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateCascadeMode(n, base, &res)
 		validateDispatchDeadlines(n, base, &res)
 		validateHolds(n, base, spec, declared, &res)
-		validateFanOut(n, base, hooks, &res)
+		validateFanOut(n, base, spec, declared, hooks, &res)
 		validateTagsAtRegistration(n, base, spec, &res)
 	}
 
+	validateHoldsAcyclic(spec, &res)
 	validatePublishers(spec, declaredMessages, &res)
 
 	// @concept: message-schema
@@ -658,7 +658,7 @@ func validateSubstitutionRefCoverage(
 				"kind":               "substitution_ref_uncovered",
 				"receiver_node_type": receiverType,
 				"ref":                refLiteral,
-				"attribute_property": "",
+				"attribute_property": ref.AttributeProperty,
 				"suggested_subscribes_entry": map[string]any{
 					"node":                   ref.TypeName,
 					"type":                   suggestedType,
@@ -793,6 +793,15 @@ func validateKindDeclaration(n TemplateNodeDef, base string, hooks RegistryHooks
 			Msg: fmt.Sprintf(
 				"node declares both kind and delegate; kind is incompatible with subgraph delegation (kind=%q, delegate=%q)",
 				n.Kind, n.Delegate),
+		})
+		return
+	}
+	if n.SendsMessage != "" {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".kind",
+			Msg: fmt.Sprintf(
+				"node declares both kind and sends_message; a kind alias resolves to an executor, and executor is mutually exclusive with sends_message (kind=%q, sends_message=%q)",
+				n.Kind, n.SendsMessage),
 		})
 		return
 	}
@@ -1045,16 +1054,6 @@ func validateClaimProducers(n TemplateNodeDef, base string, hooks RegistryHooks,
 					s.Lifetime, ClaimLifetimeSubgraph, ClaimLifetimeDurable),
 			})
 		}
-		if s.Lifetime == ClaimLifetimeDurable && hooks.StoreAdvertisesDataProcessing != nil {
-			if !hooks.StoreAdvertisesDataProcessing(name) {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: sbase + ".lifetime",
-					Msg: fmt.Sprintf(
-						"lifetime = %q requires store %q to advertise the data_processing protocol (asset pattern)",
-						ClaimLifetimeDurable, name),
-				})
-			}
-		}
 	}
 }
 
@@ -1083,6 +1082,7 @@ func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *Val
 			continue
 		}
 		seen[name] = j
+		// @concept: named-lock
 		if hooks.NamedLockDeclared != nil && !strings.ContainsAny(name, "{") && !hooks.NamedLockDeclared(name) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: lbase + ".name",
@@ -1124,32 +1124,21 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		directAliases[s.AliasOf()] = struct{}{}
 	}
 	heldAliases := make(map[string]struct{}, len(n.Holds))
-	for alias := range n.Holds {
-		heldAliases[alias] = struct{}{}
+	for alias, binding := range n.Holds {
+		heldAliases[effectiveHoldsLocalAlias(alias, binding)] = struct{}{}
 	}
 
-	properties, ok := n.Attributes.Schema["properties"].(map[string]any)
-	if !ok {
-		return
-	}
-	for fname, raw := range properties {
-		propMap, ok := raw.(map[string]any)
+	walkSchemaForSourcesWithPath(n.Attributes.Schema, "", func(raw any, path string) {
+		src, ok := raw.(string)
 		if !ok {
-			continue
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.%s", sbase, path),
+				Msg:  "source must be a string (array-form multi-source is not admitted)",
+			})
+			return
 		}
-		srcRaw, hasSource := propMap["source"]
-		if hasSource {
-			src, ok := srcRaw.(string)
-			if !ok {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: fmt.Sprintf("%s.properties.%s.source", sbase, fname),
-					Msg:  "source must be a string (array-form multi-source is not admitted)",
-				})
-				continue
-			}
-			checkAttributeSource(src, fmt.Sprintf("%s.properties.%s.source", sbase, fname), declared, directAliases, heldAliases, res)
-		}
-	}
+		checkAttributeSource(src, fmt.Sprintf("%s.%s", sbase, path), declared, directAliases, heldAliases, res)
+	})
 
 	executorForSchema := effectiveExecutor(n, hooks)
 

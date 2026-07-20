@@ -228,6 +228,82 @@ func TestTemplateRegister_RejectsHashShapedTag(t *testing.T) {
 		"hash-shaped tag must be rejected at register time")
 }
 
+func TestTemplateRegister_MovesExistingTagOnFreshInsertWhenCallerHasTagSet(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	tag := "shared-tag-" + uuid.NewString()
+	firstBody := templateBodyWithTag("tag-conflict-first-"+uuid.NewString(), tag)
+	status, first := h.httpJSON(t, "POST", "/v1/templates", firstBody)
+	require.Equal(t, http.StatusCreated, status, first)
+
+	secondBody := templateBodyWithTag("tag-conflict-second-"+uuid.NewString(), tag)
+	status, second := h.httpJSON(t, "POST", "/v1/templates", secondBody)
+	require.Equal(t, http.StatusCreated, status, second,
+		"a caller holding tag:set (the harness's anonymous-mode identity has full permissions) may move an existing tag via register-with-tag")
+	secondID := second["template_id"].(string)
+
+	getStatus, getOut := h.httpJSON(t, "GET", "/v1/templates/"+tag, nil)
+	require.Equal(t, http.StatusOK, getStatus, getOut)
+	require.Equal(t, secondID, getOut["id"],
+		"the tag must now resolve to the newly-registered template")
+}
+
+func TestTemplateRegister_MovesExistingTagOnIdempotentReRegisterWhenCallerHasTagSet(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	tag := "shared-tag-idem-" + uuid.NewString()
+	firstBody := templateBodyWithTag("tag-conflict-idem-first-"+uuid.NewString(), tag)
+	status, first := h.httpJSON(t, "POST", "/v1/templates", firstBody)
+	require.Equal(t, http.StatusCreated, status, first)
+
+	secondBody := validTemplateBody("tag-conflict-idem-second-" + uuid.NewString())
+	status, second := h.httpJSON(t, "POST", "/v1/templates", secondBody)
+	require.Equal(t, http.StatusCreated, status, second)
+	secondID := second["template_id"].(string)
+
+	secondWithTag := map[string]any{
+		"spec": specOf(secondBody),
+		"tag":  tag,
+	}
+	status, out := h.httpJSON(t, "POST", "/v1/templates", secondWithTag)
+	require.Equal(t, http.StatusOK, status, out,
+		"idempotent re-register with a tag that points elsewhere must move it when the caller holds tag:set")
+
+	getStatus, getOut := h.httpJSON(t, "GET", "/v1/templates/"+tag, nil)
+	require.Equal(t, http.StatusOK, getStatus, getOut)
+	require.Equal(t, secondID, getOut["id"])
+}
+
+func TestTemplateRegister_IdempotentReRegisterWithSameTagOK(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	tag := "stable-tag-" + uuid.NewString()
+	body := templateBodyWithTag("tag-stable-"+uuid.NewString(), tag)
+	status, first := h.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusCreated, status, first)
+
+	status, second := h.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusOK, status, second)
+	require.Equal(t, first["template_id"], second["template_id"])
+}
+
+func TestTemplateRegister_RejectsComposeReservedTag(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	body := templateBodyWithTag("compose-reserved-"+uuid.NewString(), "compose:"+uuid.NewString())
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusBadRequest, status, out,
+		"register-with-tag must enforce the compose: reserved-prefix guard, same as POST /v1/tags")
+}
+
 func TestTemplateDeploy_StateTransitions(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

@@ -227,8 +227,13 @@ func (b *breakpointHitsImpl) SweepOrphanedUnresumed(ctx context.Context, cutoff 
 		   USING rimsky_instance_breakpoints b
 		  WHERE h.breakpoint_id = b.id
 		    AND h.resumed_at IS NULL
+		    AND h.mode <> 'notify_only'
 		    AND b.overflow_policy <> 'auto_resume_after_ttl'
-		    AND h.hit_at <= $1`, cutoff)
+		    AND h.hit_at <= $1
+		    AND (h.node_run_id IS NULL OR NOT EXISTS (
+		        SELECT 1 FROM rimsky_node_runs r
+		         WHERE r.id = h.node_run_id AND r.claimed_by IS NOT NULL
+		    ))`, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("breakpointHits.sweepOrphanedUnresumed: %w", err)
 	}

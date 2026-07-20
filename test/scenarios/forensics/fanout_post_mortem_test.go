@@ -103,8 +103,8 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, parentRows, 1,
 		"parent must emit exactly one claim_terminal row after all children resolve")
-	require.Equal(t, persistence.LineageOutcomeCommitted, parentRows[0].Outcome,
-		"threshold(max_failures=1) tolerates one abandon → parent Commits")
+	require.Equal(t, persistence.LineageOutcomeAbandoned, parentRows[0].Outcome,
+		"threshold(max_failures=1) with one abandon (== max_failures) → parent Abandons at the exact threshold")
 	require.Equal(t, inst, parentRows[0].InstanceID,
 		"the auto-fired parent claim_terminal row must carry the owning instance id — this is the "+
 			"re-derived-from-holder-node path (SettleFromFanoutChild), not a value the caller supplied directly, "+
@@ -131,10 +131,10 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 		abandonPage = ap
 		return nil
 	}))
-	require.Equal(t, 4, len(commitPage.Events),
-		"3 child commits + 1 parent commit = 4 commit events")
-	require.Equal(t, 1, len(abandonPage.Events),
-		"1 child abandon = 1 abandon event")
+	require.Equal(t, 3, len(commitPage.Events),
+		"3 child commits, parent Abandons at the threshold so no parent commit event = 3 commit events")
+	require.Equal(t, 2, len(abandonPage.Events),
+		"1 child abandon + 1 auto-fired parent abandon (threshold reached) = 2 abandon events")
 	require.Equal(t, "natural", abandonPage.Events[0].Payload["cause"],
 		"abandon event must carry cause=natural")
 }

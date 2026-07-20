@@ -349,7 +349,7 @@ func (s *nodeAttributesImpl) SnapshotBagForNewRun(
 	if priorHandleBackend.Valid {
 		priorBackendStr = priorHandleBackend.String
 	}
-	carried, err := persistence.CarryForwardBag(ctx, (*tablesImpl)(s).blob,
+	carried, err := persistence.CarryForwardBag(ctx, (*tablesImpl)(s).blob, tx,
 		persistence.BlobKey{NodeID: newRunID.String(), AttributeName: "data"},
 		[]byte(priorData), priorHandleStr, priorBackendStr)
 	if err != nil {

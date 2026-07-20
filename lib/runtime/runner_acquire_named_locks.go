@@ -58,6 +58,7 @@ func acquireOneLock(
 	return AcquiredLock{}, openResultBail, fmt.Errorf("acquireOneLock: unknown spec kind %T", sp)
 }
 
+// @concept: named-lock
 func acquireNamedLock(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	spec locks.NamedLockSpec, cand persistence.Candidate, livenessInterval time.Duration,

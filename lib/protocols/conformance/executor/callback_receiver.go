@@ -6,6 +6,7 @@ package conformance
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -21,11 +22,13 @@ import (
 )
 
 type CallbackReceiver struct {
-	srv          *http.Server
-	bindAddr     string
-	advertiseURL string
-	mu           sync.Mutex
-	wait         map[string]chan *genv1.Outcome
+	srv            *http.Server
+	bindAddr       string
+	advertiseURL   string
+	mu             sync.Mutex
+	wait           map[string]chan *genv1.Outcome
+	restartSim     bool
+	restartSimHits chan string
 }
 
 type ReceiverOptions struct {
@@ -83,6 +86,20 @@ func (r *CallbackReceiver) Register(ackID string) <-chan *genv1.Outcome {
 	return ch
 }
 
+func (r *CallbackReceiver) SimulateRestart() <-chan string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.restartSim = true
+	r.restartSimHits = make(chan string, 32)
+	return r.restartSimHits
+}
+
+func (r *CallbackReceiver) EndSimulatedRestart() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.restartSim = false
+}
+
 func (r *CallbackReceiver) Close() error {
 	if r == nil || r.srv == nil {
 		return nil
@@ -99,6 +116,19 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	ackID := parts[0]
+
+	r.mu.Lock()
+	simulating := r.restartSim
+	hits := r.restartSimHits
+	r.mu.Unlock()
+	if simulating {
+		select {
+		case hits <- ackID:
+		default:
+		}
+		http.Error(w, "simulated supervisor restart", http.StatusServiceUnavailable)
+		return
+	}
 	body := map[string]any{}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		http.Error(w, "decode: "+err.Error(), http.StatusBadRequest)
@@ -157,6 +187,7 @@ func mapSuccess(m map[string]any) *genv1.Outcome {
 			Changed:         asBool(m["changed"]),
 			ChangeSummary:   asString(m["change_summary"]),
 			Tags:            asStringSlice(m["tags"]),
+			Scratch:         asBytes(m["scratch"]),
 		}},
 	}
 }
@@ -170,13 +201,15 @@ func mapErrorOutcome(m map[string]any) *genv1.Outcome {
 			Payload:         pl,
 			AttributesDelta: delta,
 			Tags:            asStringSlice(m["tags"]),
+			Scratch:         asBytes(m["scratch"]),
 		}},
 	}
 }
 
 func mapPark(m map[string]any) *genv1.Outcome {
 	p := &genv1.Park{
-		Tags: asStringSlice(m["tags"]),
+		Tags:    asStringSlice(m["tags"]),
+		Scratch: asBytes(m["scratch"]),
 	}
 	if rawResume := asString(m["resume_at"]); rawResume != "" {
 		if pt, err := time.Parse(time.RFC3339, rawResume); err == nil {
@@ -198,6 +231,17 @@ func asString(v any) string {
 }
 func asBool(v any) bool {
 	b, _ := v.(bool)
+	return b
+}
+func asBytes(v any) []byte {
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return nil
+	}
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil
+	}
 	return b
 }
 func asStringSlice(v any) []string {

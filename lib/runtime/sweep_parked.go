@@ -45,6 +45,7 @@ func SweepParkedNodes(ctx context.Context, args ParkedSweepArgs) error {
 			Queue:        args.Queue,
 			Logger:       log,
 			TargetNodeID: row.NodeID,
+			NodeRunID:    row.NodeRunID,
 			SupervisorID: args.SupervisorID,
 		}
 		if args.Metrics != nil {

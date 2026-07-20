@@ -99,7 +99,7 @@ func RunInstanceList(ctx context.Context, args []string) int {
 	_ = fs
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
-	all, err := pagedListInstances(ctx, c, ListInstancesQuery{TemplateHash: template})
+	all, err := PagedListInstances(ctx, c, ListInstancesQuery{TemplateHash: template})
 	if err != nil {
 		return reportError(err)
 	}
@@ -132,7 +132,7 @@ func RunInstanceList(ctx context.Context, args []string) int {
 	return 0
 }
 
-func pagedListInstances(ctx context.Context, c *Client, q ListInstancesQuery) ([]Instance, error) {
+func PagedListInstances(ctx context.Context, c *Client, q ListInstancesQuery) ([]Instance, error) {
 	var all []Instance
 	for {
 		page, err := c.ListInstances(ctx, q)

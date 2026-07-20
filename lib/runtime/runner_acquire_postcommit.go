@@ -74,6 +74,7 @@ func bailAcquiredLock(ctx context.Context, args RunArgs, lk AcquiredLock) error 
 			Producer:      lk.Producer,
 			Scope:         claimScope(lk),
 			Address:       claimAddress(lk),
+			LeaseToken:    lk.ProducerLeaseToken,
 		})
 		if err != nil {
 			return err

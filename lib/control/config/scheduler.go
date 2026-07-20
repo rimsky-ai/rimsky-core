@@ -25,6 +25,7 @@ type SchedulerConfig struct {
 	MaxQuietPeriodDefault   time.Duration
 	ClaimProducers          RemoteClaimProducersConfig
 	Executors               ExecutorsConfig
+	Publishers              RemotePublishersConfig
 	NamedLocks              locks.NamedLocksConfig
 	SupervisorID            string
 	Blob                    persistence.BlobBackend
@@ -59,12 +60,13 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: Driver.Queue() returned nil")
 	}
+	// @concept: advisory-lock
 	coordinator := cfg.Driver.AdvisoryLocker()
 	if coordinator == nil {
 		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: Driver.Coordinator() returned nil")
 	}
-	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors)
+	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
 	if err != nil {
 		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: dial lifecycle subscribers: %w", err)

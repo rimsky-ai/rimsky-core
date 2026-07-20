@@ -87,8 +87,9 @@ const (
 	OperationalKind_OPERATIONAL_KIND_BREAKPOINT_HIT OperationalKind = 50
 	// Message bus (operational-side audit of message activity, distinct
 	// from the signal-class `message/...` topology).
-	OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT     OperationalKind = 60
-	OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED OperationalKind = 61
+	OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT          OperationalKind = 60
+	OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED      OperationalKind = 61
+	OperationalKind_OPERATIONAL_KIND_MESSAGE_DEAD_LETTERED OperationalKind = 62
 	// Fan-out + sub-claim + sub-graph dispatch.
 	OperationalKind_OPERATIONAL_KIND_FAN_OUT_DISPATCHED              OperationalKind = 70
 	OperationalKind_OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED         OperationalKind = 71
@@ -145,6 +146,7 @@ var (
 		50: "OPERATIONAL_KIND_BREAKPOINT_HIT",
 		60: "OPERATIONAL_KIND_MESSAGE_SENT",
 		61: "OPERATIONAL_KIND_MESSAGE_RECEIVED",
+		62: "OPERATIONAL_KIND_MESSAGE_DEAD_LETTERED",
 		70: "OPERATIONAL_KIND_FAN_OUT_DISPATCHED",
 		71: "OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED",
 		72: "OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE",
@@ -192,6 +194,7 @@ var (
 		"OPERATIONAL_KIND_BREAKPOINT_HIT":                  50,
 		"OPERATIONAL_KIND_MESSAGE_SENT":                    60,
 		"OPERATIONAL_KIND_MESSAGE_RECEIVED":                61,
+		"OPERATIONAL_KIND_MESSAGE_DEAD_LETTERED":           62,
 		"OPERATIONAL_KIND_FAN_OUT_DISPATCHED":              70,
 		"OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED":         71,
 		"OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE":        72,
@@ -2302,7 +2305,7 @@ const file_events_proto_rawDesc = "" +
 	"\tdirective\x18\x01 \x01(\tR\tdirective\x12\x12\n" +
 	"\x04site\x18\x02 \x01(\tR\x04site\x12\x14\n" +
 	"\x05field\x18\x03 \x01(\tR\x05field\x12\x16\n" +
-	"\x06reason\x18\x04 \x01(\tR\x06reason*\xac\x0f\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason*\xd8\x0f\n" +
 	"\x0fOperationalKind\x12 \n" +
 	"\x1cOPERATIONAL_KIND_UNSPECIFIED\x10\x00\x12*\n" +
 	"&OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED\x10\x01\x12'\n" +
@@ -2340,7 +2343,8 @@ const file_events_proto_rawDesc = "" +
 	",OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE\x10.\x12#\n" +
 	"\x1fOPERATIONAL_KIND_BREAKPOINT_HIT\x102\x12!\n" +
 	"\x1dOPERATIONAL_KIND_MESSAGE_SENT\x10<\x12%\n" +
-	"!OPERATIONAL_KIND_MESSAGE_RECEIVED\x10=\x12'\n" +
+	"!OPERATIONAL_KIND_MESSAGE_RECEIVED\x10=\x12*\n" +
+	"&OPERATIONAL_KIND_MESSAGE_DEAD_LETTERED\x10>\x12'\n" +
 	"#OPERATIONAL_KIND_FAN_OUT_DISPATCHED\x10F\x12,\n" +
 	"(OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED\x10G\x12-\n" +
 	")OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE\x10H\x12&\n" +

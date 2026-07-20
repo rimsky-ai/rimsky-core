@@ -6,6 +6,7 @@ package launch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -110,7 +111,7 @@ func resolveSupervisorConfig(cfg supervisorYAMLConfig) (supervisorResolvedConfig
 	}, nil
 }
 
-func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations, preOpenedBlob persistence.BlobBackend) (StopFunc, <-chan error, error) {
 	cfgPath := os.Getenv("RIMSKY_SUPERVISOR_CONFIG")
 	if cfgPath == "" {
 		err := fmt.Errorf("missing RIMSKY_SUPERVISOR_CONFIG (path to YAML)")
@@ -175,13 +176,16 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 			"advertise_port", advertisePort)
 	}
 
-	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology)
-	if err != nil {
-		log.Error("config.OpenBlobBackend", "error", err.Error())
-		return nil, nil, err
+	blobBackend := preOpenedBlob
+	if blobBackend == nil {
+		blobBackend, err = config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology)
+		if err != nil {
+			log.Error("config.OpenBlobBackend", "error", err.Error())
+			return nil, nil, err
+		}
 	}
 
-	resolver := executor.NewStaticResolver(endpoints)
+	staticResolver := executor.NewStaticResolver(endpoints)
 
 	execPeers := make([]observability.PeerSpec, 0, len(rimskyCfg.Executors.Executors))
 	for name, e := range rimskyCfg.Executors.Executors {
@@ -194,11 +198,13 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	disc := observability.RunHandshake(ctx, observability.NewGRPCProber(), execPeers, nil, logger)
 
 	if bundledRegs != nil {
-		mergeBundledExecutorAliases(resolver, endpoints, bundledRegs.ExecutorAliases, func(name string) {
+		mergeBundledExecutorAliases(staticResolver, endpoints, bundledRegs.ExecutorAliases, func(name string) {
 			log.Info("bundled executor overridden by configured endpoint", "executor", name)
 		})
-		bundledRegs.AdvertiseInto(disc)
+		bundledRegs.AdvertiseInto(disc, rimskyCfg.Executors.Executors, storesCfg.ClaimProducers)
 	}
+
+	resolver := buildSupervisorResolver(staticResolver, rimskyCfg.LateBindServiceProxies, driver.Tables())
 
 	mreg := observability.NewMetricsRegistry()
 
@@ -220,6 +226,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		ClaimPollInterval:           resolved.ClaimPollInterval,
 		Resolver:                    resolver,
 		ClaimProducers:              storesCfg,
+		Publishers:                  rimskyCfg.Publishers,
 		NamedLocks:                  namedLocksCfg,
 		Validators:                  rimskyCfg.Validators,
 		DataProcessors:              rimskyCfg.DataProcessors,
@@ -275,6 +282,16 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		return firstErr
 	}
 	return stop, reporter.ch, nil
+}
+
+func buildSupervisorResolver(staticResolver *executor.StaticResolver, lateBindProxies map[string]string, persistTables persistence.Tables) executor.Resolver {
+	if len(lateBindProxies) == 0 {
+		return staticResolver
+	}
+	lookupBindings := func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
+		return config.LookupInstanceBindings(ctx, persistTables, instanceID)
+	}
+	return executor.NewLateBindResolver(staticResolver, lookupBindings, lateBindProxies)
 }
 
 func mergeBundledExecutorAliases(resolver *executor.StaticResolver, configured map[string]executor.Endpoint, bundled map[string]executor.Endpoint, onOverride func(name string)) {

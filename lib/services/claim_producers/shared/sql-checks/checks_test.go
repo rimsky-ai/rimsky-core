@@ -251,6 +251,72 @@ func TestRun_AnyFailFails(t *testing.T) {
 	}
 }
 
+type queryErrConn struct {
+	err error
+}
+
+func (c *queryErrConn) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
+	return nil, c.err
+}
+
+func TestRun_QueryErrorIsInfraNotCheckFailure(t *testing.T) {
+	conn := &queryErrConn{err: errors.New("connection reset by peer")}
+	specs := []CheckSpec{
+		{Kind: "row_count_absolute", Config: map[string]any{"min": 1000}},
+	}
+	results, err := Run(context.Background(), conn, "s", "t", specs)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+	r := results[0]
+	if r.Error == "" {
+		t.Fatal("expected Result.Error to be populated for a query infrastructure failure")
+	}
+	if !strings.Contains(r.Error, "connection reset by peer") {
+		t.Fatalf("Result.Error = %q, want it to mention the underlying error", r.Error)
+	}
+	if r.Message != "" {
+		t.Fatalf("Result.Message = %q, want empty (infra failures belong in Error, not Message)", r.Message)
+	}
+	if r.Pass {
+		t.Fatal("Result.Pass should be false on an infra failure")
+	}
+}
+
+type scanErrRows struct{}
+
+func (r *scanErrRows) Next() bool             { return true }
+func (r *scanErrRows) Scan(dest ...any) error { return errors.New("cannot scan NULL into *int64") }
+func (r *scanErrRows) Close()                 {}
+func (r *scanErrRows) Err() error             { return nil }
+
+type scanErrConn struct{}
+
+func (c *scanErrConn) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
+	return &scanErrRows{}, nil
+}
+
+func TestRun_ScanErrorIsInfraNotCheckFailure(t *testing.T) {
+	conn := &scanErrConn{}
+	specs := []CheckSpec{
+		{Kind: "row_count_absolute", Config: map[string]any{"min": 1000}},
+	}
+	results, err := Run(context.Background(), conn, "s", "t", specs)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	r := results[0]
+	if r.Error == "" {
+		t.Fatal("expected Result.Error to be populated for a scan infrastructure failure")
+	}
+	if r.Pass {
+		t.Fatal("Result.Pass should be false on an infra failure")
+	}
+}
+
 func TestRun_EmptySpecsRejected(t *testing.T) {
 	_, err := Run(context.Background(), &fakeConn{}, "s", "t", nil)
 	if err == nil {

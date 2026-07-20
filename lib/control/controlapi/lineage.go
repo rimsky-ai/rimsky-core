@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @concept: lineage-record
+// @concept: lineage
 
 package controlapi
 
@@ -21,9 +21,10 @@ import (
 )
 
 const (
-	lineageWalkDefaultDepth     = 3
-	lineageWalkMaxDepth         = 50
-	lineageWalkPerFrontierLimit = 1000
+	lineageWalkDefaultDepth = 3
+	lineageWalkMaxDepth     = 50
+	lineageScanPageSize     = 500
+	lineageScanMaxPages     = 200
 )
 
 func registerLineageRoutes(r chi.Router, deps AppDeps) {
@@ -196,6 +197,18 @@ func walkLineageRuns(
 	ctx context.Context, deps AppDeps,
 	seed shared.UUID, depth int, dir lineageWalkDirection,
 ) ([]persistence.LineageRow, error) {
+	var descendantScopeInstanceID *shared.UUID
+	if dir == lineageWalkDirectionDescendants {
+		seedRows, err := deps.Persist.Lineage().GetByRunID(ctx, seed)
+		if err != nil {
+			return nil, err
+		}
+		if len(seedRows) > 0 {
+			id := seedRows[len(seedRows)-1].InstanceID
+			descendantScopeInstanceID = &id
+		}
+	}
+
 	visited := map[shared.UUID]struct{}{seed: {}}
 	var out []persistence.LineageRow
 	frontier := []shared.UUID{seed}
@@ -225,7 +238,11 @@ func walkLineageRuns(
 					}
 				}
 			case lineageWalkDirectionDescendants:
-				children, err := deps.Persist.Lineage().QueryByParentNodeRunID(ctx, id, lineageWalkPerFrontierLimit)
+				sourceID := id.String()
+				children, _, err := queryAllLineageRecords(ctx, deps,
+					persistence.LineageQuery{Kind: persistence.LineageRecordKindLeafRun, InstanceID: descendantScopeInstanceID},
+					func(record json.RawMessage) bool { return recordMentionsSource(record, "run", sourceID) },
+					lineageScanPageSize, lineageScanMaxPages)
 				if err != nil {
 					return nil, err
 				}
@@ -246,6 +263,31 @@ func walkLineageRuns(
 		frontier = next
 	}
 	return out, nil
+}
+
+func queryAllLineageRecords(
+	ctx context.Context, deps AppDeps,
+	q persistence.LineageQuery,
+	keep func(record json.RawMessage) bool,
+	pageSize, maxPages int,
+) (matches []persistence.LineageRow, truncated bool, err error) {
+	for page := 0; page < maxPages; page++ {
+		result, err := deps.Persist.Lineage().Query(ctx, q, persistence.ListPagination{Limit: pageSize})
+		if err != nil {
+			return nil, false, err
+		}
+		for _, r := range result.Rows {
+			if keep(r.Record) {
+				matches = append(matches, r)
+			}
+		}
+		if len(result.Rows) < pageSize {
+			return matches, false, nil
+		}
+		oldest := result.Rows[len(result.Rows)-1].ObservedAt
+		q.ObservedBefore = &oldest
+	}
+	return matches, true, nil
 }
 
 func extractSubstitutionRefRunIDs(record json.RawMessage) []shared.UUID {
@@ -309,7 +351,7 @@ func handleLineageClaim(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// @concept: lineage-record
+// @concept: lineage
 func walkLineageClaims(
 	ctx context.Context, deps AppDeps,
 	seed shared.UUID, depth int, dir lineageWalkDirection,
@@ -358,7 +400,7 @@ func walkLineageClaims(
 	return out, nil
 }
 
-// @concept: lineage-record
+// @concept: lineage
 func handleLineageClaimAncestors(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		claimID, err := uuid.Parse(chi.URLParam(req, "claim_handle_id"))
@@ -383,7 +425,7 @@ func handleLineageClaimAncestors(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// @concept: lineage-record
+// @concept: lineage
 func handleLineageClaimDescendants(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		claimID, err := uuid.Parse(chi.URLParam(req, "claim_handle_id"))
@@ -416,21 +458,21 @@ func handleLineageBySource(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "source_type and source_id required")
 			return
 		}
-		page, err := deps.Persist.Lineage().Query(req.Context(), persistence.LineageQuery{
-			Kind: persistence.LineageRecordKindLeafRun,
-		}, persistence.ListPagination{Limit: 500})
+		rows, truncated, err := queryAllLineageRecords(req.Context(), deps,
+			persistence.LineageQuery{Kind: persistence.LineageRecordKindLeafRun},
+			func(record json.RawMessage) bool { return recordMentionsSource(record, sourceKind, sourceID) },
+			lineageScanPageSize, lineageScanMaxPages)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		matches := make([]lineageRecordItem, 0)
-		for _, r := range page.Rows {
-			if recordMentionsSource(r.Record, sourceKind, sourceID) {
-				matches = append(matches, toLineageItem(r))
-			}
+		matches := make([]lineageRecordItem, 0, len(rows))
+		for _, r := range rows {
+			matches = append(matches, toLineageItem(r))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"records": matches,
+			"records":   matches,
+			"truncated": truncated,
 		})
 	}
 }
@@ -464,21 +506,21 @@ func handleLineageByProducer(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		version := req.URL.Query().Get("version")
-		page, err := deps.Persist.Lineage().Query(req.Context(), persistence.LineageQuery{
-			Kind: persistence.LineageRecordKindClaimTerminal,
-		}, persistence.ListPagination{Limit: 500})
+		rows, truncated, err := queryAllLineageRecords(req.Context(), deps,
+			persistence.LineageQuery{Kind: persistence.LineageRecordKindClaimTerminal},
+			func(record json.RawMessage) bool { return recordMentionsProducer(record, producer, version) },
+			lineageScanPageSize, lineageScanMaxPages)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		matches := make([]lineageRecordItem, 0)
-		for _, r := range page.Rows {
-			if recordMentionsProducer(r.Record, producer, version) {
-				matches = append(matches, toLineageItem(r))
-			}
+		matches := make([]lineageRecordItem, 0, len(rows))
+		for _, r := range rows {
+			matches = append(matches, toLineageItem(r))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"records": matches,
+			"records":   matches,
+			"truncated": truncated,
 		})
 	}
 }

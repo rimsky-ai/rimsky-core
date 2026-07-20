@@ -68,7 +68,7 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 	t.Logf("sensor-cron restarted at %s; recovered watermark should fire on first Tick",
 		restartAt.Format(time.RFC3339Nano))
 
-	requireRecoveredPublisherMessage(t, ep, instanceID, cronPublisherName, restartAt, 90*time.Second)
+	requireRecoveredPublisherMessage(t, ep, instanceID, cronPublisherName, restartAt, originalNextFire, 90*time.Second)
 
 	requireSensorCronAdvancedWatermark(t, ctx, statePool, subID, originalNextFire, 60*time.Second)
 }
@@ -119,7 +119,7 @@ func sleepUntilPast(target time.Time, extra time.Duration) {
 	}
 }
 
-func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, instanceID, wantSender string, restartAt time.Time, deadline time.Duration) {
+func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, instanceID, wantSender string, restartAt, wantFireAt time.Time, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var lastSeen string
@@ -129,18 +129,19 @@ func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, i
 		if status == http.StatusOK {
 			var resp struct {
 				Messages []struct {
-					Type        string     `json:"type"`
-					Sender      string     `json:"sender"`
-					SenderKind  string     `json:"sender_kind"`
-					ReceivedAt  time.Time  `json:"received_at"`
-					DeliveredAt *time.Time `json:"delivered_at"`
+					Type        string          `json:"type"`
+					Sender      string          `json:"sender"`
+					SenderKind  string          `json:"sender_kind"`
+					Payload     json.RawMessage `json:"payload"`
+					ReceivedAt  time.Time       `json:"received_at"`
+					DeliveredAt *time.Time      `json:"delivered_at"`
 				} `json:"messages"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
 				for _, m := range resp.Messages {
-					lastSeen = fmt.Sprintf("type=%s sender=%s sender_kind=%s received=%s delivered=%v",
+					lastSeen = fmt.Sprintf("type=%s sender=%s sender_kind=%s received=%s delivered=%v payload=%s",
 						m.Type, m.Sender, m.SenderKind,
-						m.ReceivedAt.UTC().Format(time.RFC3339Nano), m.DeliveredAt)
+						m.ReceivedAt.UTC().Format(time.RFC3339Nano), m.DeliveredAt, string(m.Payload))
 					if m.SenderKind != "publisher" {
 						continue
 					}
@@ -156,6 +157,14 @@ func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, i
 							m.ReceivedAt.UTC().Format(time.RFC3339Nano),
 							restartAt.UTC().Format(time.RFC3339Nano))
 					}
+					gotFireAt := decodeFireAtPayload(t, m.Payload)
+					if !gotFireAt.Truncate(time.Second).Equal(wantFireAt.UTC().Truncate(time.Second)) {
+						t.Fatalf("recovered publisher message fired for window fire_at=%s, want the "+
+							"durably-recovered window %s — a sensor that lost its watermark and "+
+							"rescheduled from wall clock instead of recovering the durable next_fire_at "+
+							"would also fire After(restartAt) but for a DIFFERENT window",
+							gotFireAt.Format(time.RFC3339Nano), wantFireAt.UTC().Format(time.RFC3339Nano))
+					}
 					return
 				}
 			}
@@ -167,6 +176,21 @@ func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, i
 		"subscription (in-memory mode bug) or recomputed next_fire_at from wall clock "+
 		"(durability contract violation)",
 		restartAt.UTC().Format(time.RFC3339Nano), instanceID, deadline, lastSeen)
+}
+
+func decodeFireAtPayload(t *testing.T, raw json.RawMessage) time.Time {
+	t.Helper()
+	var body struct {
+		FireAt string `json:"fire_at"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode publisher message payload for fire_at: %v: %s", err, string(raw))
+	}
+	fireAt, err := time.Parse(time.RFC3339, body.FireAt)
+	if err != nil {
+		t.Fatalf("parse payload fire_at %q: %v", body.FireAt, err)
+	}
+	return fireAt.UTC()
 }
 
 func requireSensorCronAdvancedWatermark(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string, original time.Time, deadline time.Duration) {

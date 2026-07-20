@@ -181,30 +181,6 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, nod
 	return rowsAffected == 1, nil
 }
 
-func (q *queueImpl) RebindRunFrameInTx(
-	ctx context.Context, tx persistence.Tx,
-	nodeRunID, newFrameID shared.UUID,
-) error {
-	if tx == nil {
-		return errors.New("sqlite.RebindRunFrameInTx: tx required")
-	}
-	res, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs SET frame_id = ? WHERE id = ?`,
-		newFrameID.String(), nodeRunID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("sqlite.RebindRunFrameInTx: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("sqlite.RebindRunFrameInTx: rows affected: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("sqlite.RebindRunFrameInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
-	}
-	return nil
-}
-
 func (q *queueImpl) GetRetryNoProgress(ctx context.Context, nodeRunID shared.UUID) (int, *int, error) {
 	var (
 		count    int
@@ -295,6 +271,7 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, node
 }
 
 // @concept: executor
+// @concept: blob-backend
 func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, inline []byte, handle, handleBackend string) error {
 	if tx == nil {
 		return errors.New("sqlite.WriteScratchInTx: tx required")
@@ -302,6 +279,20 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nod
 	if len(inline) > 0 && handle != "" {
 		return errors.New("sqlite.WriteScratchInTx: inline and handle are mutually exclusive")
 	}
+	if q.tables == nil {
+		return errors.New("sqlite.WriteScratchInTx: queue not wired with tables")
+	}
+	var priorHandle, priorBackend sql.NullString
+	if err := q.q(tx).QueryRowContext(ctx,
+		`SELECT scratch_handle, scratch_handle_backend FROM rimsky_node_runs WHERE id = ?`,
+		nodeRunID.String(),
+	).Scan(&priorHandle, &priorBackend); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("sqlite.WriteScratchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
+		}
+		return fmt.Errorf("sqlite.WriteScratchInTx: read prior handle: %w", err)
+	}
+
 	var inlineArg any
 	if len(inline) > 0 {
 		inlineArg = inline
@@ -323,6 +314,12 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nod
 	}
 	if n == 0 {
 		return fmt.Errorf("sqlite.WriteScratchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
+	}
+	if priorHandle.Valid && priorHandle.String != "" && priorHandle.String != handle {
+		if err := persistence.QueueBlobOrphan(ctx, q.tables.BlobOrphans(), tx,
+			priorHandle.String, priorBackend.String, time.Now().UTC(), q.tables.blobRetention); err != nil {
+			return fmt.Errorf("sqlite.WriteScratchInTx: queue prior orphan: %w", err)
+		}
 	}
 	return nil
 }

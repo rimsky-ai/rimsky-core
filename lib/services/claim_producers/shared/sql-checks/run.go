@@ -42,7 +42,7 @@ func Run(ctx context.Context, conn Conn, schema, table string, specs []CheckSpec
 func runOne(ctx context.Context, conn Conn, c Compiled) Result {
 	rows, err := conn.Query(ctx, c.SQL)
 	if err != nil {
-		return Result{Kind: c.Kind, Message: fmt.Sprintf("query failed: %v", err)}
+		return Result{Kind: c.Kind, Error: fmt.Sprintf("query failed: %v", err)}
 	}
 	defer rows.Close()
 
@@ -50,19 +50,19 @@ func runOne(ctx context.Context, conn Conn, c Compiled) Result {
 	case "pk_unique":
 		hasRow := rows.Next()
 		if err := rows.Err(); err != nil {
-			return Result{Kind: c.Kind, Message: fmt.Sprintf("scan failed: %v", err)}
+			return Result{Kind: c.Kind, Error: fmt.Sprintf("scan failed: %v", err)}
 		}
 		return c.Interpret(hasRow)
 	default:
 		if !rows.Next() {
 			if err := rows.Err(); err != nil {
-				return Result{Kind: c.Kind, Message: fmt.Sprintf("scan failed: %v", err)}
+				return Result{Kind: c.Kind, Error: fmt.Sprintf("scan failed: %v", err)}
 			}
 			return Result{Kind: c.Kind, Message: "query returned no rows"}
 		}
 		var val any
 		if err := rows.Scan(&val); err != nil {
-			return Result{Kind: c.Kind, Message: fmt.Sprintf("scan failed: %v", err)}
+			return Result{Kind: c.Kind, Error: fmt.Sprintf("scan failed: %v", err)}
 		}
 		return c.Interpret(val)
 	}

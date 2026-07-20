@@ -7,7 +7,7 @@ status: adopted
 
 ## Choice
 
-`--quiet` collapses output to the final aggregate summary; `--verbose` adds frame ticks, scheduler decisions, and claim-handle events; `--json` switches every line to a JSON object (JSON Lines format).
+`--quiet` collapses output to the final aggregate summary; `--verbose` adds frame-tick lines on top of the default instance-starting / node-run-terminal / instance-terminal lines; `--json` switches every line to a JSON object (JSON Lines format).
 
 ## Rationale
 

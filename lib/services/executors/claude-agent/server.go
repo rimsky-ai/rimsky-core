@@ -75,7 +75,10 @@ func NewExecutorServer(cfg ServerConfig) *ExecutorServer {
 	return &ExecutorServer{cfg: cfg}
 }
 
-func (s *ExecutorServer) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+func (s *ExecutorServer) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+	if probeCancel, _ := req.GetAttributes().AsMap()["probe_cancel"].(bool); probeCancel && StubModeEnabled() {
+		return nil, executeCancelProbe(ctx, req.GetCallbackUrl())
+	}
 	ackID := uuid.NewString()
 	runID := req.GetDispatchId()
 	if runID == "" {
@@ -256,6 +259,32 @@ func (s *ExecutorServer) postFailure(
 	_ = ackID
 }
 
+var cancelProbeHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+func postCancelProbeSignal(callbackURL, ackID string) {
+	if callbackURL == "" {
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, buildCallbackURL(callbackURL, ackID),
+		bytes.NewReader([]byte(`{"success":{"changed":false}}`)))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := cancelProbeHTTPClient.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
+}
+
+func executeCancelProbe(ctx context.Context, callbackURL string) error {
+	postCancelProbeSignal(callbackURL, "cancel-observed")
+	<-ctx.Done()
+	postCancelProbeSignal(callbackURL, "cancel-acknowledged")
+	return ctx.Err()
+}
+
 func buildCallbackURL(base string, ackID string) string {
 	trimmed := strings.TrimRight(base, "/")
 	return trimmed + "/v1/callback/" + url.PathEscape(ackID)
@@ -297,9 +326,17 @@ func claimProducerNames(claimProducers map[string]*genv1.ClaimProducerHandle) []
 	return names
 }
 
+var defaultCallbackHTTPClient = &http.Client{Timeout: callbackPostTimeout}
+
 func DefaultPostCallback(callbackURL string, body map[string]any, logger *slog.Logger) {
-	PostCallbackVia(http.DefaultClient)(callbackURL, body, logger)
+	PostCallbackVia(defaultCallbackHTTPClient)(callbackURL, body, logger)
 }
+
+const (
+	callbackPostMaxAttempts = 5
+	callbackPostBaseDelay   = 200 * time.Millisecond
+	callbackPostTimeout     = 10 * time.Second
+)
 
 func PostCallbackVia(client *http.Client) PostCallbackFn {
 	return func(callbackURL string, body map[string]any, logger *slog.Logger) {
@@ -308,16 +345,33 @@ func PostCallbackVia(client *http.Client) PostCallbackFn {
 			logger.Error("callback POST body marshal failed", "error", err.Error(), "url", callbackURL)
 			return
 		}
-		resp, err := client.Post(callbackURL, "application/json", bytes.NewReader(raw))
-		if err != nil {
-			logger.Error("callback POST failed", "error", err.Error(), "url", callbackURL)
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode > 299 {
-			logger.Warn("callback POST returned non-2xx", "status", resp.StatusCode, "url", callbackURL)
+		delay := callbackPostBaseDelay
+		for attempt := 1; attempt <= callbackPostMaxAttempts; attempt++ {
+			if postCallbackOnce(client, callbackURL, raw, attempt, logger) {
+				return
+			}
+			if attempt == callbackPostMaxAttempts {
+				logger.Error("callback POST exhausted retries; outcome dropped", "attempts", attempt, "url", callbackURL)
+				return
+			}
+			time.Sleep(delay)
+			delay *= 2
 		}
 	}
+}
+
+func postCallbackOnce(client *http.Client, callbackURL string, raw []byte, attempt int, logger *slog.Logger) bool {
+	resp, err := client.Post(callbackURL, "application/json", bytes.NewReader(raw))
+	if err != nil {
+		logger.Warn("callback POST failed", "attempt", attempt, "error", err.Error(), "url", callbackURL)
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		logger.Warn("callback POST returned non-2xx", "attempt", attempt, "status", resp.StatusCode, "url", callbackURL)
+		return false
+	}
+	return true
 }
 
 type RunningGrpcServer struct {
@@ -325,8 +379,18 @@ type RunningGrpcServer struct {
 	server  *grpc.Server
 }
 
-func (r *RunningGrpcServer) Shutdown() {
-	r.server.GracefulStop()
+func (r *RunningGrpcServer) Shutdown(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		r.server.GracefulStop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		r.server.Stop()
+		<-done
+	}
 }
 
 func StartGrpcServer(host string, port int, executor *ExecutorServer, observability *ObservabilityServer, identity *peerauth.Identity) (*RunningGrpcServer, error) {

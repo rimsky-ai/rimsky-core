@@ -119,6 +119,91 @@ func TestSplitScope_ListShape(t *testing.T) {
 	}
 }
 
+func TestSplitScope_ListDuplicateKeyRejected(t *testing.T) {
+	srv, _, root := newServerWithStore(t)
+	if err := os.MkdirAll(filepath.Join(root, "parent"), 0o755); err != nil {
+		t.Fatalf("mkdir parent: %v", err)
+	}
+	if _, err := srv.Open(context.Background(), &genv1.OpenRequest{
+		ClaimId:  "p1",
+		Selector: "parent",
+		Intent:   "rw",
+	}); err != nil {
+		t.Fatalf("Open parent: %v", err)
+	}
+	req := &genv1.SplitScopeRequest{
+		ClaimHandleId:    "p1",
+		PartitionRequest: []byte(`{"list":[{"key":"a","payload":{}},{"key":"a","payload":{}}]}`),
+	}
+	_, err := srv.SplitScope(context.Background(), req)
+	if err == nil {
+		t.Fatal("SplitScope: expected error for duplicate list key, got nil")
+	}
+	if st, ok := status.FromError(err); !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("SplitScope: expected InvalidArgument, got %v", err)
+	}
+}
+
+func TestSplitScope_ListTraversalKeyRejected(t *testing.T) {
+	srv, _, root := newServerWithStore(t)
+	if err := os.MkdirAll(filepath.Join(root, "parent"), 0o755); err != nil {
+		t.Fatalf("mkdir parent: %v", err)
+	}
+	if _, err := srv.Open(context.Background(), &genv1.OpenRequest{
+		ClaimId:  "p1",
+		Selector: "parent",
+		Intent:   "rw",
+	}); err != nil {
+		t.Fatalf("Open parent: %v", err)
+	}
+	cases := []string{"../escape", "a/../b", "..", ".", "sub/dir"}
+	for _, key := range cases {
+		key := key
+		t.Run(key, func(t *testing.T) {
+			req := &genv1.SplitScopeRequest{
+				ClaimHandleId:    "p1",
+				PartitionRequest: []byte(fmt.Sprintf(`{"list":[{"key":%q,"payload":{}}]}`, key)),
+			}
+			_, err := srv.SplitScope(context.Background(), req)
+			if err == nil {
+				t.Fatalf("SplitScope: expected error for traversal key %q, got nil", key)
+			}
+			if st, ok := status.FromError(err); !ok || st.Code() != codes.InvalidArgument {
+				t.Fatalf("SplitScope: expected InvalidArgument for key %q, got %v", key, err)
+			}
+		})
+	}
+}
+
+func TestSplitScope_ListTraversalAndDuplicateKeysCollapseToDistinctScopes(t *testing.T) {
+	srv, _, root := newServerWithStore(t)
+	if err := os.MkdirAll(filepath.Join(root, "parent"), 0o755); err != nil {
+		t.Fatalf("mkdir parent: %v", err)
+	}
+	if _, err := srv.Open(context.Background(), &genv1.OpenRequest{
+		ClaimId:  "p1",
+		Selector: "parent",
+		Intent:   "rw",
+	}); err != nil {
+		t.Fatalf("Open parent: %v", err)
+	}
+	req := &genv1.SplitScopeRequest{
+		ClaimHandleId:    "p1",
+		PartitionRequest: []byte(`{"list":[{"key":"a","payload":{}},{"key":"b","payload":{}}]}`),
+	}
+	resp, err := srv.SplitScope(context.Background(), req)
+	if err != nil {
+		t.Fatalf("SplitScope: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, sub := range resp.SubScopes {
+		if seen[string(sub.ClaimScopeData)] {
+			t.Fatalf("SplitScope: overlapping ClaimScopeData %s across sibling sub-scopes", sub.ClaimScopeData)
+		}
+		seen[string(sub.ClaimScopeData)] = true
+	}
+}
+
 func TestSplitScope_BatchPickShape(t *testing.T) {
 	srv, _, root := newServerWithPickPolicy(t, "queue", action.Action{Kind: action.Recycle})
 	for _, name := range []string{"f1", "f2", "f3", "f4", "f5"} {

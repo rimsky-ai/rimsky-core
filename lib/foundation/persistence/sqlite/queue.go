@@ -148,6 +148,15 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	return nil
 }
 
+func containsStr(list []string, v string) bool {
+	for _, s := range list {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
 func (q *queueImpl) SelectCandidates(
 	ctx context.Context, tx persistence.Tx, req persistence.SelectCandidatesRequest,
 ) ([]persistence.Candidate, error) {
@@ -172,7 +181,7 @@ func (q *queueImpl) SelectCandidates(
 
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
-		        d.prior_dispatch_id, d.prior_dispatch_disposition, d.state
+		        d.prior_dispatch_id, d.prior_dispatch_disposition, d.state, i.service_bindings
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		   JOIN rimsky_instances i ON i.id = n.instance_id
@@ -201,29 +210,31 @@ func (q *queueImpl) SelectCandidates(
 	}
 	defer rows.Close()
 
-	executorAccepted := func(executor string, required []string) bool {
+	lateBoundIn := func(name string, serviceBindings map[string]json.RawMessage, proxy string, accepted []string) bool {
+		if proxy == "" || !containsStr(accepted, proxy) {
+			return false
+		}
+		_, ok := serviceBindings[name]
+		return ok
+	}
+	executorAccepted := func(executor string, serviceBindings map[string]json.RawMessage) bool {
 		if executor == "" {
 			return true
 		}
-		for _, a := range acceptedExecutors {
-			if a == executor {
-				return true
-			}
+		if containsStr(acceptedExecutors, executor) {
+			return true
 		}
-		return false
+		return lateBoundIn(executor, serviceBindings, req.LateBindExecutorProxy, acceptedExecutors)
 	}
-	storeAccepted := func(required []string) bool {
+	storeAccepted := func(required []string, serviceBindings map[string]json.RawMessage) bool {
 		for _, r := range required {
-			found := false
-			for _, a := range acceptedClaimProducers {
-				if a == r {
-					found = true
-					break
-				}
+			if containsStr(acceptedClaimProducers, r) {
+				continue
 			}
-			if !found {
-				return false
+			if lateBoundIn(r, serviceBindings, req.LateBindClaimProducerProxy, acceptedClaimProducers) {
+				continue
 			}
+			return false
 		}
 		return true
 	}
@@ -242,11 +253,18 @@ func (q *queueImpl) SelectCandidates(
 			priorDispatchIDStr        sql.NullString
 			priorDispositionStr       sql.NullString
 			preClaimStateStr          sql.NullString
+			serviceBindingsStr        sql.NullString
 		)
 		if err := rows.Scan(&dispatchIDStr, &nodeIDStr, &nodeType, &executorName,
 			&requiredClaimProducersStr, &enqueuedAtStr, &frameIDStr,
-			&priorDispatchIDStr, &priorDispositionStr, &preClaimStateStr); err != nil {
+			&priorDispatchIDStr, &priorDispositionStr, &preClaimStateStr, &serviceBindingsStr); err != nil {
 			return nil, fmt.Errorf("sqlite.SelectCandidates: scan: %w", err)
+		}
+		serviceBindings := map[string]json.RawMessage{}
+		if serviceBindingsStr.Valid && serviceBindingsStr.String != "" {
+			if err := json.Unmarshal([]byte(serviceBindingsStr.String), &serviceBindings); err != nil {
+				return nil, fmt.Errorf("sqlite.SelectCandidates: unmarshal service_bindings: %w", err)
+			}
 		}
 		c.NodeType = nodeType
 		if executorName.Valid {
@@ -270,7 +288,7 @@ func (q *queueImpl) SelectCandidates(
 			return nil, err
 		}
 		c.RequiredClaimProducers = stores
-		if !executorAccepted(c.ExecutorName, c.RequiredClaimProducers) || !storeAccepted(c.RequiredClaimProducers) {
+		if !executorAccepted(c.ExecutorName, serviceBindings) || !storeAccepted(c.RequiredClaimProducers, serviceBindings) {
 			continue
 		}
 		if c.NodeRunID, err = uuid.Parse(dispatchIDStr); err != nil {
@@ -745,6 +763,7 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 		`SELECT id FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ?
 		    AND state IN ('pending','stale','running','held','parked')
+		  ORDER BY sequence ASC
 		  LIMIT 1`,
 		nodeID.String(), runScopeID.String())
 	var idStr string
@@ -766,7 +785,7 @@ func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persi
 	row := q.q(tx).QueryRowContext(ctx,
 		`SELECT id FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ?
-		  ORDER BY enqueued_at DESC, id DESC
+		  ORDER BY sequence DESC
 		  LIMIT 1`,
 		nodeID.String(), runScopeID.String())
 	var idStr string

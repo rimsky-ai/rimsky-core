@@ -60,15 +60,18 @@ func insertCoHolderClaimHoldersAtAcquire(
 		if upstreamType == "" {
 			continue
 		}
-		upstreamNode := findInstanceNodeByType(ctx, args, tx, nd.InstanceID, upstreamType)
-		if upstreamNode == nil {
-			args.Logger.Warn("insertCoHolderClaimHoldersAtAcquire: upstream node-type not found in instance",
-				"node_id", cand.NodeID.String(),
-				"alias", alias,
-				"upstream_type", upstreamType)
-			continue
+		upstreamNode, err := findInstanceNodeByType(ctx, args, tx, nd.InstanceID, upstreamType)
+		if err != nil {
+			return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: find upstream node (alias %q): %w", alias, err)
 		}
-		lh := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmpl, upstreamType, alias)
+		if upstreamNode == nil {
+			return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: upstream node-type %q not found in instance %s (alias %q)",
+				upstreamType, nd.InstanceID.String(), alias)
+		}
+		lh, err := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmpl, upstreamType, alias, frameID)
+		if err != nil {
+			return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: lookup claim handle (alias %q): %w", alias, err)
+		}
 		if lh == nil {
 			continue
 		}

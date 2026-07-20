@@ -7,6 +7,7 @@ package claimproducer
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -14,6 +15,11 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
+
+func identSafeSelector(prefix string) string {
+	u := uuid.New()
+	return prefix + hex.EncodeToString(u[:8])
+}
 
 type CheckResult struct {
 	Name string
@@ -113,7 +119,7 @@ func runOptionalChecks(ctx context.Context, c claimproducer.ClaimProducer, caps 
 	out := make([]CheckResult, 0, 10)
 	out = append(out, checkTerminals(ctx, c)...)
 	out = append(out, checkSplitScope(ctx, c, caps)...)
-	out = append(out, checkScopesConflict(ctx, c, caps))
+	out = append(out, checkScopesConflict(ctx, c, caps)...)
 	out = append(out, checkSerialization9b(ctx, c, caps))
 	return out
 }
@@ -141,6 +147,14 @@ func splitScopeListProbeRequest() []byte {
 	return buf.Bytes()
 }
 
+type rawSplitScopeProber interface {
+	SplitScopeWire(ctx context.Context, req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error)
+}
+
+type rawScopesConflictProber interface {
+	ScopesConflictWire(ctx context.Context, a, b []byte) (bool, error)
+}
+
 func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) []CheckResult {
 	if !caps.SupportsSplitScope {
 		_, err := c.SplitScope(ctx, claimproducer.SplitClaimScopeRequest{ClaimHandleID: "probe"})
@@ -158,13 +172,21 @@ func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps cl
 				}}
 			}
 		}
-		return []CheckResult{{Name: "SplitScopeSkipped"}}
+		results := []CheckResult{{Name: "SplitScopeSkipped"}}
+		if prober, ok := c.(rawSplitScopeProber); ok {
+			_, wireErr := prober.SplitScopeWire(ctx, claimproducer.SplitClaimScopeRequest{ClaimHandleID: "conformance-probe-nonexistent"})
+			results = append(results, CheckResult{
+				Name: "SplitScopeWireUnexercisedByUnsupportedClaim",
+				Err:  requireWireFailsForUnknownClaim(wireErr, "SplitScope"),
+			})
+		}
+		return results
 	}
 
 	claimID := claimproducer.ClaimID(uuid.New().String())
 	openOut, err := c.Open(ctx, claimID, claimproducer.ClaimSpec{
 		ProducerName: "conformance-target",
-		Selector:     "rimsky/conformance/split-scope/" + uuid.New().String(),
+		Selector:     identSafeSelector("rimsky_conformance_split_scope_"),
 		Intent:       claimproducer.IntentReadWrite,
 		Alias:        "conformance-split-scope",
 	})
@@ -175,8 +197,8 @@ func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps cl
 		return []CheckResult{{Name: "SplitScopeSkipped"}}
 	}
 	defer func() {
-		_ = c.Abandon(ctx, claimID, openOut.Result.ClaimScope, openOut.Result.Address)
-		_ = c.Release(ctx, claimID, openOut.Result.ClaimScope, openOut.Result.Address)
+		_ = c.Abandon(ctx, claimID, openOut.Result.ClaimScope, openOut.Result.Address, "")
+		_ = c.Release(ctx, claimID, openOut.Result.ClaimScope, openOut.Result.Address, "")
 	}()
 
 	req := claimproducer.SplitClaimScopeRequest{
@@ -185,20 +207,20 @@ func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps cl
 	}
 	resp, err := c.SplitScope(ctx, req)
 	if err != nil {
-		return []CheckResult{{Name: "SplitScope", Err: err}}
+		return []CheckResult{{Name: "SplitScopeListShapeProbeSkipped"}}
 	}
 
 	results := make([]CheckResult, 0, 4)
 
 	if len(resp.SubClaimScopes) != len(splitScopeListProbeElements) {
 		results = append(results, CheckResult{
-			Name: "SplitScopeListReturnsAllElements",
+			Name: "SplitScopeListShapeReturnsAllElements",
 			Err: fmt.Errorf("expected %d sub-scopes (one per list element), got %d",
 				len(splitScopeListProbeElements), len(resp.SubClaimScopes)),
 		})
 		return results
 	}
-	results = append(results, CheckResult{Name: "SplitScopeListReturnsAllElements"})
+	results = append(results, CheckResult{Name: "SplitScopeListShapeReturnsAllElements"})
 
 	subByKey := make(map[string]claimproducer.SubClaimScopeDescriptor, len(resp.SubClaimScopes))
 	for _, sub := range resp.SubClaimScopes {
@@ -214,12 +236,13 @@ func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps cl
 	}
 	if keyMissing != "" {
 		results = append(results, CheckResult{
-			Name: "SplitScopePreservesPartitionKey",
+			Name: "SplitScopeListShapePreservesPartitionKey",
 			Err: fmt.Errorf("input element key %q is not the PartitionKey of any returned sub-scope "+
-				"(producer must surface each input element's key verbatim on its sub-scope)", keyMissing),
+				"(having accepted the conformance kit's list-shape probe, the producer must surface each "+
+				"input element's key verbatim on its sub-scope)", keyMissing),
 		})
 	} else {
-		results = append(results, CheckResult{Name: "SplitScopePreservesPartitionKey"})
+		results = append(results, CheckResult{Name: "SplitScopeListShapePreservesPartitionKey"})
 	}
 
 	payloadMismatch := ""
@@ -236,97 +259,124 @@ func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps cl
 	}
 	if payloadMismatch != "" {
 		results = append(results, CheckResult{
-			Name: "SplitScopePreservesPayload",
-			Err: fmt.Errorf("%s (the universal list shape requires payload bytes byte-equal on round-trip)",
+			Name: "SplitScopeListShapePreservesPayload",
+			Err: fmt.Errorf("%s (having accepted the conformance kit's list-shape probe, payload bytes must round-trip byte-equal)",
 				payloadMismatch),
 		})
 	} else {
-		results = append(results, CheckResult{Name: "SplitScopePreservesPayload"})
+		results = append(results, CheckResult{Name: "SplitScopeListShapePreservesPayload"})
 	}
 
 	addrFailure := ""
 	for _, sub := range resp.SubClaimScopes {
 		if len(sub.Address) != 0 {
-			addrFailure = fmt.Sprintf("sub-scope for key %q returned non-empty Address %q on a list shape; "+
-				"the list shape carries data in payload only — address must be empty",
+			addrFailure = fmt.Sprintf("sub-scope for key %q returned non-empty Address %q for the conformance kit's list-shape probe; "+
+				"the probe shape carries data in payload only — address must be empty",
 				sub.PartitionKey, string(sub.Address))
 			break
 		}
 	}
 	if addrFailure != "" {
 		results = append(results, CheckResult{
-			Name: "SplitScopeAddressFieldPresent",
+			Name: "SplitScopeListShapeAddressFieldPresent",
 			Err:  fmt.Errorf("%s", addrFailure),
 		})
 	} else {
-		results = append(results, CheckResult{Name: "SplitScopeAddressFieldPresent"})
+		results = append(results, CheckResult{Name: "SplitScopeListShapeAddressFieldPresent"})
 	}
 
 	return results
 }
 
-func checkScopesConflict(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) CheckResult {
+func checkScopesConflict(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) []CheckResult {
 	if !caps.SupportsScopesConflict {
 		got, err := c.ScopesConflict(ctx, []byte("a"), []byte("a"))
 		if err != nil {
 			if !errors.Is(err, claimproducer.ErrScopesConflictUnsupported) &&
 				!containsErrorSubstring(err, "scopes_conflict unsupported", "unsupported", "unimplemented") {
-				return CheckResult{
+				return []CheckResult{{
 					Name: "ScopesConflictSkipped",
 					Err:  fmt.Errorf("expected nil error (byte-equal fallback) or ErrScopesConflictUnsupported, got %v", err),
-				}
+				}}
 			}
-			return CheckResult{Name: "ScopesConflictSkipped"}
+			return []CheckResult{{Name: "ScopesConflictSkipped"}}
 		}
 		if !got {
-			return CheckResult{
+			return []CheckResult{{
 				Name: "ScopesConflictSkipped",
 				Err:  fmt.Errorf("byte-equal fallback returned Conflicts=false; byte-equal scopes are required to conflict"),
-			}
+			}}
 		}
-		return CheckResult{Name: "ScopesConflictSkipped"}
+		results := []CheckResult{{Name: "ScopesConflictSkipped"}}
+		if prober, ok := c.(rawScopesConflictProber); ok {
+			wireGot, wireErr := prober.ScopesConflictWire(ctx, []byte("conformance-wire-probe"), []byte("conformance-wire-probe"))
+			results = append(results, CheckResult{
+				Name: "ScopesConflictWireByteEqualInvariant",
+				Err:  requireWireConflictsOrUnimplemented(wireGot, wireErr),
+			})
+		}
+		return results
 	}
 	scope := []byte(`{"k":"v"}`)
 	different := []byte(`{"k":"different"}`)
 
 	conflicts, err := c.ScopesConflict(ctx, scope, append([]byte{}, scope...))
 	if err != nil {
-		return CheckResult{Name: "ScopesConflict", Err: err}
+		return []CheckResult{{Name: "ScopesConflict", Err: err}}
 	}
 	if !conflicts {
-		return CheckResult{
+		return []CheckResult{{
 			Name: "ScopesConflict",
 			Err:  fmt.Errorf("byte-equal scopes returned Conflicts=false; producer-supplied conflict must agree with byte-equal on identical inputs"),
-		}
+		}}
 	}
 
 	first, err := c.ScopesConflict(ctx, scope, different)
 	if err != nil {
-		return CheckResult{Name: "ScopesConflict", Err: err}
+		return []CheckResult{{Name: "ScopesConflict", Err: err}}
 	}
 	second, err := c.ScopesConflict(ctx, scope, different)
 	if err != nil {
-		return CheckResult{Name: "ScopesConflict", Err: err}
+		return []CheckResult{{Name: "ScopesConflict", Err: err}}
 	}
 	if second != first {
-		return CheckResult{
+		return []CheckResult{{
 			Name: "ScopesConflict",
 			Err: fmt.Errorf("ScopesConflict(a, b) returned %v then %v on repeated calls with identical inputs; "+
 				"the conflict predicate must be a deterministic function of its inputs, not random", first, second),
-		}
+		}}
 	}
 	reversed, err := c.ScopesConflict(ctx, different, scope)
 	if err != nil {
-		return CheckResult{Name: "ScopesConflict", Err: err}
+		return []CheckResult{{Name: "ScopesConflict", Err: err}}
 	}
 	if reversed != first {
-		return CheckResult{
+		return []CheckResult{{
 			Name: "ScopesConflict",
 			Err: fmt.Errorf("ScopesConflict(a, b)=%v but ScopesConflict(b, a)=%v; the overlap predicate must be symmetric",
 				first, reversed),
-		}
+		}}
 	}
-	return CheckResult{Name: "ScopesConflict"}
+	return []CheckResult{{Name: "ScopesConflict"}}
+}
+
+func requireWireFailsForUnknownClaim(err error, rpc string) error {
+	if err == nil {
+		return fmt.Errorf("%s wire call for a never-Open'd claim_handle_id returned nil error; "+
+			"the producer must not fabricate a successful response for an unknown claim", rpc)
+	}
+	return nil
+}
+
+func requireWireConflictsOrUnimplemented(conflicts bool, err error) error {
+	if err != nil {
+		return nil
+	}
+	if !conflicts {
+		return fmt.Errorf("wire ScopesConflict returned Conflicts=false for byte-equal non-empty scopes; " +
+			"identical claim scopes must always conflict when the producer implements the RPC")
+	}
+	return nil
 }
 
 func containsErrorSubstring(err error, substrs ...string) bool {

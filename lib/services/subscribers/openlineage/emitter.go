@@ -15,15 +15,14 @@ import (
 
 // @concept: lineage
 type Event struct {
-	EventType   string         `json:"eventType"`
-	EventTime   string         `json:"eventTime"`
-	ProducerURI string         `json:"producer"`
-	SchemaURL   string         `json:"schemaURL"`
-	Run         RunRef         `json:"run"`
-	Job         JobRef         `json:"job"`
-	Inputs      []DatasetRef   `json:"inputs,omitempty"`
-	Outputs     []DatasetRef   `json:"outputs,omitempty"`
-	Facets      map[string]any `json:"facets,omitempty"`
+	EventType   string       `json:"eventType"`
+	EventTime   string       `json:"eventTime"`
+	ProducerURI string       `json:"producer"`
+	SchemaURL   string       `json:"schemaURL"`
+	Run         RunRef       `json:"run"`
+	Job         JobRef       `json:"job"`
+	Inputs      []DatasetRef `json:"inputs,omitempty"`
+	Outputs     []DatasetRef `json:"outputs,omitempty"`
 }
 
 type RunRef struct {
@@ -43,11 +42,35 @@ type DatasetRef struct {
 	Facets    map[string]any `json:"facets,omitempty"`
 }
 
+const openLineageProducerURI = "https://github.com/rimsky-ai/rimsky-core/lib/services/subscribers/openlineage"
+
+func rimskyFacet(name string, fields map[string]any) map[string]any {
+	out := make(map[string]any, len(fields)+2)
+	for k, v := range fields {
+		out[k] = v
+	}
+	out["_producer"] = openLineageProducerURI
+	out["_schemaURL"] = openLineageProducerURI + "/facets.json#/$defs/" + name
+	return out
+}
+
 // @concept: lineage
 type Emitter struct {
 	BackendURL  string
 	BearerToken string
 	Client      *http.Client
+}
+
+type SendError struct {
+	StatusCode int
+	Err        error
+}
+
+func (e *SendError) Error() string { return e.Err.Error() }
+func (e *SendError) Unwrap() error { return e.Err }
+
+func (e *SendError) Permanent() bool {
+	return e.StatusCode >= 400 && e.StatusCode < 500
 }
 
 func NewEmitter(backendURL string, bearerToken string) *Emitter {
@@ -60,7 +83,7 @@ func NewEmitter(backendURL string, bearerToken string) *Emitter {
 
 func (e *Emitter) Send(ctx context.Context, ev Event) error {
 	if e.BackendURL == "" {
-		return nil
+		return fmt.Errorf("openlineage: backend URL not configured")
 	}
 	raw, err := json.Marshal(ev)
 	if err != nil {
@@ -81,20 +104,17 @@ func (e *Emitter) Send(ctx context.Context, ev Event) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("openlineage backend %s → HTTP %d", url, resp.StatusCode)
+		return &SendError{
+			StatusCode: resp.StatusCode,
+			Err:        fmt.Errorf("openlineage backend %s → HTTP %d", url, resp.StatusCode),
+		}
 	}
 	return nil
 }
 
 // @concept: lineage-record
-func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string, namespace string) Event {
-	runID := instanceID
-	if rec.ChildKey != "" {
-		runID = instanceID + "/" + rec.ChildKey
-	}
-	if runID == "" {
-		runID = rec.RunID
-	}
+func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, namespace string) Event {
+	runID := rec.RunID
 	jobName := rec.TemplateNodeAlias
 	if jobName == "" {
 		jobName = rec.NodeAlias
@@ -108,13 +128,15 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 			Namespace: hc.ProducerName,
 			Name:      hc.ScopeDataHash,
 			Facets: map[string]any{
-				"rimsky_claim_handle_id": hc.ClaimHandleID,
-				"rimsky_claim_role":      hc.Role,
+				"rimsky_held_claim": rimskyFacet("RimskyHeldClaim", map[string]any{
+					"claim_handle_id": hc.ClaimHandleID,
+					"role":            hc.Role,
+				}),
 			},
 		})
 	}
-	facets := map[string]any{
-		"rimsky": map[string]any{
+	runFacets := map[string]any{
+		"rimsky": rimskyFacet("Rimsky", map[string]any{
 			"node_id":              rec.NodeID,
 			"frame_id":             rec.FrameID,
 			"state":                rec.State,
@@ -132,17 +154,16 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 			"terminal_kind":        rec.TerminalKind,
 			"parent_run_id":        rec.ParentRunID,
 			"substitution_refs":    rec.SubstitutionRefs,
-		},
+		}),
 	}
 	return Event{
 		EventType:   "COMPLETE",
 		EventTime:   observedAt.UTC().Format(time.RFC3339Nano),
-		ProducerURI: "https://github.com/rimsky-ai/rimsky-core/lib/services/subscribers/openlineage",
+		ProducerURI: openLineageProducerURI,
 		SchemaURL:   "https://openlineage.io/spec/1-0-5/OpenLineage.json#/$defs/RunEvent",
-		Run:         RunRef{RunID: runID},
+		Run:         RunRef{RunID: runID, Facets: runFacets},
 		Job:         JobRef{Namespace: namespace, Name: jobName},
 		Inputs:      inputs,
-		Facets:      facets,
 	}
 }
 
@@ -159,37 +180,39 @@ func MakeClaimTerminalEvent(rec ClaimTerminalRecord, observedAt time.Time, names
 		Namespace: rec.ProducerName,
 		Name:      rec.ScopeDataHash,
 		Facets: map[string]any{
-			"rimsky_version_id":      rec.VersionID,
-			"rimsky_claim_handle_id": rec.ClaimHandleID,
-			"rimsky_committed_at":    rec.CommittedAt,
-			"rimsky_outcome":         rec.Outcome,
-			"rimsky_cause":           rec.Cause,
+			"rimsky_claim_terminal": rimskyFacet("RimskyClaimTerminal", map[string]any{
+				"version_id":      rec.VersionID,
+				"claim_handle_id": rec.ClaimHandleID,
+				"committed_at":    rec.CommittedAt,
+				"outcome":         rec.Outcome,
+				"cause":           rec.Cause,
+			}),
 		},
 	}
 	runID := rec.ClaimHandleID
 	if rec.OpenLineageRunRef != "" {
 		runID = rec.OpenLineageRunRef
 	}
+	runFacets := map[string]any{
+		"rimsky": rimskyFacet("Rimsky", map[string]any{
+			"sub_claim_handle_ids":      rec.SubClaimHandleIDs,
+			"frame_id":                  rec.FrameID,
+			"outcome":                   rec.Outcome,
+			"cause":                     rec.Cause,
+			"run_id":                    rec.RunID,
+			"node_id":                   rec.NodeID,
+			"parent_claim_handle_id":    rec.ParentClaimHandleID,
+			"producer_metadata":         rec.ProducerMetadata,
+			"terminating_supervisor_id": rec.TerminatingSupervisorID,
+		}),
+	}
 	return Event{
 		EventType:   eventType,
 		EventTime:   observedAt.UTC().Format(time.RFC3339Nano),
-		ProducerURI: "https://github.com/rimsky-ai/rimsky-core/lib/services/subscribers/openlineage",
+		ProducerURI: openLineageProducerURI,
 		SchemaURL:   "https://openlineage.io/spec/1-0-5/OpenLineage.json#/$defs/RunEvent",
-		Run:         RunRef{RunID: runID},
+		Run:         RunRef{RunID: runID, Facets: runFacets},
 		Job:         JobRef{Namespace: namespace, Name: rec.ProducerName + jobSuffix},
 		Outputs:     []DatasetRef{output},
-		Facets: map[string]any{
-			"rimsky": map[string]any{
-				"sub_claim_handle_ids":      rec.SubClaimHandleIDs,
-				"frame_id":                  rec.FrameID,
-				"outcome":                   rec.Outcome,
-				"cause":                     rec.Cause,
-				"run_id":                    rec.RunID,
-				"node_id":                   rec.NodeID,
-				"parent_claim_handle_id":    rec.ParentClaimHandleID,
-				"producer_metadata":         rec.ProducerMetadata,
-				"terminating_supervisor_id": rec.TerminatingSupervisorID,
-			},
-		},
 	}
 }

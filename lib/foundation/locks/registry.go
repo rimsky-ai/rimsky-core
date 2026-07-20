@@ -27,6 +27,7 @@ func (c NamedLocksConfig) Get(name string) (NamedLockConfig, bool) {
 	return cfg, ok
 }
 
+// @concept: named-lock
 func (c NamedLocksConfig) Validate() error {
 	for name, cfg := range c.Locks {
 		if cfg.Limit < 1 {

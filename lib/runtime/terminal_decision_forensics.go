@@ -32,6 +32,10 @@ func emitTerminalForensics(
 	if (td.LineageHint == ClaimLineageHint{}) {
 		return
 	}
+	lineageParentClaimHandleID := td.ParentClaimHandleID
+	if td.LineageParentClaimHandleID != nil {
+		lineageParentClaimHandleID = td.LineageParentClaimHandleID
+	}
 	outcome := terminalOutcomeKey(td)
 	now := args.Clock.Now()
 	var subIDs []string
@@ -54,7 +58,7 @@ func emitTerminalForensics(
 		OpenLineageRunRef:       td.LineageHint.NodeRunID.String(),
 		NodeID:                  td.LineageHint.NodeID,
 		FrameID:                 td.LineageHint.FrameID,
-		ParentClaimHandleID:     td.ParentClaimHandleID,
+		ParentClaimHandleID:     lineageParentClaimHandleID,
 		SubClaimHandleIDs:       subIDs,
 		CommittedAt:             now.UTC().Format(time.RFC3339Nano),
 		ProducerName:            td.LineageHint.ProducerName,
@@ -86,8 +90,8 @@ func emitTerminalForensics(
 		"claim_scope_data_hash": rec.ClaimScopeDataHash,
 		"version_id":            rec.VersionID,
 	}
-	if td.ParentClaimHandleID != nil {
-		payload["parent_claim_handle_id"] = td.ParentClaimHandleID.String()
+	if lineageParentClaimHandleID != nil {
+		payload["parent_claim_handle_id"] = lineageParentClaimHandleID.String()
 	}
 	if td.Outcome.IsAbandon() {
 		kind = events.KindClaimResolutionAbandon()

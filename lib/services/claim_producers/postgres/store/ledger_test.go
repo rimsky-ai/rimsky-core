@@ -105,6 +105,40 @@ func TestPgLedgerRecordEvent_NonTerminal(t *testing.T) {
 	}
 }
 
+func TestPgLedgerEviction_NeverEvictsOpenRecords(t *testing.T) {
+	l := NewClaimLedger(3)
+	for i := 0; i < 5; i++ {
+		l.RecordOpen(string(rune('a'+i)), "/x", nil, nil)
+	}
+	for i := 0; i < 5; i++ {
+		id := string(rune('a' + i))
+		if _, ok := l.Get(id); !ok {
+			t.Errorf("OPEN record %q was evicted even though every record over the cap is OPEN", id)
+		}
+	}
+	if got := len(l.records); got != 5 {
+		t.Fatalf("len(records) = %d, want 5 (cap must be exceeded rather than drop a live claim)", got)
+	}
+}
+
+func TestPgLedgerEviction_EvictsClosedRecordsBeforeCap(t *testing.T) {
+	l := NewClaimLedger(3)
+	l.RecordOpen("closed-1", "/x", nil, nil)
+	l.RecordTerminal("closed-1", "claim_committed", nil)
+	l.RecordOpen("open-1", "/x", nil, nil)
+	l.RecordOpen("open-2", "/x", nil, nil)
+	l.RecordOpen("open-3", "/x", nil, nil)
+
+	if _, ok := l.Get("closed-1"); ok {
+		t.Fatal("closed record should have been evicted to make room for new OPEN records")
+	}
+	for _, id := range []string{"open-1", "open-2", "open-3"} {
+		if _, ok := l.Get(id); !ok {
+			t.Errorf("OPEN record %q must survive eviction", id)
+		}
+	}
+}
+
 func TestPgLedgerRecordEvent_DefaultSeverity(t *testing.T) {
 	l := NewClaimLedger(10)
 	l.RecordOpen("c1", "/foo", nil, nil)

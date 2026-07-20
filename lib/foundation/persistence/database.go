@@ -24,6 +24,7 @@ type Database interface {
 	Close() error
 }
 
+// @concept: advisory-lock
 type AdvisoryLocker interface {
 	TrySchedulerTick(ctx context.Context) (held bool, release func(), err error)
 

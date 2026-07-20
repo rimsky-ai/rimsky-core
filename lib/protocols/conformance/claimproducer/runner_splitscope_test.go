@@ -42,10 +42,10 @@ func TestCheckSplitScope_SupportsTrue_ListShapeRoundTrip(t *testing.T) {
 	producer := newSplitScopeFakeListShape(true, false, false)
 	results := Run(context.Background(), producer)
 	for _, name := range []string{
-		"SplitScopeListReturnsAllElements",
-		"SplitScopePreservesPartitionKey",
-		"SplitScopePreservesPayload",
-		"SplitScopeAddressFieldPresent",
+		"SplitScopeListShapeReturnsAllElements",
+		"SplitScopeListShapePreservesPartitionKey",
+		"SplitScopeListShapePreservesPayload",
+		"SplitScopeListShapeAddressFieldPresent",
 	} {
 		row := findRow(t, results, name)
 		if row.Err != nil {
@@ -57,18 +57,18 @@ func TestCheckSplitScope_SupportsTrue_ListShapeRoundTrip(t *testing.T) {
 func TestCheckSplitScope_SupportsTrue_NonEmptyAddressOnListShapeFails(t *testing.T) {
 	producer := newSplitScopeFakeListShape(true, true, false)
 	results := Run(context.Background(), producer)
-	row := findRow(t, results, "SplitScopeAddressFieldPresent")
+	row := findRow(t, results, "SplitScopeListShapeAddressFieldPresent")
 	if row.Err == nil {
-		t.Errorf("SplitScopeAddressFieldPresent expected non-nil Err when producer returns non-empty Address on list shape, got PASS")
+		t.Errorf("SplitScopeListShapeAddressFieldPresent expected non-nil Err when producer returns non-empty Address on list shape, got PASS")
 	}
 }
 
 func TestCheckSplitScope_SupportsTrue_PayloadMismatchFails(t *testing.T) {
 	producer := newSplitScopeFakeListShape(true, false, true)
 	results := Run(context.Background(), producer)
-	row := findRow(t, results, "SplitScopePreservesPayload")
+	row := findRow(t, results, "SplitScopeListShapePreservesPayload")
 	if row.Err == nil {
-		t.Errorf("SplitScopePreservesPayload expected non-nil Err when producer corrupts payload bytes, got PASS")
+		t.Errorf("SplitScopeListShapePreservesPayload expected non-nil Err when producer corrupts payload bytes, got PASS")
 	}
 }
 
@@ -81,9 +81,83 @@ func TestCheckSplitScope_SupportsTrue_WrongCountFails(t *testing.T) {
 		terminalCalls: map[claimproducer.ClaimID]int{},
 	}
 	results := Run(context.Background(), producer)
-	row := findRow(t, results, "SplitScopeListReturnsAllElements")
+	row := findRow(t, results, "SplitScopeListShapeReturnsAllElements")
 	if row.Err == nil {
-		t.Errorf("SplitScopeListReturnsAllElements expected non-nil Err when producer returns wrong count, got PASS")
+		t.Errorf("SplitScopeListShapeReturnsAllElements expected non-nil Err when producer returns wrong count, got PASS")
+	}
+}
+
+func TestCheckSplitScope_SupportsTrue_ProducerRejectsListShapeIsSkippedNotFailed(t *testing.T) {
+	producer := &splitScopeFake{
+		supportsSplitScope: true,
+		splitScopeErr:      fmt.Errorf("producer: partition_request does not match this producer's date-range shape"),
+		terminalCalls:      map[claimproducer.ClaimID]int{},
+	}
+	results := Run(context.Background(), producer)
+	row := findRow(t, results, "SplitScopeListShapeProbeSkipped")
+	if row.Err != nil {
+		t.Errorf("SplitScopeListShapeProbeSkipped expected PASS when a supports=true producer rejects the "+
+			"conformance kit's own list-shape probe (partition_request is producer-defined per proto), got Err: %v", row.Err)
+	}
+	for _, name := range []string{
+		"SplitScopeListShapeReturnsAllElements",
+		"SplitScopeListShapePreservesPartitionKey",
+		"SplitScopeListShapePreservesPayload",
+		"SplitScopeListShapeAddressFieldPresent",
+	} {
+		for _, r := range results {
+			if r.Name == name {
+				t.Errorf("%s must not run when the producer rejected the list-shape probe request", name)
+			}
+		}
+	}
+}
+
+type wireProbingSplitScopeFake struct {
+	*splitScopeFake
+	wireCalled bool
+	wireErr    error
+}
+
+func (f *wireProbingSplitScopeFake) SplitScopeWire(_ context.Context, _ claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+	f.wireCalled = true
+	return claimproducer.SplitClaimScopeResponse{}, f.wireErr
+}
+
+func TestCheckSplitScope_SupportsFalse_WireProbeExercisesTargetDirectly(t *testing.T) {
+	inner := &splitScopeFake{
+		supportsSplitScope: false,
+		splitScopeErr:      claimproducer.ErrSplitScopeUnsupported,
+		terminalCalls:      map[claimproducer.ClaimID]int{},
+	}
+	fake := &wireProbingSplitScopeFake{
+		splitScopeFake: inner,
+		wireErr:        fmt.Errorf("rpc error: code = NotFound desc = unknown claim_handle_id"),
+	}
+	results := Run(context.Background(), fake)
+	if !fake.wireCalled {
+		t.Fatalf("SplitScopeWire was never invoked; the supports=false negative probe must exercise the producer's wire directly, not only the client-side short-circuit")
+	}
+	row := findRow(t, results, "SplitScopeWireUnexercisedByUnsupportedClaim")
+	if row.Err != nil {
+		t.Errorf("expected PASS when the producer's wire rejects a never-Open'd claim_handle_id, got Err: %v", row.Err)
+	}
+}
+
+func TestCheckSplitScope_SupportsFalse_WireProbeFlagsFabricatedSuccess(t *testing.T) {
+	inner := &splitScopeFake{
+		supportsSplitScope: false,
+		splitScopeErr:      claimproducer.ErrSplitScopeUnsupported,
+		terminalCalls:      map[claimproducer.ClaimID]int{},
+	}
+	fake := &wireProbingSplitScopeFake{
+		splitScopeFake: inner,
+		wireErr:        nil,
+	}
+	results := Run(context.Background(), fake)
+	row := findRow(t, results, "SplitScopeWireUnexercisedByUnsupportedClaim")
+	if row.Err == nil {
+		t.Errorf("expected non-nil Err when the producer's wire fabricates a successful SplitScope for a never-Open'd claim_handle_id, got PASS")
 	}
 }
 
@@ -132,15 +206,15 @@ func (f *splitScopeFake) Open(_ context.Context, _ claimproducer.ClaimID, spec c
 	}, nil
 }
 
-func (f *splitScopeFake) Commit(_ context.Context, id claimproducer.ClaimID, _, _ []byte) (claimproducer.CommitResult, error) {
+func (f *splitScopeFake) Commit(_ context.Context, id claimproducer.ClaimID, _, _ []byte, leaseToken string) (claimproducer.CommitResult, error) {
 	return claimproducer.CommitResult{}, f.recordTerminal(id)
 }
 
-func (f *splitScopeFake) Abandon(_ context.Context, id claimproducer.ClaimID, _, _ []byte) error {
+func (f *splitScopeFake) Abandon(_ context.Context, id claimproducer.ClaimID, _, _ []byte, leaseToken string) error {
 	return f.recordTerminal(id)
 }
 
-func (f *splitScopeFake) Release(_ context.Context, id claimproducer.ClaimID, _, _ []byte) error {
+func (f *splitScopeFake) Release(_ context.Context, id claimproducer.ClaimID, _, _ []byte, leaseToken string) error {
 	return f.recordTerminal(id)
 }
 

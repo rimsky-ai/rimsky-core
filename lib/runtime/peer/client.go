@@ -53,24 +53,24 @@ func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec c
 	return out, nil
 }
 
-func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) (claimproducer.CommitResult, error) {
-	resp, err := c.rpc.Commit(ctx, bridge.CommitRequestFromArgs(claimID, scope, address))
+func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) (claimproducer.CommitResult, error) {
+	resp, err := c.rpc.Commit(ctx, bridge.CommitRequestFromArgs(claimID, scope, address, leaseToken))
 	if err != nil {
 		return claimproducer.CommitResult{}, NewProducerCallError(c.name, "Commit", err)
 	}
 	return bridge.CommitResultFromProto(resp), nil
 }
 
-func (c *Client) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
-	_, err := c.rpc.Abandon(ctx, bridge.AbandonRequestFromArgs(claimID, scope, address))
+func (c *Client) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
+	_, err := c.rpc.Abandon(ctx, bridge.AbandonRequestFromArgs(claimID, scope, address, leaseToken))
 	if err != nil {
 		return NewProducerCallError(c.name, "Abandon", err)
 	}
 	return nil
 }
 
-func (c *Client) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
-	_, err := c.rpc.Release(ctx, bridge.ReleaseRequestFromArgs(claimID, scope, address))
+func (c *Client) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
+	_, err := c.rpc.Release(ctx, bridge.ReleaseRequestFromArgs(claimID, scope, address, leaseToken))
 	if err != nil {
 		return NewProducerCallError(c.name, "Release", err)
 	}
@@ -81,6 +81,17 @@ func (c *Client) SplitScope(ctx context.Context, req claimproducer.SplitClaimSco
 	if !c.caps.SupportsSplitScope {
 		return claimproducer.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
 	}
+	return c.SplitScopeWire(ctx, req)
+}
+
+func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) {
+	if !c.caps.SupportsScopesConflict {
+		return claimproducer.ErrScopesConflictUnsupportedFallback(a, b), nil
+	}
+	return c.ScopesConflictWire(ctx, a, b)
+}
+
+func (c *Client) SplitScopeWire(ctx context.Context, req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
 	resp, err := c.rpc.SplitScope(ctx, bridge.SplitScopeRequestToProto(req))
 	if err != nil {
 		return claimproducer.SplitClaimScopeResponse{}, NewProducerCallError(c.name, "SplitScope", err)
@@ -88,10 +99,7 @@ func (c *Client) SplitScope(ctx context.Context, req claimproducer.SplitClaimSco
 	return bridge.SplitScopeResponseFromProto(resp), nil
 }
 
-func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) {
-	if !c.caps.SupportsScopesConflict {
-		return claimproducer.ErrScopesConflictUnsupportedFallback(a, b), nil
-	}
+func (c *Client) ScopesConflictWire(ctx context.Context, a, b []byte) (bool, error) {
 	resp, err := c.rpc.ScopesConflict(ctx, &genv1.ClaimScopesConflictRequest{
 		ClaimScopeA: a,
 		ClaimScopeB: b,

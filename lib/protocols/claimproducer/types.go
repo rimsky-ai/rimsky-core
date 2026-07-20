@@ -116,6 +116,7 @@ type SubClaimScopeDescriptor struct {
 	ProducerMetadata []byte
 	Address          []byte
 	Payload          []byte
+	LeaseToken       string
 }
 
 type SplitClaimScopeResponse struct {

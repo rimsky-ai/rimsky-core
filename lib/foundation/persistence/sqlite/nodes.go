@@ -1000,23 +1000,63 @@ func (s *nodesImpl) GetPriorRunBySequence(
 
 // @concept: cascade
 // @decision: mode-default-most-recent
+// @concept: blob-backend
 func (s *nodesImpl) DeletePriorCascadeStales(
 	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, beforeSeq int64,
 ) (int, error) {
-	res, err := s.q(tx).ExecContext(ctx,
+	ti := (*tablesImpl)(s)
+	rows, err := ti.q(tx).QueryContext(ctx,
 		`DELETE FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
-		    AND state = 'stale' AND creation_reason = 'cascade' AND claimed_by IS NULL`,
+		    AND state = 'stale' AND creation_reason = 'cascade' AND claimed_by IS NULL
+		  RETURNING scratch_handle, scratch_handle_backend`,
 		nodeID.String(), runScopeID.String(), beforeSeq,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("DeletePriorCascadeStales: %w", err)
 	}
-	n, err := res.RowsAffected()
+	handles, n, err := drainDeletedScratchHandles(rows)
 	if err != nil {
-		return 0, fmt.Errorf("DeletePriorCascadeStales: rows affected: %w", err)
+		return 0, fmt.Errorf("DeletePriorCascadeStales: %w", err)
 	}
-	return int(n), nil
+	if err := enrollScratchOrphans(ctx, ti, tx, handles); err != nil {
+		return 0, fmt.Errorf("DeletePriorCascadeStales: %w", err)
+	}
+	return n, nil
+}
+
+func drainDeletedScratchHandles(rows *sql.Rows) ([]prunedBlobHandle, int, error) {
+	defer rows.Close()
+	var handles []prunedBlobHandle
+	n := 0
+	for rows.Next() {
+		n++
+		var handle, backend sql.NullString
+		if err := rows.Scan(&handle, &backend); err != nil {
+			return nil, 0, fmt.Errorf("scan scratch handle: %w", err)
+		}
+		if !handle.Valid || handle.String == "" {
+			continue
+		}
+		handles = append(handles, prunedBlobHandle{handle: handle.String, backend: backend.String})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate scratch handles: %w", err)
+	}
+	return handles, n, nil
+}
+
+func enrollScratchOrphans(ctx context.Context, ti *tablesImpl, tx persistence.Tx, handles []prunedBlobHandle) error {
+	if len(handles) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	for _, h := range handles {
+		if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), tx, h.handle, h.backend, now, ti.blobRetention); err != nil {
+			return fmt.Errorf("queue blob orphan %q: %w", h.handle, err)
+		}
+	}
+	return nil
 }
 
 // @concept: cascade
@@ -1052,21 +1092,27 @@ func (s *nodesImpl) GetMostRecentSettledRun(
 }
 
 // @concept: cascade
+// @concept: blob-backend
 func (s *nodesImpl) DropPendingRun(
 	ctx context.Context, tx persistence.Tx, runID foundationshared.UUID,
 ) error {
-	res, err := s.q(tx).ExecContext(ctx,
-		`DELETE FROM rimsky_node_runs WHERE id = ? AND state = 'pending'`, runID.String(),
-	)
+	ti := (*tablesImpl)(s)
+	var handle, backend sql.NullString
+	err := ti.q(tx).QueryRowContext(ctx,
+		`DELETE FROM rimsky_node_runs WHERE id = ? AND state = 'pending'
+		 RETURNING scratch_handle, scratch_handle_backend`, runID.String(),
+	).Scan(&handle, &backend)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("DropPendingRun: run %s not in pending state", runID)
+	}
 	if err != nil {
 		return fmt.Errorf("DropPendingRun: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("DropPendingRun: rows affected: %w", err)
+	if !handle.Valid || handle.String == "" {
+		return nil
 	}
-	if n == 0 {
-		return fmt.Errorf("DropPendingRun: run %s not in pending state", runID)
+	if err := enrollScratchOrphans(ctx, ti, tx, []prunedBlobHandle{{handle: handle.String, backend: backend.String}}); err != nil {
+		return fmt.Errorf("DropPendingRun: %w", err)
 	}
 	return nil
 }

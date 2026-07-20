@@ -243,6 +243,23 @@ func transitionThisHolderIfFullyResolved(
 	return transitionHolderIfFullyResolved(ctx, args, tx, acq.NodeRunID, td)
 }
 
+// @decision: held-as-state-not-phase
+func holderSettlementAttributes(
+	ctx context.Context, args RunArgs, tx persistence.Tx, holderNodeRunID foundationshared.UUID,
+) (map[string]any, error) {
+	if args.Persist == nil || args.Persist.NodeAttributes() == nil {
+		return nil, nil
+	}
+	row, err := args.Persist.NodeAttributes().GetByRun(ctx, holderNodeRunID, tx)
+	if err != nil {
+		return nil, fmt.Errorf("holderSettlementAttributes: GetByRun %s: %w", holderNodeRunID, err)
+	}
+	if row == nil || len(row.Data) == 0 {
+		return nil, nil
+	}
+	return row.Data, nil
+}
+
 // @concept: auto-terminal
 // @concept: run-scope
 func holderIsAggregatingParent(
@@ -304,7 +321,11 @@ func transitionHolderIfFullyResolved(
 		newState = cascade.NodeStateFresh
 		reason = cascade.ReasonAutoTerminalCommit
 		sigType = "terminal/success"
-		sig = signalpkg.BuildTerminalSuccessSignal(false, nil, changeSummary, nil)
+		delta, err := holderSettlementAttributes(ctx, args, tx, holderNodeRunID)
+		if err != nil {
+			return nil, err
+		}
+		sig = signalpkg.BuildTerminalSuccessSignal(false, delta, changeSummary, nil)
 	}
 	if err := args.Persist.Nodes().UpdateState(
 		ctx, holderNodeRunID, newState, reason, &sigType, tx,
@@ -317,6 +338,9 @@ func transitionHolderIfFullyResolved(
 			return nil, nil
 		}
 		return nil, fmt.Errorf("UpdateState: %w", err)
+	}
+	if err := recordRunTreeChanged(ctx, args, tx, holderNodeRunID, newState, &sigType, false); err != nil {
+		return nil, fmt.Errorf("transitionHolderIfFullyResolved: %w", err)
 	}
 	holderNode, err := args.Persist.Nodes().Get(ctx, holderRun.NodeID, tx)
 	if err != nil || holderNode == nil {

@@ -156,7 +156,7 @@ func testClaimHandleAnchorsAndRepoint(t *testing.T, d persistence.Database) {
 
 	// @concept: claim-handle
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return ch.UpdateNodeRunID(ctx, h2.ID, runB, tx)
+		return ch.UpdateNodeRunID(ctx, h2.ID, runB, claimQuerySup, tx)
 	}); err != nil {
 		t.Fatalf("UpdateNodeRunID: %v", err)
 	}
@@ -288,5 +288,20 @@ func testClaimHandleListByInstanceAndState(t *testing.T, d persistence.Database)
 	}
 	if got := list(fixA.InstanceID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeSubgraph); len(got) != 1 || got[0] != subgraphA.ID {
 		t.Fatalf("committed-subgraph(A) = %v, want [%s]", got, subgraphA.ID)
+	}
+}
+
+func testClaimHandleProducerLeaseTokenRoundTrip(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	in := guardScopeHandleInput(fix, claimQuerySup, time.Now().Add(1*time.Hour))
+	in.ProducerLeaseToken = "lease-" + in.ID.String()
+	seedGuardClaimHandle(ctx, t, d, in)
+	row := getGuardClaimHandle(ctx, t, d, in.ID)
+	if row == nil {
+		t.Fatalf("claim handle %s not found after insert", in.ID)
+	}
+	if row.ProducerLeaseToken != in.ProducerLeaseToken {
+		t.Fatalf("producer_lease_token round-trip: got %q, want %q", row.ProducerLeaseToken, in.ProducerLeaseToken)
 	}
 }

@@ -317,7 +317,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	} else {
 		obs["body"] = string(body)
 	}
-	idemKey := fmt.Sprintf("%s+%s", w.SubscriptionID, hash)
+	idemKey := fmt.Sprintf("%s+%s+%d", w.SubscriptionID, hash, now.UnixNano())
 	if err := s.postMessage(ctx, w, obs, idemKey); err != nil {
 		s.logger.Warn("sensor-http.message_post_failed",
 			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())

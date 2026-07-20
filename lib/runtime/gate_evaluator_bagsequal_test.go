@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -149,4 +150,35 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 				"equal: a bag that legitimately differs from the on-demand-recomputed prior bag must compare unequal")
 		return nil
 	}))
+
+	failingArgs := RunArgs{
+		Persist: erroringTemplatesTables{Tables: tables},
+		Logger:  shared.SilentLogger{},
+	}
+	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, err := bagsEqual(ctx, failingArgs, tx, priorRunID, map[string]any{"seed": "abc"})
+		require.ErrorIs(t, err, errBagsEqualTemplateLoad,
+			"an on-demand resolve failure must propagate to the caller, not silently report the bags as unequal")
+		return nil
+	}))
+}
+
+var errBagsEqualTemplateLoad = errors.New("template load failed")
+
+type erroringTemplateTable struct {
+	persistence.TemplateTable
+}
+
+func (e erroringTemplateTable) GetByHash(
+	ctx context.Context, hash string, tx persistence.Tx,
+) (*persistence.TemplateRow, error) {
+	return nil, errBagsEqualTemplateLoad
+}
+
+type erroringTemplatesTables struct {
+	persistence.Tables
+}
+
+func (e erroringTemplatesTables) Templates() persistence.TemplateTable {
+	return erroringTemplateTable{e.Tables.Templates()}
 }

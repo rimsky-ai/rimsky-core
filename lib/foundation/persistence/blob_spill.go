@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// @concept: blob-backend
 func ShouldSpillBlob(bb BlobBackend, threshold int, size int) bool {
 	if size <= 0 {
 		return false
@@ -60,6 +61,7 @@ type CarriedBag struct {
 func CarryForwardBag(
 	ctx context.Context,
 	bb BlobBackend,
+	tx Tx,
 	key BlobKey,
 	priorData []byte,
 	priorHandle, priorBackend string,
@@ -72,7 +74,7 @@ func CarryForwardBag(
 			Backend:     priorBackend,
 		}, nil
 	}
-	bytes, err := bb.Read(ctx, Handle(priorHandle))
+	bytes, err := ReadBlobInTx(ctx, bb, tx, Handle(priorHandle))
 	if err != nil {
 		if errors.Is(err, ErrBlobNotFound) {
 			empty := []byte("{}")
@@ -80,7 +82,7 @@ func CarryForwardBag(
 		}
 		return CarriedBag{}, err
 	}
-	fresh, err := bb.Write(ctx, key, bytes)
+	fresh, err := WriteBlobInTx(ctx, bb, tx, key, bytes)
 	if err != nil {
 		return CarriedBag{}, err
 	}

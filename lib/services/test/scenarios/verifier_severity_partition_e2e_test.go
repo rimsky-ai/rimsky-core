@@ -154,63 +154,40 @@ func createSeverityPartitionInstance(t *testing.T, ep harness.RimskyEndpoint, te
 	return resp.InstanceID
 }
 
-type severityNodeReadResponse struct {
-	RunSummary struct {
-		FreshCount  int `json:"fresh_count"`
-		FailedCount int `json:"failed_count"`
-	} `json:"run_summary"`
-	Events []struct {
-		Kind    string         `json:"kind"`
-		Payload map[string]any `json:"payload"`
-	} `json:"events"`
-	LatestAttributes map[string]any `json:"latest_attributes"`
-}
-
 func requireVerifierSucceededWithWarning(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var (
-		lastFresh   int
-		lastFailed  int
-		sawDispatch bool
-		lastBody    string
-	)
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t,
-			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			lastBody = string(raw)
-			var resp severityNodeReadResponse
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastFresh = resp.RunSummary.FreshCount
-				lastFailed = resp.RunSummary.FailedCount
-				for _, e := range resp.Events {
-					if e.Kind == "work_started" {
-						sawDispatch = true
-						break
-					}
-				}
-				if sawDispatch && lastFresh > 0 {
-					assertWarningRecorded(t, resp.LatestAttributes, lastBody)
-					return
-				}
-				if sawDispatch && lastFailed > 0 {
-					t.Fatalf("warning leg: node %q settled with failed_count=%d after a real dispatch — "+
-						"a warning-severity failure must NOT block the commit. "+
-						"Falsifier hit: Warning blocks commit, OR the severity field is "+
-						"declared but unused (both look the same: a warning-only failure "+
-						"flipped the terminal).\nlast GET /v1/observability/nodes/%s/%s body:\n%s",
-						nodeType, lastFailed, instanceID, nodeType, lastBody)
-				}
-			}
+	var sawDispatch bool
+	obs, ok := ep.PollNodeObservability(t, instanceID, nodeType, deadline, func(o harness.NodeObservability) bool {
+		sawDispatch = sawDispatch || o.HasEventKind("work_started")
+		if sawDispatch && o.RunSummary.FailedCount > 0 {
+			t.Fatalf("warning leg: node %q settled with failed_count=%d after a real dispatch — "+
+				"a warning-severity failure must NOT block the commit. "+
+				"Falsifier hit: Warning blocks commit, OR the severity field is "+
+				"declared but unused (both look the same: a warning-only failure "+
+				"flipped the terminal).\nlast GET /v1/observability/nodes/%s/%s body:\n%s",
+				nodeType, o.RunSummary.FailedCount, instanceID, nodeType, string(o.LatestAttributes))
 		}
-		time.Sleep(250 * time.Millisecond)
+		return sawDispatch && o.RunSummary.FreshCount > 0
+	})
+	if !ok {
+		t.Fatalf("warning leg: node %q on instance %s did not reach a terminal state within %v "+
+			"(run_summary.fresh_count=%d failed_count=%d, work_started seen=%v) — the cross-stack severity-partition exhibition "+
+			"never got a real dispatch from the bundled verifier-shape-checks executor.",
+			nodeType, instanceID, deadline, obs.RunSummary.FreshCount, obs.RunSummary.FailedCount, sawDispatch)
 	}
-	t.Fatalf("warning leg: node %q on instance %s did not reach a terminal state within %v "+
-		"(run_summary.fresh_count=%d failed_count=%d, work_started seen=%v) — the cross-stack severity-partition exhibition "+
-		"never got a real dispatch from the bundled verifier-shape-checks executor.\n"+
-		"last GET /v1/observability/nodes/%s/%s body:\n%s",
-		nodeType, instanceID, deadline, lastFresh, lastFailed, sawDispatch, instanceID, nodeType, lastBody)
+	assertWarningRecorded(t, decodeLatestAttributes(t, obs.LatestAttributes), string(obs.LatestAttributes))
+}
+
+func decodeLatestAttributes(t *testing.T, raw json.RawMessage) map[string]any {
+	t.Helper()
+	if len(raw) == 0 {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode latest_attributes: %v: %s", err, string(raw))
+	}
+	return out
 }
 
 func assertWarningRecorded(t *testing.T, latest map[string]any, debugBody string) {
@@ -276,31 +253,22 @@ func requireVerifierFailedWithCheckFailedClass(t *testing.T, ep harness.RimskyEn
 		lastBody    string
 	)
 	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t,
-			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
+		status, obs, raw := ep.GetNodeObservability(t, instanceID, nodeType)
 		if status == http.StatusOK {
 			lastBody = string(raw)
-			var resp severityNodeReadResponse
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastFresh = resp.RunSummary.FreshCount
-				lastFailed = resp.RunSummary.FailedCount
-				for _, e := range resp.Events {
-					if e.Kind == "work_started" {
-						sawDispatch = true
-						break
-					}
-				}
-				if sawDispatch && lastFresh > 0 {
-					t.Fatalf("error leg: node %q settled with fresh_count=%d after a real dispatch "+
-						"despite the error-severity numeric_range check failing — the commit "+
-						"was NOT blocked. Falsifier hit: Error doesn't block commit.\n"+
-						"last GET /v1/observability/nodes/%s/%s body:\n%s",
-						nodeType, lastFresh, instanceID, nodeType, lastBody)
-				}
-				if sawDispatch && lastFailed > 0 {
-					requireVerifierCheckFailedErrorClass(t, resp.Events, lastBody)
-					return
-				}
+			lastFresh = obs.RunSummary.FreshCount
+			lastFailed = obs.RunSummary.FailedCount
+			sawDispatch = sawDispatch || obs.HasEventKind("work_started")
+			if sawDispatch && lastFresh > 0 {
+				t.Fatalf("error leg: node %q settled with fresh_count=%d after a real dispatch "+
+					"despite the error-severity numeric_range check failing — the commit "+
+					"was NOT blocked. Falsifier hit: Error doesn't block commit.\n"+
+					"last GET /v1/observability/nodes/%s/%s body:\n%s",
+					nodeType, lastFresh, instanceID, nodeType, lastBody)
+			}
+			if sawDispatch && lastFailed > 0 {
+				requireVerifierCheckFailedErrorClass(t, obs.Events, lastBody)
+				return
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -312,10 +280,7 @@ func requireVerifierFailedWithCheckFailedClass(t *testing.T, ep harness.RimskyEn
 		nodeType, instanceID, deadline, lastFresh, lastFailed, sawDispatch, instanceID, nodeType, lastBody)
 }
 
-func requireVerifierCheckFailedErrorClass(t *testing.T, events []struct {
-	Kind    string         `json:"kind"`
-	Payload map[string]any `json:"payload"`
-}, debugBody string) {
+func requireVerifierCheckFailedErrorClass(t *testing.T, events []harness.NodeEvent, debugBody string) {
 	t.Helper()
 	const want = "verifier/check_failed/"
 	for _, e := range events {
@@ -339,10 +304,7 @@ func requireVerifierCheckFailedErrorClass(t *testing.T, events []struct {
 		want, formatEventsForDiagnostic(events), debugBody)
 }
 
-func formatEventsForDiagnostic(events []struct {
-	Kind    string         `json:"kind"`
-	Payload map[string]any `json:"payload"`
-}) string {
+func formatEventsForDiagnostic(events []harness.NodeEvent) string {
 	var b strings.Builder
 	for i, e := range events {
 		fmt.Fprintf(&b, "  [%d] kind=%q payload=%v\n", i, e.Kind, e.Payload)

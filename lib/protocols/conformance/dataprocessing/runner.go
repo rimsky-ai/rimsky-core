@@ -47,6 +47,7 @@ func Run(ctx context.Context, c genv1.DataProcessingClient) []CheckResult {
 
 	results = append(results, runBeginCommitPerMaterialization(ctx, c, caps)...)
 	results = append(results, checkBeginCandidateIdempotent(ctx, c))
+	results = append(results, checkAbandonCandidate(ctx, c)...)
 	results = append(results, checkListVersionsSmoke(ctx, c))
 	results = append(results, checkListPartitionsSmoke(ctx, c))
 	results = append(results, checkGetVersionSchemaSmoke(ctx, c))
@@ -111,6 +112,77 @@ func checkBeginCandidateIdempotent(ctx context.Context, c genv1.DataProcessingCl
 	}
 	_, _ = c.AbandonCandidate(ctx, &genv1.AbandonCandidateRequest{CandidateHandle: first.GetCandidateHandle()})
 	return CheckResult{Name: "BeginCandidateIdempotent"}
+}
+
+func checkAbandonCandidate(ctx context.Context, c genv1.DataProcessingClient) []CheckResult {
+	claimHandleID := "rimsky/conformance/dataproc/abandon"
+
+	begin, err := c.BeginCandidate(ctx, &genv1.BeginCandidateRequest{
+		ClaimHandleId:  claimHandleID,
+		IdempotencyKey: "abandon-1",
+	})
+	if err != nil {
+		errResult := fmt.Errorf("BeginCandidate: %w", err)
+		return []CheckResult{
+			{Name: "AbandonCandidateExcludedFromListVersions", Err: errResult},
+			{Name: "AbandonCandidateRejectsCommitAfterAbandon", Err: errResult},
+			checkAbandonCandidateUnknownHandleFailsCleanly(ctx, c),
+		}
+	}
+
+	if _, err := c.AbandonCandidate(ctx, &genv1.AbandonCandidateRequest{
+		CandidateHandle: begin.GetCandidateHandle(),
+	}); err != nil {
+		errResult := fmt.Errorf("AbandonCandidate: %w", err)
+		return []CheckResult{
+			{Name: "AbandonCandidateExcludedFromListVersions", Err: errResult},
+			{Name: "AbandonCandidateRejectsCommitAfterAbandon", Err: errResult},
+			checkAbandonCandidateUnknownHandleFailsCleanly(ctx, c),
+		}
+	}
+
+	results := make([]CheckResult, 0, 3)
+
+	listResp, err := c.ListVersions(ctx, &genv1.ListVersionsRequest{ClaimHandleId: claimHandleID})
+	switch {
+	case err != nil:
+		results = append(results, CheckResult{Name: "AbandonCandidateExcludedFromListVersions", Err: fmt.Errorf("ListVersions: %w", err)})
+	case len(listResp.GetVersions()) != 0:
+		results = append(results, CheckResult{
+			Name: "AbandonCandidateExcludedFromListVersions",
+			Err: fmt.Errorf("ListVersions returned %d version(s) for a claim_handle_id whose only candidate was abandoned, want 0",
+				len(listResp.GetVersions())),
+		})
+	default:
+		results = append(results, CheckResult{Name: "AbandonCandidateExcludedFromListVersions"})
+	}
+
+	if _, commitErr := c.CommitCandidate(ctx, &genv1.CommitCandidateRequest{
+		CandidateHandle: begin.GetCandidateHandle(),
+	}); commitErr == nil {
+		results = append(results, CheckResult{
+			Name: "AbandonCandidateRejectsCommitAfterAbandon",
+			Err:  fmt.Errorf("CommitCandidate succeeded on a candidate_handle already abandoned; the producer must GC an abandoned candidate and reject a later commit"),
+		})
+	} else {
+		results = append(results, CheckResult{Name: "AbandonCandidateRejectsCommitAfterAbandon"})
+	}
+
+	results = append(results, checkAbandonCandidateUnknownHandleFailsCleanly(ctx, c))
+	return results
+}
+
+func checkAbandonCandidateUnknownHandleFailsCleanly(ctx context.Context, c genv1.DataProcessingClient) CheckResult {
+	_, err := c.AbandonCandidate(ctx, &genv1.AbandonCandidateRequest{
+		CandidateHandle: []byte("conformance-unknown-candidate-handle-never-issued-by-begincandidate"),
+	})
+	if err == nil {
+		return CheckResult{
+			Name: "AbandonCandidateUnknownHandleFailsCleanly",
+			Err:  fmt.Errorf("AbandonCandidate on a candidate_handle never returned by BeginCandidate returned nil error; producers must reject an unrecognized handle rather than silently succeeding"),
+		}
+	}
+	return CheckResult{Name: "AbandonCandidateUnknownHandleFailsCleanly"}
 }
 
 func checkListVersionsSmoke(ctx context.Context, c genv1.DataProcessingClient) CheckResult {

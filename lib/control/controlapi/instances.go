@@ -19,7 +19,6 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
@@ -461,17 +460,28 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 			redact, ok := redactCache[r.TemplateHash]
 			if !ok {
 				var tpl *persistence.TemplateRow
-				if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+				err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 					t, err := deps.Persist.Templates().GetByHash(ctx, r.TemplateHash, tx)
 					tpl = t
 					return err
-				}); err != nil && deps.Logger != nil {
-					deps.Logger.Warn("handleListInstances: load template for params_redact failed; skipping redaction",
-						"instance_id", r.ID.String(),
-						"template_hash", r.TemplateHash,
-						"error", err.Error())
-				}
-				if tpl != nil {
+				})
+				switch {
+				case err != nil:
+					if deps.Logger != nil {
+						deps.Logger.Warn("handleListInstances: load template for params_redact failed; redacting all params",
+							"instance_id", r.ID.String(),
+							"template_hash", r.TemplateHash,
+							"error", err.Error())
+					}
+					redact = []string{RedactAllParamsSentinel}
+				case tpl == nil:
+					if deps.Logger != nil {
+						deps.Logger.Warn("handleListInstances: template not found for params_redact; redacting all params",
+							"instance_id", r.ID.String(),
+							"template_hash", r.TemplateHash)
+					}
+					redact = []string{RedactAllParamsSentinel}
+				default:
 					redact = tpl.Spec.ParamsRedact
 				}
 				redactCache[r.TemplateHash] = redact
@@ -487,20 +497,29 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 
 func instanceRedact(ctx context.Context, deps AppDeps, templateHash string, instanceID foundationshared.UUID) []string {
 	var tpl *persistence.TemplateRow
-	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		t, err := deps.Persist.Templates().GetByHash(ctx, templateHash, tx)
 		tpl = t
 		return err
-	}); err != nil && deps.Logger != nil {
-		deps.Logger.Warn("instanceRedact: load template for params_redact failed; skipping redaction",
-			"instance_id", instanceID.String(),
-			"template_hash", templateHash,
-			"error", err.Error())
+	})
+	if err != nil {
+		if deps.Logger != nil {
+			deps.Logger.Warn("instanceRedact: load template for params_redact failed; redacting all params",
+				"instance_id", instanceID.String(),
+				"template_hash", templateHash,
+				"error", err.Error())
+		}
+		return []string{RedactAllParamsSentinel}
 	}
-	if tpl != nil {
-		return tpl.Spec.ParamsRedact
+	if tpl == nil {
+		if deps.Logger != nil {
+			deps.Logger.Warn("instanceRedact: template not found for params_redact; redacting all params",
+				"instance_id", instanceID.String(),
+				"template_hash", templateHash)
+		}
+		return []string{RedactAllParamsSentinel}
 	}
-	return nil
+	return tpl.Spec.ParamsRedact
 }
 
 func handleGetInstance(deps AppDeps) http.HandlerFunc {
@@ -588,12 +607,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		} else {
-			var terminatedAtMs int64
-			if inst.TerminatedAt != nil {
-				terminatedAtMs = inst.TerminatedAt.UnixMilli()
-			}
-			if err := fanOutInstanceTerminatedFromLifecycleRows(req.Context(), deps,
-				inst.TemplateHash, inst.ID.String(), terminatedAtMs); err != nil {
+			if err := fanOutInstanceTerminatedFromLifecycleRows(req.Context(), deps, *inst, "instance_deleted"); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
@@ -778,60 +792,6 @@ func terminateRunArgs(deps AppDeps) runtime.RunArgs {
 		Logger:         deps.Logger,
 		SupervisorID:   "control-api-terminate",
 	}
-}
-
-func fanOutInstanceTerminatedFromLifecycleRows(
-	ctx context.Context,
-	deps AppDeps,
-	templateHash, instanceID string,
-	terminatedAtUnixMs int64,
-) error {
-	var rows []persistence.LifecycleIdempotencyRow
-	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := deps.Persist.LifecycleIdempotency().ListByScope(ctx,
-			persistence.LifecycleIdempotencyScopeInstance, instanceID, tx)
-		rows = r
-		return err
-	}); err != nil {
-		return fmt.Errorf("lifecycle row list: %w", err)
-	}
-	if deps.LifecycleSubs == nil {
-		return errors.New("lifecycle subscriber registry not initialized")
-	}
-	for _, r := range rows {
-		s, ok := deps.LifecycleSubs.Get(r.StoreRegistrationName)
-		if !ok {
-			deps.Logger.Warn("instance_delete.unknown_lifecycle_subscriber",
-				"instance_id", instanceID,
-				"template_hash", templateHash,
-				"peer_name", r.StoreRegistrationName)
-			if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				return deps.Persist.LifecycleIdempotency().Delete(ctx,
-					r.StoreRegistrationName,
-					persistence.LifecycleIdempotencyScopeInstance,
-					instanceID, tx)
-			}); err != nil {
-				return fmt.Errorf("delete lifecycle row %q: %w", r.StoreRegistrationName, err)
-			}
-			continue
-		}
-		if err := s.OnInstanceTerminated(ctx, locks.OnInstanceTerminatedRequest{
-			InstanceID:         instanceID,
-			TemplateHash:       templateHash,
-			TerminatedAtUnixMs: terminatedAtUnixMs,
-		}); err != nil {
-			return fmt.Errorf("peer %q OnInstanceTerminated: %w", r.StoreRegistrationName, err)
-		}
-		if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return deps.Persist.LifecycleIdempotency().Delete(ctx,
-				r.StoreRegistrationName,
-				persistence.LifecycleIdempotencyScopeInstance,
-				instanceID, tx)
-		}); err != nil {
-			return fmt.Errorf("delete lifecycle row %q: %w", r.StoreRegistrationName, err)
-		}
-	}
-	return nil
 }
 
 type provisionArgs struct {

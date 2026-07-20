@@ -21,13 +21,18 @@ func applyTerminalError(
 	errorClass string, payload map[string]any, tags []string,
 	attributesDel map[string]any, scratch []byte, tx persistence.Tx,
 ) (postCommitFn, error) {
-	if len(attributesDel) > 0 {
-		merged := mergeAttributesDelta(resolvedAttrs, attributesDel)
-		if err := validateCommitWriteback(ctx, args, acq, schema, merged, tx); err == nil {
-			if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
-				return nil, fmt.Errorf("applyTerminalError: upsert attributes_delta: %w", err)
-			}
+	onSettle := func(ctx context.Context, tx persistence.Tx) error {
+		if len(attributesDel) == 0 {
+			return nil
 		}
+		merged := mergeAttributesDelta(resolvedAttrs, attributesDel)
+		if err := validateCommitWriteback(ctx, args, acq, schema, merged, tx); err != nil {
+			return nil
+		}
+		if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
+			return fmt.Errorf("applyTerminalError: upsert attributes_delta: %w", err)
+		}
+		return nil
 	}
-	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, "", payload, tags, attributesDel, scratch, tx)
+	return applyErrorPolicyWithScratchAndSettleHook(ctx, args, acq, errorClass, "", payload, tags, attributesDel, scratch, tx, onSettle)
 }

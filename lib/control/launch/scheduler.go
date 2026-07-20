@@ -65,7 +65,7 @@ func (f *failureReporter) Close() {
 	close(f.ch)
 }
 
-func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig) (StopFunc, <-chan error, error) {
+func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, preOpenedBlob persistence.BlobBackend) (StopFunc, <-chan error, error) {
 	tickMs := atoiDefault(os.Getenv("RIMSKY_SCHEDULER_TICK_MS"), 250)
 	log := shared.NewSlogLogger(logger)
 
@@ -75,10 +75,13 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 		return nil, nil, err
 	}
 
-	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology)
-	if err != nil {
-		log.Error("config.OpenBlobBackend", "error", err.Error())
-		return nil, nil, err
+	blobBackend := preOpenedBlob
+	if blobBackend == nil {
+		blobBackend, err = config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology)
+		if err != nil {
+			log.Error("config.OpenBlobBackend", "error", err.Error())
+			return nil, nil, err
+		}
 	}
 
 	supervisorID := os.Getenv("RIMSKY_SCHEDULER_ID")
@@ -107,6 +110,7 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 		TickInterval:            time.Duration(tickMs) * time.Millisecond,
 		ClaimProducers:          rimskyCfg.ClaimProducers,
 		Executors:               rimskyCfg.Executors,
+		Publishers:              rimskyCfg.Publishers,
 		NamedLocks:              rimskyCfg.NamedLocks,
 		SupervisorID:            supervisorID,
 		Blob:                    blobBackend,

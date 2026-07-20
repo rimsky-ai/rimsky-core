@@ -87,7 +87,7 @@ func TestCommitRejectsWhenRootRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requireRootUnavailable(t, s.Commit(context.Background(), "claim-1", nil, nil))
+	requireRootUnavailable(t, s.Commit(context.Background(), "claim-1", nil, nil, ""))
 }
 
 func TestCommitRejectsWhenRootReadOnly(t *testing.T) {
@@ -102,7 +102,7 @@ func TestCommitRejectsWhenRootReadOnly(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
 
-	requireRootUnavailable(t, s.Commit(context.Background(), "claim-1", nil, nil))
+	requireRootUnavailable(t, s.Commit(context.Background(), "claim-1", nil, nil, ""))
 }
 
 func TestAbandonRejectsWhenRootRemoved(t *testing.T) {
@@ -122,7 +122,7 @@ func TestAbandonRejectsWhenRootRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requireRootUnavailable(t, s.Abandon(context.Background(), "claim-1", nil, nil))
+	requireRootUnavailable(t, s.Abandon(context.Background(), "claim-1", nil, nil, ""))
 }
 
 func TestAbandonRejectsWhenRootReadOnly(t *testing.T) {
@@ -137,7 +137,7 @@ func TestAbandonRejectsWhenRootReadOnly(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
 
-	requireRootUnavailable(t, s.Abandon(context.Background(), "claim-1", nil, nil))
+	requireRootUnavailable(t, s.Abandon(context.Background(), "claim-1", nil, nil, ""))
 }
 
 func TestOpenRejectsWhenRootRemoved(t *testing.T) {

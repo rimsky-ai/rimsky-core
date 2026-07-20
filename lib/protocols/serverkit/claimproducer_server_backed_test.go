@@ -211,13 +211,13 @@ func TestServerBackedErrorsPassThroughUnwrapped(t *testing.T) {
 	if _, err := p.Open(ctx, "c", claimproducer.ClaimSpec{}); !errors.Is(err, boom) {
 		t.Fatalf("Open: %v", err)
 	}
-	if _, err := p.Commit(ctx, "c", nil, nil); !errors.Is(err, boom) {
+	if _, err := p.Commit(ctx, "c", nil, nil, ""); !errors.Is(err, boom) {
 		t.Fatalf("Commit: %v", err)
 	}
-	if err := p.Abandon(ctx, "c", nil, nil); !errors.Is(err, boom) {
+	if err := p.Abandon(ctx, "c", nil, nil, ""); !errors.Is(err, boom) {
 		t.Fatalf("Abandon: %v", err)
 	}
-	if err := p.Release(ctx, "c", nil, nil); !errors.Is(err, boom) {
+	if err := p.Release(ctx, "c", nil, nil, ""); !errors.Is(err, boom) {
 		t.Fatalf("Release: %v", err)
 	}
 	if _, err := p.SplitScope(ctx, claimproducer.SplitClaimScopeRequest{}); !errors.Is(err, boom) {
@@ -235,7 +235,7 @@ func TestServerBackedCommitAbandonReleaseCarryArgs(t *testing.T) {
 	}
 	p := backedOver(t, srv)
 	ctx := context.Background()
-	res, err := p.Commit(ctx, "c1", []byte("scope"), []byte("addr"))
+	res, err := p.Commit(ctx, "c1", []byte("scope"), []byte("addr"), "")
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -245,13 +245,13 @@ func TestServerBackedCommitAbandonReleaseCarryArgs(t *testing.T) {
 	if srv.lastCommit.GetClaimId() != "c1" || string(srv.lastCommit.GetClaimScope()) != "scope" || string(srv.lastCommit.GetAddress()) != "addr" {
 		t.Fatalf("CommitRequest: %+v", srv.lastCommit)
 	}
-	if err := p.Abandon(ctx, "c2", []byte("s2"), []byte("a2")); err != nil {
+	if err := p.Abandon(ctx, "c2", []byte("s2"), []byte("a2"), ""); err != nil {
 		t.Fatalf("Abandon: %v", err)
 	}
 	if srv.lastAbandon.GetClaimId() != "c2" || string(srv.lastAbandon.GetClaimScope()) != "s2" || string(srv.lastAbandon.GetAddress()) != "a2" {
 		t.Fatalf("AbandonRequest: %+v", srv.lastAbandon)
 	}
-	if err := p.Release(ctx, "c3", []byte("s3"), []byte("a3")); err != nil {
+	if err := p.Release(ctx, "c3", []byte("s3"), []byte("a3"), ""); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 	if srv.lastRelease.GetClaimId() != "c3" || string(srv.lastRelease.GetClaimScope()) != "s3" || string(srv.lastRelease.GetAddress()) != "a3" {

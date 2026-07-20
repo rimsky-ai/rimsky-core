@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func TestRegisterAgentDisplacesPrior(t *testing.T) {
@@ -124,6 +126,48 @@ func TestInstanceCacheHitMiss(t *testing.T) {
 	}
 	if entry.params["cwd"] != "." {
 		t.Fatalf("params cwd mismatch")
+	}
+}
+
+func TestDropInstanceEvictsCache(t *testing.T) {
+	s := newProxyState()
+	s.cacheInstance("inst-x", map[string]bindingSpec{"codegen": {Path: "./bin"}}, "owner-1", nil)
+	if _, ok := s.lookupInstance("inst-x"); !ok {
+		t.Fatalf("expected cache hit after cacheInstance")
+	}
+	s.dropInstance("inst-x")
+	if _, ok := s.lookupInstance("inst-x"); ok {
+		t.Fatalf("expected cache miss after dropInstance")
+	}
+}
+
+func TestDeliverDispatchOverflowDoesNotBlock(t *testing.T) {
+	conn := newAgentConnection("owner-1", "label", "")
+	streamID := "stream-1"
+	ch := conn.registerStream(streamID)
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < cap(ch)+4; i++ {
+			conn.deliverDispatch(&genv1.DispatchFrame{StreamId: streamID})
+		}
+		close(done)
+	}()
+	<-done
+
+	otherID := "stream-2"
+	otherCh := conn.registerStream(otherID)
+	otherDone := make(chan struct{})
+	go func() {
+		conn.deliverDispatch(&genv1.DispatchFrame{StreamId: otherID})
+		close(otherDone)
+	}()
+	<-otherDone
+
+	select {
+	case <-otherCh:
+	default:
+		t.Fatalf("expected the other stream's frame to be delivered")
 	}
 }
 

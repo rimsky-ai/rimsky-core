@@ -7,8 +7,10 @@ package runtime_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,11 +26,12 @@ import (
 )
 
 type driveSetup struct {
-	backend   persistence.Tables
-	cb        *runtime.CallbackServer
-	addr      string
-	nodeRunID shared.UUID
-	ackID     string
+	backend    persistence.Tables
+	cb         *runtime.CallbackServer
+	addr       string
+	instanceID shared.UUID
+	nodeRunID  shared.UUID
+	ackID      string
 }
 
 func newDriveSetup(
@@ -104,7 +107,7 @@ func newDriveSetup(
 		AttributesSchema:   schema,
 	})
 
-	return driveSetup{backend: backend, cb: cb, addr: addr, nodeRunID: nodeRunID, ackID: ackID}
+	return driveSetup{backend: backend, cb: cb, addr: addr, instanceID: inst.ID, nodeRunID: nodeRunID, ackID: ackID}
 }
 
 func (s driveSetup) post(ctx context.Context, t *testing.T, body string) {
@@ -177,4 +180,83 @@ func TestDriveTerminal_RejectsUndeclaredTag(t *testing.T) {
 
 	require.Equal(t, cascade.NodeStateFailed, s.runState(ctx, t),
 		"an undeclared terminal tag on the async path must be rejected as a protocol violation, not completed")
+}
+
+func TestDriveTerminal_RejectedCallbackSkipsAfterTerminalBreakpoint(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newDriveSetup(ctx, t, "sup-phantom-1506", nil, nil)
+
+	bpID := createBreakpointForEval(t, ctx, s.backend, persistence.BreakpointRow{
+		InstanceID:     s.instanceID,
+		Matcher:        map[string]any{},
+		Checkpoint:     persistence.CheckpointAfterTerminal,
+		Mode:           persistence.BreakpointModeNotifyOnly,
+		OverflowPolicy: persistence.OverflowDropOldest,
+		HitTTLSeconds:  300,
+		CreatedByKey:   "test",
+	})
+
+	s.post(ctx, t, `{"success":{"changed":true}}`)
+	require.Equal(t, cascade.NodeStateFresh, s.runState(ctx, t))
+
+	hitsAfterFirst := listHitsForBreakpoint(t, ctx, s.backend, bpID)
+	require.Len(t, hitsAfterFirst, 1,
+		"the legitimate settling callback must record exactly one after_terminal hit")
+
+	s.post(ctx, t, `{"success":{"changed":true}}`)
+
+	hitsAfterDuplicate := listHitsForBreakpoint(t, ctx, s.backend, bpID)
+	require.Len(t, hitsAfterDuplicate, 1,
+		"a late/duplicate callback rejected as already-terminal must not mint a phantom after_terminal hit")
+}
+
+func TestCallback_ConcurrentDuplicateCallbacks_AckOutcomeNeverSwapped(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newDriveSetup(ctx, t, "sup-dup-1503", nil, nil)
+
+	const n = 2
+	statuses := make([]string, n)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+				"http://"+s.addr+"/v1/callback/"+s.ackID, bytes.NewReader([]byte(`{"success":{"changed":true}}`)))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			var body struct {
+				AckStatus string `json:"ack_status"`
+			}
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+			statuses[i] = body.AckStatus
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	accepted, rejectedTerminal := 0, 0
+	for _, st := range statuses {
+		switch st {
+		case "accepted":
+			accepted++
+		case "rejected_run_terminal":
+			rejectedTerminal++
+		default:
+			t.Fatalf("unexpected ack_status %q among %v", st, statuses)
+		}
+	}
+	require.Equal(t, 1, accepted,
+		"exactly one concurrent duplicate must apply the terminal and report accepted; got statuses %v", statuses)
+	require.Equal(t, 1, rejectedTerminal,
+		"exactly one concurrent duplicate must be rejected as already-terminal, never both accepted or both rejected; got statuses %v", statuses)
+	require.Equal(t, cascade.NodeStateFresh, s.runState(ctx, t))
 }

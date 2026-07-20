@@ -212,11 +212,11 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	if sub, _ := obsBody[0]["publisher_subscription_id"].(string); sub == "" {
 		t.Errorf("publisher_subscription_id: missing or empty (auth path discriminator)")
 	}
-	if got, want := obsIdem[0], "w1+etag-a"; got != want {
-		t.Errorf("Idempotency-Key[0] = %q, want %q (sub id + object etag)", got, want)
+	if got, want := obsIdem[0], "w1+events/a.json+etag-a"; got != want {
+		t.Errorf("Idempotency-Key[0] = %q, want %q (sub id + object name + etag)", got, want)
 	}
-	if got, want := obsIdem[1], "w1+etag-b"; got != want {
-		t.Errorf("Idempotency-Key[1] = %q, want %q (sub id + object etag)", got, want)
+	if got, want := obsIdem[1], "w1+events/b.json+etag-b"; got != want {
+		t.Errorf("Idempotency-Key[1] = %q, want %q (sub id + object name + etag)", got, want)
 	}
 	obsMu.Unlock()
 
@@ -235,13 +235,13 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	if len(obsBody) != 3 {
 		t.Errorf("post-add messages: %d (want 3)", len(obsBody))
 	}
-	if got, want := obsIdem[2], "w1+etag-c"; got != want {
-		t.Errorf("Idempotency-Key[2] = %q, want %q (sub id + object etag)", got, want)
+	if got, want := obsIdem[2], "w1+events/c.json+etag-c"; got != want {
+		t.Errorf("Idempotency-Key[2] = %q, want %q (sub id + object name + etag)", got, want)
 	}
 	obsMu.Unlock()
 }
 
-func TestTick_IdempotencyKeyFallsBackToObjectNameWhenETagEmpty(t *testing.T) {
+func TestTick_IdempotencyKeyIncludesObjectNameWhenETagEmpty(t *testing.T) {
 	var obsIdem string
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		obsIdem = r.Header.Get("Idempotency-Key")
@@ -266,8 +266,8 @@ func TestTick_IdempotencyKeyFallsBackToObjectNameWhenETagEmpty(t *testing.T) {
 	}
 	s.Tick(context.Background())
 
-	if want := "w1+events/no-etag.json"; obsIdem != want {
-		t.Errorf("Idempotency-Key = %q, want %q (sub id + object name when etag is empty)", obsIdem, want)
+	if want := "w1+events/no-etag.json+"; obsIdem != want {
+		t.Errorf("Idempotency-Key = %q, want %q (sub id + object name + empty etag)", obsIdem, want)
 	}
 }
 
@@ -308,6 +308,158 @@ func TestTick_LastModifiedWatermark(t *testing.T) {
 	s.Tick(context.Background())
 	if pushed != 3 {
 		t.Errorf("pushed: %d (want 3)", pushed)
+	}
+}
+
+func TestTick_LastModifiedWatermark_EqualTimestampSiblingsBothDelivered(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		pushed []string
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		payload, _ := body["payload"].(map[string]any)
+		name, _ := payload["object_name"].(string)
+		mu.Lock()
+		pushed = append(pushed, name)
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	lister := NewMemoryLister()
+	s.SetBackend("memory", lister)
+	tied := pin.Add(-1 * time.Hour)
+	lister.Put("test-bucket", ObjectMeta{Name: "sibling-a.json", LastModified: tied})
+	lister.Put("test-bucket", ObjectMeta{Name: "sibling-b.json", LastModified: tied})
+
+	cfg := map[string]any{
+		"backend":         "memory",
+		"bucket":          "test-bucket",
+		"poll_interval":   "10s",
+		"watermark_field": "last_modified",
+	}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Tick(context.Background())
+
+	mu.Lock()
+	got := append([]string(nil), pushed...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("pushed: %v (want both siblings sharing the watermark last_modified timestamp)", got)
+	}
+
+	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
+	s.Tick(context.Background())
+	mu.Lock()
+	got = append([]string(nil), pushed...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Errorf("pushed after steady-state tick: %v (want still 2; no re-delivery)", got)
+	}
+}
+
+func TestTick_NameWatermark_DiscoversLowerSortingObjectAddedLater(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		pushed []string
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		payload, _ := body["payload"].(map[string]any)
+		name, _ := payload["object_name"].(string)
+		mu.Lock()
+		pushed = append(pushed, name)
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	lister := NewMemoryLister()
+	s.SetBackend("memory", lister)
+	lister.Put("test-bucket", ObjectMeta{Name: "b.json", LastModified: pin.Add(-1 * time.Hour)})
+
+	cfg := map[string]any{"backend": "memory", "bucket": "test-bucket", "poll_interval": "10s"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Tick(context.Background())
+
+	lister.Put("test-bucket", ObjectMeta{Name: "a.json", LastModified: pin.Add(-30 * time.Minute)})
+	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
+	s.Tick(context.Background())
+
+	mu.Lock()
+	got := append([]string(nil), pushed...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("pushed: %v (want b.json then a.json; a.json sorts below the b.json watermark but must still be discovered)", got)
+	}
+	if got[1] != "a.json" {
+		t.Errorf("pushed[1] = %q, want a.json (lower-sorting object dropped after the watermark advanced past b.json)", got[1])
+	}
+}
+
+func TestTick_SameETagDifferentObjectsBothDeliveredWithDistinctIdempotencyKeys(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		obsIdem []string
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		obsIdem = append(obsIdem, r.Header.Get("Idempotency-Key"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	lister := NewMemoryLister()
+	s.SetBackend("memory", lister)
+	const sharedETag = "identical-content-hash"
+	lister.Put("test-bucket", ObjectMeta{Name: "copy-a.json", LastModified: pin.Add(-2 * time.Hour), ETag: sharedETag})
+	lister.Put("test-bucket", ObjectMeta{Name: "copy-b.json", LastModified: pin.Add(-1 * time.Hour), ETag: sharedETag})
+
+	cfg := map[string]any{"backend": "memory", "bucket": "test-bucket", "poll_interval": "10s"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Tick(context.Background())
+
+	mu.Lock()
+	got := append([]string(nil), obsIdem...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("idempotency keys observed: %v (want 2: both same-content objects delivered)", got)
+	}
+	if got[0] == got[1] {
+		t.Errorf("idempotency keys collided across distinct objects sharing an etag: %q == %q", got[0], got[1])
 	}
 }
 

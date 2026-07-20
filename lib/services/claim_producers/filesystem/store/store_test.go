@@ -139,14 +139,26 @@ func TestOpenRejectsAbsolutePath(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsInvalidClaimID(t *testing.T) {
+	st, _ := New(Config{Root: t.TempDir()})
+	cases := []string{"", "a/b", "a..b", "a.b", "../escape", "a\\b"}
+	for _, id := range cases {
+		t.Run(fmt.Sprintf("%q", id), func(t *testing.T) {
+			if _, err := st.Open(context.Background(), id, "x.txt"); err == nil {
+				t.Fatalf("Open(claimID=%q): expected error; got nil", id)
+			}
+		})
+	}
+}
+
 func TestCommitAbandonReleaseAreNoops(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	o, _ := st.Open(context.Background(), "claim-1", "x.txt")
 
-	if err := st.Commit(context.Background(), "claim-1", o.Result.ClaimScope, o.Result.Address); err != nil {
+	if err := st.Commit(context.Background(), "claim-1", o.Result.ClaimScope, o.Result.Address, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	if err := st.Abandon(context.Background(), "claim-2", nil, nil); err != nil {
+	if err := st.Abandon(context.Background(), "claim-2", nil, nil, ""); err != nil {
 		t.Fatalf("Abandon: %v", err)
 	}
 	if err := st.Release(context.Background(), "claim-3", nil, nil); err != nil {
@@ -186,6 +198,67 @@ func TestBatchPopDoesNotPopulateClaimsMap(t *testing.T) {
 	}
 	if got := len(st.claims); got != before {
 		t.Errorf("BatchPop populated s.claims map (before=%d, after=%d) — would leak entries because the server-internal claim IDs never get released by rimsky", before, got)
+	}
+}
+
+func TestBatchPopRejectsTraversalClaimID(t *testing.T) {
+	root := t.TempDir()
+	queueDir := filepath.Join(root, "queue")
+	if err := os.MkdirAll(queueDir, 0o755); err != nil {
+		t.Fatalf("mkdir queue: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(queueDir, "a"), 0o755); err != nil {
+		t.Fatalf("mkdir a: %v", err)
+	}
+	pp := &PickPolicy{
+		Root:              "queue",
+		OnCommit:          action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "on_open",
+	}
+	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@queue": pp}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := st.BatchPop(context.Background(), "@queue", []string{"../escape"}); err == nil {
+		t.Fatal("BatchPop with traversal claim_id: expected error, got nil")
+	}
+	inProgDir := filepath.Join(policyStateDir(root, "@queue"), "in_progress")
+	entries, err := os.ReadDir(inProgDir)
+	if err != nil {
+		t.Fatalf("readdir in_progress: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("in_progress must remain empty after a rejected BatchPop, got %v", entries)
+	}
+}
+
+func TestNew_LedgerMaxRecordsConfigured(t *testing.T) {
+	st, err := New(Config{Root: t.TempDir(), LedgerMaxRecords: 2})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := st.Open(context.Background(), "claim-1", "x.txt"); err != nil {
+		t.Fatalf("Open claim-1: %v", err)
+	}
+	if err := st.Commit(context.Background(), "claim-1", nil, nil, ""); err != nil {
+		t.Fatalf("Commit claim-1: %v", err)
+	}
+	if _, err := st.Open(context.Background(), "claim-2", "y.txt"); err != nil {
+		t.Fatalf("Open claim-2: %v", err)
+	}
+	if _, err := st.Open(context.Background(), "claim-3", "z.txt"); err != nil {
+		t.Fatalf("Open claim-3: %v", err)
+	}
+	if _, ok := st.Ledger().Get("claim-1"); ok {
+		t.Fatal("closed claim-1 should have been evicted once the configured cap (2) was exceeded")
+	}
+	if _, ok := st.Ledger().Get("claim-2"); !ok {
+		t.Error("open claim-2 must survive eviction")
+	}
+	if _, ok := st.Ledger().Get("claim-3"); !ok {
+		t.Error("open claim-3 must survive eviction")
 	}
 }
 

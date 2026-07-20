@@ -24,17 +24,29 @@ func SweepRotationGrace(
 	log shared.Logger,
 ) (int, error) {
 	now := clock.Now()
-	swept, err := tables.APIKeys().SweepRotationGrace(ctx, now, nil)
+	var swept []persistence.APIKey
+	err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var txErr error
+		swept, txErr = tables.APIKeys().SweepRotationGrace(ctx, now, tx)
+		if txErr != nil {
+			return txErr
+		}
+		for _, k := range swept {
+			payload := auth.KeyRevokedPayload{
+				KeyID:   k.ID,
+				KeyName: k.Name,
+				Reason:  auth.RevokeReasonRotationGrace,
+			}
+			if txErr := emitKeyRevoked(ctx, tables, tx, log, payload); txErr != nil {
+				return txErr
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return 0, err
 	}
 	for _, k := range swept {
-		payload := auth.KeyRevokedPayload{
-			KeyID:   k.ID,
-			KeyName: k.Name,
-			Reason:  auth.RevokeReasonRotationGrace,
-		}
-		emitKeyRevoked(ctx, tables, payload)
 		if log != nil {
 			log.Info("auth.rotation_grace_revoked", "key_id", k.ID.String(), "key_name", k.Name)
 		}
@@ -86,19 +98,29 @@ func registeredAuthMutationHooks() []AuthMutationHook {
 	return out
 }
 
-func emitKeyRevoked(ctx context.Context, tables persistence.Tables, p auth.KeyRevokedPayload) {
+func emitKeyRevoked(ctx context.Context, tables persistence.Tables, tx persistence.Tx, log shared.Logger, p auth.KeyRevokedPayload) error {
 	data, err := json.Marshal(p)
 	if err != nil {
-		return
+		if log != nil {
+			log.Error("auth.key_revoked.marshal", "key_id", p.KeyID.String(), "err", err.Error())
+		}
+		return err
 	}
 	payloadMap := map[string]any{}
 	if err := json.Unmarshal(data, &payloadMap); err != nil {
-		return
+		if log != nil {
+			log.Error("auth.key_revoked.unmarshal", "key_id", p.KeyID.String(), "err", err.Error())
+		}
+		return err
 	}
-	_ = tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return tables.Events().Append(ctx, persistence.EventAppendInput{
-			Kind:    events.KindAuthKeyRevoked(),
-			Payload: payloadMap,
-		}, tx)
-	})
+	if err := tables.Events().Append(ctx, persistence.EventAppendInput{
+		Kind:    events.KindAuthKeyRevoked(),
+		Payload: payloadMap,
+	}, tx); err != nil {
+		if log != nil {
+			log.Error("auth.key_revoked.append", "key_id", p.KeyID.String(), "err", err.Error())
+		}
+		return err
+	}
+	return nil
 }

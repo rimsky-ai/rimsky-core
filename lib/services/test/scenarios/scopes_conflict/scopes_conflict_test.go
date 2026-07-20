@@ -7,7 +7,6 @@ package scopesconflict
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -95,8 +94,18 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 
 	instanceID := createInstance(t, ep, templateID, "ck-scopes-conflict-top-level")
 
-	waitForNodeTerminal(t, ep, instanceID, "acquirer", 120*time.Second)
-	waitForNodeTerminal(t, ep, instanceID, "verifier", 120*time.Second)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "acquirer", 120*time.Second)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "verifier", 120*time.Second)
+
+	contenderObs := ep.WaitForNodeTerminal(t, instanceID, "contender", 30*time.Second)
+	if contenderObs.RunSummary.FailedCount == 0 {
+		t.Fatalf("top-level overlap: contender node on instance %s reached terminal without "+
+			"failing (run_summary=%+v) — a correctly-held-off contender must actually attempt "+
+			"acquisition and fail on the ScopesConflict rejection; a contender that never "+
+			"scheduled at all would instead time out waiting for terminal, so this proves the "+
+			"contender genuinely ran and was rejected, not silently skipped",
+			instanceID, contenderObs.RunSummary)
+	}
 
 	deadline := time.Now().Add(30 * time.Second)
 	got := 1
@@ -144,19 +153,21 @@ func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEn
 
 	instanceID := createInstance(t, ep, templateID, "ck-scopes-conflict-fanout")
 
-	deadline := time.Now().Add(45 * time.Second)
-	got := 0
-	for time.Now().Before(deadline) {
-		got = countSubClaimRows(ctx, t, pool, instanceID)
-		if got >= 2 {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
+	obs := ep.WaitForNodeTerminal(t, instanceID, "fan-parent", 45*time.Second)
+	if obs.RunSummary.FailedCount == 0 {
+		t.Fatalf("fan-out overlap: fan-parent reached terminal without failing (run_summary=%+v) — "+
+			"the overlapping partition keys \"a\" and \"a/x\" must cause AcquireSubClaims to reject "+
+			"the whole sub-claim batch (ScopesConflict), failing the fan-out dispatch; a fresh "+
+			"terminal here would mean the conflict was never checked", obs.RunSummary)
 	}
-	if got >= 2 {
-		t.Fatalf("fan-out overlap: the acquisition tx committed BOTH overlapping sub-claim rows for "+
-			"producer %q (got %d), but the conflicting sub-claim must be rejected so the tx commits "+
-			"neither — AcquireSubClaims did not conflict-check the overlapping sub-scopes against the "+
+
+	got := countSubClaimRows(ctx, t, pool, instanceID)
+	if got != 0 {
+		t.Fatalf("fan-out overlap: want 0 committed sub-claim rows for producer %q — the two "+
+			"requested partition keys \"a\" and \"a/x\" overlap, and AcquireSubClaims must reject "+
+			"the whole acquisition tx on any sibling conflict (the tx commits neither), got %d — "+
+			"the acquisition tx committed one or both overlapping sub-claim rows because "+
+			"AcquireSubClaims did not conflict-check the overlapping sub-scopes against the "+
 			"producer's ScopesConflict", overlapProducerName, got)
 	}
 }
@@ -242,34 +253,4 @@ func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanc
 	}
 	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "scopes-conflict", instanceKey)
 	return resp.InstanceID
-}
-
-func waitForNodeTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
-	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastSummary string
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			var resp struct {
-				RunSummary struct {
-					ActiveCount  int `json:"active_count"`
-					PendingCount int `json:"pending_count"`
-					FreshCount   int `json:"fresh_count"`
-					FailedCount  int `json:"failed_count"`
-				} `json:"run_summary"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastSummary = fmt.Sprintf("active=%d pending=%d fresh=%d failed=%d",
-					resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount,
-					resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
-				if resp.RunSummary.FreshCount > 0 || resp.RunSummary.FailedCount > 0 {
-					return
-				}
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %q on instance %s did not reach terminal within %v; last run_summary=%s",
-		nodeType, instanceID, deadline, lastSummary)
 }

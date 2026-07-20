@@ -25,7 +25,7 @@ Owns: the lineage projection storage, the two record kinds, the operator-facing 
 
 ## Query surface
 
-The operator-facing query surface supports point lookups by run id, claim-handle id, source type+id, and producer name, plus recursive backward/forward walks across runs and claim handles bounded by depth.
+The operator-facing query surface supports point lookups by run id, claim-handle id, source type+id, and producer name, plus recursive backward/forward walks across runs and claim handles bounded by depth. The source-id and producer-name reverse lookups page internally past their first window rather than silently dropping older matches, and surface a `truncated` flag if their internal scan budget is exhausted before the underlying data is.
 
 ## Retention
 

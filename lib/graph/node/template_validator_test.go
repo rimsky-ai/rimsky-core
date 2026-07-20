@@ -1799,6 +1799,62 @@ func TestValidateAttributesSchema_TypeRedeclarationConflict(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].attributes.schema.properties.model.type")
 }
 
+func TestValidateAttributesSchema_NestedSourceGrammarValidated(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"config": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"nested_field": map[string]any{
+								"type":   "string",
+								"source": "claim.unknown_alias.payload",
+							},
+						},
+					},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	require.False(t, res.Ok(), "nested source directive with an unresolvable claim alias must be rejected at registration, not just at dispatch")
+	hasErrorAt(t, res, "nodes[0].attributes.schema.properties.config.properties.nested_field.source")
+}
+
+func TestValidateAttributesSchema_NestedSourceNonStringRejected(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"config": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"nested_field": map[string]any{
+								"type":   "string",
+								"source": []any{"{{params.a}}", "{{params.b}}"},
+							},
+						},
+					},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].attributes.schema.properties.config.properties.nested_field.source")
+}
+
 func TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L2(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",

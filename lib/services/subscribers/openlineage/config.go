@@ -19,6 +19,7 @@ type Config struct {
 	Namespace    string
 	PollInterval time.Duration
 	BatchSize    int
+	LagWindow    time.Duration
 }
 
 func LoadConfig() (Config, error) {
@@ -31,6 +32,9 @@ func LoadConfig() (Config, error) {
 		state = rimsky
 	}
 	backend := os.Getenv("RIMSKY_OPENLINEAGE_BACKEND_URL")
+	if backend == "" {
+		return Config{}, fmt.Errorf("env RIMSKY_OPENLINEAGE_BACKEND_URL required")
+	}
 	bearer := os.Getenv("RIMSKY_OPENLINEAGE_BEARER_TOKEN")
 	namespace := os.Getenv("RIMSKY_OPENLINEAGE_NAMESPACE")
 	if namespace == "" {
@@ -52,6 +56,14 @@ func LoadConfig() (Config, error) {
 		}
 		batch = n
 	}
+	lagWindow := 2 * time.Second
+	if v := os.Getenv("RIMSKY_OPENLINEAGE_LAG_WINDOW"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 {
+			return Config{}, fmt.Errorf("RIMSKY_OPENLINEAGE_LAG_WINDOW: must be a non-negative duration")
+		}
+		lagWindow = d
+	}
 	return Config{
 		RimskyDSN:    rimsky,
 		StateDSN:     state,
@@ -60,5 +72,6 @@ func LoadConfig() (Config, error) {
 		Namespace:    namespace,
 		PollInterval: poll,
 		BatchSize:    batch,
+		LagWindow:    lagWindow,
 	}, nil
 }

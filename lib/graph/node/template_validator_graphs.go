@@ -159,8 +159,8 @@ func flatten(spec *TemplateSpec, res *ValidationResult) {
 			seen[n.Type] = fmt.Sprintf("graph %q", g.Name)
 			emitted := n
 			if strings.TrimSpace(emitted.Delegate) != "" {
-				emitted.IsSubgraphEntryAbsorbed = true
 				if entry, ok := entryByGraph[emitted.Delegate]; ok {
+					emitted.IsSubgraphEntryAbsorbed = true
 					absorbed, errs := absorbEntryIntoCaller(emitted, entry,
 						fmt.Sprintf("graphs[%d].nodes[%d]", gi, ni))
 					emitted = absorbed
@@ -207,16 +207,9 @@ func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (Temp
 		errs = append(errs, ValidationError{
 			Path: basePath + ".executor",
 			Msg: fmt.Sprintf(
-				"delegate and executor are mutually exclusive (executor=%q, delegate=%q)",
+				"delegate and executor are mutually exclusive (executor=%q, delegate=%q); "+
+					"a delegating node inherits its executor from the sub-graph's absorbed entry and must not declare its own",
 				caller.Executor, caller.Delegate),
-		})
-	}
-	if len(errs) == 0 && out.Executor != "" && entry.Executor != "" && out.Executor != entry.Executor {
-		errs = append(errs, ValidationError{
-			Path: basePath + ".executor",
-			Msg: fmt.Sprintf(
-				"subgraph_absorption_alias_conflict: calling node declares executor %q, but the absorbed entry declares executor %q; remove the calling node's executor (the entry's wins)",
-				out.Executor, entry.Executor),
 		})
 	}
 	if out.Executor == "" {
@@ -310,6 +303,35 @@ func mergeHoldsOnAbsorb(callerHolds, entryHolds map[string]HoldsBinding, basePat
 		out[k] = v
 	}
 	return out, errs
+}
+
+// @concept: delegation
+func validateDelegateTargets(spec *TemplateSpec, res *ValidationResult) {
+	subGraphNames := make(map[string]struct{}, len(spec.Graphs))
+	for _, g := range spec.Graphs {
+		if g.Name == "" || g.Name == MainGraphName {
+			continue
+		}
+		if strings.TrimSpace(g.Entry) == "" || strings.TrimSpace(g.Exit) == "" {
+			continue
+		}
+		subGraphNames[g.Name] = struct{}{}
+	}
+	for i, n := range spec.Nodes {
+		delegate := strings.TrimSpace(n.Delegate)
+		if delegate == "" {
+			continue
+		}
+		if _, ok := subGraphNames[delegate]; ok {
+			continue
+		}
+		res.Errors = append(res.Errors, ValidationError{
+			Path: fmt.Sprintf("nodes[%d].delegate", i),
+			Msg: fmt.Sprintf(
+				"subgraph_unknown_delegate_target: delegate %q does not name a declared sub-graph (with both entry: and exit:) in this template",
+				delegate),
+		})
+	}
 }
 
 func detectDelegateCycles(spec *TemplateSpec, graphIndex map[string]int, res *ValidationResult) {
@@ -433,6 +455,14 @@ func validateGraphReachability(g GraphSpec, res *ValidationResult) {
 					name, g.Name, g.Entry, g.Exit),
 			})
 		}
+	}
+	if g.Exit != g.Entry && !reachable[g.Exit] {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: fmt.Sprintf("graphs[%q]", g.Name),
+			Msg: fmt.Sprintf(
+				"subgraph_exit_unreachable: graph %q exit %q is not reachable from entry %q along subscribes edges",
+				g.Name, g.Exit, g.Entry),
+		})
 	}
 }
 

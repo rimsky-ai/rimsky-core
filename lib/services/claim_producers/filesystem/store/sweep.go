@@ -56,6 +56,13 @@ func (s *Store) sweepOnce() error {
 				continue
 			}
 			src := filepath.Join(inProg, e.Name())
+			folderAbs := filepath.Join(s.root, pp.Root, folder)
+			if _, statErr := os.Stat(folderAbs); statErr != nil {
+				if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					slog.Warn("filesystem store: sweep unlink orphan sentinel", "selector", selector, "folder", folder, "error", err.Error())
+				}
+				continue
+			}
 			dst := filepath.Join(avail, folder)
 			if err := os.Rename(src, dst); err != nil {
 				if !errors.Is(err, fs.ErrNotExist) {

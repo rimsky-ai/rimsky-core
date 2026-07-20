@@ -433,4 +433,101 @@ func TestScheduler_BreakpointSweeps(t *testing.T) {
 		"AutoResumeStale must stamp resumed_by_key='sweeper'")
 }
 
+func TestScheduler_OrphanedBreakpointHitReap_ExcludesNotifyOnlyAndLiveBlockedRunner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newSchedFixture(t)
+
+	bp := persistence.BreakpointRow{
+		InstanceID:     f.instance.ID,
+		Matcher:        map[string]any{"label": "block"},
+		Checkpoint:     persistence.CheckpointBeforeDispatch,
+		Mode:           persistence.BreakpointModePause,
+		OverflowPolicy: persistence.OverflowBlockDispatch,
+		HitTTLSeconds:  300,
+		CreatedByKey:   "test-key",
+	}
+	var bpID shared.UUID
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		bpID, err = f.persist.Breakpoints().Create(ctx, bp, tx)
+		return err
+	}))
+
+	liveNode := f.createNode(t, "stub", cascade.NodeStateRunning)
+	var liveRunID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT id FROM rimsky_node_runs WHERE node_id = $1`, []any{liveNode.ID}, &liveRunID)
+	pgtest.ExecForTest(ctx, t, f.driver,
+		`UPDATE rimsky_node_runs SET claimed_by = 'supervisor-live', claimed_at = NOW() WHERE id = $1`,
+		liveRunID)
+
+	deadNode := f.createNode(t, "stub", cascade.NodeStateRunning)
+	var deadRunID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT id FROM rimsky_node_runs WHERE node_id = $1`, []any{deadNode.ID}, &deadRunID)
+
+	var notifyOnlyHitID, liveBlockedHitID, orphanedHitID shared.UUID
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		id, _, err := f.persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
+			BreakpointID: bpID, InstanceID: f.instance.ID,
+			Checkpoint: persistence.CheckpointBeforeDispatch,
+			Mode:       persistence.BreakpointModeNotifyOnly,
+			Snapshot:   map[string]any{"label": "notify-only"},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		notifyOnlyHitID = id
+
+		id, _, err = f.persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
+			BreakpointID: bpID, InstanceID: f.instance.ID, NodeRunID: &liveRunID,
+			Checkpoint: persistence.CheckpointBeforeDispatch,
+			Mode:       persistence.BreakpointModePause,
+			Snapshot:   map[string]any{"label": "live-blocked"},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		liveBlockedHitID = id
+
+		id, _, err = f.persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
+			BreakpointID: bpID, InstanceID: f.instance.ID, NodeRunID: &deadRunID,
+			Checkpoint: persistence.CheckpointBeforeDispatch,
+			Mode:       persistence.BreakpointModePause,
+			Snapshot:   map[string]any{"label": "orphaned"},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		orphanedHitID = id
+		return nil
+	}))
+
+	for _, id := range []shared.UUID{notifyOnlyHitID, liveBlockedHitID, orphanedHitID} {
+		pgtest.ExecForTest(ctx, t, f.driver,
+			`UPDATE rimsky_breakpoint_hits SET hit_at = NOW() - interval '1 hour' WHERE id = $1`, id)
+	}
+
+	require.NoError(t, tick(ctx, f.schedConfig(), nil))
+
+	var gotNotifyOnly, gotLiveBlocked, gotOrphaned *persistence.BreakpointHitRow
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		var err error
+		gotNotifyOnly, err = f.persist.BreakpointHits().Get(ctx, notifyOnlyHitID, tx)
+		if err != nil {
+			return err
+		}
+		gotLiveBlocked, err = f.persist.BreakpointHits().Get(ctx, liveBlockedHitID, tx)
+		if err != nil {
+			return err
+		}
+		gotOrphaned, err = f.persist.BreakpointHits().Get(ctx, orphanedHitID, tx)
+		return err
+	})
+	require.NotNil(t, gotNotifyOnly, "a notify_only hit must never be reaped by the orphaned-hit sweeper")
+	require.NotNil(t, gotLiveBlocked, "a pause hit whose node run is still claimed (a live blocked runner) must not be force-resumed by the orphan reap")
+	require.Nil(t, gotOrphaned, "a pause hit whose node run is no longer claimed (truly orphaned) must still be reaped")
+}
+
 var _ = sync.Mutex{}

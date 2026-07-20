@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations) (StopFunc, <-chan error, error) {
+func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations, preOpenedBlob persistence.BlobBackend) (StopFunc, <-chan error, error) {
 	host := os.Getenv("RIMSKY_CONTROL_API_HOST")
 	if host == "" {
 		host = "127.0.0.1"
@@ -44,9 +44,11 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 		return nil, nil, err
 	}
 
-	if _, err := config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology); err != nil {
-		log.Error("config.OpenBlobBackend", "error", err.Error())
-		return nil, nil, err
+	if preOpenedBlob == nil {
+		if _, err := config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology); err != nil {
+			log.Error("config.OpenBlobBackend", "error", err.Error())
+			return nil, nil, err
+		}
 	}
 
 	mreg := observability.NewMetricsRegistry()
@@ -65,9 +67,10 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 		DataProcessors: rimskyCfg.DataProcessors,
 		Metrics:        observability.MetricsHookOf(mreg),
 
-		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,
-		PeerAuth:               rimskyCfg.PeerAuth,
-		Bundled:                bundledRegs,
+		LateBindServiceProxies:     rimskyCfg.LateBindServiceProxies,
+		PeerAuth:                   rimskyCfg.PeerAuth,
+		UnreachableValidatorPolicy: rimskyCfg.UnreachableValidatorPolicy,
+		Bundled:                    bundledRegs,
 	})
 	if err != nil {
 		log.Error("StartControlAPI", "error", err.Error())

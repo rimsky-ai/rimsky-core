@@ -140,6 +140,105 @@ func TestExecute_InvalidAttributes_BadSeverity(t *testing.T) {
 	}
 }
 
+func TestExecute_RuntimeUnknownKindClassifiesAsAttributeInvalidNotCheckFailed(t *testing.T) {
+	srv := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"checks": []any{
+			map[string]any{"kind": "totally_unknown_check_kind", "config": map[string]any{"field": "id"}},
+		},
+		"rows": []any{map[string]any{"id": "x"}},
+	})
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
+		t.Errorf("a misconfigured check (unknown kind) must classify as attribute_invalid, not check_failed; got %q", errOut.GetErrorClass())
+	}
+}
+
+func TestExecute_MisconfiguredWarningSeverityCheckStillErrorsNotSilentlyDowngraded(t *testing.T) {
+	srv := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"checks": []any{
+			map[string]any{"kind": "regex_match", "severity": "warning", "config": map[string]any{"field": "id", "pattern": "("}},
+		},
+		"rows": []any{map[string]any{"id": "x"}},
+	})
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("a misconfigured check under severity=warning must still error, not silently pass as a non-blocking warning; got %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
+		t.Errorf("error_class: got %q, want verifier/attribute_invalid", errOut.GetErrorClass())
+	}
+}
+
+func TestExecute_RowsPresentButWrongTypeIsAttributeInvalid(t *testing.T) {
+	srv := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"checks": []any{
+			map[string]any{"kind": "no_nulls", "config": map[string]any{"field": "id"}},
+		},
+		"rows": "not-an-array",
+	})
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("a present-but-non-array rows attribute must error, not vacuously pass as zero rows; got %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
+		t.Errorf("error_class: got %q, want verifier/attribute_invalid", errOut.GetErrorClass())
+	}
+}
+
+func TestExecute_RowsAbsentWithRowLevelCheckIsAttributeInvalid(t *testing.T) {
+	srv := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"checks": []any{
+			map[string]any{"kind": "no_nulls", "config": map[string]any{"field": "id"}},
+		},
+	})
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("an absent rows attribute for a row-level check must error, not vacuously pass zero rows; got %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
+		t.Errorf("error_class: got %q, want verifier/attribute_invalid", errOut.GetErrorClass())
+	}
+}
+
+func TestExecute_RowsAbsentWithOnlyCountLevelChecksSucceeds(t *testing.T) {
+	srv := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"checks": []any{
+			map[string]any{"kind": "row_count_absolute", "config": map[string]any{"min": float64(0)}},
+		},
+	})
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.GetSuccess() == nil {
+		t.Fatalf("row_count_absolute needs no rows attribute (it checks len(rows)); expected Success, got %T", outcome.GetOutcome())
+	}
+}
+
 func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
 	obs := NewObservabilityServer()
 	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})

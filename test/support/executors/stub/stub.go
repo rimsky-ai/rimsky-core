@@ -5,13 +5,16 @@
 package stub
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -19,6 +22,54 @@ import (
 )
 
 var cancelProbeHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+var asyncProbeHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+const (
+	asyncProbeCallbackMaxAttempts = 5
+	asyncProbeCallbackBaseDelay   = 200 * time.Millisecond
+)
+
+func postAsyncProbeCallback(callbackURL, ackID string) {
+	if callbackURL == "" {
+		return
+	}
+	body, err := json.Marshal(map[string]any{
+		"success": map[string]any{
+			"attributes_delta": map[string]any{"stub": true},
+			"changed":          false,
+			"change_summary":   "stub async probe settle",
+		},
+	})
+	if err != nil {
+		return
+	}
+	url := callbackURL + "/v1/callback/" + ackID
+	delay := asyncProbeCallbackBaseDelay
+	for attempt := 1; attempt <= asyncProbeCallbackMaxAttempts; attempt++ {
+		resp, err := asyncProbeHTTPClient.Post(url, "application/json", bytes.NewReader(body))
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return
+			}
+		}
+		if attempt == asyncProbeCallbackMaxAttempts {
+			return
+		}
+		time.Sleep(delay)
+		delay *= 2
+	}
+}
+
+const defaultParkProbeScratch = "stub-park-scratch"
+
+func parkProbeScratch(incoming []byte) []byte {
+	if len(incoming) > 0 {
+		return append([]byte(nil), incoming...)
+	}
+	return []byte(defaultParkProbeScratch)
+}
 
 func postCancelProbeSignal(callbackURL, ackID string) {
 	if callbackURL == "" {
@@ -268,8 +319,16 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 		if probe, _ := attrs["probe_park"].(bool); probe {
 			park := &genv1.Park{
 				ResumeAt: parkResumeAtFromAttrs(attrs),
+				Scratch:  parkProbeScratch(req.GetScratch()),
 			}
 			return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}, nil
+		}
+		if probe, _ := attrs["probe_async"].(bool); probe {
+			ackID := "stub-async-" + uuid.NewString()
+			go postAsyncProbeCallback(req.GetCallbackUrl(), ackID)
+			return &genv1.Outcome{Outcome: &genv1.Outcome_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
+				AsyncAckId: ackID,
+			}}}, nil
 		}
 		if probe, _ := attrs["stub_probe"].(bool); probe {
 			delta, err := structpb.NewStruct(map[string]any{"stub": true})

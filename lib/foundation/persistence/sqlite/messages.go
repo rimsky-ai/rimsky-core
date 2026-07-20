@@ -7,6 +7,8 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -46,7 +48,7 @@ func (b *messagesImpl) Insert(ctx context.Context, tx persistence.Tx, req persis
 const sqliteMarkDeliveredSQL = `
 UPDATE rimsky_messages
    SET delivered_at = ?, frame_id = ?
- WHERE id = ? AND delivered_at IS NULL`
+ WHERE id = ? AND delivered_at IS NULL AND cancelled = 0`
 
 func (b *messagesImpl) MarkDelivered(ctx context.Context, tx persistence.Tx, id shared.UUID, frame shared.UUID, deliveredAt time.Time) (bool, error) {
 	res, err := b.q(tx).ExecContext(ctx, sqliteMarkDeliveredSQL, formatTime(deliveredAt), frame.String(), id.String())
@@ -166,6 +168,14 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 			conds = append(conds, "(delivered_at IS NOT NULL OR cancelled = 1)")
 		}
 	}
+	if pag.Cursor != "" {
+		cursorReceived, cursorID, err := decodeMessageCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.MessageRow]{}, fmt.Errorf("sqlite.Messages.List: bad cursor: %w", err)
+		}
+		args = append(args, formatTime(cursorReceived), cursorID.String())
+		conds = append(conds, "(received_at, id) < (?, ?)")
+	}
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 100
@@ -186,7 +196,39 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.MessageRow]{}, err
 	}
-	return persistence.PaginatedListResult[persistence.MessageRow]{Rows: out}, nil
+	var nextCursor string
+	if len(out) == limit && len(out) > 0 {
+		last := out[len(out)-1]
+		nextCursor = encodeMessageCursor(last.ReceivedAt, last.ID)
+	}
+	return persistence.PaginatedListResult[persistence.MessageRow]{Rows: out, NextCursor: nextCursor}, nil
+}
+
+type messageCursor struct {
+	R time.Time `json:"r"`
+	I string    `json:"i"`
+}
+
+func encodeMessageCursor(receivedAt time.Time, id shared.UUID) string {
+	c := messageCursor{R: receivedAt, I: id.String()}
+	b, _ := json.Marshal(c)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeMessageCursor(s string) (time.Time, shared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	var c messageCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	id, err := uuid.Parse(c.I)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	return c.R, shared.UUID(id), nil
 }
 
 const sqliteCancelPendingForInstanceSQL = `

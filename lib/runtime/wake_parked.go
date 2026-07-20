@@ -34,6 +34,7 @@ type WakeParkedArgs struct {
 	Queue        persistence.Queue
 	Logger       shared.Logger
 	TargetNodeID shared.UUID
+	NodeRunID    shared.UUID
 	SupervisorID string
 }
 
@@ -68,6 +69,16 @@ func WakeParkedNode(ctx context.Context, args WakeParkedArgs, reason WakeReason)
 func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistence.NodeRow, reason WakeReason) error {
 	var targetRunScopeID shared.UUID
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if args.NodeRunID != (shared.UUID{}) && args.Persist.NodeRunTree() != nil {
+			row, err := args.Persist.NodeRunTree().GetByID(ctx, tx, args.NodeRunID)
+			if err != nil {
+				return err
+			}
+			if row != nil {
+				targetRunScopeID = row.RunScopeID
+			}
+			return nil
+		}
 		latest, err := args.Persist.Nodes().GetLatestRunForNode(ctx, tx, target.ID)
 		if err != nil {
 			return err
@@ -77,7 +88,7 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("wakeParkedNode: latest run lookup: %w", err)
+		return fmt.Errorf("wakeParkedNode: run scope lookup: %w", err)
 	}
 	if targetRunScopeID == (shared.UUID{}) {
 		return nil
@@ -90,6 +101,15 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 		if args.Logger != nil {
 			args.Logger.Warn("wakeParkedNode: no parked node-run row found",
 				"node_id", target.ID.String())
+		}
+		return nil
+	}
+	if args.NodeRunID != (shared.UUID{}) && parked.NodeRunID != args.NodeRunID {
+		if args.Logger != nil {
+			args.Logger.Warn("wakeParkedNode: parked row no longer matches the run scheduled for wake; skipping",
+				"node_id", target.ID.String(),
+				"expected_run_id", args.NodeRunID.String(),
+				"found_run_id", parked.NodeRunID.String())
 		}
 		return nil
 	}

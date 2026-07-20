@@ -323,7 +323,6 @@ func TestUpdateLatestSymlink_ConcurrentReadersNeverSeeBroken(t *testing.T) {
 			t.Fatalf("UpdateLatestSymlink iteration %d: %v", i, err)
 		}
 	}
-	time.Sleep(50 * time.Millisecond)
 	close(stop)
 	wg.Wait()
 

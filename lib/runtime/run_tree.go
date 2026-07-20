@@ -25,7 +25,7 @@ type ChildState struct {
 
 func (c ChildState) IsSettled() bool {
 	switch c.State {
-	case cascade.NodeStateFresh, cascade.NodeStateFailed, cascade.NodeStateParked:
+	case cascade.NodeStateFresh, cascade.NodeStateFailed:
 		return true
 	}
 	return false
@@ -70,6 +70,20 @@ type AggregateResult struct {
 	Action AggregateAction
 }
 
+func recordRunTreeChanged(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool,
+) error {
+	if args.Persist == nil {
+		return nil
+	}
+	rt := args.Persist.NodeRunTree()
+	if rt == nil {
+		return nil
+	}
+	return rt.UpdateStateAndOutcome(ctx, tx, runID, state, settlingSignalType, changed)
+}
+
 func childStatesForAggregate(children []persistence.NodeRunTreeRow) []ChildState {
 	inputs := make([]ChildState, len(children))
 	for i, c := range children {
@@ -81,7 +95,7 @@ func childStatesForAggregate(children []persistence.NodeRunTreeRow) []ChildState
 		inputs[i] = ChildState{
 			State:              c.State,
 			SettlingSignalType: sigType,
-			Changed:            true,
+			Changed:            c.Changed,
 		}
 	}
 	return inputs

@@ -329,7 +329,7 @@ func CollectSubstitutionRefsForEmit(ctx context.Context, args RunArgs, acq *acqu
 		if !ok {
 			continue
 		}
-		runID := mostRecentRunIDForNode(ctx, lt, upstreamNodeID)
+		runID := mostRecentRunIDForNode(ctx, lt, acq.InstanceID, upstreamNodeID)
 		if runID == (shared.UUID{}) {
 			continue
 		}
@@ -342,14 +342,20 @@ func CollectSubstitutionRefsForEmit(ctx context.Context, args RunArgs, acq *acqu
 	return out
 }
 
-func mostRecentRunIDForNode(ctx context.Context, lt persistence.LineageTable, upstreamNodeID shared.UUID) shared.UUID {
+const mostRecentRunLookupLimit = 1000
+
+// @concept: lineage-record
+func mostRecentRunIDForNode(
+	ctx context.Context, lt persistence.LineageTable, instanceID, upstreamNodeID shared.UUID,
+) shared.UUID {
 	page, err := lt.Query(ctx, persistence.LineageQuery{
-		Kind: persistence.LineageRecordKindLeafRun,
-	}, persistence.ListPagination{Limit: 200})
+		Kind:       persistence.LineageRecordKindLeafRun,
+		InstanceID: &instanceID,
+	}, persistence.ListPagination{Limit: mostRecentRunLookupLimit})
 	if err != nil {
 		return shared.UUID{}
 	}
-	for i := len(page.Rows) - 1; i >= 0; i-- {
+	for i := 0; i < len(page.Rows); i++ {
 		r := page.Rows[i]
 		var rec struct {
 			NodeID    string `json:"node_id"`

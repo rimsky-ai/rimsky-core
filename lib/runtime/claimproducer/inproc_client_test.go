@@ -49,17 +49,17 @@ func (h *fakeHandler) Open(context.Context, protocol.ClaimID, protocol.ClaimSpec
 	return h.openOut, h.openErr
 }
 
-func (h *fakeHandler) Commit(context.Context, protocol.ClaimID, []byte, []byte) (protocol.CommitResult, error) {
+func (h *fakeHandler) Commit(context.Context, protocol.ClaimID, []byte, []byte, string) (protocol.CommitResult, error) {
 	h.calls = append(h.calls, "Commit")
 	return h.commitRes, h.commitErr
 }
 
-func (h *fakeHandler) Abandon(context.Context, protocol.ClaimID, []byte, []byte) error {
+func (h *fakeHandler) Abandon(context.Context, protocol.ClaimID, []byte, []byte, string) error {
 	h.calls = append(h.calls, "Abandon")
 	return h.abandonErr
 }
 
-func (h *fakeHandler) Release(context.Context, protocol.ClaimID, []byte, []byte) error {
+func (h *fakeHandler) Release(context.Context, protocol.ClaimID, []byte, []byte, string) error {
 	h.calls = append(h.calls, "Release")
 	return h.releaseErr
 }
@@ -156,9 +156,9 @@ func TestHandlerErrorsWrapAsProducerCallError(t *testing.T) {
 		call   func() error
 	}{
 		{"Open", func() error { _, err := c.Open(ctx, "claim-1", protocol.ClaimSpec{}); return err }},
-		{"Commit", func() error { _, err := c.Commit(ctx, "claim-1", nil, nil); return err }},
-		{"Abandon", func() error { return c.Abandon(ctx, "claim-1", nil, nil) }},
-		{"Release", func() error { return c.Release(ctx, "claim-1", nil, nil) }},
+		{"Commit", func() error { _, err := c.Commit(ctx, "claim-1", nil, nil, ""); return err }},
+		{"Abandon", func() error { return c.Abandon(ctx, "claim-1", nil, nil, "") }},
+		{"Release", func() error { return c.Release(ctx, "claim-1", nil, nil, "") }},
 		{"SplitScope", func() error { _, err := c.SplitScope(ctx, protocol.SplitClaimScopeRequest{}); return err }},
 		{"ScopesConflict", func() error { _, err := c.ScopesConflict(ctx, []byte("a"), []byte("b")); return err }},
 	}
@@ -272,17 +272,17 @@ func TestScopesConflictGatedOnCapability(t *testing.T) {
 func TestCommitDelegates(t *testing.T) {
 	h := &fakeHandler{commitRes: protocol.CommitResult{VersionID: "v1", ProducerMetadata: []byte("meta")}}
 	c := clientOver(h, coreCapabilities())
-	res, err := c.Commit(context.Background(), "claim-1", []byte("scope"), []byte("addr"))
+	res, err := c.Commit(context.Background(), "claim-1", []byte("scope"), []byte("addr"), "")
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	if res.VersionID != "v1" || string(res.ProducerMetadata) != "meta" {
 		t.Fatalf("Commit result mangled: %+v", res)
 	}
-	if err := c.Abandon(context.Background(), "claim-1", nil, nil); err != nil {
+	if err := c.Abandon(context.Background(), "claim-1", nil, nil, ""); err != nil {
 		t.Fatalf("Abandon: %v", err)
 	}
-	if err := c.Release(context.Background(), "claim-1", nil, nil); err != nil {
+	if err := c.Release(context.Background(), "claim-1", nil, nil, ""); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 }

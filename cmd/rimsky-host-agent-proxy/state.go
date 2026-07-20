@@ -156,14 +156,14 @@ func (a *agentConnection) clearStream(streamID string) {
 
 func (a *agentConnection) deliverDispatch(frame *genv1.DispatchFrame) {
 	a.pendingMu.Lock()
-	defer a.pendingMu.Unlock()
 	ch, ok := a.pendingStreams[frame.GetStreamId()]
+	a.pendingMu.Unlock()
 	if !ok {
 		return
 	}
 	select {
 	case ch <- frame:
-	case <-a.closed:
+	default:
 	}
 }
 
@@ -343,6 +343,12 @@ func (s *proxyState) lookupInstance(instanceID string) (*instanceCacheEntry, boo
 	defer s.mu.RUnlock()
 	entry, ok := s.instances[instanceID]
 	return entry, ok
+}
+
+func (s *proxyState) dropInstance(instanceID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.instances, instanceID)
 }
 
 func (s *proxyState) recordClaimRoute(claimID, apiKeyID, spawnID string) {

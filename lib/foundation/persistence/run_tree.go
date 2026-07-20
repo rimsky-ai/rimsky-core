@@ -24,6 +24,7 @@ type NodeRunTreeRow struct {
 	State              cascade.NodeState      `json:"state"`
 	SettlingSignalType *string                `json:"settling_signal_type,omitempty"`
 	AggregationPolicy  spec.AggregationPolicy `json:"aggregation_policy,omitempty"`
+	Changed            bool                   `json:"changed"`
 }
 
 type CreateRootNodeRunInput struct {
@@ -57,7 +58,7 @@ type RunTreeTable interface {
 
 	ListChildren(ctx context.Context, tx Tx, parentNodeRunID shared.UUID) ([]NodeRunTreeRow, error)
 
-	UpdateStateAndOutcome(ctx context.Context, tx Tx, runID shared.UUID, state cascade.NodeState, settlingSignalType *string) error
+	UpdateStateAndOutcome(ctx context.Context, tx Tx, runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool) error
 
 	UpdateAggregationPolicy(ctx context.Context, tx Tx, runID shared.UUID, policy spec.AggregationPolicy) error
 }

@@ -23,4 +23,6 @@ Owns: name → hash mapping. Does NOT own: the underlying spec (see `concept:tem
 
 - Tag → hash mapping is mutable; the hash itself is immutable.
 - Tag movement does NOT retroactively migrate live instances bound to a different hash.
-- The `compose:<project>:<...>` tag prefix is reserved and **server-enforced**: tag-create rejects a `compose:`-prefixed name unless the request originates from the privileged compose path.
+- The `compose:<project>:<...>` tag prefix is reserved and **server-enforced** on every path that can attach a tag to a template — dedicated tag-create and template registration alike — rejecting a `compose:`-prefixed name unless the request originates from the privileged compose path.
+- A tag identifier's character set excludes `/`, so every tag stays addressable through the single-path-segment routes that take a tag as an identifier.
+- Moving a tag onto a different template hash — whether through the dedicated tag-move route or as a side effect of template registration — requires the caller to hold tag-move permission scoped to that tag; holding only template-registration permission is not sufficient to repoint an existing tag.

@@ -15,4 +15,5 @@ type Result struct {
 	Pass    bool           `json:"pass"`
 	Counts  map[string]any `json:"counts,omitempty"`
 	Message string         `json:"message,omitempty"`
+	Error   string         `json:"error,omitempty"`
 }

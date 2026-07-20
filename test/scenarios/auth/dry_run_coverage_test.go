@@ -17,9 +17,11 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
 type dryRunCase struct {
@@ -544,7 +546,7 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 		}); err != nil {
 			return err
 		}
-		return f.db.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateFailed, nil)
+		return f.db.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateFailed, nil, false)
 	}); err != nil {
 		t.Fatalf("seed failed node: %v", err)
 	}
@@ -576,6 +578,14 @@ func seedDurableAsset(ctx context.Context, t *testing.T, f *authFixture) (string
 				Lifetime: "durable",
 			}},
 		}},
+	}
+
+	if f.claimProducers != nil {
+		if _, ok := f.claimProducers.Get(producerName); !ok {
+			f.claimProducers.Add(producerName, storetest.NewFake(producerName, claimproducer.Capabilities{
+				Protocols: []string{claimproducer.ProtocolDataProcessing},
+			}))
+		}
 	}
 
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

@@ -30,6 +30,7 @@ type Opts struct {
 	HTTPBridgeURL     string
 	EnableLifecycle   bool
 	EnableExecutor    bool
+	LedgerMaxRecords  int
 	Host              string
 	GRPCPort          int
 	HTTPPort          int
@@ -46,6 +47,7 @@ func (o Opts) ServerConfig() Config {
 		HTTPBridgeURL:     o.HTTPBridgeURL,
 		EnableLifecycle:   o.EnableLifecycle,
 		EnableExecutor:    o.EnableExecutor,
+		LedgerMaxRecords:  o.LedgerMaxRecords,
 	}
 }
 
@@ -62,6 +64,7 @@ type yamlConfig struct {
 	SweepIntervalSeconds int                            `yaml:"sweep_interval_seconds"`
 	EnableLifecycle      bool                           `yaml:"enable_lifecycle"`
 	EnableExecutor       bool                           `yaml:"enable_executor"`
+	LedgerMaxRecords     int                            `yaml:"ledger_max_records"`
 }
 
 type yamlPickPolicy struct {
@@ -153,6 +156,7 @@ func LoadOptsFromEnv() (Opts, error) {
 		HTTPBridgeURL:     cfg.HTTPBridgeURL,
 		EnableLifecycle:   cfg.EnableLifecycle,
 		EnableExecutor:    cfg.EnableExecutor,
+		LedgerMaxRecords:  cfg.LedgerMaxRecords,
 		Host:              host,
 		GRPCPort:          agentport.Override(cfg.GRPCPort),
 		HTTPPort:          cfg.HTTPPort,

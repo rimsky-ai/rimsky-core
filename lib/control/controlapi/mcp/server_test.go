@@ -19,23 +19,25 @@ import (
 )
 
 type fakeCatalog struct {
-	tools  []mcp.Tool
-	calls  map[string]any
-	called string
+	tools     []mcp.Tool
+	calls     map[string]any
+	called    string
+	isErrorBy map[string]bool
 }
 
 func (f *fakeCatalog) Filtered(r *http.Request) []mcp.Tool { return f.tools }
 
-func (f *fakeCatalog) Invoke(r *http.Request, name string, args json.RawMessage) (any, *mcp.Error) {
+func (f *fakeCatalog) Invoke(r *http.Request, name string, args json.RawMessage) (any, bool, *mcp.Error) {
 	if f.calls == nil {
 		f.calls = map[string]any{}
 	}
 	f.calls[name] = args
 	f.called = name
+	isError := f.isErrorBy[name]
 	if v, ok := f.calls[name+"_result"]; ok {
-		return v, nil
+		return v, isError, nil
 	}
-	return map[string]any{"name": name}, nil
+	return map[string]any{"name": name}, isError, nil
 }
 
 func TestMCPInitialize(t *testing.T) {
@@ -83,6 +85,40 @@ func TestMCPToolsCall(t *testing.T) {
 	}
 	if catalog.called != "x" {
 		t.Fatalf("invoke not called; got %q", catalog.called)
+	}
+}
+
+func TestMCPToolsCall_SetsTopLevelIsErrorOnFailure(t *testing.T) {
+	catalog := &fakeCatalog{isErrorBy: map[string]bool{"x": true}}
+	server := &mcp.Server{Tools: catalog}
+	resp := serveRPC(t, server,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"x","arguments":{"k":1}}}`)
+	if resp.Error != nil {
+		t.Fatalf("a tool execution failure must still be a JSON-RPC success envelope carrying isError, not a protocol error: %v", resp.Error)
+	}
+	m, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map result; got %T", resp.Result)
+	}
+	if m["isError"] != true {
+		t.Fatalf("CallToolResult.isError must be true when the underlying tool call failed; got %+v", m)
+	}
+}
+
+func TestMCPToolsCall_OmitsIsErrorOnSuccess(t *testing.T) {
+	catalog := &fakeCatalog{}
+	server := &mcp.Server{Tools: catalog}
+	resp := serveRPC(t, server,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"x","arguments":{"k":1}}}`)
+	if resp.Error != nil {
+		t.Fatalf("tools/call: %v", resp.Error)
+	}
+	m, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map result; got %T", resp.Result)
+	}
+	if m["isError"] != false {
+		t.Fatalf("CallToolResult.isError must be false on a successful tool call; got %+v", m)
 	}
 }
 

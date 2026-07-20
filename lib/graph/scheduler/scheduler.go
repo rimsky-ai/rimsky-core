@@ -124,6 +124,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		log = shared.SilentLogger{}
 	}
 
+	// @concept: advisory-lock
 	if cfg.AdvisoryLocker != nil {
 		held, release, err := cfg.AdvisoryLocker.TrySchedulerTick(ctx)
 		if err != nil {
@@ -239,16 +240,16 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
+	if cfg.Persist != nil && cfg.Clock != nil {
+		if err := runtime.SweepDeliverMessagesForRunningFrames(ctx, cfg.Persist, log, cfg.Clock.Now()); err != nil {
+			log.Warn("tick: SweepDeliverMessagesForRunningFrames failed", "error", err.Error())
+		}
+	}
+
 	if cfg.Persist != nil && cfg.Queue != nil {
 		scopeFanout := runtime.FrameRunScopeTerminalFanout(cfg.Persist, cfg.LifecycleSubs, cfg.LifecyclePeersForSpec)
 		if err := frame.RunTick(ctx, cfg.Persist, cfg.Queue, log, scopeFanout, frameMetricsAdapter(cfg.Metrics)); err != nil {
 			log.Warn("tick: frame.RunTick failed", "error", err.Error())
-		}
-	}
-
-	if cfg.Persist != nil && cfg.Clock != nil {
-		if err := runtime.SweepDeliverMessagesForRunningFrames(ctx, cfg.Persist, log, cfg.Clock.Now()); err != nil {
-			log.Warn("tick: SweepDeliverMessagesForRunningFrames failed", "error", err.Error())
 		}
 	}
 

@@ -18,6 +18,10 @@ func WrapPgxTxForTest(tx pgx.Tx) persistence.Tx {
 	return &pgTx{tx: tx}
 }
 
+func UnwrapTxForTest(tx persistence.Tx) (pgx.Tx, error) {
+	return unwrapTx(tx)
+}
+
 func PoolFromDatabaseForTest(d persistence.Database) (*pgxpool.Pool, bool) {
 	pd, ok := d.(*database)
 	if !ok {

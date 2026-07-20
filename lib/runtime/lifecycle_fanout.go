@@ -38,10 +38,30 @@ func FrameRunScopeTerminalFanout(
 			return
 		}
 		FanOutRunScopeEvent(ctx, persist, lifecycleSubs, peersForSpec,
-			tpl.Spec, runScopeID, instanceID, terminalReason, tx)
+			tpl.Spec, runScopeID, instanceID, terminalReason, tx, nil)
 	}
 }
 
+func warnFanOut(logger shared.Logger, msg string, kv ...any) {
+	if logger != nil {
+		logger.Warn(msg, kv...)
+		return
+	}
+	slog.Warn(msg, kv...)
+}
+
+func withOptionalFanOutTx(
+	ctx context.Context, persist persistence.Tables, tx persistence.Tx,
+	fn func(ctx context.Context, tx persistence.Tx) error,
+) error {
+	if tx != nil {
+		return fn(ctx, tx)
+	}
+	return persist.Transaction(ctx, fn)
+}
+
+// @concept: run-scope
+// @concept: lifecycle-subscriber
 func FanOutRunScopeEvent(
 	ctx context.Context,
 	persist persistence.Tables,
@@ -52,6 +72,7 @@ func FanOutRunScopeEvent(
 	instanceID shared.UUID,
 	terminalReason string,
 	tx persistence.Tx,
+	logger shared.Logger,
 ) {
 	if lifecycleSubs == nil || peersForSpec == nil {
 		return
@@ -60,13 +81,14 @@ func FanOutRunScopeEvent(
 	scopeID := runScopeID.String()
 
 	for _, name := range peers {
-		existing, err := persist.LifecycleIdempotency().Get(
-			ctx, name,
-			persistence.LifecycleIdempotencyScopeRunScope,
-			scopeID, tx,
-		)
-		if err != nil {
-			slog.Warn("FanOutRunScopeEvent: lifecycle row lookup failed; skipping peer",
+		var existing *persistence.LifecycleIdempotencyRow
+		if err := withOptionalFanOutTx(ctx, persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+			r, err := persist.LifecycleIdempotency().Get(
+				ctx, name, persistence.LifecycleIdempotencyScopeRunScope, scopeID, useTx)
+			existing = r
+			return err
+		}); err != nil {
+			warnFanOut(logger, "FanOutRunScopeEvent: lifecycle row lookup failed; skipping peer",
 				"peer", name, "run_scope_id", scopeID, "error", err)
 			continue
 		}
@@ -85,18 +107,22 @@ func FanOutRunScopeEvent(
 			InstanceID:     instanceID.String(),
 		}
 		if err := sub.OnRunScopeTerminal(ctx, req); err != nil {
+			warnFanOut(logger, "FanOutRunScopeEvent: peer delivery failed; idempotency row not advanced, peer will be retried on the next terminal fan-out for this scope",
+				"peer", name, "run_scope_id", scopeID, "error", err)
 			continue
 		}
 
-		if err := persist.LifecycleIdempotency().Upsert(ctx,
-			persistence.LifecycleIdempotencyRow{
-				StoreRegistrationName: name,
-				ScopeKind:             persistence.LifecycleIdempotencyScopeRunScope,
-				ScopeID:               scopeID,
-				State:                 persistence.LifecycleIdempotencyStateRunScopeTerminal,
-			}, tx,
-		); err != nil {
-			slog.Warn("FanOutRunScopeEvent: lifecycle row upsert failed; close stands",
+		if err := withOptionalFanOutTx(ctx, persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+			return persist.LifecycleIdempotency().Upsert(ctx,
+				persistence.LifecycleIdempotencyRow{
+					StoreRegistrationName: name,
+					ScopeKind:             persistence.LifecycleIdempotencyScopeRunScope,
+					ScopeID:               scopeID,
+					State:                 persistence.LifecycleIdempotencyStateRunScopeTerminal,
+				}, useTx,
+			)
+		}); err != nil {
+			warnFanOut(logger, "FanOutRunScopeEvent: lifecycle row upsert failed after successful peer delivery; peer will be re-delivered on the next terminal fan-out for this scope",
 				"peer", name, "run_scope_id", scopeID, "error", err)
 			continue
 		}

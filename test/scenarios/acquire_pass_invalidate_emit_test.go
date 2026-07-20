@@ -80,7 +80,7 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 
 	waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/")
 
-	waitForEventCount(t, h, monitor.ID, "terminal/success", 1)
+	h.WaitForEventCount(monitor.ID, "terminal/success", 1)
 
 	var workerObserved int
 	for _, o := range h.Stub.Observed() {

@@ -14,6 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
+// @concept: auto-terminal
 func CheckAndFireResolution(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	claimHandleID shared.UUID,
@@ -108,6 +109,7 @@ func CheckAndFireResolution(
 		Producer:            producer,
 		Scope:               []byte(row.ClaimScopeData),
 		Address:             []byte(row.Address),
+		LeaseToken:          row.ProducerLeaseToken,
 		Lifetime:            row.Lifetime,
 		CandidateHandle:     row.ProducerCandidateHandle,
 		ProducerName:        producerName,
@@ -136,11 +138,17 @@ func expectedInheritorsMissing(
 		return false, nil
 	}
 	inst, err := args.Persist.Instances().Get(ctx, acquirer.InstanceID, tx)
-	if err != nil || inst == nil {
+	if err != nil {
+		return false, fmt.Errorf("instances.Get acquirer instance: %w", err)
+	}
+	if inst == nil {
 		return false, nil
 	}
 	tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-	if err != nil || tmpl == nil {
+	if err != nil {
+		return false, fmt.Errorf("templates.GetByHash: %w", err)
+	}
+	if tmpl == nil {
 		return false, nil
 	}
 	acqDef := lookupNodeDef(&tmpl.Spec, acquirer.NodeType)

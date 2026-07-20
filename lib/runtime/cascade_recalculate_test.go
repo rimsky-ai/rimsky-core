@@ -207,11 +207,16 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newFixtureWithNodes(t, []nodepkg.TemplateNodeDef{})
+}
+
+func newFixtureWithNodes(t *testing.T, defs []nodepkg.TemplateNodeDef) *fixture {
+	t.Helper()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	tpl := insertDeployedTemplate(ctx, t, d.Tables(), nodepkg.TemplateSpec{
 		Name: "sched-test-" + uuid.NewString(), Version: "v1",
-		Nodes: []nodepkg.TemplateNodeDef{},
+		Nodes: defs,
 	})
 
 	ck := "ck-" + uuid.NewString()
@@ -250,12 +255,17 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade.NodeState, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
+	_ = deps
+	return f.createTypedNodeInState(t, "t", executor, state)
+}
+
+func (f *fixture) createTypedNodeInState(t *testing.T, nodeType, executor string, state cascade.NodeState) persistence.NodeRow {
+	t.Helper()
 	ctx := context.Background()
 	var n persistence.NodeRow
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_ = deps
 		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
-			ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
+			ID: uuid.New(), InstanceID: f.instance.ID, NodeType: nodeType,
 			Executor: executor,
 		}, tx)
 		if err != nil {
@@ -395,4 +405,73 @@ func TestRecalculateNode_StaleNoExecutor_NoEnqueue(t *testing.T) {
 
 	eq, _ := f.q.snapshot()
 	require.Empty(t, eq)
+}
+
+func TestRecalculateNode_StaleWithDrainedWaitSet_StillEnqueues(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+
+	dep := f.createNodeInState(t, "worker", cascade.NodeStateStale)
+	target := f.createNodeInState(t, "runner", cascade.NodeStateStale)
+
+	var frameID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL LIMIT 1`,
+		[]any{f.instance.ID}, &frameID)
+	var depRunID, targetRunID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 AND frame_id = $2`,
+		[]any{dep.ID, frameID}, &depRunID)
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 AND frame_id = $2`,
+		[]any{target.ID, frameID}, &targetRunID)
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return f.persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID:           frameID,
+			ReceiverNodeRunID: targetRunID,
+			SenderNodeRunID:   depRunID,
+			TopicKind:         "state",
+		}, tx)
+	}))
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return f.persist.WaitSet().MarkDrainedBySender(ctx, frameID, depRunID, tx)
+	}))
+
+	err := runtime.RecalculateNode(ctx, runtime.RecalculateArgs{
+		Persist: f.persist, Queue: f.q, Clock: f.clock, Logger: f.log,
+		TargetNodeID: target.ID,
+	})
+	require.NoError(t, err)
+
+	eq, _ := f.q.snapshot()
+	require.Len(t, eq, 1,
+		"a cascade-created stale run with a fully-drained (non-empty) wait-set must not be a silent no-op")
+	require.Equal(t, target.ID, eq[0].NodeID)
+}
+
+func TestRecalculateNode_PopulatesRequiredClaimProducersFromNodeDef(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixtureWithNodes(t, []nodepkg.TemplateNodeDef{
+		{
+			Type: "recalc-req-cp", Executor: "runner",
+			ClaimProducers: []nodepkg.NodeClaimProducerRef{
+				{Name: "workspace-recalc", Selector: "/x", Intent: "rw", Alias: "schema"},
+			},
+		},
+	})
+
+	target := f.createTypedNodeInState(t, "recalc-req-cp", "runner", cascade.NodeStateStale)
+
+	err := runtime.RecalculateNode(ctx, runtime.RecalculateArgs{
+		Persist: f.persist, Queue: f.q, Clock: f.clock, Logger: f.log,
+		TargetNodeID: target.ID,
+	})
+	require.NoError(t, err)
+
+	eq, _ := f.q.snapshot()
+	require.Len(t, eq, 1)
+	require.Equal(t, []string{"workspace-recalc"}, eq[0].RequiredClaimProducers,
+		"recalculate dispatch must derive required_claim_producers from the node definition, not hardcode empty")
 }

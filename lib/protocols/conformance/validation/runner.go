@@ -62,13 +62,23 @@ func checkExecutorHappy(ctx context.Context, c genv1.ValidationClient) CheckResu
 		}},
 	}
 	resp, err := c.Validate(ctx, req)
-	if err != nil {
-		return CheckResult{Name: "ExecutorHappy", Err: err}
-	}
-	if resp == nil {
-		return CheckResult{Name: "ExecutorHappy", Err: fmt.Errorf("Validate returned nil response without error")}
+	if verr := requireHappyValidateResponse(resp, err); verr != nil {
+		return CheckResult{Name: "ExecutorHappy", Err: verr}
 	}
 	return CheckResult{Name: "ExecutorHappy"}
+}
+
+func requireHappyValidateResponse(resp *genv1.ValidateResponse, err error) error {
+	if err != nil {
+		return err
+	}
+	if resp == nil {
+		return fmt.Errorf("Validate returned nil response without error")
+	}
+	if !resp.GetValid() {
+		return fmt.Errorf("Validate returned Valid=false for a well-formed happy-path request; findings=%v", resp.GetErrors())
+	}
+	return nil
 }
 
 func checkExecutorMalformedAttributesSchema(ctx context.Context, c genv1.ValidationClient) CheckResult {
@@ -150,8 +160,9 @@ func checkClaimProducerHappy(ctx context.Context, c genv1.ValidationClient) Chec
 			}},
 		}},
 	}
-	if _, err := c.Validate(ctx, req); err != nil {
-		return CheckResult{Name: "ClaimProducerHappy", Err: err}
+	resp, err := c.Validate(ctx, req)
+	if verr := requireHappyValidateResponse(resp, err); verr != nil {
+		return CheckResult{Name: "ClaimProducerHappy", Err: verr}
 	}
 	return CheckResult{Name: "ClaimProducerHappy"}
 }
@@ -164,8 +175,9 @@ func checkLifecycleSubscriberHappy(ctx context.Context, c genv1.ValidationClient
 			TemplateId:     "sha256-aaaa",
 		}},
 	}
-	if _, err := c.Validate(ctx, req); err != nil {
-		return CheckResult{Name: "LifecycleSubscriberHappy", Err: err}
+	resp, err := c.Validate(ctx, req)
+	if verr := requireHappyValidateResponse(resp, err); verr != nil {
+		return CheckResult{Name: "LifecycleSubscriberHappy", Err: verr}
 	}
 	return CheckResult{Name: "LifecycleSubscriberHappy"}
 }
@@ -179,8 +191,9 @@ func checkPublisherHappy(ctx context.Context, c genv1.ValidationClient) CheckRes
 			ResolvedConfig: []byte(`{"cron":"*/5 * * * *"}`),
 		}},
 	}
-	if _, err := c.Validate(ctx, req); err != nil {
-		return CheckResult{Name: "PublisherHappy", Err: err}
+	resp, err := c.Validate(ctx, req)
+	if verr := requireHappyValidateResponse(resp, err); verr != nil {
+		return CheckResult{Name: "PublisherHappy", Err: verr}
 	}
 	return CheckResult{Name: "PublisherHappy"}
 }

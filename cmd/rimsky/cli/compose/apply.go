@@ -259,12 +259,12 @@ func precomputeUndeployBindings(ctx context.Context, c *cli.Client, project stri
 			continue
 		}
 		seen[step.TemplateHash] = true
-		page, err := c.ListInstances(ctx, cli.ListInstancesQuery{TemplateHash: step.TemplateHash})
+		insts, err := cli.PagedListInstances(ctx, c, cli.ListInstancesQuery{TemplateHash: step.TemplateHash})
 		if err != nil {
 			out[step.TemplateHash] = true
 			continue
 		}
-		for _, inst := range page.Instances {
+		for _, inst := range insts {
 			if inst.TerminatedAt != nil {
 				continue
 			}

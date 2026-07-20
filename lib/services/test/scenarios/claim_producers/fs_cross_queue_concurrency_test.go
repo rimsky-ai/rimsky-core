@@ -74,6 +74,6 @@ func TestFSCrossQueueConcurrency(t *testing.T) {
 	instanceID := createInstance(t, ep, templateID, "ck-fs-xqueue")
 
 	const deadline = 90 * time.Second
-	waitForNodeTerminal(t, ep, instanceID, "worker-r1", deadline)
-	waitForNodeTerminal(t, ep, instanceID, "worker-r2", deadline)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "worker-r1", deadline)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "worker-r2", deadline)
 }

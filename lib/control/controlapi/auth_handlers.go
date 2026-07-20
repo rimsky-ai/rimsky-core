@@ -89,13 +89,26 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
+		activeCount, err := deps.AuthState.Tables.APIKeys().ActiveCount(r.Context(), deps.AuthState.Clock.Now(), nil)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		wouldExitAnonymous := activeCount == 0
+		forceExpiring := r.URL.Query().Get("force_expiring_key") == "true"
+		if wouldExitAnonymous && body.ExpiresAt != nil && !forceExpiring {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": "creating the deployment's first API key with an expiry risks a silent return to anonymous mode when it lapses; pass ?force_expiring_key=true to confirm, or omit expires_at for a permanent key",
+			})
+			return
+		}
 		if ModeFromContext(r.Context()) == auth.ModeDryRun {
 			details := map[string]any{
 				"key_id":      "dry-run-not-persisted",
 				"name":        body.Name,
 				"permissions": body.Permissions,
 			}
-			if isAnon, _ := deps.AuthState.IsAnonymousMode(r.Context()); isAnon {
+			if wouldExitAnonymous {
 				details["note"] = "this is the first key; committing it exits anonymous mode and requires auth on all future requests"
 			}
 			WriteDryRunResponseForced(w, "would_have_created_key", details)
@@ -300,6 +313,23 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "cannot rotate a revoked key"})
 			return
 		}
+		now := deps.AuthState.Clock.Now()
+		if oldRow.ExpiresAt != nil && r.URL.Query().Get("force_expiring_key") != "true" {
+			active, err := keys.ActiveCount(ctx, now, nil)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			thisRowActive := oldRow.RevokedAt == nil &&
+				(oldRow.ExpiresAt == nil || oldRow.ExpiresAt.After(now)) &&
+				(oldRow.RevokeAt == nil || oldRow.RevokeAt.After(now))
+			if thisRowActive && active <= 1 {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "rotating the deployment's only active API key would inherit its expiry and risks a silent return to anonymous mode when it lapses; pass ?force_expiring_key=true to confirm",
+				})
+				return
+			}
+		}
 		if WriteDryRunResponse(w, r, "would_have_rotated_key", map[string]any{
 			"key_id": oldRow.ID.String(),
 		}) {
@@ -310,7 +340,6 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		now := deps.AuthState.Clock.Now()
 		revokeAt := now.Add(grace)
 		newRow := persistence.APIKey{
 			ID:          uuid.New(),

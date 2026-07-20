@@ -14,6 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
 type RecalculateArgs struct {
@@ -30,37 +31,19 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
-	_ = log
 
 	sourceStr := "(external)"
 	if args.SourceNodeID != nil {
 		sourceStr = args.SourceNodeID.String()
 	}
 
-	var (
-		target      *persistence.NodeRow
-		latest      *persistence.NodeRunLatest
-		runningFrID *shared.UUID
-	)
+	var target *persistence.NodeRow
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		t, err := sb.Nodes().Get(ctx, args.TargetNodeID, tx)
 		if err != nil {
 			return err
 		}
 		target = t
-		if t == nil {
-			return nil
-		}
-		l, err := sb.Nodes().GetLatestRunForNode(ctx, tx, args.TargetNodeID)
-		if err != nil {
-			return err
-		}
-		latest = l
-		fr, err := sb.Frames().GetRunningFrameID(ctx, t.InstanceID, tx)
-		if err != nil {
-			return err
-		}
-		runningFrID = fr
 		return nil
 	}); err != nil {
 		return err
@@ -81,52 +64,81 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			},
 		}, tx)
 	})
-	if latest == nil || latest.State != cascade.NodeStateStale {
-		return nil
-	}
-	if runningFrID == nil {
-		return nil
-	}
-	if latest.FrameID != *runningFrID {
-		return nil
-	}
-	runScopeID := latest.RunScopeID
-	var pending int
-	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, target.ID, runScopeID)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			pending = 0
-			return nil
-		}
-		rows, err := sb.WaitSet().ListForReceiver(ctx, *runningFrID, runID, tx)
-		if err != nil {
-			return err
-		}
-		pending = len(rows)
-		return nil
-	}); err != nil {
-		return err
-	}
-	if pending > 0 {
-		return nil
-	}
 
 	if target.Executor == "" {
 		return nil
 	}
+
+	var requiredClaimProducers []string
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		inst, err := sb.Instances().Get(ctx, target.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		if inst == nil {
+			return nil
+		}
+		tmpl, err := sb.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+		if err != nil {
+			return err
+		}
+		if tmpl == nil {
+			return nil
+		}
+		if def := lookupNodeDef(&tmpl.Spec, target.NodeType); def != nil {
+			requiredClaimProducers = node.RequiredClaimProducers(*def)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if requiredClaimProducers == nil {
+		requiredClaimProducers = []string{}
+	}
+
+	var runScopeID shared.UUID
 	// @concept: executor
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		latest, err := sb.Nodes().GetLatestRunForNode(ctx, tx, args.TargetNodeID)
+		if err != nil {
+			return err
+		}
+		if latest == nil || latest.State != cascade.NodeStateStale {
+			return nil
+		}
+		runningFrID, err := sb.Frames().GetRunningFrameID(ctx, target.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		if runningFrID == nil || latest.FrameID != *runningFrID {
+			return nil
+		}
+		runScopeID = latest.RunScopeID
+
 		var priorNodeRunID *shared.UUID
 		inFlightTarget := false
-		if inFlightID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, target.ID, runScopeID); err != nil {
+		inFlightID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, target.ID, runScopeID)
+		if err != nil {
 			return err
-		} else if ok {
+		}
+		if ok {
 			idCopy := inFlightID
 			priorNodeRunID = &idCopy
 			inFlightTarget = true
+
+			rows, err := sb.WaitSet().ListForReceiver(ctx, *runningFrID, inFlightID, tx)
+			if err != nil {
+				return err
+			}
+			pending := 0
+			for _, r := range rows {
+				if r.DrainedAt == nil {
+					pending++
+				}
+			}
+			if pending > 0 {
+				return nil
+			}
 		}
 		if priorNodeRunID == nil {
 			recentID, ok, err := args.Queue.GetMostRecentRunForNodeInScope(ctx, tx, target.ID, runScopeID)
@@ -150,7 +162,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		return args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                      target.ID,
 			ExecutorName:                target.Executor,
-			RequiredClaimProducers:      []string{},
+			RequiredClaimProducers:      requiredClaimProducers,
 			EnqueuedAt:                  args.Clock.Now(),
 			FrameID:                     *runningFrID,
 			RunScopeID:                  runScopeID,

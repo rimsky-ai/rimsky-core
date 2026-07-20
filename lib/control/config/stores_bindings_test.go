@@ -37,7 +37,7 @@ func openMigratedSQLite(t *testing.T) persistence.Database {
 
 func TestLookupInstanceBindings_UnknownInstanceNoPanic(t *testing.T) {
 	store := openMigratedSQLite(t).Tables()
-	bindings, ok, err := lookupInstanceBindings(context.Background(), store, uuid.NewString())
+	bindings, ok, err := LookupInstanceBindings(context.Background(), store, uuid.NewString())
 	if err != nil {
 		t.Fatalf("lookupInstanceBindings: unexpected error: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestLookupInstanceBindings_ReturnsServiceBindings(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	bindings, ok, err := lookupInstanceBindings(ctx, store, instID.String())
+	bindings, ok, err := LookupInstanceBindings(ctx, store, instID.String())
 	if err != nil {
 		t.Fatalf("lookupInstanceBindings: %v", err)
 	}

@@ -6,8 +6,11 @@ package controlapi
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -94,7 +97,7 @@ type validatorHarness struct {
 	validator *fakeValidator
 }
 
-func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, vfake *fakeValidator) (*validatorHarness, func()) {
+func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, vfake *fakeValidator, policy runtime.UnreachableValidatorPolicy) (*validatorHarness, func()) {
 	t.Helper()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -117,7 +120,7 @@ func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, vfake *fakeVal
 			"worker": {Transport: "grpc", Endpoint: "localhost:0"},
 		},
 		Validators:                 vr,
-		UnreachableValidatorPolicy: runtime.UnreachableValidatorPermissiveWarn,
+		UnreachableValidatorPolicy: policy,
 		AuthState: &AuthState{
 			Tables:   d.Tables(),
 			Registry: BuildV1Registry(),
@@ -145,7 +148,7 @@ func TestValidationPipeline_RejectsOnError(t *testing.T) {
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-err-" + uuid.NewString())
@@ -169,7 +172,7 @@ func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-warn-" + uuid.NewString())
@@ -190,7 +193,7 @@ func TestValidationPipeline_PublisherRoleHonoredAtRegistration(t *testing.T) {
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-pub-" + uuid.NewString())
@@ -224,7 +227,7 @@ func TestValidationPipeline_LifecycleSubscriberRoleHonoredAtRegistration(t *test
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-lifecycle-" + uuid.NewString())
@@ -248,11 +251,140 @@ func TestValidationPipeline_WarningsAsErrorsRejects(t *testing.T) {
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
-	vh, teardown := newValidatorHarness(t, vr, vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-waserrs-" + uuid.NewString())
 	status, out := vh.httpJSON(t, "POST", "/v1/templates?warnings_as_errors=true", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 	require.Equal(t, true, out["warnings_as_errors"])
+}
+
+func TestValidationPipeline_ValidateEndpointMergesPipelineErrors(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "worker",
+		supportedRoles: []string{"executor"},
+		errs: []runtime.ValidationFinding{{
+			Class:   "attribute_shape_invalid",
+			Message: "missing required field foo",
+			Path:    "/executor/attributes/foo",
+		}},
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("vp-validate-err-" + uuid.NewString())
+	status, out := vh.httpJSON(t, "POST", "/v1/templates/validate", body)
+	require.Equal(t, http.StatusOK, status,
+		"validate ran; verdict carried in the body, not the status code")
+	require.Equal(t, false, out["ok"],
+		"a template that the pipeline rejects at register time must also lint as not-ok at /validate")
+	errs, ok := out["validation_errors"].([]any)
+	require.True(t, ok, "validation_errors must be present")
+	require.NotEmpty(t, errs)
+	found := false
+	for _, raw := range errs {
+		e, ok := raw.(map[string]any)
+		if ok && strings.Contains(fmt.Sprint(e["msg"]), "missing required field foo") {
+			found = true
+		}
+	}
+	require.True(t, found, "pipeline error must merge into /validate's validation_errors, got: %v", errs)
+	require.GreaterOrEqual(t, vfake.executor, 1)
+}
+
+func TestValidationPipeline_ValidateEndpointMergesPipelineWarnings(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "worker",
+		supportedRoles: []string{"executor"},
+		warns: []runtime.ValidationFinding{{
+			Class:   "attribute_deprecated_field",
+			Message: "field bar is deprecated",
+			Path:    "/executor/attributes/bar",
+		}},
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("vp-validate-warn-" + uuid.NewString())
+	status, out := vh.httpJSON(t, "POST", "/v1/templates/validate", body)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, true, out["ok"], "a warnings-only pipeline outcome must still lint as ok")
+	warns, ok := out["validation_warnings"].([]any)
+	require.True(t, ok, "validation_warnings must be present")
+	found := false
+	for _, raw := range warns {
+		w, ok := raw.(map[string]any)
+		if ok && strings.Contains(fmt.Sprint(w["msg"]), "field bar is deprecated") {
+			found = true
+		}
+	}
+	require.True(t, found, "pipeline warning must merge into /validate's validation_warnings, got: %v", warns)
+
+	status, out = vh.httpJSON(t, "POST", "/v1/templates/validate?warnings_as_errors=true", body)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, false, out["ok"],
+		"warnings_as_errors must flip ok to false when the pipeline emits a warning")
+}
+
+func TestValidationPipeline_UnreachableValidatorPermissiveWarn_SucceedsWithWarning(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "worker",
+		supportedRoles: []string{"executor"},
+		rpcErr:         errors.New("connection refused"),
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorPermissiveWarn)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("vp-unreachable-permissive-" + uuid.NewString())
+	status, out := vh.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusCreated, status, out)
+	require.NotEmpty(t, out["template_id"])
+
+	warns, ok := out["validation_warnings"].([]any)
+	require.True(t, ok, "response must carry validation_warnings")
+	require.NotEmpty(t, warns)
+	found := false
+	for _, raw := range warns {
+		w, ok := raw.(map[string]any)
+		if ok && strings.Contains(fmt.Sprint(w["message"]), "connection refused") {
+			found = true
+		}
+	}
+	require.True(t, found, "validator_unreachable finding must surface as a warning, got: %v", warns)
+}
+
+func TestValidationPipeline_UnreachableValidatorStrict_RejectsRegistration(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "worker",
+		supportedRoles: []string{"executor"},
+		rpcErr:         errors.New("connection refused"),
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake, runtime.UnreachableValidatorStrict)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("vp-unreachable-strict-" + uuid.NewString())
+	status, out := vh.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusBadRequest, status, out)
+	require.Contains(t, out["error"], "validation pipeline")
+
+	errs, ok := out["validation_errors"].([]any)
+	require.True(t, ok, "response must carry validation_errors")
+	require.NotEmpty(t, errs)
+	found := false
+	for _, raw := range errs {
+		e, ok := raw.(map[string]any)
+		if ok && strings.Contains(fmt.Sprint(e["message"]), "connection refused") {
+			found = true
+		}
+	}
+	require.True(t, found, "validator_unreachable finding must surface as an error under strict policy, got: %v", errs)
 }

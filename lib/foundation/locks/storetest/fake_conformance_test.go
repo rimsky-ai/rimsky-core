@@ -84,14 +84,14 @@ func TestFakeConformanceFullCapabilities(t *testing.T) {
 	}
 
 	wantSeen := map[string]bool{
-		"OpenFirst":                        false,
-		"Uniformity":                       false,
-		"SplitScopeListReturnsAllElements": false,
-		"SplitScopePreservesPartitionKey":  false,
-		"SplitScopePreservesPayload":       false,
-		"SplitScopeAddressFieldPresent":    false,
-		"ScopesConflict":                   false,
-		"Serialization9b":                  false,
+		"OpenFirst":                                false,
+		"Uniformity":                               false,
+		"SplitScopeListShapeReturnsAllElements":    false,
+		"SplitScopeListShapePreservesPartitionKey": false,
+		"SplitScopeListShapePreservesPayload":      false,
+		"SplitScopeListShapeAddressFieldPresent":   false,
+		"ScopesConflict":                           false,
+		"Serialization9b":                          false,
 	}
 	for _, r := range results {
 		if _, ok := wantSeen[r.Name]; ok {

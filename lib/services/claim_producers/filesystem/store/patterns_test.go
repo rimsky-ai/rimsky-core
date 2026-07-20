@@ -40,7 +40,7 @@ func TestPattern_RingMode_LiveDiscovery(t *testing.T) {
 			t.Fatalf("iter %d: expected Available", i)
 		}
 		time.Sleep(2 * time.Millisecond)
-		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i), o.Result.ClaimScope, o.Result.Address, ""))
 	}
 	must(t, os.MkdirAll(filepath.Join(root, sub, "gamma"), 0o755))
 	seen := map[string]bool{}
@@ -53,7 +53,7 @@ func TestPattern_RingMode_LiveDiscovery(t *testing.T) {
 		var p struct{ Folder string }
 		must(t, json.Unmarshal(o.Result.Payload, &p))
 		seen[p.Folder] = true
-		must(t, st.Commit(context.Background(), fmt.Sprintf("c2-%d", i), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("c2-%d", i), o.Result.ClaimScope, o.Result.Address, ""))
 	}
 	if !seen["gamma"] {
 		t.Errorf("expected gamma to be discovered post-add; saw %v", seen)
@@ -82,7 +82,7 @@ func TestPattern_QueueMode_AutoRefresh(t *testing.T) {
 		if !o.Available {
 			t.Fatalf("p1-%d: expected Available", i)
 		}
-		must(t, st.Commit(context.Background(), fmt.Sprintf("p1-%d", i), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("p1-%d", i), o.Result.ClaimScope, o.Result.Address, ""))
 	}
 	o, err := st.Open(context.Background(), "p1-x", "@r")
 	must(t, err)
@@ -98,7 +98,7 @@ func TestPattern_QueueMode_AutoRefresh(t *testing.T) {
 			break
 		}
 		picks++
-		must(t, st.Commit(context.Background(), fmt.Sprintf("p2-%d", picks-1), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("p2-%d", picks-1), o.Result.ClaimScope, o.Result.Address, ""))
 		if picks > 5 {
 			t.Fatal("p2: more picks than expected")
 		}
@@ -131,7 +131,7 @@ func TestPattern_StagePromote(t *testing.T) {
 		if !o.Available {
 			t.Fatalf("iter %d: expected Available", i)
 		}
-		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i), o.Result.ClaimScope, o.Result.Address, ""))
 	}
 	for _, name := range []string{"a", "b", "c"} {
 		if _, err := os.Stat(filepath.Join(root, "promoted", name)); err != nil {
@@ -165,7 +165,7 @@ func TestPattern_OneShotIngest(t *testing.T) {
 		if !o.Available {
 			t.Fatalf("iter %d: expected Available", i)
 		}
-		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i), o.Result.ClaimScope, o.Result.Address, ""))
 	}
 	o, err := st.Open(context.Background(), "x", "@r")
 	must(t, err)
@@ -209,7 +209,7 @@ func TestPattern_StaticQueue_ExplicitRefresh(t *testing.T) {
 		if !o.Available {
 			t.Fatalf("iter %d: expected Available", i)
 		}
-		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i+1), o.Result.ClaimScope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i+1), o.Result.ClaimScope, o.Result.Address, ""))
 	}
 	for i := 0; i < 3; i++ {
 		o, err := st.Open(context.Background(), fmt.Sprintf("c-stick-%d", i), "@r")

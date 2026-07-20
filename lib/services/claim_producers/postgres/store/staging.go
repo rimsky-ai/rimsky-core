@@ -77,16 +77,6 @@ const stagingSchemaPrefix = "rimsky_stg_"
 
 var schemaIdentRegex = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
-func (s *Store) stagedScopeBytes(selector string) bool {
-	if _, ok := s.pickPolicies[selector]; ok {
-		return false
-	}
-	if s.writeSemantics != "staged_async" {
-		return false
-	}
-	return schemaIdentRegex.MatchString(selector)
-}
-
 func stagingSchemaName(claimID string) string {
 	safe := strings.Map(func(r rune) rune {
 		switch {

@@ -46,6 +46,7 @@ func TestProducerVerbOutbox(t *testing.T, d persistence.Database) {
 			Verb:                verb,
 			ClaimScopeData:      []byte(`"scope-` + claim.String() + `"`),
 			Address:             []byte(`"addr"`),
+			LeaseToken:          "lease-" + claim.String(),
 			SupervisorID:        "sup-conf",
 			InstanceID:          &instanceID,
 			ParentClaimHandleID: &parentID,
@@ -91,6 +92,9 @@ func TestProducerVerbOutbox(t *testing.T, d persistence.Database) {
 		}
 		if !bytes.Equal(r.Address, []byte(`"addr"`)) {
 			t.Fatalf("address round-trip: %q", r.Address)
+		}
+		if r.LeaseToken != "lease-"+claim1.String() {
+			t.Fatalf("lease_token round-trip: %q", r.LeaseToken)
 		}
 		if r.InstanceID == nil || *r.InstanceID != instanceID {
 			t.Fatalf("instance_id round-trip: %+v", r.InstanceID)

@@ -6,18 +6,20 @@ package checks
 
 import (
 	"fmt"
-	"reflect"
 	"regexp"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/checkspec"
 )
 
 type Row = map[string]any
 
 type Result struct {
-	Kind    string
-	Pass    bool
-	Failed  []Row
-	Counts  Counters
-	Message string
+	Kind        string
+	Pass        bool
+	Failed      []Row
+	Counts      Counters
+	Message     string
+	ConfigError bool
 }
 
 type Counters struct {
@@ -52,6 +54,15 @@ func KnownKinds() map[string]bool {
 	}
 }
 
+func RequiresRows(kind string) bool {
+	switch kind {
+	case "row_count_ratio", "row_count_absolute":
+		return false
+	default:
+		return true
+	}
+}
+
 func Run(spec CheckSpec, rows []Row) Result {
 	switch spec.Kind {
 	case "no_nulls":
@@ -72,34 +83,17 @@ func Run(spec CheckSpec, rows []Row) Result {
 		return runNumericRange(spec.Config, rows)
 	}
 	return Result{
-		Kind:    "unknown",
-		Pass:    false,
-		Message: fmt.Sprintf("unknown check kind %q", spec.Kind),
+		Kind:        "unknown",
+		Pass:        false,
+		Message:     fmt.Sprintf("unknown check kind %q", spec.Kind),
+		ConfigError: true,
 	}
-}
-
-func fieldList(cfg map[string]any) ([]string, error) {
-	if v, ok := cfg["field"].(string); ok && v != "" {
-		return []string{v}, nil
-	}
-	if vs, ok := cfg["fields"].([]any); ok {
-		out := make([]string, 0, len(vs))
-		for _, v := range vs {
-			s, ok := v.(string)
-			if !ok || s == "" {
-				return nil, fmt.Errorf("fields entry must be non-empty strings")
-			}
-			out = append(out, s)
-		}
-		return out, nil
-	}
-	return nil, fmt.Errorf("config: `field` (string) or `fields` ([]string) required")
 }
 
 func runNoNulls(cfg map[string]any, rows []Row) Result {
-	fields, err := fieldList(cfg)
+	fields, err := checkspec.FieldList(cfg)
 	if err != nil {
-		return Result{Kind: "no_nulls", Message: err.Error()}
+		return Result{Kind: "no_nulls", Message: err.Error(), ConfigError: true}
 	}
 	res := Result{Kind: "no_nulls", Counts: Counters{Rows: len(rows)}}
 	for _, r := range rows {
@@ -121,9 +115,9 @@ func runNoNulls(cfg map[string]any, rows []Row) Result {
 }
 
 func runNullableFieldsPresent(cfg map[string]any, rows []Row) Result {
-	fields, err := fieldList(cfg)
+	fields, err := checkspec.FieldList(cfg)
 	if err != nil {
-		return Result{Kind: "nullable_fields_present", Message: err.Error()}
+		return Result{Kind: "nullable_fields_present", Message: err.Error(), ConfigError: true}
 	}
 	res := Result{Kind: "nullable_fields_present", Counts: Counters{Rows: len(rows)}}
 	for _, r := range rows {
@@ -144,9 +138,9 @@ func runNullableFieldsPresent(cfg map[string]any, rows []Row) Result {
 }
 
 func runPKUnique(cfg map[string]any, rows []Row) Result {
-	fields, err := fieldList(cfg)
+	fields, err := checkspec.FieldList(cfg)
 	if err != nil {
-		return Result{Kind: "pk_unique", Message: err.Error()}
+		return Result{Kind: "pk_unique", Message: err.Error(), ConfigError: true}
 	}
 	seen := map[string]Row{}
 	res := Result{Kind: "pk_unique", Counts: Counters{Rows: len(rows)}}
@@ -190,14 +184,14 @@ func joinParts(parts []string) string {
 func runRowCountRatio(cfg map[string]any, rows []Row) Result {
 	baselineRaw, ok := cfg["baseline"]
 	if !ok {
-		return Result{Kind: "row_count_ratio", Message: "config.baseline required"}
+		return Result{Kind: "row_count_ratio", Message: "config.baseline required", ConfigError: true}
 	}
-	baseline, ok := numeric(baselineRaw)
+	baseline, ok := checkspec.Numeric(baselineRaw)
 	if !ok || baseline <= 0 {
-		return Result{Kind: "row_count_ratio", Message: "config.baseline must be a positive number"}
+		return Result{Kind: "row_count_ratio", Message: "config.baseline must be a positive number", ConfigError: true}
 	}
-	low, _ := numericDefault(cfg["low"], 0.5)
-	high, _ := numericDefault(cfg["high"], 2.0)
+	low, _ := checkspec.NumericDefault(cfg["low"], 0.5)
+	high, _ := checkspec.NumericDefault(cfg["high"], 2.0)
 	count := float64(len(rows))
 	ratio := count / baseline
 	res := Result{
@@ -214,9 +208,9 @@ func runRowCountRatio(cfg map[string]any, rows []Row) Result {
 }
 
 func runRowCountAbsolute(cfg map[string]any, rows []Row) Result {
-	minVal, ok := numeric(cfg["min"])
+	minVal, ok := checkspec.Numeric(cfg["min"])
 	if !ok {
-		return Result{Kind: "row_count_absolute", Message: "config.min required"}
+		return Result{Kind: "row_count_absolute", Message: "config.min required", ConfigError: true}
 	}
 	res := Result{Kind: "row_count_absolute", Counts: Counters{Rows: len(rows)}}
 	if float64(len(rows)) < minVal {
@@ -224,7 +218,7 @@ func runRowCountAbsolute(cfg map[string]any, rows []Row) Result {
 		return res
 	}
 	if maxRaw, ok := cfg["max"]; ok {
-		if maxVal, ok := numeric(maxRaw); ok && float64(len(rows)) > maxVal {
+		if maxVal, ok := checkspec.Numeric(maxRaw); ok && float64(len(rows)) > maxVal {
 			res.Message = fmt.Sprintf("row_count_absolute: %d rows > max %g", len(rows), maxVal)
 			return res
 		}
@@ -236,7 +230,7 @@ func runRowCountAbsolute(cfg map[string]any, rows []Row) Result {
 func runValueInSet(cfg map[string]any, rows []Row) Result {
 	field, _ := cfg["field"].(string)
 	if field == "" {
-		return Result{Kind: "value_in_set", Message: "config.field required"}
+		return Result{Kind: "value_in_set", Message: "config.field required", ConfigError: true}
 	}
 	set := map[string]struct{}{}
 	if vs, ok := cfg["set"].([]any); ok {
@@ -245,7 +239,7 @@ func runValueInSet(cfg map[string]any, rows []Row) Result {
 		}
 	}
 	if len(set) == 0 {
-		return Result{Kind: "value_in_set", Message: "config.set required"}
+		return Result{Kind: "value_in_set", Message: "config.set required", ConfigError: true}
 	}
 	res := Result{Kind: "value_in_set", Counts: Counters{Rows: len(rows)}}
 	for _, r := range rows {
@@ -266,15 +260,15 @@ func runValueInSet(cfg map[string]any, rows []Row) Result {
 func runRegexMatch(cfg map[string]any, rows []Row) Result {
 	field, _ := cfg["field"].(string)
 	if field == "" {
-		return Result{Kind: "regex_match", Message: "config.field required"}
+		return Result{Kind: "regex_match", Message: "config.field required", ConfigError: true}
 	}
 	pattern, _ := cfg["pattern"].(string)
 	if pattern == "" {
-		return Result{Kind: "regex_match", Message: "config.pattern required"}
+		return Result{Kind: "regex_match", Message: "config.pattern required", ConfigError: true}
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return Result{Kind: "regex_match", Message: "config.pattern compile: " + err.Error()}
+		return Result{Kind: "regex_match", Message: "config.pattern compile: " + err.Error(), ConfigError: true}
 	}
 	res := Result{Kind: "regex_match", Counts: Counters{Rows: len(rows)}}
 	for _, r := range rows {
@@ -295,33 +289,44 @@ func runRegexMatch(cfg map[string]any, rows []Row) Result {
 func runNumericRange(cfg map[string]any, rows []Row) Result {
 	field, _ := cfg["field"].(string)
 	if field == "" {
-		return Result{Kind: "numeric_range", Message: "config.field required"}
+		return Result{Kind: "numeric_range", Message: "config.field required", ConfigError: true}
 	}
 	minRaw, hasMin := cfg["min"]
 	maxRaw, hasMax := cfg["max"]
 	if !hasMin && !hasMax {
-		return Result{Kind: "numeric_range", Message: "config.min or config.max required"}
+		return Result{Kind: "numeric_range", Message: "config.min or config.max required", ConfigError: true}
+	}
+	var min, max float64
+	if hasMin {
+		m, ok := checkspec.Numeric(minRaw)
+		if !ok {
+			return Result{Kind: "numeric_range", Message: fmt.Sprintf("config.min must be numeric, got %v (%T)", minRaw, minRaw), ConfigError: true}
+		}
+		min = m
+	}
+	if hasMax {
+		m, ok := checkspec.Numeric(maxRaw)
+		if !ok {
+			return Result{Kind: "numeric_range", Message: fmt.Sprintf("config.max must be numeric, got %v (%T)", maxRaw, maxRaw), ConfigError: true}
+		}
+		max = m
 	}
 	res := Result{Kind: "numeric_range", Counts: Counters{Rows: len(rows)}}
 	for _, r := range rows {
-		v, ok := numeric(r[field])
+		v, ok := checkspec.Numeric(r[field])
 		if !ok {
 			res.Failed = appendBounded(res.Failed, r, 100)
 			res.Counts.Failed++
 			continue
 		}
-		if hasMin {
-			if min, ok := numeric(minRaw); ok && v < min {
-				res.Failed = appendBounded(res.Failed, r, 100)
-				res.Counts.Failed++
-				continue
-			}
+		if hasMin && v < min {
+			res.Failed = appendBounded(res.Failed, r, 100)
+			res.Counts.Failed++
+			continue
 		}
-		if hasMax {
-			if max, ok := numeric(maxRaw); ok && v > max {
-				res.Failed = appendBounded(res.Failed, r, 100)
-				res.Counts.Failed++
-			}
+		if hasMax && v > max {
+			res.Failed = appendBounded(res.Failed, r, 100)
+			res.Counts.Failed++
 		}
 	}
 	res.Pass = res.Counts.Failed == 0
@@ -330,38 +335,6 @@ func runNumericRange(cfg map[string]any, rows []Row) Result {
 			res.Counts.Failed, res.Counts.Rows, field)
 	}
 	return res
-}
-
-func numeric(v any) (float64, bool) {
-	switch x := v.(type) {
-	case float64:
-		return x, true
-	case float32:
-		return float64(x), true
-	case int:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	case int32:
-		return float64(x), true
-	}
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Float32, reflect.Float64:
-		return rv.Float(), true
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return float64(rv.Int()), true
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return float64(rv.Uint()), true
-	}
-	return 0, false
-}
-
-func numericDefault(v any, def float64) (float64, bool) {
-	if x, ok := numeric(v); ok {
-		return x, true
-	}
-	return def, false
 }
 
 func appendBounded(out []Row, r Row, cap int) []Row {

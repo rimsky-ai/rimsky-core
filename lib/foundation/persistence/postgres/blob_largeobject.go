@@ -24,6 +24,7 @@ type PgLargeObjectBackend struct {
 }
 
 var _ persistence.BlobBackend = (*PgLargeObjectBackend)(nil)
+var _ persistence.TxBlobBackend = (*PgLargeObjectBackend)(nil)
 
 func NewPgLargeObjectBackend(pool *pgxpool.Pool) *PgLargeObjectBackend {
 	return &PgLargeObjectBackend{pool: pool}
@@ -63,6 +64,55 @@ func (b *PgLargeObjectBackend) Write(ctx context.Context, _ persistence.BlobKey,
 	}
 	committed = true
 	return persistence.Handle(fmt.Sprintf("pglo:%d", oid)), nil
+}
+
+func (b *PgLargeObjectBackend) WriteInTx(ctx context.Context, tx persistence.Tx, _ persistence.BlobKey, bytes []byte) (persistence.Handle, error) {
+	pgT, err := unwrapTx(tx)
+	if err != nil {
+		return "", fmt.Errorf("blob pglo: WriteInTx: %w", err)
+	}
+	los := pgT.LargeObjects()
+	oid, err := los.Create(ctx, 0)
+	if err != nil {
+		return "", fmt.Errorf("blob pglo: create: %w", err)
+	}
+	lo, err := los.Open(ctx, oid, pgx.LargeObjectModeWrite)
+	if err != nil {
+		return "", fmt.Errorf("blob pglo: open(write): %w", err)
+	}
+	if _, err := lo.Write(bytes); err != nil {
+		_ = lo.Close()
+		return "", fmt.Errorf("blob pglo: write: %w", err)
+	}
+	if err := lo.Close(); err != nil {
+		return "", fmt.Errorf("blob pglo: close: %w", err)
+	}
+	return persistence.Handle(fmt.Sprintf("pglo:%d", oid)), nil
+}
+
+func (b *PgLargeObjectBackend) ReadInTx(ctx context.Context, tx persistence.Tx, handle persistence.Handle) ([]byte, error) {
+	oid, err := parsePgloHandle(handle)
+	if err != nil {
+		return nil, err
+	}
+	pgT, err := unwrapTx(tx)
+	if err != nil {
+		return nil, fmt.Errorf("blob pglo: ReadInTx: %w", err)
+	}
+	los := pgT.LargeObjects()
+	lo, err := los.Open(ctx, oid, pgx.LargeObjectModeRead)
+	if err != nil {
+		if isMissingLOError(err) {
+			return nil, persistence.ErrBlobNotFound
+		}
+		return nil, fmt.Errorf("blob pglo: open(read, in-tx): %w", err)
+	}
+	defer func() { _ = lo.Close() }()
+	out, err := io.ReadAll(lo)
+	if err != nil {
+		return nil, fmt.Errorf("blob pglo: read(in-tx): %w", err)
+	}
+	return out, nil
 }
 
 func (b *PgLargeObjectBackend) Read(ctx context.Context, handle persistence.Handle) ([]byte, error) {

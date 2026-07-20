@@ -289,7 +289,7 @@ func (s *ObservabilityServer) itemsQueueView(ctx context.Context) (*genv1.AdminV
 				sel, pp.ItemsTable)
 		}
 		var queued, inProgress int
-		queryQ := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE state = 'queued'", pp.ItemsTable)
+		queryQ := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE state = 'available'", pp.ItemsTable)
 		queryIP := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE state = 'in_progress'", pp.ItemsTable)
 		if err := pool.QueryRow(ctx, queryQ).Scan(&queued); err != nil {
 			slog.Warn("postgres-store.itemsQueueView: queued count failed",

@@ -23,7 +23,7 @@ func (s *nodeAttributesImpl) GetByRun(ctx context.Context, runID shared.UUID, tx
 		   FROM rimsky_node_attributes
 		  WHERE node_run_id = $1`, runID,
 	)
-	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetByRun")
+	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, tx, row, "GetByRun")
 }
 
 func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
@@ -36,10 +36,10 @@ func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.
 		  ORDER BY a.updated_at DESC
 		  LIMIT 1`, nodeID, runScopeID,
 	)
-	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetLatestByNode")
+	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, tx, row, "GetLatestByNode")
 }
 
-func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row pgx.Row, op string) (*persistence.NodeAttributesRow, error) {
+func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, tx persistence.Tx, row pgx.Row, op string) (*persistence.NodeAttributesRow, error) {
 	var (
 		out         persistence.NodeAttributesRow
 		raw         []byte
@@ -55,7 +55,7 @@ func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row pgx.R
 	}
 	out.UpdatedAt = when
 	if handle != nil && *handle != "" && bb != nil && handleBkend != nil && *handleBkend == bb.Name() {
-		bytes, err := bb.Read(ctx, persistence.Handle(*handle))
+		bytes, err := persistence.ReadBlobInTx(ctx, bb, tx, persistence.Handle(*handle))
 		if err != nil {
 			if errors.Is(err, persistence.ErrBlobNotFound) {
 				out.Data = map[string]any{}
@@ -105,7 +105,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 		dataToSave = raw
 	)
 	if persistence.ShouldSpillBlob(si.blob, si.blobThreshold, len(raw)) {
-		h, werr := si.blob.Write(ctx, persistence.BlobKey{
+		h, werr := persistence.WriteBlobInTx(ctx, si.blob, tx, persistence.BlobKey{
 			NodeID:        runID.String(),
 			AttributeName: "data",
 		}, raw)
@@ -308,7 +308,7 @@ func (s *nodeAttributesImpl) SnapshotBagForNewRun(
 	if priorHandleBackend != nil {
 		priorBackendStr = *priorHandleBackend
 	}
-	carried, err := persistence.CarryForwardBag(ctx, (*tablesImpl)(s).blob,
+	carried, err := persistence.CarryForwardBag(ctx, (*tablesImpl)(s).blob, tx,
 		persistence.BlobKey{NodeID: newRunID.String(), AttributeName: "data"},
 		priorData, priorHandleStr, priorBackendStr)
 	if err != nil {
@@ -348,7 +348,7 @@ func (s *nodeAttributesImpl) GetPriorRunData(
 		  LIMIT 1`,
 		runID,
 	)
-	prior, err := scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetPriorRunData")
+	prior, err := scanAttributeRow(ctx, (*tablesImpl)(s).blob, tx, row, "GetPriorRunData")
 	if err != nil {
 		return nil, err
 	}

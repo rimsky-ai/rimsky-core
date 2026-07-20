@@ -44,9 +44,12 @@ func TestCatalogInvoke_BodylessRequestDoesNotPanic(t *testing.T) {
 	}
 	cat := &mcp.Catalog{Registry: reg, Router: r}
 
-	got, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_create", json.RawMessage(`{}`))
+	got, gotIsError, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_create", json.RawMessage(`{}`))
 	if mcpErr != nil {
 		t.Fatalf("thing_create: unexpected error %+v", mcpErr)
+	}
+	if gotIsError {
+		t.Fatalf("thing_create: expected isError=false for a successful response")
 	}
 	if m, ok := got.(map[string]any); ok && m["isError"] == true {
 		t.Fatalf("thing_create: got error envelope %+v", m)
@@ -55,8 +58,42 @@ func TestCatalogInvoke_BodylessRequestDoesNotPanic(t *testing.T) {
 		t.Fatalf("thing_create: expected synthesized Idempotency-Key header, got none")
 	}
 
-	if _, mcpErr := cat.Invoke(httptest.NewRequest("GET", "/mcp", nil), "thing_list", nil); mcpErr != nil {
+	if _, _, mcpErr := cat.Invoke(httptest.NewRequest("GET", "/mcp", nil), "thing_list", nil); mcpErr != nil {
 		t.Fatalf("thing_list: unexpected error %+v", mcpErr)
+	}
+}
+
+func TestCatalogInvoke_CallerSuppliedIdempotencyKeyThreadsToHeaderAndDropsFromBody(t *testing.T) {
+	r := chi.NewRouter()
+	var sawIdempotency string
+	var sawBody map[string]any
+	r.Post("/things", func(w http.ResponseWriter, req *http.Request) {
+		defer func() { _ = req.Body.Close() }()
+		sawIdempotency = req.Header.Get("Idempotency-Key")
+		_ = json.NewDecoder(req.Body).Decode(&sawBody)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	reg := &fakeRegistry{
+		tools: []string{"thing_create"},
+		entries: map[string]mcp.RegistryEntry{
+			"thing_create": {Action: "thing:create", IsWrite: true, Routes: []mcp.RegistryRoute{{Method: "POST", Path: "/things"}}},
+		},
+	}
+	cat := &mcp.Catalog{Registry: reg, Router: r}
+
+	args := json.RawMessage(`{"name":"widget","idempotency_key":"caller-supplied-key-1"}`)
+	if _, _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_create", args); mcpErr != nil {
+		t.Fatalf("unexpected error %+v", mcpErr)
+	}
+	if sawIdempotency != "caller-supplied-key-1" {
+		t.Fatalf("expected the caller-supplied idempotency_key to reach the Idempotency-Key header verbatim; got %q", sawIdempotency)
+	}
+	if _, ok := sawBody["idempotency_key"]; ok {
+		t.Fatalf("idempotency_key must be consumed into the header, not leaked into the request body: %+v", sawBody)
+	}
+	if sawBody["name"] != "widget" {
+		t.Fatalf("other body fields must still reach the request body: %+v", sawBody)
 	}
 }
 
@@ -74,9 +111,12 @@ func TestCatalogInvoke_ErrorEnvelopeFor4xxResponses(t *testing.T) {
 	}
 	cat := &mcp.Catalog{Registry: reg, Router: r}
 
-	got, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_get", json.RawMessage(`{"id":"x"}`))
+	got, gotIsError, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_get", json.RawMessage(`{"id":"x"}`))
 	if mcpErr != nil {
 		t.Fatalf("unexpected protocol-level error %+v", mcpErr)
+	}
+	if !gotIsError {
+		t.Fatalf("expected isError=true for a >=400 response")
 	}
 	m, ok := got.(map[string]any)
 	if !ok {
@@ -115,7 +155,7 @@ func TestCatalogInvoke_ForwardsAuthorizationHeaderToInnerRequest(t *testing.T) {
 
 	outer := httptest.NewRequest("POST", "/mcp", nil)
 	outer.Header.Set("Authorization", "Bearer outer-caller-token")
-	if _, mcpErr := cat.Invoke(outer, "thing_get", json.RawMessage(`{"id":"x"}`)); mcpErr != nil {
+	if _, _, mcpErr := cat.Invoke(outer, "thing_get", json.RawMessage(`{"id":"x"}`)); mcpErr != nil {
 		t.Fatalf("unexpected error %+v", mcpErr)
 	}
 	if sawAuth != "Bearer outer-caller-token" {
@@ -147,7 +187,7 @@ func TestCatalogInvoke_AppliesProtocolSkin(t *testing.T) {
 		},
 	}
 
-	if _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_get", json.RawMessage(`{"id":"x"}`)); mcpErr != nil {
+	if _, _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_get", json.RawMessage(`{"id":"x"}`)); mcpErr != nil {
 		t.Fatalf("unexpected error %+v", mcpErr)
 	}
 	if sawSkin != "mcp" {
@@ -172,7 +212,7 @@ func TestCatalogInvoke_GETMapsScalarArgsToQueryAndDropsObjectsArrays(t *testing.
 	cat := &mcp.Catalog{Registry: reg, Router: r}
 
 	args := json.RawMessage(`{"type":"widget","obj":{"a":1},"arr":[1,2]}`)
-	if _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_list", args); mcpErr != nil {
+	if _, _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_list", args); mcpErr != nil {
 		t.Fatalf("unexpected error %+v", mcpErr)
 	}
 	if got := sawQuery.Get("type"); got != "widget" {
@@ -207,7 +247,7 @@ func TestCatalogInvoke_PathEscapesSubstitutedParams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal args: %v", err)
 	}
-	if _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_get", argsBytes); mcpErr != nil {
+	if _, _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_get", argsBytes); mcpErr != nil {
 		t.Fatalf("unexpected error %+v", mcpErr)
 	}
 	if sawID == "" {
@@ -236,7 +276,7 @@ func TestCatalogInvoke_MissingPathParamReturnsInvalidParams(t *testing.T) {
 	}
 	cat := &mcp.Catalog{Registry: reg, Router: r}
 
-	_, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_get", json.RawMessage(`{}`))
+	_, _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_get", json.RawMessage(`{}`))
 	if mcpErr == nil {
 		t.Fatalf("expected an error for a missing path param")
 	}

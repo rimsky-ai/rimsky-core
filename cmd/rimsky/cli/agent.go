@@ -28,6 +28,10 @@ const agentReadinessTimeout = 10 * time.Second
 
 const agentReadinessPollInterval = 100 * time.Millisecond
 
+var agentStopGraceTimeout = 35 * time.Second
+
+var agentStopKillTimeout = 5 * time.Second
+
 func RunAgent(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: rimsky agent {start|status|stop}")
@@ -207,10 +211,23 @@ func runAgentStatus(args []string) int {
 	if present && snap.Connected {
 		fmt.Fprintf(os.Stdout, "rimsky agent: connected (pid %d, proxy %s, since %s)\n",
 			pid, snap.Proxy, snap.Since)
+		printAgentChildren(snap.Children)
 		return 0
 	}
 	fmt.Fprintf(os.Stdout, "rimsky agent: running, disconnected (pid %d)\n", pid)
 	return 0
+}
+
+// @story: host-agent-control-plane
+func printAgentChildren(children []childSnapshot) {
+	if len(children) == 0 {
+		fmt.Fprintln(os.Stdout, "  spawned children: none")
+		return
+	}
+	fmt.Fprintln(os.Stdout, "  spawned children:")
+	for _, c := range children {
+		fmt.Fprintf(os.Stdout, "    run-scope=%s binding=%s spawn-id=%s\n", c.RunScopeID, c.Binding, c.SpawnID)
+	}
 }
 
 func runAgentStop(args []string) int {
@@ -240,7 +257,15 @@ func runAgentStop(args []string) int {
 			fmt.Fprintf(os.Stderr, "rimsky agent: signal pid %d: %v\n", pid, termErr)
 			return 1
 		}
-		waitForExit(pid, 35*time.Second)
+		waitForExit(pid, agentStopGraceTimeout)
+		if processAlive(pid) {
+			killProcess(pid)
+			waitForExit(pid, agentStopKillTimeout)
+		}
+		if processAlive(pid) {
+			fmt.Fprintf(os.Stderr, "rimsky agent: pid %d did not exit after SIGTERM and SIGKILL\n", pid)
+			return 1
+		}
 	}
 
 	pidPath := filepath.Join(dir, "agent.pid")
@@ -292,9 +317,17 @@ func readAgentPIDFrom(dir string) (int, bool, error) {
 }
 
 type statusSnapshot struct {
-	Connected bool   `json:"connected"`
-	Proxy     string `json:"proxy"`
-	Since     string `json:"since"`
+	Connected bool            `json:"connected"`
+	Proxy     string          `json:"proxy"`
+	Since     string          `json:"since"`
+	Children  []childSnapshot `json:"children"`
+}
+
+// @story: host-agent-control-plane
+type childSnapshot struct {
+	SpawnID    string `json:"spawn_id"`
+	RunScopeID string `json:"run_scope_id"`
+	Binding    string `json:"binding"`
 }
 
 func readStatusFile(path string) (statusSnapshot, bool, error) {

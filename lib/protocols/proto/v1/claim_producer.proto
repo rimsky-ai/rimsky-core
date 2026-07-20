@@ -203,6 +203,13 @@ message CommitRequest {
   string claim_id = 1;
   bytes  claim_scope = 2;
   bytes  address  = 3;
+  // lease_token echoes SubScopeDescriptor.lease_token for sub-claims minted
+  // by SplitScope. Optional-but-verified-when-present: producers that mint
+  // lease tokens MUST match a non-empty token against the live lease and
+  // treat a mismatch as "no lease held" (stale holder), never as the
+  // current lease. Empty means the caller carries no lease identity
+  // (non-batch claims; producers that do not mint tokens ignore it).
+  string lease_token = 4;
 }
 
 message CommitResponse {
@@ -225,6 +232,8 @@ message AbandonRequest {
   string claim_id = 1;
   bytes  claim_scope = 2;
   bytes  address  = 3;  // may be empty; producer identifies state by claim_id
+  // Same contract as CommitRequest.lease_token.
+  string lease_token = 4;
 }
 
 message AbandonResponse {}
@@ -233,6 +242,8 @@ message ReleaseRequest {
   string claim_id = 1;
   bytes  claim_scope = 2;
   bytes  address  = 3;
+  // Same contract as CommitRequest.lease_token.
+  string lease_token = 4;
 }
 
 message ReleaseResponse {}
@@ -271,6 +282,14 @@ message SubScopeDescriptor {
   // runtime. Same JSON-validity contract as address — when non-empty, bytes
   // must be JSON-valid.
   bytes  payload           = 5;
+  // Producer-minted identity of the lease backing this sub-claim-scope
+  // (e.g. a batch-pop lease). Opaque to rimsky; persisted on the sub-claim
+  // handle and echoed back verbatim on Commit / Abandon / Release so the
+  // producer can match terminal verbs by lease identity rather than scope
+  // equality — a stale holder's terminal verb must not resolve a
+  // successor's lease on a byte-equal scope. Empty when the producer keeps
+  // no per-lease state.
+  string lease_token       = 6;
 }
 
 message SplitScopeResponse {

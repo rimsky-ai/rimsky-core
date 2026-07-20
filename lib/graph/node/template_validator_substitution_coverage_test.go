@@ -320,6 +320,39 @@ func TestCoverageCheck_SymmetryWithNodes(t *testing.T) {
 
 // @story: typed-message-substitution
 // @decision: substitution-ref-coverage-required
+// @story: typed-message-substitution
+// @decision: substitution-ref-coverage-required
+func TestCoverageCheck_MessagesDeclaredButUncoveredRejected(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{Type: "ev/bar", BodySchema: []byte(`{"type":"object","properties":{"X":{"type":"array"}}}`)},
+		},
+		Nodes: []TemplateNodeDef{
+			{Type: "fanout", Executor: "h",
+				ClaimProducers: []NodeClaimProducerRef{
+					{Name: "content", Alias: "items", Intent: "r", Selector: "@x"},
+				},
+				FanOut: &FanOutSpec{
+					Claim:            "items",
+					PartitionRequest: "{{messages.ev/bar.X}}",
+					ErrorPolicy:      AggregationPolicy{Kind: "strict"},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
+	})
+	require.False(t, res.Ok(),
+		"a message type declared in messages: but with no covering subscription must be rejected as uncovered")
+	entry := findCoverageEntry(t, res, "fanout", "messages.ev/bar.X")
+	assertSuggestedEntryShape(t, entry, "ev/bar", "terminal/success")
+	require.Equal(t, "fan_out.partition_request", entry["attribute_property"],
+		"attribute_property must name the ref's actual position (fan_out.partition_request), not be hardcoded empty")
+}
+
 func TestCoverageCheck_MessagesWildcardAccepted(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",

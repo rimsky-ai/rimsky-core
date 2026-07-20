@@ -3,12 +3,12 @@ decision: acquire-unavailable-carveout
 status: as-is
 ---
 
-# The acquire-unavailable handler is the single named carve-out
+# The acquire-phase error handlers are named carve-outs outside the resolution engine
 
 ## Choice
 
-The acquire-unavailable handler remains outside the unified claim-handle resolution engine, explicitly named as the single carve-out, with a deterministic injection test (see `decision:race-injection-hooks`) pinning its behavior: abandon partial opens, no row delete (the acquisition transaction's rows already rolled back), route via the producer-declared class else the synthetic `acquire/unavailable` class.
+Two acquire-phase error handlers remain outside the unified claim-handle resolution engine: the acquire-unavailable handler and the acquire-producer-error handler. Both are explicitly named carve-outs sharing one deterministic injection test (see `decision:race-injection-hooks`) and one downstream policy-application path, pinning their shared behavior: abandon partial opens, no row delete (the acquisition transaction's rows already rolled back), route via a primary error class — the producer-declared unavailable class for the first handler, the producer-declared error class for the second — else a synthetic fallback class (`acquire/unavailable` or `acquire/producer_error` respectively).
 
 ## Rationale
 
-Its acquisition transaction has already rolled back, so there is no claimant-guarded delete to fold; forcing it into the engine would widen the engine's contract with a verb-only mode, diluting the single audited verb-then-delete promise.
+Both handlers' acquisition transactions have already rolled back, so there is no claimant-guarded delete to fold; forcing either into the engine would widen the engine's contract with a verb-only mode, diluting the single audited verb-then-delete promise. The two handlers share this reasoning and share their downstream policy-application code, differing only in which error class and payload fields each reports.

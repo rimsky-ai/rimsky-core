@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -387,6 +388,32 @@ func TestFanOutRunScopeEvent_ContinuesPastPeerFailureNilErrorWithPerPeerErr(t *t
 		return err
 	}))
 	require.Nil(t, betaRow, "beta's failed dispatch must not be marked terminal (so a future re-fanout retries it)")
+}
+
+func TestFanOutRunScopeEvent_ConcurrentCallsDeliverExactlyOnce(t *testing.T) {
+	t.Parallel()
+	f := newFanOutFixture(t)
+	ctx := context.Background()
+
+	instanceID := shared.UUID(uuid.New())
+	scopeID := shared.UUID(uuid.New())
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			defer wg.Done()
+			_, _, _ = FanOutRunScopeEvent(ctx, f.deps, twoStoreSpec(), scopeID, instanceID, "instance_terminated", nil)
+		}()
+	}
+	wg.Wait()
+
+	require.Len(t, f.alpha.Calls(), 1,
+		"two racing fan-outs for the same run-scope must converge to exactly one on_run_scope_terminal "+
+			"delivery per peer, not one per racing caller")
+	require.Len(t, f.beta.Calls(), 1,
+		"two racing fan-outs for the same run-scope must converge to exactly one on_run_scope_terminal "+
+			"delivery per peer, not one per racing caller")
 }
 
 func TestCloseAndFanOutRunScopesForInstance_DedupesSharedRootScope(t *testing.T) {

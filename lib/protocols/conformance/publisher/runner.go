@@ -194,6 +194,9 @@ func checkUnsubscribe(ctx context.Context, c genv1.PublisherClient, opts RunOpts
 	if _, err := c.Unsubscribe(ctx, &genv1.UnsubscribeRequest{PublisherSubscriptionId: opts.SubscriptionID}); err != nil {
 		return CheckResult{Name: "Unsubscribe", Err: err}
 	}
+	if err := requireSubscriptionAbsent(ctx, c, opts.SubscriptionID); err != nil {
+		return CheckResult{Name: "Unsubscribe", Err: err}
+	}
 	return CheckResult{Name: "Unsubscribe"}
 }
 
@@ -201,7 +204,24 @@ func checkUnsubscribeIdempotent(ctx context.Context, c genv1.PublisherClient, op
 	if _, err := c.Unsubscribe(ctx, &genv1.UnsubscribeRequest{PublisherSubscriptionId: opts.SubscriptionID}); err != nil {
 		return CheckResult{Name: "UnsubscribeIdempotent", Err: err}
 	}
+	if err := requireSubscriptionAbsent(ctx, c, opts.SubscriptionID); err != nil {
+		return CheckResult{Name: "UnsubscribeIdempotent", Err: err}
+	}
 	return CheckResult{Name: "UnsubscribeIdempotent"}
+}
+
+func requireSubscriptionAbsent(ctx context.Context, c genv1.PublisherClient, subscriptionID string) error {
+	resp, err := c.ListSubscriptions(ctx, &emptypb.Empty{})
+	if err != nil {
+		return fmt.Errorf("ListSubscriptions after Unsubscribe: %w", err)
+	}
+	for _, w := range resp.GetSubscriptions() {
+		if w.GetPublisherSubscriptionId() == subscriptionID {
+			return fmt.Errorf("subscription %q still present in ListSubscriptions after Unsubscribe; "+
+				"the publisher must stop watching and remove the subscription, not leak it forever", subscriptionID)
+		}
+	}
+	return nil
 }
 
 type MessageReceiver struct {

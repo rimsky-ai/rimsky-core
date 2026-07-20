@@ -38,7 +38,7 @@ func seedNodeRunInState(
 		}); err != nil {
 			return err
 		}
-		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, state, nil)
+		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, state, nil, false)
 	}); err != nil {
 		t.Fatalf("seedNodeRunInState(%s): %v", state, err)
 	}

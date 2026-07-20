@@ -21,7 +21,7 @@ func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	store := d.Tables()
 
-	lockHolderID := uuid.New()
+	claimHandleID := uuid.New()
 	claimHolderID := uuid.New()
 	supID := "fk-supervisor"
 	expires := time.Now().Add(1 * time.Hour)
@@ -30,7 +30,7 @@ func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
-			ID:                 lockHolderID,
+			ID:                 claimHandleID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
 			Address:            address,
@@ -42,7 +42,7 @@ func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 		}
 		if err := store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:              claimHolderID,
-			ClaimHandleID:   lockHolderID,
+			ClaimHandleID:   claimHandleID,
 			HolderNodeRunID: runID,
 		}, tx); err != nil {
 			return err
@@ -55,30 +55,30 @@ func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 	var got *persistence.ClaimHandleRow
 	var gotClaims []persistence.ClaimHolderRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.ClaimHandles().Get(ctx, lockHolderID, tx)
+		r, err := store.ClaimHandles().Get(ctx, claimHandleID, tx)
 		got = r
 		if err != nil {
 			return err
 		}
-		c, err := store.ClaimHolders().ListByClaimHandleID(ctx, lockHolderID, tx)
+		c, err := store.ClaimHolders().ListByClaimHandleID(ctx, claimHandleID, tx)
 		gotClaims = c
 		return err
 	}); err != nil || got == nil {
-		t.Fatalf("lock-holder Get / claim-holder list: row=%v err=%v", got, err)
+		t.Fatalf("claim-handle Get / claim-holder list: row=%v err=%v", got, err)
 	}
 	if len(gotClaims) != 1 {
 		t.Fatalf("expected 1 claim-holder; got %d", len(gotClaims))
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.ClaimHandles().Delete(ctx, lockHolderID, supID, tx)
+		return store.ClaimHandles().Delete(ctx, claimHandleID, supID, tx)
 	}); err != nil {
-		t.Fatalf("Delete lock-holder: %v", err)
+		t.Fatalf("Delete claim-handle: %v", err)
 	}
 
 	var gotClaims2 []persistence.ClaimHolderRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		c, err := store.ClaimHolders().ListByClaimHandleID(ctx, lockHolderID, tx)
+		c, err := store.ClaimHolders().ListByClaimHandleID(ctx, claimHandleID, tx)
 		gotClaims2 = c
 		return err
 	}); err != nil {

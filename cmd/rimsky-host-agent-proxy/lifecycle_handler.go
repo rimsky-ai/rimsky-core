@@ -87,6 +87,7 @@ func (h *lifecycleHandler) OnTemplateDeregistered(_ context.Context, _ *genv1.On
 	return &genv1.LifecycleAck{}, nil
 }
 
-func (h *lifecycleHandler) OnInstanceTerminated(_ context.Context, _ *genv1.OnInstanceTerminatedRequest) (*genv1.LifecycleAck, error) {
+func (h *lifecycleHandler) OnInstanceTerminated(_ context.Context, req *genv1.OnInstanceTerminatedRequest) (*genv1.LifecycleAck, error) {
+	h.state.dropInstance(req.GetInstanceId())
 	return &genv1.LifecycleAck{}, nil
 }

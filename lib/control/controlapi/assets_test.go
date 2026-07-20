@@ -124,6 +124,7 @@ func assetTemplateBody(name string) map[string]any {
 					"executor": "worker",
 					"claim_producers": []map[string]any{
 						{"name": "content", "selector": "items/x", "intent": "rw", "alias": "dataset"},
+						{"name": "topics-ring", "selector": "raw/y", "intent": "rw", "alias": "raw"},
 					},
 				},
 				{"type": "downstream", "executor": "worker", "subscribes": []map[string]any{{"node": "producer", "type": "terminal/*", "force_upstream_refresh": false}}},
@@ -206,6 +207,113 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 	`, claimID, nodeRunID, `{"area":"north"}`, producerNodeID)
 
 	return instID, claimID, producerNodeID, frameID
+}
+
+func (ah *assetHarness) seedNonDataProcessingClaim(
+	t *testing.T, producerNodeID, frameID uuid.UUID,
+) (claimID uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	h := ah.harness
+
+	var mainScopeID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, h.driver,
+		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
+		[]any{frameID}, &mainScopeID)
+
+	nodeRunID := uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+		INSERT INTO rimsky_node_runs
+			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'fresh', $3, $4, 1)
+	`, nodeRunID, producerNodeID, frameID, mainScopeID)
+
+	claimID = uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+		INSERT INTO rimsky_claim_handles
+			(id, node_run_id, lock_kind, producer_name, claim_scope_data, intent,
+			 holder_node_id, expires_at, lifetime, state, version_id, resolved_at)
+		VALUES ($1, $2, 'claim_scope', 'topics-ring', $3::jsonb, 'rw',
+			 $4, now() + interval '1 hour', 'durable', 'committed', 'v-001', now())
+	`, claimID, nodeRunID, `{}`, producerNodeID)
+
+	return claimID
+}
+
+func TestAssetEndpoints_NonDataProcessingProducerHiddenFromDetailAndDelete(t *testing.T) {
+	t.Parallel()
+	ah, teardown := newAssetHarness(t, nil)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, _, producerNodeID, frameID := ah.seedAsset(t, "asset-nondp")
+	claimID := ah.seedNonDataProcessingClaim(t, producerNodeID, frameID)
+
+	status, _ := ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/producer.raw", nil)
+	require.Equal(t, http.StatusNotFound, status, "a durable claim against a non-data-processing producer must not be surfaced as an asset")
+
+	status, out := ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	assets, _ := out["assets"].([]any)
+	require.Len(t, assets, 1, "LIST must exclude the non-data-processing claim exactly as before")
+
+	status, _ = ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/producer.raw/materialization-history", nil)
+	require.Equal(t, http.StatusNotFound, status)
+
+	status, _ = ah.harness.httpJSON(t, "DELETE", "/v1/instances/"+instID.String()+"/assets/producer.raw", nil)
+	require.Equal(t, http.StatusNotFound, status, "delete must not resolve a non-data-processing claim as an asset either")
+
+	var remaining int
+	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
+		[]any{claimID}, &remaining)
+	require.Equal(t, 1, remaining, "the non-asset claim row must be untouched")
+}
+
+func TestAssetEndpoints_NilClaimProducersRegistryFailsClosed(t *testing.T) {
+	t.Parallel()
+	deps := AppDeps{ClaimProducers: nil}
+	predicate := buildDataProcessingPredicate(deps)
+	require.False(t, predicate("content"), "a nil ClaimProducers registry must fail closed, not list every claim as an asset")
+}
+
+func TestClaimHandles_DeleteResolvedIfNoActiveHolders_RefusesWithActiveHolder(t *testing.T) {
+	t.Parallel()
+	ah, teardown := newAssetHarness(t, nil)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, claimID, producerNodeID, frameID := ah.seedAsset(t, "asset-guard")
+	_ = instID
+
+	holderNodeRunID := uuid.New()
+	var mainScopeID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
+		[]any{frameID}, &mainScopeID)
+	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+		INSERT INTO rimsky_node_runs
+			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
+	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
+	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
+		VALUES ($1, $2, $3, 'active', $4)
+	`, uuid.New(), claimID, holderNodeRunID, frameID)
+
+	var deleted bool
+	require.NoError(t, ah.harness.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		deleted, err = ah.harness.persist.ClaimHandles().DeleteResolvedIfNoActiveHolders(ctx, shared.UUID(claimID), tx)
+		return err
+	}))
+	require.False(t, deleted, "the atomic guard must refuse when an active holder exists, closing the check-then-act race even under a single statement")
+
+	var remaining int
+	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
+		[]any{claimID}, &remaining)
+	require.Equal(t, 1, remaining)
 }
 
 func TestAssetEndpoints_ListSurfacesDurableCommittedRows(t *testing.T) {

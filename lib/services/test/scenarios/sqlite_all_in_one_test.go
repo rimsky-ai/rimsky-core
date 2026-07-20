@@ -94,51 +94,29 @@ func createScenarioInstance(t *testing.T, ep harness.RimskyEndpoint, templateID,
 
 func waitForDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
 	t.Helper()
-	end := time.Now().Add(deadline)
 	var (
 		lastState   string
 		sawDispatch bool
 	)
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t,
-			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			var resp struct {
-				RunSummary struct {
-					ActiveCount  int `json:"active_count"`
-					PendingCount int `json:"pending_count"`
-					FreshCount   int `json:"fresh_count"`
-					FailedCount  int `json:"failed_count"`
-				} `json:"run_summary"`
-				Events []struct {
-					Kind string `json:"kind"`
-				} `json:"events"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				if resp.RunSummary.FailedCount > 0 {
-					lastState = "failed"
-				} else if resp.RunSummary.FreshCount > 0 && resp.RunSummary.ActiveCount == 0 && resp.RunSummary.PendingCount == 0 {
-					lastState = "fresh"
-				} else {
-					lastState = "in-flight"
-				}
-				for _, e := range resp.Events {
-					if e.Kind == "work_started" {
-						sawDispatch = true
-						break
-					}
-				}
-				if sawDispatch && (lastState == "fresh" || lastState == "failed") {
-					if lastState != "fresh" {
-						t.Fatalf("node %q dispatched but settled in %q, want fresh — the stub executor returns Success, so a non-fresh terminal is an orchestration-loop defect",
-							nodeType, lastState)
-					}
-					return
-				}
-			}
+	obs, ok := ep.PollNodeObservability(t, instanceID, nodeType, deadline, func(o harness.NodeObservability) bool {
+		switch {
+		case o.RunSummary.FailedCount > 0:
+			lastState = "failed"
+		case o.RunSummary.FreshCount > 0 && o.RunSummary.ActiveCount == 0 && o.RunSummary.PendingCount == 0:
+			lastState = "fresh"
+		default:
+			lastState = "in-flight"
 		}
-		time.Sleep(250 * time.Millisecond)
+		sawDispatch = sawDispatch || o.HasEventKind("work_started")
+		return sawDispatch && (lastState == "fresh" || lastState == "failed")
+	})
+	if !ok {
+		t.Fatalf("node %q on instance %s did not complete a real dispatch within %v; last state=%q, work_started seen=%v",
+			nodeType, instanceID, deadline, lastState, sawDispatch)
 	}
-	t.Fatalf("node %q on instance %s did not complete a real dispatch within %v; last state=%q, work_started seen=%v",
-		nodeType, instanceID, deadline, lastState, sawDispatch)
+	if lastState != "fresh" {
+		t.Fatalf("node %q dispatched but settled in %q, want fresh — the stub executor returns "+
+			"Success, so a non-fresh terminal is an orchestration-loop defect; run_summary=%+v",
+			nodeType, lastState, obs.RunSummary)
+	}
 }

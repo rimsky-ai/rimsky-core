@@ -216,6 +216,107 @@ func (r *fakeDataProcessingRegistry) Get(name string) (runtime.DataProcessingCli
 	return c, ok
 }
 
+func TestAcquireSubClaims_BeginCandidateIdempotencyKeyIsRunAndPartitionDerivedStable(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	const storeName = "idem-key-store"
+	reg := locks.NewRegistry()
+	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+	})
+	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+		return claimproducer.SplitClaimScopeResponse{
+			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
+				{PartitionKey: "alpha", ClaimScopeData: []byte(`{"p":"alpha"}`)},
+			},
+		}, nil
+	}
+	reg.Add(storeName, store)
+
+	dpClient := newFakeDataProcessingClient(storeName)
+	dpReg := newFakeDataProcessingRegistry(dpClient)
+
+	clk := newTickClock(time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC))
+	args := runtime.RunArgs{
+		Persist:        backend,
+		ClaimHandles:   backend.ClaimHandles(),
+		StoreRegistry:  reg,
+		DataProcessors: dpReg,
+		Logger:         shared.SilentLogger{},
+		Clock:          clk,
+		SupervisorID:   "sup-IDEM",
+	}
+	args = withSyncVerbFlush(args)
+
+	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
+		Name: "fanout-idempotency-key", Version: "1",
+	})
+	ck := "ck-idem"
+	var mainScopeID shared.UUID
+	var inst persistence.InstanceRow
+	var parentNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		inst = i
+		mainScopeID = ms
+		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
+		}, tx)
+		parentNode = p
+		return err
+	}))
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+
+	parentClaimID := shared.UUID(uuid.New())
+	parentScope := json.RawMessage(`"parent-scope-idem"`)
+	intent := "rw"
+	producerName := storeName
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID: parentClaimID, LockKind: persistence.LockKindScope,
+			ProducerName: &producerName, ClaimScopeData: parentScope, Address: json.RawMessage(`"addr"`),
+			Intent:             &intent,
+			HolderSupervisorID: "sup-IDEM", HolderNodeID: parentNode.ID,
+			ExpiresAt: time.Now().Add(10 * time.Minute),
+			NodeRunID: &parentNodeRunID,
+		}, tx)
+	}))
+
+	acquireOnce := func() {
+		require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			_, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
+				ParentClaimHandleID: parentClaimID,
+				ParentClaimScope:    parentScope,
+				ProducerName:        storeName,
+				NodeRunID:           parentNodeRunID,
+				HolderNodeID:        parentNode.ID,
+				HolderSupervisorID:  "sup-IDEM",
+				InstanceID:          inst.ID,
+				LivenessInterval:    30 * time.Second,
+				ParentIntent:        string(claimproducer.IntentReadWrite),
+			})
+			return err
+		}))
+	}
+	acquireOnce()
+	acquireOnce()
+
+	begins := dpClient.Begins()
+	require.Len(t, begins, 2, "two acquisition attempts against the same node run must each call BeginCandidate")
+	require.Equal(t, begins[0].IdempotencyKey, begins[1].IdempotencyKey,
+		"BeginCandidate.IdempotencyKey must be stable (run_id+partition_key derived) across separate "+
+			"acquisition attempts for the same node run and partition, so the producer's idempotency can engage")
+	require.NotEqual(t, begins[0].ClaimHandleID, begins[1].ClaimHandleID,
+		"each attempt must still mint a fresh claim_handle row id — only the idempotency key is stable")
+	require.NotEqual(t, begins[0].IdempotencyKey, begins[0].ClaimHandleID,
+		"the idempotency key must not be the same randomness as the claim_handle id")
+}
+
 func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1122,7 +1223,7 @@ func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
 	}))
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return backend.ClaimHandles().UpdateNodeRunID(ctx, subClaims[0].ClaimHandleID, childNodeRunID, tx)
+		return backend.ClaimHandles().UpdateNodeRunID(ctx, subClaims[0].ClaimHandleID, childNodeRunID, args.SupervisorID, tx)
 	}))
 
 	var al runtime.AcquiredLock

@@ -27,6 +27,7 @@ type frameItem struct {
 	InstanceID          string     `json:"instance_id"`
 	State               string     `json:"state"`
 	TriggeringMessageID string     `json:"triggering_message_id"`
+	RootRunScopeID      string     `json:"root_run_scope_id"`
 	StartedAt           *time.Time `json:"started_at,omitempty"`
 	EndedAt             *time.Time `json:"ended_at,omitempty"`
 	LastProgressAt      *time.Time `json:"last_progress_at,omitempty"`
@@ -53,9 +54,9 @@ func handleListInstanceFrames(deps AppDeps) http.HandlerFunc {
 		filter := persistence.FrameListFilter{}
 		instUUID := shared.UUID(instanceID)
 		filter.InstanceID = &instUUID
-		if s := q.Get("state"); s != "" {
-			unresolved := s == "running"
-			filter.Unresolved = &unresolved
+		if err := persistence.ApplyFrameStateQueryParam(&filter, q.Get("state")); err != nil {
+			badRequest(w, err.Error())
+			return
 		}
 		if tm := q.Get("triggering_message_id"); tm != "" {
 			parsed, perr := uuid.Parse(tm)
@@ -166,6 +167,7 @@ func toFrameItem(r persistence.FrameRowWithMessage) frameItem {
 		InstanceID:          r.InstanceID.String(),
 		State:               string(r.State),
 		TriggeringMessageID: r.TriggeringMessageID.String(),
+		RootRunScopeID:      r.RootRunScopeID.String(),
 		StartedAt:           r.StartedAt,
 		EndedAt:             r.EndedAt,
 		LastProgressAt:      r.LastProgressAt,

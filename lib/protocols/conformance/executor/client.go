@@ -11,8 +11,10 @@ import (
 	"sync"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -26,6 +28,10 @@ type Endpoint struct {
 type Client interface {
 	Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error)
 	Close() error
+}
+
+type DeclaredTagsClient interface {
+	DeclaredTags(ctx context.Context) ([]string, error)
 }
 
 type grpcClient struct {
@@ -47,6 +53,18 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 
 func (c *grpcClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	return c.api.Execute(ctx, req)
+}
+
+func (c *grpcClient) DeclaredTags(ctx context.Context) ([]string, error) {
+	obs := genv1.NewExecutorObservabilityClient(c.conn)
+	caps, err := obs.Capabilities(ctx, &genv1.ExecutorCapabilitiesRequest{})
+	if err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.Unimplemented {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return caps.GetDeclaredTags(), nil
 }
 
 func transportCredsFor(tlsMode string) credentials.TransportCredentials {

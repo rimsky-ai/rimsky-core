@@ -190,6 +190,7 @@ func resolveKilledClaimTerminal(
 			Producer:        producer,
 			Scope:           []byte(h.ClaimScopeData),
 			Address:         []byte(h.Address),
+			LeaseToken:      h.ProducerLeaseToken,
 			Lifetime:        h.Lifetime,
 			CandidateHandle: h.ProducerCandidateHandle,
 			ProducerName:    producerName,

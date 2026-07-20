@@ -44,19 +44,24 @@ var (
 )
 
 func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations) (*UnifiedStack, error) {
+	blobBackend, err := config.OpenBlobBackend(cfg.Blob, driver, cfg.Topology)
+	if err != nil {
+		return nil, fmt.Errorf("open blob backend: %w", err)
+	}
+
 	type roleRunner struct {
 		name string
 		run  func(context.Context, *slog.Logger) (StopFunc, <-chan error, error)
 	}
 	runners := []roleRunner{
 		{"scheduler", func(c context.Context, l *slog.Logger) (StopFunc, <-chan error, error) {
-			return runSchedulerFn(c, l, driver, cfg)
+			return runSchedulerFn(c, l, driver, cfg, blobBackend)
 		}},
 		{"supervisor", func(c context.Context, l *slog.Logger) (StopFunc, <-chan error, error) {
-			return runSupervisorFn(c, l, driver, cfg, bundledRegs)
+			return runSupervisorFn(c, l, driver, cfg, bundledRegs, blobBackend)
 		}},
 		{"control-api", func(c context.Context, l *slog.Logger) (StopFunc, <-chan error, error) {
-			return runControlAPIFn(c, l, driver, cfg, bundledRegs)
+			return runControlAPIFn(c, l, driver, cfg, bundledRegs, blobBackend)
 		}},
 	}
 

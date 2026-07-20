@@ -26,6 +26,7 @@
 package attributes
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -227,7 +228,7 @@ func parseFallbackLiteral(raw string) (any, error) {
 		}
 		return nil, fmt.Errorf("invalid literal in fallback: %q", raw)
 	}
-	var n float64
+	var n json.Number
 	if err := json.Unmarshal([]byte(raw), &n); err == nil {
 		return n, nil
 	}
@@ -357,7 +358,9 @@ func walkPath(raw json.RawMessage, path []string) (any, bool) {
 		return nil, false
 	}
 	var root any
-	if err := json.Unmarshal(raw, &root); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
 		return nil, false
 	}
 	cur := root

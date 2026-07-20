@@ -122,8 +122,8 @@ func DialDataProcessing(_ context.Context, name, endpoint, tlsMode string) (*Dat
 	}
 	conn, err := grpc.NewClient(target,
 		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
-		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),
-		grpc.WithStreamInterceptor(TLSModeStreamInterceptor(name, tlsMode)),
+		grpc.WithChainUnaryInterceptor(ServiceNameUnaryInterceptor, TLSModeUnaryInterceptor(name, tlsMode)),
+		grpc.WithChainStreamInterceptor(ServiceNameStreamInterceptor, TLSModeStreamInterceptor(name, tlsMode)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("remote data_processing %q: dial %q: %w", name, endpoint, err)

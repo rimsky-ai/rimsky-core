@@ -89,7 +89,7 @@ func TestSubscriberOpenlineage(t *testing.T) {
 	templateID := deployOLTemplate(t, ep, "openlineage-e2e")
 	instanceID := createOLInstance(t, ep, templateID, "ck-openlineage-e2e")
 
-	waitOLNodeTerminal(t, ep, instanceID, "acquire-and-execute", 90*time.Second)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "acquire-and-execute", 90*time.Second)
 
 	pool, err := pgxpool.New(ctx, ep.HostDSN)
 	if err != nil {
@@ -111,9 +111,12 @@ func TestSubscriberOpenlineage(t *testing.T) {
 			"the producer's Commit never appended a claim_terminal row", instanceID)
 	}
 
-	expectedRunID := instanceID
-	t.Logf("rimsky-side IDs: instance_id=%s leaf_runs=%d claim_scope_hashes=%d (expected_ol_runid=%s)",
-		instanceID, len(rimskyLeafRunIDs), len(rimskyClaimScopeHashes), expectedRunID)
+	leafRunIDSet := make(map[string]bool, len(rimskyLeafRunIDs))
+	for _, id := range rimskyLeafRunIDs {
+		leafRunIDSet[id] = true
+	}
+	t.Logf("rimsky-side IDs: instance_id=%s leaf_runs=%d claim_scope_hashes=%d (expected_ol_runids=%v)",
+		instanceID, len(rimskyLeafRunIDs), len(rimskyClaimScopeHashes), rimskyLeafRunIDs)
 
 	startOpenLineageSubscriber(ctx, t,
 		netName,
@@ -124,7 +127,7 @@ func TestSubscriberOpenlineage(t *testing.T) {
 	)
 
 	waitForOLArrivalMatching(t, &mu, &received, 60*time.Second,
-		"leaf_run → COMPLETE event with instance-keyed runId",
+		"leaf_run → COMPLETE event whose runId is a rimsky node-run UUID",
 		func(a olArrival) bool {
 			if a.ValidateErr != "" {
 				return false
@@ -133,7 +136,7 @@ func TestSubscriberOpenlineage(t *testing.T) {
 			runID, _ := run["runId"].(string)
 			job, _ := a.Decoded["job"].(map[string]any)
 			ns, _ := job["namespace"].(string)
-			return strings.HasPrefix(runID, expectedRunID) &&
+			return leafRunIDSet[runID] &&
 				ns == openLineageNamespace &&
 				a.Decoded["eventType"] == "COMPLETE"
 		})
@@ -397,11 +400,11 @@ func waitForOLArrivalMatching(
 func dumpOLArrivals(arrivals []olArrival) string {
 	var b strings.Builder
 	for i, a := range arrivals {
-		body := string(a.Body)
-		if len(body) > 400 {
-			body = body[:400] + "...(truncated)"
-		}
-		fmt.Fprintf(&b, "\n  [%d] path=%s err=%q body=%s", i, a.Path, a.ValidateErr, body)
+		et, _ := a.Decoded["eventType"].(string)
+		run, _ := a.Decoded["run"].(map[string]any)
+		runID, _ := run["runId"].(string)
+		fmt.Fprintf(&b, "\n  [%d] path=%s err=%q eventType=%s runId=%s outputs=%v",
+			i, a.Path, a.ValidateErr, et, runID, a.Decoded["outputs"])
 	}
 	return b.String()
 }
@@ -467,38 +470,4 @@ func createOLInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, insta
 	}
 	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "ol-instance", instanceKey)
 	return resp.InstanceID
-}
-
-func waitOLNodeTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
-	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastSummary string
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t,
-			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			var resp struct {
-				RunSummary struct {
-					ActiveCount  int `json:"active_count"`
-					PendingCount int `json:"pending_count"`
-					FreshCount   int `json:"fresh_count"`
-					FailedCount  int `json:"failed_count"`
-				} `json:"run_summary"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastSummary = fmt.Sprintf("active=%d pending=%d fresh=%d failed=%d",
-					resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount,
-					resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
-				if resp.RunSummary.FailedCount > 0 {
-					return
-				}
-				if resp.RunSummary.FreshCount > 0 && resp.RunSummary.ActiveCount == 0 && resp.RunSummary.PendingCount == 0 {
-					return
-				}
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %q on instance %s did not reach terminal within %v; last run_summary=%s",
-		nodeType, instanceID, deadline, lastSummary)
 }

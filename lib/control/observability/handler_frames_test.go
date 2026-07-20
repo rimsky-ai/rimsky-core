@@ -56,14 +56,38 @@ func TestHandler_ListFrames_DerivedStates(t *testing.T) {
 	}
 
 	failedFilter := listFrameStates(t, r, "?state=failed")
-	if len(failedFilter) != 2 {
-		t.Fatalf("?state=failed returned %d frames, want 2 (conflates failed+completed as not-running): %+v", len(failedFilter), failedFilter)
-	}
-	if _, ok := failedFilter[completedFrame.String()]; !ok {
-		t.Fatalf("?state=failed did not include the completed frame (conflation): %+v", failedFilter)
+	if len(failedFilter) != 1 {
+		t.Fatalf("?state=failed returned %d frames, want 1 (must not conflate with completed): %+v", len(failedFilter), failedFilter)
 	}
 	if _, ok := failedFilter[failedFrame.String()]; !ok {
 		t.Fatalf("?state=failed did not include the failed frame: %+v", failedFilter)
+	}
+
+	completedFilter := listFrameStates(t, r, "?state=completed")
+	if len(completedFilter) != 1 {
+		t.Fatalf("?state=completed returned %d frames, want 1 (must not conflate with failed): %+v", len(completedFilter), completedFilter)
+	}
+	if _, ok := completedFilter[completedFrame.String()]; !ok {
+		t.Fatalf("?state=completed did not include the completed frame: %+v", completedFilter)
+	}
+}
+
+func TestHandler_ListFrames_UnknownStateReturns400(t *testing.T) {
+	d := newSQLiteDriver(t)
+	store := d.Tables()
+	ctx := context.Background()
+	fix := seedInstanceWithNode(t, ctx, store, singleNodeTemplateSpec("fixture-node-type"))
+	_, _ = seedFrame(t, ctx, store, fix.InstanceID, fix.MainRunScopeID, "test/bogus-state")
+
+	disc := observability.NewDiscovery(&nopProber{})
+	deps := observability.Deps{Tables: store, Queue: d.Queue(), Discovery: disc}
+	r := newRouter(t, deps)
+
+	req := httptest.NewRequest("GET", "/v1/observability/frames?state=bogus", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: body = %s", w.Code, w.Body.String())
 	}
 }
 

@@ -208,6 +208,14 @@ func (s *Store) tryRenameClaim(claimID, selector string, pp *PickPolicy, availDi
 	for _, entry := range entries {
 		folder := entry.Name()
 		src := filepath.Join(availDir, folder)
+		subPath := filepath.Join(pp.Root, folder)
+		absPath := filepath.Join(s.root, subPath)
+		if _, statErr := os.Stat(absPath); statErr != nil {
+			if rmErr := os.Remove(src); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				return claimproducer.OpenOutcome{}, false, fmt.Errorf("filesystem store: unlink orphan available sentinel %q: %w", folder, rmErr)
+			}
+			continue
+		}
 		nowNanos := time.Now().UnixNano()
 		dst := filepath.Join(inProgDir, fmt.Sprintf("%s.%s.%d", folder, claimID, nowNanos))
 		if err := os.Rename(src, dst); err != nil {
@@ -219,8 +227,6 @@ func (s *Store) tryRenameClaim(claimID, selector string, pp *PickPolicy, availDi
 		remaining, _ := os.ReadDir(availDir)
 		lastItem := len(remaining) == 0
 
-		subPath := filepath.Join(pp.Root, folder)
-		absPath := filepath.Join(s.root, subPath)
 		addr, err := json.Marshal(absPath)
 		if err != nil {
 			return claimproducer.OpenOutcome{}, false, err
@@ -258,6 +264,18 @@ type PickedItem struct {
 	AddressBytes    []byte
 	ClaimScopeBytes []byte
 	PayloadBytes    []byte
+	LeaseToken      string
+}
+
+func batchLeaseToken(claimID string, claimedNanos int64) string {
+	return fmt.Sprintf("%s%s.%d", batchLeaseIDPrefix, claimID, claimedNanos)
+}
+
+func entryLeaseToken(claimID string, claimedNanos int64) (string, bool) {
+	if !strings.HasPrefix(claimID, batchLeaseIDPrefix) {
+		return "", false
+	}
+	return fmt.Sprintf("%s.%d", claimID, claimedNanos), true
 }
 
 func (s *Store) BatchPop(_ context.Context, selector string, claimIDs []string) ([]PickedItem, error) {
@@ -266,8 +284,8 @@ func (s *Store) BatchPop(_ context.Context, selector string, claimIDs []string) 
 	}
 	seen := make(map[string]struct{}, len(claimIDs))
 	for i, id := range claimIDs {
-		if id == "" {
-			return nil, fmt.Errorf("filesystem store: BatchPop: claimIDs[%d] is empty; every entry must be a non-empty unique id", i)
+		if err := validateClaimID(id); err != nil {
+			return nil, fmt.Errorf("filesystem store: BatchPop: claimIDs[%d]: %w", i, err)
 		}
 		if _, dup := seen[id]; dup {
 			return nil, fmt.Errorf("filesystem store: BatchPop: claimIDs[%d] = %q duplicates a prior entry; every id must be unique", i, id)
@@ -332,7 +350,16 @@ func (s *Store) popOne(claimID, selector string, pp *PickPolicy, availDir, inPro
 	for _, entry := range entries {
 		folder := entry.Name()
 		src := filepath.Join(availDir, folder)
+		subPath := filepath.Join(pp.Root, folder)
+		absPath := filepath.Join(s.root, subPath)
+		if _, statErr := os.Stat(absPath); statErr != nil {
+			if rmErr := os.Remove(src); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				return PickedItem{}, false, fmt.Errorf("filesystem store: unlink orphan available sentinel %q: %w", folder, rmErr)
+			}
+			continue
+		}
 		nowNanos := time.Now().UnixNano()
+		leaseToken := batchLeaseToken(claimID, nowNanos)
 		dst := filepath.Join(inProgDir, fmt.Sprintf("%s.%s.%d", folder, batchLeaseIDPrefix+claimID, nowNanos))
 		if err := os.Rename(src, dst); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -340,8 +367,6 @@ func (s *Store) popOne(claimID, selector string, pp *PickPolicy, availDir, inPro
 			}
 			return PickedItem{}, false, fmt.Errorf("filesystem store: BatchPop claim rename: %w", err)
 		}
-		subPath := filepath.Join(pp.Root, folder)
-		absPath := filepath.Join(s.root, subPath)
 		addr, err := json.Marshal(absPath)
 		if err != nil {
 			return PickedItem{}, false, err
@@ -363,6 +388,7 @@ func (s *Store) popOne(claimID, selector string, pp *PickPolicy, availDir, inPro
 			AddressBytes:    addr,
 			ClaimScopeBytes: scope,
 			PayloadBytes:    payload,
+			LeaseToken:      leaseToken,
 		}, true, nil
 	}
 	return PickedItem{}, false, nil
@@ -399,7 +425,7 @@ func (s *Store) findByClaimID(claimID string) (pp *PickPolicy, selector, entry, 
 	return nil, "", "", ""
 }
 
-func (s *Store) findByScope(scope []byte) (pp *PickPolicy, selector, entry, folder string) {
+func (s *Store) findByScope(scope []byte, leaseToken string) (pp *PickPolicy, selector, entry, folder string) {
 	if len(scope) == 0 {
 		return nil, "", "", ""
 	}
@@ -438,9 +464,15 @@ func (s *Store) findByScope(scope []byte) (pp *PickPolicy, selector, entry, fold
 			continue
 		}
 		for _, e := range entries {
-			f, c, _, perr := parseFromRight(e.Name())
+			f, c, nanos, perr := parseFromRight(e.Name())
 			if perr != nil || fold(f) != wantFolder || !strings.HasPrefix(c, batchLeaseIDPrefix) {
 				continue
+			}
+			if leaseToken != "" {
+				token, ok := entryLeaseToken(c, nanos)
+				if !ok || token != leaseToken {
+					continue
+				}
 			}
 			return candidate, sel, e.Name(), f
 		}
@@ -461,21 +493,21 @@ func (s *Store) applyPickAction(pp *PickPolicy, selector, entry, folder string, 
 	case action.PopAndMove:
 		folderAbs := filepath.Join(s.root, pp.Root, folder)
 		targetAbs := filepath.Join(s.root, act.MoveTarget, folder)
+		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("filesystem store: pop_and_move unlink in_progress: %w", err)
+		}
 		if err := os.Rename(folderAbs, targetAbs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("filesystem store: pop_and_move rename %q→%q: %w",
 				folderAbs, targetAbs, err)
 		}
-		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("filesystem store: pop_and_move unlink in_progress: %w", err)
-		}
 		return nil
 	case action.PopAndDelete:
 		folderAbs := filepath.Join(s.root, pp.Root, folder)
-		if err := os.RemoveAll(folderAbs); err != nil {
-			return fmt.Errorf("filesystem store: pop_and_delete removeall %s: %w", folderAbs, err)
-		}
 		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("filesystem store: pop_and_delete unlink in_progress: %w", err)
+		}
+		if err := os.RemoveAll(folderAbs); err != nil {
+			return fmt.Errorf("filesystem store: pop_and_delete removeall %s: %w", folderAbs, err)
 		}
 		return nil
 	case action.Recycle:

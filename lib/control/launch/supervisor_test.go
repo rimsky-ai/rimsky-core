@@ -260,6 +260,35 @@ func TestMergeBundledExecutorAliases_ConfiguredWinsOverBundled(t *testing.T) {
 	}
 }
 
+func TestBuildSupervisorResolver_NoLateBindProxiesReturnsStaticResolver(t *testing.T) {
+	static := executor.NewStaticResolver(map[string]executor.Endpoint{
+		"exec-a": {Transport: "grpc", URL: "host:9090"},
+	})
+
+	got := buildSupervisorResolver(static, nil, nil)
+
+	if got != executor.Resolver(static) {
+		t.Fatalf("buildSupervisorResolver with no late-bind proxies: got %T, want the same *StaticResolver instance", got)
+	}
+}
+
+func TestBuildSupervisorResolver_LateBindProxiesWrapsInLateBindResolver(t *testing.T) {
+	static := executor.NewStaticResolver(map[string]executor.Endpoint{
+		"exec-a": {Transport: "grpc", URL: "host:9090"},
+	})
+	lateBindProxies := map[string]string{"executor": "host-agent-proxy"}
+
+	got := buildSupervisorResolver(static, lateBindProxies, nil)
+
+	lbr, ok := got.(*executor.LateBindResolver)
+	if !ok {
+		t.Fatalf("buildSupervisorResolver with late-bind proxies configured: got %T, want *executor.LateBindResolver — a late-bound executor dispatch would resolve via the bare static resolver and terminal unresolved_executor", got)
+	}
+	if unwrapped := lbr.Unwrap(); unwrapped != executor.Resolver(static) {
+		t.Fatalf("LateBindResolver.Unwrap(): got %T, want the same *StaticResolver instance passed in", unwrapped)
+	}
+}
+
 func mustHostname(t *testing.T) string {
 	t.Helper()
 	hostname, err := os.Hostname()

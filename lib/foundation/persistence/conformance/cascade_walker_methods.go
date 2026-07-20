@@ -10,6 +10,8 @@ package conformance
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -165,6 +167,60 @@ func testLockReceiverCascade_NoDeadlock(t *testing.T, d persistence.Database) {
 		return nil
 	}); err != nil {
 		t.Fatalf("LockReceiverCascade: postgres advisory-lock or sqlite single-writer model must allow back-to-back same-tx calls; got %v", err)
+	}
+
+	const workers = 32
+	const widenReadsBetweenCheckAndCreate = 50
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	created := make([]int32, workers)
+	errCh := make(chan error, workers)
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			<-start
+			err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				if err := store.Nodes().LockReceiverCascade(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID); err != nil {
+					return err
+				}
+				existing, err := store.Nodes().FindLatestCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+				if err != nil {
+					return err
+				}
+				if existing != nil {
+					return nil
+				}
+				for j := 0; j < widenReadsBetweenCheckAndCreate; j++ {
+					if _, err := store.Nodes().FindLatestCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID); err != nil {
+						return err
+					}
+				}
+				if _, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID); err != nil {
+					return err
+				}
+				atomic.StoreInt32(&created[i], 1)
+				return nil
+			})
+			if err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatalf("LockReceiverCascade mutual-exclusion worker: %v", err)
+	}
+
+	var createdCount int
+	for _, c := range created {
+		createdCount += int(c)
+	}
+	if createdCount != 1 {
+		t.Fatalf("LockReceiverCascade must serialize the find-then-create race so exactly one concurrent transaction creates the cascade-pending row for a given (node, run-scope, frame); got %d of %d", createdCount, workers)
 	}
 }
 

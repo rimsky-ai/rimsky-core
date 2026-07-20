@@ -6,9 +6,17 @@ package persistence
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+)
+
+const (
+	FrameStateRunning    = "running"
+	FrameStateFailed     = "failed"
+	FrameStateTerminated = "terminated"
+	FrameStateCompleted  = "completed"
 )
 
 type FramePending struct {
@@ -43,7 +51,26 @@ type FrameRowWithMessage struct {
 type FrameListFilter struct {
 	InstanceID          *shared.UUID
 	Unresolved          *bool
+	TerminalState       *string
 	TriggeringMessageID *shared.UUID
+}
+
+func ApplyFrameStateQueryParam(filter *FrameListFilter, s string) error {
+	switch s {
+	case "":
+		return nil
+	case FrameStateRunning:
+		unresolved := true
+		filter.Unresolved = &unresolved
+		return nil
+	case FrameStateFailed, FrameStateTerminated, FrameStateCompleted:
+		state := s
+		filter.TerminalState = &state
+		return nil
+	default:
+		return fmt.Errorf("state %q invalid (want one of %s, %s, %s, %s)",
+			s, FrameStateRunning, FrameStateFailed, FrameStateTerminated, FrameStateCompleted)
+	}
 }
 
 type FrameTable interface {

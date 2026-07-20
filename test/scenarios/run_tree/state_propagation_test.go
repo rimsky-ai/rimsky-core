@@ -38,15 +38,15 @@ func TestStatePropagation_AllStaleStillNonTerminal(t *testing.T) {
 	}
 }
 
-func TestStatePropagation_ParkedChildAggregatesAsTerminal(t *testing.T) {
+func TestStatePropagation_ParkedChildHoldsParentOpen(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
 		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.PathPtr("terminal/success"), Changed: true},
 		{State: cascade.NodeStateParked},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
-	if !res.IsSettled {
-		t.Errorf("parked child should be treated as terminal by Aggregate; got non-terminal")
+	if res.IsSettled {
+		t.Errorf("a parked child is in-flight, not settled; parent must not aggregate terminal while it waits")
 	}
 }
 

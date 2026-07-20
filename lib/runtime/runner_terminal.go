@@ -230,7 +230,7 @@ func applyTerminalComplete(
 		heldFilter := subgraphMemberFilter(tmplSpec, acq.NodeType)
 		visited := map[foundationshared.UUID]struct{}{}
 		successSig := signalpkg.BuildTerminalSuccessSignal(t.Changed, t.AttributesDel, t.ChangeSummary, t.Tags)
-		if err := emitSignalInTxWithFilter(ctx, args, tx,
+		if err := cascadeSignalInTxWithFilter(ctx, args, tx,
 			acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
 			successSig, visited, heldFilter); err != nil {
 			return nil, err
@@ -285,6 +285,9 @@ func applyTerminalComplete(
 	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, settlingSignalType, tx); err != nil {
 		return nil, err
+	}
+	if err := recordRunTreeChanged(ctx, args, tx, acq.NodeRunID, cascade.NodeStateFresh, settlingSignalType, t.Changed); err != nil {
+		return nil, fmt.Errorf("applyTerminalComplete: %w", err)
 	}
 	// @concept: node-run
 	// @concept: cascade
@@ -787,7 +790,10 @@ func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
 func upsertFinalAttributesTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, merged map[string]any,
 ) error {
-	prior, _ := args.Persist.NodeAttributes().GetByRun(ctx, acq.NodeRunID, tx)
+	prior, err := args.Persist.NodeAttributes().GetByRun(ctx, acq.NodeRunID, tx)
+	if err != nil {
+		return fmt.Errorf("upsertFinalAttributesTx: load prior attributes: %w", err)
+	}
 	final := merged
 	if prior != nil && len(prior.Data) > 0 {
 		combined := make(map[string]any, len(prior.Data)+len(merged))

@@ -22,6 +22,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
 type PartitionDescriptor struct {
@@ -118,7 +119,7 @@ func DispatchChildren(
 					return nil, fmt.Errorf("DispatchChildren: partition %q carries sub-claim %s but no claim-handle table is wired",
 						p.PartitionKey, p.SubClaimHandleID)
 				}
-				if err := args.Persist.ClaimHandles().UpdateNodeRunID(ctx, p.SubClaimHandleID, runID, tx); err != nil {
+				if err := args.Persist.ClaimHandles().UpdateNodeRunID(ctx, p.SubClaimHandleID, runID, args.SupervisorID, tx); err != nil {
 					return nil, fmt.Errorf("DispatchChildren: link sub-claim %s to child run %q: %w",
 						p.SubClaimHandleID, p.PartitionKey, err)
 				}
@@ -235,12 +236,12 @@ func SettleFromDelegate(
 	if err := scopes.Close(ctx, tx, exit.RunScopeID); err != nil {
 		return nil, fmt.Errorf("SettleFromDelegate: close sub-graph run scope %s: %w", exit.RunScopeID, err)
 	}
+	var fanoutPC postCommitFn
 	if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
 		if inst, err := instTbl.Get(ctx, exitScope.InstanceID, tx); err == nil && inst != nil {
 			if tpl, err := tplTbl.GetByHash(ctx, inst.TemplateHash, tx); err == nil && tpl != nil {
-				FanOutRunScopeEvent(ctx, args.Persist, args.LifecycleSubs,
-					args.LifecyclePeersForSpec, tpl.Spec, exit.RunScopeID,
-					exitScope.InstanceID, "subgraph_exit", tx)
+				fanoutPC = fanOutRunScopeEventPostCommit(args, tpl.Spec, exit.RunScopeID,
+					exitScope.InstanceID, "subgraph_exit")
 			}
 		}
 	}
@@ -293,7 +294,16 @@ func SettleFromDelegate(
 	}, tx); err != nil {
 		return nil, err
 	}
-	return callerClaimsPC, nil
+	return chainPostCommit(callerClaimsPC, fanoutPC), nil
+}
+
+func fanOutRunScopeEventPostCommit(
+	args RunArgs, tplSpec node.TemplateSpec, runScopeID, instanceID shared.UUID, terminalReason string,
+) postCommitFn {
+	return func(ctx context.Context) {
+		FanOutRunScopeEvent(ctx, args.Persist, args.LifecycleSubs,
+			args.LifecyclePeersForSpec, tplSpec, runScopeID, instanceID, terminalReason, nil, args.Logger)
+	}
 }
 
 // @concept: claim-handle
@@ -347,6 +357,7 @@ func resolveDelegateCallerClaimsInTx(
 			Producer:            producer,
 			Scope:               []byte(row.ClaimScopeData),
 			Address:             []byte(row.Address),
+			LeaseToken:          row.ProducerLeaseToken,
 			Lifetime:            row.Lifetime,
 			CandidateHandle:     row.ProducerCandidateHandle,
 			ProducerName:        producerName,
@@ -451,9 +462,8 @@ func SettleFromFanoutChild(
 			if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
 				if inst, err := instTbl.Get(ctx, childScope.InstanceID, tx); err == nil && inst != nil {
 					if tpl, err := tplTbl.GetByHash(ctx, inst.TemplateHash, tx); err == nil && tpl != nil {
-						FanOutRunScopeEvent(ctx, args.Persist, args.LifecycleSubs,
-							args.LifecyclePeersForSpec, tpl.Spec, childRun.RunScopeID,
-							childScope.InstanceID, "fanout_partition_terminal", tx)
+						post = chainPostCommit(post, fanOutRunScopeEventPostCommit(args, tpl.Spec,
+							childRun.RunScopeID, childScope.InstanceID, "fanout_partition_terminal"))
 					}
 				}
 			}
@@ -464,7 +474,11 @@ func SettleFromFanoutChild(
 	if parent.ProducerName != nil {
 		producerName = *parent.ProducerName
 	}
-	producer, ok := args.StoreRegistry.Get(producerName)
+	instID, err := acquirerInstanceID(ctx, args, tx, parent.HolderNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("SettleFromFanoutChild: %w", err)
+	}
+	producer, ok := args.StoreRegistry.GetWithContext(ctx, producerName, instID.String())
 	if !ok {
 		return nil, fmt.Errorf("SettleFromFanoutChild: unknown producer %q", producerName)
 	}
@@ -478,10 +492,6 @@ func SettleFromFanoutChild(
 	}
 	if parent.NodeRunID != nil {
 		parentHint.NodeRunID = *parent.NodeRunID
-	}
-	instID, err := acquirerInstanceID(ctx, args, tx, parent.HolderNodeID)
-	if err != nil {
-		return nil, fmt.Errorf("SettleFromFanoutChild: %w", err)
 	}
 	parentHint.InstanceID = instID
 	if *parent.HolderSupervisorID != args.SupervisorID {
@@ -500,6 +510,7 @@ func SettleFromFanoutChild(
 		Producer:            producer,
 		Scope:               []byte(parent.ClaimScopeData),
 		Address:             []byte(parent.Address),
+		LeaseToken:          parent.ProducerLeaseToken,
 		Lifetime:            parent.Lifetime,
 		CandidateHandle:     parent.ProducerCandidateHandle,
 		ProducerName:        producerName,
@@ -510,6 +521,10 @@ func SettleFromFanoutChild(
 		return nil, err
 	}
 	post = chainPostCommit(post, pc)
+	// @concept: fan-out
+	if args.FanOutSemaphores != nil && parent.NodeRunID != nil {
+		args.FanOutSemaphores.Drop(*parent.NodeRunID)
+	}
 	return post, nil
 }
 
@@ -599,7 +614,11 @@ func aggregateParentOutcome(parent *persistence.ClaimHandleRow, seedOutcome Term
 		}
 		return OutcomeCommit
 	case spec.AggregationKindThreshold:
-		if abandoned > policy.MaxFailures {
+		max := policy.MaxFailures
+		if max <= 0 {
+			max = 1
+		}
+		if abandoned >= max {
 			return OutcomeAbandon
 		}
 		return OutcomeCommit

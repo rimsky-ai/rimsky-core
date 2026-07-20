@@ -101,17 +101,20 @@ func applyTerminalCompleteSubgraphCaller(
 		if err != nil {
 			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: load instance: %w", err)
 		}
-		if inst != nil {
-			tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-			if err != nil {
-				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: load template: %w", err)
-			}
-			if tmpl != nil {
-				tmplSpec = &tmpl.Spec
-			}
+		if inst == nil {
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: instance %s not found", acq.InstanceID.String())
 		}
+		tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+		if err != nil {
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: load template: %w", err)
+		}
+		if tmpl == nil {
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: template %q not found for instance %s",
+				inst.TemplateHash, acq.InstanceID.String())
+		}
+		tmplSpec = &tmpl.Spec
 	}
-	if tmplSpec != nil {
+	{
 		nodes, err := SubgraphInternalCascade(SubgraphInternalCascadeArgs{
 			CallingNodeRunID:  acq.NodeRunID,
 			CallingNodeID:     acq.NodeID,
@@ -138,7 +141,7 @@ func applyTerminalCompleteSubgraphCaller(
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: audit running-stay transition: %w", err)
 	}
 	if err := args.Persist.NodeRunTree().UpdateStateAndOutcome(ctx, tx, acq.NodeRunID,
-		stayState, &settlingSig); err != nil {
+		stayState, &settlingSig, t.Changed); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: update run-tree: %w", err)
 	}
 	if err := emitAttributeChangesForRunInTx(ctx, args, tx,

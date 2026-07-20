@@ -190,7 +190,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 					return errPublisherSubscriptionNotLive
 				}
 				sender = row.PublisherName
-				senderSubject = ""
+				senderSubject = row.ID.String()
 			}
 			dedupRow, inserted, err := deps.Persist.MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
 				InstanceID:     instUUID,

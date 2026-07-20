@@ -77,9 +77,7 @@ func TestObservabilityHandlers_ReadEachThroughATransaction(t *testing.T) {
 	paths := []string{
 		"/v1/observability/claim-producers/" + producer,
 		"/v1/observability/templates/" + fix.TemplateHash,
-		"/v1/observability/instances/" + fix.InstanceID.String(),
 		"/v1/observability/frames/" + frameID.String(),
-		"/v1/observability/nodes/" + fix.InstanceID.String() + "/worker",
 		"/v1/observability/node-runs/" + runID.String(),
 		"/v1/observability/lock-holders/" + claimHandleID.String(),
 		"/v1/observability/events",
@@ -96,6 +94,23 @@ func TestObservabilityHandlers_ReadEachThroughATransaction(t *testing.T) {
 			if got := atomic.LoadInt32(&counting.count); got < 1 {
 				t.Fatalf("GET %s (status=%d) never called Tables.Transaction: got %d calls, want >= 1 — "+
 					"the handler must read through inTx rather than issuing untransacted reads", path, w.Code, got)
+			}
+		})
+	}
+
+	singleTxPaths := []string{
+		"/v1/observability/instances/" + fix.InstanceID.String(),
+		"/v1/observability/nodes/" + fix.InstanceID.String() + "/worker",
+	}
+	for _, path := range singleTxPaths {
+		t.Run(path, func(t *testing.T) {
+			atomic.StoreInt32(&counting.count, 0)
+			req := httptest.NewRequest("GET", path, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if got := atomic.LoadInt32(&counting.count); got != 1 {
+				t.Fatalf("GET %s (status=%d) called Tables.Transaction %d times, want exactly 1 — "+
+					"a multi-transaction read risks a torn read across the transactions", path, w.Code, got)
 			}
 		})
 	}

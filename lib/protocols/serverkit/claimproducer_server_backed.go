@@ -54,21 +54,21 @@ func (p *ServerBackedClaimProducer) Open(ctx context.Context, claimID claimprodu
 	return OpenOutcomeFromProto(resp)
 }
 
-func (p *ServerBackedClaimProducer) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) (claimproducer.CommitResult, error) {
-	resp, err := p.srv.Commit(ctx, CommitRequestFromArgs(claimID, scope, address))
+func (p *ServerBackedClaimProducer) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) (claimproducer.CommitResult, error) {
+	resp, err := p.srv.Commit(ctx, CommitRequestFromArgs(claimID, scope, address, leaseToken))
 	if err != nil {
 		return claimproducer.CommitResult{}, err
 	}
 	return CommitResultFromProto(resp), nil
 }
 
-func (p *ServerBackedClaimProducer) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
-	_, err := p.srv.Abandon(ctx, AbandonRequestFromArgs(claimID, scope, address))
+func (p *ServerBackedClaimProducer) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
+	_, err := p.srv.Abandon(ctx, AbandonRequestFromArgs(claimID, scope, address, leaseToken))
 	return err
 }
 
-func (p *ServerBackedClaimProducer) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
-	_, err := p.srv.Release(ctx, ReleaseRequestFromArgs(claimID, scope, address))
+func (p *ServerBackedClaimProducer) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
+	_, err := p.srv.Release(ctx, ReleaseRequestFromArgs(claimID, scope, address, leaseToken))
 	return err
 }
 

@@ -155,8 +155,18 @@ func TestAbandonCandidate(t *testing.T) {
 	}
 	if _, err := s.CommitCandidate(ctx, &genv1.CommitCandidateRequest{
 		CandidateHandle: begin.GetCandidateHandle(),
-	}); err != nil {
-		t.Errorf("CommitCandidate on abandoned handle: got error %v want nil", err)
+	}); err == nil {
+		t.Errorf("CommitCandidate on abandoned handle: got nil error, want non-nil (an abandoned candidate must be GC'd and reject a later commit)")
+	}
+}
+
+func TestAbandonCandidateUnknownHandleFails(t *testing.T) {
+	s := New()
+	ctx := context.Background()
+	if _, err := s.AbandonCandidate(ctx, &genv1.AbandonCandidateRequest{
+		CandidateHandle: []byte("never-issued-handle"),
+	}); err == nil {
+		t.Error("AbandonCandidate on an unknown candidate_handle: got nil error, want non-nil")
 	}
 }
 

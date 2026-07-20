@@ -5,7 +5,6 @@
 package locks
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -22,10 +21,7 @@ func ModeCoexists(intentA, intentB claimproducer.Intent, sem claimproducer.Write
 
 // @concept: claim-scope
 func ClaimScopesByteEqual(a, b []byte) bool {
-	if len(a) == 0 || len(b) == 0 {
-		return false
-	}
-	return bytes.Equal(a, b)
+	return claimproducer.ErrScopesConflictUnsupportedFallback(a, b)
 }
 
 func mvccPassThrough(ws claimproducer.WriteSemantics) bool {

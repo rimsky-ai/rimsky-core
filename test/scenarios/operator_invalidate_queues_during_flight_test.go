@@ -121,10 +121,12 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 	require.Equal(t, http.StatusOK, resumeResp.status,
 		"resume must succeed so dispatch can flow again; body=%s", string(resumeResp.raw))
 
-	require.Equal(t, 1, stubWorkerCount(h),
+	stableCounts := awaitStableDispatchCounts(t, h)
+	require.Equal(t, 1, stableCounts["worker"],
 		"with the instance unpaused and the clock still frozen before resume_at, the operator-invalidate "+
 			"stale must NOT dispatch while the parked predecessor is in-flight; the dispatcher's serialization "+
-			"gate — not the pause — blocks it")
+			"gate — not the pause — blocks it. Checked after a quiesce window (not a single unwaited "+
+			"snapshot) so a slower-polling broken gate is still caught.")
 
 	clock.Advance(15 * time.Second)
 

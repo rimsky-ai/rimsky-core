@@ -6,6 +6,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/internal/pgtest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	pgpersist "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
@@ -149,6 +151,53 @@ func TestPGNodeAttributesBackendMismatchFallsBackToInlineData(t *testing.T) {
 	}
 	if got.Data["inline_survivor"] != "yes" {
 		t.Fatalf("GetByRun with mismatched value_handle_backend = %+v; want inline data column fallback", got.Data)
+	}
+}
+
+func TestPGUpsertSpillDoesNotLeakLargeObjectWhenEnclosingTxRollsBack(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	pool, ok := pgpersist.PoolFromDatabaseForTest(d)
+	if !ok {
+		t.Fatalf("PoolFromDatabaseForTest: not a postgres driver")
+	}
+	blob := pgpersist.NewPgLargeObjectBackend(pool)
+	d.SetBlobBackend(blob, 8, time.Hour)
+
+	store := d.Tables()
+	attrs := store.NodeAttributes()
+	nodeID, runID, _ := seedNodeAndRunPG(t, ctx, d, 1)
+
+	sentinelErr := errors.New("force rollback")
+	var handle string
+	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := attrs.Upsert(ctx, shared.UUID(runID), shared.UUID(nodeID),
+			map[string]any{"big": strings.Repeat("x", 500)}, tx); err != nil {
+			return err
+		}
+		pgT, err := pgpersist.UnwrapTxForTest(tx)
+		if err != nil {
+			return err
+		}
+		var h *string
+		if err := pgT.QueryRow(ctx,
+			`SELECT value_handle FROM rimsky_node_attributes WHERE node_run_id = $1`, runID,
+		).Scan(&h); err != nil {
+			return err
+		}
+		if h == nil || *h == "" {
+			t.Fatalf("expected the large payload to spill to a blob handle before rollback")
+		}
+		handle = *h
+		return sentinelErr
+	})
+	if !errors.Is(err, sentinelErr) {
+		t.Fatalf("store.Transaction: got %v, want sentinelErr", err)
+	}
+
+	if _, err := blob.Read(ctx, persistence.Handle(handle)); !errors.Is(err, persistence.ErrBlobNotFound) {
+		t.Fatalf("large object written by a rolled-back Upsert survived: Read(%s) = %v, want ErrBlobNotFound", handle, err)
 	}
 }
 

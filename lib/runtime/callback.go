@@ -25,7 +25,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
@@ -61,10 +60,14 @@ func NewCallbackRegistry() *CallbackRegistry {
 	return &CallbackRegistry{pending: map[string]AsyncContext{}}
 }
 
-func (r *CallbackRegistry) Register(ackID string, ctx AsyncContext) {
+func (r *CallbackRegistry) Register(ackID string, ctx AsyncContext) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, exists := r.pending[ackID]; exists {
+		return false
+	}
 	r.pending[ackID] = ctx
+	return true
 }
 
 func (r *CallbackRegistry) Pop(ackID string) (AsyncContext, bool) {
@@ -105,8 +108,6 @@ type CallbackServer struct {
 	addr             string
 	srv              *http.Server
 	serveErr         chan error
-	ackMu            sync.Mutex
-	ackOutcomes      map[shared.UUID]ackOutcomeRecord
 }
 
 func (c *CallbackServer) authorizePeer(r *http.Request) error {
@@ -137,29 +138,6 @@ func (c *CallbackServer) enforceCallbackPrincipal(r *http.Request, asyncCtx Asyn
 		return fmt.Errorf("%w: callback principal %q does not match dispatched executor principal %q", errUnauthorizedCallback, got, asyncCtx.AsyncAckPrincipal)
 	}
 	return nil
-}
-
-func (c *CallbackServer) recordAckOutcome(nodeRunID shared.UUID, status, phase string, _ bool) {
-	c.ackMu.Lock()
-	defer c.ackMu.Unlock()
-	if c.ackOutcomes == nil {
-		c.ackOutcomes = make(map[shared.UUID]ackOutcomeRecord)
-	}
-	c.ackOutcomes[nodeRunID] = ackOutcomeRecord{Status: status, Phase: phase}
-}
-
-func (c *CallbackServer) consumeAckOutcome(nodeRunID shared.UUID) ackOutcomeRecord {
-	c.ackMu.Lock()
-	defer c.ackMu.Unlock()
-	if c.ackOutcomes == nil {
-		return ackOutcomeRecord{Status: ackStatusAccepted}
-	}
-	rec, ok := c.ackOutcomes[nodeRunID]
-	if !ok {
-		return ackOutcomeRecord{Status: ackStatusAccepted}
-	}
-	delete(c.ackOutcomes, nodeRunID)
-	return rec
 }
 
 func (c *CallbackServer) Start(host string, port int) (string, error) {
@@ -217,7 +195,9 @@ func (c *CallbackServer) Close(ctx context.Context) error {
 	if c.srv == nil {
 		return nil
 	}
-	return c.srv.Shutdown(ctx)
+	err := c.srv.Shutdown(ctx)
+	<-c.serveErr
+	return err
 }
 
 type asyncCallbackBody struct {
@@ -296,15 +276,14 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := c.driveTerminal(r.Context(), asyncCtx, t); err != nil {
+	outcome, err := c.driveTerminal(r.Context(), asyncCtx, t)
+	if err != nil {
 		c.Registry.Register(ackID, asyncCtx)
 		c.Logger.Warn("callback: driveTerminal failed",
 			"node_id", asyncCtx.NodeID.String(), "error", err.Error())
-		_ = c.consumeAckOutcome(asyncCtx.NodeRunID)
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
 	}
-	outcome := c.consumeAckOutcome(asyncCtx.NodeRunID)
 	body := callbackAckBody{AckStatus: outcome.Status}
 	if outcome.Status != ackStatusAccepted && outcome.Status != ackStatusRejectedUnknown {
 		if successor := c.findCanonicalSuccessor(r.Context(), asyncCtx); successor != nil {
@@ -434,7 +413,11 @@ func (c *CallbackServer) reconstructAcquisition(
 		return err
 	}
 	acq.Locks = acqLocks
-	if held := loadInheritedClaimsForNode(ctx, args, tx, nd); len(held) > 0 {
+	held, err := loadInheritedClaimsForNode(ctx, args, tx, nd, acq.FrameID)
+	if err != nil {
+		return fmt.Errorf("reconstructAcquisition: load inherited claims: %w", err)
+	}
+	if len(held) > 0 {
 		acq.HeldClaims = held
 	}
 	return nil
@@ -517,37 +500,10 @@ func recoverResolvedAttributes(ctx context.Context, args RunArgs, acq *acquisiti
 			return nil, schema, &executorSchemaUnavailableError{Executor: acq.Executor}
 		}
 	}
-	snapshot, schema, err := loadDispatchBag(ctx, args, acq)
+	merged, schema, _, _, err := resolveAttributesCore(ctx, args, acq)
 	if err != nil {
 		return nil, schema, err
 	}
-	var paramsRaw json.RawMessage
-	if len(acq.InstanceParams) > 0 {
-		b, mErr := json.Marshal(acq.InstanceParams)
-		if mErr != nil {
-			return nil, schema, mErr
-		}
-		paramsRaw = b
-	}
-	scope := resolveAcqScope(ctx, args, acq)
-	filled, err := fillClaimRefs(schema, attributes.ResolveContext{
-		Claim:             claimsMapFromAcq(acq),
-		Params:            paramsRaw,
-		ChildPartitionKey: scope.PartitionKey,
-	}, snapshot)
-	if err != nil {
-		return nil, schema, err
-	}
-	filled = mergeSchemaDefaultsForDispatch(schema, filled)
-	merged, _ := applyAttributeOverrides(
-		filled,
-		acq.InstanceAttributeOverrides,
-		acq.Executor,
-		acq.NodeType,
-		acq.GraphName,
-		scope.PartitionKey,
-		args.Logger,
-	)
 	acq.MergedAttributes = merged
 	return merged, schema, nil
 }
@@ -650,7 +606,7 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 	return terminalEvent{}, errors.New("unreachable")
 }
 
-func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t terminalEvent) error {
+func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t terminalEvent) (ackOutcomeRecord, error) {
 	args := c.runArgs(ac.SupervisorID, ac.StoreRegistry)
 	acq := &acquisition{
 		NodeRunID:      ac.NodeRunID,
@@ -705,7 +661,12 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 	}
 	t = validateTags(ctx, dispatchContext{Args: args, Acquired: acq}, t)
 	if err := runApplyTerminal(ctx, args, acq, ac.ResolvedAttributes, ac.AttributesSchema, t, setup); err != nil {
-		return err
+		return ackOutcomeRecord{}, err
+	}
+
+	outcome := ackOutcomeRecord{Status: ackStatus, Phase: phase}
+	if rejected {
+		return outcome, nil
 	}
 
 	scope := resolveAcqScope(ctx, args, acq)
@@ -730,8 +691,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 			"dispatch_id", acq.NodeRunID.String(),
 			"error", err.Error())
 	}
-	c.recordAckOutcome(ac.NodeRunID, ackStatus, phase, rejected)
-	return nil
+	return outcome, nil
 }
 
 func ackStatusForState(s cascade.NodeState) string {

@@ -17,7 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-var tagPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._:@/-]{0,254}$`)
+var tagPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._:@-]{0,254}$`)
 
 func validTag(s string) bool {
 	if !tagPattern.MatchString(s) {
@@ -44,6 +44,7 @@ type tagItem struct {
 	UpdatedAt  string `json:"updated_at"`
 }
 
+// @concept: tag
 func registerTagsRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/tags", gate(deps, "tag:create", handleCreateTag(deps)))
 	r.Get("/tags", gate(deps, "tag:read", handleListTags(deps)))

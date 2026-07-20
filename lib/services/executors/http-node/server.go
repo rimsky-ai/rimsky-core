@@ -108,7 +108,10 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 		return s.executeStub(req), nil
 	}
 	if probePark, _ := ud["probe_park"].(bool); probePark && s.stubMode {
-		return s.executeParkProbe(ud), nil
+		return s.executeParkProbe(ud, req.GetScratch()), nil
+	}
+	if probeCancel, _ := ud["probe_cancel"].(bool); probeCancel && s.stubMode {
+		return nil, s.executeCancelProbe(ctx, req.GetCallbackUrl())
 	}
 
 	urlStr, _ := ud["url"].(string)
@@ -211,6 +214,7 @@ var configAttributeKeys = map[string]struct{}{
 	"expect_status":     {},
 	"stub_probe":        {},
 	"stub_response":     {},
+	"stub_tags":         {},
 	"error_class_field": {},
 }
 
@@ -283,12 +287,60 @@ func (s *Server) executeStub(req *genv1.ExecuteRequest) *genv1.Outcome {
 		AttributesDelta: v,
 		Changed:         true,
 		ChangeSummary:   "stub",
+		Scratch:         req.GetScratch(),
+		Tags:            stubTags(ud),
 	}}}
 }
 
-func (s *Server) executeParkProbe(ud map[string]any) *genv1.Outcome {
+func stubTags(ud map[string]any) []string {
+	raw, ok := ud["stub_tags"].([]any)
+	if !ok {
+		return nil
+	}
+	tags := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			tags = append(tags, s)
+		}
+	}
+	return tags
+}
+
+var cancelProbeHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+func postCancelProbeSignal(callbackURL, ackID string) {
+	if callbackURL == "" {
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, callbackURL+"/v1/callback/"+ackID,
+		strings.NewReader(`{"success":{"changed":false}}`))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := cancelProbeHTTPClient.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
+}
+
+func (s *Server) executeCancelProbe(ctx context.Context, callbackURL string) error {
+	postCancelProbeSignal(callbackURL, "cancel-observed")
+	<-ctx.Done()
+	postCancelProbeSignal(callbackURL, "cancel-acknowledged")
+	return ctx.Err()
+}
+
+const defaultParkProbeScratch = "http-node-stub-park-scratch"
+
+func (s *Server) executeParkProbe(ud map[string]any, incomingScratch []byte) *genv1.Outcome {
 	park := &genv1.Park{
 		ResumeAt: timestamppb.New(time.Now().Add(30 * time.Second)),
+		Scratch:  incomingScratch,
+	}
+	if len(park.Scratch) == 0 {
+		park.Scratch = []byte(defaultParkProbeScratch)
 	}
 	if raw, _ := ud["park_resume_at"].(string); raw != "" {
 		if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {

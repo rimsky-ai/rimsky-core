@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -611,5 +612,51 @@ func TestExecute_ProbeParkHonorsRequestedResumeAt(t *testing.T) {
 	}
 	if got := park.GetResumeAt().AsTime(); !got.Equal(resumeAt) {
 		t.Errorf("resume_at=%v, want %v", got, resumeAt)
+	}
+}
+
+func TestExecute_ProbeCancelSignalsObservedThenAcknowledgedAndSurfacesCanceled(t *testing.T) {
+	observed := make(chan struct{})
+	acknowledged := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.TrimPrefix(r.URL.Path, "/v1/callback/") {
+		case "cancel-observed":
+			close(observed)
+		case "cancel-acknowledged":
+			close(acknowledged)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	s := testServer(t, true)
+	req := newRequest(t, map[string]any{
+		"url":          "http://stub/",
+		"probe_cancel": true,
+	})
+	req.CallbackUrl = srv.URL
+
+	execCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Execute(execCtx, req)
+		done <- err
+	}()
+
+	<-observed
+	select {
+	case <-acknowledged:
+		t.Fatal("cancel-acknowledged fired before the executor observed context cancellation")
+	default:
+	}
+	cancel()
+	<-acknowledged
+
+	err := <-done
+	if err == nil {
+		t.Fatal("expected Execute to return an error after mid-flight cancellation")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }

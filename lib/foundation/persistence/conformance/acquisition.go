@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
@@ -34,10 +35,11 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 	}
 
 	supID := "acquisition-supervisor"
-	lockHolderID := uuid.New()
+	claimHandleID := uuid.New()
 	lockName := "acquisition-lock"
 	rollbackErr := errors.New("rollback the whole acquisition")
 
+	var claimedNodeRunID shared.UUID
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
@@ -50,6 +52,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 		if len(cands) != 1 {
 			t.Fatalf("expected 1 candidate, got %d", len(cands))
 		}
+		claimedNodeRunID = cands[0].NodeRunID
 		ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].NodeRunID, supID)
 		if err != nil {
 			return err
@@ -58,7 +61,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 			t.Fatalf("ClaimDispatchRow: not claimed")
 		}
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
-			ID:                 lockHolderID,
+			ID:                 claimHandleID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
 			HolderSupervisorID: supID,
@@ -67,7 +70,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.ClaimHandles().UpdateAddress(ctx, lockHolderID, supID,
+		if err := store.ClaimHandles().UpdateAddress(ctx, claimHandleID, supID,
 			json.RawMessage(`{"addr":"x"}`), tx); err != nil {
 			return err
 		}
@@ -79,23 +82,21 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 
 	var got *persistence.ClaimHandleRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.ClaimHandles().Get(ctx, lockHolderID, tx)
+		r, err := store.ClaimHandles().Get(ctx, claimHandleID, tx)
 		got = r
 		return err
 	}); err != nil {
-		t.Fatalf("Get lock-holder: %v", err)
+		t.Fatalf("Get claim-handle: %v", err)
 	}
 	if got != nil {
-		t.Fatalf("rollback failed: lock-holder %s present", lockHolderID)
+		t.Fatalf("rollback failed: claim-handle %s present", claimHandleID)
 	}
-	rows, err := q.ListOrphanedClaims(ctx)
+	ownership, err := q.GetClaimedBy(ctx, claimedNodeRunID)
 	if err != nil {
-		t.Fatalf("ListOrphanedClaims: %v", err)
+		t.Fatalf("GetClaimedBy: %v", err)
 	}
-	for _, r := range rows {
-		if r.NodeID == fix.NodeID && r.ClaimedBy != nil {
-			t.Fatalf("rollback failed: dispatch is claimed by %v", *r.ClaimedBy)
-		}
+	if ownership.Kind != "unclaimed" {
+		t.Fatalf("rollback failed: dispatch row %s has ownership %+v, want unclaimed", claimedNodeRunID, ownership)
 	}
 
 	addressBytes := json.RawMessage(`{"addr":"committed"}`)
@@ -116,7 +117,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 			t.Fatalf("ClaimDispatchRow #2: not claimed")
 		}
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
-			ID:                 lockHolderID,
+			ID:                 claimHandleID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
 			HolderSupervisorID: supID,
@@ -125,7 +126,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.ClaimHandles().UpdateAddress(ctx, lockHolderID, supID, addressBytes, tx); err != nil {
+		if err := store.ClaimHandles().UpdateAddress(ctx, claimHandleID, supID, addressBytes, tx); err != nil {
 			return err
 		}
 		return nil
@@ -135,14 +136,14 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 
 	var got2 *persistence.ClaimHandleRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.ClaimHandles().Get(ctx, lockHolderID, tx)
+		r, err := store.ClaimHandles().Get(ctx, claimHandleID, tx)
 		got2 = r
 		return err
 	}); err != nil {
-		t.Fatalf("Get lock-holder #2: %v", err)
+		t.Fatalf("Get claim-handle #2: %v", err)
 	}
 	if got2 == nil {
-		t.Fatalf("commit failed: lock-holder %s absent", lockHolderID)
+		t.Fatalf("commit failed: claim-handle %s absent", claimHandleID)
 	}
 	if !jsonEqual(got2.Address, addressBytes) {
 		t.Fatalf("address mismatch: got %q want %q", string(got2.Address), string(addressBytes))

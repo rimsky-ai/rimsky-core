@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
@@ -30,7 +31,7 @@ type Server struct {
 func NewServer(stubMode bool) *Server {
 	return &Server{
 		stubMode: stubMode,
-		client:   &http.Client{Timeout: 60 * time.Second},
+		client:   &http.Client{},
 	}
 }
 
@@ -50,14 +51,15 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	if ms, ok := numeric(ud["timeout_ms"]); ok && ms > 0 {
 		timeout = time.Duration(ms) * time.Millisecond
 	}
-	expected := []int{http.StatusOK}
+	expected := defaultExpectedStatus()
 	if es, ok := ud["expected_status"].([]any); ok && len(es) > 0 {
-		expected = expected[:0]
+		var exact []int
 		for _, v := range es {
 			if n, ok := numeric(v); ok {
-				expected = append(expected, int(n))
+				exact = append(exact, int(n))
 			}
 		}
+		expected = expectedStatusSet{exact: exact, isExplicit: true}
 	}
 	var bodyReader io.Reader
 	if body, ok := ud["body"]; ok && body != nil {
@@ -86,7 +88,7 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
-	if !statusInSet(resp.StatusCode, expected) {
+	if !expected.matches(resp.StatusCode) {
 		classField := defaultClassField
 		if cf, ok := ud["class_field"].(string); ok && cf != "" {
 			classField = cf
@@ -98,13 +100,20 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 		}
 		payloadMap := map[string]any{
 			"actual_status":   float64(resp.StatusCode),
-			"expected_status": toFloatSet(expected),
+			"expected_status": expected.describe(),
 			"body_preview":    truncate(string(respBody), 512),
 		}
 		if upstreamClass != "" {
 			payloadMap["upstream_class"] = upstreamClass
 		}
-		payload, _ := structpb.NewStruct(payloadMap)
+		payload, err := structpb.NewStruct(payloadMap)
+		if err != nil {
+			delete(payloadMap, "body_preview")
+			payload, err = structpb.NewStruct(payloadMap)
+			if err != nil {
+				payload, _ = structpb.NewStruct(map[string]any{"actual_status": float64(resp.StatusCode)})
+			}
+		}
 		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
 			ErrorClass: errClass,
 			Payload:    payload,
@@ -136,18 +145,33 @@ func extractClassField(body []byte, field string) string {
 	return cls
 }
 
-func statusInSet(n int, set []int) bool {
-	for _, e := range set {
-		if e == n {
+type expectedStatusSet struct {
+	exact      []int
+	isExplicit bool
+}
+
+func defaultExpectedStatus() expectedStatusSet {
+	return expectedStatusSet{}
+}
+
+func (s expectedStatusSet) matches(code int) bool {
+	if !s.isExplicit {
+		return code >= 200 && code < 300
+	}
+	for _, e := range s.exact {
+		if e == code {
 			return true
 		}
 	}
 	return false
 }
 
-func toFloatSet(in []int) []any {
-	out := make([]any, len(in))
-	for i, n := range in {
+func (s expectedStatusSet) describe() any {
+	if !s.isExplicit {
+		return "2xx"
+	}
+	out := make([]any, len(s.exact))
+	for i, n := range s.exact {
 		out[i] = float64(n)
 	}
 	return out
@@ -169,9 +193,9 @@ func numeric(v any) (float64, bool) {
 
 func truncate(s string, max int) string {
 	if len(s) <= max {
-		return s
+		return strings.ToValidUTF8(s, "")
 	}
-	return s[:max-1] + "…"
+	return strings.ToValidUTF8(s[:max-1], "") + "…"
 }
 
 func classifyTransportErr(err error) string {

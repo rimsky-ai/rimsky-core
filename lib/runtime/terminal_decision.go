@@ -65,6 +65,8 @@ type TerminalDecision struct {
 	Scope   []byte
 	Address []byte
 
+	LeaseToken string
+
 	// @concept: claim-lifetime
 	Lifetime spec.ClaimLifetime
 
@@ -75,6 +77,8 @@ type TerminalDecision struct {
 	LineageHint ClaimLineageHint
 
 	ParentClaimHandleID *shared.UUID
+
+	LineageParentClaimHandleID *shared.UUID
 }
 
 type ClaimLineageHint struct {

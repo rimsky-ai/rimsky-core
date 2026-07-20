@@ -337,6 +337,42 @@ func TestGrantScope_TagDelete(t *testing.T) {
 	})
 }
 
+func TestGrantScope_RegisterWithTagCannotMoveWithoutTagSet(t *testing.T) {
+	fLocal := newAuthFixture(t)
+	defer fLocal.Close()
+
+	_, body := fLocal.request(t, "POST", "/v1/auth/keys", "", map[string]any{
+		"name":        "admin",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	adminKey, _ := body["plaintext"].(string)
+
+	tag := "moveguard-" + randomNoun(t)
+	firstHash := registerOnly(t, fLocal, adminKey, "moveguard-first-"+randomNoun(t), tag)
+
+	_, sb := fLocal.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
+		"name": "register-only-no-tagset",
+		"permissions": []map[string]any{
+			{"action": "template:register", "scope": map[string]any{"template_tag": tag}},
+			{"action": "*:read"},
+		},
+	})
+	scopedKey, _ := sb["plaintext"].(string)
+
+	code, resp := fLocal.request(t, "POST", "/v1/templates", scopedKey, map[string]any{
+		"spec": scopeLifecycleSpec("moveguard-second-" + randomNoun(t)),
+		"tag":  tag,
+	})
+	requireForbidden(t, code, resp,
+		"register-with-tag must not move an existing tag for a caller holding template:register on that tag but not tag:set")
+
+	code, getResp := fLocal.request(t, "GET", "/v1/templates/"+tag, adminKey, nil)
+	requireOK(t, code, getResp, "re-fetch tag after rejected move")
+	if getResp["id"] != firstHash {
+		t.Fatalf("tag %q moved despite the forbidden request: got %v want %v", tag, getResp["id"], firstHash)
+	}
+}
+
 func TestGrantScope_InstanceCreate(t *testing.T) {
 	h := newScopeLifecycleHarness(t)
 

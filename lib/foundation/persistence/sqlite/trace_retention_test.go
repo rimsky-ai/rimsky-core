@@ -16,13 +16,14 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 type traceFixture struct {
 	instanceID  string
-	scopeID     string
 	oldFrames   []string
 	oldRuns     []string
 	recentFrame string
@@ -42,7 +43,6 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New().String()
-	scopeID := uuid.New().String()
 
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_templates (id, spec, state, source) VALUES (?, '{}', 'registered', 'direct')`,
@@ -50,25 +50,22 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 	); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	stx, err := rawDB.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	defer func() { _ = stx.Rollback() }()
-	if _, err := stx.ExecContext(ctx,
+	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_instances (id, template_hash) VALUES (?, ?)`,
 		instanceID, templateID,
 	); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
-	if _, err := stx.ExecContext(ctx,
-		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id) VALUES (?, 'main', '', ?)`,
-		scopeID, instanceID,
-	); err != nil {
-		t.Fatalf("seed run_scope: %v", err)
-	}
-	if err := stx.Commit(); err != nil {
-		t.Fatalf("commit seed: %v", err)
+
+	insertRunScope := func() string {
+		id := uuid.New().String()
+		if _, err := rawDB.ExecContext(ctx,
+			`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id) VALUES (?, 'main', '', ?)`,
+			id, instanceID,
+		); err != nil {
+			t.Fatalf("seed run_scope: %v", err)
+		}
+		return id
 	}
 
 	msgID := uuid.New().String()
@@ -90,6 +87,7 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 		frameID := uuid.New().String()
 		nodeID := uuid.New().String()
 		runID := uuid.New().String()
+		scopeID := insertRunScope()
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_frames
 			   (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, ended_at)
@@ -127,11 +125,12 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 	heldFrame := uuid.New().String()
 	heldNode := uuid.New().String()
 	heldRun := uuid.New().String()
+	heldScopeID := insertRunScope()
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at)
 		 VALUES (?, ?, ?, ?, ?)`,
-		heldFrame, instanceID, msgID, scopeID, rfc(oldTime),
+		heldFrame, instanceID, msgID, heldScopeID, rfc(oldTime),
 	); err != nil {
 		t.Fatalf("seed held frame: %v", err)
 	}
@@ -145,7 +144,7 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
 		 VALUES (?, ?, 'stub', '[]', ?, 'parked', 'cascade', 1, ?, ?)`,
-		heldRun, heldNode, rfc(oldTime), heldFrame, scopeID,
+		heldRun, heldNode, rfc(oldTime), heldFrame, heldScopeID,
 	); err != nil {
 		t.Fatalf("seed parked node_run: %v", err)
 	}
@@ -167,7 +166,6 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 
 	return traceFixture{
 		instanceID:  instanceID,
-		scopeID:     scopeID,
 		oldFrames:   oldFrames,
 		oldRuns:     oldRuns,
 		recentFrame: recentFrame,
@@ -339,8 +337,28 @@ func TestSQLite_EventTimeRoundTripThroughProductionPaths(t *testing.T) {
 	d := openSQLite(t)
 	rawDB := sqlitedrv.DBFromDatabase(d)
 	f := seedTraceFixture(t, ctx, d, 0)
-	_ = f
 	store := d.Tables()
+
+	instanceUUID, err := uuid.Parse(f.instanceID)
+	if err != nil {
+		t.Fatalf("parse instance id: %v", err)
+	}
+	instanceID := shared.UUID(instanceUUID)
+
+	appendEvent := func(kind events.Kind, when time.Time) {
+		t.Helper()
+		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return store.Events().Append(ctx, persistence.EventAppendInput{
+				InstanceID: &instanceID,
+				Kind:       kind,
+				OccurredAt: &when,
+			}, tx)
+		}); err != nil {
+			t.Fatalf("Append(%s): %v", kind.String(), err)
+		}
+	}
+	appendEvent(events.KindWorkStarted(), f.oldTime)
+	appendEvent(events.KindWorkCompleted(), f.recentTime)
 
 	rawCount := func() int {
 		var n int
@@ -354,7 +372,7 @@ func TestSQLite_EventTimeRoundTripThroughProductionPaths(t *testing.T) {
 
 	before := rawCount()
 	if before < 2 {
-		t.Fatalf("seedTraceFixture must seed at least 2 events; got %d", before)
+		t.Fatalf("must have seeded at least 2 events via the production Events().Append writer; got %d", before)
 	}
 
 	n, err := store.Events().DeleteOlderThan(ctx, f.oldTime.Add(-time.Hour))

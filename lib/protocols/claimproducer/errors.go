@@ -16,6 +16,9 @@ var ErrSplitScopeUnsupported = errors.New("split_scope unsupported by this produ
 var ErrScopesConflictUnsupported = errors.New("scopes_conflict unsupported by this producer")
 
 func ErrScopesConflictUnsupportedFallback(a, b []byte) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
 	if len(a) != len(b) {
 		return false
 	}

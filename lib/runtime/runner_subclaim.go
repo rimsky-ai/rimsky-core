@@ -45,11 +45,16 @@ type SubClaim struct {
 	PartitionKey            string
 	ClaimScope              json.RawMessage
 	ProducerCandidateHandle []byte
+	ProducerLeaseToken      string
 }
 
 type begunSubClaimCandidate struct {
 	claimHandleID   string
 	candidateHandle []byte
+}
+
+func subClaimIdempotencyKey(nodeRunID shared.UUID, partitionKey string) string {
+	return fmt.Sprintf("subclaim:%s:%s", nodeRunID.String(), partitionKey)
 }
 
 func AcquireSubClaims(
@@ -153,7 +158,7 @@ func AcquireSubClaims(
 				ProducerName:       in.ProducerName,
 				ClaimHandleID:      subID.String(),
 				SubScopeDescriptor: desc.ClaimScopeData,
-				IdempotencyKey:     subID.String(),
+				IdempotencyKey:     subClaimIdempotencyKey(in.NodeRunID, desc.PartitionKey),
 			})
 			if beginErr != nil {
 				return nil, fmt.Errorf("AcquireSubClaims: BeginCandidate(%s): %w", in.ProducerName, beginErr)
@@ -183,6 +188,7 @@ func AcquireSubClaims(
 			Lifetime:                lifetime,
 			IsHeld:                  in.ParentIsHeld,
 			ProducerCandidateHandle: candidateHandle,
+			ProducerLeaseToken:      desc.LeaseToken,
 		}
 		if err := args.ClaimHandles.Insert(ctx, insert, tx); err != nil {
 			return nil, fmt.Errorf("AcquireSubClaims: Insert sub-claim: %w", err)
@@ -196,6 +202,7 @@ func AcquireSubClaims(
 			PartitionKey:            desc.PartitionKey,
 			ClaimScope:              json.RawMessage(desc.ClaimScopeData),
 			ProducerCandidateHandle: candidateHandle,
+			ProducerLeaseToken:      desc.LeaseToken,
 		})
 	}
 	emitSubclaimAcquired(ctx, args, tx, parentID, in.HolderNodeID, in.ProducerName, len(out))
@@ -248,6 +255,7 @@ func reuseLinkedSubClaim(
 			Alias:                   claimSpec.Alias,
 			IsHeld:                  row.IsHeld,
 			ProducerCandidateHandle: row.ProducerCandidateHandle,
+			ProducerLeaseToken:      row.ProducerLeaseToken,
 		}, true, nil
 	}
 	return AcquiredLock{}, false, nil

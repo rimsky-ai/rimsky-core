@@ -58,6 +58,7 @@ type FakeCall struct {
 	InstanceKey        string
 	Params             []byte
 	RunScopeID         string
+	LeaseToken         string
 	TerminalReason     string
 	TerminatedAtUnixMs int64
 	ServiceBindings    []byte
@@ -131,12 +132,13 @@ func (f *Fake) Open(_ context.Context, claimID claimproducer.ClaimID, spec claim
 	return outcome, nil
 }
 
-func (f *Fake) Commit(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) (claimproducer.CommitResult, error) {
+func (f *Fake) Commit(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) (claimproducer.CommitResult, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
 		Verb: "commit", ClaimID: claimID,
 		Scope: cloneBytes(scope), Address: cloneBytes(address),
-		Sequence: nextFakeSequence(),
+		LeaseToken: leaseToken,
+		Sequence:   nextFakeSequence(),
 	})
 	errFn := f.ErrorFunc
 	res := f.CommitResult
@@ -153,12 +155,13 @@ func (f *Fake) Commit(_ context.Context, claimID claimproducer.ClaimID, scope, a
 	return res, nil
 }
 
-func (f *Fake) Abandon(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
+func (f *Fake) Abandon(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
 		Verb: "abandon", ClaimID: claimID,
 		Scope: cloneBytes(scope), Address: cloneBytes(address),
-		Sequence: nextFakeSequence(),
+		LeaseToken: leaseToken,
+		Sequence:   nextFakeSequence(),
 	})
 	errFn := f.ErrorFunc
 	f.mu.Unlock()
@@ -174,12 +177,13 @@ func (f *Fake) Abandon(_ context.Context, claimID claimproducer.ClaimID, scope, 
 	return nil
 }
 
-func (f *Fake) Release(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
+func (f *Fake) Release(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
 		Verb: "release", ClaimID: claimID,
 		Scope: cloneBytes(scope), Address: cloneBytes(address),
-		Sequence: nextFakeSequence(),
+		LeaseToken: leaseToken,
+		Sequence:   nextFakeSequence(),
 	})
 	errFn := f.ErrorFunc
 	f.mu.Unlock()

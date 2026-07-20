@@ -6,8 +6,10 @@ package controlapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"testing"
 	"time"
@@ -249,6 +251,48 @@ func TestCreateMessage_PublisherSubscriptionActiveSucceeds(t *testing.T) {
 	require.Equal(t, "sensor-http", row.Sender, "sender must be derived from publisher_name, not body")
 }
 
+func TestCreateMessage_PublisherSubscriptionDedupScopedBySubscriptionID(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "pub-dedup-scope")
+	subA := insertPublisherSubscription(t, h, instID, "sensor-http", persistence.PublisherSubscriptionStateActive)
+	subB := insertPublisherSubscription(t, h, instID, "sensor-http", persistence.PublisherSubscriptionStateActive)
+
+	idemKey := "shared-idem-key-" + uuid.NewString()
+
+	respA := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
+		"type":                      "system/invalidate",
+		"publisher_subscription_id": subA,
+	}, map[string]string{"Idempotency-Key": idemKey})
+	require.Equal(t, http.StatusCreated, respA.status, respA.body)
+	msgA, _ := respA.body["message_id"].(string)
+	require.NotEmpty(t, msgA)
+
+	respB := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
+		"type":                      "system/invalidate",
+		"publisher_subscription_id": subB,
+	}, map[string]string{"Idempotency-Key": idemKey})
+	require.Equal(t, http.StatusCreated, respB.status, respB.body,
+		"a distinct live publisher subscription of the same publisher name, sending under the same "+
+			"idempotency key, must not be dropped as a replay of subscription A's send")
+	msgB, _ := respB.body["message_id"].(string)
+	require.NotEmpty(t, msgB)
+	require.NotEqual(t, msgA, msgB,
+		"two live subscriptions of the same publisher name must not share a dedup namespace; "+
+			"the subscription id must be recorded on the dedup row as sender_subject")
+
+	respAReplay := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
+		"type":                      "system/invalidate",
+		"publisher_subscription_id": subA,
+	}, map[string]string{"Idempotency-Key": idemKey})
+	require.Equal(t, http.StatusOK, respAReplay.status, respAReplay.body,
+		"a genuine retry from the same subscription with the same idempotency key must still replay")
+	msgAReplay, _ := respAReplay.body["message_id"].(string)
+	require.Equal(t, msgA, msgAReplay, "the replay must return subscription A's original message_id")
+}
+
 func TestCreateMessage_PublisherSubscriptionStoppedForbidden(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -336,6 +380,68 @@ func TestCreateMessage_IdempotencyKeyDuplicateReturnsExisting(t *testing.T) {
 	require.Equal(t, http.StatusOK, second.status, "replay returns 200 OK")
 	secondID, _ := second.body["message_id"].(string)
 	require.Equal(t, firstID, secondID, "replay returns the original message_id")
+}
+
+func TestMCPMessageSend_CallerSuppliedIdempotencyKeyReplaysInsteadOfDoubleSending(t *testing.T) {
+	h := newMCPParityHarness(t)
+	admin := h.mintKey(t, "admin", `[{"action":"*"}]`)
+
+	status, out := h.http(t, "POST", "/v1/templates", admin, validTemplateBody("mcp-msg-idem-"+uuid.NewString()))
+	require.Equal(t, http.StatusCreated, status, out)
+	tplID, _ := out["template_id"].(string)
+	require.NotEmpty(t, tplID)
+	deployStatus, _ := h.http(t, "POST", "/v1/templates/"+tplID+"/deploy", admin, map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
+	status, out = h.http(t, "POST", "/v1/instances", admin, map[string]any{
+		"template":     tplID,
+		"instance_key": "mcp-msg-idem-ck-" + uuid.NewString(),
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	instID, _ := out["instance_id"].(string)
+	require.NotEmpty(t, instID)
+
+	idemKey := "mcp-caller-key-" + uuid.NewString()
+	callSend := func() map[string]any {
+		rpcBody := map[string]any{
+			"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+			"params": map[string]any{
+				"name": "message_send",
+				"arguments": map[string]any{
+					"id":              instID,
+					"type":            "system/invalidate",
+					"idempotency_key": idemKey,
+				},
+			},
+		}
+		status, out := h.http(t, "POST", "/v1/mcp", admin, rpcBody)
+		require.Equal(t, http.StatusOK, status, out)
+		result, ok := out["result"].(map[string]any)
+		require.True(t, ok, "expected JSON-RPC result envelope: %v", out)
+		content, ok := result["content"].([]any)
+		require.True(t, ok && len(content) > 0, "expected result.content: %v", result)
+		first, _ := content[0].(map[string]any)
+		text, _ := first["text"].(string)
+		var toolResult map[string]any
+		require.NoError(t, json.Unmarshal([]byte(text), &toolResult))
+		return toolResult
+	}
+
+	first := callSend()
+	require.NotEqual(t, true, first["isError"], "first send must succeed: %v", first)
+	firstID, _ := first["message_id"].(string)
+	require.NotEmpty(t, firstID)
+
+	second := callSend()
+	require.NotEqual(t, true, second["isError"], "replay of the same idempotency_key must succeed, not error: %v", second)
+	secondID, _ := second["message_id"].(string)
+	require.Equal(t, firstID, secondID,
+		"an MCP message_send retry carrying the same caller-supplied idempotency_key must replay the "+
+			"original send (same message_id), not mint a fresh Idempotency-Key and double-send")
+
+	status, out = h.http(t, "GET", fmt.Sprintf("/v1/instances/%s/messages?type=system/invalidate", instID), admin, nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Len(t, msgs, 1, "a replayed send must not enqueue a second message envelope")
 }
 
 func TestCreateMessage_DeclaredTypeAccepted(t *testing.T) {
@@ -566,6 +672,49 @@ func TestCreateMessage_UndeclaredTypeRefused_SurfacesImplicitTypes(t *testing.T)
 	require.True(t, ok, "implicit_types must be a JSON array, got %+v", resp.body)
 	require.ElementsMatch(t, []any{""}, implicit,
 		"the 400-body must advertise the runtime-implicit empty-type so an operator inspecting the response sees the admissible empty entry")
+}
+
+func TestMessages_ListCursorPaginationPagesPastFirstWindow(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "cursor-page")
+	const total = 7
+	want := make(map[string]bool, total)
+	for i := 0; i < total; i++ {
+		want[postMessageForTest(t, h, instID)] = true
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	for pages := 0; pages < total*2; pages++ {
+		path := fmt.Sprintf("/v1/instances/%s/messages?limit=3", instID)
+		if cursor != "" {
+			path += "&cursor=" + neturl.QueryEscape(cursor)
+		}
+		status, out := h.httpJSON(t, "GET", path, nil)
+		require.Equal(t, http.StatusOK, status, out)
+		msgs, _ := out["messages"].([]any)
+		for _, m := range msgs {
+			item, _ := m.(map[string]any)
+			id, _ := item["id"].(string)
+			require.False(t, seen[id], "message %s returned more than once across pages", id)
+			seen[id] = true
+		}
+		nextCursor, _ := out["next_cursor"].(string)
+		if nextCursor == "" {
+			break
+		}
+		cursor = nextCursor
+	}
+
+	require.Len(t, seen, total,
+		"GET .../messages?cursor= must actually page past the first window; a client following next_cursor "+
+			"must not terminate after one page with rows remaining")
+	for id := range want {
+		require.True(t, seen[id], "message %s never appeared across any page", id)
+	}
 }
 
 func postMessageForTest(t *testing.T, h *harness, instID string) string {

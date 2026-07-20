@@ -38,15 +38,15 @@ func (f *scopesConflictFake) Open(_ context.Context, _ claimproducer.ClaimID, sp
 	}, nil
 }
 
-func (f *scopesConflictFake) Commit(context.Context, claimproducer.ClaimID, []byte, []byte) (claimproducer.CommitResult, error) {
+func (f *scopesConflictFake) Commit(context.Context, claimproducer.ClaimID, []byte, []byte, string) (claimproducer.CommitResult, error) {
 	return claimproducer.CommitResult{}, nil
 }
 
-func (f *scopesConflictFake) Abandon(context.Context, claimproducer.ClaimID, []byte, []byte) error {
+func (f *scopesConflictFake) Abandon(context.Context, claimproducer.ClaimID, []byte, []byte, string) error {
 	return nil
 }
 
-func (f *scopesConflictFake) Release(context.Context, claimproducer.ClaimID, []byte, []byte) error {
+func (f *scopesConflictFake) Release(context.Context, claimproducer.ClaimID, []byte, []byte, string) error {
 	return nil
 }
 
@@ -117,5 +117,61 @@ func TestCheckScopesConflict_Asymmetric_Fails(t *testing.T) {
 	row := findRow(t, results, "ScopesConflict")
 	if row.Err == nil {
 		t.Errorf("ScopesConflict row expected non-nil Err for an asymmetric predicate (conflicts(a,b) != conflicts(b,a)), got PASS")
+	}
+}
+
+type wireProbingScopesConflictFake struct {
+	*scopesConflictFake
+	supportsScopesConflict bool
+	wireCalled             bool
+	wireConflicts          bool
+	wireErr                error
+}
+
+func (f *wireProbingScopesConflictFake) Capabilities(context.Context) (claimproducer.Capabilities, error) {
+	return claimproducer.Capabilities{
+		WriteSemanticsAllowed:  []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsScopesConflict: f.supportsScopesConflict,
+	}, nil
+}
+
+func (f *wireProbingScopesConflictFake) ScopesConflictWire(_ context.Context, _, _ []byte) (bool, error) {
+	f.wireCalled = true
+	return f.wireConflicts, f.wireErr
+}
+
+func TestCheckScopesConflict_SupportsFalse_WireProbeExercisesTargetDirectly(t *testing.T) {
+	fake := &wireProbingScopesConflictFake{
+		scopesConflictFake: &scopesConflictFake{
+			scopesConflictFunc: func(a, b []byte) (bool, error) {
+				return claimproducer.ErrScopesConflictUnsupportedFallback(a, b), nil
+			},
+		},
+		wireErr: claimproducer.ErrScopesConflictUnsupported,
+	}
+	results := Run(context.Background(), fake)
+	if !fake.wireCalled {
+		t.Fatalf("ScopesConflictWire was never invoked; the supports=false negative probe must exercise the producer's wire directly, not only the client-side byte-equal fallback")
+	}
+	row := findRow(t, results, "ScopesConflictWireByteEqualInvariant")
+	if row.Err != nil {
+		t.Errorf("expected PASS when the producer's wire declines scopes_conflict as unimplemented, got Err: %v", row.Err)
+	}
+}
+
+func TestCheckScopesConflict_SupportsFalse_WireProbeFlagsBrokenImplementation(t *testing.T) {
+	fake := &wireProbingScopesConflictFake{
+		scopesConflictFake: &scopesConflictFake{
+			scopesConflictFunc: func(a, b []byte) (bool, error) {
+				return claimproducer.ErrScopesConflictUnsupportedFallback(a, b), nil
+			},
+		},
+		wireConflicts: false,
+		wireErr:       nil,
+	}
+	results := Run(context.Background(), fake)
+	row := findRow(t, results, "ScopesConflictWireByteEqualInvariant")
+	if row.Err == nil {
+		t.Errorf("expected non-nil Err when the producer's wire implements ScopesConflict but returns Conflicts=false for byte-equal non-empty scopes, got PASS")
 	}
 }

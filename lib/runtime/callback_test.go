@@ -39,6 +39,31 @@ func TestCallbackRegistry_RegisterPopRoundTrip(t *testing.T) {
 	require.False(t, ok, "Pop is consume-once")
 }
 
+// @decision: async-callback-persistent-registry
+func TestCallbackRegistry_RegisterRejectsCollisionInsteadOfOverwriting(t *testing.T) {
+	t.Parallel()
+	reg := runtime.NewCallbackRegistry()
+
+	ackID := "ack-" + uuid.NewString()
+	first := runtime.AsyncContext{
+		NodeID:       shared.UUID(uuid.New()),
+		SupervisorID: "sup-first",
+	}
+	second := runtime.AsyncContext{
+		NodeID:       shared.UUID(uuid.New()),
+		SupervisorID: "sup-second",
+	}
+
+	require.True(t, reg.Register(ackID, first), "first registration for a fresh ack id must succeed")
+	require.False(t, reg.Register(ackID, second),
+		"a colliding ack id must be rejected, not silently overwrite the pending entry from the first registration")
+
+	got, ok := reg.Pop(ackID)
+	require.True(t, ok)
+	require.Equal(t, first.SupervisorID, got.SupervisorID,
+		"the original entry must survive a rejected collision, not be clobbered by the second caller")
+}
+
 func TestCallbackRegistry_PopUnknown(t *testing.T) {
 	t.Parallel()
 	reg := runtime.NewCallbackRegistry()

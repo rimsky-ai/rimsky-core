@@ -54,10 +54,15 @@ func Unmarshal(b []byte) (*ListPartitionRequest, error) {
 	if len(req.List) == 0 {
 		return nil, fmt.Errorf("listarray: \"list\" array is empty; fan-out requires at least one element (an empty list would produce zero sub-claims, leaving the parent in an undefined fan-out state)")
 	}
+	seen := make(map[string]int, len(req.List))
 	for i, el := range req.List {
 		if el.Key == "" {
 			return nil, fmt.Errorf("listarray: element [%d] has an empty \"key\"; every element must declare a non-empty key", i)
 		}
+		if prior, dup := seen[el.Key]; dup {
+			return nil, fmt.Errorf("listarray: element [%d] has key %q, which duplicates element [%d]; sibling fan-out keys must be unique so sub-claim scopes stay disjoint", i, el.Key, prior)
+		}
+		seen[el.Key] = i
 	}
 	return &req, nil
 }

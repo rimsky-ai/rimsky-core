@@ -38,7 +38,7 @@ func TestObservability_GetClaim_AfterCommit(t *testing.T) {
 	if _, err := st.Open(context.Background(), "c1", "foo"); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if err := st.Commit(context.Background(), "c1", nil, nil); err != nil {
+	if err := st.Commit(context.Background(), "c1", nil, nil, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	obs := NewObservabilityServer(st, t.TempDir(), nil)
@@ -104,7 +104,7 @@ func TestObservability_StreamClaim_AfterTerminal(t *testing.T) {
 	if _, err := st.Open(context.Background(), "c1", "foo"); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if err := st.Commit(context.Background(), "c1", nil, nil); err != nil {
+	if err := st.Commit(context.Background(), "c1", nil, nil, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	obs := NewObservabilityServer(st, t.TempDir(), nil)

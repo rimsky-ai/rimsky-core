@@ -319,8 +319,7 @@ func handleGetInstance(deps Deps) http.HandlerFunc {
 			return
 		}
 		var row *persistence.InstanceRow
-		var nodes []persistence.NodeRow
-		var template *persistence.TemplateRow
+		var graph []CascadeNode
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
 			r2, err := deps.Tables.Instances().Get(ctx, id, tx)
 			if err != nil {
@@ -330,13 +329,19 @@ func handleGetInstance(deps Deps) http.HandlerFunc {
 			if row == nil {
 				return nil
 			}
-			ns, err := deps.Tables.Nodes().ListByInstance(ctx, id, tx)
+			nodes, err := deps.Tables.Nodes().ListByInstance(ctx, id, tx)
 			if err != nil {
 				return err
 			}
-			nodes = ns
-			t, _ := deps.Tables.Templates().GetByHash(ctx, row.TemplateHash, tx)
-			template = t
+			template, err := deps.Tables.Templates().GetByHash(ctx, row.TemplateHash, tx)
+			if err != nil {
+				return err
+			}
+			g, err := computeCascadeGraph(ctx, deps, tx, nodes, template)
+			if err != nil {
+				return err
+			}
+			graph = g
 			return nil
 		}); err != nil {
 			internalErr(w, err)
@@ -346,7 +351,6 @@ func handleGetInstance(deps Deps) http.HandlerFunc {
 			notFound(w, "instance not found")
 			return
 		}
-		graph := computeCascadeGraph(r.Context(), deps, *row, nodes, template)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"instance":      row,
 			"cascade_graph": graph,
@@ -370,9 +374,9 @@ func handleListFrames(deps Deps) http.HandlerFunc {
 			}
 			filter.InstanceID = &id
 		}
-		if s := r.URL.Query().Get("state"); s != "" {
-			unresolved := s == "running"
-			filter.Unresolved = &unresolved
+		if err := persistence.ApplyFrameStateQueryParam(&filter, r.URL.Query().Get("state")); err != nil {
+			badRequest(w, err.Error())
+			return
 		}
 		var res persistence.PaginatedListResult[persistence.FrameRow]
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
@@ -424,41 +428,39 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 			return
 		}
 		nodeType := chi.URLParam(r, "node_type")
-		var nodes []persistence.NodeRow
+
+		var (
+			match     *persistence.NodeRow
+			holdings  []persistence.ClaimHandleRow
+			eventRes  persistence.EventListResult
+			latestBag map[string]any
+			summary   persistence.NodeRunSummary
+		)
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
-			rows, err := deps.Tables.Nodes().ListByInstance(ctx, id, tx)
-			nodes = rows
-			return err
-		}); err != nil {
-			internalErr(w, err)
-			return
-		}
-		var match *persistence.NodeRow
-		for i := range nodes {
-			if nodes[i].NodeType == nodeType {
-				match = &nodes[i]
-				break
+			nodes, err := deps.Tables.Nodes().ListByInstance(ctx, id, tx)
+			if err != nil {
+				return err
 			}
-		}
-		if match == nil {
-			notFound(w, "node not found")
-			return
-		}
-		var holdings []persistence.ClaimHandleRow
-		_ = inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
+			for i := range nodes {
+				if nodes[i].NodeType == nodeType {
+					m := nodes[i]
+					match = &m
+					break
+				}
+			}
+			if match == nil {
+				return nil
+			}
 			h, err := deps.Tables.ClaimHandles().ListByHolderNode(ctx, match.ID, tx)
+			if err != nil {
+				return err
+			}
 			holdings = h
-			return err
-		})
-		var eventRes persistence.EventListResult
-		_ = inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
 			e, err := deps.Tables.Events().List(ctx, persistence.EventListFilter{NodeID: &match.ID}, persistence.ListPagination{Limit: 50}, tx)
+			if err != nil {
+				return err
+			}
 			eventRes = e
-			return err
-		})
-		var latestBag map[string]any
-		var summary persistence.NodeRunSummary
-		_ = inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
 			latest, err := deps.Tables.Nodes().GetLatestRunForNode(ctx, tx, match.ID)
 			if err != nil {
 				return err
@@ -478,7 +480,14 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 			}
 			summary = s
 			return nil
-		})
+		}); err != nil {
+			internalErr(w, err)
+			return
+		}
+		if match == nil {
+			notFound(w, "node not found")
+			return
+		}
 		if latestBag == nil {
 			latestBag = map[string]any{}
 		}
