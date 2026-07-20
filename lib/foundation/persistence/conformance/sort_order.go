@@ -12,7 +12,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-func testSortOrderCoordination(t *testing.T, d persistence.Database) {
+func testAdvisoryLockConcurrentAcquisitionSmoke(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	store := d.Tables()
 	coord := d.AdvisoryLocker()

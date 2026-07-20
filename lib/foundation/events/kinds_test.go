@@ -6,11 +6,37 @@ package events_test
 
 import (
 	"errors"
+	"sort"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
+
+func TestOperationalKindFromProtoPanicsOnUnspecified(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("OperationalKindFromProto(UNSPECIFIED) did not panic")
+		}
+	}()
+	events.OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_UNSPECIFIED)
+}
+
+func TestOperationalKindFromProtoPanicsOnUnmappedValue(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("OperationalKindFromProto(unmapped) did not panic")
+		}
+	}()
+	events.OperationalKindFromProto(genv1.OperationalKind(999999))
+}
+
+func TestAllOperationalKindsIsSorted(t *testing.T) {
+	all := events.AllOperationalKinds()
+	if !sort.StringsAreSorted(all) {
+		t.Fatalf("AllOperationalKinds() not sorted: %v", all)
+	}
+}
 
 func TestOperationalKindRoundTrip(t *testing.T) {
 	cases := []struct {

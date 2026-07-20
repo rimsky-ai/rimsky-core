@@ -113,9 +113,6 @@ func (f *fakeQueue) GetParkedByNode(_ context.Context, _ persistence.Tx, _ share
 func (f *fakeQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (bool, error) {
 	return false, nil
 }
-func (f *fakeQueue) RebindRunFrameInTx(_ context.Context, _ persistence.Tx, _, _ shared.UUID) error {
-	return nil
-}
 func (f *fakeQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
 	return 0, nil, nil
 }

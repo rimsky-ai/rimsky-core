@@ -6,6 +6,7 @@ package conformance
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,6 +93,73 @@ func testMessageIdempotencyInsertOrLookup(t *testing.T, d persistence.Database) 
 	_, inserted = idempotencyInsertOrLookup(ctx, t, d, otherSender)
 	if !inserted {
 		t.Fatalf("distinct sender collided with existing tuple")
+	}
+
+	otherInstance := seedFixtureSet(ctx, t, d)
+	otherInstanceRow := base
+	otherInstanceRow.InstanceID = otherInstance.InstanceID
+	otherInstanceRow.MessageID = shared.UUID(uuid.New())
+	got, inserted = idempotencyInsertOrLookup(ctx, t, d, otherInstanceRow)
+	if !inserted || got.MessageID != otherInstanceRow.MessageID {
+		t.Fatalf("identical (kind, sender, subject, key) tuple under a different instance_id collided "+
+			"with the first instance's row: inserted=%v id=%s want=%s",
+			inserted, got.MessageID, otherInstanceRow.MessageID)
+	}
+}
+
+func testMessageIdempotencyInsertOrLookupRace(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+
+	row := func() persistence.MessageIdempotencyRow {
+		return persistence.MessageIdempotencyRow{
+			InstanceID:     fix.InstanceID,
+			SenderKind:     "operator",
+			Sender:         "operator",
+			SenderSubject:  "api-key-race",
+			IdempotencyKey: "race-key",
+			MessageID:      shared.UUID(uuid.New()),
+		}
+	}
+
+	store := d.Tables()
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		results []persistence.MessageIdempotencyRow
+		inserts int
+	)
+	race := func() {
+		defer wg.Done()
+		r := row()
+		var out persistence.MessageIdempotencyRow
+		var inserted bool
+		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			var err error
+			out, inserted, err = store.MessageIdempotencies().InsertOrLookup(ctx, tx, r)
+			return err
+		}); err != nil {
+			t.Errorf("racing InsertOrLookup: %v", err)
+			return
+		}
+		mu.Lock()
+		results = append(results, out)
+		if inserted {
+			inserts++
+		}
+		mu.Unlock()
+	}
+
+	wg.Add(2)
+	go race()
+	go race()
+	wg.Wait()
+
+	if inserts != 1 {
+		t.Fatalf("two racing InsertOrLookup calls on the same key must produce exactly one insert; got %d", inserts)
+	}
+	if len(results) != 2 || results[0].MessageID != results[1].MessageID {
+		t.Fatalf("racing InsertOrLookup calls must resolve to a single shared message id; got %+v", results)
 	}
 }
 

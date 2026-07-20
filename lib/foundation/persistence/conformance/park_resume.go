@@ -6,6 +6,7 @@ package conformance
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -94,7 +95,7 @@ func parkRun(ctx context.Context, t *testing.T, d persistence.Database, in persi
 			return err
 		}
 		if row == nil {
-			return nil
+			return fmt.Errorf("parkRun: node run row %s vanished between ParkActiveInTx and GetRunForGate", in.NodeRunID)
 		}
 		return d.Tables().Nodes().UpdateState(ctx, in.NodeRunID,
 			cascade.NodeStateParked, cascade.ReasonHandlerPark, nil, tx)
@@ -113,7 +114,7 @@ func resumeRunInTx(ctx context.Context, d persistence.Database, tx persistence.T
 		return false, err
 	}
 	if row == nil {
-		return true, nil
+		return false, fmt.Errorf("resumeRunInTx: node run row %s vanished between ResumeParkedInTx and GetRunForGate", nodeRunID)
 	}
 	if err := d.Tables().Nodes().UpdateState(ctx, nodeRunID,
 		cascade.NodeStateStale, cascade.ReasonDeadlineResume, nil, tx); err != nil {
@@ -299,6 +300,10 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	now := time.Now()
 
 	runID := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, parkResumeSup)
+	preParkRow, err := q.GetByID(ctx, runID)
+	if err != nil || preParkRow == nil {
+		t.Fatalf("GetByID before park: row=%v err=%v", preParkRow, err)
+	}
 	parkedAt := now.Add(-30 * time.Minute)
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		NodeRunID:         runID,
@@ -350,6 +355,14 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	}
 	if owner.Kind != "unclaimed" {
 		t.Fatalf("resumed row ownership = %s/%s, want unclaimed", owner.Kind, owner.SupervisorID)
+	}
+	postResumeRow, err := q.GetByID(ctx, runID)
+	if err != nil || postResumeRow == nil {
+		t.Fatalf("GetByID after resume: row=%v err=%v", postResumeRow, err)
+	}
+	if postResumeRow.FrameID != preParkRow.FrameID {
+		t.Fatalf("resume must not rebind the run's frame: before=%s after=%s "+
+			"(park-resume does not open a new frame)", preParkRow.FrameID, postResumeRow.FrameID)
 	}
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{

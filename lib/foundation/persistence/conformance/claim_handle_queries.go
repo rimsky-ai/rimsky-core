@@ -103,17 +103,20 @@ func testClaimHandleAnchorsAndRepoint(t *testing.T, d persistence.Database) {
 	nodeB := seedExtraNode(ctx, t, d, fix, "anchor-node-b")
 	runB := seedConformanceRunForNode(ctx, t, d, nodeB, fix.FrameID)
 
+	claimedAtBase := time.Now().UTC()
+
 	h1 := guardScopeHandleInput(fix, claimQuerySup, time.Now().Add(1*time.Hour))
 	h1.NodeRunID = &runA
+	h1.ClaimedAtOverride = claimedAtBase
 	seedGuardClaimHandle(ctx, t, d, h1)
-	time.Sleep(20 * time.Millisecond)
 	h2 := guardScopeHandleInput(fix, claimQuerySup, time.Now().Add(1*time.Hour))
 	h2.NodeRunID = &runA
+	h2.ClaimedAtOverride = claimedAtBase.Add(1 * time.Second)
 	seedGuardClaimHandle(ctx, t, d, h2)
-	time.Sleep(20 * time.Millisecond)
 	h3 := guardScopeHandleInput(fix, claimQuerySup, time.Now().Add(1*time.Hour))
 	h3.HolderNodeID = nodeB
 	h3.NodeRunID = &runB
+	h3.ClaimedAtOverride = claimedAtBase.Add(2 * time.Second)
 	seedGuardClaimHandle(ctx, t, d, h3)
 
 	listByHolder := func(nodeID shared.UUID) []shared.UUID {

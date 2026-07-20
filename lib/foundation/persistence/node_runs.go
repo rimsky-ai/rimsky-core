@@ -15,6 +15,8 @@ import (
 
 var ErrRunRowMissing = errors.New("persistence: rimsky_node_runs row not found")
 
+var ErrRunClaimantMismatch = errors.New("persistence: rimsky_node_runs row not in expected (active, claimed_by) state")
+
 type DispatchRequest struct {
 	NodeID                 shared.UUID
 	ExecutorName           string

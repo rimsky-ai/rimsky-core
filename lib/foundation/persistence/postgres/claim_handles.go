@@ -42,6 +42,9 @@ func claimantGuard(alias string, n int) string {
 
 func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandleInsertInput, tx persistence.Tx) error {
 	now := time.Now().UTC()
+	if !in.ClaimedAtOverride.IsZero() {
+		now = in.ClaimedAtOverride
+	}
 	var rws *string
 	if in.RealizedWriteSemantics != "" {
 		v := in.RealizedWriteSemantics

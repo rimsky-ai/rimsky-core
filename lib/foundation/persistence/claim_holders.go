@@ -31,7 +31,6 @@ type ClaimHolderInsertInput struct {
 	ID              shared.UUID
 	ClaimHandleID   shared.UUID
 	HolderNodeRunID shared.UUID
-	FrameID         *shared.UUID
 }
 
 type ClaimHolderTable interface {

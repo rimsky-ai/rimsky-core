@@ -68,15 +68,13 @@ func parsePagination(r *http.Request) (persistence.ListPagination, error) {
 	limit := defaultLimit
 	if v := r.URL.Query().Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
+		if err != nil || n <= 0 {
 			return persistence.ListPagination{}, errors.New("invalid limit")
 		}
 		if n > maxLimit {
 			n = maxLimit
 		}
-		if n > 0 {
-			limit = n
-		}
+		limit = n
 	}
 	return persistence.ListPagination{Limit: limit, Cursor: r.URL.Query().Get("cursor")}, nil
 }
@@ -293,7 +291,11 @@ func handleListInstances(deps Deps) http.HandlerFunc {
 			TemplateHash: r.URL.Query().Get("template_hash"),
 		}
 		if v := r.URL.Query().Get("active"); v != "" {
-			b := v == "1" || v == "true"
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				badRequest(w, "invalid active")
+				return
+			}
 			filter.Active = &b
 		}
 		var res persistence.PaginatedListResult[persistence.InstanceRow]

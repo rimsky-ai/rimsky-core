@@ -199,7 +199,10 @@ func evaluateClaimScopeConflict(
 		if h.Intent != nil {
 			holderIntent = claimproducer.Intent(*h.Intent)
 		}
-		holderRWS := claimproducer.WriteSemantics(h.RealizedWriteSemantics)
+		holderRWS, ok := claimproducer.ParseWriteSemantics(h.RealizedWriteSemantics)
+		if !ok {
+			return false, false, fmt.Errorf("evaluateClaimScopeConflict: claim handle %s has no realized write-semantics yet (holder open still in flight)", h.ID)
+		}
 		if !locks.ModeCoexists(spec.Intent, holderIntent, holderRWS) {
 			sawConflict = true
 			if h.State == fspec.ClaimHandleStateCommitted && h.Lifetime == fspec.ClaimLifetimeDurable {

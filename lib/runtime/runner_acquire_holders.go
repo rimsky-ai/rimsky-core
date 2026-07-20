@@ -24,12 +24,10 @@ func insertHeldClaimHoldersAtAcquire(
 	if !ok || !subgraph.IsHeld() {
 		return nil
 	}
-	frameID := cand.FrameID
 	if err := args.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 		ID:              uuid.New(),
 		ClaimHandleID:   claimHandleID,
 		HolderNodeRunID: cand.NodeRunID,
-		FrameID:         &frameID,
 	}, tx); err != nil {
 		return fmt.Errorf("insertHeldClaimHoldersAtAcquire: Insert: %w", err)
 	}
@@ -79,7 +77,6 @@ func insertCoHolderClaimHoldersAtAcquire(
 			ID:              uuid.New(),
 			ClaimHandleID:   lh.ID,
 			HolderNodeRunID: cand.NodeRunID,
-			FrameID:         &frameID,
 		}, tx); err != nil {
 			return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: holds: %w", err)
 		}

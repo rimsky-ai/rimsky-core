@@ -59,12 +59,12 @@ func (b *MemoryBackend) ReadRange(_ context.Context, handle Handle, offset, leng
 	if offset < 0 || length < 0 {
 		return nil, fmt.Errorf("blob memory: ReadRange: negative offset=%d length=%d", offset, length)
 	}
-	end := offset + length
-	if int64(len(bytes)) < end {
+	n := int64(len(bytes))
+	if offset > n || length > n-offset {
 		return nil, io.ErrUnexpectedEOF
 	}
 	out := make([]byte, length)
-	copy(out, bytes[offset:end])
+	copy(out, bytes[offset:offset+length])
 	return out, nil
 }
 

@@ -91,10 +91,10 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 		chID, acqRunID, supervisorID, acq.ID, frameID,
 	)
 	h.ExecSQL(
-		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, completed_at, frame_id)
-		 VALUES ($1, $2, $3, 'completed', NOW(), $4),
-		        ($5, $2, $6, 'completed', NOW(), $4)`,
-		uuid.New(), chID, acqRunID, frameID, uuid.New(), inhRunID,
+		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, completed_at)
+		 VALUES ($1, $2, $3, 'completed', NOW()),
+		        ($4, $2, $5, 'completed', NOW())`,
+		uuid.New(), chID, acqRunID, uuid.New(), inhRunID,
 	)
 
 	client, err := peer.Dial(h.Ctx, "held-store", "grpc://"+endpoint, peer.TLSModeOff)

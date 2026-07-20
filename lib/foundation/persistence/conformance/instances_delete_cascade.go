@@ -130,17 +130,26 @@ func testInstancesDeleteCascadeRunScopeTree(
 		t.Fatalf("seed claim handles + holder: %v", err)
 	}
 
-	if preScopes := countScopesByInstance(t, d, rawQuery, fix.InstanceID); preScopes < 3 {
-		t.Fatalf("pre-delete: expected ≥3 RunScopes (main+fanout+subgraph), got %d", preScopes)
+	if preScopes := countScopesByInstance(t, d, rawQuery, fix.InstanceID); preScopes != 3 {
+		t.Fatalf("pre-delete: expected exactly 3 RunScopes (main+fanout+subgraph), got %d", preScopes)
 	}
-	if preRuns := countRunsByInstanceScopes(t, d, rawQuery, fix.InstanceID); preRuns < 3 {
-		t.Fatalf("pre-delete: expected ≥3 node_runs (main+fanout+subgraph), got %d", preRuns)
+	if preRuns := countRunsByInstanceScopes(t, d, rawQuery, fix.InstanceID); preRuns != 3 {
+		t.Fatalf("pre-delete: expected exactly 3 node_runs (main+fanout+subgraph), got %d", preRuns)
 	}
-	if preHandles := countClaimHandlesByInstance(t, d, rawQuery, fix.InstanceID); preHandles < 2 {
-		t.Fatalf("pre-delete: expected ≥2 claim_handles (parent+child), got %d", preHandles)
+	if preHandles := countClaimHandlesByInstance(t, d, rawQuery, fix.InstanceID); preHandles != 2 {
+		t.Fatalf("pre-delete: expected exactly 2 claim_handles (parent+child), got %d", preHandles)
 	}
-	if preHolders := countClaimHoldersByInstance(t, d, rawQuery, fix.InstanceID); preHolders < 1 {
-		t.Fatalf("pre-delete: expected ≥1 claim_holder, got %d", preHolders)
+	if preHolders := countClaimHoldersByInstance(t, d, rawQuery, fix.InstanceID); preHolders != 1 {
+		t.Fatalf("pre-delete: expected exactly 1 claim_holder, got %d", preHolders)
+	}
+	if preFrames := countFramesByInstance(t, d, rawQuery, fix.InstanceID); preFrames != 1 {
+		t.Fatalf("pre-delete: expected exactly 1 frame, got %d", preFrames)
+	}
+	if preMessages := countMessagesByInstance(t, d, rawQuery, fix.InstanceID); preMessages != 1 {
+		t.Fatalf("pre-delete: expected exactly 1 message, got %d", preMessages)
+	}
+	if preNodes := countNodesByInstance(t, d, rawQuery, fix.InstanceID); preNodes != 1 {
+		t.Fatalf("pre-delete: expected exactly 1 node, got %d", preNodes)
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -165,6 +174,15 @@ func testInstancesDeleteCascadeRunScopeTree(
 	}
 	if n := countClaimHoldersByID(t, d, rawQuery, holderID); n != 0 {
 		t.Fatalf("post-delete: claim_holder remains, want 0 got %d", n)
+	}
+	if n := countFramesByInstance(t, d, rawQuery, fix.InstanceID); n != 0 {
+		t.Fatalf("post-delete: %d frame rows remain for instance %s, want 0 (ON DELETE CASCADE)", n, fix.InstanceID)
+	}
+	if n := countMessagesByInstance(t, d, rawQuery, fix.InstanceID); n != 0 {
+		t.Fatalf("post-delete: %d message rows remain for instance %s, want 0 (ON DELETE CASCADE)", n, fix.InstanceID)
+	}
+	if n := countNodesByInstance(t, d, rawQuery, fix.InstanceID); n != 0 {
+		t.Fatalf("post-delete: %d node rows remain for instance %s, want 0 (ON DELETE CASCADE)", n, fix.InstanceID)
 	}
 	var inst *persistence.InstanceRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -259,6 +277,54 @@ func countScopesByInstance(
 	t.Helper()
 	rows := rawQuery(t, d,
 		`SELECT COUNT(*) AS n FROM rimsky_run_scopes WHERE instance_id = ?`,
+		id.String(),
+	)
+	if len(rows) == 0 {
+		return 0
+	}
+	return scanCount(t, rows[0]["n"])
+}
+
+func countFramesByInstance(
+	t *testing.T, d persistence.Database,
+	rawQuery func(*testing.T, persistence.Database, string, ...any) []RawQueryRow,
+	id shared.UUID,
+) int {
+	t.Helper()
+	rows := rawQuery(t, d,
+		`SELECT COUNT(*) AS n FROM rimsky_frames WHERE instance_id = ?`,
+		id.String(),
+	)
+	if len(rows) == 0 {
+		return 0
+	}
+	return scanCount(t, rows[0]["n"])
+}
+
+func countMessagesByInstance(
+	t *testing.T, d persistence.Database,
+	rawQuery func(*testing.T, persistence.Database, string, ...any) []RawQueryRow,
+	id shared.UUID,
+) int {
+	t.Helper()
+	rows := rawQuery(t, d,
+		`SELECT COUNT(*) AS n FROM rimsky_messages WHERE instance_id = ?`,
+		id.String(),
+	)
+	if len(rows) == 0 {
+		return 0
+	}
+	return scanCount(t, rows[0]["n"])
+}
+
+func countNodesByInstance(
+	t *testing.T, d persistence.Database,
+	rawQuery func(*testing.T, persistence.Database, string, ...any) []RawQueryRow,
+	id shared.UUID,
+) int {
+	t.Helper()
+	rows := rawQuery(t, d,
+		`SELECT COUNT(*) AS n FROM rimsky_nodes WHERE instance_id = ?`,
 		id.String(),
 	)
 	if len(rows) == 0 {

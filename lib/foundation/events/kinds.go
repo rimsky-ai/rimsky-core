@@ -30,6 +30,9 @@ type Kind struct {
 }
 
 func OperationalKindFromProto(op genv1.OperationalKind) Kind {
+	if _, ok := operationalKindWireForm[op]; !ok {
+		panic(fmt.Sprintf("events.OperationalKindFromProto: unmapped OperationalKind %v", op))
+	}
 	return Kind{family: FamilyOperational, op: op}
 }
 
@@ -155,6 +158,7 @@ func AllOperationalKinds() []string {
 	for _, s := range operationalKindWireForm {
 		out = append(out, s)
 	}
+	sort.Strings(out)
 	return out
 }
 

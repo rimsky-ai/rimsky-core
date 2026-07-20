@@ -17,17 +17,11 @@ type BlobConfig struct {
 
 	Filesystem FilesystemBlobConfig
 
-	PgLargeObject PgLargeObjectBlobConfig
-
 	Retention BlobRetentionConfig
 }
 
 type FilesystemBlobConfig struct {
 	Root string
-}
-
-type PgLargeObjectBlobConfig struct {
-	Schema string
 }
 
 type BlobRetentionConfig struct {

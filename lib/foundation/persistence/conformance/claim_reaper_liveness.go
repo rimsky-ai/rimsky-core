@@ -187,14 +187,12 @@ func testCoHolderInsertIdempotent(t *testing.T, d persistence.Database) {
 		t.Fatalf("seed claim handle: %v", err)
 	}
 
-	frameID := fix.FrameID
 	insertHolder := func() error {
 		return inTx(ctx, store, func(tx persistence.Tx) error {
 			return store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 				ID:              shared.UUID(uuid.New()),
 				ClaimHandleID:   claimID,
 				HolderNodeRunID: runID,
-				FrameID:         &frameID,
 			}, tx)
 		})
 	}

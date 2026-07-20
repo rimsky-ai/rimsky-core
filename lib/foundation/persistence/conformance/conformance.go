@@ -34,7 +34,7 @@ func Suite(
 	t.Run("TxAtomicity", func(t *testing.T) { testTxAtomicity(t, factory(t)) })
 	t.Run("AcquisitionTxAtomicity", func(t *testing.T) { testAcquisitionTxAtomicity(t, factory(t)) })
 	t.Run("ClaimHandleLockForUpdateSerializesConcurrentTx", func(t *testing.T) { testClaimHandleLockForUpdateSerializesConcurrentTx(t, factory(t)) })
-	t.Run("SortOrderCoordination", func(t *testing.T) { testSortOrderCoordination(t, factory(t)) })
+	t.Run("AdvisoryLockConcurrentAcquisitionSmoke", func(t *testing.T) { testAdvisoryLockConcurrentAcquisitionSmoke(t, factory(t)) })
 	t.Run("PublisherSubscriptionLifecycle", func(t *testing.T) { testPublisherSubscriptionLifecycle(t, factory(t)) })
 	t.Run("QueueInTxAndDispatchNode", func(t *testing.T) { testQueueInTxAndDispatchNode(t, factory(t)) })
 	t.Run("SelectCandidatesSkipsPausedInstances", func(t *testing.T) { testSelectCandidatesSkipsPausedInstances(t, factory(t)) })
@@ -83,7 +83,6 @@ func Suite(
 		t.Run("UpdateState", func(t *testing.T) { testRunStateWritesIsolated_UpdateState(t, factory(t)) })
 		t.Run("UpdateStateWritesNoAuditEvent", func(t *testing.T) { testRunStateWritesIsolated_UpdateStateWritesNoAuditEvent(t, factory(t)) })
 		t.Run("BumpLastProgressAt", func(t *testing.T) { testRunStateWritesIsolated_BumpLastProgressAt(t, factory(t)) })
-		t.Run("ClearSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ClearSettlingSignalType(t, factory(t)) })
 		t.Run("ResetFailedTerminalSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t, factory(t)) })
 		t.Run("RemoveForNodeInTx", func(t *testing.T) { testRunStateWritesIsolated_RemoveForNodeInTx(t, factory(t)) })
 		t.Run("GetParkedByNode", func(t *testing.T) { testRunStateWritesIsolated_GetParkedByNode(t, factory(t)) })
@@ -151,6 +150,7 @@ func Suite(
 	})
 	t.Run("MessageIdempotency", func(t *testing.T) {
 		t.Run("InsertOrLookup", func(t *testing.T) { testMessageIdempotencyInsertOrLookup(t, factory(t)) })
+		t.Run("InsertOrLookupRace", func(t *testing.T) { testMessageIdempotencyInsertOrLookupRace(t, factory(t)) })
 		t.Run("DeleteOlderThan", func(t *testing.T) { testMessageIdempotencyDeleteOlderThan(t, factory(t)) })
 	})
 	t.Run("ParkResume", func(t *testing.T) {

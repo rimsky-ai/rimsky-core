@@ -19,7 +19,36 @@ func testNodeAttributesPerRunInsertByRun(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.NodeAttributes().GetLatestByNode(ctx, fix.NodeID, fix.MainRunScopeID, tx)
+		if err != nil {
+			return err
+		}
+		if r != nil {
+			t.Fatalf("GetLatestByNode for a known node with no runs yet in this scope: got %+v, want nil", r)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("GetLatestByNode (no runs yet): %v", err)
+	}
+
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.NodeAttributes().GetByRun(ctx, runID, tx)
+		if err != nil {
+			return err
+		}
+		if r == nil {
+			t.Fatalf("GetByRun on a freshly created run: got nil, want a row with the schema-default empty bag")
+		}
+		if len(r.Data) != 0 {
+			t.Fatalf("GetByRun on a freshly created run before any Upsert: data=%+v, want the empty bag", r.Data)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("GetByRun (fresh): %v", err)
+	}
 
 	data := map[string]any{"k": "v", "n": float64(7)}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -51,6 +80,31 @@ func testNodeAttributesPerRunInsertByRun(t *testing.T, d persistence.Database) {
 	if v, _ := got.Data["n"].(float64); v != 7 {
 		t.Fatalf("GetByRun: data.n=%v want 7", got.Data["n"])
 	}
+
+	replacement := map[string]any{"m": "replaced"}
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.NodeAttributes().Upsert(ctx, runID, fix.NodeID, replacement, tx)
+	}); err != nil {
+		t.Fatalf("Upsert (second, replace): %v", err)
+	}
+	var replaced *persistence.NodeAttributesRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.NodeAttributes().GetByRun(ctx, runID, tx)
+		replaced = r
+		return err
+	}); err != nil {
+		t.Fatalf("GetByRun (after second Upsert): %v", err)
+	}
+	if replaced == nil {
+		t.Fatalf("GetByRun (after second Upsert): row missing")
+	}
+	if _, stillPresent := replaced.Data["k"]; stillPresent {
+		t.Fatalf("second Upsert must replace the bag wholesale, not merge; key %q from the first "+
+			"Upsert survived: %+v", "k", replaced.Data)
+	}
+	if v, _ := replaced.Data["m"].(string); v != "replaced" {
+		t.Fatalf("GetByRun (after second Upsert): data.m=%v want replaced", replaced.Data["m"])
+	}
 }
 
 func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
@@ -66,16 +120,45 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 	}
 	completeRunAdmin(ctx, t, d, runA)
 
-	time.Sleep(10 * time.Millisecond)
+	var rowA *persistence.NodeAttributesRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.NodeAttributes().GetByRun(ctx, runA, tx)
+		rowA = r
+		return err
+	}); err != nil {
+		t.Fatalf("GetByRun A: %v", err)
+	}
+	if rowA == nil {
+		t.Fatalf("GetByRun A: row missing")
+	}
+
 	runB := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	if runB == runA {
 		t.Fatalf("seedConformanceRunForNode returned the same run twice (%v); "+
 			"runA must be settled before runB is seeded so GetLatestByNode has two distinct rows to choose between", runB)
 	}
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.NodeAttributes().Upsert(ctx, runB, fix.NodeID, map[string]any{"which": "B"}, tx)
-	}); err != nil {
-		t.Fatalf("Upsert B: %v", err)
+
+	var rowB *persistence.NodeAttributesRow
+	for {
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return store.NodeAttributes().Upsert(ctx, runB, fix.NodeID, map[string]any{"which": "B"}, tx)
+		}); err != nil {
+			t.Fatalf("Upsert B: %v", err)
+		}
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			r, err := store.NodeAttributes().GetByRun(ctx, runB, tx)
+			rowB = r
+			return err
+		}); err != nil {
+			t.Fatalf("GetByRun B: %v", err)
+		}
+		if rowB == nil {
+			t.Fatalf("GetByRun B: row missing")
+		}
+		if rowB.UpdatedAt.After(rowA.UpdatedAt) {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
 
 	var latest *persistence.NodeAttributesRow
@@ -94,6 +177,22 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 	}
 	if v, _ := latest.Data["which"].(string); v != "B" {
 		t.Fatalf("GetLatestByNode: data.which=%v want B", latest.Data["which"])
+	}
+
+	var byRunA *persistence.NodeAttributesRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.NodeAttributes().GetByRun(ctx, runA, tx)
+		byRunA = r
+		return err
+	}); err != nil {
+		t.Fatalf("GetByRun A (after B upsert): %v", err)
+	}
+	if byRunA == nil {
+		t.Fatalf("GetByRun A (after B upsert): row missing — per-run rows must coexist, not collapse to one row per node")
+	}
+	if v, _ := byRunA.Data["which"].(string); v != "A" {
+		t.Fatalf("GetByRun A (after B upsert): data.which=%v want A — a backend keying attributes per (node, scope) "+
+			"rather than per node_run would have overwritten this row when B was upserted", byRunA.Data["which"])
 	}
 
 	missingNodeID := uuid.New()

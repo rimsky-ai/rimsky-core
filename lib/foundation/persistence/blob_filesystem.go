@@ -105,6 +105,13 @@ func (b *FilesystemBackend) ReadRange(_ context.Context, handle Handle, offset, 
 		return nil, fmt.Errorf("blob filesystem: open %q: %w", handle, err)
 	}
 	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("blob filesystem: stat %q: %w", handle, err)
+	}
+	if size := fi.Size(); offset > size || length > size-offset {
+		return nil, io.ErrUnexpectedEOF
+	}
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("blob filesystem: seek: %w", err)
 	}

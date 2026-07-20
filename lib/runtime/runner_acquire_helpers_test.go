@@ -797,9 +797,6 @@ func (f *fakeNodesDeps) UpdateState(_ context.Context, _ shared.UUID, _ cascade.
 func (f *fakeNodesDeps) UpdateError(_ context.Context, _ shared.UUID, _ spec.EvaluatorState, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeNodesDeps) ClearSettlingSignalType(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) error {
-	return nil
-}
 func (f *fakeNodesDeps) ResetFailedTerminalSettlingSignalType(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) error {
 	return nil
 }

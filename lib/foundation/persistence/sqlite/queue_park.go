@@ -48,7 +48,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		return fmt.Errorf("sqlite.ParkActiveInTx: rows affected: %w", err)
 	}
 	if rowsAffected != 1 {
-		return fmt.Errorf("sqlite.ParkActiveInTx: row %s not in expected (active, claimed_by=%s) state", in.NodeRunID, in.ExpectedClaimedBy)
+		return fmt.Errorf("sqlite.ParkActiveInTx: row %s not in expected (active, claimed_by=%s) state: %w", in.NodeRunID, in.ExpectedClaimedBy, persistence.ErrRunClaimantMismatch)
 	}
 	return nil
 }

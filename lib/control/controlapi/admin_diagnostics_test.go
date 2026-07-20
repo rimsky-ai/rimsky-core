@@ -152,9 +152,6 @@ func (noopNodes) UpdateError(context.Context, shared.UUID, spec.EvaluatorState, 
 func (noopNodes) UpdateHeartbeat(context.Context, shared.UUID, shared.UUID, time.Time, string, persistence.Tx) error {
 	return nil
 }
-func (noopNodes) ClearSettlingSignalType(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
-	return nil
-}
 func (noopNodes) ResetFailedTerminalSettlingSignalType(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
 	return nil
 }
@@ -336,9 +333,6 @@ func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, persistence.Tx, s
 }
 func (f *fakeDiagnosticQueue) ResumeParkedInTx(context.Context, persistence.Tx, shared.UUID) (bool, error) {
 	return false, nil
-}
-func (f *fakeDiagnosticQueue) RebindRunFrameInTx(context.Context, persistence.Tx, shared.UUID, shared.UUID) error {
-	return nil
 }
 func (f *fakeDiagnosticQueue) GetRetryNoProgress(context.Context, shared.UUID) (int, *int, error) {
 	return 0, nil, nil

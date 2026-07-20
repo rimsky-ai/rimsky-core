@@ -15,9 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 // @decision: walker-rule-per-sender-node
@@ -146,6 +149,55 @@ func testCreateCascadePendingAndFindLatest(t *testing.T, d persistence.Database)
 	}
 	if found.CreationReason != cascade.CreationReasonCascade {
 		t.Fatalf("CreateCascadePending should set creation_reason=cascade; got %q", found.CreationReason)
+	}
+
+	var secondPendingID shared.UUID
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		id, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		secondPendingID = id
+		return err
+	}); err != nil {
+		t.Fatalf("CreateCascadePending (second): %v", err)
+	}
+	if secondPendingID == pendingID {
+		t.Fatalf("second CreateCascadePending returned the same id as the first: %s", secondPendingID)
+	}
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := store.Nodes().FindLatestCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		found = r
+		return err
+	}); err != nil {
+		t.Fatalf("FindLatestCascadePending (after second create): %v", err)
+	}
+	if found == nil || found.NodeRunID != secondPendingID {
+		t.Fatalf("FindLatestCascadePending must return the most-recently-created pending row "+
+			"(concept:node-run allows multiple coexisting pending rows per (node, run-scope) under cascade "+
+			"accumulation); got %v, want the second-created row %s", found, secondPendingID)
+	}
+
+	scopeB := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:               scopeB,
+			ParentRunScopeID: &fix.MainRunScopeID,
+			ParentNodeRunID:  &secondPendingID,
+			GraphName:        spec.MainGraphName,
+			InstanceID:       fix.InstanceID,
+			PartitionKey:     "cascade-walker-scope-b",
+		})
+	}); err != nil {
+		t.Fatalf("Create scope B: %v", err)
+	}
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := store.Nodes().FindLatestCascadePending(ctx, tx, fix.NodeID, scopeB, fix.FrameID)
+		found = r
+		return err
+	}); err != nil {
+		t.Fatalf("FindLatestCascadePending (scope B): %v", err)
+	}
+	if found != nil {
+		t.Fatalf("FindLatestCascadePending must scope by run_scope_id: querying an unrelated scope "+
+			"(scope B) must not return the pending row created under the main run scope; got %+v", found)
 	}
 }
 

@@ -569,7 +569,6 @@ func testClaimantGuardHolderRelease(t *testing.T, d persistence.Database) {
 			ID:              holderID,
 			ClaimHandleID:   in.ID,
 			HolderNodeRunID: runID,
-			FrameID:         &fix.FrameID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("seed claim holder: %v", err)
@@ -819,6 +818,9 @@ func testClaimantGuardRunReleaseClaim(t *testing.T, d persistence.Database) {
 		(afterRow.LastProgressAt != nil && !afterRow.LastProgressAt.Equal(*beforeRow.LastProgressAt)) {
 		t.Fatalf("wrong-claimant ReleaseClaim mutated last_progress_at")
 	}
+	if afterRow.State != beforeRow.State {
+		t.Fatalf("wrong-claimant ReleaseClaim mutated state: before=%q after=%q", beforeRow.State, afterRow.State)
+	}
 
 	if err := q.ReleaseClaim(ctx, nodeRunID, guardSupA); err != nil {
 		t.Fatalf("owner ReleaseClaim: %v", err)
@@ -830,6 +832,13 @@ func testClaimantGuardRunReleaseClaim(t *testing.T, d persistence.Database) {
 	if owner.Kind != "unclaimed" {
 		t.Fatalf("owner ReleaseClaim did not release: %s/%s", owner.Kind, owner.SupervisorID)
 	}
+	releasedRow, err := q.GetByID(ctx, nodeRunID)
+	if err != nil || releasedRow == nil {
+		t.Fatalf("GetByID after owner release: row=%v err=%v", releasedRow, err)
+	}
+	if releasedRow.State != cascade.NodeStateStale {
+		t.Fatalf("owner ReleaseClaim must flip state to 'stale'; got %q", releasedRow.State)
+	}
 }
 
 func testClaimantGuardRunComplete(t *testing.T, d persistence.Database) {
@@ -838,10 +847,24 @@ func testClaimantGuardRunComplete(t *testing.T, d persistence.Database) {
 	q := d.Queue()
 	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
+	beforeRow, err := q.GetByID(ctx, nodeRunID)
+	if err != nil || beforeRow == nil {
+		t.Fatalf("GetByID before: row=%v err=%v", beforeRow, err)
+	}
+
 	if err := q.Complete(ctx, nodeRunID, guardSupB); err != nil {
 		t.Fatalf("wrong-claimant Complete: %v", err)
 	}
 	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "Complete")
+	afterRow, err := q.GetByID(ctx, nodeRunID)
+	if err != nil || afterRow == nil {
+		t.Fatalf("GetByID after wrong-claimant Complete: row=%v err=%v", afterRow, err)
+	}
+	if afterRow.State != beforeRow.State {
+		t.Fatalf("wrong-claimant Complete mutated state: before=%q after=%q "+
+			"(Complete's claimed_by=$2 predicate gates a single UPDATE, so any column mutating "+
+			"implies claimed_by would too)", beforeRow.State, afterRow.State)
+	}
 
 	if err := q.Complete(ctx, nodeRunID, guardSupA); err != nil {
 		t.Fatalf("owner Complete: %v", err)
@@ -898,8 +921,8 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 	err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.ParkActiveInTx(ctx, tx, parkInput(guardSupB))
 	})
-	if err == nil {
-		t.Fatalf("wrong-claimant ParkActiveInTx did not error")
+	if !errors.Is(err, persistence.ErrRunClaimantMismatch) {
+		t.Fatalf("wrong-claimant ParkActiveInTx: got err %v, want ErrRunClaimantMismatch", err)
 	}
 	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "ParkActiveInTx")
 	parked, perr := q.GetParkedByNode(ctx, nil, fix.NodeID, fix.MainRunScopeID)
@@ -1024,7 +1047,6 @@ func testClaimantGuardUnguardedMutationCarveOuts(t *testing.T, d persistence.Dat
 			ID:              holderID,
 			ClaimHandleID:   in.ID,
 			HolderNodeRunID: runID,
-			FrameID:         &fix.FrameID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("seed claim holder: %v", err)
@@ -1055,7 +1077,6 @@ func testClaimantGuardUnguardedMutationCarveOuts(t *testing.T, d persistence.Dat
 			ID:              holderID2,
 			ClaimHandleID:   in2.ID,
 			HolderNodeRunID: runID,
-			FrameID:         &fix.FrameID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("seed second claim holder: %v", err)

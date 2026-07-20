@@ -37,6 +37,9 @@ const claimantGuardClause = `holder_supervisor_id = ?`
 
 func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandleInsertInput, tx persistence.Tx) error {
 	now := nowUTC()
+	if !in.ClaimedAtOverride.IsZero() {
+		now = formatTime(in.ClaimedAtOverride)
+	}
 	var rws *string
 	if in.RealizedWriteSemantics != "" {
 		v := in.RealizedWriteSemantics

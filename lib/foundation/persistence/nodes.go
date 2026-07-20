@@ -82,7 +82,6 @@ type NodeTable interface {
 	UpdateRunEvaluatorState(ctx context.Context, runID shared.UUID, es spec.EvaluatorState, tx Tx) error
 	// @concept: error-policy
 	GetRunEvaluatorState(ctx context.Context, runID shared.UUID, tx Tx) (spec.EvaluatorState, error)
-	ClearSettlingSignalType(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
 	ResetFailedTerminalSettlingSignalType(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
 
 	// @concept: run-scope

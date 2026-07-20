@@ -41,7 +41,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		return fmt.Errorf("postgres.ParkActiveInTx: %w", err)
 	}
 	if cmd.RowsAffected() != 1 {
-		return fmt.Errorf("postgres.ParkActiveInTx: row %s not in expected (active, claimed_by=%s) state", in.NodeRunID, in.ExpectedClaimedBy)
+		return fmt.Errorf("postgres.ParkActiveInTx: row %s not in expected (active, claimed_by=%s) state: %w", in.NodeRunID, in.ExpectedClaimedBy, persistence.ErrRunClaimantMismatch)
 	}
 	return nil
 }

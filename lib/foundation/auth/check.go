@@ -58,6 +58,11 @@ func ValidateGrant(grant Grant) error {
 		if err := ValidateActionString(e.Action); err != nil {
 			return fmt.Errorf("entry %d: %w", i, err)
 		}
+		switch e.Mode {
+		case "", ModeExecute, ModeDryRun:
+		default:
+			return fmt.Errorf("entry %d: %w: mode %q must be \"\", %q, or %q", i, ErrInvalidGrant, e.Mode, ModeExecute, ModeDryRun)
+		}
 	}
 	return nil
 }

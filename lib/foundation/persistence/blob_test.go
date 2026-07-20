@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"testing"
 )
@@ -92,6 +93,19 @@ func TestMemoryBackendReadRangeOutOfBounds(t *testing.T) {
 	}
 }
 
+func TestMemoryBackendReadRangeOverflowDoesNotPanic(t *testing.T) {
+	t.Parallel()
+	be := NewMemoryBackend()
+	ctx := context.Background()
+	h, _ := be.Write(ctx, BlobKey{}, []byte("short"))
+	if _, err := be.ReadRange(ctx, h, math.MaxInt64-10, 100); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("ReadRange with offset+length overflow: want io.ErrUnexpectedEOF, got %v", err)
+	}
+	if _, err := be.ReadRange(ctx, h, 3, math.MaxInt64-1); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("ReadRange with offset+length overflow (length side): want io.ErrUnexpectedEOF, got %v", err)
+	}
+}
+
 func TestFilesystemBackend(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -152,6 +166,22 @@ func TestFilesystemBackendReadRangeOutOfBounds(t *testing.T) {
 	}
 	if _, err := be.ReadRange(ctx, h, 0, 100); !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("ReadRange out-of-bounds: want io.ErrUnexpectedEOF, got %v", err)
+	}
+}
+
+func TestFilesystemBackendReadRangeHugeLengthRejectedBeforeAllocating(t *testing.T) {
+	t.Parallel()
+	be, err := NewFilesystemBackend(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFilesystemBackend: %v", err)
+	}
+	ctx := context.Background()
+	h, err := be.Write(ctx, BlobKey{}, []byte("short"))
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if _, err := be.ReadRange(ctx, h, 0, math.MaxInt64/2); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("ReadRange with huge length beyond blob size: want io.ErrUnexpectedEOF, got %v", err)
 	}
 }
 

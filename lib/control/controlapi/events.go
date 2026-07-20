@@ -7,7 +7,6 @@ package controlapi
 import (
 	"context"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -28,12 +27,6 @@ type eventResponseItem struct {
 	OccurredAt time.Time      `json:"occurred_at"`
 }
 
-func sortedOperationalKinds() []string {
-	kinds := events.AllOperationalKinds()
-	sort.Strings(kinds)
-	return kinds
-}
-
 type listEventsResponse struct {
 	Events     []eventResponseItem `json:"events"`
 	NextCursor string              `json:"next_cursor,omitempty"`
@@ -52,7 +45,7 @@ func handleListEvents(deps AppDeps) http.HandlerFunc {
 				badRequest(w, "invalid kind: "+kindParam+
 					" (expected an operational kind from the OperationalKind proto enum"+
 					" or a canonical signal type-path; one of: "+
-					strings.Join(sortedOperationalKinds(), ", ")+
+					strings.Join(events.AllOperationalKinds(), ", ")+
 					", or terminal/*, transient/*, attribute/*/changed)")
 				return
 			}

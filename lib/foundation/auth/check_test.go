@@ -52,4 +52,6 @@ func TestValidateGrant(t *testing.T) {
 	require.Error(t, ValidateGrant(Grant{}), "empty grant should error")
 	require.NoError(t, ValidateGrant(Grant{{Action: "instance:create"}}), "valid grant")
 	require.Error(t, ValidateGrant(Grant{{Action: "instance:*"}, {Action: "nocolon"}}), "bad-action grant should error")
+	require.NoError(t, ValidateGrant(Grant{{Action: "instance:create", Mode: ModeExecute}}), "valid mode grant")
+	require.Error(t, ValidateGrant(Grant{{Action: "instance:create", Mode: Mode("bogus")}}), "out-of-enum mode should error")
 }

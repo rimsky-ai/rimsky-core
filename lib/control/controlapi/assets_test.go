@@ -297,9 +297,9 @@ func TestClaimHandles_DeleteResolvedIfNoActiveHolders_RefusesWithActiveHolder(t 
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
 	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
-		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
-		VALUES ($1, $2, $3, 'active', $4)
-	`, uuid.New(), claimID, holderNodeRunID, frameID)
+		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state)
+		VALUES ($1, $2, $3, 'active')
+	`, uuid.New(), claimID, holderNodeRunID)
 
 	var deleted bool
 	require.NoError(t, ah.harness.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -499,9 +499,9 @@ func TestAssetEndpoints_DeleteDryRunRefusesWithActiveHolder(t *testing.T) {
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
 	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
-		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
-		VALUES ($1, $2, $3, 'active', $4)
-	`, uuid.New(), claimID, holderNodeRunID, frameID)
+		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state)
+		VALUES ($1, $2, $3, 'active')
+	`, uuid.New(), claimID, holderNodeRunID)
 
 	status, out := ah.harness.httpJSON(t, "DELETE",
 		"/v1/instances/"+instID.String()+"/assets/producer.dataset?dry_run=true", nil)
@@ -587,9 +587,9 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
 	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
-		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
-		VALUES ($1, $2, $3, 'active', $4)
-	`, uuid.New(), claimID, holderNodeRunID, frameID)
+		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state)
+		VALUES ($1, $2, $3, 'active')
+	`, uuid.New(), claimID, holderNodeRunID)
 
 	status, out := ah.harness.httpJSON(t, "DELETE", "/v1/instances/"+instID.String()+"/assets/producer.dataset", nil)
 	require.Equal(t, http.StatusConflict, status, out)

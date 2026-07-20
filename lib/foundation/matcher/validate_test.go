@@ -172,6 +172,15 @@ func TestValidate(t *testing.T) {
 		}
 	})
 
+	t.Run("attrs path with empty segment rejected", func(t *testing.T) {
+		for _, path := range []string{"a..b", "a.", ".a", " a", "a.b ", "a. b"} {
+			err := Validate(Matcher{"attrs": map[string]any{path: "v"}}, refs, 0)
+			if err == nil || !errors.Is(err, ErrInvalid) {
+				t.Fatalf("attrs path %q has an empty/whitespace segment and can never match; want rejection, got %v", path, err)
+			}
+		}
+	})
+
 	t.Run("entryIndex prefix shows when >= 0", func(t *testing.T) {
 		err := Validate(Matcher{"bogus": "x"}, refs, 3)
 		if err == nil {

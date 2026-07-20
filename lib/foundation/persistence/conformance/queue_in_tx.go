@@ -162,6 +162,9 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	if owner.Kind != "unclaimed" {
 		t.Fatalf("RemoveForNodeInTx commit did not clear claim (expected kind=unclaimed): kind=%q", owner.Kind)
 	}
+	if found := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID); found != (shared.UUID{}) {
+		t.Fatalf("RemoveForNodeInTx commit left the retired row %s dispatchable via SelectCandidates", found)
+	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
@@ -174,8 +177,13 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("EnqueueInTx after retire: %v", err)
 	}
-	if found := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID); found == (shared.UUID{}) {
+	found := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID)
+	if found == (shared.UUID{}) {
 		t.Fatalf("EnqueueInTx after retire: no fresh in-flight row visible")
+	}
+	if found == nodeRunID {
+		t.Fatalf("EnqueueInTx after retire surfaced the retired node_run_id %s again; "+
+			"the retire-then-re-enqueue must produce a new row, not leave the old one dispatchable", nodeRunID)
 	}
 }
 

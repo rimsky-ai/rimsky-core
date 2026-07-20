@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -73,5 +75,13 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 	}
 	if owner2.Kind != "unclaimed" {
 		t.Fatalf("expected unclaimed, got %s/%s", owner2.Kind, owner2.SupervisorID)
+	}
+
+	missing, err := q.GetClaimedBy(ctx, shared.UUID(uuid.New()))
+	if err != nil {
+		t.Fatalf("GetClaimedBy (missing run): %v", err)
+	}
+	if missing.Kind != "not_found" {
+		t.Fatalf("GetClaimedBy for a nonexistent node_run_id: expected kind=not_found, got %s/%s", missing.Kind, missing.SupervisorID)
 	}
 }

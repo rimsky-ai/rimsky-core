@@ -7,6 +7,7 @@ package conformance
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -28,6 +29,7 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	frames := d.Tables().Frames()
 
+	var firstEndedAt *time.Time
 	frameOp(ctx, t, d, "MarkFrameEnded (initial)", func(tx persistence.Tx) error {
 		transitioned, err := frames.MarkFrameEnded(ctx, fix.FrameID, tx)
 		if err != nil {
@@ -36,6 +38,14 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		if !transitioned {
 			t.Fatalf("MarkFrameEnded did not transition the running frame")
 		}
+		row, err := frames.GetForObservability(ctx, fix.FrameID, tx)
+		if err != nil {
+			return err
+		}
+		if row == nil || row.EndedAt == nil {
+			t.Fatalf("frame row after first MarkFrameEnded = %+v, want ended_at set", row)
+		}
+		firstEndedAt = row.EndedAt
 		transitioned, err = frames.MarkFrameEnded(ctx, fix.FrameID, tx)
 		if err != nil {
 			return err
@@ -52,6 +62,23 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		}
 		if row == nil || row.State != "completed" || row.EndedAt == nil {
 			t.Fatalf("terminal frame row = %+v, want state=completed with ended_at", row)
+		}
+		return nil
+	})
+	frameOp(ctx, t, d, "MarkFrameEnded (cross-transaction re-end)", func(tx persistence.Tx) error {
+		transitioned, err := frames.MarkFrameEnded(ctx, fix.FrameID, tx)
+		if err != nil {
+			return err
+		}
+		if transitioned {
+			t.Fatalf("MarkFrameEnded in a fresh transaction reported transitioned=true on an already-ended frame")
+		}
+		row, err := frames.GetForObservability(ctx, fix.FrameID, tx)
+		if err != nil {
+			return err
+		}
+		if row == nil || row.EndedAt == nil || firstEndedAt == nil || !row.EndedAt.Equal(*firstEndedAt) {
+			t.Fatalf("MarkFrameEnded across a fresh transaction re-stamped ended_at: first=%v second=%v", firstEndedAt, row)
 		}
 		return nil
 	})
@@ -91,6 +118,12 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		if row == nil || row.State != "running" || row.StartedAt == nil {
 			t.Fatalf("running frame row = %+v, want state=running with started_at", row)
 		}
+		if row.RootRunScopeID != scope2 {
+			t.Fatalf("InsertRunningFrame f2 root_run_scope_id = %s, want the supplied scope %s", row.RootRunScopeID, scope2)
+		}
+		if row.TriggeringMessageID != fix.MessageID {
+			t.Fatalf("InsertRunningFrame f2 triggering_message_id = %s, want the supplied message %s", row.TriggeringMessageID, fix.MessageID)
+		}
 		id, err := frames.GetRunningFrameID(ctx, fix.InstanceID, tx)
 		if err != nil {
 			return err
@@ -103,17 +136,49 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 
 	scope3 := shared.UUID(uuid.New())
 	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
-		if err := d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:         scope3,
 			GraphName:  spec.MainGraphName,
 			InstanceID: fix.InstanceID,
-		}); err != nil {
-			return err
-		}
+		})
+	}); err != nil {
+		t.Fatalf("seed scope3: %v", err)
+	}
+	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
 		_, err := frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, scope3, tx)
 		return err
 	}); err == nil {
 		t.Fatalf("InsertRunningFrame while another running frame exists must fail; got nil")
+	}
+
+	fkFix := seedFixtureSet(ctx, t, d)
+	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
+		_, err := frames.MarkFrameEnded(ctx, fkFix.FrameID, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("end fkFix running frame: %v", err)
+	}
+	fkScope := shared.UUID(uuid.New())
+	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
+		return d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         fkScope,
+			GraphName:  spec.MainGraphName,
+			InstanceID: fkFix.InstanceID,
+		})
+	}); err != nil {
+		t.Fatalf("seed fkScope: %v", err)
+	}
+	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
+		_, err := frames.InsertRunningFrame(ctx, fkFix.InstanceID, shared.UUID(uuid.New()), fkScope, tx)
+		return err
+	}); err == nil {
+		t.Fatalf("InsertRunningFrame with a nonexistent triggering message must fail (RESTRICT on rimsky_messages); got nil")
+	}
+	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
+		_, err := frames.InsertRunningFrame(ctx, fkFix.InstanceID, fkFix.MessageID, shared.UUID(uuid.New()), tx)
+		return err
+	}); err == nil {
+		t.Fatalf("InsertRunningFrame with a nonexistent run scope must fail (REFERENCES rimsky_run_scopes); got nil")
 	}
 
 	failedRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, f2)

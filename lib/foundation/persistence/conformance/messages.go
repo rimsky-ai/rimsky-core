@@ -153,6 +153,21 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 	if !inRows(gotSettled, msgA) || !inRows(gotSettled, msgB) {
 		t.Fatalf("delivered msgA and msgB must appear under Pending=false; settled rows = %v", gotSettled)
 	}
+	if !inRows(gotPending, fix.MessageID) || !inRows(gotPending, frameBMsgID) {
+		t.Fatalf("the two frame-triggering messages are never marked delivered and must appear under "+
+			"Pending=true; pending rows = %v", gotPending)
+	}
+	if len(gotPending) != 3 {
+		t.Fatalf("Pending=true = %d rows, want exactly 3 (msgC + the two frame-triggering messages)", len(gotPending))
+	}
+	if len(gotSettled) != 2 {
+		t.Fatalf("Pending=false = %d rows, want exactly 2 (msgA + msgB)", len(gotSettled))
+	}
+	for _, r := range gotPending {
+		if inRows(gotSettled, r.ID) {
+			t.Fatalf("message %s appears in both Pending=true and Pending=false results", r.ID)
+		}
+	}
 
 	var deliveredA []persistence.MessageRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {

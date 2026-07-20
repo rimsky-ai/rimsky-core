@@ -22,12 +22,19 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	store := d.Tables()
 
 	receiverID := uuid.New()
+	receiver2ID := uuid.New()
 	senderAID := uuid.New()
 	senderBID := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: receiverID, InstanceID: fix.InstanceID,
 			NodeType: "receiver", Executor: "test-executor",
+		}, tx); err != nil {
+			return err
+		}
+		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: receiver2ID, InstanceID: fix.InstanceID,
+			NodeType: "receiver-2", Executor: "test-executor",
 		}, tx); err != nil {
 			return err
 		}
@@ -48,9 +55,11 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		t.Fatalf("seed nodes: %v", err)
 	}
 	receiverNodeRunID := seedConformanceRunForNode(ctx, t, d, receiverID, fix.FrameID)
+	receiver2NodeRunID := seedConformanceRunForNode(ctx, t, d, receiver2ID, fix.FrameID)
 	senderARunID := seedConformanceRunForNode(ctx, t, d, senderAID, fix.FrameID)
 	senderBRunID := seedConformanceRunForNode(ctx, t, d, senderBID, fix.FrameID)
 
+	attrFilter, _ := json.Marshal(map[string]string{"name": "result"})
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID: fix.FrameID, ReceiverNodeRunID: receiverNodeRunID,
@@ -66,15 +75,34 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		filter, _ := json.Marshal(map[string]string{"name": "result"})
+		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID: fix.FrameID, ReceiverNodeRunID: receiver2NodeRunID,
+			SenderNodeRunID: senderARunID,
+			TopicKind:       "state",
+		}, tx); err != nil {
+			return err
+		}
 		return store.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID: fix.FrameID, ReceiverNodeRunID: receiverNodeRunID,
 			SenderNodeRunID: senderBRunID,
 			TopicKind:       "attribute",
-			TopicFilter:     filter,
+			TopicFilter:     attrFilter,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("wait_set insert: %v", err)
+	}
+
+	var byReceiver2 []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiver2NodeRunID, tx)
+		byReceiver2 = rows
+		return err
+	}); err != nil {
+		t.Fatalf("ListForReceiver(receiver2): %v", err)
+	}
+	if len(byReceiver2) != 1 || byReceiver2[0].SenderNodeRunID != senderARunID {
+		t.Fatalf("ListForReceiver(receiver2) = %+v, want exactly one row for senderA "+
+			"(the receiver dimension must be part of the wait-set key, not just frame/sender/topic_kind)", byReceiver2)
 	}
 
 	var byReceiver []persistence.WaitSetRow
@@ -102,14 +130,26 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("ListForFrame: %v", err)
 	}
-	if len(byFrame) != 2 {
-		t.Fatalf("ListForFrame: got %d rows want 2", len(byFrame))
+	if len(byFrame) != 3 {
+		t.Fatalf("ListForFrame: got %d rows want 3", len(byFrame))
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderARunID, tx)
 	}); err != nil {
 		t.Fatalf("MarkDrainedBySender: %v", err)
+	}
+	var afterDrainReceiver2 []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiver2NodeRunID, tx)
+		afterDrainReceiver2 = rows
+		return err
+	}); err != nil {
+		t.Fatalf("ListForReceiver(receiver2) after drain A: %v", err)
+	}
+	if len(afterDrainReceiver2) != 1 || afterDrainReceiver2[0].DrainedAt == nil {
+		t.Fatalf("MarkDrainedBySender(senderA) must drain senderA's row for every receiver, not just one: "+
+			"receiver2's row after drain = %+v", afterDrainReceiver2)
 	}
 	var afterDrainA []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -180,8 +220,8 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("ListForFrame after drain: %v", err)
 	}
-	if len(allDrained) != 2 {
-		t.Fatalf("after final MarkDrainedBySender: got %d rows want 2 (rows are retained, not deleted)", len(allDrained))
+	if len(allDrained) != 3 {
+		t.Fatalf("after final MarkDrainedBySender: got %d rows want 3 (rows are retained, not deleted)", len(allDrained))
 	}
 	for _, r := range allDrained {
 		if r.DrainedAt == nil {
@@ -205,6 +245,17 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	}
 	if drainedAttrs[0].TopicKind != "attribute" {
 		t.Fatalf("drained-attr row topic=%q want attribute", drainedAttrs[0].TopicKind)
+	}
+	var gotFilter, wantFilter map[string]string
+	if err := json.Unmarshal(drainedAttrs[0].TopicFilter, &gotFilter); err != nil {
+		t.Fatalf("drained-attr row topic_filter unmarshal: %v (raw=%s)", err, drainedAttrs[0].TopicFilter)
+	}
+	if err := json.Unmarshal(attrFilter, &wantFilter); err != nil {
+		t.Fatalf("attrFilter unmarshal: %v", err)
+	}
+	if len(gotFilter) != len(wantFilter) || gotFilter["name"] != wantFilter["name"] {
+		t.Fatalf("drained-attr row topic_filter=%v want %v (topic_filter must round-trip through write/read)",
+			gotFilter, wantFilter)
 	}
 }
 

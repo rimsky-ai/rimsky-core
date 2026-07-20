@@ -298,9 +298,6 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Filesystem          *struct {
 			Root string `yaml:"root"`
 		} `yaml:"filesystem"`
-		PgLargeObject *struct {
-			Schema string `yaml:"schema"`
-		} `yaml:"pg_largeobject"`
 		Retention *struct {
 			OrphanSweepInterval        time.Duration `yaml:"orphan_sweep_interval"`
 			RetentionAfterUnreferenced time.Duration `yaml:"retention_after_unreferenced"`
@@ -539,9 +536,6 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		}
 		if blob.Filesystem != nil {
 			bcfg.Filesystem.Root = blob.Filesystem.Root
-		}
-		if blob.PgLargeObject != nil {
-			bcfg.PgLargeObject.Schema = blob.PgLargeObject.Schema
 		}
 		if blob.Retention != nil {
 			if blob.Retention.OrphanSweepInterval > 0 {

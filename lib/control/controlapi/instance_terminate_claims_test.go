@@ -89,7 +89,6 @@ func TestTerminateInstance_ForceCancelsHeldAndInFlightClaims(t *testing.T) {
 			ID:              shared.UUID(holderRowID),
 			ClaimHandleID:   shared.UUID(heldHandleID),
 			HolderNodeRunID: heldRunID,
-			FrameID:         &frameID,
 		}, tx)
 	}))
 

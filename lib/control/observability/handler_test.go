@@ -288,6 +288,57 @@ func TestHandler_ListDispatches_Empty(t *testing.T) {
 	}
 }
 
+func TestHandler_ListDispatches_LimitZeroRejected(t *testing.T) {
+	d := newSQLiteDriver(t)
+	disc := observability.NewDiscovery(&nopProber{})
+	deps := observability.Deps{
+		Tables:    d.Tables(),
+		Queue:     d.Queue(),
+		Discovery: disc,
+	}
+	r := newRouter(t, deps)
+	req := httptest.NewRequest("GET", "/v1/observability/node-runs?limit=0", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestHandler_ListInstances_ActiveRejectsUnrecognizedValue(t *testing.T) {
+	d := newSQLiteDriver(t)
+	disc := observability.NewDiscovery(&nopProber{})
+	deps := observability.Deps{
+		Tables:    d.Tables(),
+		Queue:     d.Queue(),
+		Discovery: disc,
+	}
+	r := newRouter(t, deps)
+	req := httptest.NewRequest("GET", "/v1/observability/instances?active=yes", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestHandler_ListInstances_ActiveAcceptsUppercaseTrue(t *testing.T) {
+	d := newSQLiteDriver(t)
+	disc := observability.NewDiscovery(&nopProber{})
+	deps := observability.Deps{
+		Tables:    d.Tables(),
+		Queue:     d.Queue(),
+		Discovery: disc,
+	}
+	r := newRouter(t, deps)
+	req := httptest.NewRequest("GET", "/v1/observability/instances?active=TRUE", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
 func TestHandler_ListFrames_Empty(t *testing.T) {
 	d := newSQLiteDriver(t)
 	disc := observability.NewDiscovery(&nopProber{})

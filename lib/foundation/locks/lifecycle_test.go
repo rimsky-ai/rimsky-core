@@ -6,6 +6,8 @@ package locks
 
 import (
 	"context"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/lifecycle"
@@ -130,6 +132,29 @@ func TestLifecycleRegistrySubscribers(t *testing.T) {
 	if got, _ := r.Get("alpha"); got == nil {
 		t.Fatalf("mutating the map returned by Subscribers() must not affect the registry")
 	}
+}
+
+func TestLifecycleRegistryConcurrentAddAndReadIsRaceFree(t *testing.T) {
+	r := NewLifecycleRegistry()
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			name := "sub-" + strconv.Itoa(i)
+			r.Add(name, mockSubscriber{name: name})
+		}(i)
+	}
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.Get("sub-0")
+			r.Names()
+			r.Subscribers()
+		}()
+	}
+	wg.Wait()
 }
 
 func TestLifecycleRegistryCloseDispatchesToImplementers(t *testing.T) {

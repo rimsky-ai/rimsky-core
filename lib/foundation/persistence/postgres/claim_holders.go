@@ -21,10 +21,10 @@ const claimHolderCols = `id, claim_handle_id, holder_run_id, state, completed_at
 func (s *claimHoldersImpl) Insert(ctx context.Context, in persistence.ClaimHolderInsertInput, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
-		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
-		 VALUES ($1, $2, $3, 'active', $4)
+		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state)
+		 VALUES ($1, $2, $3, 'active')
 		 ON CONFLICT (claim_handle_id, holder_run_id) DO NOTHING`,
-		in.ID, in.ClaimHandleID, in.HolderNodeRunID, in.FrameID,
+		in.ID, in.ClaimHandleID, in.HolderNodeRunID,
 	)
 	if err != nil {
 		return fmt.Errorf("claim_holders.Insert: %w", err)

@@ -161,6 +161,37 @@ func TestEvaluate(t *testing.T) {
 			t.Fatal("bool true should not equal string \"true\"")
 		}
 	})
+
+	t.Run("non-map attrs value causes defensive skip, not fail-open", func(t *testing.T) {
+		cap := shared.NewCapturingLogger()
+		ctx := Context{}
+		if Evaluate(Matcher{"attrs": "not-a-map"}, ctx, cap, 3) {
+			t.Fatal("a non-map attrs value must not match every dispatch")
+		}
+		var saw bool
+		for _, r := range cap.Records() {
+			if r.Level == "warn" && r.Fields["key"] == "attrs" && r.Fields["entry_index"] == 3 {
+				saw = true
+			}
+		}
+		if !saw {
+			t.Fatalf("expected Warn for malformed attrs; got %+v", cap.Records())
+		}
+	})
+
+	t.Run("non-string node_type value causes defensive skip, not empty-string coercion", func(t *testing.T) {
+		ctx := Context{NodeType: ""}
+		if Evaluate(Matcher{"node_type": 42}, ctx, silent, 0) {
+			t.Fatal("a non-string node_type must not coerce to \"\" and match an empty NodeType")
+		}
+	})
+
+	t.Run("non-string child_key value causes defensive skip, not non-fan-out-sentinel coercion", func(t *testing.T) {
+		ctx := Context{ChildKey: ""}
+		if Evaluate(Matcher{"child_key": 42}, ctx, silent, 0) {
+			t.Fatal("a non-string child_key must not coerce to \"\" and match the non-fan-out sentinel")
+		}
+	})
 }
 
 func TestWalkAttrPath(t *testing.T) {
@@ -222,6 +253,11 @@ func TestPrimitiveEqual(t *testing.T) {
 		{"non-primitive b", "x", map[string]any{}, false},
 		{"equal maps rejected as non-primitive", map[string]any{"x": 1}, map[string]any{"x": 1}, false},
 		{"equal slices rejected as non-primitive", []any{1, 2}, []any{1, 2}, false},
+		{"identical out-of-float64-range json.Number compares equal by text", json.Number("1e999"), json.Number("1e999"), true},
+		{"distinct out-of-float64-range json.Number compares unequal", json.Number("1e999"), json.Number("2e999"), false},
+		{"int64 above 2^53 does not spuriously equal a rounded float64", int64(1<<53 + 1), float64(1 << 53), false},
+		{"float64 above 2^53 does not spuriously equal a distinct int64", float64(1 << 53), int64(1<<53 + 1), false},
+		{"int64 above 2^53 equals its own exact float64 representation", int64(1 << 53), float64(1 << 53), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

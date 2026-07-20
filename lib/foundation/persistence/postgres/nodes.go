@@ -383,16 +383,6 @@ func (s *nodesImpl) GetRunEvaluatorState(ctx context.Context, runID foundationsh
 	return es, nil
 }
 
-func (s *nodesImpl) ClearSettlingSignalType(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
-	ex := s.q(tx)
-	_, err := ex.Exec(ctx,
-		`UPDATE rimsky_node_runs SET settling_signal_type = NULL
-		  WHERE node_id = $1
-		    AND run_scope_id = $2
-		    AND state IN ('pending','stale','running','held','parked')`, id, runScopeID)
-	return err
-}
-
 func (s *nodesImpl) ResetFailedTerminalSettlingSignalType(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,

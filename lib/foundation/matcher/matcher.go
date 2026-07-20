@@ -8,6 +8,7 @@ package matcher
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -48,33 +49,56 @@ func Evaluate(m Matcher, ctx Context, logger shared.Logger, entryIndex int) bool
 	if len(m) == 0 {
 		return true
 	}
+	malformed := func(key string) bool {
+		if logger != nil {
+			logger.Warn("matcher.Evaluate: matcher key has the wrong type; skipping entry",
+				"entry_index", entryIndex,
+				"key", key)
+		}
+		return false
+	}
 	if v, ok := m["node_type"]; ok {
-		s, _ := v.(string)
+		s, isStr := v.(string)
+		if !isStr {
+			return malformed("node_type")
+		}
 		if s != ctx.NodeType {
 			return false
 		}
 	}
 	if v, ok := m["executor"]; ok {
-		s, _ := v.(string)
+		s, isStr := v.(string)
+		if !isStr {
+			return malformed("executor")
+		}
 		if s != ctx.Executor {
 			return false
 		}
 	}
 	if v, ok := m["graph"]; ok {
-		s, _ := v.(string)
+		s, isStr := v.(string)
+		if !isStr {
+			return malformed("graph")
+		}
 		if s != ctx.Graph {
 			return false
 		}
 	}
 	if v, ok := m["child_key"]; ok {
-		s, _ := v.(string)
+		s, isStr := v.(string)
+		if !isStr {
+			return malformed("child_key")
+		}
 		if s != ctx.ChildKey {
 			return false
 		}
 	}
 	if v, ok := m["attrs"]; ok {
 		// @concept: inertness
-		attrsMatcher, _ := v.(map[string]any)
+		attrsMatcher, isMap := v.(map[string]any)
+		if !isMap {
+			return malformed("attrs")
+		}
 		for path, want := range attrsMatcher {
 			got, found := walkAttrPath(ctx.AttributeBag, path)
 			if !found {
@@ -106,13 +130,23 @@ func walkAttrPath(bag map[string]any, path string) (any, bool) {
 }
 
 func primitiveEqual(a, b any) bool {
-	if n, ok := a.(json.Number); ok {
-		if f, err := n.Float64(); err == nil {
+	an, aIsNumber := a.(json.Number)
+	bn, bIsNumber := b.(json.Number)
+	if aIsNumber && bIsNumber {
+		af, aErr := an.Float64()
+		bf, bErr := bn.Float64()
+		if aErr == nil && bErr == nil {
+			return af == bf
+		}
+		return an.String() == bn.String()
+	}
+	if aIsNumber {
+		if f, err := an.Float64(); err == nil {
 			a = f
 		}
 	}
-	if n, ok := b.(json.Number); ok {
-		if f, err := n.Float64(); err == nil {
+	if bIsNumber {
+		if f, err := bn.Float64(); err == nil {
 			b = f
 		}
 	}
@@ -128,15 +162,15 @@ func primitiveEqual(a, b any) bool {
 		case float64:
 			return av == bv
 		case int:
-			return av == float64(bv)
+			return floatEqualsInt64(av, int64(bv))
 		case int64:
-			return av == float64(bv)
+			return floatEqualsInt64(av, bv)
 		}
 		return false
 	case int:
 		switch bv := b.(type) {
 		case float64:
-			return float64(av) == bv
+			return floatEqualsInt64(bv, int64(av))
 		case int:
 			return av == bv
 		case int64:
@@ -146,7 +180,7 @@ func primitiveEqual(a, b any) bool {
 	case int64:
 		switch bv := b.(type) {
 		case float64:
-			return float64(av) == bv
+			return floatEqualsInt64(bv, av)
 		case int:
 			return av == int64(bv)
 		case int64:
@@ -155,4 +189,11 @@ func primitiveEqual(a, b any) bool {
 		return false
 	}
 	return false
+}
+
+func floatEqualsInt64(f float64, i int64) bool {
+	if f != math.Trunc(f) || f < math.MinInt64 || f > math.MaxInt64 {
+		return false
+	}
+	return int64(f) == i
 }

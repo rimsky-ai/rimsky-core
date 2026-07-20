@@ -89,6 +89,36 @@ func testRunScopeCreate_MainAndChild(t *testing.T, d persistence.Database) {
 	if got.ParentNodeRunID == nil || *got.ParentNodeRunID != parentNodeRunID {
 		t.Fatalf("child scope: parent_run_id = %v, want %v", got.ParentNodeRunID, parentNodeRunID)
 	}
+
+	onlyScopeID := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:               onlyScopeID,
+			ParentRunScopeID: &mainScopeID,
+			ParentNodeRunID:  nil,
+			GraphName:        "subgraph",
+			InstanceID:       fix.InstanceID,
+			PartitionKey:     "part-only-scope",
+		})
+	}); err == nil {
+		t.Fatalf("Create with ParentRunScopeID set and ParentNodeRunID nil must be rejected " +
+			"(the two parent pointers must stand or fall together); got nil error")
+	}
+
+	onlyRunID := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:               onlyRunID,
+			ParentRunScopeID: nil,
+			ParentNodeRunID:  &parentNodeRunID,
+			GraphName:        "subgraph",
+			InstanceID:       fix.InstanceID,
+			PartitionKey:     "part-only-run",
+		})
+	}); err == nil {
+		t.Fatalf("Create with ParentNodeRunID set and ParentRunScopeID nil must be rejected " +
+			"(the two parent pointers must stand or fall together); got nil error")
+	}
 }
 
 func testRunScopeClose_StampsClosedAt(t *testing.T, d persistence.Database) {
@@ -219,6 +249,31 @@ func testRunScopeFanoutPartitionUniqueness(t *testing.T, d persistence.Database)
 	})
 	if err == nil {
 		t.Fatalf("Create second fanout_partition with duplicate (parent_run_id, partition_key): expected unique-violation error, got nil")
+	}
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, gErr := store.RunScopes().GetByID(ctx, tx, secondID)
+		if gErr != nil {
+			return gErr
+		}
+		if r != nil {
+			t.Fatalf("Create second fanout_partition rejected but the row is visible: %+v", r)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("GetByID(secondID): %v", err)
+	}
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, gErr := store.RunScopes().GetByID(ctx, tx, firstID)
+		if gErr != nil {
+			return gErr
+		}
+		if r == nil {
+			t.Fatalf("first fanout_partition row vanished after the rejected duplicate Create")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("GetByID(firstID): %v", err)
 	}
 }
 

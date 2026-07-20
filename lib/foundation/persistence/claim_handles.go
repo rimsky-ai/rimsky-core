@@ -66,6 +66,7 @@ type ClaimHandleInsertInput struct {
 	HolderSupervisorID     string
 	HolderNodeID           shared.UUID
 	ExpiresAt              time.Time
+	ClaimedAtOverride      time.Time
 	FrameID                *shared.UUID
 	RealizedWriteSemantics string
 	IsHeld                 bool

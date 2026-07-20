@@ -92,6 +92,25 @@ type runRowSnapshot struct {
 	LastProgressAt     *time.Time
 }
 
+func snapshotsEqual(a, b runRowSnapshot) bool {
+	if a.State != b.State || a.SettlingSignalType != b.SettlingSignalType || a.ClaimedBy != b.ClaimedBy {
+		return false
+	}
+	if (a.LastProgressAt == nil) != (b.LastProgressAt == nil) {
+		return false
+	}
+	return a.LastProgressAt == nil || a.LastProgressAt.Equal(*b.LastProgressAt)
+}
+
+func isLiveDispatchState(s cascade.NodeState) bool {
+	switch s {
+	case cascade.NodeStatePending, cascade.NodeStateStale, cascade.NodeStateRunning,
+		cascade.NodeStateHeld, cascade.NodeStateParked:
+		return true
+	}
+	return false
+}
+
 func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runID shared.UUID) runRowSnapshot {
 	t.Helper()
 	store := d.Tables()
@@ -102,11 +121,12 @@ func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runI
 		if err != nil {
 			return err
 		}
-		if r != nil {
-			out.State = r.State
-			if r.SettlingSignalType != nil {
-				out.SettlingSignalType = *r.SettlingSignalType
-			}
+		if r == nil {
+			t.Fatalf("snapshotRun.NodeRunTree: run %s not found", runID)
+		}
+		out.State = r.State
+		if r.SettlingSignalType != nil {
+			out.SettlingSignalType = *r.SettlingSignalType
 		}
 		return nil
 	}); err != nil {
@@ -116,14 +136,18 @@ func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runI
 	if err != nil {
 		t.Fatalf("snapshotRun.Queue.GetByID: %v", err)
 	}
-	if row != nil {
-		if row.ClaimedBy != nil {
-			out.ClaimedBy = *row.ClaimedBy
-		}
-		if row.LastProgressAt != nil {
-			t := *row.LastProgressAt
-			out.LastProgressAt = &t
-		}
+	if row == nil && isLiveDispatchState(out.State) {
+		t.Fatalf("snapshotRun.Queue.GetByID: run %s in live state %q not found in the dispatch queue", runID, out.State)
+	}
+	if row == nil {
+		return out
+	}
+	if row.ClaimedBy != nil {
+		out.ClaimedBy = *row.ClaimedBy
+	}
+	if row.LastProgressAt != nil {
+		t := *row.LastProgressAt
+		out.LastProgressAt = &t
 	}
 	return out
 }
@@ -133,6 +157,10 @@ func testRunStateWritesIsolated_UpdateState(t *testing.T, d persistence.Database
 	f := seedTwoScopeRuns(ctx, t, d)
 	store := d.Tables()
 
+	beforeA := snapshotRun(ctx, t, d, f.runA)
+	if beforeA.State == cascade.NodeStateRunning {
+		t.Fatalf("UpdateState precondition failed: A.State already %q before the call", beforeA.State)
+	}
 	before := snapshotRun(ctx, t, d, f.runB)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().UpdateState(ctx, f.runA,
@@ -140,9 +168,13 @@ func testRunStateWritesIsolated_UpdateState(t *testing.T, d persistence.Database
 	}); err != nil {
 		t.Fatalf("UpdateState(A): %v", err)
 	}
+	afterA := snapshotRun(ctx, t, d, f.runA)
+	if afterA.State != cascade.NodeStateRunning {
+		t.Fatalf("UpdateState(A) did not land: A.State=%q, want %q", afterA.State, cascade.NodeStateRunning)
+	}
 	after := snapshotRun(ctx, t, d, f.runB)
-	if before.State != after.State {
-		t.Fatalf("UpdateState leaked across scope: B.State before=%q, after=%q", before.State, after.State)
+	if !snapshotsEqual(before, after) {
+		t.Fatalf("UpdateState leaked across scope: B snapshot before=%+v, after=%+v", before, after)
 	}
 }
 
@@ -153,54 +185,48 @@ func testRunStateWritesIsolated_BumpLastProgressAt(t *testing.T, d persistence.D
 	q := d.Queue()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if _, err := q.ClaimDispatchRow(ctx, tx, f.runA, "sup-A"); err != nil {
+		okA, err := q.ClaimDispatchRow(ctx, tx, f.runA, "sup-A")
+		if err != nil {
 			return err
 		}
-		_, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
-		return err
+		if !okA {
+			t.Fatalf("seed claims: ClaimDispatchRow(A) returned ok=false")
+		}
+		okB, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
+		if err != nil {
+			return err
+		}
+		if !okB {
+			t.Fatalf("seed claims: ClaimDispatchRow(B) returned ok=false")
+		}
+		return nil
 	}); err != nil {
 		t.Fatalf("seed claims: %v", err)
 	}
 
+	bumpedTo := time.Now().Add(1 * time.Hour)
 	before := snapshotRun(ctx, t, d, f.runB)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		_, berr := q.BumpLastProgressAt(ctx, tx, f.runA, time.Now().Add(1*time.Hour))
-		return berr
+		ok, berr := q.BumpLastProgressAt(ctx, tx, f.runA, bumpedTo)
+		if berr != nil {
+			return berr
+		}
+		if !ok {
+			t.Fatalf("BumpLastProgressAt(A) returned ok=false")
+		}
+		return nil
 	}); err != nil {
 		t.Fatalf("BumpLastProgressAt(A): %v", err)
+	}
+	afterA := snapshotRun(ctx, t, d, f.runA)
+	if afterA.LastProgressAt == nil || !afterA.LastProgressAt.Equal(bumpedTo) {
+		t.Fatalf("BumpLastProgressAt(A) did not land: A.LastProgressAt=%v, want %v", afterA.LastProgressAt, bumpedTo)
 	}
 	after := snapshotRun(ctx, t, d, f.runB)
 	if (before.LastProgressAt == nil) != (after.LastProgressAt == nil) ||
 		(before.LastProgressAt != nil && !before.LastProgressAt.Equal(*after.LastProgressAt)) {
 		t.Fatalf("BumpLastProgressAt leaked across scope: B before=%v after=%v",
 			before.LastProgressAt, after.LastProgressAt)
-	}
-}
-
-func testRunStateWritesIsolated_ClearSettlingSignalType(t *testing.T, d persistence.Database) {
-	ctx := context.Background()
-	f := seedTwoScopeRuns(ctx, t, d)
-	store := d.Tables()
-
-	successSig := "terminal/success"
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFresh, &successSig, false); err != nil {
-			return err
-		}
-		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFresh, &successSig, false)
-	}); err != nil {
-		t.Fatalf("seed settling_signal_type: %v", err)
-	}
-	before := snapshotRun(ctx, t, d, f.runB)
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().ClearSettlingSignalType(ctx, f.fix.NodeID, f.scopeA, tx)
-	}); err != nil {
-		t.Fatalf("ClearSettlingSignalType(A): %v", err)
-	}
-	after := snapshotRun(ctx, t, d, f.runB)
-	if before.SettlingSignalType != after.SettlingSignalType {
-		t.Fatalf("ClearSettlingSignalType leaked across scope: B.SettlingSignalType before=%q after=%q",
-			before.SettlingSignalType, after.SettlingSignalType)
 	}
 }
 
@@ -248,11 +274,21 @@ func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Da
 	q := d.Queue()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if _, err := q.ClaimDispatchRow(ctx, tx, f.runA, "sup-A"); err != nil {
+		okA, err := q.ClaimDispatchRow(ctx, tx, f.runA, "sup-A")
+		if err != nil {
 			return err
 		}
-		_, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
-		return err
+		if !okA {
+			t.Fatalf("seed supervisors: ClaimDispatchRow(A) returned ok=false")
+		}
+		okB, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
+		if err != nil {
+			return err
+		}
+		if !okB {
+			t.Fatalf("seed supervisors: ClaimDispatchRow(B) returned ok=false")
+		}
+		return nil
 	}); err != nil {
 		t.Fatalf("seed supervisors: %v", err)
 	}
@@ -261,6 +297,15 @@ func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Da
 		return q.RemoveForNodeInTx(ctx, f.fix.NodeID, f.scopeA, "sup-A", tx)
 	}); err != nil {
 		t.Fatalf("RemoveForNodeInTx(A): %v", err)
+	}
+
+	ownerA, err := q.GetClaimedBy(ctx, f.runA)
+	if err != nil {
+		t.Fatalf("GetClaimedBy(A): %v", err)
+	}
+	if ownerA.Kind != "unclaimed" {
+		t.Fatalf("RemoveForNodeInTx(A) did not clear scope A's claim (a no-op node_id/run_scope_id filter "+
+			"would silently match zero rows): ownership=%s/%s", ownerA.Kind, ownerA.SupervisorID)
 	}
 
 	var idB shared.UUID
@@ -418,5 +463,21 @@ func testRunStateWritesIsolated_NodeAttributesGetLatestByNode(t *testing.T, d pe
 	}
 	if v, _ := rowA.Data["which"].(string); v != "A" {
 		t.Fatalf("GetLatestByNode(A) leaked across scope: data.which=%v, want A", rowA.Data["which"])
+	}
+
+	var rowB *persistence.NodeAttributesRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.NodeAttributes().GetLatestByNode(ctx, f.fix.NodeID, f.scopeB, tx)
+		rowB = r
+		return err
+	}); err != nil {
+		t.Fatalf("GetLatestByNode(B): %v", err)
+	}
+	if rowB == nil {
+		t.Fatalf("GetLatestByNode(B): nil")
+	}
+	if v, _ := rowB.Data["which"].(string); v != "B" {
+		t.Fatalf("GetLatestByNode(B) leaked across scope (or returned the first-inserted row instead of "+
+			"the scope-matched one): data.which=%v, want B", rowB.Data["which"])
 	}
 }

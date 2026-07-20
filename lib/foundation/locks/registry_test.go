@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -232,6 +234,8 @@ func TestRegistryGetWithContextEmptyProxyName(t *testing.T) {
 }
 
 func TestRegistryGetWithContextLookupError(t *testing.T) {
+	buf := captureDefaultLog(t)
+
 	r := NewRegistry(
 		WithLookupInstanceBindings(func(_ context.Context, _ string) (map[string]json.RawMessage, bool, error) {
 			return nil, false, errors.New("boom")
@@ -243,6 +247,10 @@ func TestRegistryGetWithContextLookupError(t *testing.T) {
 	got, ok := r.GetWithContext(context.Background(), "missing", "instance-1")
 	if ok || got != nil {
 		t.Fatalf("GetWithContext with lookup error = (%v, %v), want (nil, false)", got, ok)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "instance-bindings lookup failed") || !strings.Contains(logged, "boom") {
+		t.Fatalf("expected a lookup-failure warning naming the underlying error, got: %q", logged)
 	}
 }
 
@@ -356,6 +364,29 @@ func TestRegistryCloseDispatchesToImplementers(t *testing.T) {
 	if closeCalls != 1 {
 		t.Fatalf("Close() dispatched %d times to the closer implementer, want 1", closeCalls)
 	}
+}
+
+func TestRegistryConcurrentAddAndReadIsRaceFree(t *testing.T) {
+	r := NewRegistry()
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			name := "producer-" + strconv.Itoa(i)
+			r.Add(name, mockProducer{name: name})
+		}(i)
+	}
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.Get("producer-0")
+			r.Names()
+			r.Producers()
+		}()
+	}
+	wg.Wait()
 }
 
 func TestNamedLocksConfigGet(t *testing.T) {

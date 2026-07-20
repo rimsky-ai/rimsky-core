@@ -57,7 +57,7 @@ func NewMetricsRegistry() *MetricsRegistry {
 			[]string{"lock_name", "intent"},
 		),
 		NodesByState: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{Name: "rimsky_nodes_by_state", Help: "Count of nodes in each state."},
+			prometheus.GaugeOpts{Name: "rimsky_nodes_by_state", Help: "Count of rimsky_node_runs rows in each state (not distinct nodes)."},
 			[]string{"state"},
 		),
 		ParkedNodes: prometheus.NewGauge(
@@ -67,7 +67,7 @@ func NewMetricsRegistry() *MetricsRegistry {
 			prometheus.GaugeOpts{Name: "rimsky_held_frames", Help: "Count of frames with at least one parked node."},
 		),
 		NodeRunsPending: prometheus.NewGauge(
-			prometheus.GaugeOpts{Name: "rimsky_node_runs_pending", Help: "Count of unclaimed rimsky_node_runs rows (state='stale' and claimed_by IS NULL) awaiting dispatch."},
+			prometheus.GaugeOpts{Name: "rimsky_node_runs_pending", Help: "Count of unclaimed rimsky_node_runs rows (state IN ('pending','stale','running','held','parked') and claimed_by IS NULL)."},
 		),
 		DispatchLatencySeconds: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{

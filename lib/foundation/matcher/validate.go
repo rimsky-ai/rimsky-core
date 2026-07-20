@@ -99,6 +99,11 @@ func Validate(m Matcher, refs ValidationRefs, entryIndex int) error {
 				if strings.TrimSpace(path) == "" {
 					return wrap("matcher.attrs key must be a non-empty dotted path")
 				}
+				for _, segment := range strings.Split(path, ".") {
+					if strings.TrimSpace(segment) != segment || segment == "" {
+						return wrap("matcher.attrs key %q has an empty or whitespace-padded segment; it can never match", path)
+					}
+				}
 			}
 		}
 	}

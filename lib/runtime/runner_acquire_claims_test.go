@@ -152,3 +152,47 @@ func TestAcquireClaim_EmptyOpenClaimScopeFallsBackToSeededSelector(t *testing.T)
 			row.ClaimScopeData, wantScope)
 	}
 }
+
+// @concept: write-semantics
+func TestEvaluateClaimScopeConflict_HolderWithUnrealizedWriteSemanticsBailsInsteadOfPanicking(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fx := openSelfExclusionFixture(ctx, t)
+	tables := fx.tables
+
+	producer := "in-flight-open-store"
+	const supervisorID = "sup-A"
+	holderRunID := seedSelfExclusionRun(ctx, t, fx)
+	candidateRunID := seedSelfExclusionRun(ctx, t, fx)
+
+	intent := "rw"
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return tables.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID:                 shared.UUID(uuid.New()),
+			NodeRunID:          &holderRunID,
+			LockKind:           persistence.LockKindScope,
+			ProducerName:       &producer,
+			ClaimScopeData:     []byte(`"shared-scope"`),
+			Intent:             &intent,
+			HolderSupervisorID: supervisorID,
+			HolderNodeID:       fx.nodeID,
+			ExpiresAt:          time.Now().Add(time.Hour),
+		}, tx)
+	}); err != nil {
+		t.Fatalf("insert in-flight holder claim: %v", err)
+	}
+
+	fake := storetest.NewFake(producer, claimproducer.Capabilities{})
+	args := RunArgs{Persist: tables, ClaimHandles: tables.ClaimHandles(), SupervisorID: supervisorID}
+	spec := claimproducer.ClaimSpec{ProducerName: producer, Selector: "shared-scope", Intent: "rw"}
+	cand := persistence.Candidate{NodeID: fx.nodeID, NodeRunID: candidateRunID}
+
+	err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, _, err := evaluateClaimScopeConflict(ctx, args, tx, fake, spec, cand)
+		return err
+	})
+	if err == nil {
+		t.Fatal("evaluateClaimScopeConflict against a holder whose write-semantics is not yet realized " +
+			"should bail with an error, not silently coexist or panic")
+	}
+}
