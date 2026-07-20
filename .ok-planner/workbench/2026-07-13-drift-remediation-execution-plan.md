@@ -233,3 +233,49 @@ corpus, tests, and code agree with the intent ledger; every restored behavior
 guard-tested; the dossiers hold the durable rulings. The security ledger is
 worked as its own track. This document archives to `.ok-planner/history/` when
 the effort completes.
+
+## Multi-agent orchestration discipline (ratified 2026-07-20, effective steps 4–6)
+
+Adopted after the step-3 gate repeatedly burned time on stale-image phantom
+regressions and torn concurrent builds. This is process guidance for running
+the remaining waves; the supporting harness changes are scheduled work.
+
+**Worktree waves, rebased linear.**
+1. Lead stays on the integration branch. Each packet agent gets
+   `git worktree add ../wt/<packet> -b wave/<packet>` off the current tip;
+   packet briefs stay area-partitioned as before.
+2. Agents edit and verify with unit/package tests in their own quiet tree
+   (host `go test` — always fresh by construction). Writers do NOT run
+   docker-stack suites mid-wave.
+3. A finished packet is a single commit on its packet branch. Lead verifies,
+   rebases onto the current tip, fast-forwards the integration branch, and
+   removes the worktree. Finish order = linear history; one clean commit per
+   packet. Cross-area fix-every-bug edits surface as small, attributable
+   rebase conflicts at integration (resolved by lead or bounced back), never
+   as mid-air compile breakage in sibling agents.
+4. Full gate (lint, all modules, images, docker-stack suites) runs once per
+   wave on the quiet integration tip.
+
+**Image freshness + isolation (target mechanism; harness work scheduled).**
+- Images are built only from a quiet tree; the tag is derived from the source
+  content (git tree-object hash of the build inputs), so an image either
+  matches the tree that asks for it or does not exist — staleness is
+  unrepresentable, rebuilds on an unchanged tree are cache no-ops, and
+  identical trees share one image.
+- The docker-suite harness resolves image tags from the environment/current
+  tree hash — never a bare `:latest`; an unset/missing tag fails loudly
+  naming the build command.
+- Each concurrent stack runs under its own compose project name (session id)
+  for network/container/volume isolation.
+- Docker-stack test binaries are built into a test-runner service image from
+  the same tree snapshot as the images under test (same make invocation), and
+  run inside the stack's network — test and subject cannot diverge, and
+  host-port tunnel plumbing disappears. No docker-in-docker: the host-side
+  agent orchestrates its own stack; the test container orchestrates nothing.
+- Rimsky-built images carry a project label; a reap target prunes labeled
+  images beyond a retention window plus dangling layers, so unique tags do
+  not accumulate.
+
+Implementation of the mechanism block (Makefile tag derivation, harness tag
+resolution, test-runner service, reap target) is scheduled as a step-6
+close-out packet; the worktree wave flow applies immediately.
