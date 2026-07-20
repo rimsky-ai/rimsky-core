@@ -189,3 +189,62 @@ func TestResolveEndpoint_NothingConfigured(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestResolveEndpoint_RimskyContextEnvNotFound(t *testing.T) {
+	t.Setenv("RIMSKY_CONTEXT", "ghost")
+	cfg := writeConfig(t, &Config{
+		CurrentContext: "dev",
+		Contexts:       map[string]Context{"dev": {Endpoint: "http://dev"}},
+	})
+	_, err := ResolveEndpoint("", "", cfg, "")
+	if err == nil {
+		t.Fatal("want error when RIMSKY_CONTEXT names an undefined context")
+	}
+	if !strings.Contains(err.Error(), `RIMSKY_CONTEXT="ghost" not found`) {
+		t.Errorf("error %v does not name the missing RIMSKY_CONTEXT value", err)
+	}
+}
+
+func TestResolveEndpoint_RimskyContextEnvHasNoEndpoint(t *testing.T) {
+	t.Setenv("RIMSKY_CONTEXT", "dev")
+	cfg := writeConfig(t, &Config{
+		Contexts: map[string]Context{"dev": {}},
+	})
+	_, err := ResolveEndpoint("", "", cfg, "")
+	if err == nil {
+		t.Fatal("want error when the RIMSKY_CONTEXT-named context has no endpoint")
+	}
+	if !strings.Contains(err.Error(), `context "dev" has no endpoint set`) {
+		t.Errorf("error %v does not mention the missing endpoint", err)
+	}
+}
+
+func TestResolveEndpoint_CurrentContextNotDefined(t *testing.T) {
+	t.Setenv("RIMSKY_CONTEXT", "")
+	cfg := writeConfig(t, &Config{
+		CurrentContext: "ghost",
+		Contexts:       map[string]Context{"dev": {Endpoint: "http://dev"}},
+	})
+	_, err := ResolveEndpoint("", "", cfg, "")
+	if err == nil {
+		t.Fatal("want error when current_context names an undefined context")
+	}
+	if !strings.Contains(err.Error(), `current_context "ghost" not defined`) {
+		t.Errorf("error %v does not name the undefined current_context", err)
+	}
+}
+
+func TestResolveEndpoint_CurrentContextHasNoEndpoint(t *testing.T) {
+	t.Setenv("RIMSKY_CONTEXT", "")
+	cfg := writeConfig(t, &Config{
+		CurrentContext: "dev",
+		Contexts:       map[string]Context{"dev": {}},
+	})
+	_, err := ResolveEndpoint("", "", cfg, "")
+	if err == nil {
+		t.Fatal("want error when current_context's endpoint is empty")
+	}
+	if !strings.Contains(err.Error(), `context "dev" has no endpoint set`) {
+		t.Errorf("error %v does not mention the missing endpoint", err)
+	}
+}

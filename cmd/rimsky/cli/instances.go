@@ -255,11 +255,8 @@ type InstanceStatus struct {
 	BreakpointHits []map[string]any `json:"breakpoint_hits"`
 }
 
-func gatherInstanceStatus(ctx context.Context, c *Client, uuid string) (*InstanceStatus, error) {
-	inst, err := c.GetInstance(ctx, uuid)
-	if err != nil {
-		return nil, err
-	}
+func gatherInstanceStatus(ctx context.Context, c *Client, inst *Instance) (*InstanceStatus, error) {
+	uuid := inst.UUID()
 	nodesResp, err := c.ListInstanceNodes(ctx, uuid)
 	if err != nil {
 		return nil, err
@@ -293,16 +290,12 @@ func RunInstanceStatus(ctx context.Context, args []string) int {
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 
-	id := rest[0]
-	if !LooksLikeUUID(id) {
-		inst, err := c.GetInstance(ctx, id)
-		if err != nil {
-			return reportError(err)
-		}
-		id = inst.UUID()
+	inst, err := c.GetInstance(ctx, rest[0])
+	if err != nil {
+		return reportError(err)
 	}
 
-	status, err := gatherInstanceStatus(ctx, c, id)
+	status, err := gatherInstanceStatus(ctx, c, inst)
 	if err != nil {
 		return reportError(err)
 	}

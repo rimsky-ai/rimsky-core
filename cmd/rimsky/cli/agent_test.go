@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +17,57 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
+
+func writeAgentFixtureBinary(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return path
+}
+
+func TestDaemonizeAgent_ReapsCrashedChildAndLogsStderr(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixtures unavailable on windows")
+	}
+	dir := t.TempDir()
+	fixture := writeAgentFixtureBinary(t, dir, "fake-agent",
+		`echo "boom: proxy unreachable" >&2; exit 7`)
+
+	saved := agentSelfExecutable
+	agentSelfExecutable = func() (string, error) { return fixture, nil }
+	t.Cleanup(func() { agentSelfExecutable = saved })
+
+	stateDir := filepath.Join(dir, "state")
+	statusPath := filepath.Join(stateDir, "agent.status")
+
+	var got int
+	out := captureStderr(t, func() {
+		got = daemonizeAgent(nil, stateDir, statusPath, "proxy.example:9000")
+	})
+	if got != 1 {
+		t.Fatalf("daemonizeAgent = %d, want 1 (child crashed during startup)", got)
+	}
+
+	logPath := filepath.Join(stateDir, "agent.log")
+	if !strings.Contains(out, logPath) {
+		t.Fatalf("failure message should point at %q, got: %s", logPath, out)
+	}
+
+	logBody, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read agent.log: %v", err)
+	}
+	if !strings.Contains(string(logBody), "boom: proxy unreachable") {
+		t.Fatalf("agent.log should capture the daemon child's stderr, got: %q", string(logBody))
+	}
+
+	pidPath := filepath.Join(stateDir, "agent.pid")
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("pid file should be removed after a crashed startup, stat err = %v", err)
+	}
+}
 
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
@@ -40,6 +92,33 @@ func captureStdout(t *testing.T, fn func()) string {
 	}()
 	fn()
 	os.Stdout = saved
+	_ = w.Close()
+	return <-out
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stderr
+	os.Stderr = w
+	out := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 0, 64*1024)
+		tmp := make([]byte, 4096)
+		for {
+			n, rerr := r.Read(tmp)
+			buf = append(buf, tmp[:n]...)
+			if rerr != nil {
+				break
+			}
+		}
+		out <- string(buf)
+	}()
+	fn()
+	os.Stderr = saved
 	_ = w.Close()
 	return <-out
 }

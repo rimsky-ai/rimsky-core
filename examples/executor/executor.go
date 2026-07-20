@@ -59,9 +59,13 @@ func (e *Executor) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1
 
 	case "emit_event":
 		// @concept: terminal-tag
+		summary := "minimal example: tagged success"
+		if count := intAttr(req, "count"); count > 0 {
+			summary = fmt.Sprintf("minimal example: tagged success (count=%d)", count)
+		}
 		return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
 			Changed:       false,
-			ChangeSummary: "minimal example: tagged success",
+			ChangeSummary: summary,
 			Tags:          []string{DeclaredTagName},
 		}}}, nil
 
@@ -145,6 +149,19 @@ func stringAttr(req *genv1.ExecuteRequest, name string) string {
 		return ""
 	}
 	return v.GetStringValue()
+}
+
+func intAttr(req *genv1.ExecuteRequest, name string) int {
+	attrs := req.GetAttributes()
+	if attrs == nil {
+		return 0
+	}
+	fields := attrs.GetFields()
+	v, ok := fields[name]
+	if !ok || v == nil {
+		return 0
+	}
+	return int(v.GetNumberValue())
 }
 
 func (e *Executor) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {

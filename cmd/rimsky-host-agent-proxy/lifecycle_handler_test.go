@@ -85,6 +85,62 @@ func TestOnRunScopeTerminalReapsSpawns(t *testing.T) {
 	}
 }
 
+func TestOnRunScopeTerminalReapsConcurrently(t *testing.T) {
+	state := newProxyState()
+	h := newLifecycleHandler(state, Config{ReapTimeout: 3 * time.Second})
+
+	conn := newAgentConnection("owner-1", "label", "")
+	state.agents["owner-1"] = conn
+
+	const scopeID = "scope-1"
+	state.recordSpawn("spawn-1", "owner-1", scopeID, "codegen", nil, "")
+	state.recordSpawn("spawn-2", "owner-1", scopeID, "fs", nil, "")
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = h.OnRunScopeTerminal(context.Background(), &genv1.OnRunScopeTerminalRequest{RunScopeId: scopeID})
+		close(done)
+	}()
+
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case frame := <-conn.sendCh:
+			reap := frame.GetReap()
+			if reap == nil {
+				t.Fatalf("expected Reap frame, got %T", frame.GetBody())
+			}
+			seen[reap.GetSpawnId()] = true
+		case <-time.After(3 * time.Second):
+			t.Fatalf("only received %d of 2 Reap frames before the read deadline; reaps are not dispatched concurrently", i)
+		}
+	}
+	if !seen["spawn-1"] || !seen["spawn-2"] {
+		t.Fatalf("expected reap frames for both spawns, got %v", seen)
+	}
+
+	for i := 0; i < 2; i++ {
+		conn.deliverReaped(&genv1.Reaped{SpawnId: pickSpawnID(seen, i)})
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("OnRunScopeTerminal did not return after both reaps were acked")
+	}
+}
+
+func pickSpawnID(seen map[string]bool, i int) string {
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	if i >= len(ids) {
+		return ""
+	}
+	return ids[i]
+}
+
 func TestOnInstanceTerminatedEvictsCache(t *testing.T) {
 	state := newProxyState()
 	h := newLifecycleHandler(state, Config{ReapTimeout: time.Second})

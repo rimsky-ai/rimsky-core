@@ -32,6 +32,8 @@ var agentStopGraceTimeout = 35 * time.Second
 
 var agentStopKillTimeout = 5 * time.Second
 
+var agentSelfExecutable = os.Executable
+
 func RunAgent(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: rimsky agent {start|status|stop}")
@@ -116,7 +118,7 @@ func runAgentStart(args []string) int {
 
 // @story: host-agent-control-plane
 func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int {
-	self, err := os.Executable()
+	self, err := agentSelfExecutable()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -131,13 +133,24 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 		return 1
 	}
 
-	forkArgs := append([]string{"agent", "start", "--foreground", "--state-dir", stateDir}, startArgs...)
-	cmd := exec.Command(self, forkArgs...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
-	if err := cmd.Start(); err != nil {
+	logPath := filepath.Join(stateDir, "agent.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+
+	forkArgs := append([]string{"agent", "start", "--foreground", "--state-dir", stateDir}, startArgs...)
+	cmd := exec.Command(self, forkArgs...)
+	cmd.Stdin = nil
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	_ = logFile.Close()
 
 	childPid := cmd.Process.Pid
 
@@ -147,10 +160,7 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 		return 1
 	}
 
-	if err := cmd.Process.Release(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
+	go func() { _ = cmd.Wait() }()
 
 	deadline := time.Now().Add(agentReadinessTimeout)
 	for time.Now().Before(deadline) {
@@ -161,7 +171,7 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 		}
 		if !processAlive(childPid) {
 			_ = os.Remove(pidPath)
-			fmt.Fprintf(os.Stderr, "rimsky agent: daemon exited during startup (proxy %q unreachable or misconfigured)\n", proxy)
+			fmt.Fprintf(os.Stderr, "rimsky agent: daemon exited during startup (proxy %q unreachable or misconfigured); see %s for details\n", proxy, logPath)
 			return 1
 		}
 		time.Sleep(agentReadinessPollInterval)
@@ -170,8 +180,8 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 	killProcess(childPid)
 	_ = os.Remove(pidPath)
 	fmt.Fprintf(os.Stderr,
-		"rimsky agent: daemon did not connect to proxy %q within %s; killed (proxy unreachable or misconfigured)\n",
-		proxy, agentReadinessTimeout)
+		"rimsky agent: daemon did not connect to proxy %q within %s; killed (proxy unreachable or misconfigured); see %s for details\n",
+		proxy, agentReadinessTimeout, logPath)
 	return 1
 }
 

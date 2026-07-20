@@ -29,22 +29,26 @@ type CreatedInstance struct {
 	TemplateHash string
 }
 
-func ApplyPlan(ctx context.Context, c *cli.Client, plan *Plan, opts ApplyOpts) ([]CreatedInstance, error) {
+func ApplyPlan(ctx context.Context, c *cli.Client, plan *Plan, opts ApplyOpts) ([]CreatedInstance, int, error) {
 	w := opts.Logger
 	if w == nil {
 		w = os.Stdout
 	}
 	var created []CreatedInstance
+	applied := 0
 	for _, step := range plan.Steps {
-		ci, err := applyStep(ctx, c, step, w, opts)
+		ci, wasApplied, err := applyStep(ctx, c, step, w, opts)
 		if err != nil {
-			return created, fmt.Errorf("step %s %s: %w", step.Action, stepTarget(step), err)
+			return created, applied, fmt.Errorf("step %s %s: %w", step.Action, stepTarget(step), err)
+		}
+		if wasApplied {
+			applied++
 		}
 		if ci != nil {
 			created = append(created, *ci)
 		}
 	}
-	return created, nil
+	return created, applied, nil
 }
 
 func stepTarget(s Step) string {
@@ -58,34 +62,34 @@ func stepTarget(s Step) string {
 	}
 }
 
-func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts ApplyOpts) (*CreatedInstance, error) {
+func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts ApplyOpts) (*CreatedInstance, bool, error) {
 	logf := func(verb, target, status string) {
 		fmt.Fprintf(w, "  %s %s %s\n", verb, target, status)
 	}
 	switch step.Action {
 	case ActionRegister:
 		if step.SpecBody == nil {
-			return nil, fmt.Errorf("register step missing spec body")
+			return nil, false, fmt.Errorf("register step missing spec body")
 		}
 		body := cli.RegisterTemplateRequest{Spec: *step.SpecBody, Source: step.Source}
 		resp, err := c.RegisterTemplate(ctx, body)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		logf("register", cli.TruncHash(resp.Hash()), "ok")
-		return nil, nil
+		return nil, true, nil
 	case ActionTagCreate:
 		if _, err := c.CreateTag(ctx, cli.CreateTagRequest{Tag: step.Tag, Template: step.TemplateHash}); err != nil {
 			if cli.IsConflict(err) {
 				logf("tag", step.Tag, "skipped (already exists)")
-				return nil, nil
+				return nil, false, nil
 			}
-			return nil, err
+			return nil, false, err
 		}
 		logf("tag", step.Tag, "ok")
 	case ActionTagMove:
 		if _, err := c.MoveTag(ctx, step.Tag, cli.MoveTagRequest{Template: step.TemplateHash}); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		logf("tag-move", step.Tag, "ok")
 	case ActionDeploy:
@@ -94,34 +98,34 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 			ref = step.Tag
 		}
 		if _, err := c.DeployTemplate(ctx, ref); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		logf("deploy", ref, "ok")
 	case ActionInstanceDelete:
 		if err := c.DeleteInstance(ctx, step.InstanceID); err != nil {
 			if cli.IsNotFound(err) {
 				logf("instance-delete", step.InstanceKey, "skipped (already gone)")
-				return nil, nil
+				return nil, false, nil
 			}
-			return nil, err
+			return nil, false, err
 		}
 		logf("instance-delete", step.InstanceKey, "ok")
 	case ActionUndeploy:
 		if _, err := c.UndeployTemplate(ctx, step.TemplateHash); err != nil {
 			if cli.IsConflict(err) {
 				logf("undeploy", cli.TruncHash(step.TemplateHash), "skipped (still has active instances or already undeployed)")
-				return nil, nil
+				return nil, false, nil
 			}
-			return nil, err
+			return nil, false, err
 		}
 		logf("undeploy", cli.TruncHash(step.TemplateHash), "ok")
 	case ActionTagDelete:
 		if err := c.DeleteTag(ctx, step.Tag); err != nil {
 			if cli.IsNotFound(err) {
 				logf("tag-rm", step.Tag, "skipped (already gone)")
-				return nil, nil
+				return nil, false, nil
 			}
-			return nil, err
+			return nil, false, err
 		}
 		logf("tag-rm", step.Tag, "ok")
 	case ActionInstanceCreate:
@@ -133,23 +137,23 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 		}
 		resp, err := c.CreateInstance(ctx, body)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		logf("create", step.InstanceKey, "ok")
-		return &CreatedInstance{Key: step.InstanceKey, ID: resp.UUID(), TemplateHash: resp.TemplateHash}, nil
+		return &CreatedInstance{Key: step.InstanceKey, ID: resp.UUID(), TemplateHash: resp.TemplateHash}, true, nil
 	case ActionTemplateDelete:
 		if err := c.DeleteTemplate(ctx, step.TemplateHash); err != nil {
 			if cli.IsConflict(err) || cli.IsNotFound(err) {
 				logf("template-delete", cli.TruncHash(step.TemplateHash), "skipped (still referenced)")
-				return nil, nil
+				return nil, false, nil
 			}
-			return nil, err
+			return nil, false, err
 		}
 		logf("template-delete", cli.TruncHash(step.TemplateHash), "ok")
 	default:
-		return nil, fmt.Errorf("unknown action %s", step.Action)
+		return nil, false, fmt.Errorf("unknown action %s", step.Action)
 	}
-	return nil, nil
+	return nil, true, nil
 }
 
 func EmitPlan(w io.Writer, plan *Plan, format cli.Format) {
@@ -331,6 +335,10 @@ func parseComposeFlags(name string, args []string) (*composeUpFlags, []string, i
 		fmt.Fprintln(os.Stderr, err)
 		return nil, nil, 2
 	}
+	if rest := fs.Args(); len(rest) > 0 {
+		fmt.Fprintf(os.Stderr, "%s: unexpected positional argument(s): %s\n", name, strings.Join(rest, " "))
+		return nil, nil, 2
+	}
 	cli.SetActiveCommonFlags(&out.common)
 	return out, fs.Args(), 0
 }
@@ -401,13 +409,14 @@ func runComposeUpWithManifest(ctx context.Context, m *Manifest, c *cli.Client, f
 	if !confirmDestructive(flags.common.Yes, os.Stdin, os.Stderr, destructiveSteps) {
 		return 2
 	}
-	if _, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: os.Stdout}); err != nil {
+	_, applied, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: os.Stdout})
+	if err != nil {
 		return reportApplyError(err)
 	}
-	if plan.Summary.Changes == 0 {
+	if applied == 0 {
 		fmt.Fprintln(os.Stdout, "no changes")
 	} else {
-		fmt.Fprintf(os.Stdout, "applied %d changes\n", plan.Summary.Changes)
+		fmt.Fprintf(os.Stdout, "applied %d changes\n", applied)
 	}
 	return 0
 }

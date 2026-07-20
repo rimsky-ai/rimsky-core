@@ -5,11 +5,37 @@
 package cli
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
+
+func TestWaitAndCleanup_CanceledContextDuringGetInstanceReturnsZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	c := NewClient(srv.URL)
+	got := waitAndCleanup(ctx, c, "inst-1", "hash-1", time.Millisecond, 0)
+	if got != 0 {
+		t.Fatalf("waitAndCleanup with a canceled context during GetInstance = %d, want 0 (clean interrupt exit)", got)
+	}
+}
+
+func TestRunLs_UnknownSubcommandErrors(t *testing.T) {
+	if got := RunLs(context.Background(), []string{"bogus"}); got != 2 {
+		t.Fatalf("RunLs(bogus) = %d, want 2", got)
+	}
+}
 
 func TestMergeParams_JSONOnly(t *testing.T) {
 	got, err := mergeParams(`{"a":1,"b":"x"}`, nil)

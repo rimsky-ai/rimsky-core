@@ -29,7 +29,7 @@ func RunCtxList(args []string, configPath string) int {
 		return 1
 	}
 	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, cfg)
+		_ = EmitJSON(os.Stdout, redactedConfig(cfg))
 		return 0
 	}
 	names := make([]string, 0, len(cfg.Contexts))
@@ -47,6 +47,19 @@ func RunCtxList(args []string, configPath string) int {
 	}
 	EmitTable(os.Stdout, []string{"", "NAME", "ENDPOINT"}, rows)
 	return 0
+}
+
+const redactedAPIKeyPlaceholder = "REDACTED"
+
+func redactedConfig(cfg *Config) *Config {
+	out := &Config{CurrentContext: cfg.CurrentContext, Contexts: make(map[string]Context, len(cfg.Contexts))}
+	for name, c := range cfg.Contexts {
+		if c.APIKey != "" {
+			c.APIKey = redactedAPIKeyPlaceholder
+		}
+		out.Contexts[name] = c
+	}
+	return out
 }
 
 func RunCtxUse(args []string, configPath string) int {
@@ -109,9 +122,6 @@ func RunCtxAdd(args []string, configPath string) int {
 	if _, ok := cfg.Contexts[name]; ok {
 		fmt.Fprintf(os.Stderr, "context %q already exists\n", name)
 		return 2
-	}
-	if cfg.Contexts == nil {
-		cfg.Contexts = map[string]Context{}
 	}
 	cfg.Contexts[name] = Context{Endpoint: endpoint}
 	if cfg.CurrentContext == "" {

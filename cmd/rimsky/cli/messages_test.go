@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,6 +82,80 @@ func TestClient_GetMessage(t *testing.T) {
 func TestRunMessagesTail_RequiresInstance(t *testing.T) {
 	if code := RunMessagesTail(context.Background(), []string{}); code != 2 {
 		t.Errorf("exit code: %d", code)
+	}
+}
+
+func TestRunMessagesTail_SameInstantMessagesBothEmitted(t *testing.T) {
+	ts := time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{
+				{"id": "m1", "instance_id": "abc", "type": "ping", "sender": "operator", "sender_kind": "operator", "received_at": ts},
+				{"id": "m2", "instance_id": "abc", "type": "ping", "sender": "operator", "sender_kind": "operator", "received_at": ts},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	const uuid = "5cb9362f-1111-2222-3333-444455556666"
+	var code int
+	out := captureStdout(t, func() {
+		code = RunMessagesTail(context.Background(), []string{"--endpoint", srv.URL, "--instance", uuid})
+	})
+	if code != 0 {
+		t.Fatalf("exit %d, output: %s", code, out)
+	}
+	if !strings.Contains(out, "m1") {
+		t.Errorf("expected m1 in output, got: %q", out)
+	}
+	if !strings.Contains(out, "m2") {
+		t.Errorf("two messages sharing the same received_at instant: m2 was dropped by the dedup boundary, got: %q", out)
+	}
+}
+
+func TestRunMessagesShow_RendersFields(t *testing.T) {
+	receivedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	deliveredAt := receivedAt.Add(time.Second)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages/m1" {
+			t.Errorf("path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":           "m1",
+			"instance_id":  "abc",
+			"type":         "ping/recheck",
+			"sender":       "operator",
+			"sender_kind":  "operator",
+			"received_at":  receivedAt.Format(time.RFC3339),
+			"delivered_at": deliveredAt.Format(time.RFC3339),
+			"frame_id":     "frame-9",
+			"cancelled":    true,
+		})
+	}))
+	defer srv.Close()
+
+	var code int
+	out := captureStdout(t, func() {
+		code = RunMessagesShow(context.Background(), []string{"--endpoint", srv.URL, "m1"})
+	})
+	if code != 0 {
+		t.Fatalf("exit %d, output: %s", code, out)
+	}
+	for _, want := range []string{"m1", "abc", "ping/recheck", "frame-9", "cancelled:", deliveredAt.Format(time.RFC3339)} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q, got: %q", want, out)
+		}
+	}
+}
+
+func TestRunMessagesShow_WrongArgCount(t *testing.T) {
+	if code := RunMessagesShow(context.Background(), nil); code != 2 {
+		t.Errorf("exit %d, want 2", code)
+	}
+	if code := RunMessagesShow(context.Background(), []string{"a", "b"}); code != 2 {
+		t.Errorf("exit %d, want 2", code)
 	}
 }
 

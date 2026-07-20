@@ -46,7 +46,11 @@ func RunLs(ctx context.Context, args []string) int {
 	case "tags":
 		return RunTagList(ctx, args[1:])
 	}
-	return RunInstanceList(ctx, args)
+	if strings.HasPrefix(args[0], "-") {
+		return RunInstanceList(ctx, args)
+	}
+	fmt.Fprintf(os.Stderr, "rimsky ls: unknown subcommand %q (want templates|instances|tags, or a flag for the default instance listing)\n", args[0])
+	return 2
 }
 
 func RunLogs(ctx context.Context, args []string) int {
@@ -311,6 +315,9 @@ func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pol
 	for {
 		inst, err := c.GetInstance(signalCtx, instanceID)
 		if err != nil {
+			if signalCtx.Err() != nil {
+				return 0
+			}
 			return reportError(err)
 		}
 		if inst.TerminatedAt != nil {
@@ -327,12 +334,17 @@ func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pol
 		}
 	}
 	if err := c.DeleteInstance(signalCtx, instanceID); err != nil {
+		if signalCtx.Err() != nil {
+			return 0
+		}
 		return reportError(err)
 	}
 	if _, err := c.UndeployTemplate(signalCtx, hash); err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.Status == 409 {
 			fmt.Fprintf(os.Stderr, "warn: undeploy %s skipped (still referenced)\n", hash)
+		} else if signalCtx.Err() != nil {
+			return 0
 		} else {
 			return reportError(err)
 		}
@@ -341,6 +353,8 @@ func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pol
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.Status == 409 {
 			fmt.Fprintf(os.Stderr, "warn: delete %s skipped (still referenced)\n", hash)
+		} else if signalCtx.Err() != nil {
+			return 0
 		} else {
 			return reportError(err)
 		}

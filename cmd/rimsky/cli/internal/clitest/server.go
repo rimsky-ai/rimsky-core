@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,8 +28,15 @@ type Server struct {
 	failMu   sync.Mutex
 	failNext map[string]*FailureSpec
 
+	getInstanceHits atomic.Int64
+	listEventsHits  atomic.Int64
+
 	ListInstancesDefaultPageSize int
 }
+
+func (s *Server) GetInstanceHitCount() int64 { return s.getInstanceHits.Load() }
+
+func (s *Server) ListEventsHitCount() int64 { return s.listEventsHits.Load() }
 
 type FailureSpec struct {
 	Status int
@@ -606,6 +614,7 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
+	s.getInstanceHits.Add(1)
 	idOrKey := chi.URLParam(r, "idOrKey")
 	if s.maybeFail(w, r, "/v1/instances/"+idOrKey) {
 		return
@@ -739,6 +748,7 @@ func (s *Server) handleResetNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
+	s.listEventsHits.Add(1)
 	if s.maybeFail(w, r, "/v1/events") {
 		return
 	}

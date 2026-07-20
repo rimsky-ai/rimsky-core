@@ -51,6 +51,7 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 	defer cancel()
 
 	var lastSeen time.Time
+	seenAtLastSeen := map[string]struct{}{}
 	for {
 		page, err := c.ListInstanceMessages(signalCtx, id, ListMessagesQuery{
 			Type:           msgType,
@@ -65,10 +66,18 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 			return reportError(err)
 		}
 		for _, m := range page.Messages {
-			if !m.ReceivedAt.After(lastSeen) {
+			if m.ReceivedAt.Before(lastSeen) {
 				continue
 			}
+			if m.ReceivedAt.Equal(lastSeen) {
+				if _, dup := seenAtLastSeen[m.ID]; dup {
+					continue
+				}
+			} else {
+				seenAtLastSeen = map[string]struct{}{}
+			}
 			lastSeen = m.ReceivedAt
+			seenAtLastSeen[m.ID] = struct{}{}
 			if common.Format == FormatJSON {
 				_ = EmitJSON(os.Stdout, m)
 				continue

@@ -27,15 +27,18 @@ func TemplateHasStructuralRoot(ctx context.Context, c *Client, hash string) (boo
 	}
 	raw, err := json.Marshal(tpl.Spec)
 	if err != nil {
-		return true, nil
+		return false, err
 	}
 	var ts node.TemplateSpec
-	if uerr := json.Unmarshal(raw, &ts); uerr != nil {
-		return true, nil
+	if err := json.Unmarshal(raw, &ts); err != nil {
+		return false, err
 	}
 	msgRefs := node.ExtractMessageRefsFromTemplate(ts)
 	edges, err := node.BuildSubscriptionEdges(ts, msgRefs)
-	if err != nil || edges == nil {
+	if err != nil {
+		return false, err
+	}
+	if edges == nil {
 		return true, nil
 	}
 	matched := edges.Match("", rsignal.TypePath("terminal/success"))

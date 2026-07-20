@@ -32,6 +32,14 @@ func TestRunComposeDown_Terminal(t *testing.T) {
 	}
 }
 
+func TestRunComposeDown_RejectsStrayPositionalArgs(t *testing.T) {
+	_ = setupServer(t)
+	mf := writeFullManifest(t)
+	if got := compose.RunComposeDown(context.Background(), []string{"-f", mf, "--yes", "bogus"}); got != 2 {
+		t.Fatalf("exit %d, want 2 for a stray positional argument", got)
+	}
+}
+
 func TestRunComposeDown_NonTerminalRefuses(t *testing.T) {
 	srv := setupServer(t)
 	mf := writeFullManifest(t)

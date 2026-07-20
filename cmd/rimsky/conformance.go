@@ -310,7 +310,7 @@ func runConformanceValidation(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance validation", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "validation-advertising service gRPC endpoint (e.g. grpc://localhost:9095)")
 	transport := fs.String("transport", "grpc", "transport: grpc (the http+json bridge is not implemented for Validation)")
-	role := fs.String("role", "executor", "role to validate against: executor | claim_producer | lifecycle_subscriber | sensor")
+	role := fs.String("role", "executor", "role to validate against: executor | claim_producer | lifecycle_subscriber | publisher")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-suite timeout")
 	if err := fs.Parse(args); err != nil {
 		return 2

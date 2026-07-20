@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestClient_ListAssets(t *testing.T) {
@@ -195,8 +196,8 @@ func TestRunAssetVersions_RendersTable(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"versions": []map[string]any{
-				{"version_id": "v1", "committed_at": "2026-01-01T00:00:00Z"},
-				{"version_id": "v2", "committed_at": "2026-01-02T00:00:00Z"},
+				{"version_id": "v1", "committed_at_unix_s": 1767225600},
+				{"version_id": "v2", "committed_at_unix_s": 1767312000},
 			},
 		})
 	}))
@@ -213,6 +214,9 @@ func TestRunAssetVersions_RendersTable(t *testing.T) {
 	}
 	if !strings.Contains(out, "v1") || !strings.Contains(out, "v2") || !strings.Contains(out, "VERSION_ID") {
 		t.Errorf("expected a rendered versions table; got %q", out)
+	}
+	if !strings.Contains(out, "2026-01-01T00:00:00Z") || !strings.Contains(out, "2026-01-02T00:00:00Z") {
+		t.Errorf("committed_at_unix_s should render as an RFC3339 COMMITTED_AT column, got %q", out)
 	}
 }
 
@@ -380,12 +384,16 @@ func TestTruncateSnippet(t *testing.T) {
 		{"exactly_at_limit_unchanged", "12345", 5, "12345"},
 		{"over_limit_truncated_with_ellipsis", "123456789", 5, "1234…"},
 		{"newlines_collapsed_to_spaces", "a\nb\nc", 60, "a b c"},
+		{"multibyte_rune_boundary_not_split", "日本語のテキスト", 5, "日本語の…"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := truncateSnippet(c.in, c.max)
 			if got != c.want {
 				t.Errorf("truncateSnippet(%q, %d) = %q, want %q", c.in, c.max, got, c.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("truncateSnippet(%q, %d) = %q is not valid UTF-8", c.in, c.max, got)
 			}
 		})
 	}

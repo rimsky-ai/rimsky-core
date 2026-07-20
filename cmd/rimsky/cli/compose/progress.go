@@ -20,6 +20,7 @@ type ProgressPrinter interface {
 	NodeRunTerminal(project, name, nodeID, outcome, reason string)
 	InstanceTerminal(project, name, outcome string, nodeCount int)
 	FrameTick(project, name string, frameNo int)
+	Summary(verb, reason string, instanceCount int)
 	Finalize()
 }
 
@@ -76,6 +77,14 @@ func (lp *linePrinter) InstanceTerminal(project, name, outcome string, nodeCount
 }
 
 func (lp *linePrinter) FrameTick(project, name string, frameNo int) {}
+
+func (lp *linePrinter) Summary(verb, reason string, instanceCount int) {
+	if instanceCount > 0 {
+		_ = lp.emit(fmt.Sprintf("%s: %s (%d instance%s)", verb, reason, instanceCount, pluralS(instanceCount)))
+		return
+	}
+	_ = lp.emit(fmt.Sprintf("%s: %s", verb, reason))
+}
 
 func (lp *linePrinter) Finalize() {
 	lp.mu.Lock()
@@ -176,6 +185,18 @@ func (p *jsonPrinter) FrameTick(project, name string, frameNo int) {
 		"instance": name,
 		"frame":    frameNo,
 	})
+}
+
+func (p *jsonPrinter) Summary(verb, reason string, instanceCount int) {
+	rec := map[string]any{
+		"event":  "summary",
+		"verb":   verb,
+		"reason": reason,
+	}
+	if instanceCount > 0 {
+		rec["instance_count"] = instanceCount
+	}
+	p.writeRecord(rec)
 }
 
 func (p *jsonPrinter) Finalize() {

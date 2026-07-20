@@ -128,17 +128,23 @@ func WaitForInstancesTerminal(
 		case <-timer.C:
 		}
 
-		// @decision: progress-default
 		tickCount++
-		if tickCount >= waitPollBackoffAfter && currentInterval < maxWaitPollInterval {
-			currentInterval *= 2
-			if currentInterval > maxWaitPollInterval {
-				currentInterval = maxWaitPollInterval
-			}
-		}
+		currentInterval = nextWaitPollInterval(tickCount, currentInterval)
 		timer.Reset(currentInterval)
 	}
 	return outcomes, nil
+}
+
+// @decision: progress-default
+func nextWaitPollInterval(tickCount int, current time.Duration) time.Duration {
+	if tickCount < waitPollBackoffAfter || current >= maxWaitPollInterval {
+		return current
+	}
+	current *= 2
+	if current > maxWaitPollInterval {
+		current = maxWaitPollInterval
+	}
+	return current
 }
 
 // @story: one-shot-to-terminal
@@ -190,9 +196,6 @@ func isNodeSettled(s *cli.NodeRunSummary) bool {
 
 // @concept: node-run
 func allNodesSettled(nodes []cli.Node) bool {
-	if len(nodes) == 0 {
-		return false
-	}
 	for _, n := range nodes {
 		if !isNodeSettled(n.RunSummary) {
 			return false
@@ -222,6 +225,13 @@ func classifyWaitErr(err error) ShutdownReason {
 	default:
 		return ReasonAnyFailure
 	}
+}
+
+func bootFailureReason(bootCtx context.Context) ShutdownReason {
+	if bootCtx.Err() != nil {
+		return ReasonSignal
+	}
+	return ReasonAnyFailure
 }
 
 func reasonString(r ShutdownReason) string {

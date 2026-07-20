@@ -37,7 +37,7 @@ func Run(ctx context.Context, c genv1.ValidationClient, role string) []CheckResu
 	default:
 		results = append(results, CheckResult{
 			Name: "RoleDispatch",
-			Err:  fmt.Errorf("unsupported --role %q; must be one of: executor, claim_producer, lifecycle_subscriber, sensor", role),
+			Err:  fmt.Errorf("unsupported --role %q; must be one of: executor, claim_producer, lifecycle_subscriber, publisher", role),
 		})
 	}
 	return results

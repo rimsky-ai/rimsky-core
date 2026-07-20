@@ -205,6 +205,43 @@ func TestUpdateLatestSymlink_OverwritesExisting(t *testing.T) {
 	}
 }
 
+func TestUpdateLatestSymlink_SweepsStaleTmpEntries(t *testing.T) {
+	tmp := t.TempDir()
+	linkDir := filepath.Join(tmp, ".rimsky")
+	if err := os.MkdirAll(linkDir, 0o700); err != nil {
+		t.Fatalf("mkdir %q: %v", linkDir, err)
+	}
+
+	stalePath := filepath.Join(linkDir, "latest.tmp.999.111.1")
+	if err := os.WriteFile(stalePath, []byte("leaked"), 0o600); err != nil {
+		t.Fatalf("write stale entry: %v", err)
+	}
+	old := time.Now().Add(-staleLatestTmpAge - time.Minute)
+	if err := os.Chtimes(stalePath, old, old); err != nil {
+		t.Fatalf("backdate stale entry: %v", err)
+	}
+
+	freshPath := filepath.Join(linkDir, "latest.tmp.999.222.2")
+	if err := os.WriteFile(freshPath, []byte("in-flight"), 0o600); err != nil {
+		t.Fatalf("write fresh entry: %v", err)
+	}
+
+	runDir, err := EnsureRunDir(tmp, "2026-06-13T14-00-00Z", "sweep")
+	if err != nil {
+		t.Fatalf("EnsureRunDir: %v", err)
+	}
+	if err := UpdateLatestSymlink(tmp, runDir); err != nil {
+		t.Fatalf("UpdateLatestSymlink: %v", err)
+	}
+
+	if _, err := os.Lstat(stalePath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stale latest.tmp.* entry should have been swept, stat err = %v", err)
+	}
+	if _, err := os.Lstat(freshPath); err != nil {
+		t.Errorf("a recently-modified latest.tmp.* entry should not be swept (could belong to an in-flight concurrent writer), stat err = %v", err)
+	}
+}
+
 func TestUpdateLatestSymlink_ConcurrentFirstInstall(t *testing.T) {
 	tmp := t.TempDir()
 	const writers = 8

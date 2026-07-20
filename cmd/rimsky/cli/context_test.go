@@ -6,6 +6,7 @@ package cli
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -92,5 +93,52 @@ func TestRunCtxCurrent_Set(t *testing.T) {
 	RunCtxAdd([]string{"--endpoint", "http://a", "a"}, cfg)
 	if got := RunCtxCurrent(nil, cfg); got != 0 {
 		t.Errorf("exit %d", got)
+	}
+}
+
+func TestRedactedConfig_HidesAPIKeys(t *testing.T) {
+	const secret = "rim_super_secret_token"
+	cfg := &Config{
+		CurrentContext: "a",
+		Contexts: map[string]Context{
+			"a": {Endpoint: "http://a", APIKey: secret},
+			"b": {Endpoint: "http://b"},
+		},
+	}
+	redacted := redactedConfig(cfg)
+	if redacted.Contexts["a"].APIKey != redactedAPIKeyPlaceholder {
+		t.Fatalf("APIKey for context a = %q, want %q", redacted.Contexts["a"].APIKey, redactedAPIKeyPlaceholder)
+	}
+	if redacted.Contexts["a"].Endpoint != "http://a" {
+		t.Fatalf("endpoint should be preserved, got %q", redacted.Contexts["a"].Endpoint)
+	}
+	if redacted.Contexts["b"].APIKey != "" {
+		t.Fatalf("APIKey for a context with no key should stay empty, got %q", redacted.Contexts["b"].APIKey)
+	}
+	if cfg.Contexts["a"].APIKey != secret {
+		t.Fatalf("redactedConfig must not mutate the original config; got %q", cfg.Contexts["a"].APIKey)
+	}
+}
+
+func TestRunCtxList_JSONRedactsAPIKey(t *testing.T) {
+	cfg := tempCfg(t)
+	const secret = "rim_super_secret_token"
+	if err := SaveConfig(cfg, &Config{
+		CurrentContext: "a",
+		Contexts:       map[string]Context{"a": {Endpoint: "http://a", APIKey: secret}},
+	}); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if got := RunCtxList([]string{"--output", "json"}, cfg); got != 0 {
+			t.Errorf("exit %d", got)
+		}
+	})
+	if strings.Contains(out, secret) {
+		t.Fatalf("ctx list --output json leaked the API key to stdout: %s", out)
+	}
+	if !strings.Contains(out, redactedAPIKeyPlaceholder) {
+		t.Fatalf("ctx list --output json should render the redaction placeholder, got: %s", out)
 	}
 }

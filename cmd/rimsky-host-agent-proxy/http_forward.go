@@ -18,19 +18,29 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
+const (
+	maxConcurrentForwards   = 64
+	maxForwardResponseBytes = 8 << 20
+)
+
 type httpForwarder struct {
 	state  *proxyState
 	client *http.Client
+	sem    chan struct{}
 }
 
 func newHTTPForwarder(state *proxyState) *httpForwarder {
 	return &httpForwarder{
 		state:  state,
 		client: &http.Client{Timeout: 30 * time.Second},
+		sem:    make(chan struct{}, maxConcurrentForwards),
 	}
 }
 
 func (f *httpForwarder) handle(agent *agentConnection, fwd *genv1.LocalHttpForward) {
+	f.sem <- struct{}{}
+	defer func() { <-f.sem }()
+
 	target := f.targetURL(fwd)
 	if target == "" {
 		f.reply(agent, fwd.GetForwardId(), http.StatusBadGateway, []byte("no upstream callback for spawn"), nil)
@@ -59,7 +69,7 @@ func (f *httpForwarder) handle(agent *agentConnection, fwd *genv1.LocalHttpForwa
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxForwardResponseBytes))
 	headers := map[string]string{}
 	for k := range resp.Header {
 		headers[k] = resp.Header.Get(k)

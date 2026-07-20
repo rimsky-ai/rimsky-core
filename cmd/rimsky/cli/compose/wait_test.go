@@ -95,6 +95,7 @@ func (nopPrinter) InstanceStarting(project, name string)                        
 func (nopPrinter) NodeRunTerminal(project, name, nodeID, outcome, reason string) {}
 func (nopPrinter) InstanceTerminal(project, name, outcome string, nodeCount int) {}
 func (nopPrinter) FrameTick(project, name string, frameNo int)                   {}
+func (nopPrinter) Summary(verb, reason string, instanceCount int)                {}
 func (nopPrinter) Finalize()                                                     {}
 
 func TestWaitForInstancesTerminal_ReturnsOnAllTerminal(t *testing.T) {
@@ -287,6 +288,58 @@ func TestAnyOutcomeFailed(t *testing.T) {
 	}
 }
 
+func TestNextWaitPollInterval(t *testing.T) {
+	base := DefaultWaitPollInterval
+	interval := base
+	for tick := 1; tick < waitPollBackoffAfter; tick++ {
+		interval = nextWaitPollInterval(tick, interval)
+		if interval != base {
+			t.Fatalf("tick %d: interval = %v, want unchanged %v before the backoff threshold", tick, interval, base)
+		}
+	}
+
+	interval = nextWaitPollInterval(waitPollBackoffAfter, interval)
+	if interval != base*2 {
+		t.Fatalf("tick %d: interval = %v, want %v (first doubling at the threshold)", waitPollBackoffAfter, interval, base*2)
+	}
+
+	for interval < maxWaitPollInterval {
+		prev := interval
+		interval = nextWaitPollInterval(waitPollBackoffAfter+1, interval)
+		if interval <= prev {
+			t.Fatalf("interval did not grow: prev=%v got=%v", prev, interval)
+		}
+	}
+	if interval != maxWaitPollInterval {
+		t.Fatalf("interval = %v, want it to converge to the cap %v", interval, maxWaitPollInterval)
+	}
+
+	capped := nextWaitPollInterval(waitPollBackoffAfter+10, interval)
+	if capped != maxWaitPollInterval {
+		t.Fatalf("interval past the cap = %v, want it to stay at %v", capped, maxWaitPollInterval)
+	}
+}
+
+func TestAllNodesSettled(t *testing.T) {
+	if !allNodesSettled(nil) {
+		t.Error("allNodesSettled(nil) should be vacuously true (no nodes means none are unsettled)")
+	}
+	if !allNodesSettled([]cli.Node{}) {
+		t.Error("allNodesSettled(empty slice) should be vacuously true")
+	}
+	settled := []cli.Node{{ID: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}}}
+	if !allNodesSettled(settled) {
+		t.Error("allNodesSettled should be true when every node is settled")
+	}
+	unsettled := []cli.Node{
+		{ID: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}},
+		{ID: "b", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}},
+	}
+	if allNodesSettled(unsettled) {
+		t.Error("allNodesSettled should be false when any node is still active")
+	}
+}
+
 func TestClassifyWaitErr(t *testing.T) {
 	if got := classifyWaitErr(nil); got != ReasonAllSuccess {
 		t.Errorf("classifyWaitErr(nil) = %v, want ReasonAllSuccess", got)
@@ -299,6 +352,20 @@ func TestClassifyWaitErr(t *testing.T) {
 	}
 	if got := classifyWaitErr(errors.New("other")); got != ReasonAnyFailure {
 		t.Errorf("classifyWaitErr(other) = %v, want ReasonAnyFailure", got)
+	}
+}
+
+func TestBootFailureReason(t *testing.T) {
+	live, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if got := bootFailureReason(live); got != ReasonAnyFailure {
+		t.Errorf("bootFailureReason(live ctx) = %v, want ReasonAnyFailure", got)
+	}
+
+	canceled, cancelNow := context.WithCancel(context.Background())
+	cancelNow()
+	if got := bootFailureReason(canceled); got != ReasonSignal {
+		t.Errorf("bootFailureReason(canceled ctx) = %v, want ReasonSignal (a client-call error during a signaled boot window must be reported as an interrupt, not a generic failure)", got)
 	}
 }
 

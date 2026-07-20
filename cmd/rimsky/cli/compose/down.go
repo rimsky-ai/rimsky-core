@@ -109,6 +109,10 @@ func parseComposeDownFlags(args []string) (*composeDownFlags, int) {
 		fmt.Fprintln(os.Stderr, err)
 		return nil, 2
 	}
+	if rest := fs.Args(); len(rest) > 0 {
+		fmt.Fprintf(os.Stderr, "compose down: unexpected positional argument(s): %s\n", strings.Join(rest, " "))
+		return nil, 2
+	}
 	cli.SetActiveCommonFlags(&out.common)
 	return out, 0
 }
@@ -147,7 +151,7 @@ func runComposeDownWithManifest(ctx context.Context, m *Manifest, c *cli.Client,
 	if !confirmDestructive(flags.common.Yes, os.Stdin, os.Stderr, destructiveSteps) {
 		return 2
 	}
-	if _, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: os.Stdout}); err != nil {
+	if _, _, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: os.Stdout}); err != nil {
 		return reportApplyError(err)
 	}
 	fmt.Fprintln(os.Stdout, "compose down complete")

@@ -143,7 +143,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 
 	if err := WaitForControlAPIReady(bootCtx, stack.Endpoint(), 10*time.Second); err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky run: control-api not ready:", err)
-		return coord.Drain(context.Background(), ReasonAnyFailure)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 
 	c := cli.NewClient(stack.Endpoint())
@@ -152,12 +152,12 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 	tpl, err := c.RegisterTemplate(bootCtx, cli.RegisterTemplateRequest{Spec: spec, Tag: rf.Tag})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky run: register template:", err)
-		return coord.Drain(context.Background(), ReasonAnyFailure)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 	hash := tpl.Hash()
 	if _, err := c.DeployTemplate(bootCtx, hash); err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky run: deploy template:", err)
-		return coord.Drain(context.Background(), ReasonAnyFailure)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 
 	body := cli.CreateInstanceRequest{Template: hash, Params: rf.Params}
@@ -168,7 +168,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 	inst, err := c.CreateInstance(bootCtx, body)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky run: create instance:", err)
-		return coord.Drain(context.Background(), ReasonAnyFailure)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 	if common.Format == cli.FormatJSON {
 		_ = cli.EmitJSON(os.Stdout, inst)
@@ -180,13 +180,13 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 	hasRoot, err := cli.TemplateHasStructuralRoot(bootCtx, c, hash)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky run: inspect template:", err)
-		return coord.Drain(context.Background(), ReasonAnyFailure)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 	if hasRoot {
 		if _, err := c.CreateInstanceMessage(bootCtx, inst.UUID(), "run-wake-"+inst.UUID(),
 			cli.CreateInstanceMessageRequest{}); err != nil {
 			fmt.Fprintln(os.Stderr, "rimsky run: emit wake message:", err)
-			return coord.Drain(context.Background(), ReasonAnyFailure)
+			return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 		}
 	}
 
@@ -198,8 +198,8 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 
 	releaseBootSignalWatcher()
 	if bootCtx.Err() != nil {
+		printer.Summary("rimsky run", reasonString(ReasonSignal), 0)
 		printer.Finalize()
-		fmt.Fprintf(os.Stderr, "rimsky run: %s\n", reasonString(ReasonSignal))
 		return coord.Drain(context.Background(), ReasonSignal)
 	}
 
@@ -222,7 +222,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		logger:       logger,
 	})
 
+	printer.Summary("rimsky run", reasonString(reason), 0)
 	printer.Finalize()
-	fmt.Fprintf(os.Stderr, "rimsky run: %s\n", reasonString(reason))
 	return coord.Drain(context.Background(), reason)
 }

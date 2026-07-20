@@ -7,6 +7,7 @@ package sweep
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -91,6 +92,36 @@ func TestTick_PreservesAliveAndOldLeakedReaped(t *testing.T) {
 		if exists != c.want {
 			t.Errorf("staging %s exists=%v want=%v", c.id, exists, c.want)
 		}
+	}
+}
+
+func TestTick_NilLoggerDoesNotPanicOnAbandonError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-based RemoveAll failure is Unix-only")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses the permission check this test relies on")
+	}
+	tmp := t.TempDir()
+	st, err := store.New(tmp)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	entry, err := st.Open("old-leak", "scope-o")
+	if err != nil {
+		t.Fatalf("Open old-leak: %v", err)
+	}
+	backdateOldLeak(t, tmp)
+
+	scopeDir := filepath.Dir(entry.StagingPath)
+	if err := os.Chmod(scopeDir, 0o555); err != nil {
+		t.Fatalf("chmod scope dir read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(scopeDir, 0o755) })
+
+	sw := &Sweeper{Store: st, Live: liveSet{}, TTL: 24 * time.Hour}
+	if err := sw.Tick(time.Now()); err != nil {
+		t.Fatalf("Tick: %v", err)
 	}
 }
 

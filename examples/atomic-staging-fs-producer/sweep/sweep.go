@@ -30,9 +30,6 @@ func (s *Sweeper) Run(ctx context.Context) error {
 	if s.TTL <= 0 {
 		s.TTL = 24 * time.Hour
 	}
-	if s.Logger == nil {
-		s.Logger = func(string, ...any) {}
-	}
 	t := time.NewTicker(s.Interval)
 	defer t.Stop()
 	for {
@@ -41,9 +38,15 @@ func (s *Sweeper) Run(ctx context.Context) error {
 			return nil
 		case <-t.C:
 			if err := s.Tick(time.Now()); err != nil {
-				s.Logger("atomic-staging.sweep tick failed: %v", err)
+				s.logf("atomic-staging.sweep tick failed: %v", err)
 			}
 		}
+	}
+}
+
+func (s *Sweeper) logf(format string, args ...any) {
+	if s.Logger != nil {
+		s.Logger(format, args...)
 	}
 }
 
@@ -60,7 +63,7 @@ func (s *Sweeper) Tick(now time.Time) error {
 			continue
 		}
 		if err := s.Store.AbandonByClaimID(e.ClaimID); err != nil {
-			s.Logger("atomic-staging.sweep: abandon %s: %v", e.ClaimID, err)
+			s.logf("atomic-staging.sweep: abandon %s: %v", e.ClaimID, err)
 		}
 	}
 	return nil

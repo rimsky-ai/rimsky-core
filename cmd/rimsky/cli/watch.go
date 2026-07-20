@@ -66,9 +66,11 @@ func RunWatch(ctx context.Context, args []string) int {
 				}
 				return reportError(err)
 			}
+			reachedAlreadySeen := false
 			for _, e := range page.Events {
 				if e.ID <= prevSeen {
-					continue
+					reachedAlreadySeen = true
+					break
 				}
 				if e.ID > lastSeenID {
 					lastSeenID = e.ID
@@ -78,7 +80,7 @@ func RunWatch(ctx context.Context, args []string) int {
 					render: func() { printWatchEvent(common.Format, e) },
 				})
 			}
-			if page.NextCursor == "" {
+			if reachedAlreadySeen || page.NextCursor == "" {
 				break
 			}
 			nextCursor = page.NextCursor

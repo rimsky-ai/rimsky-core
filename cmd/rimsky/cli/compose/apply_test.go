@@ -156,6 +156,52 @@ func TestApplyPlan_FailureMidPlan(t *testing.T) {
 	}
 }
 
+func TestApplyPlan_AppliedCountExcludesSkippedSteps(t *testing.T) {
+	srv := setupServer(t)
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:existing@1", "")
+
+	c := cli.NewClient(srv.URL)
+	plan := &compose.Plan{
+		Project: "p",
+		Steps: []compose.Step{
+			{Action: compose.ActionTagCreate, Kind: compose.KindTag, Tag: "compose:p:existing@1", TemplateHash: hash},
+			{Action: compose.ActionTagCreate, Kind: compose.KindTag, Tag: "compose:p:fresh@1", TemplateHash: hash},
+		},
+	}
+
+	_, applied, err := compose.ApplyPlan(context.Background(), c, plan, compose.ApplyOpts{})
+	if err != nil {
+		t.Fatalf("ApplyPlan: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("applied = %d, want 1 (one step should have been skipped as already-exists, not counted as applied)", applied)
+	}
+}
+
+func TestRunComposeUp_RejectsStrayPositionalArgs(t *testing.T) {
+	_ = setupServer(t)
+	mf := writeFullManifest(t)
+	if got := compose.RunComposeUp(context.Background(), []string{"-f", mf, "--yes", "bogus"}); got != 2 {
+		t.Fatalf("exit %d, want 2 for a stray positional argument", got)
+	}
+}
+
+func TestRunComposePlan_RejectsStrayPositionalArgs(t *testing.T) {
+	_ = setupServer(t)
+	mf := writeFullManifest(t)
+	if got := compose.RunComposePlan(context.Background(), []string{"-f", mf, "bogus"}); got != 2 {
+		t.Fatalf("exit %d, want 2 for a stray positional argument", got)
+	}
+}
+
+func TestRunComposeStatus_RejectsStrayPositionalArgs(t *testing.T) {
+	_ = setupServer(t)
+	mf := writeFullManifest(t)
+	if got := compose.RunComposeStatus(context.Background(), []string{"-f", mf, "bogus"}); got != 2 {
+		t.Fatalf("exit %d, want 2 for a stray positional argument", got)
+	}
+}
+
 func TestRunComposeUp_NonTTYDestructiveRequiresYes(t *testing.T) {
 	srv := setupServer(t)
 	mf := writeFullManifest(t)

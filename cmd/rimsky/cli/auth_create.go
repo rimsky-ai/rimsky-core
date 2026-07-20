@@ -10,9 +10,19 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
+
+func parseExpiresDuration(s string) (time.Duration, error) {
+	if days, ok := strings.CutSuffix(s, "d"); ok && days != "" {
+		if n, err := strconv.ParseFloat(days, 64); err == nil {
+			return time.Duration(n * float64(24*time.Hour)), nil
+		}
+	}
+	return time.ParseDuration(s)
+}
 
 type authStringSliceFlag []string
 
@@ -65,7 +75,7 @@ func RunAuthCreateKey(ctx context.Context, args []string) int {
 		"permissions": grant,
 	}
 	if expires != "" {
-		d, err := time.ParseDuration(expires)
+		d, err := parseExpiresDuration(expires)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "invalid --expires duration:", err.Error())
 			return 2

@@ -84,7 +84,10 @@ func (c *Client) doStatus(req *http.Request, out any) (int, error) {
 		return 0, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return resp.StatusCode, fmt.Errorf("read response body: %w", readErr)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		apiErr := &APIError{
 			Status: resp.StatusCode,

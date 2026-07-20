@@ -83,11 +83,31 @@ func EnsureRunDir(root, timestamp, name string) (string, error) {
 	return "", fmt.Errorf("exhausted run-dir collision suffixes (-2..-%d) under %q; the most likely fix is to remove stale run dirs under %q", maxRunDirCollisionSuffix, base, filepath.Dir(base))
 }
 
+const staleLatestTmpAge = 5 * time.Minute
+
+func sweepStaleLatestTmp(linkDir string) {
+	stale, err := filepath.Glob(filepath.Join(linkDir, "latest.tmp.*"))
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-staleLatestTmpAge)
+	for _, p := range stale {
+		fi, statErr := os.Lstat(p)
+		if statErr != nil {
+			continue
+		}
+		if fi.ModTime().Before(cutoff) {
+			_ = os.Remove(p)
+		}
+	}
+}
+
 func UpdateLatestSymlink(root, runDir string) error {
 	linkDir := filepath.Join(root, ".rimsky")
 	if err := os.MkdirAll(linkDir, 0o700); err != nil {
 		return fmt.Errorf("create symlink dir %q: %w", linkDir, err)
 	}
+	sweepStaleLatestTmp(linkDir)
 	linkPath := filepath.Join(linkDir, "latest")
 	relTarget, err := filepath.Rel(linkDir, runDir)
 	if err != nil {

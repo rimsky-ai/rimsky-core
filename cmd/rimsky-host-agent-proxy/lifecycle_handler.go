@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -43,9 +44,15 @@ func (h *lifecycleHandler) OnRunScopeTerminal(_ context.Context, req *genv1.OnRu
 		scopeID = req.GetInstanceId()
 	}
 	dropped := h.state.dropSpawnsForRunScope(scopeID)
+	var wg sync.WaitGroup
+	wg.Add(len(dropped))
 	for i := range dropped {
-		h.reap(dropped[i])
+		go func(sp spawnState) {
+			defer wg.Done()
+			h.reap(sp)
+		}(dropped[i])
 	}
+	wg.Wait()
 	return &genv1.LifecycleAck{}, nil
 }
 

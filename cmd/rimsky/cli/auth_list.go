@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/roles"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
@@ -102,10 +104,40 @@ func grantsEqual(a, b auth.Grant) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := range a {
-		if a[i].Action != b[i].Action {
+	counts := map[string]int{}
+	for _, e := range a {
+		counts[grantEntryKey(e)]++
+	}
+	for _, e := range b {
+		key := grantEntryKey(e)
+		counts[key]--
+		if counts[key] < 0 {
+			return false
+		}
+	}
+	for _, c := range counts {
+		if c != 0 {
 			return false
 		}
 	}
 	return true
+}
+
+func grantEntryKey(e auth.GrantEntry) string {
+	scopeKeys := make([]string, 0, len(e.Scope))
+	for k := range e.Scope {
+		scopeKeys = append(scopeKeys, k)
+	}
+	sort.Strings(scopeKeys)
+	var b strings.Builder
+	b.WriteString(e.Action)
+	b.WriteByte('\x00')
+	b.WriteString(string(e.Mode))
+	for _, k := range scopeKeys {
+		b.WriteByte('\x00')
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(e.Scope[k])
+	}
+	return b.String()
 }

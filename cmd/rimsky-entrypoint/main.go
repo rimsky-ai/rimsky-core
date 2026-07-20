@@ -92,8 +92,13 @@ func shouldMigrate(selected []string) (bool, error) {
 	return len(selected) == 1 && Role(selected[0]).OwnsMigration(), nil
 }
 
+func newLeveledHandler() slog.Handler {
+	level := shared.ParseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))
+	return slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+}
+
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("binary", "entrypoint"))
+	slog.SetDefault(slog.New(newLeveledHandler()).With("binary", "entrypoint"))
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -146,8 +151,7 @@ func runMigrateIfOwned(plan LaunchPlan, sigCh <-chan os.Signal) {
 }
 
 func runUnified(sigCh <-chan os.Signal) {
-	level := shared.ParseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))
-	base := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	base := slog.New(newLeveledHandler())
 
 	ctx := context.Background()
 

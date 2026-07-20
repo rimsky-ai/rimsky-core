@@ -136,8 +136,7 @@ func RunAssetVersions(ctx context.Context, args []string) int {
 	rows := make([][]string, 0, len(v.Versions))
 	for _, vv := range v.Versions {
 		versionID, _ := vv["version_id"].(string)
-		ts, _ := vv["committed_at"].(string)
-		rows = append(rows, []string{versionID, ts})
+		rows = append(rows, []string{versionID, formatCommittedAtUnixS(vv["committed_at_unix_s"])})
 	}
 	EmitTable(os.Stdout, []string{"VERSION_ID", "COMMITTED_AT"}, rows)
 	return 0
@@ -240,8 +239,20 @@ func recordCarriesVersion(record json.RawMessage, want string) bool {
 
 func truncateSnippet(s string, max int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:max-1] + "…"
+	if max <= 0 {
+		return ""
+	}
+	return string(runes[:max-1]) + "…"
+}
+
+func formatCommittedAtUnixS(v any) string {
+	sec, ok := v.(float64)
+	if !ok {
+		return ""
+	}
+	return time.Unix(int64(sec), 0).UTC().Format(time.RFC3339)
 }

@@ -267,6 +267,7 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 				strings.Join(nonTerminalOrphans, ", ")),
 		}
 	}
+	sort.Slice(instanceDeletes, func(i, j int) bool { return instanceDeletes[i].InstanceKey < instanceDeletes[j].InstanceKey })
 
 	keptHashes := map[string]bool{}
 	for _, hash := range resolved {

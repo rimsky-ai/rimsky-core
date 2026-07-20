@@ -163,6 +163,79 @@ func TestRunInstanceStatus_KeyResolution(t *testing.T) {
 	}
 }
 
+func TestRunInstanceStatus_SingleGetInstanceRoundTrip(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	key := "compose:p:n"
+	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}})
+
+	before := srv.GetInstanceHitCount()
+	if got := cli.RunInstanceStatus(context.Background(), []string{key}); got != 0 {
+		t.Fatalf("exit %d, want 0", got)
+	}
+	hits := srv.GetInstanceHitCount() - before
+	if hits != 1 {
+		t.Fatalf("RunInstanceStatus with a non-UUID key issued %d GET /v1/instances/{id} requests, want exactly 1", hits)
+	}
+}
+
+func TestRunInstanceGet_ByKeyAndUUID(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	key := "compose:p:n"
+	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
+
+	var exit int
+	out := captureStdout(t, func() {
+		exit = cli.RunInstanceGet(context.Background(), []string{key})
+	})
+	if exit != 0 {
+		t.Fatalf("RunInstanceGet by key: exit %d, want 0; output:\n%s", exit, out)
+	}
+	if !strings.Contains(out, inst.ID) {
+		t.Fatalf("RunInstanceGet by key: output missing instance id, got:\n%s", out)
+	}
+
+	out = captureStdout(t, func() {
+		exit = cli.RunInstanceGet(context.Background(), []string{inst.ID})
+	})
+	if exit != 0 {
+		t.Fatalf("RunInstanceGet by uuid: exit %d, want 0; output:\n%s", exit, out)
+	}
+	if !strings.Contains(out, inst.ID) {
+		t.Fatalf("RunInstanceGet by uuid: output missing instance id, got:\n%s", out)
+	}
+
+	out = captureStdout(t, func() {
+		exit = cli.RunInstanceGet(context.Background(), []string{"-o", "json", inst.ID})
+	})
+	if exit != 0 {
+		t.Fatalf("RunInstanceGet --output json: exit %d, want 0; output:\n%s", exit, out)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("RunInstanceGet --output json produced invalid JSON: %v; output:\n%s", err, out)
+	}
+}
+
+func TestRunInstanceGet_NotFound(t *testing.T) {
+	srv := setupClitest(t)
+	_ = srv
+	if got := cli.RunInstanceGet(context.Background(), []string{"ghost-id"}); got != 1 {
+		t.Fatalf("RunInstanceGet(ghost-id): exit %d, want 1", got)
+	}
+}
+
+func TestRunInstanceGet_WrongArgCount(t *testing.T) {
+	if got := cli.RunInstanceGet(context.Background(), nil); got != 2 {
+		t.Fatalf("RunInstanceGet(no args): exit %d, want 2", got)
+	}
+	if got := cli.RunInstanceGet(context.Background(), []string{"a", "b"}); got != 2 {
+		t.Fatalf("RunInstanceGet(two args): exit %d, want 2", got)
+	}
+}
+
 func TestRunWatch_ExitsOnTerminal(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")

@@ -5,7 +5,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +27,17 @@ func writeFixtureBinary(t *testing.T, dir, name, body string) string {
 		t.Fatalf("write fixture: %v", err)
 	}
 	return path
+}
+
+func TestNewLeveledHandler_HonorsLogLevel(t *testing.T) {
+	t.Setenv("RIMSKY_LOG_LEVEL", "error")
+	h := newLeveledHandler()
+	if h.Enabled(context.Background(), slog.LevelInfo) {
+		t.Fatal("newLeveledHandler() with RIMSKY_LOG_LEVEL=error still enables Info; the entrypoint's own logger ignores the level knob")
+	}
+	if !h.Enabled(context.Background(), slog.LevelError) {
+		t.Fatal("newLeveledHandler() with RIMSKY_LOG_LEVEL=error should enable Error")
+	}
 }
 
 func TestNameOf(t *testing.T) {

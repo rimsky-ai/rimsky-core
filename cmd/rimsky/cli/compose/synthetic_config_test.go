@@ -244,6 +244,9 @@ named_locks:
 	if pub.Endpoint != "127.0.0.1:9301" {
 		t.Fatalf("publishers[ticker].endpoint: got %q, want 127.0.0.1:9301", pub.Endpoint)
 	}
+	if pub.TLS != "off" {
+		t.Fatalf("publishers[ticker].tls: got %q, want \"off\" (round-tripped from the sibling's `tls: off`)", pub.TLS)
+	}
 	nl, ok := cfg.NamedLocks.Locks["resource-a"]
 	if !ok {
 		t.Fatalf("named_locks[resource-a] not folded into synthetic rimsky.yml: %#v", cfg.NamedLocks)

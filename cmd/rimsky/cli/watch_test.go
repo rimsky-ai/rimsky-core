@@ -136,6 +136,115 @@ func TestRunWatch_DrainsFullBacklogAcrossMultiplePagesInChronologicalOrder(t *te
 	}
 }
 
+func TestRunWatch_DoesNotRescanFullHistoryOnSubsequentPolls(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+	srv.State.SetInstanceActivity(inst.ID, 0, 0)
+
+	const total = 250
+	base := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < total; i++ {
+		srv.State.AddEvent(cli.Event{
+			InstanceID: inst.ID,
+			Kind:       "seq_event",
+			OccurredAt: base.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+			Payload:    map[string]any{"seq": i},
+		})
+	}
+
+	done := make(chan int, 1)
+	exit := -1
+	captureStdout(t, func() {
+		go func() {
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10ms", inst.ID})
+		}()
+		select {
+		case exit = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("watch did not exit on an idle instance")
+		}
+	})
+	if exit != 0 {
+		t.Fatalf("exit %d, want 0", exit)
+	}
+
+	const wantPages = 4
+	if got := srv.ListEventsHitCount(); got != wantPages {
+		t.Fatalf("ListEvents was called %d times across two polls of a 250-event backlog, want %d (watch is re-scanning full history on every poll)", got, wantPages)
+	}
+}
+
+func TestRunWatch_PendingMessagesBlockIdle(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+	srv.State.SetInstanceActivity(inst.ID, 1, 0)
+
+	done := make(chan int, 1)
+	exit := -1
+	out := captureStdout(t, func() {
+		go func() {
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "20ms", inst.ID})
+		}()
+		select {
+		case exit = <-done:
+			t.Errorf("watch exited (%d) while a message was still pending", exit)
+		case <-time.After(200 * time.Millisecond):
+		}
+		srv.State.SetInstanceActivity(inst.ID, 0, 0)
+		select {
+		case exit = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("watch did not exit after the pending message cleared")
+		}
+	})
+	if exit != 0 {
+		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
+	}
+	if !strings.Contains(out, "idle") {
+		t.Fatalf("watch output missing idle line; output:\n%s", out)
+	}
+}
+
+func TestRunWatch_IdleConfirmationResetsOnTransientBusy(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+	srv.State.SetInstanceActivity(inst.ID, 0, 0)
+
+	done := make(chan int, 1)
+	exit := -1
+	out := captureStdout(t, func() {
+		go func() {
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "20ms", inst.ID})
+		}()
+		select {
+		case exit = <-done:
+			t.Errorf("watch exited (%d) after only a single idle poll; idleConfirmPolls should require two consecutive idle reads", exit)
+		case <-time.After(15 * time.Millisecond):
+		}
+		srv.State.SetInstanceActivity(inst.ID, 0, 1)
+		select {
+		case exit = <-done:
+			t.Errorf("watch exited (%d) despite a running frame between the two idle polls", exit)
+		case <-time.After(60 * time.Millisecond):
+		}
+		srv.State.SetInstanceActivity(inst.ID, 0, 0)
+		select {
+		case exit = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("watch did not exit after two fresh consecutive idle polls following the reset")
+		}
+	})
+	if exit != 0 {
+		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
+	}
+	if !strings.Contains(out, "idle") {
+		t.Fatalf("watch output missing idle line; output:\n%s", out)
+	}
+}
+
 func TestRunWatch_ExitsOnIdleInstance(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")

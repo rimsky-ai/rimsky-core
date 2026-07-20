@@ -19,13 +19,14 @@ import (
 )
 
 type InMemoryState struct {
-	mu        sync.Mutex
-	templates map[string]*storedTemplate
-	tags      map[string]string
-	instances map[string]*storedInstance
-	events    []cli.Event
-	nodes     map[string]map[string]*cli.Node
-	nextEvent int64
+	mu           sync.Mutex
+	templates    map[string]*storedTemplate
+	tags         map[string]string
+	instances    map[string]*storedInstance
+	events       []cli.Event
+	nodes        map[string]map[string]*cli.Node
+	nextEvent    int64
+	nextInstance int64
 
 	breakpointHits map[string][]map[string]any
 	nextHitSeq     int64
@@ -242,7 +243,8 @@ func (s *InMemoryState) CreateInstance(hash string, key *string, params map[stri
 			}
 		}
 	}
-	id := fmt.Sprintf("inst-%d", len(s.instances)+1)
+	s.nextInstance++
+	id := fmt.Sprintf("inst-%d", s.nextInstance)
 	row := &storedInstance{
 		ID:           id,
 		TemplateHash: hash,

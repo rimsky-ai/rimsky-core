@@ -346,3 +346,27 @@ func TestClient_5xxError(t *testing.T) {
 		t.Errorf("error message missing body: %v", err)
 	}
 }
+
+func TestClient_RawCall_PropagatesBodyReadError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("test server ResponseWriter does not support hijacking")
+		}
+		conn, buf, err := hj.Hijack()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort")
+		_ = buf.Flush()
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	var out map[string]any
+	status, err := c.RawCall(context.Background(), http.MethodGet, "/v1/health", nil, &out)
+	if err == nil {
+		t.Fatalf("RawCall should surface a truncated-body read error instead of silently returning (status=%d, out=%v)", status, out)
+	}
+}

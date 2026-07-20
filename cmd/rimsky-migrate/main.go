@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -26,13 +28,16 @@ func main() {
 	slog.SetDefault(slogLogger)
 	logger := shared.NewSlogLogger(slogLogger)
 
-	if err := run(logger); err != nil {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	if err := run(ctx, logger); err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky-migrate: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger shared.Logger) error {
+func run(ctx context.Context, logger shared.Logger) error {
 	cfgPath := os.Getenv("RIMSKY_CONFIG")
 	if cfgPath == "" {
 		cfgPath = "/etc/rimsky/rimsky.yml"
@@ -42,7 +47,6 @@ func run(logger shared.Logger) error {
 		return fmt.Errorf("load rimsky config: %w", err)
 	}
 
-	ctx := context.Background()
 	driver, err := persistence.Open(ctx, cfg.Persistence)
 	if err != nil {
 		return fmt.Errorf("persistence.Open: %w", err)

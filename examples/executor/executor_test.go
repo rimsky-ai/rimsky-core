@@ -78,6 +78,34 @@ func TestExecute_EmitEventEmitsDeclaredTag(t *testing.T) {
 	}
 }
 
+func TestExecute_EmitEventCountAttributeAffectsChangeSummary(t *testing.T) {
+	e := &Executor{}
+
+	noCount := mustExecuteRequest(t, map[string]any{"mode": "emit_event"})
+	outcome, err := e.Execute(context.Background(), noCount)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	success, ok := outcome.GetOutcome().(*genv1.Outcome_Success)
+	if !ok {
+		t.Fatalf("expected Outcome_Success, got %T", outcome.GetOutcome())
+	}
+	baseline := success.Success.GetChangeSummary()
+
+	withCount := mustExecuteRequest(t, map[string]any{"mode": "emit_event", "count": 3})
+	outcome, err = e.Execute(context.Background(), withCount)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	success, ok = outcome.GetOutcome().(*genv1.Outcome_Success)
+	if !ok {
+		t.Fatalf("expected Outcome_Success, got %T", outcome.GetOutcome())
+	}
+	if got := success.Success.GetChangeSummary(); got == baseline {
+		t.Errorf("the declared `count` attribute should be reflected in ChangeSummary, got the same summary %q with and without it", got)
+	}
+}
+
 func TestExecute_AsyncMode_ReturnsAwaitAsyncCallback(t *testing.T) {
 	e := &Executor{}
 	const wantAck = "ack-async-unit-test-1"

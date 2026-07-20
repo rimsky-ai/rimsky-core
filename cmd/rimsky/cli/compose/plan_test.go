@@ -11,6 +11,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -252,11 +254,170 @@ instances:
 		t.Fatal(err)
 	}
 	actions := []compose.Action{}
-	for _, s := range plan.Steps {
+	deleteIdx, createIdx := -1, -1
+	var deletedDestructive bool
+	for i, s := range plan.Steps {
 		actions = append(actions, s.Action)
+		if s.Action == compose.ActionInstanceDelete && s.InstanceKey == key {
+			deleteIdx = i
+			deletedDestructive = s.Destructive
+		}
+		if s.Action == compose.ActionInstanceCreate && s.InstanceKey == key {
+			createIdx = i
+		}
 	}
 	if !containsAction(actions, compose.ActionInstanceDelete) || !containsAction(actions, compose.ActionInstanceCreate) {
 		t.Errorf("missing delete+create; got %+v", actions)
+	}
+	if deleteIdx < 0 || createIdx < 0 {
+		t.Fatalf("could not find delete/create steps for key %s; got %+v", key, plan.Steps)
+	}
+	if !(deleteIdx < createIdx) {
+		t.Errorf("delete step (index %d) must precede the create step (index %d) for the same key", deleteIdx, createIdx)
+	}
+	if !deletedDestructive {
+		t.Errorf("delete step for a failed instance should be marked Destructive")
+	}
+}
+
+func TestComputePlan_RestartAlways_RecreatesEvenOnSuccess(t *testing.T) {
+	srv := clitest.NewServer(t)
+	defer srv.Close()
+	c := cli.NewClient(srv.URL)
+	dir, m := makeManifest(t, `project: p
+templates:
+  - path: spec.yml
+    tag: a@1.0
+instances:
+  - template: a@1.0
+    name: hello
+    restart: always
+`)
+	for i := range m.Templates {
+		m.Templates[i].Path = filepath.Join(dir, m.Templates[i].Path)
+	}
+	hash, body, err := compose.ResolveTemplate(m.Templates[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
+	if gotHash != hash {
+		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
+	}
+	srv.State.SetTemplateState(hash, "deployed")
+	key := "compose:p:hello"
+	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}})
+	now := time.Now()
+	srv.State.SetInstanceTerminated(inst.ID, &now)
+
+	state, _ := compose.QueryState(context.Background(), c, m.Project)
+	plan, err := compose.ComputePlan(context.Background(), c, m, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := []compose.Action{}
+	var deletedDestructive bool
+	for _, s := range plan.Steps {
+		actions = append(actions, s.Action)
+		if s.Action == compose.ActionInstanceDelete && s.InstanceKey == key {
+			deletedDestructive = s.Destructive
+		}
+	}
+	if !containsAction(actions, compose.ActionInstanceDelete) || !containsAction(actions, compose.ActionInstanceCreate) {
+		t.Errorf("restart=always on a successful terminal instance should still delete+recreate; got %+v", actions)
+	}
+	if deletedDestructive {
+		t.Errorf("delete step for a successful instance should not be marked Destructive")
+	}
+}
+
+func TestComputePlan_RestartNever_DeletesWithoutRecreating(t *testing.T) {
+	srv := clitest.NewServer(t)
+	defer srv.Close()
+	c := cli.NewClient(srv.URL)
+	dir, m := makeManifest(t, `project: p
+templates:
+  - path: spec.yml
+    tag: a@1.0
+instances:
+  - template: a@1.0
+    name: hello
+    restart: never
+`)
+	for i := range m.Templates {
+		m.Templates[i].Path = filepath.Join(dir, m.Templates[i].Path)
+	}
+	hash, body, err := compose.ResolveTemplate(m.Templates[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
+	if gotHash != hash {
+		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
+	}
+	srv.State.SetTemplateState(hash, "deployed")
+	key := "compose:p:hello"
+	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FailedCount: 1}})
+	now := time.Now()
+	srv.State.SetInstanceTerminated(inst.ID, &now)
+
+	state, _ := compose.QueryState(context.Background(), c, m.Project)
+	plan, err := compose.ComputePlan(context.Background(), c, m, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := []compose.Action{}
+	for _, s := range plan.Steps {
+		actions = append(actions, s.Action)
+	}
+	if !containsAction(actions, compose.ActionInstanceDelete) {
+		t.Errorf("restart=never on a terminal instance should still delete it; got %+v", actions)
+	}
+	if containsAction(actions, compose.ActionInstanceCreate) {
+		t.Errorf("restart=never must not recreate; got %+v", actions)
+	}
+}
+
+func TestComputePlan_InstanceDeletesAreDeterministicallySorted(t *testing.T) {
+	srv := clitest.NewServer(t)
+	defer srv.Close()
+	c := cli.NewClient(srv.URL)
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:a@1.0", "")
+	srv.State.SetTemplateState(hash, "deployed")
+
+	keys := []string{"compose:p:zebra", "compose:p:apple", "compose:p:mango", "compose:p:banana", "compose:p:cherry"}
+	now := time.Now()
+	for _, key := range keys {
+		key := key
+		inst, _, err := srv.State.CreateInstance(hash, &key, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv.State.SetInstanceTerminated(inst.ID, &now)
+	}
+
+	_, m := makeManifest(t, "project: p\n")
+	state, _ := compose.QueryState(context.Background(), c, m.Project)
+	plan, err := compose.ComputePlan(context.Background(), c, m, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var deleteKeys []string
+	for _, s := range plan.Steps {
+		if s.Action == compose.ActionInstanceDelete {
+			deleteKeys = append(deleteKeys, s.InstanceKey)
+		}
+	}
+	if len(deleteKeys) != len(keys) {
+		t.Fatalf("got %d delete steps, want %d: %+v", len(deleteKeys), len(keys), deleteKeys)
+	}
+	want := append([]string(nil), keys...)
+	sort.Strings(want)
+	if !reflect.DeepEqual(deleteKeys, want) {
+		t.Errorf("instance-delete steps not deterministically sorted: got %v, want %v", deleteKeys, want)
 	}
 }
 
@@ -386,6 +547,54 @@ instances:
 	count := strings.Count(stderr, want)
 	if count != 1 {
 		t.Errorf("warning appearances: got %d; stderr=%q", count, stderr)
+	}
+}
+
+func TestComputePlan_ParamsEqualNumericNormalizationAvoidsFalseDrift(t *testing.T) {
+	srv := clitest.NewServer(t)
+	defer srv.Close()
+	c := cli.NewClient(srv.URL)
+	dir, m := makeManifest(t, `project: p
+templates:
+  - path: spec.yml
+    tag: a@1.0
+    state: deployed
+instances:
+  - template: a@1.0
+    name: hello
+    params:
+      count: 7
+`)
+	for i := range m.Templates {
+		m.Templates[i].Path = filepath.Join(dir, m.Templates[i].Path)
+	}
+	hash, body, err := compose.ResolveTemplate(m.Templates[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
+	if gotHash != hash {
+		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
+	}
+	srv.State.SetTemplateState(hash, "deployed")
+	key := "compose:p:hello"
+	if _, _, err := srv.State.CreateInstance(hash, &key, map[string]any{"count": 7}); err != nil {
+		t.Fatal(err)
+	}
+
+	state, _ := compose.QueryState(context.Background(), c, m.Project)
+	plan, err := compose.ComputePlan(context.Background(), c, m, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if plan.HasDriftWarnings {
+		t.Errorf("HasDriftWarnings: got true; want false for materially-equal params (manifest int 7 vs stored float64 7 must not false-positive)")
+	}
+	for _, s := range plan.Steps {
+		if s.InstanceKey == key {
+			t.Errorf("unexpected step for a non-drifted instance %s: %+v", key, s)
+		}
 	}
 }
 

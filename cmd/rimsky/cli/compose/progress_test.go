@@ -108,6 +108,29 @@ func TestJSONPrinter_EmitsJSONLines(t *testing.T) {
 	}
 }
 
+func TestJSONPrinter_SummaryEmitsParseableJSONLine(t *testing.T) {
+	var buf bytes.Buffer
+	p := newJSONPrinter(&buf)
+
+	p.InstanceStarting("proj", "inst")
+	p.Summary("compose run", "all-success", 3)
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 JSON lines, got %d; buffer = %q", len(lines), buf.String())
+	}
+	var rec map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &rec); err != nil {
+		t.Fatalf("trailing summary line is not parseable JSON: %v (line = %q)", err, lines[len(lines)-1])
+	}
+	if rec["event"] != "summary" || rec["verb"] != "compose run" || rec["reason"] != "all-success" {
+		t.Errorf("summary record shape wrong: %+v", rec)
+	}
+	if n, ok := rec["instance_count"].(float64); !ok || n != 3 {
+		t.Errorf("summary record instance_count = %v, want 3", rec["instance_count"])
+	}
+}
+
 func TestJSONPrinter_NodeRunTerminalReasonOptional(t *testing.T) {
 	var buf bytes.Buffer
 	p := newJSONPrinter(&buf)

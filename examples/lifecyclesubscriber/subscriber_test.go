@@ -24,4 +24,16 @@ func TestSubscriberAcksLifecycle(t *testing.T) {
 	if a, err := s.OnRunScopeTerminal(ctx, &genv1.OnRunScopeTerminalRequest{RunScopeId: "r1"}); err != nil || a == nil {
 		t.Fatalf("OnRunScopeTerminal: ack=%v err=%v", a, err)
 	}
+	if a, err := s.OnTemplateRegistered(ctx, &genv1.OnTemplateRegisteredRequest{}); err != nil || a == nil {
+		t.Fatalf("OnTemplateRegistered: ack=%v err=%v", a, err)
+	}
+	if a, err := s.OnTemplateDeployed(ctx, &genv1.OnTemplateDeployedRequest{}); err != nil || a == nil {
+		t.Fatalf("OnTemplateDeployed: ack=%v err=%v", a, err)
+	}
+	if a, err := s.OnTemplateUndeployed(ctx, &genv1.OnTemplateUndeployedRequest{}); err != nil || a == nil {
+		t.Fatalf("OnTemplateUndeployed: ack=%v err=%v", a, err)
+	}
+	if a, err := s.OnTemplateDeregistered(ctx, &genv1.OnTemplateDeregisteredRequest{}); err != nil || a == nil {
+		t.Fatalf("OnTemplateDeregistered: ack=%v err=%v", a, err)
+	}
 }

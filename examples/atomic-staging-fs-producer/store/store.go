@@ -59,6 +59,11 @@ func New(root string) (*Store, error) {
 func (s *Store) Open(claimID, scope string) (Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if existing, ok, err := s.lookup(claimID); err != nil {
+		return Entry{}, err
+	} else if ok {
+		return existing, nil
+	}
 	stagingPath := filepath.Join(s.root, "staging", scope, claimID)
 	if err := os.MkdirAll(stagingPath, 0o755); err != nil {
 		return Entry{}, fmt.Errorf("atomic-staging.Open: mkdir staging: %w", err)
@@ -85,7 +90,7 @@ func (s *Store) Commit(claimID string) error {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("atomic-staging.Commit: unknown claim_id %q", claimID)
+		return nil
 	}
 	if err := s.swapIntoCanonical(entry); err != nil {
 		return err

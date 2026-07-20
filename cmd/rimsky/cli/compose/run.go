@@ -170,7 +170,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 
 	if err := WaitForControlAPIReady(bootCtx, stack.Endpoint(), 10*time.Second); err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: control-api not ready:", err)
-		return coord.Drain(context.Background(), ReasonAnyFailure)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 
 	c := cli.NewClient(stack.Endpoint())
@@ -180,12 +180,12 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	state, err := QueryState(bootCtx, c, m.Project)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: query state:", err)
-		return coord.Drain(context.Background(), ReasonAnyFailure)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 	plan, err := ComputePlan(bootCtx, c, m, state)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: compute plan:", err)
-		return coord.Drain(context.Background(), ReasonAnyFailure)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 
 	printer := newProgressPrinter(os.Stderr, flags.quiet, flags.verbose, flags.json)
@@ -194,10 +194,10 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	if flags.json {
 		applyLogger = io.Discard
 	}
-	created, err := ApplyPlan(bootCtx, c, plan, ApplyOpts{Logger: applyLogger})
+	created, _, err := ApplyPlan(bootCtx, c, plan, ApplyOpts{Logger: applyLogger})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: apply:", err)
-		return coord.Drain(context.Background(), ReasonAnyFailure)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 
 	// @decision: compose-driver-sends-empty-message-after-create
@@ -212,7 +212,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 			h, herr := cli.TemplateHasStructuralRoot(bootCtx, c, ci.TemplateHash)
 			if herr != nil {
 				fmt.Fprintln(os.Stderr, "rimsky compose run: inspect template:", herr)
-				return coord.Drain(context.Background(), ReasonAnyFailure)
+				return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 			}
 			rootByHash[ci.TemplateHash] = h
 			hasRoot = h
@@ -224,7 +224,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		if _, err := c.CreateInstanceMessage(bootCtx, ci.ID, wakeKey,
 			cli.CreateInstanceMessageRequest{}); err != nil {
 			fmt.Fprintln(os.Stderr, "rimsky compose run: emit wake message:", err)
-			return coord.Drain(context.Background(), ReasonAnyFailure)
+			return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 		}
 	}
 
@@ -238,9 +238,8 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 
 	releaseBootSignalWatcher()
 	if bootCtx.Err() != nil {
+		printer.Summary("compose run", reasonString(ReasonSignal), len(instanceIDs))
 		printer.Finalize()
-		fmt.Fprintf(os.Stderr, "compose run: %s (%d instance%s)\n",
-			reasonString(ReasonSignal), len(instanceIDs), pluralS(len(instanceIDs)))
 		return coord.Drain(context.Background(), ReasonSignal)
 	}
 
@@ -259,9 +258,8 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		logger:       logger,
 	})
 
+	printer.Summary("compose run", reasonString(reason), len(instanceIDs))
 	printer.Finalize()
-	fmt.Fprintf(os.Stderr, "compose run: %s (%d instance%s)\n",
-		reasonString(reason), len(instanceIDs), pluralS(len(instanceIDs)))
 
 	return coord.Drain(context.Background(), reason)
 }

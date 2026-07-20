@@ -26,6 +26,19 @@ type emptyHandleSet struct{}
 
 func (emptyHandleSet) Contains(string) bool { return false }
 
+func mustParseDurationEnv(logger *slog.Logger, name string) time.Duration {
+	v := os.Getenv(name)
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		logger.Error("invalid duration", "env", name, "value", v, "error", err.Error())
+		os.Exit(2)
+	}
+	return d
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
@@ -38,8 +51,8 @@ func main() {
 	if addr == "" {
 		addr = ":8090"
 	}
-	sweepInterval, _ := time.ParseDuration(os.Getenv("RIMSKY_SWEEP_INTERVAL"))
-	sweepTTL, _ := time.ParseDuration(os.Getenv("RIMSKY_SWEEP_TTL"))
+	sweepInterval := mustParseDurationEnv(logger, "RIMSKY_SWEEP_INTERVAL")
+	sweepTTL := mustParseDurationEnv(logger, "RIMSKY_SWEEP_TTL")
 
 	st, err := store.New(root)
 	if err != nil {
