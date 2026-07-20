@@ -9,6 +9,7 @@ package node
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -105,7 +106,14 @@ func findAllCycles(adj map[string][]string) [][]string {
 		for _, next := range adj[node] {
 			switch color[next] {
 			case gray:
-				cyclePath := append([]string(nil), path...)
+				cycleStart := 0
+				for i, n := range path {
+					if n == next {
+						cycleStart = i
+						break
+					}
+				}
+				cyclePath := append([]string(nil), path[cycleStart:]...)
 				cyclePath = append(cyclePath, next)
 				key := canonicalCycleKey(cyclePath)
 				if _, dup := seenCycles[key]; !dup {
@@ -119,7 +127,12 @@ func findAllCycles(adj map[string][]string) [][]string {
 		color[node] = black
 	}
 
+	nodes := make([]string, 0, len(adj))
 	for node := range adj {
+		nodes = append(nodes, node)
+	}
+	sort.Strings(nodes)
+	for _, node := range nodes {
 		if color[node] == white {
 			dfs(node)
 		}

@@ -372,12 +372,12 @@ func modeDropIfPriorEqual(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	row *persistence.NodeRunForGate, bag map[string]any, includeSettled bool,
 ) (bool, error) {
-	priorStale, err := args.Persist.Nodes().GetPriorCascadeStaleNotClaimed(ctx, tx, row.NodeID, row.RunScopeID, row.Sequence)
+	priorQueued, err := args.Persist.Nodes().GetPriorCascadeQueuedNotClaimed(ctx, tx, row.NodeID, row.RunScopeID, row.Sequence)
 	if err != nil {
-		return false, fmt.Errorf("prior stale: %w", err)
+		return false, fmt.Errorf("prior queued: %w", err)
 	}
-	if priorStale != nil {
-		return bagsEqual(ctx, args, tx, priorStale.NodeRunID, bag)
+	if priorQueued != nil {
+		return bagsEqual(ctx, args, tx, priorQueued.NodeRunID, bag)
 	}
 	if !includeSettled {
 		return false, nil

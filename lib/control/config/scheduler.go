@@ -61,10 +61,10 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		return nil, fmt.Errorf("StartScheduler: Driver.Queue() returned nil")
 	}
 	// @concept: advisory-lock
-	coordinator := cfg.Driver.AdvisoryLocker()
-	if coordinator == nil {
+	advisoryLocker := cfg.Driver.AdvisoryLocker()
+	if advisoryLocker == nil {
 		registry.Close()
-		return nil, fmt.Errorf("StartScheduler: Driver.Coordinator() returned nil")
+		return nil, fmt.Errorf("StartScheduler: Driver.AdvisoryLocker() returned nil")
 	}
 	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
 	if err != nil {
@@ -74,7 +74,7 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 	inner := scheduler.Config{
 		Persist:                 persistStore,
 		Queue:                   persistQueue,
-		AdvisoryLocker:          coordinator,
+		AdvisoryLocker:          advisoryLocker,
 		Clock:                   cfg.Clock,
 		Logger:                  cfg.Logger,
 		TickInterval:            cfg.TickInterval,

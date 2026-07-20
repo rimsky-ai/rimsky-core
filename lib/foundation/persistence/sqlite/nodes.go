@@ -1185,7 +1185,7 @@ func enrollScratchOrphans(ctx context.Context, ti *tablesImpl, tx persistence.Tx
 }
 
 // @concept: cascade
-func (s *nodesImpl) GetPriorCascadeStaleNotClaimed(
+func (s *nodesImpl) GetPriorCascadeQueuedNotClaimed(
 	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, beforeSeq int64,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,

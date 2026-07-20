@@ -51,8 +51,8 @@ func Routes(r chi.Router, deps Deps) {
 	r.Get("/node-runs", handleListNodeRuns(deps))
 	r.Get("/node-runs/{id}", handleGetNodeRun(deps))
 
-	r.Get("/lock-holders", handleListLockHolders(deps))
-	r.Get("/lock-holders/{id}", handleGetClaimHandle(deps))
+	r.Get("/claim-handles", handleListClaimHandles(deps))
+	r.Get("/claim-handles/{id}", handleGetClaimHandle(deps))
 
 	r.Get("/events", handleListEvents(deps))
 	r.Get("/system/health", handleSystemHealth(deps))
@@ -622,7 +622,7 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 	}
 }
 
-func handleListLockHolders(deps Deps) http.HandlerFunc {
+func handleListClaimHandles(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pag, err := parsePagination(r)
 		if err != nil {
@@ -660,8 +660,8 @@ func handleListLockHolders(deps Deps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"lock_holders": res.Rows,
-			"next_cursor":  res.NextCursor,
+			"claim_handles": res.Rows,
+			"next_cursor":   res.NextCursor,
 		})
 	}
 }
@@ -671,7 +671,7 @@ func handleGetClaimHandle(deps Deps) http.HandlerFunc {
 		idStr := chi.URLParam(r, "id")
 		id, err := uuid.Parse(idStr)
 		if err != nil {
-			badRequest(w, "invalid lock-holder id")
+			badRequest(w, "invalid claim-handle id")
 			return
 		}
 		var row *persistence.ClaimHandleRow
@@ -695,11 +695,11 @@ func handleGetClaimHandle(deps Deps) http.HandlerFunc {
 			return
 		}
 		if row == nil {
-			notFound(w, "lock-holder not found")
+			notFound(w, "claim-handle not found")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"lock_holder":   row,
+			"claim_handle":  row,
 			"claim_holders": holders,
 		})
 	}

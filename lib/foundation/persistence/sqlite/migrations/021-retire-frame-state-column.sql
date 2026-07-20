@@ -17,11 +17,13 @@
 -- migrator applies every migration on a connection with foreign_keys
 -- OFF (see migrate.go): with foreign_keys ON, DROP TABLE performs an
 -- implicit DELETE that would fire ON DELETE CASCADE into
--- rimsky_node_runs and the wait tables. DROP TABLE + RENAME under
--- sqlite's modern ALTER TABLE semantics automatically updates FK
--- references in child tables (rimsky_messages, rimsky_node_runs,
--- rimsky_breakpoint_hits, rimsky_wait_sets) to point at the renamed
--- table, and the migrator runs PRAGMA foreign_key_check before commit.
+-- rimsky_node_runs and the wait tables. Child tables (rimsky_messages,
+-- rimsky_node_runs, rimsky_breakpoint_hits, rimsky_wait_set) declare
+-- their FK as REFERENCES rimsky_frames(frame_id) by name, not by a
+-- resolved object reference; renaming rimsky_frames_new to rimsky_frames
+-- below means those clauses resolve against the rebuilt table without
+-- any ALTER TABLE involvement on the child side, and the migrator runs
+-- PRAGMA foreign_key_check before commit.
 
 DROP INDEX IF EXISTS uq_rimsky_frames_running;
 

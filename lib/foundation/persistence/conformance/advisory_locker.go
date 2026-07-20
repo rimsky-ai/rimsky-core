@@ -11,11 +11,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-func testCoordinatorSchedulerTick(t *testing.T, d persistence.Database) {
+func testAdvisoryLockerSchedulerTick(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	c := d.AdvisoryLocker()
 	if c == nil {
-		t.Fatalf("driver.Coordinator() returned nil")
+		t.Fatalf("driver.AdvisoryLocker() returned nil")
 	}
 
 	got1, release1, err := c.TrySchedulerTick(ctx)

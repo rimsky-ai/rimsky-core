@@ -42,7 +42,7 @@ func seedClaimHandle(t *testing.T, ctx context.Context, store persistence.Tables
 	return id
 }
 
-func TestHandler_ListLockHolders_FiltersByProducerName(t *testing.T) {
+func TestHandler_ListClaimHandles_FiltersByProducerName(t *testing.T) {
 	d := newSQLiteDriver(t)
 	store := d.Tables()
 	ctx := context.Background()
@@ -56,27 +56,27 @@ func TestHandler_ListLockHolders_FiltersByProducerName(t *testing.T) {
 	deps := observability.Deps{Tables: store, Queue: d.Queue(), Discovery: disc}
 	r := newRouter(t, deps)
 
-	req := httptest.NewRequest("GET", "/v1/observability/lock-holders?producer_name=topics-ring", nil)
+	req := httptest.NewRequest("GET", "/v1/observability/claim-handles?producer_name=topics-ring", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 	var body struct {
-		LockHolders []map[string]any `json:"lock_holders"`
+		ClaimHandles []map[string]any `json:"claim_handles"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(body.LockHolders) != 1 {
-		t.Fatalf("producer_name filter returned %d holders, want 1: %+v", len(body.LockHolders), body.LockHolders)
+	if len(body.ClaimHandles) != 1 {
+		t.Fatalf("producer_name filter returned %d claim handles, want 1: %+v", len(body.ClaimHandles), body.ClaimHandles)
 	}
-	if body.LockHolders[0]["id"] != wantID.String() {
-		t.Fatalf("id = %v, want %s", body.LockHolders[0]["id"], wantID.String())
+	if body.ClaimHandles[0]["id"] != wantID.String() {
+		t.Fatalf("id = %v, want %s", body.ClaimHandles[0]["id"], wantID.String())
 	}
 }
 
-func TestHandler_ListLockHolders_FiltersByInstanceID(t *testing.T) {
+func TestHandler_ListClaimHandles_FiltersByInstanceID(t *testing.T) {
 	d := newSQLiteDriver(t)
 	store := d.Tables()
 	ctx := context.Background()
@@ -90,23 +90,23 @@ func TestHandler_ListLockHolders_FiltersByInstanceID(t *testing.T) {
 	deps := observability.Deps{Tables: store, Queue: d.Queue(), Discovery: disc}
 	r := newRouter(t, deps)
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/v1/observability/lock-holders?instance_id=%s", fixA.InstanceID.String()), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/v1/observability/claim-handles?instance_id=%s", fixA.InstanceID.String()), nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 	var body struct {
-		LockHolders []map[string]any `json:"lock_holders"`
+		ClaimHandles []map[string]any `json:"claim_handles"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(body.LockHolders) != 1 {
-		t.Fatalf("instance_id filter returned %d holders, want 1: %+v", len(body.LockHolders), body.LockHolders)
+	if len(body.ClaimHandles) != 1 {
+		t.Fatalf("instance_id filter returned %d claim handles, want 1: %+v", len(body.ClaimHandles), body.ClaimHandles)
 	}
-	if body.LockHolders[0]["id"] != wantID.String() {
-		t.Fatalf("id = %v, want %s", body.LockHolders[0]["id"], wantID.String())
+	if body.ClaimHandles[0]["id"] != wantID.String() {
+		t.Fatalf("id = %v, want %s", body.ClaimHandles[0]["id"], wantID.String())
 	}
 }
 
@@ -128,32 +128,32 @@ func TestHandler_GetClaimHandle_ForensicAnswerFromRowAlone(t *testing.T) {
 	deps := observability.Deps{Tables: store, Queue: d.Queue(), Discovery: disc}
 	r := newRouter(t, deps)
 
-	req := httptest.NewRequest("GET", "/v1/observability/lock-holders/"+claimID.String(), nil)
+	req := httptest.NewRequest("GET", "/v1/observability/claim-handles/"+claimID.String(), nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 	var body struct {
-		LockHolder map[string]any `json:"lock_holder"`
+		ClaimHandle map[string]any `json:"claim_handle"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if body.LockHolder["id"] != claimID.String() {
+	if body.ClaimHandle["id"] != claimID.String() {
 		t.Fatalf("existence answer: id = %v, want %s (the row must answer 'did this claim exist' from itself)",
-			body.LockHolder["id"], claimID.String())
+			body.ClaimHandle["id"], claimID.String())
 	}
-	if body.LockHolder["state"] != "committed" {
+	if body.ClaimHandle["state"] != "committed" {
 		t.Fatalf("resolution answer: state = %v, want %q (the row must answer 'how did this claim resolve' from itself, no lineage join)",
-			body.LockHolder["state"], "committed")
+			body.ClaimHandle["state"], "committed")
 	}
-	if body.LockHolder["resolved_at"] == nil || body.LockHolder["resolved_at"] == "" {
-		t.Fatalf("resolution answer: resolved_at = %v, want a non-empty timestamp sourced from the row itself", body.LockHolder["resolved_at"])
+	if body.ClaimHandle["resolved_at"] == nil || body.ClaimHandle["resolved_at"] == "" {
+		t.Fatalf("resolution answer: resolved_at = %v, want a non-empty timestamp sourced from the row itself", body.ClaimHandle["resolved_at"])
 	}
 }
 
-func TestHandler_ListLockHolders_InvalidInstanceID(t *testing.T) {
+func TestHandler_ListClaimHandles_InvalidInstanceID(t *testing.T) {
 	d := newSQLiteDriver(t)
 	store := d.Tables()
 
@@ -161,7 +161,7 @@ func TestHandler_ListLockHolders_InvalidInstanceID(t *testing.T) {
 	deps := observability.Deps{Tables: store, Queue: d.Queue(), Discovery: disc}
 	r := newRouter(t, deps)
 
-	req := httptest.NewRequest("GET", "/v1/observability/lock-holders?instance_id=not-a-uuid", nil)
+	req := httptest.NewRequest("GET", "/v1/observability/claim-handles?instance_id=not-a-uuid", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {

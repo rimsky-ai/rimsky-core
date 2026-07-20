@@ -865,7 +865,7 @@ func (f *fakeNodesDeps) HasLaterCascadePending(_ context.Context, _ persistence.
 func (f *fakeNodesDeps) ListPendingRunsInScopeForNodes(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []shared.UUID) ([]shared.UUID, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) GetPriorCascadeStaleNotClaimed(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
+func (f *fakeNodesDeps) GetPriorCascadeQueuedNotClaimed(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
 func (f *fakeNodesDeps) GetMostRecentSettledRun(_ context.Context, _ persistence.Tx, nodeID, runScopeID shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {

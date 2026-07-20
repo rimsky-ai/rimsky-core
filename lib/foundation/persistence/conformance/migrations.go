@@ -41,6 +41,6 @@ func testMigrationIdempotency(t *testing.T, d persistence.Database) {
 		t.Fatalf("Queue() nil after re-migrate")
 	}
 	if d.Tables() == nil {
-		t.Fatalf("Store() nil after re-migrate")
+		t.Fatalf("Tables() nil after re-migrate")
 	}
 }

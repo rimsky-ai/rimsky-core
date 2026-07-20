@@ -206,7 +206,7 @@ func (noopNodes) HasLaterCascadePending(context.Context, persistence.Tx, shared.
 func (noopNodes) ListPendingRunsInScopeForNodes(context.Context, persistence.Tx, shared.UUID, []shared.UUID) ([]shared.UUID, error) {
 	return nil, nil
 }
-func (noopNodes) GetPriorCascadeStaleNotClaimed(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (*persistence.NodeRunForGate, error) {
+func (noopNodes) GetPriorCascadeQueuedNotClaimed(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
 func (noopNodes) GetMostRecentSettledRun(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (*persistence.NodeRunForGate, error) {

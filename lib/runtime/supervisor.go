@@ -127,7 +127,7 @@ func Start(cfg Config) (*Handle, error) {
 		return nil, errors.New("supervisor.Start: StoreRegistry is required")
 	}
 
-	lockHolders := cfg.Persist.ClaimHandles()
+	claimHandles := cfg.Persist.ClaimHandles()
 
 	var verbDispatcher *ProducerVerbDispatcher
 	if p, ok := cfg.Persist.(producerVerbOutboxProvider); ok {
@@ -162,7 +162,7 @@ func Start(cfg Config) (*Handle, error) {
 		Persist:                     cfg.Persist,
 		Queue:                       cfg.Queue,
 		AdvisoryLocker:              cfg.AdvisoryLocker,
-		ClaimHandles:                lockHolders,
+		ClaimHandles:                claimHandles,
 		StoreRegistry:               cfg.StoreRegistry,
 		Clock:                       cfg.Clock,
 		Logger:                      cfg.Logger,
@@ -252,7 +252,7 @@ func Start(cfg Config) (*Handle, error) {
 	advertised := advertisedCallbackURL(host, port, cfg.PeerAuth)
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg, callbackServeErr: callbackSrv.ServeErr()}
 	fanOutSems := NewFanOutSemaphoreRegistry()
-	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedClaimProducers, lockHolders, verbDispatcher, fanOutSems)
+	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedClaimProducers, claimHandles, verbDispatcher, fanOutSems)
 	return h, nil
 }
 
@@ -327,7 +327,7 @@ func runLoop(
 	pool *executor.ClientPool,
 	accepted []string,
 	acceptedClaimProducers []string,
-	lockHolders persistence.ClaimHandleTable,
+	claimHandles persistence.ClaimHandleTable,
 	verbDispatcher *ProducerVerbDispatcher,
 	fanOutSems *FanOutSemaphoreRegistry,
 ) {
@@ -371,7 +371,7 @@ func runLoop(
 				Persist:                     cfg.Persist,
 				Queue:                       cfg.Queue,
 				AdvisoryLocker:              cfg.AdvisoryLocker,
-				ClaimHandles:                lockHolders,
+				ClaimHandles:                claimHandles,
 				Clock:                       cfg.Clock,
 				Logger:                      cfg.Logger,
 				SupervisorID:                cfg.SupervisorID,

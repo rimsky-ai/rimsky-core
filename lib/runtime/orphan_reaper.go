@@ -32,11 +32,11 @@ func SweepOrphanedClaimHandles(ctx context.Context, args OrphanReaperArgs) error
 		expired = rows
 		return err
 	}); err != nil {
-		return fmt.Errorf("tick: list expired lock-holders: %w", err)
+		return fmt.Errorf("tick: list expired claim-handles: %w", err)
 	}
 	for _, lh := range expired {
 		if err := reapOneClaimHandle(ctx, args, lh, log); err != nil {
-			log.Warn("tick: reap lock-holder failed",
+			log.Warn("tick: reap claim-handle failed",
 				"claim_handle_id", lh.ID.String(),
 				"kind", string(lh.LockKind),
 				"error", err.Error())

@@ -223,8 +223,8 @@ ALTER TABLE rimsky_instances
 --     frame_id); drives dispatcher claim ordering.
 --   * creation_reason TEXT NOT NULL — provenance discriminator for why
 --     this run row exists; values: ('cascade','operator_invalidate',
---     'recalculate'). Retry of a failed executor is in-place on the
---     existing run row, NOT a new row.
+--     'recalculate','message_delivery'). Retry of a failed executor is
+--     in-place on the existing run row, NOT a new row.
 -- async-callback registry + tags + denormalized dispatch deadlines are
 -- post-executor-protocol-coherence shape; scratch_inline/handle/handle_backend
 -- carry the per-dispatch executor scratch triple.

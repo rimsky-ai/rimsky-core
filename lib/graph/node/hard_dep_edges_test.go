@@ -117,6 +117,27 @@ func TestBuildHardDepEdges_MultipleCyclesReported(t *testing.T) {
 	}
 }
 
+func TestFindAllCycles_ExcludesNonCycleEntryPrefix(t *testing.T) {
+	adj := map[string][]string{
+		"a": {"m"},
+		"m": {"n"},
+		"n": {"m"},
+	}
+	cycles := findAllCycles(adj)
+	if len(cycles) != 1 {
+		t.Fatalf("expected exactly 1 cycle, got %d: %v", len(cycles), cycles)
+	}
+	got := cycles[0]
+	if got[0] != got[len(got)-1] {
+		t.Fatalf("cycle %v does not start and end on the same node (entry-prefix leaked into the report)", got)
+	}
+	for _, n := range got {
+		if n == "a" {
+			t.Fatalf("cycle %v includes non-cycle entry-prefix node %q", got, "a")
+		}
+	}
+}
+
 func TestBuildHardDepEdges_RejectsFanoutTarget(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "a", Executor: "stub",

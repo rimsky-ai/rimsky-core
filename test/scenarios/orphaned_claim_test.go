@@ -31,11 +31,11 @@ func TestOrphanedClaim(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	lockHolderID := uuid.New()
+	claimHandleID := uuid.New()
 	lockName := "orphan-zombie-lock"
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
-			ID:                 lockHolderID,
+			ID:                 claimHandleID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
 			HolderSupervisorID: "dead-supervisor",
@@ -44,7 +44,7 @@ func TestOrphanedClaim(t *testing.T) {
 		}, tx)
 	}))
 
-	waitForClaimHandleReaped(t, h, lockHolderID)
+	waitForClaimHandleReaped(t, h, claimHandleID)
 
 	nid := n.ID
 	var evs persistence.EventListResult
@@ -76,11 +76,11 @@ func TestOrphanedClaimActiveRowsAlwaysHaveHolder(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	lockHolderID := uuid.New()
+	claimHandleID := uuid.New()
 	lockName := "orphan-active-holder-invariant-lock"
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
-			ID:                 lockHolderID,
+			ID:                 claimHandleID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
 			HolderSupervisorID: "some-supervisor",
@@ -90,7 +90,7 @@ func TestOrphanedClaimActiveRowsAlwaysHaveHolder(t *testing.T) {
 	}))
 
 	_, err := h.Pool.Exec(h.Ctx,
-		`UPDATE rimsky_claim_handles SET holder_supervisor_id = NULL WHERE id = $1`, lockHolderID)
+		`UPDATE rimsky_claim_handles SET holder_supervisor_id = NULL WHERE id = $1`, claimHandleID)
 	require.Error(t, err,
 		"rimsky_claim_handles_active_has_holder must reject a NULL holder_supervisor_id on an "+
 			"active row; the orphan-reaper's nil-holder skip (reapOneClaimHandle) is unreachable "+

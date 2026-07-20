@@ -27,7 +27,7 @@ func (s *lifecycleIdempotencyImpl) Get(ctx context.Context, claimProducerName st
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("store_lifecycle.get: %w", err)
+		return nil, fmt.Errorf("lifecycleidempotency.get: %w", err)
 	}
 	return &r, nil
 }
@@ -41,7 +41,7 @@ func (s *lifecycleIdempotencyImpl) Upsert(ctx context.Context, in persistence.Li
 		in.ClaimProducerName, string(in.ScopeKind), in.ScopeID, string(in.State), nowUTC(),
 	)
 	if err != nil {
-		return fmt.Errorf("store_lifecycle.upsert: %w", err)
+		return fmt.Errorf("lifecycleidempotency.upsert: %w", err)
 	}
 	return nil
 }
@@ -53,7 +53,7 @@ func (s *lifecycleIdempotencyImpl) Delete(ctx context.Context, claimProducerName
 		claimProducerName, string(scopeKind), scopeID,
 	)
 	if err != nil {
-		return fmt.Errorf("store_lifecycle.delete: %w", err)
+		return fmt.Errorf("lifecycleidempotency.delete: %w", err)
 	}
 	return nil
 }
@@ -65,7 +65,7 @@ func (s *lifecycleIdempotencyImpl) DeleteByScope(ctx context.Context, scopeKind 
 		string(scopeKind), scopeID,
 	)
 	if err != nil {
-		return fmt.Errorf("store_lifecycle.deleteByScope: %w", err)
+		return fmt.Errorf("lifecycleidempotency.deleteByScope: %w", err)
 	}
 	return nil
 }
@@ -79,7 +79,7 @@ func (s *lifecycleIdempotencyImpl) ListByScope(ctx context.Context, scopeKind pe
 		string(scopeKind), scopeID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("store_lifecycle.listByScope: %w", err)
+		return nil, fmt.Errorf("lifecycleidempotency.listByScope: %w", err)
 	}
 	defer rows.Close()
 
@@ -103,7 +103,7 @@ func (s *lifecycleIdempotencyImpl) ListByClaimProducer(ctx context.Context, clai
 		claimProducerName,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("store_lifecycle.listByClaimProducer: %w", err)
+		return nil, fmt.Errorf("lifecycleidempotency.listByClaimProducer: %w", err)
 	}
 	defer rows.Close()
 

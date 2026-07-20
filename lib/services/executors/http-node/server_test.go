@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,9 +21,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
-
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
 )
 
 func newRequest(t *testing.T, ud map[string]any) *genv1.ExecuteRequest {

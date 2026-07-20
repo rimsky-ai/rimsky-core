@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	pgsqlite "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
+	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
 // @decision: persistence-driver
@@ -28,7 +28,7 @@ func TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	db := pgsqlite.DBFromDatabase(d)
+	db := sqlitedrv.DBFromDatabase(d)
 
 	if _, err := db.Exec(`CREATE TABLE poolprobe (id INTEGER PRIMARY KEY, payload TEXT)`); err != nil {
 		t.Fatalf("create table: %v", err)

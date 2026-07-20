@@ -55,7 +55,7 @@ func (b *apiKeysImpl) Insert(ctx context.Context, k persistence.APIKey, tx persi
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			switch pgErr.ConstraintName {
-			case "rimsky_api_keys_active_name_idx":
+			case "idx_rimsky_api_keys_active_name":
 				return persistence.ErrAPIKeyNameTaken
 			case "rimsky_api_keys_key_hash_unique":
 				return persistence.ErrAPIKeyHashCollision

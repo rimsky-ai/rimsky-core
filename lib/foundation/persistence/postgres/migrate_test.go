@@ -144,11 +144,11 @@ func TestMigrationTagsColumn(t *testing.T) {
 		  FROM pg_indexes
 		 WHERE schemaname = current_schema()
 		   AND tablename = 'rimsky_nodes'
-		   AND indexname = 'rimsky_nodes_tags_idx'
+		   AND indexname = 'idx_rimsky_nodes_tags'
 	`).Scan(&idxName); err != nil {
 		t.Fatalf("query gin index: %v", err)
 	}
-	if idxName != "rimsky_nodes_tags_idx" {
-		t.Errorf("gin index name: got %q want rimsky_nodes_tags_idx", idxName)
+	if idxName != "idx_rimsky_nodes_tags" {
+		t.Errorf("gin index name: got %q want idx_rimsky_nodes_tags", idxName)
 	}
 }

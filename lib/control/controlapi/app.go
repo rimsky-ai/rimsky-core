@@ -37,7 +37,7 @@ type AppDeps struct {
 	Executors      map[string]ExecutorEntry
 	Observability  ObservabilityRouter
 
-	ExecutorCapabilities func(executorName string) (declaredEvents []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool)
+	ExecutorCapabilities func(executorName string) (declaredTags []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool)
 
 	StoreDeclaredErrorClasses func(storeName string) (declaredErrorClasses []string, ok bool)
 

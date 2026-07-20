@@ -180,9 +180,11 @@ CREATE TABLE rimsky_supervisors (
 );
 
 -- =====  rimsky_run_scopes  =====
--- parent_run_id is declared inline as a plain TEXT column; the FK to
--- rimsky_node_runs is added below after that table exists. SQLite
--- tolerates the column without the constraint at CREATE time.
+-- parent_run_id declares its FK to rimsky_node_runs inline even though
+-- that table doesn't exist yet; SQLite defers FK resolution to DML time
+-- (there is no ALTER TABLE ADD CONSTRAINT to add it after the fact), so
+-- the forward reference is valid as long as rimsky_node_runs exists by
+-- the time a row is inserted.
 CREATE TABLE rimsky_run_scopes (
     id                  TEXT PRIMARY KEY,
     parent_run_scope_id TEXT NULL REFERENCES rimsky_run_scopes(id) ON DELETE CASCADE,

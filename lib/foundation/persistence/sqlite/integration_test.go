@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	pgsqlite "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
+	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
 func TestSQLiteForeignKeysEnabled(t *testing.T) {
@@ -31,7 +31,7 @@ func TestSQLiteForeignKeysEnabled(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	db := pgsqlite.DBFromDatabase(d)
+	db := sqlitedrv.DBFromDatabase(d)
 	var fk int
 	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil {
 		t.Fatalf("pragma: %v", err)
@@ -54,7 +54,7 @@ func TestSQLiteWALMode(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	db := pgsqlite.DBFromDatabase(d)
+	db := sqlitedrv.DBFromDatabase(d)
 	var mode string
 	if err := db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
 		t.Fatalf("pragma: %v", err)

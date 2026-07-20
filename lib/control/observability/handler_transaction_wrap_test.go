@@ -79,7 +79,7 @@ func TestObservabilityHandlers_ReadEachThroughATransaction(t *testing.T) {
 		"/v1/observability/templates/" + fix.TemplateHash,
 		"/v1/observability/frames/" + frameID.String(),
 		"/v1/observability/node-runs/" + runID.String(),
-		"/v1/observability/lock-holders/" + claimHandleID.String(),
+		"/v1/observability/claim-handles/" + claimHandleID.String(),
 		"/v1/observability/events",
 		"/v1/observability/system/health",
 		"/v1/observability/system/summary",

@@ -43,7 +43,7 @@ func (e *staticConfigGateError) validationErrorEntry() map[string]string {
 func validateStaticConfigAgainstExecutorSchemas(
 	nodes []nodepkg.TemplateNodeDef,
 	defaults *nodepkg.TemplateDefaults,
-	execCapabilities func(string) (declaredEvents []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool),
+	execCapabilities func(string) (declaredTags []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool),
 ) error {
 	if execCapabilities == nil {
 		return nil

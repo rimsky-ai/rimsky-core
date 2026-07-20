@@ -22,22 +22,22 @@ type PaginatedListResult[T any] struct {
 	NextCursor string
 }
 
-type lockHolderCursor struct {
+type claimHandleCursor struct {
 	C time.Time   `json:"c"`
 	I shared.UUID `json:"i"`
 }
 
-func EncodeLockHolderCursor(claimed time.Time, id shared.UUID) string {
-	b, _ := json.Marshal(lockHolderCursor{C: claimed, I: id})
+func EncodeClaimHandleCursor(claimed time.Time, id shared.UUID) string {
+	b, _ := json.Marshal(claimHandleCursor{C: claimed, I: id})
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-func DecodeLockHolderCursor(s string) (time.Time, shared.UUID, error) {
+func DecodeClaimHandleCursor(s string) (time.Time, shared.UUID, error) {
 	raw, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
 		return time.Time{}, shared.UUID{}, err
 	}
-	var c lockHolderCursor
+	var c claimHandleCursor
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return time.Time{}, shared.UUID{}, err
 	}

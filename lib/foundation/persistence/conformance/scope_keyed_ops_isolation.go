@@ -240,7 +240,7 @@ func testScopeKeyedOps_DeletePriorCascadeStales(t *testing.T, d persistence.Data
 	}
 }
 
-func testScopeKeyedOps_GetPriorCascadeStaleNotClaimed(t *testing.T, d persistence.Database) {
+func testScopeKeyedOps_GetPriorCascadeQueuedNotClaimed(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
 	store := d.Tables()
@@ -260,20 +260,20 @@ func testScopeKeyedOps_GetPriorCascadeStaleNotClaimed(t *testing.T, d persistenc
 		if err != nil {
 			return err
 		}
-		priorA, err = store.Nodes().GetPriorCascadeStaleNotClaimed(ctx, tx, f.fix.NodeID, f.scopeA, curA.Sequence)
+		priorA, err = store.Nodes().GetPriorCascadeQueuedNotClaimed(ctx, tx, f.fix.NodeID, f.scopeA, curA.Sequence)
 		if err != nil {
 			return err
 		}
-		priorB, err = store.Nodes().GetPriorCascadeStaleNotClaimed(ctx, tx, f.fix.NodeID, f.scopeB, curB.Sequence)
+		priorB, err = store.Nodes().GetPriorCascadeQueuedNotClaimed(ctx, tx, f.fix.NodeID, f.scopeB, curB.Sequence)
 		return err
 	}); err != nil {
-		t.Fatalf("GetPriorCascadeStaleNotClaimed: %v", err)
+		t.Fatalf("GetPriorCascadeQueuedNotClaimed: %v", err)
 	}
 	if priorA == nil || priorA.NodeRunID != f.runA {
-		t.Fatalf("GetPriorCascadeStaleNotClaimed(scopeA) = %+v, want runA %v", priorA, f.runA)
+		t.Fatalf("GetPriorCascadeQueuedNotClaimed(scopeA) = %+v, want runA %v", priorA, f.runA)
 	}
 	if priorB == nil || priorB.NodeRunID != f.runB {
-		t.Fatalf("GetPriorCascadeStaleNotClaimed(scopeB) = %+v, want runB %v", priorB, f.runB)
+		t.Fatalf("GetPriorCascadeQueuedNotClaimed(scopeB) = %+v, want runB %v", priorB, f.runB)
 	}
 }
 

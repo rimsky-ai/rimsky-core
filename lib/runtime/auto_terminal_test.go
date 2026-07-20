@@ -203,10 +203,10 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 
 	storeName := "workspace"
 	intent := "rw"
-	lockHolderID := shared.UUID(uuid.New())
+	claimHandleID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
-			ID: lockHolderID, LockKind: persistence.LockKindScope,
+			ID: claimHandleID, LockKind: persistence.LockKindScope,
 			ProducerName: &storeName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-A", HolderNodeID: acqNode.ID,
@@ -215,23 +215,23 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 			return err
 		}
 		if err := backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeRunID: acqRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: claimHandleID, HolderNodeRunID: acqRunID,
 		}, tx); err != nil {
 			return err
 		}
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeRunID: inhRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: claimHandleID, HolderNodeRunID: inhRunID,
 		}, tx)
 	}))
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHolders().CompleteByClaimHandleAndRun(
-			ctx, lockHolderID, acqRunID, persistence.ClaimHolderStateCompleted, tx,
+			ctx, claimHandleID, acqRunID, persistence.ClaimHolderStateCompleted, tx,
 		); err != nil {
 			return err
 		}
 		return backend.ClaimHolders().CompleteByClaimHandleAndRun(
-			ctx, lockHolderID, inhRunID, persistence.ClaimHolderStateCompleted, tx,
+			ctx, claimHandleID, inhRunID, persistence.ClaimHolderStateCompleted, tx,
 		)
 	}))
 
@@ -245,7 +245,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, lockHolderID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
 		post = pc
 		return err
 	}))
@@ -255,7 +255,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 
 	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := backend.ClaimHandles().Get(ctx, lockHolderID, tx)
+		r, err := backend.ClaimHandles().Get(ctx, claimHandleID, tx)
 		row = r
 		return err
 	}))
@@ -1182,10 +1182,10 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 
 	storeName := "workspace"
 	intent := "rw"
-	lockHolderID := shared.UUID(uuid.New())
+	claimHandleID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
-			ID: lockHolderID, LockKind: persistence.LockKindScope,
+			ID: claimHandleID, LockKind: persistence.LockKindScope,
 			ProducerName: &storeName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-G", HolderNodeID: acqNode.ID,
@@ -1194,22 +1194,22 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 			return err
 		}
 		if err := backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeRunID: acqRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: claimHandleID, HolderNodeRunID: acqRunID,
 		}, tx); err != nil {
 			return err
 		}
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeRunID: inhRunID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: claimHandleID, HolderNodeRunID: inhRunID,
 		}, tx)
 	}))
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHolders().CompleteByClaimHandleAndRun(
-			ctx, lockHolderID, acqRunID, persistence.ClaimHolderStateCompleted, tx,
+			ctx, claimHandleID, acqRunID, persistence.ClaimHolderStateCompleted, tx,
 		); err != nil {
 			return err
 		}
 		return backend.ClaimHolders().CompleteByClaimHandleAndRun(
-			ctx, lockHolderID, inhRunID, persistence.ClaimHolderStateFailed, tx,
+			ctx, claimHandleID, inhRunID, persistence.ClaimHolderStateFailed, tx,
 		)
 	}))
 
@@ -1223,7 +1223,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	args = withSyncVerbFlush(args)
 	var postG func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, lockHolderID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
 		postG = pc
 		return err
 	}))
@@ -1233,7 +1233,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 
 	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := backend.ClaimHandles().Get(ctx, lockHolderID, tx)
+		r, err := backend.ClaimHandles().Get(ctx, claimHandleID, tx)
 		row = r
 		return err
 	}))

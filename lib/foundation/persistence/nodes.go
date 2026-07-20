@@ -149,7 +149,7 @@ type NodeTable interface {
 	DeletePriorCascadeStales(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, beforeSeq int64) (int, error)
 
 	// @concept: cascade
-	GetPriorCascadeStaleNotClaimed(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, beforeSeq int64) (*NodeRunForGate, error)
+	GetPriorCascadeQueuedNotClaimed(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, beforeSeq int64) (*NodeRunForGate, error)
 
 	// @concept: cascade
 	GetMostRecentSettledRun(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, beforeSeq int64) (*NodeRunForGate, error)

@@ -93,17 +93,17 @@ func TestClaimHoldersRoute(t *testing.T) {
 
 	holderNodeID := seedThrowawayNode(t, h)
 	holderNodeRunID := seedRunForNode(ctx, t, h, holderNodeID)
-	lockHolderID := seedScopeClaimHandle(ctx, t, h, holderNodeID)
+	claimHandleID := seedScopeClaimHandle(ctx, t, h, holderNodeID)
 	claimHolderID := uuid.New()
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:              claimHolderID,
-			ClaimHandleID:   lockHolderID,
+			ClaimHandleID:   claimHandleID,
 			HolderNodeRunID: holderNodeRunID,
 		}, tx)
 	}))
 
-	status, body = doJSON(t, router, http.MethodGet, "/v1/claim-handles/"+lockHolderID.String()+"/holders", nil)
+	status, body = doJSON(t, router, http.MethodGet, "/v1/claim-handles/"+claimHandleID.String()+"/holders", nil)
 	require.Equal(t, http.StatusOK, status, string(body))
 	var resp struct {
 		Holders []map[string]any `json:"holders"`
@@ -111,7 +111,7 @@ func TestClaimHoldersRoute(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &resp))
 	require.Len(t, resp.Holders, 1)
 	require.Equal(t, claimHolderID.String(), resp.Holders[0]["id"])
-	require.Equal(t, lockHolderID.String(), resp.Holders[0]["claim_handle_id"])
+	require.Equal(t, claimHandleID.String(), resp.Holders[0]["claim_handle_id"])
 	require.Equal(t, holderNodeRunID.String(), resp.Holders[0]["holder_run_id"])
 	require.Equal(t, "active", resp.Holders[0]["state"])
 }

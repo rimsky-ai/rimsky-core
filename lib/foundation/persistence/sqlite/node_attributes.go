@@ -136,7 +136,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 	)
 	if persistence.ShouldSpillBlob(si.blob, si.blobThreshold, len(raw)) {
 		h, werr := si.blob.Write(ctx, persistence.BlobKey{
-			NodeID:        runID.String(),
+			NodeID:        nodeID.String(),
 			AttributeName: "data",
 		}, raw)
 		if werr != nil {
@@ -373,7 +373,7 @@ func (s *nodeAttributesImpl) SnapshotBagForNewRun(
 		priorBackendStr = priorHandleBackend.String
 	}
 	carried, err := persistence.CarryForwardBag(ctx, (*tablesImpl)(s).blob, tx,
-		persistence.BlobKey{NodeID: newRunID.String(), AttributeName: "data"},
+		persistence.BlobKey{NodeID: nodeID.String(), AttributeName: "data"},
 		[]byte(priorData), priorHandleStr, priorBackendStr)
 	if err != nil {
 		return fmt.Errorf("node_attributes.SnapshotBagForNewRun: carry forward blob: %w", err)

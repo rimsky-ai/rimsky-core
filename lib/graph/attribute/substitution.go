@@ -14,10 +14,14 @@
 //   - {{env.<VAR_NAME>}}
 //
 // `messages.<type>.<field>` is sugar for `nodes.<type>.attribute.<field>`
-// — both resolve through the same `Deps` lookup. The only difference is
-// the registration-time validation: a `messages.<type>` ref requires
-// `<type>` to be declared in the template's `messages:` registry, where
-// `nodes.<type>` requires `<type>` to be declared as a node-type.
+// — both resolve through the same `Deps` lookup. They differ in two
+// checks: the registration-time validation (a `messages.<type>` ref
+// requires `<type>` to be declared in the template's `messages:`
+// registry, where `nodes.<type>` requires `<type>` to be declared as a
+// node-type), and a runtime registry gate — when the resolve-time
+// context carries a populated declared-types set (as `lib/runtime`
+// always supplies), a `messages.<type>` ref whose type is absent from
+// that set is rejected even if registration-time validation passed.
 //
 // `env.<VAR_NAME>` reads from the supervisor process's environment at
 // dispatch time. Names must match `[A-Za-z_][A-Za-z0-9_]*`. Unlike the

@@ -51,11 +51,11 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 
 	producerName := "scenario-store"
 	intent := "rw"
-	lockHolderID := shared.UUID(uuid.New())
+	claimHandleID := shared.UUID(uuid.New())
 	holderID := shared.UUID(uuid.New())
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := h.Persist.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
-			ID:                 lockHolderID,
+			ID:                 claimHandleID,
 			LockKind:           persistence.LockKindScope,
 			ProducerName:       &producerName,
 			ClaimScopeData:     []byte(`"r-1"`),
@@ -68,7 +68,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 		}
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:              holderID,
-			ClaimHandleID:   lockHolderID,
+			ClaimHandleID:   claimHandleID,
 			HolderNodeRunID: runID,
 		}, tx)
 	}))
@@ -80,21 +80,21 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 		return err
 	}))
 	require.NotNil(t, row)
-	require.Equal(t, lockHolderID, row.ClaimHandleID)
+	require.Equal(t, claimHandleID, row.ClaimHandleID)
 	require.Equal(t, runID, row.HolderNodeRunID)
 	require.Equal(t, persistence.ClaimHolderStateActive, row.State)
 
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:              shared.UUID(uuid.New()),
-			ClaimHandleID:   lockHolderID,
+			ClaimHandleID:   claimHandleID,
 			HolderNodeRunID: runID,
 		}, tx)
 	}), "re-inserting the same (claim_handle_id, holder_run_id) co-holder must be idempotent, not wedge on the UNIQUE constraint")
 
 	var holders []persistence.ClaimHolderRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		rows, err := h.Persist.ClaimHolders().ListByClaimHandleID(h.Ctx, lockHolderID, tx)
+		rows, err := h.Persist.ClaimHolders().ListByClaimHandleID(h.Ctx, claimHandleID, tx)
 		holders = rows
 		return err
 	}))
